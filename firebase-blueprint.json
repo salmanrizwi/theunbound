@@ -1,0 +1,177 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with role-based access control and agency association.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["BUYER", "B2B_AGENT", "ADMIN", "TEAM_MEMBER", "VIEWER", "PUBLIC"] },
+        "category": { "type": "string", "enum": ["EXTERNAL", "INTERNAL"] },
+        "agencyName": { "type": "string" },
+        "country": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "email", "role"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Ground tour, hotel, transfer, or travel service product definition.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "sku": { "type": "string" },
+        "name": { "type": "string" },
+        "destinationId": { "type": "string" },
+        "category": { "type": "string" },
+        "city": { "type": "string" },
+        "country": { "type": "string" },
+        "adultNetPrice": { "type": "number" },
+        "childNetPrice": { "type": "number" },
+        "currency": { "type": "string" },
+        "sellingPriceStartingFrom": { "type": "number" },
+        "status": { "type": "string", "enum": ["ACTIVE", "ARCHIVED", "DRAFT"] }
+      },
+      "required": ["id", "sku", "name", "destinationId", "adultNetPrice", "currency", "status"]
+    },
+    "Promotion": {
+      "title": "Promotion",
+      "description": "Marketing campaign, promo code, and seasonal discounts targeting products or destinations.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "promoCode": { "type": "string" },
+        "discountType": { "type": "string", "enum": ["PERCENTAGE", "FIXED"] },
+        "discountValue": { "type": "number" },
+        "minBookingValue": { "type": "number" },
+        "maxDiscount": { "type": "number" },
+        "targetAudience": { "type": "string", "enum": ["ALL", "BUYER", "B2B_AGENT"] },
+        "displayPlacement": { "type": "string", "enum": ["BANNER", "MODAL", "SLIDER", "PRODUCT_PAGE", "DESTINATION_PAGE"] },
+        "destinationId": { "type": "string" },
+        "applicableProductIds": { "type": "array" },
+        "applyToAllProducts": { "type": "boolean" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "priority": { "type": "number" }
+      },
+      "required": ["id", "title", "discountType", "discountValue", "isActive"]
+    },
+    "Blog": {
+      "title": "Blog",
+      "description": "Editorial travel article, destination guide, and luxury itinerary content.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "slug": { "type": "string" },
+        "author": { "type": "string" },
+        "authorAvatar": { "type": "string" },
+        "category": { "type": "string" },
+        "tags": { "type": "array" },
+        "summary": { "type": "string" },
+        "content": { "type": "string" },
+        "featuredImage": { "type": "string" },
+        "status": { "type": "string", "enum": ["PUBLISHED", "DRAFT", "SCHEDULED", "ARCHIVED"] },
+        "isFeatured": { "type": "boolean" },
+        "publishDate": { "type": "string" },
+        "readTimeMinutes": { "type": "number" },
+        "seoTitle": { "type": "string" },
+        "seoDescription": { "type": "string" },
+        "seoKeywords": { "type": "string" }
+      },
+      "required": ["id", "title", "slug", "content", "status"]
+    },
+    "GoogleReview": {
+      "title": "GoogleReview",
+      "description": "Verified Google customer and partner reviews imported for homepage and marketing showcase.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorAvatar": { "type": "string" },
+        "rating": { "type": "number" },
+        "reviewText": { "type": "string" },
+        "date": { "type": "string" },
+        "destination": { "type": "string" },
+        "source": { "type": "string" },
+        "isFeatured": { "type": "boolean" },
+        "isVisible": { "type": "boolean" },
+        "displayOrder": { "type": "number" },
+        "verifiedPartner": { "type": "boolean" }
+      },
+      "required": ["id", "authorName", "rating", "reviewText", "isVisible"]
+    },
+    "Quotation": {
+      "title": "Quotation",
+      "description": "Secured custom itinerary quotation with price breakdowns and owner authorization.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "quoteNumber": { "type": "string" },
+        "title": { "type": "string" },
+        "clientName": { "type": "string" },
+        "clientEmail": { "type": "string" },
+        "agentId": { "type": "string" },
+        "agentName": { "type": "string" },
+        "currency": { "type": "string" },
+        "status": { "type": "string", "enum": ["DRAFT", "SENT_TO_CLIENT", "ACCEPTED", "EXPIRED", "CONFIRMED"] },
+        "totalNetCost": { "type": "number" },
+        "totalSellingPrice": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "quoteNumber", "agentId", "status", "totalSellingPrice"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable security and administrative action audit record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userRole": { "type": "string" },
+        "action": { "type": "string" },
+        "entity": { "type": "string" },
+        "entityId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "details": { "type": "string" }
+      },
+      "required": ["id", "userId", "action", "entity", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and credentials."
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Master inventory products."
+    },
+    "/promotions/{promotionId}": {
+      "schema": "Promotion",
+      "description": "Promotional campaigns and discounts."
+    },
+    "/blogs/{blogId}": {
+      "schema": "Blog",
+      "description": "CMS blog articles and editorial guides."
+    },
+    "/google_reviews/{reviewId}": {
+      "schema": "GoogleReview",
+      "description": "Google reviews repository."
+    },
+    "/quotations/{quotationId}": {
+      "schema": "Quotation",
+      "description": "Secured custom quotations."
+    },
+    "/audit_logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Administrative audit logs."
+    }
+  }
+}

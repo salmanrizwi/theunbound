@@ -1,0 +1,382 @@
+import { Hotel } from '../types';
+
+export const INITIAL_HOTELS: Hotel[] = [
+  {
+    id: 'hotel-hoshinoya-tokyo',
+    name: 'Hoshinoya Tokyo Luxury Ryokan',
+    code: 'HTL-TYO-HOS01',
+    destinationId: 'japan',
+    destinationName: 'Japan',
+    cityId: 'tokyo',
+    cityName: 'Tokyo',
+    country: 'Japan',
+    area: 'Otemachi Financial District',
+    starRating: 5,
+    propertyType: 'RYOKAN',
+    shortDescription: 'Modern 17-story tower reimagining the classic Japanese ryokan with natural hot springs and tatami-matted halls.',
+    description: 'Hoshinoya Tokyo is a serene sanctuary nestled in the heart of Tokyo. Each floor functions as an exclusive intimate ryokan with its own ochanoma lounge. Experience rooftop geothermal onsen baths drawn from 1,500 meters below the Tokyo bedrock.',
+    heroImage: 'https://images.unsplash.com/photo-1542051841857-5f90071e7989?q=80&w=1200&auto=format&fit=crop',
+    images: [
+      'https://images.unsplash.com/photo-1542051841857-5f90071e7989?q=80&w=1200&auto=format&fit=crop',
+      'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=1200&auto=format&fit=crop',
+      'https://images.unsplash.com/photo-1578683010236-d716f9a3f461?q=80&w=1200&auto=format&fit=crop'
+    ],
+    website: 'https://hoshinoya.com/tokyo/en/',
+    googleMapsUrl: 'https://maps.google.com/?q=Hoshinoya+Tokyo',
+    address: '1-9-1 Otemachi, Chiyoda-ku, Tokyo 100-0004, Japan',
+    latitude: 35.6881,
+    longitude: 139.7656,
+    locationDetails: {
+      airportName: 'Tokyo Haneda International (HND)',
+      airportDistanceKm: 19.5,
+      airportTransferTimeMins: 28,
+      railwayStationName: 'Tokyo Central Station',
+      railwayDistanceKm: 0.8,
+      walkingDistanceMins: 10,
+      metroStationName: 'Otemachi Subway Station (Direct Access)',
+      nearbyAttractions: ['Imperial Palace Gardens (500m)', 'Ginza Luxury Avenue (2km)', 'Nihombashi District (1km)']
+    },
+    roomTypes: [
+      {
+        id: 'room-kiku-suite',
+        roomName: 'Kiku Grand Executive Suite',
+        roomCategory: 'Executive Suite',
+        description: 'Corner room with generous light through bamboo screens, spacious dining table, and deep cypress soaking tub.',
+        images: ['https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?q=80&w=800&auto=format&fit=crop'],
+        bedType: 'Custom Futon on Low Wooden Platform (Twin or King)',
+        numberOfBeds: 2,
+        roomSizeSqMeters: 83,
+        maxAdults: 3,
+        maxChildren: 1,
+        maxOccupancy: 3,
+        extraBedAvailable: true,
+        childPolicy: 'Children under 6 stay complimentary when sharing existing bedding.',
+        amenities: ['Geothermal Spring Water Bath', 'Kimono Robes', 'Ochanoma Lounge Access', 'High-Speed Wi-Fi', 'DMC 24/7 Butler'],
+        view: 'Otemachi Skyline & Palace Tree Canopy',
+        cancellationPolicy: 'Free cancellation up to 14 days prior to check-in. 100% within 14 days.',
+        rates: [
+          {
+            id: 'rate-kiku-bb',
+            mealPlan: 'BB',
+            mealPlanName: 'Japanese Kaiseki Breakfast Included',
+            singleNetRate: 820,
+            doubleNetRate: 950,
+            tripleNetRate: 1180,
+            extraBedRate: 180,
+            childRate: 90,
+            markupPercent: 18,
+            taxPercent: 10,
+            feePercent: 2.5,
+            currency: 'USD',
+            validityFrom: '2026-01-01',
+            validityTo: '2026-12-31',
+            isWeekendPeak: false
+          }
+        ]
+      },
+      {
+        id: 'room-yuri-deluxe',
+        roomName: 'Yuri Deluxe Tatami Room',
+        roomCategory: 'Deluxe Room',
+        description: 'Serene tatami room featuring delicate shoji screens and an ultra-deep bath crafted from aromatic wood.',
+        images: ['https://images.unsplash.com/photo-1590490360182-c33d57733427?q=80&w=800&auto=format&fit=crop'],
+        bedType: 'King Size Low Bed',
+        numberOfBeds: 1,
+        roomSizeSqMeters: 50,
+        maxAdults: 2,
+        maxChildren: 1,
+        maxOccupancy: 2,
+        extraBedAvailable: false,
+        childPolicy: 'Children under 6 stay free.',
+        amenities: ['Shoji Screen Ambiance', 'Aromatic Wood Bath', 'Complimentary Minibar Refreshments', 'Ochanoma Lounge Access'],
+        view: 'Traditional Inner Courtyard Garden',
+        cancellationPolicy: 'Free cancellation up to 7 days prior to check-in.',
+        rates: [
+          {
+            id: 'rate-yuri-bb',
+            mealPlan: 'BB',
+            mealPlanName: 'Breakfast Included',
+            singleNetRate: 580,
+            doubleNetRate: 680,
+            tripleNetRate: 680,
+            extraBedRate: 0,
+            childRate: 60,
+            markupPercent: 18,
+            taxPercent: 10,
+            feePercent: 2.5,
+            currency: 'USD',
+            validityFrom: '2026-01-01',
+            validityTo: '2026-12-31'
+          }
+        ]
+      }
+    ],
+    amenities: [
+      'Top Floor Geothermal Onsen',
+      'Michelin-Star Kaiseki Restaurant',
+      'Private Tea Ceremony Pavilion',
+      'Concierge & Chauffeur Fleet',
+      'Ochanoma Floor Lounges'
+    ],
+    blackoutDates: ['2026-12-30', '2026-12-31', '2027-01-01'],
+    status: 'PUBLISHED',
+    startingNetPrice: 580,
+    currency: 'USD',
+    createdAt: '2026-01-15T00:00:00Z',
+    updatedAt: '2026-08-20T00:00:00Z'
+  },
+  {
+    id: 'hotel-four-seasons-kyoto',
+    name: 'Four Seasons Hotel Kyoto',
+    code: 'HTL-KYO-FS02',
+    destinationId: 'japan',
+    destinationName: 'Japan',
+    cityId: 'kyoto',
+    cityName: 'Kyoto',
+    country: 'Japan',
+    area: 'Higashiyama Temple District',
+    starRating: 5,
+    propertyType: 'LUXURY_HOTEL',
+    shortDescription: 'Modern sanctuary built around a 12th-century Shakusui-en pond garden in historic Higashiyama.',
+    description: 'Immerse in the timeless poetry of Kyoto. Surrounded by cherry blossoms and maples, Four Seasons Hotel Kyoto brings together centuries of Zen heritage with legendary modern luxury.',
+    heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
+    images: [
+      'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
+      'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=1200&auto=format&fit=crop'
+    ],
+    website: 'https://www.fourseasons.com/kyoto/',
+    address: '445-3 Myohoin Maekawa-cho, Higashiyama-ku, Kyoto 605-0932',
+    latitude: 34.9912,
+    longitude: 135.7761,
+    locationDetails: {
+      airportName: 'Osaka Kansai International (KIX)',
+      airportDistanceKm: 78.0,
+      airportTransferTimeMins: 75,
+      railwayStationName: 'JR Kyoto Shinkansen Station',
+      railwayDistanceKm: 2.2,
+      walkingDistanceMins: 25,
+      metroStationName: 'Shichijo Station (Keihan Line)',
+      nearbyAttractions: ['Sanjusangendo Temple (300m)', 'Kiyomizu-dera (1.4km)', 'Gion Geisha District (1.8km)']
+    },
+    roomTypes: [
+      {
+        id: 'room-fs-garden-view',
+        roomName: 'Four Seasons Pond Garden King',
+        roomCategory: 'Luxury Garden View',
+        description: 'Floor-to-ceiling windows gazing out upon the 800-year-old Shakusui-en koi pond garden and heritage teahouse.',
+        images: ['https://images.unsplash.com/photo-1566665797739-1674de7a421a?q=80&w=800&auto=format&fit=crop'],
+        bedType: 'Four Seasons Signature King',
+        numberOfBeds: 1,
+        roomSizeSqMeters: 53,
+        maxAdults: 2,
+        maxChildren: 1,
+        maxOccupancy: 3,
+        extraBedAvailable: true,
+        childPolicy: 'Children under 12 stay complimentary.',
+        amenities: ['Marble Bathroom with Deep Soaking Tub', 'Bose Soundbar', 'Pond Garden Balcony', 'Nespresso Coffee Bar'],
+        view: 'Historic 12th-Century Pond Garden',
+        cancellationPolicy: 'Free cancellation up to 5 days prior to arrival.',
+        rates: [
+          {
+            id: 'rate-fs-bb',
+            mealPlan: 'BB',
+            mealPlanName: 'Brasserie Gourmet Breakfast',
+            singleNetRate: 720,
+            doubleNetRate: 840,
+            tripleNetRate: 990,
+            extraBedRate: 150,
+            childRate: 75,
+            markupPercent: 18,
+            taxPercent: 10,
+            feePercent: 2.5,
+            currency: 'USD',
+            validityFrom: '2026-01-01',
+            validityTo: '2026-12-31'
+          }
+        ]
+      }
+    ],
+    amenities: [
+      'Heritage Pond Garden with Waterside Teahouse',
+      'Full-Service Wellness Spa & 20m Indoor Pool',
+      'Sushi Wakon (Michelin-starred)',
+      'Private Temple Mediation Masterclasses',
+      'VIP Airport Shinkansen Luggage Concierge'
+    ],
+    blackoutDates: ['2026-03-25', '2026-03-26', '2026-03-27', '2026-03-28'],
+    status: 'PUBLISHED',
+    startingNetPrice: 720,
+    currency: 'USD',
+    createdAt: '2026-01-15T00:00:00Z',
+    updatedAt: '2026-08-20T00:00:00Z'
+  },
+  {
+    id: 'hotel-the-savoy-london',
+    name: 'The Savoy Hotel London',
+    code: 'HTL-LON-SAV01',
+    destinationId: 'united-kingdom',
+    destinationName: 'United Kingdom',
+    cityId: 'london',
+    cityName: 'London',
+    country: 'United Kingdom',
+    area: 'Strand / Covent Garden',
+    starRating: 5,
+    propertyType: 'LUXURY_HOTEL',
+    shortDescription: 'Iconic British institution on the Northbank of the River Thames offering legendary Edwardian & Art Deco glamour.',
+    description: 'Opened in 1889, The Savoy remains London’s most storied luxury hotel. Positioned along the Strand overlooking the Thames, with Gordon Ramsay’s Savoy Grill and the world-renowned American Bar.',
+    heroImage: 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=1200&auto=format&fit=crop',
+    images: [
+      'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=1200&auto=format&fit=crop',
+      'https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?q=80&w=1200&auto=format&fit=crop'
+    ],
+    website: 'https://www.thesavoylondon.com/',
+    address: 'Strand, London WC2R 0EZ, United Kingdom',
+    latitude: 51.5104,
+    longitude: -0.1207,
+    locationDetails: {
+      airportName: 'London Heathrow (LHR)',
+      airportDistanceKm: 27.0,
+      airportTransferTimeMins: 45,
+      railwayStationName: 'Charing Cross Station',
+      railwayDistanceKm: 0.4,
+      walkingDistanceMins: 5,
+      metroStationName: 'Covent Garden / Embankment Underground',
+      nearbyAttractions: ['Covent Garden Market (300m)', 'Trafalgar Square (600m)', 'West End Theatres (200m)']
+    },
+    roomTypes: [
+      {
+        id: 'room-savoy-river-suite',
+        roomName: 'River View Deluxe Junior Suite',
+        roomCategory: 'Junior Suite',
+        description: 'Art Deco decor offering panoramic views over the River Thames and London skyline with 24/7 Savoy Butler service.',
+        images: ['https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?q=80&w=800&auto=format&fit=crop'],
+        bedType: 'Super King Luxury Bed',
+        numberOfBeds: 1,
+        roomSizeSqMeters: 55,
+        maxAdults: 2,
+        maxChildren: 1,
+        maxOccupancy: 3,
+        extraBedAvailable: true,
+        childPolicy: 'Children under 12 stay free.',
+        amenities: ['Savoy Butler Service', 'Penhaligon’s Toiletries', 'River Thames View', 'Marble Rain Shower & Tub'],
+        view: 'River Thames & London Eye Panorama',
+        cancellationPolicy: 'Free cancellation up to 48 hours prior to arrival.',
+        rates: [
+          {
+            id: 'rate-savoy-bb',
+            mealPlan: 'BB',
+            mealPlanName: 'Full English Traditional Breakfast',
+            singleNetRate: 650,
+            doubleNetRate: 750,
+            tripleNetRate: 900,
+            extraBedRate: 150,
+            childRate: 50,
+            markupPercent: 20,
+            taxPercent: 20,
+            feePercent: 2.5,
+            currency: 'GBP',
+            validityFrom: '2026-01-01',
+            validityTo: '2026-12-31'
+          }
+        ]
+      }
+    ],
+    amenities: [
+      'Legendary Savoy Butler Service',
+      'The American Bar (World Best Bars Hall of Fame)',
+      'Savoy Grill by Gordon Ramsay',
+      'Private Thames River Cruise Charter',
+      'Indoor Pool & Wellness Spa'
+    ],
+    blackoutDates: ['2026-12-31'],
+    status: 'PUBLISHED',
+    startingNetPrice: 650,
+    currency: 'GBP',
+    createdAt: '2026-01-15T00:00:00Z',
+    updatedAt: '2026-08-20T00:00:00Z'
+  },
+  {
+    id: 'hotel-le-bristol-paris',
+    name: 'Le Bristol Paris Palace',
+    code: 'HTL-PAR-BRI01',
+    destinationId: 'western-europe',
+    destinationName: 'Western Europe',
+    cityId: 'paris',
+    cityName: 'Paris',
+    country: 'France',
+    area: 'Rue du Faubourg Saint-Honoré',
+    starRating: 5,
+    propertyType: 'LUXURY_HOTEL',
+    shortDescription: 'Quintessential Parisian Palace hotel renowned for discrete excellence and 3-Michelin-starred Epicure.',
+    description: 'Located on Paris’s prestigious fashion artery Rue du Faubourg Saint-Honoré, Le Bristol is an emblem of French luxury living since 1925, boasting a 1,200 sqm French courtyard garden.',
+    heroImage: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=80&w=1200&auto=format&fit=crop',
+    images: [
+      'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=80&w=1200&auto=format&fit=crop'
+    ],
+    website: 'https://www.oetkercollection.com/hotels/le-bristol-paris/',
+    address: '112 Rue du Faubourg Saint-Honoré, 75008 Paris, France',
+    latitude: 48.8718,
+    longitude: 2.3146,
+    locationDetails: {
+      airportName: 'Paris Charles de Gaulle (CDG)',
+      airportDistanceKm: 31.0,
+      airportTransferTimeMins: 40,
+      railwayStationName: 'Gare Saint-Lazare',
+      railwayDistanceKm: 1.1,
+      walkingDistanceMins: 12,
+      metroStationName: 'Miromesnil (Lines 9 & 13)',
+      nearbyAttractions: ['Champs-Élysées (500m)', 'Louvre Museum (2km)', 'Élysée Palace (100m)']
+    },
+    roomTypes: [
+      {
+        id: 'room-bristol-deluxe',
+        roomName: 'Deluxe Courtyard Palace Room',
+        roomCategory: 'Deluxe Room',
+        description: 'Decorated in classic 18th-century French style by Pierre-Yves Rochon, overlooking the tranquil French courtyard garden.',
+        images: ['https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?q=80&w=800&auto=format&fit=crop'],
+        bedType: 'King Size French Bed',
+        numberOfBeds: 1,
+        roomSizeSqMeters: 45,
+        maxAdults: 2,
+        maxChildren: 1,
+        maxOccupancy: 2,
+        extraBedAvailable: false,
+        childPolicy: 'Children under 6 stay free.',
+        amenities: ['French Garden View', 'Courtyard Balcony', 'La Prairie Spa Products', 'Marble Bath'],
+        view: 'Private French Courtyard Garden',
+        cancellationPolicy: 'Free cancellation up to 72 hours prior to arrival.',
+        rates: [
+          {
+            id: 'rate-bristol-bb',
+            mealPlan: 'BB',
+            mealPlanName: 'Gourmet French Viennoiserie Breakfast',
+            singleNetRate: 980,
+            doubleNetRate: 1100,
+            tripleNetRate: 1100,
+            extraBedRate: 0,
+            childRate: 80,
+            markupPercent: 18,
+            taxPercent: 10,
+            feePercent: 2.5,
+            currency: 'EUR',
+            validityFrom: '2026-01-01',
+            validityTo: '2026-12-31'
+          }
+        ]
+      }
+    ],
+    amenities: [
+      'Epicure Restaurant (3 Michelin Stars)',
+      'Rooftop Yacht-Themed Indoor Swimming Pool',
+      'Spa Le Bristol by La Prairie',
+      'Private 1,200 sqm French Garden',
+      'Chauffeured Maybach Fleet'
+    ],
+    blackoutDates: ['2026-07-14', '2026-12-31'],
+    status: 'PUBLISHED',
+    startingNetPrice: 980,
+    currency: 'EUR',
+    createdAt: '2026-01-15T00:00:00Z',
+    updatedAt: '2026-08-20T00:00:00Z'
+  }
+];

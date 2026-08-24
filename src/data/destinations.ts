@@ -1,0 +1,208 @@
+import { Destination } from '../types';
+
+export const DESTINATIONS: Destination[] = [
+  {
+    id: 'dest-japan',
+    name: 'Japan',
+    slug: 'japan',
+    country: 'Japan',
+    region: 'JAPAN',
+    heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1600&auto=format&fit=crop',
+    tagline: 'Precision, heritage, ultra-modern luxury, and Michelin-starred hospitality.',
+    description: 'Discover curated ryokans, private tea ceremonies, Shinkansen bullet train logistics, Mt. Fuji helicopter transfers, and VIP access across ancient and futuristic Japan.',
+    keySellingPoints: [
+      'Seamless high-speed transit and door-to-door luggage handling',
+      'Exclusive private access to UNESCO shrines and master craftsmen',
+      'Michelin-caliber culinary tours and private sake tastings',
+      'Bespoke onsen & ryokan properties in Hakone, Kyoto & Hokkaido'
+    ],
+    bestTimeToVisit: 'March–May (Cherry Blossom) & October–November (Autumn Foliage)',
+    idealTripDuration: '10–14 Days',
+    travelStyle: 'Bespoke Luxury, Cultural Immersion & Gastronomy',
+    currency: 'JPY',
+    highlights: [
+      'Mount Fuji private guided expeditions & Five Lakes onsens',
+      'Kyoto Gion geisha district evening cultural walks',
+      'Tokyo Tsukiji & Toyosu VIP sushi masterclasses',
+      'Hiroshima Peace Memorial & Miyajima Island private cruise'
+    ],
+    cities: [
+      {
+        id: 'tokyo',
+        name: 'Tokyo',
+        tagline: 'Neon skyline meets centuries of Edo tradition',
+        image: 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=800&auto=format&fit=crop',
+        productCount: 18
+      },
+      {
+        id: 'kyoto',
+        name: 'Kyoto',
+        tagline: 'The cultural soul of shrines, bamboo groves and geishas',
+        image: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop',
+        productCount: 14
+      },
+      {
+        id: 'osaka',
+        name: 'Osaka',
+        tagline: 'The vibrant culinary and merchant capital of the Kansai region',
+        image: 'https://images.unsplash.com/photo-1590559899731-a382839e5549?q=80&w=800&auto=format&fit=crop',
+        productCount: 9
+      },
+      {
+        id: 'hakone',
+        name: 'Hakone & Mt. Fuji',
+        tagline: 'Thermal springs, open-air art museums and volcanic vistas',
+        image: 'https://images.unsplash.com/photo-1578637387939-43c525550085?q=80&w=800&auto=format&fit=crop',
+        productCount: 8
+      },
+      {
+        id: 'hiroshima',
+        name: 'Hiroshima & Miyajima',
+        tagline: 'Historic peace architecture and floating torii gates',
+        image: 'https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?q=80&w=800&auto=format&fit=crop',
+        productCount: 6
+      },
+      {
+        id: 'nara',
+        name: 'Nara',
+        tagline: 'Ancient temples and free-roaming sacred sika deer',
+        image: 'https://images.unsplash.com/photo-1504109586057-7a2ae83d1338?q=80&w=800&auto=format&fit=crop',
+        productCount: 5
+      }
+    ],
+    featuredProductIds: ['jp-tok-01', 'jp-kyo-01', 'jp-fuji-01', 'jp-trf-01'],
+    status: 'ACTIVE'
+  },
+  {
+    id: 'dest-uk',
+    name: 'United Kingdom',
+    slug: 'united-kingdom',
+    country: 'United Kingdom',
+    region: 'UNITED_KINGDOM',
+    heroImage: 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=1600&auto=format&fit=crop',
+    tagline: 'Regal heritage, rolling countryside manors, and world-class theatrical culture.',
+    description: 'Bespoke DMC solutions across England, Scotland, Wales, and Northern Ireland. From private royal palace viewings and vintage chauffeur tours to Scottish Highlands castle retreats.',
+    keySellingPoints: [
+      'Official Blue Badge certified private expert tour guides',
+      'VIP access to royal palaces, West End theaters & Premier League suites',
+      'Bespoke Scottish Highlands whisky distillery private charters',
+      'Direct partnerships with five-star Mayfair and countryside boutique estates'
+    ],
+    bestTimeToVisit: 'May–September (Pleasant Summer) & December (Festive London & Edinburgh)',
+    idealTripDuration: '7–12 Days',
+    travelStyle: 'Royal Heritage, Countryside Estates & High Culture',
+    currency: 'GBP',
+    highlights: [
+      'Tower of London private after-hours Crown Jewels viewing',
+      'Cotswolds private honey-stone village chauffeur excursion',
+      'Edinburgh Castle & Loch Ness Highlands private charter',
+      'Oxford & Cambridge private punt with University fellows'
+    ],
+    cities: [
+      {
+        id: 'london',
+        name: 'London',
+        tagline: 'Global metropolis of royal pageantry, world-class theater and gastronomy',
+        image: 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=800&auto=format&fit=crop',
+        productCount: 22
+      },
+      {
+        id: 'edinburgh',
+        name: 'Edinburgh & Highlands',
+        tagline: 'Cobblestone Royal Mile, dramatic crags, and clan castle legends',
+        image: 'https://images.unsplash.com/photo-1506377247377-2a5b3b417ebb?q=80&w=800&auto=format&fit=crop',
+        productCount: 12
+      },
+      {
+        id: 'cotswolds',
+        name: 'The Cotswolds & Bath',
+        tagline: 'Quintessential English charm, Roman thermal baths, and manor hospitality',
+        image: 'https://images.unsplash.com/photo-1596701062351-8c2c14d1fdd0?q=80&w=800&auto=format&fit=crop',
+        productCount: 9
+      },
+      {
+        id: 'oxford',
+        name: 'Oxford & Cambridge',
+        tagline: 'Dreaming spires, ancient libraries, and scholarly riverside lawns',
+        image: 'https://images.unsplash.com/photo-1548013146-72479768bada?q=80&w=800&auto=format&fit=crop',
+        productCount: 7
+      }
+    ],
+    featuredProductIds: ['uk-lon-01', 'uk-cots-01', 'uk-edi-01', 'uk-trf-01'],
+    status: 'ACTIVE'
+  },
+  {
+    id: 'dest-europe',
+    name: 'Europe',
+    slug: 'europe',
+    country: 'Continental Europe',
+    region: 'EUROPE',
+    heroImage: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=80&w=1600&auto=format&fit=crop',
+    tagline: 'Timeless romance, Renaissance art capitals, Alpine summits, and Mediterranean Riviera.',
+    description: 'Comprehensive cross-border DMC logistics covering France, Italy, Switzerland, Spain, Netherlands, and Central Europe. Direct contract hotel allotments, private yachts, and high-speed rail packages.',
+    keySellingPoints: [
+      'Pan-European multi-country seamless itinerary routing and transfers',
+      'Exclusive skip-the-line museum docents (Louvre, Vatican, Uffizi, Prado)',
+      'Scenic Alpine express rail bookings (Glacier Express, Bernina)',
+      'Bespoke Mediterranean private yacht charters & Amalfi private drivers'
+    ],
+    bestTimeToVisit: 'April–June (Spring Blossoms) & September–October (Wine Harvest Season)',
+    idealTripDuration: '10–21 Days',
+    travelStyle: 'Grand Tour Luxury, Wine & Culinary Journeys, Scenic Rail',
+    currency: 'EUR',
+    highlights: [
+      'Paris Louvre museum private after-hours curator tour',
+      'Rome Vatican & Sistine Chapel early morning private access',
+      'Swiss Alps Jungfraujoch & Glacier Express 1st class panoramic journey',
+      'Amalfi Coast private vintage speedboat charter'
+    ],
+    cities: [
+      {
+        id: 'paris',
+        name: 'Paris',
+        tagline: 'City of light, haute couture, world-leading art, and culinary perfection',
+        image: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=80&w=800&auto=format&fit=crop',
+        productCount: 24
+      },
+      {
+        id: 'rome',
+        name: 'Rome & Amalfi',
+        tagline: 'Eternal city monuments, Roman cuisine, and cliffside coastal panoramas',
+        image: 'https://images.unsplash.com/photo-1552832230-c0197dd311b5?q=80&w=800&auto=format&fit=crop',
+        productCount: 19
+      },
+      {
+        id: 'zurich',
+        name: 'Zurich & Swiss Alps',
+        tagline: 'Pristine mountain lakes, luxury chronometry, and panoramic rail',
+        image: 'https://images.unsplash.com/photo-1530122037265-a5f1f91d3b99?q=80&w=800&auto=format&fit=crop',
+        productCount: 15
+      },
+      {
+        id: 'barcelona',
+        name: 'Barcelona & Madrid',
+        tagline: 'Gaudí modernism, tapas culture, and vibrant Iberian flair',
+        image: 'https://images.unsplash.com/photo-1583422409516-2895a77efded?q=80&w=800&auto=format&fit=crop',
+        productCount: 13
+      },
+      {
+        id: 'amsterdam',
+        name: 'Amsterdam',
+        tagline: 'Canal rings, Golden Age masters, and charming boutique merchant houses',
+        image: 'https://images.unsplash.com/photo-1512470876302-972faa2aa9a4?q=80&w=800&auto=format&fit=crop',
+        productCount: 11
+      }
+    ],
+    featuredProductIds: ['eu-par-01', 'eu-rom-01', 'eu-swi-01', 'eu-bar-01'],
+    status: 'ACTIVE'
+  }
+];
+
+export const UPCOMING_DESTINATIONS = [
+  { name: 'Southeast Asia', tag: 'Phase 2', flag: '🌏' },
+  { name: 'Middle East & UAE', tag: 'Phase 2', flag: '🏜️' },
+  { name: 'USA & Canada', tag: 'Phase 3', flag: '🗽' },
+  { name: 'Australia & New Zealand', tag: 'Phase 3', flag: '🦘' },
+  { name: 'Africa & Safari', tag: 'Phase 3', flag: '🦁' },
+  { name: 'CIS & Central Asia', tag: 'Phase 3', flag: '🏔️' },
+];
