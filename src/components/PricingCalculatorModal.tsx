@@ -52,7 +52,7 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
   const [agentNotes, setAgentNotes] = useState<string>('');
   const [showCalendarPicker, setShowCalendarPicker] = useState<boolean>(true);
 
-  const currencies: CurrencyCode[] = ['USD', 'EUR', 'GBP', 'JPY'];
+  const currencies: CurrencyCode[] = ['USD', 'EUR', 'GBP', 'JPY', 'AED', 'THB'];
 
   const availability = checkDateAvailability(product.id, travelDate, adults + childrenCount);
 
@@ -395,6 +395,14 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
                   <div className="flex justify-between text-slate-300">
                     <span>Child Participants ({childrenCount} × {formatCurrency(calculation.childPricePerPax, targetCurrency)})</span>
                     <span className="font-mono">{formatCurrency(calculation.childrenSubtotalSelling, targetCurrency)}</span>
+                  </div>
+                )}
+
+                {/* Infants */}
+                {infantsCount > 0 && (
+                  <div className="flex justify-between text-slate-300">
+                    <span>Infant Participants ({infantsCount} × {formatCurrency(calculation.infantsSubtotalSelling / infantsCount, targetCurrency)})</span>
+                    <span className="font-mono">{formatCurrency(calculation.infantsSubtotalSelling, targetCurrency)}</span>
                   </div>
                 )}
 

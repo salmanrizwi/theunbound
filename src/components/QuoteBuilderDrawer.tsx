@@ -5,6 +5,8 @@ import { useRoster } from '../context/RosterContext';
 import { formatCurrency } from '../services/pricingEngine';
 import { RosterCalendarPicker } from './RosterCalendarPicker';
 import { Quotation } from '../types';
+import { GoogleTasksService } from '../services/googleTasksService';
+import { downloadQuotationPDF } from '../services/pdfGenerator';
 import { 
   X, 
   Trash2, 
@@ -110,7 +112,38 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({ onBookQu
     }
   };
 
+  const handleDownloadPDF = () => {
+    try {
+      const activeQuote = saveCurrentQuote();
+      if (activeQuote) {
+        downloadQuotationPDF({
+          quote: activeQuote,
+          agentName: user?.name,
+          agentAgency: user?.agencyName,
+          agentEmail: user?.email,
+          agentRole: user?.role
+        });
+
+        try {
+          GoogleTasksService.getInstance().schedulePdfQuoteFollowUpTask(activeQuote, user);
+        } catch (e) {
+          console.debug('PDF follow-up task note:', e);
+        }
+      }
+    } catch (err) {
+      console.error('Error generating PDF quote:', err);
+    }
+  };
+
   const handlePrintProposal = () => {
+    try {
+      const activeQuote = saveCurrentQuote();
+      if (activeQuote) {
+        GoogleTasksService.getInstance().schedulePdfQuoteFollowUpTask(activeQuote, user);
+      }
+    } catch (e) {
+      console.debug('PDF follow-up task note:', e);
+    }
     window.print();
   };
 
@@ -542,6 +575,21 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({ onBookQu
                 </button>
 
                 <button
+                  id="btn-download-pdf-quote"
+                  disabled={hasRosterConflict}
+                  onClick={handleDownloadPDF}
+                  className={`flex items-center space-x-1.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all shadow-md ${
+                    hasRosterConflict
+                      ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                      : 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer shadow-emerald-600/20'
+                  }`}
+                  title="Generate & Download Clean PDF Quotation (No Duplicate Pages)"
+                >
+                  <FileDown className="w-3.5 h-3.5" />
+                  <span>Download PDF</span>
+                </button>
+
+                <button
                   id="btn-preview-proposal"
                   disabled={hasRosterConflict}
                   onClick={() => setShowProposalPreview(true)}
@@ -551,7 +599,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({ onBookQu
                       : 'bg-slate-800 hover:bg-slate-700 text-white cursor-pointer'
                   }`}
                 >
-                  <FileDown className="w-3.5 h-3.5" />
+                  <Globe2 className="w-3.5 h-3.5 text-[#00C6A6]" />
                   <span>Proposal</span>
                 </button>
 
@@ -609,11 +657,19 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({ onBookQu
                     </button>
                   )}
                   <button
+                    onClick={handleDownloadPDF}
+                    className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-lg text-xs cursor-pointer shadow-sm"
+                    title="Download clean formatted PDF quotation document"
+                  >
+                    <FileDown className="w-3.5 h-3.5" />
+                    <span>Download as PDF</span>
+                  </button>
+                  <button
                     onClick={handlePrintProposal}
                     className="flex items-center space-x-1.5 bg-slate-800 text-white font-bold px-3 py-1.5 rounded-lg text-xs hover:bg-slate-700 cursor-pointer border border-slate-700"
                   >
                     <Printer className="w-3.5 h-3.5 text-[#00C6A6]" />
-                    <span>Print / Save PDF</span>
+                    <span>Print</span>
                   </button>
                   <button
                     onClick={() => setShowProposalPreview(false)}

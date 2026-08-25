@@ -4,6 +4,7 @@ import { AppDatabase } from '../services/db';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { formatCurrency, calculateProductPrice } from '../services/pricingEngine';
+import { GoogleTasksService } from '../services/googleTasksService';
 import { 
   X, 
   ShieldCheck, 
@@ -217,6 +218,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         travelStartDate,
         travelEndDate
       }, currentUser);
+
+      // Trigger automated 12-hour ground operations confirmation task via Google Tasks Service
+      try {
+        GoogleTasksService.getInstance().scheduleBookingConfirmationTask(newBooking);
+      } catch (gtaskErr) {
+        console.debug('Google task creation note:', gtaskErr);
+      }
 
       setIsSubmitting(false);
       onBookingComplete(newBooking);

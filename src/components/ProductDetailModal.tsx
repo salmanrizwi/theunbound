@@ -5,6 +5,8 @@ import { useQuotation } from '../context/QuotationContext';
 import { useRoster } from '../context/RosterContext';
 import { formatCurrency, convertCurrency } from '../services/pricingEngine';
 import { RosterCalendarPicker } from './RosterCalendarPicker';
+import { CurrencyConverterWidget } from './CurrencyConverterWidget';
+import { WishlistButton } from './WishlistButton';
 import { 
   X, 
   MapPin, 
@@ -46,7 +48,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   hidePrice = false
 }) => {
   const { isAuthenticated, openAuthModal, role } = useAuth();
-  const { currency, addProductToQuote, items } = useQuotation();
+  const { currency, setCurrency, addProductToQuote, items } = useQuotation();
   const { checkDateAvailability, getNextAvailableDate } = useRoster();
 
   const [activeImageIdx, setActiveImageIdx] = useState(0);
@@ -294,11 +296,21 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                       Published Starting Rate
                     </span>
                     
-                    <div className="flex items-baseline space-x-2 mb-4">
+                    <div className="flex items-baseline space-x-2 mb-3">
                       <span className="text-3xl font-black text-white font-sans">
                         {formatCurrency(convertedStartingPrice, currency)}
                       </span>
                       <span className="text-xs text-slate-400">/ Adult (Retail)</span>
+                    </div>
+
+                    {/* Real-time FX Converter for preferred local currency */}
+                    <div className="mb-4">
+                      <CurrencyConverterWidget
+                        currentCurrency={currency}
+                        onCurrencyChange={setCurrency}
+                        baseCurrency={product.currency}
+                        baseAmount={product.sellingPriceStartingFrom}
+                      />
                     </div>
                   </>
                 )}
@@ -509,7 +521,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                       <button
                         disabled={!availability.isAvailable}
                         onClick={handleAddToQuote}
-                        className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center space-x-1.5 ${
+                        className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center space-x-1.5 mb-2 ${
                           availability.isAvailable
                             ? 'bg-slate-800 hover:bg-slate-700 text-white cursor-pointer'
                             : 'bg-slate-800/50 text-slate-600 cursor-not-allowed'
@@ -522,6 +534,10 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                         )}
                       </button>
                     )}
+
+                    <div className="pt-1">
+                      <WishlistButton product={product} variant="button" />
+                    </div>
                   </>
                 )}
 

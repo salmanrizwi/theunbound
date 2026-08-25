@@ -28,7 +28,9 @@ import {
   JobSheet,
   EmailCampaignConfig,
   RosterResource,
-  ProductRosterRule
+  ProductRosterRule,
+  WishlistFolder,
+  WishlistItem
 } from '../types';
 import { INITIAL_PRODUCTS } from '../data/initialProducts';
 import { DESTINATIONS } from '../data/destinations';
@@ -44,15 +46,47 @@ import { INITIAL_LEADS } from '../data/initialLeads';
 import { INITIAL_CAMPAIGNS } from '../data/initialCampaigns';
 import { INITIAL_ROSTER_RESOURCES } from '../data/initialRoster';
 import { EmailNotificationService } from './emailNotificationService';
+import { db as firestoreDb } from './firebase';
+import { 
+  collection, 
+  doc, 
+  getDocs, 
+  setDoc, 
+  deleteDoc, 
+  onSnapshot, 
+  getDocFromServer,
+  writeBatch 
+} from 'firebase/firestore';
+
+function cleanForFirestore(data: any): any {
+  if (data === undefined) {
+    return null;
+  }
+  if (data === null || typeof data !== 'object') {
+    return data;
+  }
+  if (Array.isArray(data)) {
+    return data.map(item => cleanForFirestore(item));
+  }
+  const cleaned: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) {
+      cleaned[key] = cleanForFirestore(value);
+    }
+  }
+  return cleaned;
+}
 
 const STORAGE_KEY_PREFIX = 'theunbound_db_';
 
 export class AppDatabase {
   private static instance: AppDatabase;
   private listeners: Set<() => void> = new Set();
+  private isFirestoreInitialized: boolean = false;
 
   private constructor() {
     this.initDefaultData();
+    this.initFirestoreSync();
   }
 
   public static getInstance(): AppDatabase {
@@ -81,12 +115,192 @@ export class AppDatabase {
     }
   }
 
-  private setItem<T>(key: string, value: T): void {
+  private setItem<T>(key: string, value: T, syncToFirestore: boolean = true): void {
     try {
       localStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(value));
       this.notify();
     } catch (e) {
       console.error(`Error saving ${key} to storage:`, e);
+    }
+  }
+
+  private syncFirestoreDoc(collectionName: string, docId: string, data: any): void {
+    if (!docId) return;
+    try {
+      const cleanData = cleanForFirestore(data);
+      setDoc(doc(firestoreDb, collectionName, docId), cleanData, { merge: true }).catch((err) => {
+        console.debug(`Firestore sync note (${collectionName}/${docId}):`, err);
+      });
+    } catch (e) {
+      console.debug(`Firestore sync error (${collectionName}/${docId}):`, e);
+    }
+  }
+
+  private deleteFirestoreDoc(collectionName: string, docId: string): void {
+    if (!docId) return;
+    try {
+      deleteDoc(doc(firestoreDb, collectionName, docId)).catch((err) => {
+        console.debug(`Firestore delete note (${collectionName}/${docId}):`, err);
+      });
+    } catch (e) {
+      console.debug(`Firestore delete error (${collectionName}/${docId}):`, e);
+    }
+  }
+
+  private async initFirestoreSync(): Promise<void> {
+    if (this.isFirestoreInitialized || typeof window === 'undefined') return;
+    this.isFirestoreInitialized = true;
+
+    try {
+      // Validate connection to Firestore
+      try {
+        await getDocFromServer(doc(firestoreDb, 'test', 'connection'));
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('the client is offline')) {
+          console.warn("Firestore running in offline cache mode.");
+        }
+      }
+
+      // 1. Sync Products
+      onSnapshot(collection(firestoreDb, 'products'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: Product[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as Product));
+          this.setItem('products', list, false);
+        } else {
+          // Seed initial products to Firestore
+          const initial = this.getProducts();
+          initial.forEach(p => {
+            this.syncFirestoreDoc('products', p.id, p);
+          });
+        }
+      }, (err) => console.debug('Firestore products sync note:', err));
+
+      // 2. Sync Destinations
+      onSnapshot(collection(firestoreDb, 'destinations'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: Destination[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as Destination));
+          this.setItem('destinations', list, false);
+        } else {
+          const initial = this.getDestinations();
+          initial.forEach(d => {
+            this.syncFirestoreDoc('destinations', d.id, d);
+          });
+        }
+      }, (err) => console.debug('Firestore destinations sync note:', err));
+
+      // 3. Sync Quotations
+      onSnapshot(collection(firestoreDb, 'quotations'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: Quotation[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as Quotation));
+          this.setItem('saved_quotes', list, false);
+        }
+      }, (err) => console.debug('Firestore quotations sync note:', err));
+
+      // 4. Sync Bookings
+      onSnapshot(collection(firestoreDb, 'bookings'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: Booking[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as Booking));
+          this.setItem('bookings', list, false);
+        }
+      }, (err) => console.debug('Firestore bookings sync note:', err));
+
+      // 5. Sync Hotels
+      onSnapshot(collection(firestoreDb, 'hotels'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: Hotel[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as Hotel));
+          this.setItem('hotels', list, false);
+        } else {
+          const initial = this.getHotels();
+          initial.forEach(h => {
+            this.syncFirestoreDoc('hotels', h.id, h);
+          });
+        }
+      }, (err) => console.debug('Firestore hotels sync note:', err));
+
+      // 6. Sync Leads
+      onSnapshot(collection(firestoreDb, 'leads'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: TravelLead[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as TravelLead));
+          this.setItem('leads', list, false);
+        }
+      }, (err) => console.debug('Firestore leads sync note:', err));
+
+      // 7. Sync Promotions
+      onSnapshot(collection(firestoreDb, 'promotions'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: Promotion[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as Promotion));
+          this.setItem('promotions', list, false);
+        } else {
+          const initial = this.getPromotions();
+          initial.forEach(pr => {
+            this.syncFirestoreDoc('promotions', pr.id, pr);
+          });
+        }
+      }, (err) => console.debug('Firestore promotions sync note:', err));
+
+      // 8. Sync Gallery
+      onSnapshot(collection(firestoreDb, 'gallery_items'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: GalleryImage[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as GalleryImage));
+          this.setItem('gallery', list, false);
+        }
+      }, (err) => console.debug('Firestore gallery sync note:', err));
+
+      // 9. Sync Reviews
+      onSnapshot(collection(firestoreDb, 'google_reviews'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: GoogleReview[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as GoogleReview));
+          this.setItem('reviews', list, false);
+        }
+      }, (err) => console.debug('Firestore reviews sync note:', err));
+
+      // 10. Sync Blogs
+      onSnapshot(collection(firestoreDb, 'blog_articles'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: BlogArticle[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as BlogArticle));
+          this.setItem('blogs', list, false);
+        }
+      }, (err) => console.debug('Firestore blogs sync note:', err));
+
+      // 11. Sync Wishlist Folders
+      onSnapshot(collection(firestoreDb, 'wishlist_folders'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: WishlistFolder[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as WishlistFolder));
+          this.setItem('wishlist_folders', list, false);
+        }
+      }, (err) => console.debug('Firestore wishlist folders sync note:', err));
+
+      // 12. Sync Wishlist Items
+      onSnapshot(collection(firestoreDb, 'wishlist_items'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: WishlistItem[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as WishlistItem));
+          this.setItem('wishlist_items', list, false);
+        }
+      }, (err) => console.debug('Firestore wishlist items sync note:', err));
+
+      // 13. Sync Users
+      onSnapshot(collection(firestoreDb, 'users'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: User[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as User));
+          this.setItem('system_users', list, false);
+        }
+      }, (err) => console.debug('Firestore users sync note:', err));
+
+    } catch (error) {
+      console.warn('Firestore real-time listeners initialized with local fallback:', error);
     }
   }
 
@@ -180,10 +394,11 @@ export class AppDatabase {
       entityId,
       timestamp: new Date().toISOString(),
       details,
-      previousValue,
-      newValue
+      previousValue: previousValue || '',
+      newValue: newValue || ''
     };
     this.setItem('audit_logs', [newLog, ...logs.slice(0, 499)]); // Keep last 500 logs
+    this.syncFirestoreDoc('audit_logs', newLog.id, newLog);
   }
 
   public getAuditLogs(): AuditLog[] {
@@ -220,11 +435,13 @@ export class AppDatabase {
         prev ? JSON.stringify({ name: prev.name, price: prev.adultNetPrice }) : undefined,
         JSON.stringify({ name: product.name, price: product.adultNetPrice })
       );
+      this.syncFirestoreDoc('products', product.id, products[existingIndex]);
     } else {
-      products.unshift({
+      const newProd = {
         ...product,
         lastUpdated: new Date().toISOString().split('T')[0]
-      });
+      };
+      products.unshift(newProd);
       this.logAudit(
         user,
         'PRODUCT_CREATED',
@@ -232,6 +449,7 @@ export class AppDatabase {
         product.id,
         `Created new product: ${product.name} (SKU: ${product.sku})`
       );
+      this.syncFirestoreDoc('products', product.id, newProd);
     }
     this.setItem('products', products);
   }
@@ -258,6 +476,7 @@ export class AppDatabase {
     const target = products.find(p => p.id === productId);
     const filtered = products.filter(p => p.id !== productId);
     this.setItem('products', filtered);
+    this.deleteFirestoreDoc('products', productId);
     if (target) {
       this.logAudit(
         user,
@@ -290,6 +509,7 @@ export class AppDatabase {
       destinations.push(destination);
       this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destination.id, `Added destination: ${destination.name}`);
     }
+    this.syncFirestoreDoc('destinations', destination.id, destination);
     this.setItem('destinations', destinations);
   }
 
@@ -297,6 +517,7 @@ export class AppDatabase {
     const destinations = this.getDestinations();
     const target = destinations.find(d => d.id === destinationId);
     this.setItem('destinations', destinations.filter(d => d.id !== destinationId));
+    this.deleteFirestoreDoc('destinations', destinationId);
     if (target) {
       this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destinationId, `Removed destination: ${target.name}`);
     }
@@ -323,18 +544,22 @@ export class AppDatabase {
   public savePromotion(promotion: Promotion, user: User | null): void {
     const promotions = this.getPromotions();
     const index = promotions.findIndex(p => p.id === promotion.id);
+    let savedPromo: Promotion;
     if (index >= 0) {
-      promotions[index] = { ...promotion, updatedAt: new Date().toISOString() };
+      savedPromo = { ...promotion, updatedAt: new Date().toISOString() };
+      promotions[index] = savedPromo;
       this.logAudit(user, 'PROMOTION_UPDATED', 'Promotion', promotion.id, `Updated promotion: ${promotion.title}`);
     } else {
-      promotions.unshift({
+      savedPromo = {
         ...promotion,
         id: promotion.id || `promo-${Date.now()}`,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
-      });
+      };
+      promotions.unshift(savedPromo);
       this.logAudit(user, 'PROMOTION_CREATED', 'Promotion', promotion.id, `Created promotion: ${promotion.title}`);
     }
+    this.syncFirestoreDoc('promotions', savedPromo.id, savedPromo);
     this.setItem('promotions', promotions);
   }
 
@@ -342,6 +567,7 @@ export class AppDatabase {
     const promotions = this.getPromotions();
     const target = promotions.find(p => p.id === promotionId);
     this.setItem('promotions', promotions.filter(p => p.id !== promotionId));
+    this.deleteFirestoreDoc('promotions', promotionId);
     if (target) {
       this.logAudit(user, 'PROMOTION_DELETED', 'Promotion', promotionId, `Deleted promotion: ${target.title}`);
     }
@@ -361,18 +587,22 @@ export class AppDatabase {
   public saveBlog(blog: BlogArticle, user: User | null): void {
     const blogs = this.getBlogs();
     const index = blogs.findIndex(b => b.id === blog.id);
+    let savedBlog: BlogArticle;
     if (index >= 0) {
-      blogs[index] = { ...blog, updatedAt: new Date().toISOString() };
+      savedBlog = { ...blog, updatedAt: new Date().toISOString() };
+      blogs[index] = savedBlog;
       this.logAudit(user, 'BLOG_UPDATED', 'Blog', blog.id, `Updated blog article: ${blog.title}`);
     } else {
-      blogs.unshift({
+      savedBlog = {
         ...blog,
         id: blog.id || `blog-${Date.now()}`,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
-      });
+      };
+      blogs.unshift(savedBlog);
       this.logAudit(user, 'BLOG_CREATED', 'Blog', blog.id, `Created blog article: ${blog.title}`);
     }
+    this.syncFirestoreDoc('blog_articles', savedBlog.id, savedBlog);
     this.setItem('blogs', blogs);
   }
 
@@ -380,6 +610,7 @@ export class AppDatabase {
     const blogs = this.getBlogs();
     const target = blogs.find(b => b.id === blogId);
     this.setItem('blogs', blogs.filter(b => b.id !== blogId));
+    this.deleteFirestoreDoc('blog_articles', blogId);
     if (target) {
       this.logAudit(user, 'BLOG_UPDATED', 'Blog', blogId, `Deleted blog article: ${target.title}`);
     }
@@ -391,6 +622,7 @@ export class AppDatabase {
     if (target) {
       target.views = (target.views || 0) + 1;
       this.setItem('blogs', blogs);
+      this.syncFirestoreDoc('blog_articles', blogId, { views: target.views });
     }
   }
 
@@ -410,16 +642,20 @@ export class AppDatabase {
   public saveReview(review: GoogleReview, user: User | null): void {
     const reviews = this.getReviews();
     const index = reviews.findIndex(r => r.id === review.id);
+    let savedReview: GoogleReview;
     if (index >= 0) {
-      reviews[index] = review;
+      savedReview = review;
+      reviews[index] = savedReview;
       this.logAudit(user, 'REVIEW_UPDATED', 'GoogleReview', review.id, `Updated review from ${review.authorName}`);
     } else {
-      reviews.unshift({
+      savedReview = {
         ...review,
         id: review.id || `rev-${Date.now()}`
-      });
+      };
+      reviews.unshift(savedReview);
       this.logAudit(user, 'REVIEW_UPDATED', 'GoogleReview', review.id, `Added review from ${review.authorName}`);
     }
+    this.syncFirestoreDoc('google_reviews', savedReview.id, savedReview);
     this.setItem('reviews', reviews);
   }
 
@@ -427,6 +663,7 @@ export class AppDatabase {
     const reviews = this.getReviews();
     const target = reviews.find(r => r.id === reviewId);
     this.setItem('reviews', reviews.filter(r => r.id !== reviewId));
+    this.deleteFirestoreDoc('google_reviews', reviewId);
     if (target) {
       this.logAudit(user, 'REVIEW_UPDATED', 'GoogleReview', reviewId, `Deleted review from ${target.authorName}`);
     }
@@ -559,6 +796,7 @@ export class AppDatabase {
     } else {
       quotes.unshift(updatedQuote);
     }
+    this.syncFirestoreDoc('quotations', updatedQuote.id, updatedQuote);
     this.setItem('saved_quotes', quotes);
     this.logAudit(
       user, 
@@ -595,6 +833,7 @@ export class AppDatabase {
     if (!quote) return false;
     const quotes = this.getAllSavedQuotes().filter(q => q.id !== quoteId);
     this.setItem('saved_quotes', quotes);
+    this.deleteFirestoreDoc('quotations', quoteId);
     this.logAudit(user, 'SETTINGS_UPDATED', 'Quotation', quoteId, `Deleted quote ${quote.quoteNumber}`);
     return true;
   }
@@ -679,6 +918,7 @@ export class AppDatabase {
 
     existing.unshift(newBookingDraft);
     this.setItem('bookings', existing);
+    this.syncFirestoreDoc('bookings', newBookingDraft.id, newBookingDraft);
 
     // If booking was created from a quote, update quote status
     if (data.quoteId) {
@@ -688,6 +928,7 @@ export class AppDatabase {
         quotes[qIdx].status = 'BOOKING_SUBMITTED';
         quotes[qIdx].updatedAt = timestamp;
         this.setItem('saved_quotes', quotes);
+        this.syncFirestoreDoc('quotations', quotes[qIdx].id, { status: 'BOOKING_SUBMITTED', updatedAt: timestamp });
       }
     }
 
@@ -710,6 +951,7 @@ export class AppDatabase {
     all[index].status = status;
     all[index].updatedAt = new Date().toISOString();
     this.setItem('bookings', all);
+    this.syncFirestoreDoc('bookings', all[index].id, { status, updatedAt: all[index].updatedAt });
 
     this.logAudit(
       user,
@@ -843,13 +1085,17 @@ export class AppDatabase {
   public saveHotel(hotel: Hotel, user: User | null): void {
     const hotels = this.getHotels();
     const index = hotels.findIndex(h => h.id === hotel.id);
+    let savedHotel: Hotel;
     if (index >= 0) {
-      hotels[index] = { ...hotel, updatedAt: new Date().toISOString() };
+      savedHotel = { ...hotel, updatedAt: new Date().toISOString() };
+      hotels[index] = savedHotel;
       this.logAudit(user, 'PRODUCT_UPDATED', 'Hotel', hotel.id, `Updated hotel property: ${hotel.name} (${hotel.code})`);
     } else {
-      hotels.unshift({ ...hotel, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      savedHotel = { ...hotel, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      hotels.unshift(savedHotel);
       this.logAudit(user, 'PRODUCT_CREATED', 'Hotel', hotel.id, `Created hotel property: ${hotel.name} (${hotel.code})`);
     }
+    this.syncFirestoreDoc('hotels', savedHotel.id, savedHotel);
     this.setItem('hotels', hotels);
   }
 
@@ -857,6 +1103,7 @@ export class AppDatabase {
     const hotels = this.getHotels();
     const target = hotels.find(h => h.id === hotelId);
     this.setItem('hotels', hotels.filter(h => h.id !== hotelId));
+    this.deleteFirestoreDoc('hotels', hotelId);
     if (target) {
       this.logAudit(user, 'PRODUCT_ARCHIVED', 'Hotel', hotelId, `Deleted hotel property: ${target.name}`);
     }
@@ -883,6 +1130,7 @@ export class AppDatabase {
       hubs.push(cityHub);
       this.logAudit(user, 'DESTINATION_UPDATED', 'CityHub', cityHub.id, `Added city hub: ${cityHub.name} (${cityHub.destinationName})`);
     }
+    this.syncFirestoreDoc('city_hubs', cityHub.id, cityHub);
     this.setItem('city_hubs', hubs);
   }
 
@@ -890,6 +1138,7 @@ export class AppDatabase {
     const hubs = this.getCityHubs();
     const target = hubs.find(c => c.id === cityHubId);
     this.setItem('city_hubs', hubs.filter(c => c.id !== cityHubId));
+    this.deleteFirestoreDoc('city_hubs', cityHubId);
     if (target) {
       this.logAudit(user, 'DESTINATION_UPDATED', 'CityHub', cityHubId, `Deleted city hub: ${target.name}`);
     }
@@ -916,6 +1165,7 @@ export class AppDatabase {
       faqs.push(faq);
       this.logAudit(user, 'SETTINGS_UPDATED', 'DestinationFAQ', faq.id, `Created FAQ for ${faq.destinationName}: "${faq.question}"`);
     }
+    this.syncFirestoreDoc('faqs', faq.id, faq);
     this.setItem('destination_faqs', faqs);
   }
 
@@ -923,6 +1173,7 @@ export class AppDatabase {
     const faqs = this.getItem<DestinationFAQ[]>('destination_faqs', INITIAL_FAQS);
     const target = faqs.find(f => f.id === faqId);
     this.setItem('destination_faqs', faqs.filter(f => f.id !== faqId));
+    this.deleteFirestoreDoc('faqs', faqId);
     if (target) {
       this.logAudit(user, 'SETTINGS_UPDATED', 'DestinationFAQ', faqId, `Deleted FAQ: "${target.question}"`);
     }
@@ -945,6 +1196,7 @@ export class AppDatabase {
       gallery.unshift(image);
       this.logAudit(user, 'SETTINGS_UPDATED', 'GalleryImage', image.id, `Added gallery photo for ${image.customerName} (${image.destination})`);
     }
+    this.syncFirestoreDoc('gallery_items', image.id, image);
     this.setItem('gallery', gallery);
   }
 
@@ -952,6 +1204,7 @@ export class AppDatabase {
     const gallery = this.getGalleryImages();
     const target = gallery.find(g => g.id === imageId);
     this.setItem('gallery', gallery.filter(g => g.id !== imageId));
+    this.deleteFirestoreDoc('gallery_items', imageId);
     if (target) {
       this.logAudit(user, 'SETTINGS_UPDATED', 'GalleryImage', imageId, `Removed gallery image: ${target.caption}`);
     }
@@ -966,6 +1219,7 @@ export class AppDatabase {
 
   public updateHomepageConfig(config: HomepageConfig, user: User | null): void {
     this.setItem('homepage_config', config);
+    this.syncFirestoreDoc('homepage_config', 'main', config);
     this.logAudit(user, 'SETTINGS_UPDATED', 'HomepageConfig', 'main', `Updated Homepage Control settings (Hero & Featured ordering)`);
   }
 
@@ -983,13 +1237,22 @@ export class AppDatabase {
   public saveLead(lead: TravelLead, user: User | null): void {
     const leads = this.getLeads();
     const index = leads.findIndex(l => l.id === lead.id);
+    let savedLead: TravelLead;
     if (index >= 0) {
-      leads[index] = { ...lead, updatedAt: new Date().toISOString() };
-      this.logAudit(user, 'BOOKING_UPDATED', 'TravelLead', lead.id, `Updated CRM lead: ${lead.leadNumber} (${lead.contactName})`);
+      savedLead = { ...lead, updatedAt: new Date().toISOString() };
+      leads[index] = savedLead;
+      this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', lead.id, `Updated lead for ${lead.contactName}`);
     } else {
-      leads.unshift({ ...lead, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-      this.logAudit(user, 'BOOKING_CREATED', 'TravelLead', lead.id, `Captured new CRM lead: ${lead.leadNumber} (${lead.contactName})`);
+      savedLead = {
+        ...lead,
+        id: lead.id || `lead-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      leads.unshift(savedLead);
+      this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', lead.id, `Created new lead for ${lead.contactName} (${lead.destinationName})`);
     }
+    this.syncFirestoreDoc('leads', savedLead.id, savedLead);
     this.setItem('leads', leads);
   }
 
@@ -1000,6 +1263,7 @@ export class AppDatabase {
       leads[index].status = status;
       leads[index].updatedAt = new Date().toISOString();
       this.setItem('leads', leads);
+      this.syncFirestoreDoc('leads', leadId, { status, updatedAt: leads[index].updatedAt });
       this.logAudit(user, 'BOOKING_UPDATED', 'TravelLead', leadId, `Updated CRM lead status to ${status} for ${leads[index].leadNumber}`);
     }
   }
@@ -1055,6 +1319,7 @@ export class AppDatabase {
       };
       leads[existingIdx] = updatedLead;
       this.setItem('leads', leads);
+      this.syncFirestoreDoc('leads', updatedLead.id, updatedLead);
       this.logAudit(user || null, 'BOOKING_UPDATED', 'TravelLead', existing.id, `Lead updated via ${data.source}: ${existing.leadNumber} (${existing.contactName})`);
       return updatedLead;
     } else {
@@ -1093,6 +1358,7 @@ export class AppDatabase {
       };
       leads.unshift(newLead);
       this.setItem('leads', leads);
+      this.syncFirestoreDoc('leads', newLead.id, newLead);
       this.logAudit(user || null, 'BOOKING_CREATED', 'TravelLead', newLead.id, `Captured new CRM lead: ${newLead.leadNumber} (${newLead.contactName}) via ${data.source}`);
       return newLead;
     }
@@ -1102,6 +1368,7 @@ export class AppDatabase {
     const leads = this.getLeads();
     const target = leads.find(l => l.id === leadId);
     this.setItem('leads', leads.filter(l => l.id !== leadId));
+    this.deleteFirestoreDoc('leads', leadId);
     if (target) {
       this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', leadId, `Deleted lead ${target.leadNumber}`);
     }
@@ -1128,6 +1395,7 @@ export class AppDatabase {
       invoices.unshift(invoice);
       this.logAudit(user, 'BOOKING_CREATED', 'Invoice', invoice.id, `Generated Tax Invoice ${invoice.invoiceNumber} for ${invoice.customerName} (${invoice.currency} ${invoice.totalAmount})`);
     }
+    this.syncFirestoreDoc('invoices', invoice.id, invoice);
     this.setItem('invoices', invoices);
   }
 
@@ -1149,6 +1417,7 @@ export class AppDatabase {
       vouchers.unshift(voucher);
       this.logAudit(user, 'BOOKING_CREATED', 'Voucher', voucher.id, `Issued Service Voucher ${voucher.voucherNumber} for ${voucher.leadPaxName}`);
     }
+    this.syncFirestoreDoc('vouchers', voucher.id, voucher);
     this.setItem('vouchers', vouchers);
   }
 
@@ -1170,6 +1439,7 @@ export class AppDatabase {
       sheets.unshift(jobSheet);
       this.logAudit(user, 'BOOKING_CREATED', 'JobSheet', jobSheet.id, `Generated Daily Operational Job Sheet ${jobSheet.jobSheetNumber}`);
     }
+    this.syncFirestoreDoc('job_sheets', jobSheet.id, jobSheet);
     this.setItem('job_sheets', sheets);
   }
 
@@ -1190,6 +1460,7 @@ export class AppDatabase {
       campaigns.push(campaign);
       this.logAudit(user, 'SETTINGS_UPDATED', 'EmailCampaign', campaign.id, `Created Email Campaign: ${campaign.name}`);
     }
+    this.syncFirestoreDoc('campaigns', campaign.id, campaign);
     this.setItem('campaigns', campaigns);
   }
 
@@ -1201,6 +1472,7 @@ export class AppDatabase {
     campaigns[index].sentCount += 1;
     campaigns[index].lastDispatchedAt = new Date().toISOString();
     this.setItem('campaigns', campaigns);
+    this.syncFirestoreDoc('campaigns', campaignId, { sentCount: campaigns[index].sentCount, lastDispatchedAt: campaigns[index].lastDispatchedAt });
 
     this.logAudit(
       user,
@@ -1233,6 +1505,7 @@ export class AppDatabase {
       list.unshift(resource);
       this.logAudit(user, 'SETTINGS_UPDATED', 'RosterResource', resource.id, `Created operations resource: ${resource.name} (${resource.role})`);
     }
+    this.syncFirestoreDoc('roster_resources', resource.id, resource);
     this.setItem('roster_resources', list);
   }
 
@@ -1240,6 +1513,7 @@ export class AppDatabase {
     const list = this.getResources();
     const target = list.find(r => r.id === resourceId);
     this.setItem('roster_resources', list.filter(r => r.id !== resourceId));
+    this.deleteFirestoreDoc('roster_resources', resourceId);
     if (target) {
       this.logAudit(user, 'SETTINGS_UPDATED', 'RosterResource', resourceId, `Deleted resource: ${target.name}`);
     }
@@ -1388,5 +1662,317 @@ export class AppDatabase {
     );
 
     return updatedReviews;
+  }
+
+  // ==========================================
+  // USER APPROVAL, SEGREGATION & ACCESS CONTROL
+  // ==========================================
+  public getUsers(): User[] {
+    const defaultUsers: User[] = [
+      {
+        id: 'usr-buyer-01',
+        name: 'James Harrison',
+        email: 'james.buyer@horizonventures.com',
+        role: 'BUYER',
+        category: 'EXTERNAL',
+        agencyName: 'Horizon Private Client Group',
+        country: 'United States',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 12,
+        contactNumber: '+1 415 555 2671',
+        permissions: {
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: false,
+          canAccessCMS: false,
+          canAccessRoster: false,
+          canAccessFinancials: false,
+          canManageUsers: false
+        },
+        createdAt: '2026-02-01'
+      },
+      {
+        id: 'usr-agent-01',
+        name: 'Elena Rostova',
+        email: 'elena@luxurydiscovery.com',
+        role: 'B2B_AGENT',
+        category: 'EXTERNAL',
+        agencyName: 'Luxury Discovery Travel Partners',
+        country: 'United Kingdom',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 10,
+        contactNumber: '+44 20 7946 0912',
+        permissions: {
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: true,
+          canAccessCMS: false,
+          canAccessRoster: false,
+          canAccessFinancials: false,
+          canManageUsers: false
+        },
+        createdAt: '2025-11-12'
+      },
+      {
+        id: 'usr-agent-pending-02',
+        name: 'Aiden Dupont',
+        email: 'aiden@alpsluxurytours.fr',
+        role: 'B2B_AGENT',
+        category: 'EXTERNAL',
+        agencyName: 'Alps Luxury Escapes SARL',
+        country: 'France',
+        approvalStatus: 'PENDING',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 10,
+        contactNumber: '+33 6 12 34 56 78',
+        permissions: {
+          canAccessPricingCalculator: false,
+          canCreateBookings: false,
+          canExportPDF: false,
+          canViewWholesaleNetRates: false,
+          canAccessCMS: false,
+          canAccessRoster: false,
+          canAccessFinancials: false,
+          canManageUsers: false
+        },
+        createdAt: '2026-08-20'
+      },
+      {
+        id: 'usr-admin-business',
+        name: 'TheUnbound Executive Admin',
+        email: 'business@theunbound.in',
+        password: 'Unboundpass11!',
+        role: 'ADMIN',
+        category: 'INTERNAL',
+        agencyName: 'TheUnbound DMC Global Headquarters',
+        country: 'Global',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 10,
+        contactNumber: '+91 9811654959',
+        permissions: {
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: true,
+          canAccessCMS: true,
+          canAccessRoster: true,
+          canAccessFinancials: true,
+          canManageUsers: true
+        },
+        createdAt: '2025-01-01'
+      },
+      {
+        id: 'usr-admin-01',
+        name: 'Marcus Vance',
+        email: 'marcus@theunbound.in',
+        password: 'Unboundpass11!',
+        role: 'ADMIN',
+        category: 'INTERNAL',
+        agencyName: 'TheUnbound DMC Global Headquarters',
+        country: 'Global',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 10,
+        permissions: {
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: true,
+          canAccessCMS: true,
+          canAccessRoster: true,
+          canAccessFinancials: true,
+          canManageUsers: true
+        },
+        createdAt: '2025-01-01'
+      },
+      {
+        id: 'usr-staff-01',
+        name: 'Kenji Sato',
+        email: 'kenji.ops@theunbound.in',
+        role: 'TEAM_MEMBER',
+        category: 'INTERNAL',
+        agencyName: 'TheUnbound Ground Operations Hub',
+        country: 'Japan',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 10,
+        permissions: {
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: true,
+          canAccessCMS: true,
+          canAccessRoster: true,
+          canAccessFinancials: false,
+          canManageUsers: false
+        },
+        createdAt: '2025-06-15'
+      }
+    ];
+
+    return this.getItem<User[]>('system_users', defaultUsers);
+  }
+
+  public saveUser(updatedUser: User, actor: User | null): void {
+    const users = this.getUsers();
+    const idx = users.findIndex(u => u.id === updatedUser.id);
+    if (idx >= 0) {
+      users[idx] = updatedUser;
+    } else {
+      users.push(updatedUser);
+    }
+    this.setItem('system_users', users);
+    this.syncFirestoreDoc('users', updatedUser.id, updatedUser);
+
+    this.logAudit(
+      actor,
+      'USER_ROLE_CHANGED',
+      'UserAccessControl',
+      updatedUser.id,
+      `Updated user status for ${updatedUser.name} (${updatedUser.email}): Role=${updatedUser.role}, Status=${updatedUser.approvalStatus || 'APPROVED'}, Margin Buyer=${updatedUser.customBuyerMarginPercent}%, Agent=${updatedUser.customAgentMarginPercent}%`
+    );
+  }
+
+  public approveUser(userId: string, actor: User | null): void {
+    const users = this.getUsers();
+    const user = users.find(u => u.id === userId);
+    if (user) {
+      user.approvalStatus = 'APPROVED';
+      user.permissions = {
+        canAccessPricingCalculator: true,
+        canCreateBookings: true,
+        canExportPDF: true,
+        canViewWholesaleNetRates: user.role === 'B2B_AGENT' || user.role === 'ADMIN' || user.role === 'TEAM_MEMBER',
+        canAccessCMS: user.role === 'ADMIN' || user.role === 'TEAM_MEMBER',
+        canAccessRoster: user.role === 'ADMIN' || user.role === 'TEAM_MEMBER',
+        canAccessFinancials: user.role === 'ADMIN',
+        canManageUsers: user.role === 'ADMIN'
+      };
+      this.saveUser(user, actor);
+    }
+  }
+
+  public rejectUser(userId: string, actor: User | null): void {
+    const users = this.getUsers();
+    const user = users.find(u => u.id === userId);
+    if (user) {
+      user.approvalStatus = 'REJECTED';
+      user.permissions = {
+        canAccessPricingCalculator: false,
+        canCreateBookings: false,
+        canExportPDF: false,
+        canViewWholesaleNetRates: false,
+        canAccessCMS: false,
+        canAccessRoster: false,
+        canAccessFinancials: false,
+        canManageUsers: false
+      };
+      this.saveUser(user, actor);
+    }
+  }
+
+  // ==========================================
+  // WISHLIST FOLDERS & CURATED PRODUCT SELECTIONS
+  // ==========================================
+  public getWishlistFolders(userId: string): WishlistFolder[] {
+    const all = this.getItem<WishlistFolder[]>('wishlist_folders', [
+      {
+        id: 'folder-sample-01',
+        userId: 'usr-agent-01',
+        name: 'Japan Luxury Highlights 2026',
+        color: '#00C6A6',
+        createdAt: '2026-03-01'
+      }
+    ]);
+    return all.filter(f => !f.userId || f.userId === userId);
+  }
+
+  public saveWishlistFolder(folder: WishlistFolder): void {
+    const all = this.getItem<WishlistFolder[]>('wishlist_folders', []);
+    const index = all.findIndex(f => f.id === folder.id);
+    if (index >= 0) {
+      all[index] = folder;
+    } else {
+      all.unshift(folder);
+    }
+    this.setItem('wishlist_folders', all);
+    this.syncFirestoreDoc('wishlist_folders', folder.id, folder);
+  }
+
+  public createWishlistFolder(folder: WishlistFolder): void {
+    this.saveWishlistFolder(folder);
+  }
+
+  public deleteWishlistFolder(folderId: string): void {
+    const all = this.getItem<WishlistFolder[]>('wishlist_folders', []);
+    this.setItem('wishlist_folders', all.filter(f => f.id !== folderId));
+    this.deleteFirestoreDoc('wishlist_folders', folderId);
+
+    // Also update any items in this folder to move to 'default'
+    const items = this.getItem<WishlistItem[]>('wishlist_items', []);
+    const updatedItems = items.map(item => {
+      if (item.folderId === folderId) {
+        return { ...item, folderId: 'default' };
+      }
+      return item;
+    });
+    this.setItem('wishlist_items', updatedItems);
+  }
+
+  public getWishlistItems(userId: string): WishlistItem[] {
+    const all = this.getItem<WishlistItem[]>('wishlist_items', [
+      {
+        id: 'wish-sample-01',
+        userId: 'usr-agent-01',
+        productId: 'prod-jp-01',
+        folderId: 'folder-sample-01',
+        addedAt: '2026-03-01'
+      },
+      {
+        id: 'wish-sample-02',
+        userId: 'usr-agent-01',
+        productId: 'prod-jp-04',
+        folderId: 'folder-sample-01',
+        addedAt: '2026-03-02'
+      }
+    ]);
+    return all.filter(i => !i.userId || i.userId === userId);
+  }
+
+  public saveWishlistItem(item: WishlistItem): void {
+    const all = this.getItem<WishlistItem[]>('wishlist_items', []);
+    const index = all.findIndex(i => i.id === item.id || (i.userId === item.userId && i.productId === item.productId));
+    if (index >= 0) {
+      all[index] = item;
+    } else {
+      all.unshift(item);
+    }
+    this.setItem('wishlist_items', all);
+    this.syncFirestoreDoc('wishlist_items', item.id, item);
+  }
+
+  public deleteWishlistItem(itemId: string): void {
+    const all = this.getItem<WishlistItem[]>('wishlist_items', []);
+    this.setItem('wishlist_items', all.filter(i => i.id !== itemId));
+    this.deleteFirestoreDoc('wishlist_items', itemId);
+  }
+
+  public removeFromWishlist(itemId: string): void {
+    this.deleteWishlistItem(itemId);
+  }
+
+  public moveWishlistItem(itemId: string, targetFolderId: string): void {
+    const all = this.getItem<WishlistItem[]>('wishlist_items', []);
+    const item = all.find(i => i.id === itemId);
+    if (item) {
+      item.folderId = targetFolderId;
+      this.setItem('wishlist_items', all);
+      this.syncFirestoreDoc('wishlist_items', itemId, item);
+    }
   }
 }

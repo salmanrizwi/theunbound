@@ -195,12 +195,98 @@ export const DESTINATIONS: Destination[] = [
     ],
     featuredProductIds: ['eu-par-01', 'eu-rom-01', 'eu-swi-01', 'eu-bar-01'],
     status: 'ACTIVE'
+  },
+  {
+    id: 'dest-dubai',
+    name: 'Dubai & UAE',
+    slug: 'dubai',
+    country: 'United Arab Emirates',
+    region: 'MIDDLE_EAST',
+    heroImage: 'https://images.unsplash.com/photo-1512453979798-5ea266f8880c?q=80&w=1600&auto=format&fit=crop',
+    tagline: 'Futuristic architectural wonders, private desert luxury, and Michelin gastronomy.',
+    description: 'Premier UAE DMC services spanning Dubai, Abu Dhabi, and Ras Al Khaimah. Luxury chauffeur logistics, private yacht charters, Burj Khalifa VIP lounges, and bespoke desert glamping retreats.',
+    keySellingPoints: [
+      'Dedicated Arabic and English licensed private tour guides',
+      'VIP Burj Al Arab & Burj Khalifa 148th Sky Lounge private access',
+      'Chauffeur Mercedes-Maybach and Rolls-Royce fleet transfers',
+      'Private desert safari with Michelin-curated dune dining'
+    ],
+    bestTimeToVisit: 'November–March (Pleasant Winter)',
+    idealTripDuration: '5–8 Days',
+    travelStyle: 'Ultra Luxury, Desert Glamping & Supercar Charters',
+    currency: 'AED',
+    highlights: [
+      'Burj Khalifa VIP 148th Sky Lounge & Private Chauffeur',
+      'Heritage Vintage Land Rover Desert Safari & Royal Dinner',
+      'Dubai Marina Private 65ft Luxury Superyacht Charter',
+      'Abu Dhabi Louvre & Sheikh Zayed Grand Mosque VIP Excursion'
+    ],
+    cities: [
+      {
+        id: 'dubai-city',
+        name: 'Dubai Downtown & Marina',
+        tagline: 'Gleaming skyscrapers, Palm Jumeirah luxury, and high-end shopping',
+        image: 'https://images.unsplash.com/photo-1512453979798-5ea266f8880c?q=80&w=800&auto=format&fit=crop',
+        productCount: 16
+      },
+      {
+        id: 'abu-dhabi',
+        name: 'Abu Dhabi',
+        tagline: 'Grand mosques, cultural Louvre masterpieces, and Yas Island estates',
+        image: 'https://images.unsplash.com/photo-1518684079-3c830dcef090?q=80&w=800&auto=format&fit=crop',
+        productCount: 8
+      }
+    ],
+    featuredProductIds: ['dxb-tour-01', 'dxb-yacht-01', 'dxb-trf-01'],
+    status: 'ACTIVE'
+  },
+  {
+    id: 'dest-thailand',
+    name: 'Thailand',
+    slug: 'thailand',
+    country: 'Thailand',
+    region: 'SOUTHEAST_ASIA',
+    heroImage: 'https://images.unsplash.com/photo-1528181304800-259b08848526?q=80&w=1600&auto=format&fit=crop',
+    tagline: 'Golden temples, tropical island retreats, and authentic royal Thai hospitality.',
+    description: 'Direct DMC ground handling across Bangkok, Phuket, Koh Samui, and Chiang Mai. Luxury private longtail charters, ethical elephant sanctuaries, and private rooftop dining.',
+    keySellingPoints: [
+      'Certified English speaking licensed Thai tour guides',
+      'Exclusive private speedboat charters across Phang Nga Bay & Phi Phi',
+      'Luxury wellness spa packages and five-star resort allotments',
+      'Direct airport fast-track immigration and chauffeur van handling'
+    ],
+    bestTimeToVisit: 'November–April (Dry & Sunny Season)',
+    idealTripDuration: '8–14 Days',
+    travelStyle: 'Tropical Luxury, Island Hopping & Cultural Exploration',
+    currency: 'THB',
+    highlights: [
+      'Bangkok Grand Palace & Chao Phraya Private Canal Cruise',
+      'Phuket to Phi Phi Islands Private Speedboat Expedition',
+      'Chiang Mai Ethical Elephant Sanctuary & Hilltribe Experience',
+      'Koh Samui Luxury Catamaran Sunset Charter'
+    ],
+    cities: [
+      {
+        id: 'bangkok',
+        name: 'Bangkok',
+        tagline: 'Vibrant capital of royal palaces, Michelin street food, and rooftop lounges',
+        image: 'https://images.unsplash.com/photo-1508009603885-50cf7c579365?q=80&w=800&auto=format&fit=crop',
+        productCount: 14
+      },
+      {
+        id: 'phuket',
+        name: 'Phuket & Krabi',
+        tagline: 'Emerald Andaman waters, limestone karst cliffs, and private island villas',
+        image: 'https://images.unsplash.com/photo-1589394815804-964ed0be2eb5?q=80&w=800&auto=format&fit=crop',
+        productCount: 12
+      }
+    ],
+    featuredProductIds: ['th-bkk-01', 'th-phu-01'],
+    status: 'ACTIVE'
   }
 ];
 
 export const UPCOMING_DESTINATIONS = [
-  { name: 'Southeast Asia', tag: 'Phase 2', flag: '🌏' },
-  { name: 'Middle East & UAE', tag: 'Phase 2', flag: '🏜️' },
   { name: 'USA & Canada', tag: 'Phase 3', flag: '🗽' },
   { name: 'Australia & New Zealand', tag: 'Phase 3', flag: '🦘' },
   { name: 'Africa & Safari', tag: 'Phase 3', flag: '🦁' },

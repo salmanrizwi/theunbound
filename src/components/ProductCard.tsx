@@ -3,6 +3,7 @@ import { Product } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { formatCurrency, convertCurrency } from '../services/pricingEngine';
+import { WishlistButton } from './WishlistButton';
 import { 
   Star, 
   Clock, 
@@ -95,10 +96,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           loading="lazy"
         />
 
-        {/* Category Pill on top right */}
-        <span className="absolute top-3 right-3 bg-white/95 backdrop-blur px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider text-[#00C6A6] shadow-sm">
-          {product.category}
-        </span>
+        {/* Top Right Action Stack */}
+        <div className="absolute top-3 right-3 flex items-center space-x-1.5 z-10">
+          <span className="bg-white/95 backdrop-blur px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider text-[#00C6A6] shadow-sm">
+            {product.category}
+          </span>
+          <WishlistButton product={product} variant="icon" />
+        </div>
 
         {/* Location pill on top left */}
         <span className="absolute top-3 left-3 bg-slate-900/85 backdrop-blur text-white text-[10px] font-bold px-2.5 py-1 rounded-lg flex items-center gap-1 shadow-sm">

@@ -1,0 +1,139 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.email == 'business@theunbound.in' || request.auth.token.email == 'admin@theunbound.in');
+    }
+
+    // Public catalog & content
+    match /products/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /destinations/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /hotels/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /promotions/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /gallery_items/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /google_reviews/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /blog_articles/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /homepage_config/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /city_hubs/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /faqs/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // User data
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Quotations
+    match /quotations/{quotationId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+
+    // Bookings
+    match /bookings/{bookingId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated();
+      allow update: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // Leads
+    match /leads/{leadId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+
+    // Financials
+    match /financial_invoices/{id} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow write: if isAdmin();
+    }
+
+    match /financial_vouchers/{id} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow write: if isAdmin();
+    }
+
+    match /financial_ledgers/{id} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow write: if isAdmin();
+    }
+
+    // Operations & Admin logs
+    match /job_sheets/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /roster_resources/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /tasks/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /email_logs/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /audit_logs/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /sheets_sync_history/{id} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

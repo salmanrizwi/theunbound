@@ -1,29 +1,34 @@
 import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, Product } from '../types';
+import { ExchangeRateService, DEFAULT_EXCHANGE_RATES } from './exchangeRateService';
 
 // Standardized exchange rate base: 1 USD
 export const EXCHANGE_RATES: Record<CurrencyCode, number> = {
-  USD: 1.0,
-  EUR: 0.92,
-  GBP: 0.79,
-  JPY: 154.5
+  ...DEFAULT_EXCHANGE_RATES
 };
 
 export function convertCurrency(amount: number, from: CurrencyCode, to: CurrencyCode): number {
   if (from === to) return amount;
-  const inUsd = amount / EXCHANGE_RATES[from];
-  return inUsd * EXCHANGE_RATES[to];
+  return ExchangeRateService.getInstance().convert(amount, from, to);
 }
 
 export function formatCurrency(amount: number, currency: CurrencyCode): string {
-  const decimals = currency === 'JPY' ? 0 : 2;
+  const decimals = (currency === 'JPY' || currency === 'THB') ? 0 : 2;
   const symbolMap: Record<CurrencyCode, string> = {
     USD: '$',
     EUR: '€',
     GBP: '£',
-    JPY: '¥'
+    JPY: '¥',
+    AED: 'AED ',
+    THB: '฿',
+    AUD: 'A$',
+    CAD: 'CA$',
+    SGD: 'S$',
+    INR: '₹',
+    CHF: 'CHF '
   };
 
-  return `${symbolMap[currency]}${amount.toLocaleString(undefined, {
+  const symbol = symbolMap[currency] || `${currency} `;
+  return `${symbol}${amount.toLocaleString(undefined, {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals
   })}`;
@@ -44,7 +49,7 @@ export function calculateProductPrice(
   // 1. Determine Base Net Costs with Date-Wise & Tiered Overrides
   let baseAdultNet = product.adultNetPrice;
   let baseChildNet = product.childNetPrice !== undefined ? product.childNetPrice : product.adultNetPrice * 0.5;
-  let baseInfantNet = product.infantNetPrice || 0;
+  let baseInfantNet = product.infantNetPrice !== undefined ? product.infantNetPrice : 0;
 
   // Check Calendar Date Overrides if available
   if (product.datePricingOverrides && travelDate && product.datePricingOverrides[travelDate]) {
@@ -74,21 +79,14 @@ export function calculateProductPrice(
   let infantNetInNative = 0;
 
   if (isTransfer) {
-    // ----------------------------------------------------
-    // TRANSFER PRICING ENGINE: Fixed Total Vehicle Cost
-    // e.g. Total Vehicle Cost = $200 regardless of 2, 4, 6 pax
-    // Per-Person cost = $200 / Pax
-    // ----------------------------------------------------
+    // Fixed Total Vehicle Cost
     const vehicleCost = product.vehicleConfig?.totalTransferCost || product.adultNetPrice || 200;
     rawTotalNetCostInNative = vehicleCost * quantity;
     adultNetInNative = rawTotalNetCostInNative;
     childNetInNative = 0;
     infantNetInNative = 0;
   } else {
-    // ----------------------------------------------------
-    // TOUR / ACTIVITY / TICKET PRICING ENGINE
-    // Adult Net + Child Net + Infant Net
-    // ----------------------------------------------------
+    // Tour / Activity / Hotel Pricing Engine with Adult, Child & Infant Costs
     adultNetInNative = baseAdultNet * adults * quantity;
     childNetInNative = baseChildNet * children * quantity;
     infantNetInNative = baseInfantNet * infants * quantity;
@@ -117,41 +115,15 @@ export function calculateProductPrice(
   const totalNetCost = convertCurrency(rawTotalNetCostInNative, product.currency, targetCurrency);
 
   // Configurable Commercial Rates
-  // Dynamic Markup %: default 25% or product markup or request override
+  // Buyer (B2C) vs B2B Agent separate margins:
   const defaultMarkup = product.defaultMarkupPercent || 25;
   const configuredMarkupPercent = request.customMarkupPercent !== undefined 
     ? request.customMarkupPercent 
     : (pricingTier === 'B2C' ? Math.max(defaultMarkup, 25) : 10);
 
-  // Dynamic Tax %: default 18% or product taxPercent
-  const configuredTaxPercent = product.taxPercent !== undefined ? product.taxPercent : 18;
-  const taxRate = configuredTaxPercent / 100;
-
-  // Dynamic Fee %: default 2.5% or product service fee percentage
-  const configuredFeePercent = product.serviceFeeFixed > 0 ? (product.serviceFeeFixed / (totalNetCost || 1)) * 100 : 2.5;
-  const feeRate = configuredFeePercent / 100;
-
-  // ----------------------------------------------------
-  // FORMULA SPEC:
-  // Net Cost = Adult Cost + Child Cost + Infant Cost
-  // Markup = Net Cost * Markup %
-  // Tax = Net Cost * Tax %
-  // Fee = Net Cost * Fee %
-  // Selling Price = Net Cost + Markup + Tax + Fee
-  // ----------------------------------------------------
+  // Markup calculation on totalNetCost
   let markupRate = configuredMarkupPercent / 100;
   let markupAmount = totalNetCost * markupRate;
-  let taxAmount = totalNetCost * taxRate;
-  let serviceFee = totalNetCost * feeRate;
-
-  // Discounts & Commissions
-  const discountPercent = request.customDiscountPercent || 0;
-  const discountRate = discountPercent / 100;
-  const discountAmount = (totalNetCost + markupAmount + taxAmount + serviceFee) * discountRate;
-
-  const commissionPercent = product.commissionPercent || 0;
-  const commissionRate = commissionPercent / 100;
-  const commissionAmount = totalNetCost * commissionRate;
 
   let b2bWholesaleMarkupRate = 0.10;
   let b2bWholesaleNetToAgent = totalNetCost + (totalNetCost * 0.10);
@@ -169,13 +141,35 @@ export function calculateProductPrice(
     markupRate = totalNetCost > 0 ? markupAmount / totalNetCost : 0;
   }
 
+  // ----------------------------------------------------
+  // TAX SPEC: Tax is calculated strictly on the MARGIN amount
+  // e.g. (Total Net Cost * Margin %) * Tax %
+  // ----------------------------------------------------
+  const configuredTaxPercent = product.taxPercent !== undefined ? product.taxPercent : 18;
+  const taxRate = configuredTaxPercent / 100;
+  const taxAmount = markupAmount * taxRate;
+
+  // Dynamic Fee %: default 2.5% on net cost or product service fee
+  const configuredFeePercent = product.serviceFeeFixed > 0 ? (product.serviceFeeFixed / (totalNetCost || 1)) * 100 : 2.5;
+  const feeRate = configuredFeePercent / 100;
+  const serviceFee = totalNetCost * feeRate;
+
+  // Discounts & Commissions
+  const discountPercent = request.customDiscountPercent || 0;
+  const discountRate = discountPercent / 100;
+  const discountAmount = (totalNetCost + markupAmount + taxAmount + serviceFee) * discountRate;
+
+  const commissionPercent = product.commissionPercent || 0;
+  const commissionRate = commissionPercent / 100;
+  const commissionAmount = totalNetCost * commissionRate;
+
   const grossBeforeTax = totalNetCost + markupAmount;
   const finalTotalSellingPrice = (totalNetCost + markupAmount + taxAmount + serviceFee) - discountAmount;
 
   const dmcMarginAmount = markupAmount + serviceFee - discountAmount;
   const dmcMarginPercent = totalNetCost > 0 ? (dmcMarginAmount / totalNetCost) * 100 : 0;
 
-  // Per Person Selling Cost (For transfers, divides fixed vehicle selling price by total pax)
+  // Per Person Selling Cost
   const pricePerPerson = totalPax > 0 ? finalTotalSellingPrice / totalPax : finalTotalSellingPrice;
 
   // Proportional breakdown of selling price

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
+import { AppDatabase } from '../services/db';
 
 interface AuthContextType {
   user: User | null;
@@ -51,9 +52,9 @@ const DEMO_USERS: Record<UserRole, User> = {
     createdAt: '2025-11-12'
   },
   ADMIN: {
-    id: 'usr-admin-01',
-    name: 'Marcus Vance',
-    email: 'marcus@theunbound.in',
+    id: 'usr-admin-business',
+    name: 'TheUnbound Executive Admin',
+    email: 'business@theunbound.in',
     role: 'ADMIN',
     category: 'INTERNAL',
     agencyName: 'TheUnbound DMC Global Headquarters',
@@ -132,8 +133,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user]);
 
   const login = (email: string, role: UserRole = 'AGENT') => {
+    const db = AppDatabase.getInstance();
+    const existing = db.getUsers().find(u => u.email.toLowerCase() === (email || '').trim().toLowerCase());
     const demoProfile = DEMO_USERS[role] || DEMO_USERS.AGENT;
-    const authenticatedUser: User = {
+    const authenticatedUser: User = existing ? {
+      ...existing,
+      avatarUrl: existing.avatarUrl || demoProfile.avatarUrl
+    } : {
       ...demoProfile,
       email: email || demoProfile.email
     };

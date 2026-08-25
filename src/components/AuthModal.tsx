@@ -67,11 +67,11 @@ export const AuthModal: React.FC = () => {
       BUYER: 'james.buyer@horizonventures.com',
       B2B_AGENT: 'elena@luxurydiscovery.com',
       AGENT: 'elena@luxurydiscovery.com',
-      ADMIN: 'marcus@theunbound.in',
+      ADMIN: 'business@theunbound.in',
       TEAM_MEMBER: 'kenji.ops@theunbound.in',
       DMC_STAFF: 'kenji.ops@theunbound.in'
     };
-    login(demoEmails[role] || 'elena@luxurydiscovery.com', role);
+    login(demoEmails[role] || 'business@theunbound.in', role);
   };
 
   return (

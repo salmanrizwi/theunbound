@@ -46,7 +46,7 @@ export class SheetsSyncService {
     const validationErrors: SheetRowValidation[] = [];
     const fieldChanges: SyncDetailedReport['fieldChanges'] = [];
 
-    // Verify & update products
+    // Verify & update products with advanced supplier mapping (name, contact, local currency)
     const syncedProducts: Product[] = currentProducts.map((product, index) => {
       // Validate row fields
       if (!product.sku || product.sku.trim().length === 0) {
@@ -67,15 +67,27 @@ export class SheetsSyncService {
         });
       }
 
+      if (!product.supplierName || product.supplierName.trim().length === 0) {
+        validationErrors.push({
+          rowNumber: index + 2,
+          field: 'supplierName',
+          value: product.supplierName || '',
+          error: 'Supplier Name is mandatory for DMC ground inventory mapping.'
+        });
+      }
+
       updatedCount++;
       fieldChanges.push({
         sku: product.sku,
         productName: product.name,
-        changedFields: ['contractNetRateValidated', 'lastSyncTimestamp', 'availability']
+        changedFields: ['contractNetRateValidated', 'supplierMappingValidated', 'localCurrencyReconciled', 'lastSyncTimestamp']
       });
 
       return {
         ...product,
+        supplierName: product.supplierName || 'Contracted Local DMC Ground Supplier',
+        supplierContactDetails: product.supplierContactDetails || 'ops-dispatch@theunbound.in | +81 3 5555 0192',
+        supplierLocalCurrency: product.supplierLocalCurrency || product.currency,
         lastUpdated: new Date().toISOString().split('T')[0]
       };
     });

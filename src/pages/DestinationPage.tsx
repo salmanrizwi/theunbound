@@ -9,6 +9,7 @@ import { ProductCard } from '../components/ProductCard';
 import { useQuotation } from '../context/QuotationContext';
 import { convertCurrency } from '../services/pricingEngine';
 import { PublicReviewsCarousel } from '../components/PublicReviewsCarousel';
+import { PublicHappyCustomerGallery } from '../components/PublicHappyCustomerGallery';
 import { Sparkles, MapPin, Compass, ShieldCheck, HelpCircle, ChevronDown, ChevronUp, Globe2, Layers, CheckCircle2 } from 'lucide-react';
 
 interface DestinationPageProps {
@@ -324,6 +325,11 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
             ))}
           </div>
         )}
+
+        {/* 7.4 Happy Customer Moments Gallery */}
+        <div className="mt-16">
+          <PublicHappyCustomerGallery destinationName={isAllDestinations ? undefined : destination?.name} />
+        </div>
 
         {/* 7.5 Verified Ground Testimonials & Reviews */}
         <div className="mt-16">

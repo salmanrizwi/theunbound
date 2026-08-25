@@ -26,18 +26,37 @@ export type ProductCategory =
   | 'Transport' 
   | 'Travel Services';
 
-export type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'JPY';
+export type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'JPY' | 'AED' | 'THB' | 'AUD' | 'CAD' | 'SGD' | 'INR' | 'CHF';
+
+export type UserApprovalStatus = 'APPROVED' | 'PENDING' | 'REJECTED';
+
+export interface UserPermissionAccess {
+  canAccessPricingCalculator?: boolean;
+  canCreateBookings?: boolean;
+  canExportPDF?: boolean;
+  canViewWholesaleNetRates?: boolean;
+  canAccessCMS?: boolean;
+  canAccessRoster?: boolean;
+  canAccessFinancials?: boolean;
+  canManageUsers?: boolean;
+}
 
 export interface User {
   id: string;
   name: string;
   email: string;
+  password?: string;
   role: UserRole;
   category?: UserCategory;
   agencyName?: string;
   country?: string;
   avatarUrl?: string;
   createdAt: string;
+  approvalStatus?: UserApprovalStatus;
+  permissions?: UserPermissionAccess;
+  customBuyerMarginPercent?: number;
+  customAgentMarginPercent?: number;
+  contactNumber?: string;
 }
 
 export interface DestinationCity {
@@ -625,6 +644,10 @@ export type AuditAction =
   | 'ROSTER_RESOURCE_ADDED'
   | 'ROSTER_RESOURCE_UPDATED'
   | 'BLACKOUT_DATE_MODIFIED'
+  | 'USER_ROLE_CHANGED'
+  | 'USER_APPROVED'
+  | 'USER_REJECTED'
+  | 'STATUS_UPDATED'
   | 'SETTINGS_UPDATED';
 
 export interface AuditLog {
@@ -1161,6 +1184,42 @@ export interface EmailCampaignConfig {
 export type Invoice = BookingInvoice;
 export type ServiceVoucher = BookingVoucher;
 export type EmailCampaignTemplate = EmailCampaignConfig;
+
+// ----------------------------------------------------
+// WISHLIST & CUSTOM ITINERARY FOLDERS
+// ----------------------------------------------------
+export interface WishlistFolder {
+  id: string;
+  userId: string;
+  name: string;
+  description?: string;
+  color?: string; // Hex or tailwind color name
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface WishlistItem {
+  id: string;
+  userId: string;
+  productId: string;
+  folderId: string; // 'default' or folder ID
+  notes?: string;
+  estimatedTravelDate?: string;
+  addedAt: string;
+}
+
+// ----------------------------------------------------
+// DRAG-AND-DROP ITINERARY TIMELINE
+// ----------------------------------------------------
+export interface ItineraryDaySlot {
+  dayNumber: number;
+  date: string;
+  title?: string;
+  destination?: string;
+  city?: string;
+  itemIds: string[];
+}
+
 
 
 

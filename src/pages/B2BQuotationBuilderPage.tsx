@@ -5,6 +5,8 @@ import { useQuotation } from '../context/QuotationContext';
 import { useRoster } from '../context/RosterContext';
 import { formatCurrency, convertCurrency, calculateProductPrice } from '../services/pricingEngine';
 import { RosterCalendarPicker } from '../components/RosterCalendarPicker';
+import { ItineraryTimelineView } from '../components/ItineraryTimelineView';
+import { CurrencyConverterWidget } from '../components/CurrencyConverterWidget';
 import { 
   Building2, 
   MapPin, 
@@ -95,6 +97,9 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
 
   // Catalog inspection modal
   const [rosterPreviewProduct, setRosterPreviewProduct] = useState<Product | null>(null);
+
+  // Workspace View Mode: Catalog & Sidebar vs Visual Drag & Drop Timeline
+  const [workspaceViewMode, setWorkspaceViewMode] = useState<'BUILDER' | 'TIMELINE'>('BUILDER');
 
   // Sidebar controls
   const [agentClientMarkupPercent, setAgentClientMarkupPercent] = useState<number>(12); // Default 12% agent margin
@@ -347,22 +352,63 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
               <span className="text-[11px] text-slate-400 font-mono">Agent: {user?.name || 'Elena Rostova'}</span>
             </div>
 
-            <div className="pt-2 sm:pt-0 sm:pl-4 sm:border-l border-slate-700">
-              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Quote Currency</label>
-              <select
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                className="bg-slate-900 border border-slate-700 text-[#00E5C0] rounded-lg px-2.5 py-1 text-xs font-bold focus:ring-1 focus:ring-[#00C6A6] cursor-pointer"
-              >
-                {currencies.map(c => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
+            <div className="pt-2 sm:pt-0 sm:pl-4 sm:border-l border-slate-700 space-y-1">
+              <label className="text-[10px] uppercase font-bold text-slate-400 block">Quote Currency & Live FX</label>
+              <CurrencyConverterWidget compact={true} />
             </div>
           </div>
         </div>
       </div>
 
+      {/* Workspace View Mode Toggle (Catalog vs Visual Drag & Drop Timeline) */}
+      <div className="bg-white rounded-2xl p-2 border border-slate-200 shadow-xs flex items-center justify-between gap-3">
+        <div className="flex items-center space-x-2">
+          <button
+            type="button"
+            onClick={() => setWorkspaceViewMode('BUILDER')}
+            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center space-x-2 cursor-pointer ${
+              workspaceViewMode === 'BUILDER'
+                ? 'bg-slate-900 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Layers className="w-4 h-4 text-[#00C6A6]" />
+            <span>Catalog & Sidebar Mode</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setWorkspaceViewMode('TIMELINE')}
+            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center space-x-2 cursor-pointer ${
+              workspaceViewMode === 'TIMELINE'
+                ? 'bg-slate-900 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Calendar className="w-4 h-4 text-[#00E5C0]" />
+            <span>Visual Drag & Drop Timeline View</span>
+            {items.length > 0 && (
+              <span className="ml-1 px-2 py-0.2 bg-[#00C6A6] text-slate-950 text-[10px] font-mono font-bold rounded-full">
+                {items.length}
+              </span>
+            )}
+          </button>
+        </div>
+
+        <div className="text-xs text-slate-500 font-medium hidden sm:block pr-3">
+          {workspaceViewMode === 'BUILDER' 
+            ? 'Discover wholesale catalog and build custom itemized quotations' 
+            : 'Plan chronological day-by-day itineraries with drag-and-drop sequencing'}
+        </div>
+      </div>
+
+      {workspaceViewMode === 'TIMELINE' ? (
+        <ItineraryTimelineView 
+          onViewProductDetails={onViewProductDetails}
+          availableProducts={products}
+        />
+      ) : (
+        <>
       {/* ========================================================================= */}
       {/* STEP 1: SELECT DESTINATION FROM CATEGORY */}
       {/* ========================================================================= */}
@@ -1020,6 +1066,8 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
           </div>
         </div>
       </div>
+      </>
+      )}
 
       {/* ========================================================================= */}
       {/* FINAL B2B QUOTATION MODAL / RESULT SUMMARY */}
