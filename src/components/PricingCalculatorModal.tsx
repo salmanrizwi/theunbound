@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Product, CurrencyCode } from '../types';
+import { Product, CurrencyCode, SUPPORTED_CURRENCIES } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { useRoster } from '../context/RosterContext';
@@ -51,8 +51,6 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
   const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
   const [agentNotes, setAgentNotes] = useState<string>('');
   const [showCalendarPicker, setShowCalendarPicker] = useState<boolean>(true);
-
-  const currencies: CurrencyCode[] = ['USD', 'EUR', 'GBP', 'JPY', 'AED', 'THB'];
 
   const availability = checkDateAvailability(product.id, travelDate, adults + childrenCount);
 
@@ -301,8 +299,8 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
                     onChange={(e) => setTargetCurrency(e.target.value as CurrencyCode)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-semibold text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white cursor-pointer"
                   >
-                    {currencies.map(c => (
-                      <option key={c} value={c}>{c} ({formatCurrency(1, c).slice(0, 1)})</option>
+                    {SUPPORTED_CURRENCIES.map(c => (
+                      <option key={c.code} value={c.code}>{c.code} ({c.symbol}) - {c.name}</option>
                     ))}
                   </select>
                 </div>

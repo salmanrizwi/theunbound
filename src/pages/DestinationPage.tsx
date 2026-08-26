@@ -1,13 +1,16 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Destination, Product, ProductFilterState } from '../types';
+import { Destination, Product, ProductFilterState, Hotel } from '../types';
 import { DestinationHero } from '../components/DestinationHero';
 import { AllDestinationsHero } from '../components/AllDestinationsHero';
 import { CityHubs } from '../components/CityHubs';
 import { CategoryFilter } from '../components/CategoryFilter';
 import { SearchAndFilter } from '../components/SearchAndFilter';
 import { ProductCard } from '../components/ProductCard';
+import { FeaturedHotelsSection } from '../components/FeaturedHotelsSection';
+import { HotelDetailModal } from '../components/HotelDetailModal';
 import { useQuotation } from '../context/QuotationContext';
 import { convertCurrency } from '../services/pricingEngine';
+import { AppDatabase } from '../services/db';
 import { PublicReviewsCarousel } from '../components/PublicReviewsCarousel';
 import { PublicHappyCustomerGallery } from '../components/PublicHappyCustomerGallery';
 import { Sparkles, MapPin, Compass, ShieldCheck, HelpCircle, ChevronDown, ChevronUp, Globe2, Layers, CheckCircle2 } from 'lucide-react';
@@ -32,8 +35,19 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
   onInstantBook
 }) => {
   const { currency } = useQuotation();
+  const db = AppDatabase.getInstance();
 
   const isAllDestinations = !destination || destination.slug === 'all';
+
+  // Hotel database state & inspection modal
+  const [hotels, setHotels] = useState<Hotel[]>(() => db.getHotels());
+  const [inspectingHotel, setInspectingHotel] = useState<Hotel | null>(null);
+
+  useEffect(() => {
+    return db.subscribe(() => {
+      setHotels(db.getHotels());
+    });
+  }, [db]);
 
   // Filters State
   const [filters, setFilters] = useState<ProductFilterState>({
@@ -59,6 +73,29 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
   }, [destination?.slug]);
 
   const [expandedFaqIdx, setExpandedFaqIdx] = useState<number | null>(null);
+
+  // Hotels filtered for this destination / city
+  const destinationHotels = useMemo(() => {
+    const published = hotels.filter(h => h.status === 'PUBLISHED' || !h.status);
+    let list = published;
+    if (!isAllDestinations && destination) {
+      list = list.filter(h => 
+        h.destinationId === destination.id || 
+        h.destinationId === destination.slug || 
+        h.country.toLowerCase().includes(destination.name.toLowerCase()) ||
+        h.destinationName.toLowerCase().includes(destination.name.toLowerCase())
+      );
+    }
+    // If city filter is active
+    if (filters.city) {
+      list = list.filter(h => 
+        h.cityName.toLowerCase() === filters.city.toLowerCase() ||
+        h.cityId.toLowerCase() === filters.city.toLowerCase() ||
+        h.area.toLowerCase().includes(filters.city.toLowerCase())
+      );
+    }
+    return list;
+  }, [hotels, isAllDestinations, destination, filters.city]);
 
   // All combined city hubs across all destinations or single destination
   const activeCities = useMemo(() => {
@@ -326,6 +363,17 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
           </div>
         )}
 
+        {/* 7.1 Featured Hotel Section - ONLY visible if there are hotels to show */}
+        {destinationHotels.length > 0 && (
+          <div className="mt-14 pt-8 border-t border-slate-200">
+            <FeaturedHotelsSection
+              hotels={destinationHotels}
+              destinationName={isAllDestinations ? 'All Destinations' : destination?.name}
+              onViewHotel={(hotel) => setInspectingHotel(hotel)}
+            />
+          </div>
+        )}
+
         {/* 7.4 Happy Customer Moments Gallery */}
         <div className="mt-16">
           <PublicHappyCustomerGallery destinationName={isAllDestinations ? undefined : destination?.name} />
@@ -399,6 +447,14 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Hotel Detail & Interactive Rate Calculator Modal */}
+      {inspectingHotel && (
+        <HotelDetailModal
+          hotel={inspectingHotel}
+          onClose={() => setInspectingHotel(null)}
+        />
+      )}
     </div>
   );
 };

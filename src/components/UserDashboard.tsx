@@ -317,7 +317,8 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {activeFolderItems.map((item) => {
-                      const prod = item.productSnapshot;
+                      const prod = products.find(p => p.id === item.productId);
+                      if (!prod) return null;
                       return (
                         <div
                           key={item.id}

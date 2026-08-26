@@ -9,7 +9,17 @@ interface QuotationContextType {
   setCurrency: (curr: CurrencyCode) => void;
   isQuoteDrawerOpen: boolean;
   setIsQuoteDrawerOpen: (open: boolean) => void;
-  addProductToQuote: (product: Product, options?: { adults?: number; children?: number; infants?: number; travelDate?: string; selectedAddonIds?: string[] }) => void;
+  addProductToQuote: (
+    product: Product, 
+    options?: { 
+      adults?: number; 
+      children?: number; 
+      infants?: number; 
+      travelDate?: string; 
+      selectedAddonIds?: string[];
+      openDrawer?: boolean;
+    }
+  ) => void;
   removeProductFromQuote: (itemId: string) => void;
   updateItemPax: (itemId: string, pax: { adults: number; children: number; infants: number }) => void;
   updateItemTravelDate: (itemId: string, date: string) => void;
@@ -109,6 +119,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       infants?: number;
       travelDate?: string;
       selectedAddonIds?: string[];
+      openDrawer?: boolean;
     }
   ) => {
     const adults = options?.adults ?? Math.max(1, product.minPax);
@@ -138,7 +149,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     setItems(prev => [...prev, newItem]);
-    setIsQuoteDrawerOpen(true);
+    if (options?.openDrawer !== false) {
+      setIsQuoteDrawerOpen(true);
+    }
   };
 
   const removeProductFromQuote = (itemId: string) => {

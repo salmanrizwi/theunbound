@@ -28,6 +28,26 @@ export type ProductCategory =
 
 export type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'JPY' | 'AED' | 'THB' | 'AUD' | 'CAD' | 'SGD' | 'INR' | 'CHF';
 
+export interface CurrencyOption {
+  code: CurrencyCode;
+  name: string;
+  symbol: string;
+}
+
+export const SUPPORTED_CURRENCIES: CurrencyOption[] = [
+  { code: 'USD', name: 'US Dollar', symbol: '$' },
+  { code: 'EUR', name: 'Euro', symbol: '€' },
+  { code: 'GBP', name: 'British Pound', symbol: '£' },
+  { code: 'JPY', name: 'Japanese Yen', symbol: '¥' },
+  { code: 'AED', name: 'UAE Dirham', symbol: 'AED' },
+  { code: 'THB', name: 'Thai Baht', symbol: '฿' },
+  { code: 'AUD', name: 'Australian Dollar', symbol: 'A$' },
+  { code: 'CAD', name: 'Canadian Dollar', symbol: 'CA$' },
+  { code: 'SGD', name: 'Singapore Dollar', symbol: 'S$' },
+  { code: 'INR', name: 'Indian Rupee', symbol: '₹' },
+  { code: 'CHF', name: 'Swiss Franc', symbol: 'CHF' }
+];
+
 export type UserApprovalStatus = 'APPROVED' | 'PENDING' | 'REJECTED';
 
 export interface UserPermissionAccess {
@@ -137,13 +157,21 @@ export interface Product {
   adultNetPrice: number;
   childNetPrice: number;
   infantNetPrice: number;
+  adultNettCost?: number; // Alias for adultNetPrice in Base Currency
+  childNettCost?: number; // Alias for childNetPrice in Base Currency
+  infantNettCost?: number; // Alias for infantNetPrice in Base Currency
   currency: CurrencyCode;
   
   // Commercial parameters
   defaultMarkupPercent: number;
+  buyerMarkupPercent?: number; // Default Buyer markup % (e.g. 30%)
+  b2bAgentMarkupPercent?: number; // Default B2B Agent markup % (e.g. 20%)
   taxPercent: number;
   commissionPercent: number;
   serviceFeeFixed: number;
+  
+  // Optional experience upgrades tagged to this product for upselling
+  optionalUpgradeProductIds?: string[];
   
   // Calculated base selling price
   sellingPriceStartingFrom: number;
@@ -221,8 +249,12 @@ export interface PricingCalculationRequest {
   targetCurrency: CurrencyCode;
   quantity?: number;
   selectedAddonIds?: string[];
-  pricingTier?: PricingTier; // B2C (Retail Consumer) or B2B (Travel Agent Wholesale)
+  pricingTier?: PricingTier; // B2C (Retail Consumer / Buyer) or B2B (Travel Agent Wholesale)
+  userRole?: UserRole;
+  user?: User | null;
   customMarkupPercent?: number;
+  buyerMarkupPercent?: number;
+  b2bAgentMarkupPercent?: number;
   customDiscountPercent?: number;
   agentClientMarkupPercent?: number; // Custom markup the B2B agent applies for their client
 }

@@ -72,11 +72,14 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     childNetPrice: 200,
     infantNetPrice: 0,
     currency: 'USD',
-    defaultMarkupPercent: 20,
+    defaultMarkupPercent: 30,
+    buyerMarkupPercent: 30,
+    b2bAgentMarkupPercent: 20,
     taxPercent: 10,
     commissionPercent: 10,
     serviceFeeFixed: 25,
     sellingPriceStartingFrom: 462,
+    optionalUpgradeProductIds: [],
     shortDescription: '',
     longDescription: '',
     supplierId: SUPPLIERS[0]?.id || 'supp-01',
@@ -131,11 +134,14 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       childNetPrice: 250,
       infantNetPrice: 0,
       currency: 'USD',
-      defaultMarkupPercent: 20,
+      defaultMarkupPercent: 30,
+      buyerMarkupPercent: 30,
+      b2bAgentMarkupPercent: 20,
       taxPercent: 10,
       commissionPercent: 10,
       serviceFeeFixed: 20,
       sellingPriceStartingFrom: 528,
+      optionalUpgradeProductIds: [],
       shortDescription: '',
       longDescription: '',
       supplierId: SUPPLIERS[0]?.id || 'supp-01',
@@ -167,7 +173,12 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
 
   const handleOpenEdit = (product: Product) => {
     setEditingProduct(product);
-    setFormData({ ...product });
+    setFormData({
+      ...product,
+      buyerMarkupPercent: product.buyerMarkupPercent !== undefined ? product.buyerMarkupPercent : (product.defaultMarkupPercent || 30),
+      b2bAgentMarkupPercent: product.b2bAgentMarkupPercent !== undefined ? product.b2bAgentMarkupPercent : 20,
+      optionalUpgradeProductIds: product.optionalUpgradeProductIds || []
+    });
     setIsModalOpen(true);
   };
 
@@ -192,9 +203,9 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   };
 
   const calculateSellingPrice = (net: number, markup: number, tax: number, fee: number) => {
-    const gross = net * (1 + markup / 100);
-    const withTax = gross * (1 + tax / 100);
-    return Math.round(withTax + fee);
+    const markupAmt = net * (markup / 100);
+    const taxAmt = markupAmt * (tax / 100);
+    return Math.round(net + markupAmt + taxAmt + fee);
   };
 
   const handleSave = (e: React.FormEvent) => {
@@ -202,10 +213,13 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     if (!formData.name || !formData.sku) return;
 
     const adultNet = Number(formData.adultNetPrice) || 0;
-    const markup = Number(formData.defaultMarkupPercent) || 20;
+    const childNet = Number(formData.childNetPrice) || 0;
+    const infantNet = Number(formData.infantNetPrice) || 0;
+    const buyerMarkup = Number(formData.buyerMarkupPercent) || Number(formData.defaultMarkupPercent) || 30;
+    const b2bAgentMarkup = Number(formData.b2bAgentMarkupPercent) || 20;
     const tax = Number(formData.taxPercent) || 10;
     const fee = Number(formData.serviceFeeFixed) || 0;
-    const computedSelling = calculateSellingPrice(adultNet, markup, tax, fee);
+    const computedSelling = calculateSellingPrice(adultNet, buyerMarkup, tax, fee);
 
     const productToSave: Product = {
       id: editingProduct ? editingProduct.id : `prod-${Date.now()}`,
@@ -227,14 +241,20 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       operatingDays: formData.operatingDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
       operatingHours: formData.operatingHours || '09:00 - 18:00',
       adultNetPrice: adultNet,
-      childNetPrice: Number(formData.childNetPrice) || 0,
-      infantNetPrice: Number(formData.infantNetPrice) || 0,
+      childNetPrice: childNet,
+      infantNetPrice: infantNet,
+      adultNettCost: adultNet,
+      childNettCost: childNet,
+      infantNettCost: infantNet,
       currency: (formData.currency as CurrencyCode) || 'USD',
-      defaultMarkupPercent: markup,
+      defaultMarkupPercent: buyerMarkup,
+      buyerMarkupPercent: buyerMarkup,
+      b2bAgentMarkupPercent: b2bAgentMarkup,
       taxPercent: tax,
       commissionPercent: Number(formData.commissionPercent) || 10,
       serviceFeeFixed: fee,
       sellingPriceStartingFrom: computedSelling,
+      optionalUpgradeProductIds: formData.optionalUpgradeProductIds || [],
       season: (formData.season as any) || 'All Year',
       validityFrom: formData.validityFrom || '2026-01-01',
       validityTo: formData.validityTo || '2026-12-31',
@@ -624,32 +644,40 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
               </div>
 
               {/* Net Pricing Engine Specs */}
-              <div className="bg-slate-900 text-white p-5 rounded-2xl space-y-3">
+              <div className="bg-slate-900 text-white p-5 rounded-2xl space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-[#00E5C0] font-bold text-xs flex items-center space-x-1">
-                    <DollarSign className="w-3.5 h-3.5" />
-                    <span>Dynamic Wholesale Pricing Matrix</span>
+                  <span className="text-[#00E5C0] font-bold text-xs flex items-center space-x-1.5">
+                    <DollarSign className="w-4 h-4" />
+                    <span>Product Nett Cost & User-Type Markup Engine</span>
                   </span>
-                  <span className="text-[10px] text-slate-400">Automated gross selling formula calculation</span>
+                  <span className="text-[10px] text-slate-400">Stored in Product Base Currency</span>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs text-slate-800">
+                {/* 1. Base Nett Costs */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-800">
                   <div className="space-y-1">
-                    <label className="text-[11px] text-slate-300 font-medium">Currency</label>
+                    <label className="text-[11px] text-slate-300 font-medium">Base Currency</label>
                     <select
                       value={formData.currency}
                       onChange={e => setFormData({ ...formData, currency: e.target.value as CurrencyCode })}
-                      className="w-full p-2 bg-white rounded-lg"
+                      className="w-full p-2 bg-white rounded-lg font-bold"
                     >
                       <option value="USD">USD ($)</option>
                       <option value="EUR">EUR (€)</option>
                       <option value="GBP">GBP (£)</option>
                       <option value="JPY">JPY (¥)</option>
+                      <option value="INR">INR (₹)</option>
+                      <option value="AED">AED (AED)</option>
+                      <option value="THB">THB (฿)</option>
+                      <option value="AUD">AUD (A$)</option>
+                      <option value="CAD">CAD (CA$)</option>
+                      <option value="SGD">SGD (S$)</option>
+                      <option value="CHF">CHF (CHF)</option>
                     </select>
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] text-slate-300 font-medium">Adult Net Cost *</label>
+                    <label className="text-[11px] text-slate-300 font-medium">Adult Nett Cost *</label>
                     <input
                       type="number"
                       required
@@ -661,7 +689,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] text-slate-300 font-medium">Child Net Cost</label>
+                    <label className="text-[11px] text-slate-300 font-medium">Child Nett Cost</label>
                     <input
                       type="number"
                       min="0"
@@ -672,18 +700,45 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] text-slate-300 font-medium">Markup Margin %</label>
+                    <label className="text-[11px] text-slate-300 font-medium">Infant Nett Cost</label>
                     <input
                       type="number"
                       min="0"
-                      value={formData.defaultMarkupPercent || 20}
-                      onChange={e => setFormData({ ...formData, defaultMarkupPercent: Number(e.target.value) })}
+                      value={formData.infantNetPrice || 0}
+                      onChange={e => setFormData({ ...formData, infantNetPrice: Number(e.target.value) })}
                       className="w-full p-2 bg-white rounded-lg"
+                    />
+                  </div>
+                </div>
+
+                {/* 2. User-Type Default Markups & Tax */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-800 pt-2 border-t border-slate-800">
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-emerald-400 font-medium">Buyer Markup %</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={formData.buyerMarkupPercent !== undefined ? formData.buyerMarkupPercent : 30}
+                      onChange={e => setFormData({ ...formData, buyerMarkupPercent: Number(e.target.value), defaultMarkupPercent: Number(e.target.value) })}
+                      className="w-full p-2 bg-white rounded-lg font-semibold"
+                      placeholder="e.g. 30"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] text-slate-300 font-medium">Tax %</label>
+                    <label className="text-[11px] text-cyan-400 font-medium">B2B Agent Markup %</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={formData.b2bAgentMarkupPercent !== undefined ? formData.b2bAgentMarkupPercent : 20}
+                      onChange={e => setFormData({ ...formData, b2bAgentMarkupPercent: Number(e.target.value) })}
+                      className="w-full p-2 bg-white rounded-lg font-semibold"
+                      placeholder="e.g. 20"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-slate-300 font-medium">Tax % (on Margin)</label>
                     <input
                       type="number"
                       min="0"
@@ -692,21 +747,103 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                       className="w-full p-2 bg-white rounded-lg"
                     />
                   </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-slate-300 font-medium">Fixed Service Fee</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={formData.serviceFeeFixed || 0}
+                      onChange={e => setFormData({ ...formData, serviceFeeFixed: Number(e.target.value) })}
+                      className="w-full p-2 bg-white rounded-lg"
+                    />
+                  </div>
                 </div>
 
-                <div className="pt-2 flex items-center justify-between text-xs border-t border-slate-800">
-                  <span className="text-slate-400">Computed Base Selling Price:</span>
-                  <span className="text-base font-bold font-mono text-[#00E5C0]">
-                    {formatCurrency(
-                      calculateSellingPrice(
-                        formData.adultNetPrice || 0,
-                        formData.defaultMarkupPercent || 20,
-                        formData.taxPercent || 10,
-                        formData.serviceFeeFixed || 0
-                      ),
-                      formData.currency || 'USD'
-                    )}
+                {/* 3. Dual Live Preview */}
+                <div className="pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs border-t border-slate-800 bg-slate-950/60 p-3 rounded-xl">
+                  <div>
+                    <span className="text-slate-400 block text-[10px] uppercase tracking-wider font-semibold">Direct Buyer Delivered Rate:</span>
+                    <span className="text-base font-bold font-mono text-emerald-400">
+                      {formatCurrency(
+                        calculateSellingPrice(
+                          formData.adultNetPrice || 0,
+                          formData.buyerMarkupPercent !== undefined ? formData.buyerMarkupPercent : 30,
+                          formData.taxPercent || 10,
+                          formData.serviceFeeFixed || 0
+                        ),
+                        formData.currency || 'USD'
+                      )}
+                    </span>
+                    <span className="text-[10px] text-slate-500 ml-1.5">(Net + {formData.buyerMarkupPercent || 30}% markup)</span>
+                  </div>
+
+                  <div className="sm:text-right">
+                    <span className="text-slate-400 block text-[10px] uppercase tracking-wider font-semibold">B2B Agent Delivered Rate:</span>
+                    <span className="text-base font-bold font-mono text-[#00E5C0]">
+                      {formatCurrency(
+                        calculateSellingPrice(
+                          formData.adultNetPrice || 0,
+                          formData.b2bAgentMarkupPercent !== undefined ? formData.b2bAgentMarkupPercent : 20,
+                          formData.taxPercent || 10,
+                          formData.serviceFeeFixed || 0
+                        ),
+                        formData.currency || 'USD'
+                      )}
+                    </span>
+                    <span className="text-[10px] text-slate-500 ml-1.5">(Net + {formData.b2bAgentMarkupPercent || 20}% markup)</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Optional Experience Upgrades (Upsell Tagging) */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5 text-slate-800 font-bold text-xs">
+                    <Layers className="w-4 h-4 text-[#00C6A6]" />
+                    <span>Optional Experience Upgrades (Upsell Tagging)</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500">
+                    {(formData.optionalUpgradeProductIds || []).length} experience(s) selected
                   </span>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Tag optional upgrades (exclusive tastings, private chauffeur, VIP admissions) that clients or travel agents can add during booking.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1 bg-white rounded-xl border border-slate-200">
+                  {products.filter(p => p.id !== (editingProduct?.id || '')).map(p => {
+                    const isChecked = (formData.optionalUpgradeProductIds || []).includes(p.id);
+                    return (
+                      <label
+                        key={p.id}
+                        className={`flex items-start space-x-2.5 p-2 rounded-lg border transition-colors cursor-pointer text-xs ${
+                          isChecked ? 'bg-[#00C6A6]/10 border-[#00C6A6]' : 'hover:bg-slate-50 border-slate-100'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={e => {
+                            const current = formData.optionalUpgradeProductIds || [];
+                            if (e.target.checked) {
+                              setFormData({ ...formData, optionalUpgradeProductIds: [...current, p.id] });
+                            } else {
+                              setFormData({ ...formData, optionalUpgradeProductIds: current.filter(id => id !== p.id) });
+                            }
+                          }}
+                          className="mt-0.5 rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-slate-900 truncate">{p.name}</div>
+                          <div className="text-[10px] text-slate-500 flex items-center justify-between mt-0.5">
+                            <span>{p.city} • {p.category}</span>
+                            <span className="font-mono font-bold text-slate-700">{formatCurrency(p.adultNetPrice, p.currency)}</span>
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
 

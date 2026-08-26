@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CurrencyCode } from '../types';
+import { CurrencyCode, SUPPORTED_CURRENCIES } from '../types';
 import { ExchangeRateService, ExchangeRateData } from '../services/exchangeRateService';
 import { formatCurrency } from '../services/pricingEngine';
 import { useQuotation } from '../context/QuotationContext';
@@ -8,7 +8,7 @@ import {
   RefreshCw, 
   TrendingUp, 
   Globe, 
-  Check,
+  Check, 
   ChevronDown
 } from 'lucide-react';
 
@@ -20,35 +20,21 @@ interface CurrencyConverterWidgetProps {
   compact?: boolean;
 }
 
-const POPULAR_CURRENCIES: { code: CurrencyCode; name: string; symbol: string }[] = [
-  { code: 'USD', name: 'US Dollar', symbol: '$' },
-  { code: 'EUR', name: 'Euro', symbol: '€' },
-  { code: 'GBP', name: 'British Pound', symbol: '£' },
-  { code: 'JPY', name: 'Japanese Yen', symbol: '¥' },
-  { code: 'AED', name: 'UAE Dirham', symbol: 'AED' },
-  { code: 'THB', name: 'Thai Baht', symbol: '฿' },
-  { code: 'AUD', name: 'Australian Dollar', symbol: 'A$' },
-  { code: 'CAD', name: 'Canadian Dollar', symbol: 'CA$' },
-  { code: 'SGD', name: 'Singapore Dollar', symbol: 'S$' },
-  { code: 'INR', name: 'Indian Rupee', symbol: '₹' },
-  { code: 'CHF', name: 'Swiss Franc', symbol: 'CHF' }
-];
-
 export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = ({
   currentCurrency: propCurrentCurrency,
   onCurrencyChange: propOnCurrencyChange,
-  baseCurrency = 'USD',
+  baseCurrency: propBaseCurrency = 'USD',
   baseAmount,
   compact = false
 }) => {
   const quoteContext = useQuotation();
   
-  const currentCurrency: CurrencyCode = propCurrentCurrency || quoteContext.currency;
+  const currentCurrency: CurrencyCode = (propCurrentCurrency || quoteContext.currency) as CurrencyCode;
+  const baseCurrency: CurrencyCode = propBaseCurrency as CurrencyCode;
   const onCurrencyChange = propOnCurrencyChange || quoteContext.setCurrency;
 
   const [fxData, setFxData] = useState<ExchangeRateData>(() => ExchangeRateService.getInstance().getData());
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [showDropdown, setShowDropdown] = useState(false);
   const [testAmount, setTestAmount] = useState<number>(baseAmount || 1000);
 
   useEffect(() => {
@@ -84,7 +70,7 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
           onChange={(e) => onCurrencyChange(e.target.value as CurrencyCode)}
           className="bg-slate-800 text-white font-bold text-xs rounded-lg px-2 py-0.5 border border-slate-600 focus:outline-none focus:ring-1 focus:ring-[#00C6A6] cursor-pointer"
         >
-          {POPULAR_CURRENCIES.map(c => (
+          {SUPPORTED_CURRENCIES.map(c => (
             <option key={c.code} value={c.code}>
               {c.code} ({c.symbol}) - {c.name}
             </option>
@@ -133,7 +119,7 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
 
       {/* Currency Selection Grid */}
       <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 pt-1">
-        {POPULAR_CURRENCIES.map(c => {
+        {SUPPORTED_CURRENCIES.map(c => {
           const isSelected = currentCurrency === c.code;
           return (
             <button

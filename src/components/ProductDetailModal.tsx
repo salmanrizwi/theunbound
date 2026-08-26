@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
-import { Product } from '../types';
+import { Product, CurrencyCode, SUPPORTED_CURRENCIES } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { useRoster } from '../context/RosterContext';
 import { formatCurrency, convertCurrency } from '../services/pricingEngine';
 import { RosterCalendarPicker } from './RosterCalendarPicker';
-import { CurrencyConverterWidget } from './CurrencyConverterWidget';
 import { WishlistButton } from './WishlistButton';
 import { 
   X, 
@@ -29,7 +28,9 @@ import {
   CalendarX,
   UserCheck,
   ArrowRight,
-  AlertTriangle
+  AlertTriangle,
+  Globe2,
+  ChevronDown
 } from 'lucide-react';
 
 interface ProductDetailModalProps {
@@ -124,13 +125,31 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             <span className="text-slate-300 text-xs font-medium">{product.destinationName} / {product.city}</span>
           </div>
 
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-2.5">
+            {/* Synchronized Currency Selector in Modal Header */}
+            <div className="flex items-center space-x-1.5 bg-slate-800/90 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs text-slate-300">
+              <Globe2 className="w-3.5 h-3.5 text-[#00C6A6] shrink-0" />
+              <select
+                id="modal-header-currency-select"
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
+                className="bg-transparent text-white font-bold text-xs focus:outline-none cursor-pointer pr-1"
+                title="Switch Currency"
+              >
+                {SUPPORTED_CURRENCIES.map(c => (
+                  <option key={c.code} value={c.code} className="bg-slate-900 text-white">
+                    {c.code} ({c.symbol})
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <button
               onClick={handleShare}
               className="text-xs text-slate-300 hover:text-white flex items-center space-x-1.5 bg-slate-800 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
             >
               {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5" />}
-              <span>{copiedLink ? 'Link Copied' : 'Share'}</span>
+              <span className="hidden sm:inline">{copiedLink ? 'Link Copied' : 'Share'}</span>
             </button>
 
             <button
@@ -292,26 +311,48 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   </div>
                 ) : (
                   <>
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#00C6A6] block mb-1">
-                      Published Starting Rate
-                    </span>
+                    {/* Rate Header with integrated Currency Dropdown */}
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-[#00C6A6]">
+                        Published Starting Rate
+                      </span>
+                      <div className="relative inline-flex items-center">
+                        <Globe2 className="w-3 h-3 text-slate-400 absolute left-2 pointer-events-none" />
+                        <select
+                          id="product-detail-currency-select"
+                          value={currency}
+                          onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
+                          className="bg-slate-800 text-white font-bold text-xs rounded-lg pl-6 pr-6 py-1 border border-slate-700 focus:outline-none focus:ring-1 focus:ring-[#00C6A6] cursor-pointer hover:bg-slate-750 transition-colors appearance-none"
+                          title="Change display currency"
+                        >
+                          {SUPPORTED_CURRENCIES.map(c => (
+                            <option key={c.code} value={c.code} className="bg-slate-900 text-white">
+                              {c.code} ({c.symbol})
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="w-3 h-3 text-slate-400 absolute right-1.5 pointer-events-none" />
+                      </div>
+                    </div>
                     
-                    <div className="flex items-baseline space-x-2 mb-3">
-                      <span className="text-3xl font-black text-white font-sans">
+                    <div className="flex items-baseline space-x-2 mb-2">
+                      <span className="text-3xl font-black text-white font-sans tracking-tight">
                         {formatCurrency(convertedStartingPrice, currency)}
                       </span>
                       <span className="text-xs text-slate-400">/ Adult (Retail)</span>
                     </div>
 
-                    {/* Real-time FX Converter for preferred local currency */}
-                    <div className="mb-4">
-                      <CurrencyConverterWidget
-                        currentCurrency={currency}
-                        onCurrencyChange={setCurrency}
-                        baseCurrency={product.currency}
-                        baseAmount={product.sellingPriceStartingFrom}
-                      />
-                    </div>
+                    {product.currency !== currency && (
+                      <div className="text-[11px] text-slate-400 flex items-center justify-between px-2.5 py-1.5 mb-3 rounded-xl bg-slate-800/60 border border-slate-700/60">
+                        <span className="flex items-center space-x-1.5 text-slate-400">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block"></span>
+                          <span>Base Supplier Rate:</span>
+                        </span>
+                        <span className="font-mono font-bold text-slate-200">
+                          {formatCurrency(product.sellingPriceStartingFrom, product.currency)}
+                        </span>
+                      </div>
+                    )}
                   </>
                 )}
 

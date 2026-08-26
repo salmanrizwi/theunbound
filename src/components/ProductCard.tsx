@@ -2,7 +2,7 @@ import React from 'react';
 import { Product } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
-import { formatCurrency, convertCurrency } from '../services/pricingEngine';
+import { formatCurrency, calculateDeliveredPriceForUser } from '../services/pricingEngine';
 import { WishlistButton } from './WishlistButton';
 import { 
   Star, 
@@ -32,18 +32,14 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onOpenCalculator,
   onInstantBook
 }) => {
-  const { isAuthenticated, openAuthModal, role } = useAuth();
+  const { isAuthenticated, openAuthModal, role, user } = useAuth();
   const { currency, addProductToQuote, items } = useQuotation();
 
   const isB2BAgentOrAdmin = role === 'B2B_AGENT' || role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF';
   const isAlreadyInQuote = items.some(item => item.product.id === product.id);
 
-  // Convert starting baseline price to active currency
-  const convertedStartingPrice = convertCurrency(
-    product.sellingPriceStartingFrom,
-    product.currency,
-    currency
-  );
+  // Dynamic delivered price customized for the active logged-in user (Buyer vs Agent vs Custom Margin)
+  const deliveredInfo = calculateDeliveredPriceForUser(product, user, currency);
 
   const handleCalculatorClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -165,14 +161,21 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         <div className="pt-3 border-t border-slate-100">
           <div className="flex items-baseline justify-between mb-3">
             <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                Direct Rate From
-              </span>
+              <div className="flex items-center space-x-1.5 mb-0.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  {deliveredInfo.userTier === 'B2B_AGENT' ? 'Delivered B2B Rate' : 'Delivered Selling Rate'}
+                </span>
+                {deliveredInfo.isCustomMargin && (
+                  <span className="bg-[#00C6A6]/15 text-[#008f77] text-[9px] font-bold px-1.5 py-0.5 rounded">
+                    Custom {deliveredInfo.appliedMarkupPercent}%
+                  </span>
+                )}
+              </div>
               <div className="flex items-baseline space-x-1">
                 <span className="text-lg font-extrabold text-slate-900 font-mono">
-                  {formatCurrency(convertedStartingPrice, currency)}
+                  {formatCurrency(deliveredInfo.deliveredPrice, currency)}
                 </span>
-                <span className="text-xs text-slate-500 font-medium">/ pax</span>
+                <span className="text-xs text-slate-500 font-medium">/ adult</span>
               </div>
             </div>
 
@@ -183,7 +186,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                   Net Cost ({product.currency})
                 </span>
                 <span className="text-xs font-mono font-bold text-slate-700">
-                  {formatCurrency(product.adultNetPrice, product.currency)}
+                  {formatCurrency(deliveredInfo.baseAdultNet, product.currency)}
                 </span>
               </div>
             )}

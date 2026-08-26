@@ -1904,8 +1904,20 @@ export class AppDatabase {
     this.syncFirestoreDoc('wishlist_folders', folder.id, folder);
   }
 
-  public createWishlistFolder(folder: WishlistFolder): void {
-    this.saveWishlistFolder(folder);
+  public createWishlistFolder(folderOrUserId: WishlistFolder | string, folderName?: string): WishlistFolder {
+    if (typeof folderOrUserId === 'object') {
+      this.saveWishlistFolder(folderOrUserId);
+      return folderOrUserId;
+    }
+    const newFolder: WishlistFolder = {
+      id: `folder-${Date.now()}`,
+      userId: folderOrUserId,
+      name: folderName || 'New Folder',
+      color: '#00C6A6',
+      createdAt: new Date().toISOString()
+    };
+    this.saveWishlistFolder(newFolder);
+    return newFolder;
   }
 
   public deleteWishlistFolder(folderId: string): void {
@@ -1962,8 +1974,16 @@ export class AppDatabase {
     this.deleteFirestoreDoc('wishlist_items', itemId);
   }
 
-  public removeFromWishlist(itemId: string): void {
-    this.deleteWishlistItem(itemId);
+  public removeFromWishlist(itemIdOrUserId: string, folderId?: string, productId?: string): void {
+    if (folderId && productId) {
+      const all = this.getItem<WishlistItem[]>('wishlist_items', []);
+      const item = all.find(i => i.userId === itemIdOrUserId && i.productId === productId && (folderId === 'all' || i.folderId === folderId));
+      if (item) {
+        this.deleteWishlistItem(item.id);
+      }
+      return;
+    }
+    this.deleteWishlistItem(itemIdOrUserId);
   }
 
   public moveWishlistItem(itemId: string, targetFolderId: string): void {

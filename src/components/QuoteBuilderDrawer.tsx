@@ -505,31 +505,6 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({ onBookQu
               <span className="font-semibold text-white">{items.length} {items.length === 1 ? 'Product' : 'Products'}</span>
             </div>
 
-            {/* Internal DMC Profit & Margin (Visible ONLY to Admin / Staff) */}
-            {isInternalUser && (
-              <div className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 space-y-1.5 text-[11px]">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Internal DMC Financial Breakdown</p>
-                <div className="grid grid-cols-2 gap-2 text-slate-300">
-                  <div className="flex justify-between">
-                    <span>Net Base:</span>
-                    <span className="font-mono">{formatCurrency(totalNetCost, currency)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Taxes & VAT:</span>
-                    <span className="font-mono">+{formatCurrency(totalTaxes, currency)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Service Fees:</span>
-                    <span className="font-mono">+{formatCurrency(totalServiceFees, currency)}</span>
-                  </div>
-                  <div className="flex justify-between text-[#00E5C0] font-bold">
-                    <span>Gross Margin:</span>
-                    <span className="font-mono">{formatCurrency(totalMarginAmount, currency)}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
             {/* Booking Lock Warning if Roster Conflicts exist */}
             {hasRosterConflict && (
               <div className="p-2.5 rounded-xl bg-rose-950/80 border border-rose-600 text-rose-200 text-xs flex items-center space-x-2">
@@ -777,8 +752,8 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({ onBookQu
                 {/* Final Price Summary Box */}
                 <div className="border-t-2 border-slate-900 pt-4 flex justify-between items-baseline">
                   <div>
-                    <p className="text-xs font-bold text-slate-900">Total Net Inclusions & Taxes</p>
-                    <p className="text-[11px] text-slate-500">All local city taxes, VAT, and chauffeur charges included.</p>
+                    <p className="text-xs font-bold text-slate-900">All-Inclusive Contracted Rate</p>
+                    <p className="text-[11px] text-slate-500">Fully scheduled ground logistics, licensed guide allocation, and destination inclusions.</p>
                   </div>
                   <div className="text-right">
                     <span className="text-xs text-slate-500 block">Total Quotation Value:</span>

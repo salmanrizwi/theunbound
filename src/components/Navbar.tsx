@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
-import { CurrencyCode, DestinationRegion, Destination } from '../types';
+import { CurrencyCode, DestinationRegion, Destination, SUPPORTED_CURRENCIES } from '../types';
 
 export type MainNavTab = 'DESTINATIONS' | 'B2B_BUILDER' | 'DASHBOARD' | 'ADMIN' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND';
 
@@ -53,8 +53,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   const { items, currency, setCurrency, setIsQuoteDrawerOpen } = useQuotation();
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
-
-  const currencies: CurrencyCode[] = ['USD', 'EUR', 'GBP', 'JPY'];
 
   const currentActiveDest = selectedDestinationSlug || activeDestination || 'japan';
 
@@ -91,15 +89,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
           <span className="text-slate-700 hidden md:inline">|</span>
           <div className="hidden md:flex items-center space-x-2 text-slate-400 text-xs">
+            <Globe2 className="w-3.5 h-3.5 text-[#00C6A6]" />
             <span>Currency:</span>
             <select
               id="currency-selector"
               value={currency}
               onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-              className="bg-slate-800 text-white rounded-md px-2 py-0.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#00C6A6] cursor-pointer"
+              className="bg-slate-800 text-white rounded-md px-2.5 py-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#00C6A6] cursor-pointer border border-slate-700 hover:bg-slate-750 transition-colors"
             >
-              {currencies.map(c => (
-                <option key={c} value={c}>{c}</option>
+              {SUPPORTED_CURRENCIES.map(c => (
+                <option key={c.code} value={c.code}>
+                  {c.code} ({c.symbol}) - {c.name}
+                </option>
               ))}
             </select>
           </div>
@@ -448,14 +449,19 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
 
             <div className="pt-2 border-t border-slate-100 flex justify-between items-center px-3">
-              <span className="text-xs text-slate-500 font-bold">Currency</span>
+              <span className="text-xs text-slate-500 font-bold flex items-center space-x-1.5">
+                <Globe2 className="w-3.5 h-3.5 text-[#00C6A6]" />
+                <span>Currency</span>
+              </span>
               <select
                 value={currency}
                 onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                className="bg-slate-100 text-slate-800 rounded-lg px-2.5 py-1 text-xs font-bold"
+                className="bg-slate-100 text-slate-800 rounded-lg px-2.5 py-1 text-xs font-bold border border-slate-200"
               >
-                {currencies.map(c => (
-                  <option key={c} value={c}>{c}</option>
+                {SUPPORTED_CURRENCIES.map(c => (
+                  <option key={c.code} value={c.code}>
+                    {c.code} ({c.symbol}) - {c.name}
+                  </option>
                 ))}
               </select>
             </div>

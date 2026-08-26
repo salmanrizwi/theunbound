@@ -1,12 +1,18 @@
-import React, { useState, useMemo } from 'react';
-import { Product, Destination, CurrencyCode, QuoteItem, Quotation } from '../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Product, Destination, CurrencyCode, QuoteItem, Quotation, Hotel } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { useRoster } from '../context/RosterContext';
 import { formatCurrency, convertCurrency, calculateProductPrice } from '../services/pricingEngine';
 import { RosterCalendarPicker } from '../components/RosterCalendarPicker';
-import { ItineraryTimelineView } from '../components/ItineraryTimelineView';
 import { CurrencyConverterWidget } from '../components/CurrencyConverterWidget';
+import { B2BProductRowCard } from '../components/B2BProductRowCard';
+import { B2BHotelRowCard } from '../components/B2BHotelRowCard';
+import { HotelDetailModal } from '../components/HotelDetailModal';
+import { AppDatabase } from '../services/db';
+import { hotelToProduct } from '../utils/hotelHelpers';
+import { downloadQuotationPDF } from '../services/pdfGenerator';
+import { GoogleTasksService } from '../services/googleTasksService';
 import { 
   Building2, 
   MapPin, 
@@ -19,6 +25,7 @@ import {
   Eye, 
   Sparkles, 
   FileText, 
+  FileDown,
   Check, 
   ChevronDown, 
   ChevronUp, 
@@ -41,8 +48,13 @@ import {
   AlertTriangle,
   RotateCcw,
   RefreshCw,
-  AlertOctagon
+  AlertOctagon,
+  Bed,
+  Compass,
+  CheckCircle2
 } from 'lucide-react';
+
+export type QuotationScope = 'LAND_ONLY' | 'HOTEL_LAND' | 'HOTEL_ONLY';
 
 interface B2BQuotationBuilderPageProps {
   destinations: Destination[];
@@ -85,6 +97,21 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
 
   const { checkDateAvailability, getNextAvailableDate } = useRoster();
 
+  // Quotation Scope: Land Part vs Hotel & Land Part vs Hotel Only
+  const [quotationScope, setQuotationScope] = useState<QuotationScope>('HOTEL_LAND');
+  const [hotelLandViewMode, setHotelLandViewMode] = useState<'ALL' | 'HOTELS' | 'LAND'>('ALL');
+
+  // Database and Live Hotels
+  const db = AppDatabase.getInstance();
+  const [hotels, setHotels] = useState<Hotel[]>(() => db.getHotels());
+  const [inspectingHotel, setInspectingHotel] = useState<Hotel | null>(null);
+
+  useEffect(() => {
+    return db.subscribe(() => {
+      setHotels(db.getHotels());
+    });
+  }, [db]);
+
   // STEP 1: Destination Category Selection
   const [selectedDestinationSlug, setSelectedDestinationSlug] = useState<string>('all');
 
@@ -97,9 +124,6 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
 
   // Catalog inspection modal
   const [rosterPreviewProduct, setRosterPreviewProduct] = useState<Product | null>(null);
-
-  // Workspace View Mode: Catalog & Sidebar vs Visual Drag & Drop Timeline
-  const [workspaceViewMode, setWorkspaceViewMode] = useState<'BUILDER' | 'TIMELINE'>('BUILDER');
 
   // Sidebar controls
   const [agentClientMarkupPercent, setAgentClientMarkupPercent] = useState<number>(12); // Default 12% agent margin
@@ -144,7 +168,58 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
     });
   };
 
-  // Handle Quick Add to Sidebar with verified earliest open Roster date
+  // Handle Add to Itinerary with full inline dropdown parameters (without popping drawer)
+  const handleAddProductFromDropdown = (
+    product: Product,
+    options: {
+      adults: number;
+      children: number;
+      infants: number;
+      travelDate: string;
+      selectedAddonIds: string[];
+      timeSlot?: string;
+      notes?: string;
+    }
+  ) => {
+    addProductToQuote(product, {
+      adults: options.adults,
+      children: options.children,
+      infants: options.infants,
+      travelDate: options.travelDate,
+      selectedAddonIds: options.selectedAddonIds,
+      openDrawer: false
+    });
+    setJustAddedId(product.id);
+    setTimeout(() => setJustAddedId(null), 1800);
+  };
+
+  // Handle Add Hotel Stay to Itinerary
+  const handleAddHotelStayToQuote = (
+    hotelProduct: Product,
+    options: {
+      adults: number;
+      children: number;
+      infants: number;
+      travelDate: string;
+      nights: number;
+      roomsCount: number;
+      roomName: string;
+      mealPlan: string;
+    }
+  ) => {
+    addProductToQuote(hotelProduct, {
+      adults: options.adults,
+      children: options.children,
+      infants: options.infants,
+      travelDate: options.travelDate,
+      selectedAddonIds: [],
+      openDrawer: false
+    });
+    setJustAddedId(hotelProduct.id);
+    setTimeout(() => setJustAddedId(null), 1800);
+  };
+
+  // Handle Quick Add to Sidebar without opening drawer
   const handleQuickAdd = (product: Product) => {
     const nextDate = getNextAvailableDate(product.id) || new Date(Date.now() + 86400000 * 14).toISOString().split('T')[0];
     addProductToQuote(product, {
@@ -152,7 +227,8 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
       children: 0,
       infants: 0,
       travelDate: nextDate,
-      selectedAddonIds: []
+      selectedAddonIds: [],
+      openDrawer: false
     });
     setJustAddedId(product.id);
     setTimeout(() => setJustAddedId(null), 1800);
@@ -161,15 +237,19 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
   // Destination category items for Step 1
   const destinationOptions = useMemo(() => {
     return [
-      { slug: 'all', name: 'All Destinations', country: 'Global', count: products.length },
-      ...destinations.map(d => ({
-        slug: d.slug,
-        name: d.name,
-        country: d.country,
-        count: products.filter(p => p.destinationSlug === d.slug || p.destinationName.toLowerCase().includes(d.name.toLowerCase())).length
-      }))
+      { slug: 'all', name: 'All Destinations', country: 'Global', count: products.length + hotels.length },
+      ...destinations.map(d => {
+        const destProds = products.filter(p => p.destinationSlug === d.slug || p.destinationName.toLowerCase().includes(d.name.toLowerCase()));
+        const destHotels = hotels.filter(h => h.destinationId === d.id || h.destinationId === d.slug || h.country.toLowerCase().includes(d.name.toLowerCase()));
+        return {
+          slug: d.slug,
+          name: d.name,
+          country: d.country,
+          count: destProds.length + destHotels.length
+        };
+      })
     ];
-  }, [destinations, products]);
+  }, [destinations, products, hotels]);
 
   // Filter products by selected destination
   const destinationFilteredProducts = useMemo(() => {
@@ -180,6 +260,45 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
       p => p.destinationSlug === dest.slug || p.destinationName.toLowerCase().includes(dest.name.toLowerCase())
     );
   }, [products, selectedDestinationSlug, destinations]);
+
+  // Filter hotels by selected destination
+  const destinationFilteredHotels = useMemo(() => {
+    const published = hotels.filter(h => h.status === 'PUBLISHED' || !h.status);
+    let list = published;
+
+    if (selectedDestinationSlug !== 'all') {
+      const dest = destinations.find(d => d.slug === selectedDestinationSlug);
+      if (dest) {
+        list = list.filter(h => 
+          h.destinationId === dest.id || 
+          h.destinationId === dest.slug || 
+          h.country.toLowerCase().includes(dest.name.toLowerCase()) ||
+          h.destinationName.toLowerCase().includes(dest.name.toLowerCase())
+        );
+      }
+    }
+
+    if (selectedCity !== 'ALL') {
+      list = list.filter(h => 
+        h.cityName.toLowerCase() === selectedCity.toLowerCase() ||
+        h.cityId.toLowerCase() === selectedCity.toLowerCase() ||
+        h.area.toLowerCase().includes(selectedCity.toLowerCase())
+      );
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(h => 
+        h.name.toLowerCase().includes(q) ||
+        h.cityName.toLowerCase().includes(q) ||
+        h.area.toLowerCase().includes(q) ||
+        h.code.toLowerCase().includes(q) ||
+        h.description.toLowerCase().includes(q)
+      );
+    }
+
+    return list;
+  }, [hotels, selectedDestinationSlug, destinations, selectedCity, searchQuery]);
 
   // Unique categories for active destination
   const availableCategories = useMemo(() => {
@@ -196,8 +315,11 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
     destinationFilteredProducts.forEach(p => {
       if (p.city) set.add(p.city);
     });
+    destinationFilteredHotels.forEach(h => {
+      if (h.cityName) set.add(h.cityName);
+    });
     return Array.from(set);
-  }, [destinationFilteredProducts]);
+  }, [destinationFilteredProducts, destinationFilteredHotels]);
 
   // Filtered products for List View
   const listProducts = useMemo(() => {
@@ -268,6 +390,14 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
     let totalClientSellingPrice = 0;
     let totalPax = 0;
 
+    // Itemized breakdown: Hotels vs Land
+    let hotelItemsCount = 0;
+    let landItemsCount = 0;
+    let hotelSellingPrice = 0;
+    let landSellingPrice = 0;
+    let hotelWholesaleNet = 0;
+    let landWholesaleNet = 0;
+
     b2bCalculatedItems.forEach(item => {
       totalSupplierNet += item.b2bCalc.totalNetCost;
       totalDmcWholesaleNet += item.b2bCalc.b2bWholesaleNetToAgent;
@@ -276,6 +406,17 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
       totalServiceFees += item.b2bCalc.serviceFee;
       totalClientSellingPrice += item.b2bCalc.finalTotalSellingPrice;
       totalPax += (item.pax.adults + item.pax.children);
+
+      const isHotel = item.product.category === 'Hotels' || item.product.sku.startsWith('HTL-') || item.product.sku.startsWith('STAY-');
+      if (isHotel) {
+        hotelItemsCount++;
+        hotelSellingPrice += item.b2bCalc.finalTotalSellingPrice;
+        hotelWholesaleNet += item.b2bCalc.b2bWholesaleNetToAgent;
+      } else {
+        landItemsCount++;
+        landSellingPrice += item.b2bCalc.finalTotalSellingPrice;
+        landWholesaleNet += item.b2bCalc.b2bWholesaleNetToAgent;
+      }
     });
 
     if (overallDiscountPercent > 0) {
@@ -295,7 +436,13 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
       totalServiceFees,
       totalClientSellingPrice,
       totalPax: totalPax || 2,
-      pricePerPax: totalPax > 0 ? totalClientSellingPrice / totalPax : totalClientSellingPrice
+      pricePerPax: totalPax > 0 ? totalClientSellingPrice / totalPax : totalClientSellingPrice,
+      hotelItemsCount,
+      landItemsCount,
+      hotelSellingPrice,
+      landSellingPrice,
+      hotelWholesaleNet,
+      landWholesaleNet
     };
   }, [b2bCalculatedItems, overallDiscountPercent]);
 
@@ -309,6 +456,29 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
     if (saved) {
       setSavedSuccessQuote(saved);
       setTimeout(() => setSavedSuccessQuote(null), 3000);
+    }
+  };
+
+  const handleDownloadPDF = () => {
+    try {
+      const activeQuote = saveCurrentQuote();
+      if (activeQuote) {
+        downloadQuotationPDF({
+          quote: activeQuote,
+          agentName: user?.name,
+          agentAgency: user?.agencyName,
+          agentEmail: user?.email,
+          agentRole: user?.role
+        });
+
+        try {
+          GoogleTasksService.getInstance().schedulePdfQuoteFollowUpTask(activeQuote, user);
+        } catch (e) {
+          console.debug('PDF follow-up task note:', e);
+        }
+      }
+    } catch (err) {
+      console.error('Error generating PDF quote:', err);
     }
   };
 
@@ -360,55 +530,6 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
         </div>
       </div>
 
-      {/* Workspace View Mode Toggle (Catalog vs Visual Drag & Drop Timeline) */}
-      <div className="bg-white rounded-2xl p-2 border border-slate-200 shadow-xs flex items-center justify-between gap-3">
-        <div className="flex items-center space-x-2">
-          <button
-            type="button"
-            onClick={() => setWorkspaceViewMode('BUILDER')}
-            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center space-x-2 cursor-pointer ${
-              workspaceViewMode === 'BUILDER'
-                ? 'bg-slate-900 text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-          >
-            <Layers className="w-4 h-4 text-[#00C6A6]" />
-            <span>Catalog & Sidebar Mode</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setWorkspaceViewMode('TIMELINE')}
-            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center space-x-2 cursor-pointer ${
-              workspaceViewMode === 'TIMELINE'
-                ? 'bg-slate-900 text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-          >
-            <Calendar className="w-4 h-4 text-[#00E5C0]" />
-            <span>Visual Drag & Drop Timeline View</span>
-            {items.length > 0 && (
-              <span className="ml-1 px-2 py-0.2 bg-[#00C6A6] text-slate-950 text-[10px] font-mono font-bold rounded-full">
-                {items.length}
-              </span>
-            )}
-          </button>
-        </div>
-
-        <div className="text-xs text-slate-500 font-medium hidden sm:block pr-3">
-          {workspaceViewMode === 'BUILDER' 
-            ? 'Discover wholesale catalog and build custom itemized quotations' 
-            : 'Plan chronological day-by-day itineraries with drag-and-drop sequencing'}
-        </div>
-      </div>
-
-      {workspaceViewMode === 'TIMELINE' ? (
-        <ItineraryTimelineView 
-          onViewProductDetails={onViewProductDetails}
-          availableProducts={products}
-        />
-      ) : (
-        <>
       {/* ========================================================================= */}
       {/* STEP 1: SELECT DESTINATION FROM CATEGORY */}
       {/* ========================================================================= */}
@@ -460,6 +581,112 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
       </div>
 
       {/* ========================================================================= */}
+      {/* STEP 1.5: QUOTATION SCOPE SELECTION (Land Part vs Hotel & Land Part vs Hotel) */}
+      {/* ========================================================================= */}
+      <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center space-x-2">
+            <span className="w-6 h-6 rounded-full bg-slate-900 text-white font-extrabold text-xs flex items-center justify-center">
+              ✦
+            </span>
+            <div>
+              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                Quotation Structure & Scope
+              </h2>
+              <p className="text-xs text-slate-500">
+                Select your package components. Relevant inventory and calculations will dynamically adapt.
+              </p>
+            </div>
+          </div>
+
+          <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-800 border border-teal-200/80">
+            <span>Active:</span>
+            <strong className="text-slate-900">
+              {quotationScope === 'LAND_ONLY' ? 'Land Part Only' : quotationScope === 'HOTEL_ONLY' ? 'Hotels Only' : 'Hotel & Land Part (Package)'}
+            </strong>
+          </span>
+        </div>
+
+        {/* 3 Scope Selector Buttons */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+          {/* 1. Land Part */}
+          <button
+            type="button"
+            id="scope-btn-land-only"
+            onClick={() => setQuotationScope('LAND_ONLY')}
+            className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-start space-x-3 ${
+              quotationScope === 'LAND_ONLY'
+                ? 'bg-slate-900 text-white border-slate-900 shadow-md ring-2 ring-[#00C6A6]'
+                : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+            }`}
+          >
+            <div className={`p-2 rounded-lg shrink-0 ${quotationScope === 'LAND_ONLY' ? 'bg-[#00C6A6] text-slate-950' : 'bg-slate-200 text-slate-700'}`}>
+              <Compass className="w-5 h-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold">Land Part</span>
+                {quotationScope === 'LAND_ONLY' && <CheckCircle2 className="w-3.5 h-3.5 text-[#00C6A6]" />}
+              </div>
+              <p className={`text-[11px] mt-0.5 leading-snug ${quotationScope === 'LAND_ONLY' ? 'text-slate-300' : 'text-slate-500'}`}>
+                Guided tours, private transfers, day excursions & activities.
+              </p>
+            </div>
+          </button>
+
+          {/* 2. Hotel & Land Part */}
+          <button
+            type="button"
+            id="scope-btn-hotel-land"
+            onClick={() => setQuotationScope('HOTEL_LAND')}
+            className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-start space-x-3 ${
+              quotationScope === 'HOTEL_LAND'
+                ? 'bg-slate-900 text-white border-slate-900 shadow-md ring-2 ring-[#00C6A6]'
+                : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+            }`}
+          >
+            <div className={`p-2 rounded-lg shrink-0 ${quotationScope === 'HOTEL_LAND' ? 'bg-[#00C6A6] text-slate-950' : 'bg-slate-200 text-slate-700'}`}>
+              <Layers className="w-5 h-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold">Hotel & Land Part</span>
+                {quotationScope === 'HOTEL_LAND' && <CheckCircle2 className="w-3.5 h-3.5 text-[#00C6A6]" />}
+              </div>
+              <p className={`text-[11px] mt-0.5 leading-snug ${quotationScope === 'HOTEL_LAND' ? 'text-slate-300' : 'text-slate-500'}`}>
+                Complete Itinerary: 5★ hotel accommodations + all ground tours.
+              </p>
+            </div>
+          </button>
+
+          {/* 3. Hotel Only */}
+          <button
+            type="button"
+            id="scope-btn-hotel-only"
+            onClick={() => setQuotationScope('HOTEL_ONLY')}
+            className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-start space-x-3 ${
+              quotationScope === 'HOTEL_ONLY'
+                ? 'bg-slate-900 text-white border-slate-900 shadow-md ring-2 ring-[#00C6A6]'
+                : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+            }`}
+          >
+            <div className={`p-2 rounded-lg shrink-0 ${quotationScope === 'HOTEL_ONLY' ? 'bg-[#00C6A6] text-slate-950' : 'bg-slate-200 text-slate-700'}`}>
+              <Building2 className="w-5 h-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold">Hotel</span>
+                {quotationScope === 'HOTEL_ONLY' && <CheckCircle2 className="w-3.5 h-3.5 text-[#00C6A6]" />}
+              </div>
+              <p className={`text-[11px] mt-0.5 leading-snug ${quotationScope === 'HOTEL_ONLY' ? 'text-slate-300' : 'text-slate-500'}`}>
+                Contracted 5★ luxury stays, suites, ryokans & resorts.
+              </p>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
       {/* STEP 2: CALCULATOR WORKSPACE & RELEVANT FILTERS (LEFT LIST + RIGHT SIDEBAR) */}
       {/* ========================================================================= */}
       <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-4">
@@ -485,7 +712,7 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
             <input
               type="text"
-              placeholder="Search tours, SKU, keywords..."
+              placeholder={quotationScope === 'HOTEL_ONLY' ? "Search hotel name, area, code..." : "Search tours, hotels, SKU, keywords..."}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
@@ -537,6 +764,50 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
             </button>
           </div>
         </div>
+
+        {/* Sub-tab view switch for Hotel & Land Part mode */}
+        {quotationScope === 'HOTEL_LAND' && (
+          <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-500">Filter View:</span>
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs">
+              <button
+                type="button"
+                onClick={() => setHotelLandViewMode('ALL')}
+                className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                  hotelLandViewMode === 'ALL'
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All Products ({listProducts.length + destinationFilteredHotels.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setHotelLandViewMode('HOTELS')}
+                className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                  hotelLandViewMode === 'HOTELS'
+                    ? 'bg-white text-teal-800 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Building2 className="w-3 h-3 text-teal-600" />
+                <span>Hotels Only ({destinationFilteredHotels.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setHotelLandViewMode('LAND')}
+                className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                  hotelLandViewMode === 'LAND'
+                    ? 'bg-white text-emerald-800 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Compass className="w-3 h-3 text-emerald-600" />
+                <span>Land Tours ({listProducts.length})</span>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ========================================================================= */}
@@ -544,180 +815,188 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
       {/* ========================================================================= */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* ========================================================================= */}
-        {/* LEFT COLUMN (8 Cols): TOUR LIST IN LIST MODE (NO PRICE SHOWN) */}
+        {/* LEFT COLUMN (8 Cols): PRODUCT CATALOG & HOTEL STAYS IN LIST MODE */}
         {/* ========================================================================= */}
-        <div className="lg:col-span-7 xl:col-span-8 space-y-3">
+        <div className="lg:col-span-7 xl:col-span-8 space-y-4">
+          {/* Header count info */}
           <div className="flex items-center justify-between px-1">
-            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-              Available Ground Experiences ({listProducts.length})
+            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center space-x-2">
+              <span>
+                {quotationScope === 'LAND_ONLY' 
+                  ? `Land Ground Experiences (${listProducts.length})` 
+                  : quotationScope === 'HOTEL_ONLY'
+                  ? `Contracted 5★ Hotels & Stays (${destinationFilteredHotels.length})`
+                  : `Package Inventory: Hotels (${destinationFilteredHotels.length}) + Land Tours (${listProducts.length})`}
+              </span>
             </span>
             <span className="text-[11px] text-slate-400">
               List Mode • Confidential Partner View
             </span>
           </div>
 
-          {listProducts.length === 0 ? (
-            <div className="bg-white rounded-2xl p-10 text-center border border-slate-200 text-slate-500 space-y-3">
-              <Search className="w-8 h-8 mx-auto text-slate-300" />
-              <p className="font-bold text-sm text-slate-700">No tours match your current filter selection</p>
-              <p className="text-xs text-slate-400">Try changing the category, city, or clearing the search query.</p>
-              <button
-                onClick={() => {
-                  setSearchQuery('');
-                  setSelectedCategory('ALL');
-                  setSelectedCity('ALL');
-                  setSelectedDestinationSlug('all');
-                }}
-                className="inline-flex items-center space-x-1.5 text-xs font-bold text-[#008972] bg-[#00C6A6]/10 px-3 py-1.5 rounded-lg hover:bg-[#00C6A6]/20 cursor-pointer"
-              >
-                <span>Reset All Filters</span>
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {listProducts.map(product => {
-                const isAlreadyAdded = items.some(i => i.product.id === product.id);
-                const isJustAdded = justAddedId === product.id;
+          {/* 1. HOTEL ONLY SCOPE */}
+          {quotationScope === 'HOTEL_ONLY' && (
+            destinationFilteredHotels.length === 0 ? (
+              <div className="bg-white rounded-2xl p-10 text-center border border-slate-200 text-slate-500 space-y-3">
+                <Building2 className="w-8 h-8 mx-auto text-slate-300" />
+                <p className="font-bold text-sm text-slate-700">No hotel properties match your current destination or search</p>
+                <p className="text-xs text-slate-400">Try changing the destination or clearing the search query.</p>
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedCity('ALL');
+                    setSelectedDestinationSlug('all');
+                  }}
+                  className="inline-flex items-center space-x-1.5 text-xs font-bold text-[#008972] bg-[#00C6A6]/10 px-3 py-1.5 rounded-lg hover:bg-[#00C6A6]/20 cursor-pointer"
+                >
+                  <span>Reset All Filters</span>
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {destinationFilteredHotels.map(hotel => (
+                  <B2BHotelRowCard
+                    key={hotel.id}
+                    hotel={hotel}
+                    currency={currency}
+                    agentMarkupPercent={agentClientMarkupPercent}
+                    onAddHotelStayToQuote={handleAddHotelStayToQuote}
+                    onViewHotelDetails={(h) => setInspectingHotel(h)}
+                    isJustAdded={justAddedId === hotel.id}
+                  />
+                ))}
+              </div>
+            )
+          )}
 
-                return (
-                  <div
-                    key={product.id}
-                    id={`b2b-tour-row-${product.id}`}
-                    className={`bg-white rounded-2xl border transition-all p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${
-                      isAlreadyAdded
-                        ? 'border-[#00C6A6]/60 bg-emerald-50/20 shadow-xs'
-                        : 'border-slate-200 hover:border-slate-300 shadow-xs'
-                    }`}
-                  >
-                    {/* Left: Thumbnail & Core Details */}
-                    <div className="flex items-start space-x-4 min-w-0 flex-1">
-                      <div 
-                        onClick={() => onViewProductDetails(product)}
-                        className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-slate-100 shrink-0 cursor-pointer group"
-                      >
-                        <img
-                          src={product.images[0] || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
-                          alt={product.name}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                          loading="lazy"
-                        />
-                        <span className="absolute bottom-1 left-1 bg-slate-950/80 text-[#00E5C0] font-mono text-[9px] font-bold px-1.5 py-0.5 rounded">
-                          {product.sku}
-                        </span>
-                      </div>
+          {/* 2. LAND ONLY SCOPE */}
+          {quotationScope === 'LAND_ONLY' && (
+            listProducts.length === 0 ? (
+              <div className="bg-white rounded-2xl p-10 text-center border border-slate-200 text-slate-500 space-y-3">
+                <Search className="w-8 h-8 mx-auto text-slate-300" />
+                <p className="font-bold text-sm text-slate-700">No land tours match your current filter selection</p>
+                <p className="text-xs text-slate-400">Try changing the category, city, or clearing the search query.</p>
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedCategory('ALL');
+                    setSelectedCity('ALL');
+                    setSelectedDestinationSlug('all');
+                  }}
+                  className="inline-flex items-center space-x-1.5 text-xs font-bold text-[#008972] bg-[#00C6A6]/10 px-3 py-1.5 rounded-lg hover:bg-[#00C6A6]/20 cursor-pointer"
+                >
+                  <span>Reset All Filters</span>
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {listProducts.map(product => {
+                  const matchingItems = items.filter(i => i.product.id === product.id);
+                  const isAlreadyAdded = matchingItems.length > 0;
 
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-[10px] font-bold uppercase tracking-wider bg-[#00C6A6]/10 text-[#008972] px-2 py-0.5 rounded">
-                            {product.category}
-                          </span>
-                          <span className="text-[11px] font-medium text-slate-500 flex items-center space-x-1">
-                            <MapPin className="w-3 h-3 text-slate-400" />
-                            <span>{product.city}, {product.destinationName}</span>
-                          </span>
-                          <span className="text-[11px] font-medium text-slate-400 flex items-center space-x-1">
-                            <Clock className="w-3 h-3 text-slate-400" />
-                            <span>{product.duration}</span>
-                          </span>
-                        </div>
+                  return (
+                    <B2BProductRowCard
+                      key={product.id}
+                      product={product}
+                      allProducts={products}
+                      currency={currency}
+                      agentClientMarkupPercent={agentClientMarkupPercent}
+                      isAlreadyAdded={isAlreadyAdded}
+                      addedCount={matchingItems.length}
+                      onViewDetails={onViewProductDetails}
+                      onOpenRosterModal={(p) => setRosterPreviewProduct(p)}
+                      onAddToQuote={(options) => handleAddProductFromDropdown(product, options)}
+                    />
+                  );
+                })}
+              </div>
+            )
+          )}
 
-                        <h3 
-                          onClick={() => onViewProductDetails(product)}
-                          className="font-bold text-sm text-slate-900 hover:text-[#008972] transition-colors leading-snug cursor-pointer line-clamp-1"
-                        >
-                          {product.name}
-                        </h3>
-
-                        <p className="text-xs text-slate-500 line-clamp-1 leading-relaxed">
-                          {product.shortDescription}
-                        </p>
-
-                        <div className="flex items-center space-x-3 text-[11px] text-slate-400 pt-0.5">
-                          <span className="flex items-center space-x-1">
-                            <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                            <span className="font-bold text-slate-700">{product.rating.toFixed(1)}</span>
-                            <span>({product.reviewCount})</span>
-                          </span>
-                          <span>•</span>
-                          <span className="text-slate-500 font-medium">
-                            Min {product.minPax} pax - Max {product.maxPax} pax
-                          </span>
-                          <span>•</span>
-                          <span className="text-slate-400">
-                            {product.operatingDays.slice(0, 4).join(', ')}
-                          </span>
-                        </div>
-                      </div>
+          {/* 3. HOTEL & LAND COMBINED SCOPE */}
+          {quotationScope === 'HOTEL_LAND' && (
+            <div className="space-y-6">
+              {/* Hotels Section in Combined View */}
+              {(hotelLandViewMode === 'ALL' || hotelLandViewMode === 'HOTELS') && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between pb-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="w-5 h-5 rounded-md bg-teal-50 text-[#008972] font-bold text-xs flex items-center justify-center">
+                        <Building2 className="w-3 h-3" />
+                      </span>
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">
+                        Contracted Hotels & Stays ({destinationFilteredHotels.length})
+                      </h3>
                     </div>
-
-                    {/* Right: Confidential Badge (NO PRICE) & Actions */}
-                    <div className="flex sm:flex-col items-end justify-between sm:justify-center gap-2.5 shrink-0 w-full sm:w-auto pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                      {/* Price Confidential Indicator */}
-                      <div className="text-right">
-                        <span className="inline-flex items-center space-x-1 text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-1 rounded-md border border-slate-200/80">
-                          <Lock className="w-2.5 h-2.5 text-slate-400" />
-                          <span>Confidential Wholesale</span>
-                        </span>
-                        <span className="text-[10px] text-slate-400 block mt-0.5">
-                          Calculated on Quote Creation
-                        </span>
-                      </div>
-
-                      {/* Action Buttons */}
-                      <div className="flex items-center space-x-1.5 sm:space-x-2">
-                        <button
-                          type="button"
-                          id={`b2b-btn-roster-${product.id}`}
-                          onClick={() => setRosterPreviewProduct(product)}
-                          className="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors flex items-center space-x-1 cursor-pointer"
-                          title="Check Roster & Capacity Calendar"
-                        >
-                          <CalendarCheck className="w-3.5 h-3.5 text-[#008972]" />
-                          <span>Roster</span>
-                        </button>
-
-                        <button
-                          id={`b2b-btn-view-details-${product.id}`}
-                          onClick={() => onViewProductDetails(product)}
-                          className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors flex items-center space-x-1 cursor-pointer"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-slate-400" />
-                          <span>Details</span>
-                        </button>
-
-                        <button
-                          id={`b2b-btn-add-${product.id}`}
-                          onClick={() => handleQuickAdd(product)}
-                          className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center space-x-1 cursor-pointer ${
-                            isJustAdded
-                              ? 'bg-emerald-600 text-white shadow-xs'
-                              : isAlreadyAdded
-                              ? 'bg-slate-900 hover:bg-slate-800 text-white shadow-xs'
-                              : 'bg-[#00C6A6] hover:bg-[#008972] text-slate-950 shadow-xs'
-                          }`}
-                        >
-                          {isJustAdded ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 text-white" />
-                              <span>Added!</span>
-                            </>
-                          ) : isAlreadyAdded ? (
-                            <>
-                              <Plus className="w-3.5 h-3.5 text-[#00E5C0]" />
-                              <span>Add Another Day</span>
-                            </>
-                          ) : (
-                            <>
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>Add to Itinerary</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
+                    <span className="text-[11px] text-teal-700 font-semibold">5★ Luxury Properties</span>
                   </div>
-                );
-              })}
+
+                  {destinationFilteredHotels.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500 text-center">
+                      No hotel stays found for this destination or search.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {destinationFilteredHotels.map(hotel => (
+                        <B2BHotelRowCard
+                          key={hotel.id}
+                          hotel={hotel}
+                          currency={currency}
+                          agentMarkupPercent={agentClientMarkupPercent}
+                          onAddHotelStayToQuote={handleAddHotelStayToQuote}
+                          onViewHotelDetails={(h) => setInspectingHotel(h)}
+                          isJustAdded={justAddedId === hotel.id}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Land Tours Section in Combined View */}
+              {(hotelLandViewMode === 'ALL' || hotelLandViewMode === 'LAND') && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between pb-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="w-5 h-5 rounded-md bg-emerald-50 text-emerald-700 font-bold text-xs flex items-center justify-center">
+                        <Compass className="w-3 h-3" />
+                      </span>
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">
+                        Land Tours, Transfers & Excursions ({listProducts.length})
+                      </h3>
+                    </div>
+                    <span className="text-[11px] text-emerald-700 font-semibold">Licensed Guides & Transfers</span>
+                  </div>
+
+                  {listProducts.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500 text-center">
+                      No ground tours found for this filter combination.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {listProducts.map(product => {
+                        const matchingItems = items.filter(i => i.product.id === product.id);
+                        const isAlreadyAdded = matchingItems.length > 0;
+
+                        return (
+                          <B2BProductRowCard
+                            key={product.id}
+                            product={product}
+                            allProducts={products}
+                            currency={currency}
+                            agentClientMarkupPercent={agentClientMarkupPercent}
+                            isAlreadyAdded={isAlreadyAdded}
+                            addedCount={matchingItems.length}
+                            onViewDetails={onViewProductDetails}
+                            onOpenRosterModal={(p) => setRosterPreviewProduct(p)}
+                            onAddToQuote={(options) => handleAddProductFromDropdown(product, options)}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1027,6 +1306,37 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
               )}
             </div>
 
+            {/* Financial Scope Subtotals in Sidebar (when items present) */}
+            {items.length > 0 && (b2bTotals.hotelSellingPrice > 0 || b2bTotals.landSellingPrice > 0) && (
+              <div className="p-3 rounded-2xl bg-slate-800/80 border border-slate-700/80 space-y-1.5 text-xs">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                  Price Breakdown Preview ({currency})
+                </span>
+                {b2bTotals.hotelSellingPrice > 0 && (
+                  <div className="flex items-center justify-between text-teal-300">
+                    <span className="flex items-center space-x-1">
+                      <Building2 className="w-3 h-3" />
+                      <span>Hotel Stays:</span>
+                    </span>
+                    <span className="font-mono font-bold">{formatCurrency(b2bTotals.hotelSellingPrice, currency)}</span>
+                  </div>
+                )}
+                {b2bTotals.landSellingPrice > 0 && (
+                  <div className="flex items-center justify-between text-emerald-300">
+                    <span className="flex items-center space-x-1">
+                      <Compass className="w-3 h-3" />
+                      <span>Land Tours & Transfers:</span>
+                    </span>
+                    <span className="font-mono font-bold">{formatCurrency(b2bTotals.landSellingPrice, currency)}</span>
+                  </div>
+                )}
+                <div className="pt-1.5 border-t border-slate-700 flex items-center justify-between font-bold text-white">
+                  <span>Client Selling Total:</span>
+                  <span className="text-[#00E5C0] font-mono text-sm">{formatCurrency(b2bTotals.totalClientSellingPrice, currency)}</span>
+                </div>
+              </div>
+            )}
+
             {/* ================================================================= */}
             {/* PRIMARY CTA: "CREATE QUOTE" BUTTON */}
             {/* ================================================================= */}
@@ -1066,8 +1376,6 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
           </div>
         </div>
       </div>
-      </>
-      )}
 
       {/* ========================================================================= */}
       {/* FINAL B2B QUOTATION MODAL / RESULT SUMMARY */}
@@ -1083,7 +1391,7 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
                 </div>
                 <div>
                   <h3 className="text-base font-extrabold text-white">
-                    B2B Final Itinerary Price Quotation
+                    {activeQuoteTab === 'AGENT_WHOLESALE' ? 'Agent Wholesale Quotation' : 'Client Itinerary Proposal'}
                   </h3>
                   <p className="text-xs text-slate-400">
                     {clientName || 'Harrison VIP Client'} • {items.length} Ground Products • Currency: {currency}
@@ -1168,31 +1476,27 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
               </div>
 
               {/* Financial KPI Ribbon */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
                 {activeQuoteTab === 'AGENT_WHOLESALE' ? (
                   <>
                     <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">DMC Wholesale Net</span>
-                      <span className="text-lg font-extrabold text-slate-900 font-mono">
+                      <span className="text-xl font-extrabold text-slate-900 font-mono">
                         {formatCurrency(b2bTotals.totalDmcWholesaleNet, currency)}
                       </span>
-                      <span className="text-[10px] text-emerald-600 block mt-0.5 font-semibold">10% Wholesale Tier</span>
+                      <span className="text-[10px] text-slate-500 block mt-0.5 font-medium">
+                        Final selling price to the B2B Agent
+                      </span>
                     </div>
 
                     <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 block">Agent Profit / Margin</span>
-                      <span className="text-lg font-extrabold text-emerald-700 font-mono">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 block">Agent Profit</span>
+                      <span className="text-xl font-extrabold text-emerald-700 font-mono">
                         {formatCurrency(b2bTotals.totalAgentProfit, currency)}
                       </span>
-                      <span className="text-[10px] text-emerald-600 block mt-0.5 font-semibold">+{agentClientMarkupPercent}% Client Markup</span>
-                    </div>
-
-                    <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Taxes & Fees</span>
-                      <span className="text-lg font-extrabold text-slate-900 font-mono">
-                        {formatCurrency(b2bTotals.totalTaxes + b2bTotals.totalServiceFees, currency)}
+                      <span className="text-[10px] text-emerald-600 block mt-0.5 font-medium">
+                        B2B agent's profit for his reference
                       </span>
-                      <span className="text-[10px] text-slate-500 block mt-0.5">Local Destination VAT</span>
                     </div>
 
                     <div className="p-4 rounded-2xl bg-slate-900 text-white">
@@ -1209,26 +1513,18 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
                   <>
                     <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Total Itinerary Services</span>
-                      <span className="text-lg font-extrabold text-slate-900 font-mono">
+                      <span className="text-xl font-extrabold text-slate-900 font-mono">
                         {items.length} Products
                       </span>
                       <span className="text-[10px] text-slate-500 block mt-0.5">Fully Scheduled & Guided</span>
                     </div>
 
                     <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Total Travelers</span>
-                      <span className="text-lg font-extrabold text-slate-900 font-mono">
-                        {b2bTotals.totalPax} Pax
-                      </span>
-                      <span className="text-[10px] text-slate-500 block mt-0.5">Adults + Children</span>
-                    </div>
-
-                    <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Package Price Per Person</span>
-                      <span className="text-lg font-extrabold text-slate-900 font-mono">
+                      <span className="text-xl font-extrabold text-slate-900 font-mono">
                         {formatCurrency(b2bTotals.pricePerPax, currency)}
                       </span>
-                      <span className="text-[10px] text-slate-500 block mt-0.5">All Inclusions & Taxes</span>
+                      <span className="text-[10px] text-slate-500 block mt-0.5">All-Inclusive Contracted Rate</span>
                     </div>
 
                     <div className="p-4 rounded-2xl bg-slate-900 text-white">
@@ -1236,7 +1532,7 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
                       <span className="text-xl font-extrabold text-white font-mono">
                         {formatCurrency(b2bTotals.totalClientSellingPrice, currency)}
                       </span>
-                      <span className="text-[10px] text-slate-400 block mt-0.5">Net Inclusive Package</span>
+                      <span className="text-[10px] text-slate-400 block mt-0.5">Final All-Inclusive Total</span>
                     </div>
                   </>
                 )}
@@ -1315,7 +1611,7 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
                 <span className="font-bold text-slate-900 block">DMC Partner Terms & Inclusions:</span>
                 <ul className="text-slate-600 list-disc pl-4 space-y-1 text-[11px] leading-relaxed">
                   <li>Wholesale contracted rates guaranteed for 14 days from generation date.</li>
-                  <li>Includes licensed English-speaking guides, private ground transfers, taxes, and service fees.</li>
+                  <li>Includes licensed English-speaking guides, private ground transfers, and destination inclusions.</li>
                   <li>Instant confirmation applies subject to guide dispatch and vehicle availability in DMC roster.</li>
                 </ul>
               </div>
@@ -1323,7 +1619,17 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
 
             {/* Modal Footer Actions */}
             <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
-              <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  id="btn-modal-download-pdf"
+                  onClick={handleDownloadPDF}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer shadow-xs"
+                  title="Download clean formatted PDF quotation document"
+                >
+                  <FileDown className="w-3.5 h-3.5" />
+                  <span>Download PDF</span>
+                </button>
+
                 <button
                   onClick={handleShareLink}
                   className="px-3.5 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-bold transition-colors flex items-center space-x-1.5 cursor-pointer"
@@ -1337,7 +1643,7 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
                   className="px-3.5 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl text-xs font-bold transition-colors flex items-center space-x-1.5 cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>Print PDF</span>
+                  <span>Print</span>
                 </button>
               </div>
 
@@ -1413,13 +1719,14 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
                   productId={rosterPreviewProduct.id}
                   selectedDate={getNextAvailableDate(rosterPreviewProduct.id) || new Date().toISOString().split('T')[0]}
                   onSelectDate={(newDate) => {
-                    // Quick add with selected date
+                    // Quick add with selected date without opening drawer
                     addProductToQuote(rosterPreviewProduct, {
                       travelDate: newDate,
                       adults: Math.max(1, rosterPreviewProduct.minPax || 2),
                       children: 0,
                       infants: 0,
-                      selectedAddonIds: []
+                      selectedAddonIds: [],
+                      openDrawer: false
                     });
                     setRosterPreviewProduct(null);
                   }}
@@ -1452,6 +1759,21 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
             </div>
           </div>
         </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* HOTEL DETAIL & INSPECTION MODAL */}
+      {/* ========================================================================= */}
+      {inspectingHotel && (
+        <HotelDetailModal
+          hotel={inspectingHotel}
+          isOpen={!!inspectingHotel}
+          onClose={() => setInspectingHotel(null)}
+          onAddStayToQuote={(stayConfig) => {
+            handleAddHotelStayToQuote(inspectingHotel, stayConfig);
+            setInspectingHotel(null);
+          }}
+        />
       )}
     </div>
   );

@@ -239,11 +239,12 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(71, 85, 105);
-  doc.text('Subtotal Base Price:', summaryX + 4, currentY + 6);
-  doc.text(formatCurrency(quote.totalSellingPrice * 0.9, quote.currency), summaryX + summaryWidth - 4, currentY + 6, { align: 'right' });
+  doc.text('Total Itinerary Services:', summaryX + 4, currentY + 6);
+  doc.text(`${quote.items.length} Curated Products`, summaryX + summaryWidth - 4, currentY + 6, { align: 'right' });
 
-  doc.text('Local VAT & City Service Fees (Included):', summaryX + 4, currentY + 12);
-  doc.text(formatCurrency(quote.totalSellingPrice * 0.1, quote.currency), summaryX + summaryWidth - 4, currentY + 12, { align: 'right' });
+  const totalPaxCount = Math.max(1, (quote.items[0]?.pax?.adults || 1) + (quote.items[0]?.pax?.children || 0));
+  doc.text('Package Rate Per Person:', summaryX + 4, currentY + 12);
+  doc.text(formatCurrency(quote.totalSellingPrice / totalPaxCount, quote.currency), summaryX + summaryWidth - 4, currentY + 12, { align: 'right' });
 
   doc.setDrawColor(148, 163, 184);
   doc.line(summaryX + 4, currentY + 16, summaryX + summaryWidth - 4, currentY + 16);
