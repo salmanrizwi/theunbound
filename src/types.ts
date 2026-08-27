@@ -69,8 +69,30 @@ export interface User {
   role: UserRole;
   category?: UserCategory;
   agencyName?: string;
+  companyName?: string;
+  businessType?: string;
+  jobTitle?: string;
   country?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  address?: string;
+  companyAddress?: string;
+  companyCity?: string;
+  companyState?: string;
+  companyPostalCode?: string;
+  companyCountry?: string;
+  companyPhone?: string;
+  companyEmail?: string;
+  companyWebsite?: string;
+  taxOrGstNumber?: string;
+  iataOrAbtaNumber?: string;
   avatarUrl?: string;
+  brandLogoUrl?: string;
+  primaryCurrency?: CurrencyCode;
+  bio?: string;
+  emergencyContactPerson?: string;
+  emergencyContactPhone?: string;
   createdAt: string;
   approvalStatus?: UserApprovalStatus;
   permissions?: UserPermissionAccess;
@@ -400,6 +422,23 @@ export interface BookingCustomerInfo {
   emergencyContact?: string;
 }
 
+export interface BookingSupplierAllocation {
+  supplierId: string;
+  supplierName: string;
+  supplierType: 'HOTEL' | 'TRANSPORT' | 'GUIDE' | 'ACTIVITY' | 'DMC_PARTNER';
+  serviceName: string;
+  status: 'PENDING_DISPATCH' | 'SENT_TO_SUPPLIER' | 'CONFIRMED_BY_SUPPLIER' | 'REJECTED_BY_SUPPLIER' | 'AMENDMENT_REQUESTED';
+  supplierConfirmationRef?: string;
+  dispatchedAt?: string;
+  confirmedAt?: string;
+  assignedContact?: string;
+  contactPhone?: string;
+  contactEmail?: string;
+  notes?: string;
+  costRate?: number;
+  costCurrency?: CurrencyCode;
+}
+
 export interface BookingItem {
   id: string;
   productId: string;
@@ -418,6 +457,11 @@ export interface BookingItem {
   unitSellingPrice: number;
   totalPrice: number;
   currency: CurrencyCode;
+  supplierId?: string;
+  supplierName?: string;
+  supplierStatus?: 'PENDING_DISPATCH' | 'SENT_TO_SUPPLIER' | 'CONFIRMED_BY_SUPPLIER' | 'REJECTED_BY_SUPPLIER' | 'AMENDMENT_REQUESTED';
+  supplierConfirmationRef?: string;
+  supplierNotes?: string;
 }
 
 export interface SentEmailRecord {
@@ -446,6 +490,8 @@ export interface Booking {
   travelStartDate: string;
   travelEndDate: string;
   status: BookingStatus;
+  supplierAllocationStatus?: 'UNALLOCATED' | 'DISPATCHED_TO_SUPPLIERS' | 'PARTIALLY_CONFIRMED' | 'FULLY_CONFIRMED_BY_SUPPLIERS';
+  supplierAllocations?: BookingSupplierAllocation[];
   createdAt: string;
   updatedAt: string;
   confirmationNotice: string; // "Your booking has been submitted and will be updated in 24-48 Hrs."
@@ -840,9 +886,18 @@ export interface HotelRoomType {
   bedType: string;
   numberOfBeds: number;
   roomSizeSqMeters: number;
-  maxAdults: number;
-  maxChildren: number;
-  maxOccupancy: number;
+  minPax?: number; // Minimum total passengers required (default 1)
+  maxPax?: number; // Maximum total passengers allowed
+  minAdults?: number; // Minimum adults (default 1)
+  maxAdults: number; // Maximum adults (e.g. 2, 3, 4)
+  minChildren?: number; // Minimum children (default 0)
+  maxChildren: number; // Maximum children allowed (e.g. 1, 2, 3)
+  minChildAge?: number; // e.g. 0 or 2
+  maxChildAge?: number; // e.g. 11 or 12 years
+  infantMaxAge?: number; // e.g. 2 years
+  maxInfants?: number; // e.g. 1
+  childPricingPolicy?: 'FREE_BELOW_AGE' | 'HALF_PRICE' | 'FULL_ADULT_RATE';
+  maxOccupancy: number; // Overall maximum occupancy ceiling
   extraBedAvailable: boolean;
   childPolicy: string;
   amenities: string[];
@@ -1250,6 +1305,48 @@ export interface ItineraryDaySlot {
   destination?: string;
   city?: string;
   itemIds: string[];
+}
+
+// ----------------------------------------------------
+// INSTITUTIONAL & LEGAL PAGES CONFIGURATION
+// ----------------------------------------------------
+export interface SitePagesConfig {
+  contactPage: {
+    heroTitle: string;
+    heroSubtitle: string;
+    officeAddress: string;
+    salesEmail: string;
+    opsEmail: string;
+    phone: string;
+    whatsappNumber: string;
+    supportHours: string;
+    emergencyHotline: string;
+  };
+  termsPage: {
+    lastUpdated: string;
+    title: string;
+    b2bWholesaleTerms: string;
+    cancellationSlaNotice: string;
+    generalTermsSnippet: string;
+  };
+  refundPage: {
+    lastUpdated: string;
+    title: string;
+    processingTimeDays: number;
+    forceMajeurePolicy: string;
+    refundConditionsSnippet: string;
+  };
+  privacyPage: {
+    lastUpdated: string;
+    title: string;
+    dataControllerEmail: string;
+    gdprNoticeSnippet: string;
+  };
+  b2bPortal: {
+    announcementBanner: string;
+    isAnnouncementActive: boolean;
+    contractDownloadNotice: string;
+  };
 }
 
 

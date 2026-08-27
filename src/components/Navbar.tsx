@@ -14,13 +14,14 @@ import {
   X,
   Briefcase,
   Calendar,
-  Clock
+  Clock,
+  Building2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { CurrencyCode, DestinationRegion, Destination, SUPPORTED_CURRENCIES } from '../types';
 
-export type MainNavTab = 'DESTINATIONS' | 'B2B_BUILDER' | 'DASHBOARD' | 'ADMIN' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND';
+export type MainNavTab = 'DESTINATIONS' | 'B2B_BUILDER' | 'DASHBOARD' | 'ADMIN' | 'ACCOUNT' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND';
 
 interface NavbarProps {
   destinations?: Destination[];
@@ -267,6 +268,18 @@ export const Navbar: React.FC<NavbarProps> = ({
 
                     <div className="py-1">
                       <button
+                        id="user-menu-account"
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          if (onSelectTab) onSelectTab('ACCOUNT');
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-slate-800 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer font-medium"
+                      >
+                        <UserIcon className="w-4 h-4 text-[#00C6A6]" />
+                        <span>Profile & Company Details</span>
+                      </button>
+
+                      <button
                         id="user-menu-bookings"
                         onClick={() => {
                           setIsUserMenuOpen(false);
@@ -397,16 +410,31 @@ export const Navbar: React.FC<NavbarProps> = ({
             {onSelectTab && (
               <div className="pt-2 border-t border-slate-100 space-y-1">
                 {isAuthenticated && (
-                  <button
-                    onClick={() => {
-                      if (onOpenBookings) onOpenBookings();
-                      setIsMobileNavOpen(false);
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-slate-800 hover:bg-slate-50 flex items-center justify-between"
-                  >
-                    <span>My Bookings (24-48h SLA)</span>
-                    <span className="text-[10px] bg-slate-900 text-[#00E5C0] px-1.5 py-0.5 rounded font-mono font-bold">Bookings</span>
-                  </button>
+                  <>
+                    <button
+                      onClick={() => {
+                        onSelectTab('ACCOUNT');
+                        setIsMobileNavOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-slate-800 hover:bg-slate-50 flex items-center justify-between"
+                    >
+                      <span className="flex items-center space-x-2">
+                        <UserIcon className="w-4 h-4 text-[#00C6A6]" />
+                        <span>Profile & Company Details</span>
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        if (onOpenBookings) onOpenBookings();
+                        setIsMobileNavOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-slate-800 hover:bg-slate-50 flex items-center justify-between"
+                    >
+                      <span>My Bookings (24-48h SLA)</span>
+                      <span className="text-[10px] bg-slate-900 text-[#00E5C0] px-1.5 py-0.5 rounded font-mono font-bold">Bookings</span>
+                    </button>
+                  </>
                 )}
 
                 {isB2BAgentOrAdmin && (

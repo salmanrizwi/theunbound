@@ -12,6 +12,7 @@ import { ContactUsPage } from './pages/ContactUsPage';
 import { TermsOfPolicyPage } from './pages/TermsOfPolicyPage';
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { RefundPolicyPage } from './pages/RefundPolicyPage';
+import { AccountPage } from './pages/AccountPage';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { PricingCalculatorModal } from './components/PricingCalculatorModal';
 import { QuoteBuilderDrawer } from './components/QuoteBuilderDrawer';
@@ -155,7 +156,15 @@ const MainAppContent: React.FC = () => {
               setInspectingProductHidePrice(false);
               setInspectingProduct(p);
             }}
+            onNavigateToAccount={() => setActiveTab('ACCOUNT')}
             products={products}
+          />
+        )}
+
+        {activeTab === 'ACCOUNT' && (
+          <AccountPage
+            onBackToExplore={() => setActiveTab('DESTINATIONS')}
+            onNavigateToBuilder={() => setActiveTab('B2B_BUILDER')}
           />
         )}
 

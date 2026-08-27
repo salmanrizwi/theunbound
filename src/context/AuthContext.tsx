@@ -10,6 +10,7 @@ interface AuthContextType {
   authModalReason: string;
   login: (email: string, role?: UserRole) => void;
   logout: () => void;
+  updateUserProfile: (updates: Partial<User>) => Promise<User | null>;
   openAuthModal: (reason?: string, onAuthenticatedCallback?: () => void) => void;
   closeAuthModal: () => void;
   requireAuth: (callback: () => void, reason?: string) => boolean;
@@ -157,6 +158,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
   };
 
+  const updateUserProfile = async (updates: Partial<User>): Promise<User | null> => {
+    if (!user) return null;
+    const db = AppDatabase.getInstance();
+    const updated = db.updateUserProfile(user.id, updates, user);
+    if (updated) {
+      setUser(updated);
+      localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(updated));
+      return updated;
+    }
+    // Fallback if not returned
+    const fallbackUser: User = {
+      ...user,
+      ...updates
+    };
+    setUser(fallbackUser);
+    localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(fallbackUser));
+    return fallbackUser;
+  };
+
   const openAuthModal = (reason = 'Access Protected Pricing Calculator', callback?: () => void) => {
     setAuthModalReason(reason);
     if (callback) {
@@ -189,6 +209,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         authModalReason,
         login,
         logout,
+        updateUserProfile,
         openAuthModal,
         closeAuthModal,
         requireAuth

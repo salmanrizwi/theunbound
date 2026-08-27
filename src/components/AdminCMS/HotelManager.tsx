@@ -882,102 +882,128 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
 
           {/* Hotel Cards Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredHotels.map(hotel => (
-              <div key={hotel.id} className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between">
-                <div>
-                  <div className="relative h-48 overflow-hidden">
-                    <img 
-                      src={hotel.heroImage} 
-                      alt={hotel.name} 
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
-                    />
-                    <div className="absolute top-3 left-3 bg-slate-900/80 backdrop-blur-md text-white text-[11px] font-bold px-2.5 py-1 rounded-lg flex items-center space-x-1">
-                      <MapPin className="w-3 h-3 text-[#00C6A6]" />
-                      <span>{hotel.cityName}, {hotel.destinationName}</span>
-                    </div>
-                    <div className="absolute top-3 right-3 bg-[#008972] text-white text-[11px] font-bold px-2.5 py-0.5 rounded-md">
-                      {hotel.propertyType.replace('_', ' ')}
-                    </div>
-                    <div className="absolute bottom-3 left-3 bg-white/95 backdrop-blur-sm text-amber-500 text-xs font-bold px-2 py-1 rounded-md flex items-center space-x-0.5 shadow-xs">
-                      {[...Array(hotel.starRating)].map((_, i) => (
-                        <Star key={i} className="w-3 h-3 fill-amber-400 text-amber-400" />
-                      ))}
-                      <span className="ml-1 text-slate-700 font-mono text-[11px]">{hotel.code}</span>
-                    </div>
-                  </div>
+            {filteredHotels.map(hotel => {
+              const maxRoomOccupancy = Math.max(...(hotel.roomTypes.map(r => r.maxOccupancy || (r.maxAdults + r.maxChildren) || 3)), 3);
+              const maxChildrenAllowed = Math.max(...(hotel.roomTypes.map(r => r.maxChildren ?? 2)), 2);
+              const maxChildAge = Math.max(...(hotel.roomTypes.map(r => r.maxChildAge ?? 12)), 12);
 
-                  <div className="p-5 space-y-3">
-                    <h3 className="text-base font-bold text-slate-900 line-clamp-1">{hotel.name}</h3>
-                    <p className="text-xs text-slate-500 line-clamp-2">{hotel.shortDescription || hotel.description}</p>
-
-                    {/* Room Rates Breakdown */}
-                    <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100 space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-500">Room Categories:</span>
-                        <span className="font-bold text-slate-800">{hotel.roomTypes.length} Configured</span>
+              return (
+                <div key={hotel.id} className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between group">
+                  <div>
+                    <div className="relative h-48 overflow-hidden bg-slate-100">
+                      <img 
+                        src={hotel.heroImage} 
+                        alt={hotel.name} 
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
+                      />
+                      <div className="absolute top-3 left-3 bg-slate-900/85 backdrop-blur-md text-white text-[11px] font-bold px-3 py-1 rounded-xl flex items-center space-x-1.5 shadow-sm">
+                        <MapPin className="w-3.5 h-3.5 text-[#00C6A6]" />
+                        <span>{hotel.cityName}, {hotel.destinationName}</span>
                       </div>
-                      
-                      <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200">
-                        <span className="text-slate-500">Per-Night Net Starting Rate:</span>
-                        <span className="font-extrabold text-[#008972] font-mono text-sm">
-                          {hotel.currency} {hotel.startingNetPrice} <span className="text-[10px] font-normal text-slate-500">/ night</span>
+                      <div className="absolute top-3 right-3 bg-[#008972] text-white text-[10px] font-extrabold px-2.5 py-1 rounded-xl uppercase tracking-wider shadow-sm">
+                        {hotel.propertyType.replace('_', ' ')}
+                      </div>
+                      <div className="absolute bottom-3 left-3 bg-white/95 backdrop-blur-sm text-amber-500 text-xs font-bold px-2.5 py-1 rounded-xl flex items-center space-x-1 shadow-sm">
+                        {[...Array(hotel.starRating)].map((_, i) => (
+                          <Star key={i} className="w-3 h-3 fill-amber-400 text-amber-400" />
+                        ))}
+                        <span className="ml-1.5 text-slate-700 font-mono text-[11px] font-bold">{hotel.code}</span>
+                      </div>
+                    </div>
+
+                    <div className="p-5 space-y-3.5">
+                      <div>
+                        <h3 className="text-base font-bold text-slate-900 line-clamp-1 group-hover:text-[#008972] transition-colors">
+                          {hotel.name}
+                        </h3>
+                        <p className="text-xs text-slate-500 line-clamp-2 mt-1 leading-relaxed">
+                          {hotel.shortDescription || hotel.description}
+                        </p>
+                      </div>
+
+                      {/* Smart Passenger & Room Capacity Badge */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2.5 py-1 rounded-lg flex items-center space-x-1">
+                          <Bed className="w-3 h-3 text-slate-500" />
+                          <span>{hotel.roomTypes.length} Room Categories</span>
+                        </span>
+                        <span className="bg-emerald-50 text-emerald-800 border border-emerald-200/60 text-[10px] font-bold px-2 py-1 rounded-lg">
+                          Max {maxRoomOccupancy} Pax / Room (Kids ≤ {maxChildAge}y)
                         </span>
                       </div>
+
+                      {/* Room Rates Breakdown */}
+                      <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100 space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500">Status:</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                            hotel.status === 'PUBLISHED' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {hotel.status}
+                          </span>
+                        </div>
+                        
+                        <div className="flex items-center justify-between text-xs pt-1.5 border-t border-slate-200">
+                          <span className="text-slate-500 font-medium">Per-Night Net Starting Rate:</span>
+                          <span className="font-extrabold text-[#008972] font-mono text-sm">
+                            {hotel.currency} {hotel.startingNetPrice} <span className="text-[10px] font-normal text-slate-500">/ night</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* High-Visibility Card CTA Section */}
+                  <div className="p-4 bg-slate-50/80 border-t border-slate-100 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => {
+                          setCalendarHotelId(hotel.id);
+                          if (hotel.roomTypes[0]) {
+                            setCalendarRoomId(hotel.roomTypes[0].id);
+                          }
+                          setViewMode('CALENDAR_VIEW');
+                        }}
+                        className="w-full flex items-center justify-center space-x-1.5 bg-[#008972] hover:bg-[#007460] text-white py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+                      >
+                        <CalendarIcon className="w-3.5 h-3.5" />
+                        <span>Rates & Calendar</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setEditingHotel(hotel);
+                          setIsEditing(true);
+                        }}
+                        className="w-full flex items-center justify-center space-x-1.5 bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 py-2.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                      >
+                        <Edit className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Edit Property</span>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1 text-[11px] text-slate-400">
+                      {hotel.dailyRateOverrides && Object.keys(hotel.dailyRateOverrides).length > 0 ? (
+                        <span className="text-[10px] font-bold text-[#008972] flex items-center space-x-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>{Object.keys(hotel.dailyRateOverrides).length} Active Daily Overrides</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px]">Standard contract tariff</span>
+                      )}
+
+                      <button
+                        onClick={() => handleDelete(hotel.id)}
+                        className="text-red-600 hover:text-red-800 text-[11px] font-bold flex items-center space-x-1 cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Delete</span>
+                      </button>
                     </div>
                   </div>
                 </div>
-
-                <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                      hotel.status === 'PUBLISHED' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                    }`}>
-                      {hotel.status}
-                    </span>
-                    {hotel.dailyRateOverrides && Object.keys(hotel.dailyRateOverrides).length > 0 && (
-                      <span className="text-[10px] font-bold bg-[#008972]/10 text-[#008972] px-2 py-0.5 rounded flex items-center space-x-1">
-                        <CalendarIcon className="w-2.5 h-2.5" />
-                        <span>{Object.keys(hotel.dailyRateOverrides).length} Calendar Overrides</span>
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={() => {
-                        setCalendarHotelId(hotel.id);
-                        if (hotel.roomTypes[0]) {
-                          setCalendarRoomId(hotel.roomTypes[0].id);
-                        }
-                        setViewMode('CALENDAR_VIEW');
-                      }}
-                      className="px-2.5 py-1.5 rounded-xl border border-[#008972] bg-[#008972]/10 text-[#008972] hover:bg-[#008972] hover:text-white transition-colors text-xs font-bold cursor-pointer flex items-center space-x-1"
-                      title="Open Calendar Rates"
-                    >
-                      <CalendarIcon className="w-3 h-3" />
-                      <span>Calendar</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setEditingHotel(hotel);
-                        setIsEditing(true);
-                      }}
-                      className="p-1.5 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 cursor-pointer"
-                      title="Edit Hotel & Rates"
-                    >
-                      <Edit className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(hotel.id)}
-                      className="p-1.5 rounded-xl border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 cursor-pointer"
-                      title="Delete Hotel"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -1540,6 +1566,7 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                           </button>
                         </div>
 
+                        {/* Room Basic Attributes */}
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                           <div>
                             <label className="text-slate-500 font-bold">Bed Type</label>
@@ -1568,30 +1595,171 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                             />
                           </div>
                           <div>
-                            <label className="text-slate-500 font-bold">Max Adults</label>
+                            <label className="text-slate-500 font-bold">Total Max Occupancy (Pax)</label>
                             <input
                               type="number"
-                              value={room.maxAdults || 2}
+                              value={room.maxOccupancy || (room.maxAdults + room.maxChildren) || 4}
                               onChange={e => {
                                 const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                updatedRooms[roomIdx].maxAdults = Number(e.target.value);
+                                const val = Number(e.target.value);
+                                updatedRooms[roomIdx].maxOccupancy = val;
+                                updatedRooms[roomIdx].maxPax = val;
+                                setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                              }}
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-[#008972]"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-slate-500 font-bold">Min Passenger (Pax)</label>
+                            <input
+                              type="number"
+                              value={room.minPax ?? 1}
+                              onChange={e => {
+                                const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                updatedRooms[roomIdx].minPax = Number(e.target.value);
                                 setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
                               }}
                               className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs"
                             />
                           </div>
-                          <div>
-                            <label className="text-slate-500 font-bold">Max Children</label>
-                            <input
-                              type="number"
-                              value={room.maxChildren || 1}
-                              onChange={e => {
-                                const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                updatedRooms[roomIdx].maxChildren = Number(e.target.value);
-                                setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs"
-                            />
+                        </div>
+
+                        {/* Smart Passenger & Children Age Configuration Panel */}
+                        <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-700 flex items-center space-x-1.5">
+                              <Sparkles className="w-3.5 h-3.5 text-[#008972]" />
+                              <span>Smart Passenger & Kids Age Matrix</span>
+                            </span>
+                            <span className="text-[10px] bg-[#008972]/10 text-[#008972] font-bold px-2 py-0.5 rounded-full">
+                              Validates B2B & Direct Room Occupancy
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 text-xs">
+                            <div>
+                              <label className="text-slate-500 text-[10px] font-bold block mb-1">Min Adults</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={10}
+                                value={room.minAdults ?? 1}
+                                onChange={e => {
+                                  const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                  updatedRooms[roomIdx].minAdults = Number(e.target.value);
+                                  setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                }}
+                                className="w-full px-2 py-1 rounded border border-slate-200 text-xs font-semibold"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-slate-500 text-[10px] font-bold block mb-1">Max Adults</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={10}
+                                value={room.maxAdults ?? 2}
+                                onChange={e => {
+                                  const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                  updatedRooms[roomIdx].maxAdults = Number(e.target.value);
+                                  setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                }}
+                                className="w-full px-2 py-1 rounded border border-slate-200 text-xs font-semibold"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-slate-500 text-[10px] font-bold block mb-1">Max Children</label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={10}
+                                value={room.maxChildren ?? 2}
+                                onChange={e => {
+                                  const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                  updatedRooms[roomIdx].maxChildren = Number(e.target.value);
+                                  setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                }}
+                                className="w-full px-2 py-1 rounded border border-slate-200 text-xs font-semibold"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-slate-500 text-[10px] font-bold block mb-1">Max Child Age (Yrs)</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={17}
+                                value={room.maxChildAge ?? 11}
+                                onChange={e => {
+                                  const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                  updatedRooms[roomIdx].maxChildAge = Number(e.target.value);
+                                  setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                }}
+                                className="w-full px-2 py-1 rounded border border-slate-200 text-xs font-semibold"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-slate-500 text-[10px] font-bold block mb-1">Infant Max Age (Yrs)</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={5}
+                                value={room.infantMaxAge ?? 2}
+                                onChange={e => {
+                                  const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                  updatedRooms[roomIdx].infantMaxAge = Number(e.target.value);
+                                  setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                }}
+                                className="w-full px-2 py-1 rounded border border-slate-200 text-xs font-semibold"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-slate-500 text-[10px] font-bold block mb-1">Max Infants</label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={5}
+                                value={room.maxInfants ?? 1}
+                                onChange={e => {
+                                  const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                  updatedRooms[roomIdx].maxInfants = Number(e.target.value);
+                                  setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                }}
+                                className="w-full px-2 py-1 rounded border border-slate-200 text-xs font-semibold"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-100 text-xs">
+                            <div>
+                              <label className="text-slate-500 text-[10px] font-bold block mb-1">Child Bedding Policy</label>
+                              <input
+                                type="text"
+                                value={room.childPolicy || ''}
+                                onChange={e => {
+                                  const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                  updatedRooms[roomIdx].childPolicy = e.target.value;
+                                  setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                }}
+                                placeholder="e.g. Complimentary below 6 yrs sharing bed, Extra bed for 6-11 yrs"
+                                className="w-full px-2.5 py-1 rounded border border-slate-200 text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-slate-500 text-[10px] font-bold block mb-1">Child Pricing Policy</label>
+                              <select
+                                value={room.childPricingPolicy || 'HALF_PRICE'}
+                                onChange={e => {
+                                  const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                  updatedRooms[roomIdx].childPricingPolicy = e.target.value as any;
+                                  setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                }}
+                                className="w-full px-2.5 py-1 rounded border border-slate-200 text-xs font-semibold"
+                              >
+                                <option value="FREE_BELOW_AGE">Free below age rule / Sharing existing bed</option>
+                                <option value="HALF_PRICE">Fixed Child Tariff Rate</option>
+                                <option value="FULL_ADULT_PRICE">Full Adult Rate with extra bed</option>
+                              </select>
+                            </div>
                           </div>
                         </div>
 

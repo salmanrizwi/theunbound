@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { CurrencyCode, Product, QuoteItem, Quotation } from '../types';
+import { CurrencyCode, Product, QuoteItem, Quotation, TravelLead } from '../types';
 import { calculateProductPrice } from '../services/pricingEngine';
+import { AppDatabase } from '../services/db';
 import { useAuth } from './AuthContext';
 
 interface QuotationContextType {
@@ -313,6 +314,48 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     setSavedQuotes(prev => [newQuote, ...prev]);
+
+    // Auto-capture or update as a CRM Travel Lead for ground operations
+    try {
+      const db = AppDatabase.getInstance();
+      const leadId = `lead-quote-${newQuote.id}`;
+      const newLead: TravelLead = {
+        id: leadId,
+        leadNumber: `LED-${newQuote.quoteNumber.replace('UBQ-', '')}`,
+        contactName: clientName || user?.name || 'Inquiring Traveler / Agency',
+        email: clientEmail || user?.email || 'sales@theunbound.in',
+        phone: '',
+        agencyName: clientCompany || user?.agencyName,
+        source: 'QUOTATION_SAVED',
+        status: 'QUOTED',
+        assignedStaffId: user?.id || 'staff-01',
+        assignedStaffName: user?.name || 'Operations Desk',
+        destinationId: items[0]?.product.destinationId || 'japan',
+        destinationName: items[0]?.product.destinationName || 'Multi-Destination',
+        travelDates: items[0]?.travelDate || 'Upcoming 2026',
+        paxAdults: items.reduce((sum, it) => sum + it.pax.adults, 0) || 2,
+        paxChildren: items.reduce((sum, it) => sum + it.pax.children, 0) || 0,
+        estimatedBudget: totals.totalSellingPrice,
+        currency,
+        quoteId: newQuote.id,
+        quoteNumber: newQuote.quoteNumber,
+        travelRequirements: `Generated itinerary with ${items.length} items: ${items.map(i => i.product.name).join(', ')}`,
+        notes: [
+          {
+            id: `note-${Date.now()}`,
+            authorName: user?.name || 'System Automation',
+            text: `B2B Quotation ${newQuote.quoteNumber} created and saved for value ${totals.totalSellingPrice.toLocaleString()} ${currency}.`,
+            timestamp: new Date().toISOString()
+          }
+        ],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      db.saveLead(newLead, user);
+    } catch (e) {
+      console.debug('Lead auto-capture from quote save:', e);
+    }
+
     return newQuote;
   };
 

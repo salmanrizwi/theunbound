@@ -1,6 +1,13 @@
 import { Booking, SentEmailRecord } from '../types';
 import { formatCurrency } from './pricingEngine';
 
+function base64UrlEncode(str: string): string {
+  return btoa(unescape(encodeURIComponent(str)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
 export class EmailNotificationService {
   private static instance: EmailNotificationService;
 
@@ -12,7 +19,49 @@ export class EmailNotificationService {
   }
 
   /**
-   * Generates and dispatches simulated production emails for a newly submitted booking:
+   * Executes live email dispatch via Google Workspace Gmail API v1 endpoint
+   */
+  public async sendViaGmailApi(to: string, subject: string, htmlBody: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    try {
+      const storedToken = sessionStorage.getItem('google_access_token') || localStorage.getItem('google_access_token');
+      if (!storedToken) {
+        return { success: false, error: 'NO_AUTH_TOKEN' };
+      }
+
+      const emailLines = [
+        `To: ${to}`,
+        `Subject: =?utf-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
+        `MIME-Version: 1.0`,
+        `Content-Type: text/html; charset=utf-8`,
+        ``,
+        htmlBody
+      ];
+
+      const raw = base64UrlEncode(emailLines.join('\r\n'));
+
+      const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${storedToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ raw })
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        return { success: false, error: `Gmail API error (${res.status}): ${errText}` };
+      }
+
+      const data = await res.json();
+      return { success: true, messageId: data.id };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error executing Gmail API' };
+    }
+  }
+
+  /**
+   * Generates and dispatches production emails for a newly submitted booking:
    * 1. Official Acknowledgement Email to Traveler / B2B Agent (with 24-48 hour update SLA notice)
    * 2. Internal Operations Dossier Email to TheUnbound DMC Team (sales@theunbound.in / ops@theunbound.in)
    */

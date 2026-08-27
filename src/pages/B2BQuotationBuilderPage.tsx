@@ -1767,12 +1767,7 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
       {inspectingHotel && (
         <HotelDetailModal
           hotel={inspectingHotel}
-          isOpen={!!inspectingHotel}
           onClose={() => setInspectingHotel(null)}
-          onAddStayToQuote={(stayConfig) => {
-            handleAddHotelStayToQuote(inspectingHotel, stayConfig);
-            setInspectingHotel(null);
-          }}
         />
       )}
     </div>

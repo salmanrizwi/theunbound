@@ -31,6 +31,7 @@ interface UserDashboardProps {
   onExploreProducts: () => void;
   onSelectDestination: (dest: string) => void;
   onViewProduct: (product: Product) => void;
+  onNavigateToAccount?: () => void;
   products: Product[];
 }
 
@@ -38,6 +39,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   onExploreProducts,
   onSelectDestination,
   onViewProduct,
+  onNavigateToAccount,
   products
 }) => {
   const { user } = useAuth();
@@ -141,7 +143,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center space-x-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {onNavigateToAccount && (
+              <button
+                onClick={onNavigateToAccount}
+                className="bg-slate-800 hover:bg-slate-700 text-white font-semibold px-4 py-2.5 rounded-xl text-xs transition-all border border-slate-700 flex items-center space-x-1.5 cursor-pointer"
+              >
+                <User className="w-3.5 h-3.5 text-[#00C6A6]" />
+                <span>Account & Company Details</span>
+              </button>
+            )}
+
             <button
               onClick={onExploreProducts}
               className="bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold px-5 py-2.5 rounded-xl text-xs transition-all shadow-md shadow-[#00C6A6]/20 flex items-center space-x-1.5 cursor-pointer"

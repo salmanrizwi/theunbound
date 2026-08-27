@@ -245,7 +245,6 @@ export function hotelToProduct(
     sku: `${hotel.code}-${selectedRoom?.id?.substring(0, 4)?.toUpperCase() || 'STD'}`,
     destinationId: hotel.destinationId,
     destinationName: hotel.destinationName,
-    destinationSlug: hotel.destinationId,
     country: hotel.country,
     city: hotel.cityName,
     productType: 'Hotel & Resort',
@@ -298,11 +297,12 @@ export function hotelToProduct(
     meetingPoint: `${hotel.name} Reception Lobby (${hotel.address})`,
     pickupInformation: 'Direct hotel check-in desk.',
     images: hotel.images && hotel.images.length > 0 ? hotel.images : [hotel.heroImage],
-    heroImage: hotel.heroImage,
-    highlights: hotel.amenities.slice(0, 4),
+    location: `${hotel.area}, ${hotel.cityName}, ${hotel.country}`,
+    latitude: hotel.latitude || 0,
+    longitude: hotel.longitude || 0,
     rating: hotel.starRating,
     reviewCount: 48,
-    isFeatured: true,
+    status: 'ACTIVE',
     lastUpdated: hotel.updatedAt || '2026-08-20'
   };
 }

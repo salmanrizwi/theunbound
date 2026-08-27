@@ -30,7 +30,8 @@ import {
   RosterResource,
   ProductRosterRule,
   WishlistFolder,
-  WishlistItem
+  WishlistItem,
+  SitePagesConfig
 } from '../types';
 import { INITIAL_PRODUCTS } from '../data/initialProducts';
 import { DESTINATIONS } from '../data/destinations';
@@ -46,6 +47,7 @@ import { INITIAL_LEADS } from '../data/initialLeads';
 import { INITIAL_CAMPAIGNS } from '../data/initialCampaigns';
 import { INITIAL_ROSTER_RESOURCES } from '../data/initialRoster';
 import { EmailNotificationService } from './emailNotificationService';
+import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { db as firestoreDb } from './firebase';
 import { 
   collection, 
@@ -79,6 +81,45 @@ function cleanForFirestore(data: any): any {
 
 const STORAGE_KEY_PREFIX = 'theunbound_db_';
 
+export const INITIAL_SITE_PAGES_CONFIG: SitePagesConfig = {
+  contactPage: {
+    heroTitle: 'Get in Touch with Our Ground Operations',
+    heroSubtitle: 'Connect directly with TheUnbound Destination Management Company for bespoke travel quotations, wholesale contracted tariffs, guide allocations, and operational support across Japan, United Kingdom, and Europe.',
+    officeAddress: 'A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi, India',
+    salesEmail: 'sales@theunbound.in',
+    opsEmail: 'business@theunbound.in',
+    phone: '+91 98710 24890',
+    whatsappNumber: '+91 98710 24890',
+    supportHours: 'Mon - Sat: 09:00 AM - 08:00 PM (IST) / 24x7 On-Tour Emergency Support',
+    emergencyHotline: '+91 98710 24890'
+  },
+  termsPage: {
+    lastUpdated: '2026-01-15',
+    title: 'Terms & Conditions of Ground Service',
+    b2bWholesaleTerms: 'All B2B contracted wholesale tariffs are confidential and valid for licensed travel agencies and tour operators. Rates are protected for 14 days from official quotation issuance.',
+    cancellationSlaNotice: 'All bookings are processed under our strict 24–48 hour operational SLA. Ground dispatch confirmation and vouchers will be updated within this guaranteed window.',
+    generalTermsSnippet: 'Services provided by TheUnbound Destination Management Company Ltd. are subject to operational safety regulations, local ground partner availability, and verified vehicle allocations.'
+  },
+  refundPage: {
+    lastUpdated: '2026-01-15',
+    title: 'Cancellation & Refund Policy',
+    processingTimeDays: 7,
+    forceMajeurePolicy: 'In events of extreme weather warnings, natural disruptions, or official government advisories, full credit notes or rescheduled dates will be facilitated without penalty.',
+    refundConditionsSnippet: 'Cancellations received up to 72 hours prior to scheduled tour commencement qualify for a 100% refund minus payment processing gateway charges.'
+  },
+  privacyPage: {
+    lastUpdated: '2026-01-15',
+    title: 'Privacy & Data Protection Policy',
+    dataControllerEmail: 'privacy@theunbound.in',
+    gdprNoticeSnippet: 'We respect your confidentiality. Traveler names, passport numbers, and flight itineraries are collected solely for hotel check-ins, licensed guide manifests, and private chauffeur dispatches.'
+  },
+  b2bPortal: {
+    announcementBanner: '🌸 Spring 2026 Japan & Europe Early-Bird Wholesale Tariffs Live — Lock In Guaranteed Rates Now!',
+    isAnnouncementActive: true,
+    contractDownloadNotice: 'Verified travel agents can download complete Excel & PDF tariff sheets directly from the portal.'
+  }
+};
+
 export class AppDatabase {
   private static instance: AppDatabase;
   private listeners: Set<() => void> = new Set();
@@ -99,6 +140,10 @@ export class AppDatabase {
   public subscribe(callback: () => void): () => void {
     this.listeners.add(callback);
     return () => this.listeners.delete(callback);
+  }
+
+  public async runDiagnostics(): Promise<FirestoreDiagnosticReport> {
+    return runFirestoreDiagnostics();
   }
 
   private notify() {
@@ -916,6 +961,21 @@ export class AppDatabase {
     const emails = emailService.generateBookingEmails(newBookingDraft);
     newBookingDraft.notificationEmailsSent = emails;
 
+    // Asynchronously dispatch real Gmail API calls if authorized
+    emails.forEach(async (em, idx) => {
+      try {
+        const result = await emailService.sendViaGmailApi(em.recipient, em.subject, em.fullHtml);
+        if (result.success && result.messageId) {
+          em.status = 'DELIVERED';
+          this.syncFirestoreDoc('bookings', newBookingDraft.id, {
+            notificationEmailsSent: newBookingDraft.notificationEmailsSent
+          });
+        }
+      } catch (err) {
+        console.debug('Direct Gmail API transmission notice:', err);
+      }
+    });
+
     existing.unshift(newBookingDraft);
     this.setItem('bookings', existing);
     this.syncFirestoreDoc('bookings', newBookingDraft.id, newBookingDraft);
@@ -962,6 +1022,36 @@ export class AppDatabase {
     );
 
     return all[index];
+  }
+
+  public saveBooking(booking: Booking, user: User | null): void {
+    const all = this.getAllBookings();
+    const index = all.findIndex(b => b.id === booking.id || b.bookingReference === booking.bookingReference);
+    const updatedBooking: Booking = {
+      ...booking,
+      updatedAt: new Date().toISOString()
+    };
+    if (index >= 0) {
+      all[index] = updatedBooking;
+      this.logAudit(
+        user,
+        'BOOKING_UPDATED',
+        'Booking',
+        booking.id,
+        `Updated booking ${booking.bookingReference} (Supplier status & details updated)`
+      );
+    } else {
+      all.unshift(updatedBooking);
+      this.logAudit(
+        user,
+        'BOOKING_CREATED',
+        'Booking',
+        booking.id,
+        `Created booking ${booking.bookingReference}`
+      );
+    }
+    this.syncFirestoreDoc('bookings', updatedBooking.id, updatedBooking);
+    this.setItem('bookings', all);
   }
 
   // ==========================================
@@ -1221,6 +1311,19 @@ export class AppDatabase {
     this.setItem('homepage_config', config);
     this.syncFirestoreDoc('homepage_config', 'main', config);
     this.logAudit(user, 'SETTINGS_UPDATED', 'HomepageConfig', 'main', `Updated Homepage Control settings (Hero & Featured ordering)`);
+  }
+
+  // ==========================================
+  // INSTITUTIONAL & LEGAL PAGES CONFIGURATION
+  // ==========================================
+  public getSitePagesConfig(): SitePagesConfig {
+    return this.getItem<SitePagesConfig>('site_pages_config', INITIAL_SITE_PAGES_CONFIG);
+  }
+
+  public updateSitePagesConfig(config: SitePagesConfig, user: User | null): void {
+    this.setItem('site_pages_config', config);
+    this.syncFirestoreDoc('site_pages_config', 'main', config);
+    this.logAudit(user, 'SETTINGS_UPDATED', 'SitePagesConfig', 'main', `Updated Institutional and Legal Pages content`);
   }
 
   // ==========================================
@@ -1836,6 +1939,45 @@ export class AppDatabase {
       updatedUser.id,
       `Updated user status for ${updatedUser.name} (${updatedUser.email}): Role=${updatedUser.role}, Status=${updatedUser.approvalStatus || 'APPROVED'}, Margin Buyer=${updatedUser.customBuyerMarginPercent}%, Agent=${updatedUser.customAgentMarginPercent}%`
     );
+  }
+
+  public updateUserProfile(userId: string, updates: Partial<User>, actor: User | null): User | null {
+    const users = this.getUsers();
+    const idx = users.findIndex(u => u.id === userId);
+    if (idx === -1) {
+      // If user is not yet in system_users, insert with updates
+      if (actor && actor.id === userId) {
+        const newUser: User = {
+          ...actor,
+          ...updates
+        };
+        users.push(newUser);
+        this.setItem('system_users', users);
+        this.syncFirestoreDoc('users', userId, newUser);
+        this.logAudit(actor, 'SETTINGS_UPDATED', 'UserProfile', userId, `Updated personal & company profile for ${newUser.name} (${newUser.companyName || newUser.agencyName || 'Personal'})`);
+        return newUser;
+      }
+      return null;
+    }
+
+    const current = users[idx];
+    const updated: User = {
+      ...current,
+      ...updates
+    };
+    users[idx] = updated;
+    this.setItem('system_users', users);
+    this.syncFirestoreDoc('users', userId, updated);
+
+    this.logAudit(
+      actor || updated,
+      'SETTINGS_UPDATED',
+      'UserProfile',
+      userId,
+      `Updated personal & company profile for ${updated.name} (${updated.companyName || updated.agencyName || 'Personal'})`
+    );
+
+    return updated;
   }
 
   public approveUser(userId: string, actor: User | null): void {
