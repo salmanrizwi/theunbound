@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Globe2, 
   Search, 
@@ -19,9 +19,10 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
-import { CurrencyCode, DestinationRegion, Destination, SUPPORTED_CURRENCIES } from '../types';
+import { CurrencyCode, DestinationRegion, Destination, SUPPORTED_CURRENCIES, MenuItemConfig } from '../types';
+import { AppDatabase } from '../services/db';
 
-export type MainNavTab = 'DESTINATIONS' | 'B2B_BUILDER' | 'DASHBOARD' | 'ADMIN' | 'ACCOUNT' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND';
+export type MainNavTab = 'DESTINATIONS' | 'B2B_BUILDER' | 'DASHBOARD' | 'ADMIN' | 'ACCOUNT' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND' | 'CUSTOM_PAGE';
 
 interface NavbarProps {
   destinations?: Destination[];
@@ -30,6 +31,8 @@ interface NavbarProps {
   onSelectDestination: (dest: string) => void;
   activeTab?: MainNavTab;
   onSelectTab?: (tab: MainNavTab) => void;
+  onSelectCustomPage?: (slug: string) => void;
+  activeCustomPageSlug?: string;
   onOpenSearch?: () => void;
   onOpenSpecs: () => void;
   onOpenAdmin?: () => void;
@@ -44,6 +47,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectDestination,
   activeTab = 'DESTINATIONS',
   onSelectTab,
+  onSelectCustomPage,
+  activeCustomPageSlug,
   onOpenSearch,
   onOpenSpecs,
   onOpenAdmin,
@@ -55,14 +60,57 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
+  const db = AppDatabase.getInstance();
+  const [cmsMenuItems, setCmsMenuItems] = useState<MenuItemConfig[]>(() => db.getMenuItems());
+
+  useEffect(() => {
+    return db.subscribe(() => {
+      setCmsMenuItems(db.getMenuItems());
+    });
+  }, [db]);
+
   const currentActiveDest = selectedDestinationSlug || activeDestination || 'japan';
 
-  const destinationTabs = [
-    { id: 'all', label: 'All Destinations' },
-    { id: 'japan', label: 'Japan' },
-    { id: 'united-kingdom', label: 'United Kingdom' },
-    { id: 'europe', label: 'Europe' }
-  ];
+  // Visible menu items ordered by displayOrder
+  const visibleMenuItems = useMemo(() => {
+    return cmsMenuItems.filter(m => m.isVisible !== false).sort((a, b) => a.displayOrder - b.displayOrder);
+  }, [cmsMenuItems]);
+
+  const handleMenuItemClick = (item: MenuItemConfig) => {
+    setIsMobileNavOpen(false);
+    if (item.type === 'CUSTOM_PAGE') {
+      if (onSelectCustomPage && item.targetId) {
+        onSelectCustomPage(item.targetId);
+      }
+    } else if (item.type === 'DESTINATION') {
+      if (onSelectTab) onSelectTab('DESTINATIONS');
+      if (item.targetId) onSelectDestination(item.targetId);
+    } else if (item.type === 'CUSTOM_LINK' && item.customUrl) {
+      if (item.customUrl.startsWith('http')) {
+        window.open(item.customUrl, '_blank', 'noopener,noreferrer');
+      } else if (item.customUrl.startsWith('#')) {
+        const el = document.querySelector(item.customUrl);
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+      } else {
+        window.location.href = item.customUrl;
+      }
+    } else if (item.type === 'SYSTEM_VIEW') {
+      const target = item.targetId || 'home';
+      if (target === 'home' || target === 'destinations') {
+        if (onSelectTab) onSelectTab('DESTINATIONS');
+        onSelectDestination('all');
+      } else if (target === 'japan' || target === 'united-kingdom' || target === 'europe') {
+        if (onSelectTab) onSelectTab('DESTINATIONS');
+        onSelectDestination(target);
+      } else if (target === 'b2b') {
+        if (onSelectTab) onSelectTab('B2B_BUILDER');
+      } else if (target === 'contact') {
+        if (onSelectTab) onSelectTab('CONTACT');
+      } else if (target === 'about') {
+        if (onSelectCustomPage) onSelectCustomPage('about-theunbound');
+      }
+    }
+  };
 
   const isB2BAgentOrAdmin = role === 'B2B_AGENT' || role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF';
 
@@ -126,26 +174,39 @@ export const Navbar: React.FC<NavbarProps> = ({
               </span>
             </div>
 
-            {/* Desktop Destination Links with Sleek Dot Indicators */}
+            {/* Desktop Dynamic Navigation Links from CMS */}
             <nav className="hidden lg:flex items-center space-x-1 pl-4 border-l border-slate-200">
-              {destinationTabs.map((tab) => {
-                const isActive = activeTab === 'DESTINATIONS' && (currentActiveDest === tab.id || (tab.id === 'all' && currentActiveDest === 'all'));
+              {visibleMenuItems.map((item) => {
+                let isActive = false;
+                if (item.type === 'CUSTOM_PAGE') {
+                  isActive = activeTab === 'CUSTOM_PAGE' && activeCustomPageSlug === item.targetId;
+                } else if (item.type === 'DESTINATION') {
+                  isActive = activeTab === 'DESTINATIONS' && currentActiveDest === item.targetId;
+                } else if (item.type === 'SYSTEM_VIEW') {
+                  if (item.targetId === 'home' || item.targetId === 'destinations') {
+                    isActive = activeTab === 'DESTINATIONS' && (currentActiveDest === 'all' || !currentActiveDest);
+                  } else if (item.targetId === 'b2b') {
+                    isActive = activeTab === 'B2B_BUILDER';
+                  } else if (item.targetId === 'contact') {
+                    isActive = activeTab === 'CONTACT';
+                  } else {
+                    isActive = activeTab === 'DESTINATIONS' && currentActiveDest === item.targetId;
+                  }
+                }
+
                 return (
                   <button
-                    key={tab.id}
-                    id={`dest-nav-${tab.id}`}
-                    onClick={() => {
-                      if (onSelectTab) onSelectTab('DESTINATIONS');
-                      onSelectDestination(tab.id);
-                    }}
-                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                    key={item.id}
+                    id={`menu-nav-${item.id}`}
+                    onClick={() => handleMenuItemClick(item)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
                       isActive
                         ? 'bg-[#00C6A6]/10 text-[#00C6A6] font-bold'
                         : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                     }`}
                   >
                     <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-[#00C6A6]' : 'bg-slate-300'}`}></span>
-                    <span>{tab.label}</span>
+                    <span>{item.label}</span>
                   </button>
                 );
               })}
@@ -389,23 +450,38 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Mobile Nav Drawer */}
         {isMobileNavOpen && (
           <div className="lg:hidden border-t border-slate-200 py-3 space-y-1 animate-in fade-in">
-            <p className="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Destinations</p>
-            {destinationTabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => {
-                  if (onSelectTab) onSelectTab('DESTINATIONS');
-                  onSelectDestination(tab.id);
-                  setIsMobileNavOpen(false);
-                }}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ${
-                  currentActiveDest === tab.id ? 'bg-[#00C6A6]/10 text-[#00C6A6] font-bold' : 'text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${currentActiveDest === tab.id ? 'bg-[#00C6A6]' : 'bg-slate-300'}`}></span>
-                <span>{tab.label}</span>
-              </button>
-            ))}
+            <p className="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Navigation Menu</p>
+            {visibleMenuItems.map((item) => {
+              let isActive = false;
+              if (item.type === 'CUSTOM_PAGE') {
+                isActive = activeTab === 'CUSTOM_PAGE' && activeCustomPageSlug === item.targetId;
+              } else if (item.type === 'DESTINATION') {
+                isActive = activeTab === 'DESTINATIONS' && currentActiveDest === item.targetId;
+              } else if (item.type === 'SYSTEM_VIEW') {
+                if (item.targetId === 'home' || item.targetId === 'destinations') {
+                  isActive = activeTab === 'DESTINATIONS' && (currentActiveDest === 'all' || !currentActiveDest);
+                } else if (item.targetId === 'b2b') {
+                  isActive = activeTab === 'B2B_BUILDER';
+                } else if (item.targetId === 'contact') {
+                  isActive = activeTab === 'CONTACT';
+                } else {
+                  isActive = activeTab === 'DESTINATIONS' && currentActiveDest === item.targetId;
+                }
+              }
+
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => handleMenuItemClick(item)}
+                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ${
+                    isActive ? 'bg-[#00C6A6]/10 text-[#00C6A6] font-bold' : 'text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-[#00C6A6]' : 'bg-slate-300'}`}></span>
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
 
             {onSelectTab && (
               <div className="pt-2 border-t border-slate-100 space-y-1">

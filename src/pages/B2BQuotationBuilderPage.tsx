@@ -43,6 +43,7 @@ import {
   X,
   Layers,
   CalendarX,
+  Copy,
   CalendarCheck,
   UserCheck,
   AlertTriangle,
@@ -88,11 +89,17 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
     setClientEmail,
     clientCompany,
     setClientCompany,
+    leadId,
+    setLeadId,
     agentNotes,
     setAgentNotes,
     overallDiscountPercent,
     setOverallDiscountPercent,
-    saveCurrentQuote
+    activeQuoteId,
+    currentVersion,
+    isLocked,
+    saveCurrentQuote,
+    loadSavedQuote
   } = useQuotation();
 
   const { checkDateAvailability, getNextAvailableDate } = useRoster();
@@ -459,6 +466,27 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
     }
   };
 
+  const handleCreateNewVersion = () => {
+    if (!activeQuoteId) {
+      // If not yet saved, save it first
+      const saved = saveCurrentQuote();
+      if (!saved) return;
+      const newVersion = db.createQuotationVersion(saved.id, user);
+      if (newVersion) {
+        loadSavedQuote(newVersion);
+        setSavedSuccessQuote(newVersion);
+        setTimeout(() => setSavedSuccessQuote(null), 3000);
+      }
+    } else {
+      const newVersion = db.createQuotationVersion(activeQuoteId, user);
+      if (newVersion) {
+        loadSavedQuote(newVersion);
+        setSavedSuccessQuote(newVersion);
+        setTimeout(() => setSavedSuccessQuote(null), 3000);
+      }
+    }
+  };
+
   const handleDownloadPDF = () => {
     try {
       const activeQuote = saveCurrentQuote();
@@ -466,9 +494,11 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
         downloadQuotationPDF({
           quote: activeQuote,
           agentName: user?.name,
-          agentAgency: user?.agencyName,
+          agentAgency: user?.agencyName || user?.companyName,
+          agentLogoUrl: user?.brandLogoUrl || user?.logoUrl,
           agentEmail: user?.email,
-          agentRole: user?.role
+          agentRole: user?.role,
+          leadId: leadId || activeQuote.leadId
         });
 
         try {
@@ -1034,18 +1064,58 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
 
             {/* Client Reference & Agent Settings */}
             <div className="space-y-2.5 pt-1">
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-                  Client / Lead Traveler Name
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g., Harrison Family (VIP Private)"
-                  value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white placeholder-slate-500 focus:ring-1 focus:ring-[#00C6A6] focus:outline-none"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                    Client / Traveler Name
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g., Harrison Family"
+                    value={clientName}
+                    onChange={(e) => setClientName(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white placeholder-slate-500 focus:ring-1 focus:ring-[#00C6A6] focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-purple-300 block mb-1 flex items-center justify-between">
+                    <span>Lead ID / Ref</span>
+                    {currentVersion > 1 && (
+                      <span className="text-[9px] bg-purple-900/60 text-purple-200 px-1 rounded font-mono">v{currentVersion}</span>
+                    )}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g., LED-10492"
+                    value={leadId}
+                    onChange={(e) => setLeadId(e.target.value)}
+                    className="w-full bg-slate-800 border border-purple-800/60 rounded-xl px-3 py-2 text-xs font-mono font-bold text-purple-200 placeholder-purple-400/50 focus:ring-1 focus:ring-purple-400 focus:outline-none"
+                  />
+                </div>
               </div>
+
+              {/* Version & Lock Status Ribbon */}
+              {activeQuoteId && (
+                <div className="flex items-center justify-between p-2 rounded-xl bg-slate-800/80 border border-slate-700 text-[10px]">
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-slate-400">Version:</span>
+                    <span className="font-bold text-[#00E5C0]">v{currentVersion}</span>
+                    {isLocked && (
+                      <span className="bg-amber-900/60 text-amber-300 px-1.5 py-0.5 rounded font-bold">Locked</span>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleCreateNewVersion}
+                    className="px-2 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-bold transition-colors cursor-pointer"
+                    title="Branch a new editable draft version"
+                  >
+                    + New Version
+                  </button>
+                </div>
+              )}
 
               {/* B2B Agent Client Markup Slider */}
               <div className="p-3 rounded-xl bg-slate-800/80 border border-slate-700/80 space-y-2">
@@ -1654,6 +1724,16 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
                 >
                   <Briefcase className="w-4 h-4 text-[#008972]" />
                   <span>{savedSuccessQuote ? 'Saved!' : 'Save Quote'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCreateNewVersion}
+                  className="px-4 py-2.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
+                  title="Create a new draft version from this quotation"
+                >
+                  <Copy className="w-4 h-4" />
+                  <span>New Version</span>
                 </button>
 
                 {onBookQuotation && (

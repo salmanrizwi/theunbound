@@ -89,6 +89,7 @@ export interface User {
   iataOrAbtaNumber?: string;
   avatarUrl?: string;
   brandLogoUrl?: string;
+  logoUrl?: string;
   primaryCurrency?: CurrencyCode;
   bio?: string;
   emergencyContactPerson?: string;
@@ -376,6 +377,12 @@ export interface Quotation {
   id: string;
   quoteNumber: string;
   version?: number;
+  parentQuoteId?: string;
+  isLocked?: boolean;
+  leadId?: string;
+  agentLogoUrl?: string;
+  agentEmail?: string;
+  agentAgency?: string;
   versionHistory?: QuoteVersionRecord[];
   activityLog?: QuoteActivityRecord[];
   title: string;
@@ -1347,6 +1354,43 @@ export interface SitePagesConfig {
     isAnnouncementActive: boolean;
     contractDownloadNotice: string;
   };
+}
+
+// ----------------------------------------------------
+// MENU & DYNAMIC PAGES CONFIGURATION
+// ----------------------------------------------------
+export type MenuItemType = 'DESTINATION' | 'PAGE' | 'CUSTOM_PAGE' | 'EXTERNAL_LINK' | 'SYSTEM_VIEW' | 'CUSTOM_LINK';
+
+export interface MenuItemConfig {
+  id: string;
+  label: string;
+  type: MenuItemType;
+  targetId: string; // e.g. 'all', 'japan', 'uk', 'europe', 'CONTACT', 'TERMS', 'PRIVACY', 'REFUND', 'BLOGS', or custom page slug
+  targetUrl?: string;
+  customUrl?: string;
+  displayOrder: number;
+  isVisible: boolean;
+  badgeText?: string;
+}
+
+export interface CustomPage {
+  id: string;
+  title: string;
+  subtitle?: string;
+  slug: string;
+  menuLabel?: string;
+  heroTitle?: string;
+  heroSubtitle?: string;
+  heroImage?: string;
+  content: string; // Markdown or HTML
+  showInMenu: boolean;
+  menuOrder: number;
+  isPublished: boolean;
+  seoTitle?: string;
+  seoDescription?: string;
+  metaDescription?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 

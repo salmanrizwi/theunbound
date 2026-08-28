@@ -8,10 +8,15 @@ export interface PDFExportOptions {
   agentAgency?: string;
   agentEmail?: string;
   agentRole?: string;
+  agentLogoUrl?: string;
+  leadId?: string;
 }
 
 export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
-  const { quote, agentName, agentAgency, agentEmail, agentRole } = options;
+  const { quote, agentName, agentAgency, agentEmail, agentRole, agentLogoUrl, leadId } = options;
+
+  const effectiveLeadId = leadId || quote.leadId;
+  const effectiveAgentLogo = agentLogoUrl || quote.agentLogoUrl;
 
   // Initialize jsPDF document (A4 format, millimeters)
   const doc = new jsPDF({
@@ -44,44 +49,81 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
     doc.setTextColor(0, 198, 166);
     doc.text('THEUNBOUND DMC • OFFICIAL ITINERARY PROPOSAL', margin + 3, currentY + 5.5);
     doc.setTextColor(255, 255, 255);
-    doc.text(`REF: ${quote.quoteNumber || 'UBQ-2026'}`, pageWidth - margin - 3, currentY + 5.5, { align: 'right' });
+    const refText = `REF: ${quote.quoteNumber || 'UBQ-2026'}${effectiveLeadId ? ` • LEAD: ${effectiveLeadId}` : ''}`;
+    doc.text(refText, pageWidth - margin - 3, currentY + 5.5, { align: 'right' });
     currentY += 12;
   };
 
   // ----------------------------------------------------
-  // 1. TOP HEADER & BRANDING BAR
+  // 1. TOP HEADER & BRANDING BAR (With Agent Brand Logo)
   // ----------------------------------------------------
   doc.setFillColor(15, 23, 42); // slate-900
-  doc.roundedRect(margin, currentY, contentWidth, 28, 3, 3, 'F');
+  doc.roundedRect(margin, currentY, contentWidth, 30, 3, 3, 'F');
 
-  // Left Brand Title
+  // If Agent Logo is present, attempt to render it in header or draw agency logo badge
+  let textStartX = margin + 6;
+  if (effectiveAgentLogo) {
+    try {
+      // White container box for Agent Logo
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(margin + 4, currentY + 4, 22, 22, 2, 2, 'F');
+      
+      if (effectiveAgentLogo.startsWith('data:image') || effectiveAgentLogo.startsWith('http')) {
+        doc.addImage(effectiveAgentLogo, 'JPEG', margin + 5, currentY + 5, 20, 20);
+      } else {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(15, 23, 42);
+        doc.text('LOGO', margin + 8, currentY + 16);
+      }
+      textStartX = margin + 29;
+    } catch (e) {
+      // Graceful fallback to text
+      textStartX = margin + 6;
+    }
+  }
+
+  // Brand Titles
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.text('THEUNBOUND DMC', margin + 6, currentY + 11);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8.5);
-  doc.setTextColor(0, 229, 192); // Teal
-  doc.text('Destination Management Company • Ground Logistics & Wholesaler', margin + 6, currentY + 17);
-
-  doc.setFontSize(7.5);
-  doc.setTextColor(148, 163, 184); // slate-400
-  doc.text('Official Contact: sales@theunbound.in • +91-9811654959 / 011-41185542', margin + 6, currentY + 23);
-
-  // Right Quotation Info
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.setTextColor(255, 255, 255);
-  doc.text(`QUOTE REF: ${quote.quoteNumber || 'UBQ-2026'}`, pageWidth - margin - 6, currentY + 10, { align: 'right' });
+  doc.setFontSize(15);
+  const mainHeaderTitle = agentAgency ? agentAgency.toUpperCase() : 'THEUNBOUND DMC';
+  doc.text(mainHeaderTitle, textStartX, currentY + 10);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  doc.setTextColor(203, 213, 225); // slate-300
-  doc.text(`Issue Date: ${new Date(quote.createdAt || Date.now()).toLocaleDateString()}`, pageWidth - margin - 6, currentY + 16, { align: 'right' });
-  doc.text(`Valid For: 14 Calendar Days`, pageWidth - margin - 6, currentY + 22, { align: 'right' });
+  doc.setTextColor(0, 229, 192); // Teal
+  const subTitle = agentAgency 
+    ? `Authorized Travel Partner • In Association with TheUnbound DMC`
+    : `Destination Management Company • Ground Logistics & Wholesaler`;
+  doc.text(subTitle, textStartX, currentY + 16);
 
-  currentY += 33;
+  doc.setFontSize(7);
+  doc.setTextColor(148, 163, 184); // slate-400
+  const contactLine = agentEmail
+    ? `Partner Contact: ${agentEmail} ${agentName ? `(${agentName})` : ''} • Ground Ops: sales@theunbound.in`
+    : `Official Contact: sales@theunbound.in • +91-9811654959 / 011-41185542`;
+  doc.text(contactLine, textStartX, currentY + 22);
+
+  // Right Quotation Info
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.setTextColor(255, 255, 255);
+  doc.text(`QUOTE: ${quote.quoteNumber || 'UBQ-2026'}${quote.version ? ` (v${quote.version})` : ''}`, pageWidth - margin - 6, currentY + 9, { align: 'right' });
+
+  if (effectiveLeadId) {
+    doc.setFontSize(8);
+    doc.setTextColor(0, 229, 192);
+    doc.text(`LEAD ID: ${effectiveLeadId}`, pageWidth - margin - 6, currentY + 15, { align: 'right' });
+  }
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(203, 213, 225); // slate-300
+  doc.text(`Issue Date: ${new Date(quote.createdAt || Date.now()).toLocaleDateString()}`, pageWidth - margin - 6, currentY + (effectiveLeadId ? 21 : 16), { align: 'right' });
+  doc.text(`Valid For: 14 Days`, pageWidth - margin - 6, currentY + (effectiveLeadId ? 26 : 22), { align: 'right' });
+
+  currentY += 34;
 
   // ----------------------------------------------------
   // 2. CLIENT & AGENT DETAILS CARD
@@ -97,36 +139,36 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
   doc.text('CLIENT / GUEST PROFILE', margin + 4, currentY + 6);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
+  doc.setFontSize(10.5);
   doc.setTextColor(15, 23, 42); // slate-900
   doc.text(quote.clientName || 'Private Client Group', margin + 4, currentY + 12);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
+  doc.setFontSize(7.5);
   doc.setTextColor(71, 85, 105);
   const clientSub = [quote.clientEmail, quote.clientCompany].filter(Boolean).join(' • ');
   doc.text(clientSub || 'Destination Itinerary Inquiry', margin + 4, currentY + 18);
 
-  // Right: Consultant & Destination
+  // Right: Consultant & Lead Reference
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.5);
   doc.setTextColor(100, 116, 139);
-  doc.text('CONSULTANT & DESTINATION', pageWidth / 2 + 6, currentY + 6);
+  doc.text('CONSULTANT & LEAD DETAILS', pageWidth / 2 + 6, currentY + 6);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.setTextColor(15, 23, 42);
   doc.text(`Destination: ${quote.destination || 'Japan & East Asia'}`, pageWidth / 2 + 6, currentY + 12);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
+  doc.setFontSize(7.5);
   doc.setTextColor(71, 85, 105);
-  const consultantText = agentAgency 
-    ? `${agentName || 'Travel Partner'} (${agentAgency})`
-    : `TheUnbound Ground Operations (${agentName || 'Operations Desk'})`;
+  const consultantText = (agentAgency || quote.agentAgency)
+    ? `${agentName || quote.agentName || 'Travel Partner'} (${agentAgency || quote.agentAgency})`
+    : `TheUnbound Ground Operations (${agentName || quote.agentName || 'Operations Desk'})`;
   doc.text(consultantText, pageWidth / 2 + 6, currentY + 18);
 
-  currentY += 29;
+  currentY += 28;
 
   // ----------------------------------------------------
   // 3. ITINERARY LINE ITEMS TABLE

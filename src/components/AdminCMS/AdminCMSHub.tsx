@@ -6,6 +6,7 @@ import { BookingsManager } from './BookingsManager';
 import { QuoteMasterManager } from './QuoteMasterManager';
 import { HomepageManager } from './HomepageManager';
 import { InstitutionalPagesManager } from './InstitutionalPagesManager';
+import { MenuAndPagesManager } from './MenuAndPagesManager';
 import { BlogCMSManager } from './BlogCMSManager';
 import { GalleryManager } from './GalleryManager';
 import { ReviewManager } from './ReviewManager';
@@ -130,6 +131,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       description: 'Institutional contact/policies, homepage hero controls, live customer moment gallery, Google reviews, and blogs.',
       subTabs: [
         { id: 'HOMEPAGE', label: 'Homepage & Hero Control', icon: LayoutTemplate },
+        { id: 'NAVIGATION_MENU', label: 'Menu & Custom Pages', icon: Layers },
         { id: 'PAGES_LEGAL', label: 'Site Pages & Legal Policies', icon: ShieldCheck },
         { id: 'GALLERY', label: 'Happy Customer Gallery', icon: Sparkles },
         { id: 'REVIEWS', label: 'Google Business Reviews', icon: CheckCircle2 },
@@ -384,6 +386,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           {activeSection === 'PAGE_MANAGEMENT' && (
             <>
               {activeSubTab === 'HOMEPAGE' && <HomepageManager destinations={destinations} />}
+              {activeSubTab === 'NAVIGATION_MENU' && <MenuAndPagesManager />}
               {activeSubTab === 'PAGES_LEGAL' && <InstitutionalPagesManager />}
               {activeSubTab === 'GALLERY' && <GalleryManager />}
               {activeSubTab === 'REVIEWS' && <ReviewManager />}

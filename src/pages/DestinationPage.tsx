@@ -232,7 +232,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
                   <span>Filter Products by Destination</span>
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Switch view or filter all travel experiences across our 3 premier regions
+                  Switch view or filter all travel experiences across our {allDestinations.length} premier regions: {allDestinations.map(d => d.name).join(', ')}
                 </p>
               </div>
               <div className="flex items-center space-x-2">
@@ -243,7 +243,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {allDestinations.map(d => {
                 const count = products.filter(
                   p => p.destinationSlug === d.slug || p.destinationName.toLowerCase().includes(d.name.toLowerCase())
@@ -266,7 +266,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
                           {d.name}
                         </h4>
                         <span className="text-[11px] text-slate-500">
-                          {d.cities.length} Hubs • {count} Tours
+                          {d.cities ? d.cities.length : 0} Hubs • {count} Tours
                         </span>
                       </div>
                     </div>
@@ -309,12 +309,12 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
               {filters.category
                 ? `${filters.category} in ${isAllDestinations ? 'All Destinations' : destination?.name}`
                 : isAllDestinations
-                ? 'All Available Products across Japan, UK & Europe'
+                ? `All Available Products across ${allDestinations.map(d => d.name).join(', ')}`
                 : `Featured Products in ${destination?.name}`}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               {isAllDestinations
-                ? 'Showing direct wholesale DMC inventory across all 3 countries'
+                ? `Showing direct wholesale DMC inventory across all ${allDestinations.length} destination portfolios`
                 : `Verified ground contracts and bespoke experiences in ${destination?.country}`}
             </p>
           </div>
@@ -404,7 +404,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
             {[
               {
                 q: isAllDestinations
-                  ? 'What is the standard cancellation window across Japan, UK, and Europe?'
+                  ? `What is the standard cancellation window across ${allDestinations.map(d => d.name).join(', ')}?`
                   : `What is the standard cancellation window for ${destination?.name} private tours?`,
                 a: `Most contracted ground services allow full refunds up to 72 hours prior to scheduled departure. Specialty private charters, Michelin dining reservations, and peak seasonal allocations require 7 to 14 days advance written notice.`
               },
@@ -412,12 +412,12 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
                 q: isAllDestinations
                   ? 'How do multi-currency conversions and VAT work across all destinations?'
                   : `How do currency conversions and VAT work for ${destination?.name}?`,
-                a: `Published rates in our portal automatically convert native ground supplier contracts (JPY, GBP, EUR) into your selected billing currency (USD, EUR, GBP, JPY) using real-time dynamic exchange rate formulas.`
+                a: `Published rates in our portal automatically convert native ground supplier contracts (${allDestinations.map(d => d.currency).join(', ')}) into your selected billing currency using real-time dynamic exchange rate formulas.`
               },
               {
                 q: isAllDestinations
-                  ? 'Can TheUnbound combine Japan, UK, and European tours into a single multi-destination quote?'
-                  : `Can TheUnbound customize bespoke multi-city itineraries for VIP groups?`,
+                  ? `Can TheUnbound combine ${allDestinations.map(d => d.name).slice(0, 3).join(', ')} tours into a single multi-destination quote?`
+                  : `Can TheUnbound customize bespoke multi-city itineraries for VIP groups in ${destination?.name}?`,
                 a: `Yes. Our B2B Quotation Builder allows travel agents to bundle services across multiple countries into a single unified proposal with consolidated billing and itemized net rates.`
               },
               {

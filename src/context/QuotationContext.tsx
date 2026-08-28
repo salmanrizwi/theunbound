@@ -35,10 +35,15 @@ interface QuotationContextType {
   setClientEmail: (email: string) => void;
   clientCompany: string;
   setClientCompany: (company: string) => void;
+  leadId: string;
+  setLeadId: (leadId: string) => void;
   agentNotes: string;
   setAgentNotes: (notes: string) => void;
   overallDiscountPercent: number;
   setOverallDiscountPercent: (percent: number) => void;
+  activeQuoteId: string | null;
+  currentVersion: number;
+  isLocked: boolean;
   
   // Computed summary
   totalNetCost: number;
@@ -69,8 +74,12 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
   const [clientCompany, setClientCompany] = useState('');
+  const [leadId, setLeadId] = useState('');
   const [agentNotes, setAgentNotes] = useState('');
   const [overallDiscountPercent, setOverallDiscountPercent] = useState(0);
+  const [activeQuoteId, setActiveQuoteId] = useState<string | null>(null);
+  const [currentVersion, setCurrentVersion] = useState(1);
+  const [isLocked, setIsLocked] = useState(false);
 
   const pricingTier = user && user.role !== 'PUBLIC' ? 'B2B' : 'B2C';
 
@@ -244,8 +253,12 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setClientName('');
     setClientEmail('');
     setClientCompany('');
+    setLeadId('');
     setAgentNotes('');
     setOverallDiscountPercent(0);
+    setActiveQuoteId(null);
+    setCurrentVersion(1);
+    setIsLocked(false);
   };
 
   // Aggregated financials
@@ -288,23 +301,34 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const saveCurrentQuote = (): Quotation | null => {
     if (items.length === 0) return null;
 
+    const db = AppDatabase.getInstance();
+    const existingQuote = activeQuoteId ? db.getQuoteByIdAuthorized(activeQuoteId, user) : null;
+
+    const quoteIdToUse = activeQuoteId || `quote-${Date.now()}`;
+    const quoteNumberToUse = existingQuote?.quoteNumber || `UBQ-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
     const newQuote: Quotation = {
-      id: `quote-${Date.now()}`,
-      quoteNumber: `UBQ-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      id: quoteIdToUse,
+      quoteNumber: quoteNumberToUse,
       title: clientName ? `Quotation for ${clientName}` : `Bespoke Itinerary Quote #${items.length} Products`,
       clientName: clientName || 'Client Name Pending',
       clientEmail,
       clientCompany,
+      leadId: leadId || undefined,
       agentId: user?.id || 'usr-anonymous',
       agentName: user?.name || 'Travel Consultant',
+      agentAgency: user?.agencyName || user?.companyName,
+      agentLogoUrl: user?.brandLogoUrl || user?.logoUrl,
       destination: items[0]?.product.destinationName || 'Multi-Destination',
       currency,
       items,
+      version: currentVersion,
+      isLocked: isLocked,
       overallDiscountPercent,
       agentNotes,
       termsAndConditions: 'Quotation valid for 14 days from generation date. Subject to hotel and guide confirmation at time of deposit.',
-      status: 'DRAFT',
-      createdAt: new Date().toISOString(),
+      status: existingQuote?.status || 'DRAFT',
+      createdAt: existingQuote?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       validUntil: new Date(Date.now() + 86400000 * 14).toISOString(),
       totalNetCost: totals.totalNetCost,
@@ -313,15 +337,21 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       totalMargin: totals.totalMarginAmount
     };
 
-    setSavedQuotes(prev => [newQuote, ...prev]);
+    // Save to AppDatabase (which persists and notifies subscribers)
+    db.saveQuote(newQuote, user);
+    setActiveQuoteId(newQuote.id);
+
+    setSavedQuotes(prev => {
+      const filtered = prev.filter(q => q.id !== newQuote.id);
+      return [newQuote, ...filtered];
+    });
 
     // Auto-capture or update as a CRM Travel Lead for ground operations
     try {
-      const db = AppDatabase.getInstance();
-      const leadId = `lead-quote-${newQuote.id}`;
+      const leadIdStr = leadId || `lead-quote-${newQuote.id}`;
       const newLead: TravelLead = {
-        id: leadId,
-        leadNumber: `LED-${newQuote.quoteNumber.replace('UBQ-', '')}`,
+        id: leadIdStr,
+        leadNumber: leadId || `LED-${newQuote.quoteNumber.replace('UBQ-', '')}`,
         contactName: clientName || user?.name || 'Inquiring Traveler / Agency',
         email: clientEmail || user?.email || 'sales@theunbound.in',
         phone: '',
@@ -344,7 +374,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           {
             id: `note-${Date.now()}`,
             authorName: user?.name || 'System Automation',
-            text: `B2B Quotation ${newQuote.quoteNumber} created and saved for value ${totals.totalSellingPrice.toLocaleString()} ${currency}.`,
+            text: `B2B Quotation ${newQuote.quoteNumber} (v${newQuote.version || 1}) created/saved for value ${totals.totalSellingPrice.toLocaleString()} ${currency}.`,
             timestamp: new Date().toISOString()
           }
         ],
@@ -365,12 +395,18 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setClientName(quote.clientName);
     setClientEmail(quote.clientEmail || '');
     setClientCompany(quote.clientCompany || '');
+    setLeadId(quote.leadId || '');
     setAgentNotes(quote.agentNotes || '');
     setOverallDiscountPercent(quote.overallDiscountPercent || 0);
+    setActiveQuoteId(quote.id);
+    setCurrentVersion(quote.version || 1);
+    setIsLocked(!!quote.isLocked);
     setIsQuoteDrawerOpen(true);
   };
 
   const deleteSavedQuote = (quoteId: string) => {
+    const db = AppDatabase.getInstance();
+    db.deleteQuote(quoteId, user);
     setSavedQuotes(prev => prev.filter(q => q.id !== quoteId));
   };
 
@@ -395,10 +431,15 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setClientEmail,
         clientCompany,
         setClientCompany,
+        leadId,
+        setLeadId,
         agentNotes,
         setAgentNotes,
         overallDiscountPercent,
         setOverallDiscountPercent,
+        activeQuoteId,
+        currentVersion,
+        isLocked,
         ...totals,
         savedQuotes,
         saveCurrentQuote,

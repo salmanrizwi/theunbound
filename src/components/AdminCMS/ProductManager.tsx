@@ -22,7 +22,9 @@ import {
   Check, 
   AlertTriangle,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Image as ImageIcon,
+  Sparkles
 } from 'lucide-react';
 
 interface ProductManagerProps {
@@ -109,6 +111,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
 
   const [inclusionInput, setInclusionInput] = useState('');
   const [exclusionInput, setExclusionInput] = useState('');
+  const [newImageUrl, setNewImageUrl] = useState('');
 
   const refreshProducts = () => {
     setProducts(db.getProducts());
@@ -870,16 +873,143 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                 />
               </div>
 
-              {/* Image URL */}
-              <div className="space-y-1">
-                <label className="font-semibold text-slate-700">Primary Featured Image URL</label>
-                <input
-                  type="url"
-                  value={formData.images?.[0] || ''}
-                  onChange={e => setFormData({ ...formData, images: [e.target.value] })}
-                  placeholder="https://images.unsplash.com/..."
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl"
-                />
+              {/* Multi-Picture Gallery Management */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-slate-800 text-xs flex items-center space-x-1.5">
+                    <ImageIcon className="w-4 h-4 text-[#00C6A6]" />
+                    <span>Product Pictures & Visual Media Gallery ({formData.images?.length || 0})</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400">First image will be the primary hero photo</span>
+                </div>
+
+                {/* Add New Picture URL input */}
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="url"
+                    value={newImageUrl}
+                    onChange={e => setNewImageUrl(e.target.value)}
+                    placeholder="Paste high-res image URL (e.g. https://images.unsplash.com/...)"
+                    className="flex-1 p-2.5 bg-white border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-[#00C6A6]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const trimmed = newImageUrl.trim();
+                      if (trimmed) {
+                        const current = formData.images || [];
+                        if (!current.includes(trimmed)) {
+                          setFormData({ ...formData, images: [...current, trimmed] });
+                        }
+                        setNewImageUrl('');
+                      }
+                    }}
+                    className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl flex items-center space-x-1 cursor-pointer transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Photo</span>
+                  </button>
+                </div>
+
+                {/* Quick Luxury Presets */}
+                <div className="flex items-center space-x-2 text-[11px] text-slate-500 overflow-x-auto pb-1">
+                  <span className="shrink-0 flex items-center space-x-1 font-semibold text-slate-700">
+                    <Sparkles className="w-3 h-3 text-[#00C6A6]" />
+                    <span>Quick Presets:</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sample = 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=1200&auto=format&fit=crop';
+                      const current = formData.images || [];
+                      if (!current.includes(sample)) setFormData({ ...formData, images: [...current, sample] });
+                    }}
+                    className="px-2 py-0.5 bg-white border border-slate-200 rounded-md hover:border-[#00C6A6] text-slate-700 shrink-0 cursor-pointer"
+                  >
+                    Tokyo Tower
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sample = 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop';
+                      const current = formData.images || [];
+                      if (!current.includes(sample)) setFormData({ ...formData, images: [...current, sample] });
+                    }}
+                    className="px-2 py-0.5 bg-white border border-slate-200 rounded-md hover:border-[#00C6A6] text-slate-700 shrink-0 cursor-pointer"
+                  >
+                    Kyoto Garden
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sample = 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?q=80&w=1200&auto=format&fit=crop';
+                      const current = formData.images || [];
+                      if (!current.includes(sample)) setFormData({ ...formData, images: [...current, sample] });
+                    }}
+                    className="px-2 py-0.5 bg-white border border-slate-200 rounded-md hover:border-[#00C6A6] text-slate-700 shrink-0 cursor-pointer"
+                  >
+                    VIP Chauffeur
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sample = 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=1200&auto=format&fit=crop';
+                      const current = formData.images || [];
+                      if (!current.includes(sample)) setFormData({ ...formData, images: [...current, sample] });
+                    }}
+                    className="px-2 py-0.5 bg-white border border-slate-200 rounded-md hover:border-[#00C6A6] text-slate-700 shrink-0 cursor-pointer"
+                  >
+                    London Landmark
+                  </button>
+                </div>
+
+                {/* Picture Thumbnails Grid */}
+                {formData.images && formData.images.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                    {formData.images.map((imgUrl, idx) => (
+                      <div key={idx} className="relative group rounded-xl overflow-hidden border border-slate-200 bg-white aspect-4/3 shadow-2xs">
+                        <img src={imgUrl} alt={`Product ${idx + 1}`} className="w-full h-full object-cover" />
+                        {idx === 0 && (
+                          <span className="absolute top-1.5 left-1.5 bg-[#00C6A6] text-slate-950 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-xs">
+                            Primary
+                          </span>
+                        )}
+                        <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-1.5">
+                          {idx !== 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = [...(formData.images || [])];
+                                const [selected] = current.splice(idx, 1);
+                                current.unshift(selected);
+                                setFormData({ ...formData, images: current });
+                              }}
+                              className="px-2 py-1 bg-white/90 hover:bg-white text-slate-900 rounded text-[10px] font-bold cursor-pointer"
+                              title="Make this the primary photo"
+                            >
+                              Set Primary
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const current = (formData.images || []).filter((_, i) => i !== idx);
+                              setFormData({ ...formData, images: current });
+                            }}
+                            className="p-1 bg-rose-600 hover:bg-rose-700 text-white rounded cursor-pointer"
+                            title="Remove photo"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-4 bg-white rounded-xl border border-dashed border-slate-200 text-xs text-slate-400">
+                    No pictures attached yet. Paste a URL or click a quick preset above.
+                  </div>
+                )}
               </div>
 
               {/* Status */}

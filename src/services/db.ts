@@ -13,6 +13,8 @@ import {
   SyncDetailedReport,
   UserRole,
   User,
+  UserCategory,
+  UserApprovalStatus,
   Hotel,
   CityHub,
   DestinationFAQ,
@@ -31,7 +33,9 @@ import {
   ProductRosterRule,
   WishlistFolder,
   WishlistItem,
-  SitePagesConfig
+  SitePagesConfig,
+  MenuItemConfig,
+  CustomPage
 } from '../types';
 import { INITIAL_PRODUCTS } from '../data/initialProducts';
 import { DESTINATIONS } from '../data/destinations';
@@ -119,6 +123,86 @@ export const INITIAL_SITE_PAGES_CONFIG: SitePagesConfig = {
     contractDownloadNotice: 'Verified travel agents can download complete Excel & PDF tariff sheets directly from the portal.'
   }
 };
+
+export const INITIAL_MENU_ITEMS: MenuItemConfig[] = [
+  { id: 'menu-home', label: 'Home', type: 'SYSTEM_VIEW', targetId: 'home', displayOrder: 1, isVisible: true },
+  { id: 'menu-destinations', label: 'Destinations', type: 'SYSTEM_VIEW', targetId: 'destinations', displayOrder: 2, isVisible: true },
+  { id: 'menu-experiences', label: 'Experiences', type: 'SYSTEM_VIEW', targetId: 'experiences', displayOrder: 3, isVisible: true },
+  { id: 'menu-about', label: 'About DMC', type: 'SYSTEM_VIEW', targetId: 'about', displayOrder: 4, isVisible: true },
+  { id: 'menu-b2b', label: 'Agent Portal', type: 'SYSTEM_VIEW', targetId: 'b2b', displayOrder: 5, isVisible: true },
+  { id: 'menu-contact', label: 'Contact', type: 'SYSTEM_VIEW', targetId: 'contact', displayOrder: 6, isVisible: true }
+];
+
+export const INITIAL_CUSTOM_PAGES: CustomPage[] = [
+  {
+    id: 'page-about-theunbound',
+    slug: 'about-theunbound',
+    title: 'About TheUnbound: Premier Destination Management Company',
+    subtitle: 'Direct ground operations, wholesale B2B partner tariffs, and bespoke luxury logistics across Japan, the United Kingdom, and Europe.',
+    content: `## Who We Are: The Destination Operations Standard
+
+TheUnbound is a premier Destination Management Company (DMC) delivering direct-contracted ground logistics, VIP chauffeur fleets, accredited private guides, and exclusive venue access across our specialized multi-country network.
+
+### Our Core Mission
+To eliminate middleman markups and operational delays for luxury travel designers, travel agencies, and private clients worldwide. We empower our partners with verified net B2B contracts, instant pricing calculators, and a strict 24–48h ground confirmation SLA.
+
+### Direct Ground Support Guarantee
+- **100% Direct Supplier Contracts**: No secondary brokers. We hold direct allotments with luxury ryokans, historic manor houses, Michelin-starred culinary masters, and private charter providers.
+- **24/7 Ground Ops Dispatch**: Dedicated local duty managers and emergency hotlines available around the clock in every destination timezone.
+- **Accredited Multilingual Guides**: Certified government-licensed interpreters, Blue Badge guides in the UK, and specialized art docents across Continental Europe.
+- **Transparent Wholesale Pricing**: Live multi-currency net pricing (USD, EUR, GBP, JPY) with itemized tiers for adults, children, and vehicle groups.
+
+### Global Presence & Operations Hubs
+Our operational footprint spans key gateway cities and cultural regions:
+- **Japan**: Tokyo, Kyoto, Osaka, Hakone, Hokkaido, Kanazawa, Hiroshima, Nara
+- **United Kingdom**: London, Edinburgh, Cotswolds, Scottish Highlands, Bath, Oxford
+- **Europe**: Paris, Rome, Swiss Alps, Florence, French Riviera, Amsterdam, Venice
+
+### Core Values
+1. **Precision**: Meticulous execution of complex multi-city and cross-border itineraries.
+2. **Authenticity**: Privileged access to private cultural masters, tea ceremonies, and closed-door historical sites.
+3. **Integrity**: Transparent B2B net wholesale pricing and zero hidden transaction fees.
+4. **Partner Empowerment**: State-of-the-art digital quotation builder and dynamic tariff downloads.`,
+    heroImage: 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=1600&auto=format&fit=crop',
+    isPublished: true,
+    showInMenu: true,
+    menuLabel: 'About Us',
+    menuOrder: 4,
+    metaDescription: 'Discover TheUnbound Destination Management Company - Direct luxury ground operations, private tours, and wholesale tariffs.',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z'
+  },
+  {
+    id: 'page-japan-cherry-blossom',
+    slug: 'japan-cherry-blossom-guide',
+    title: 'Spring Sakura Guide: Private Ground Logistics',
+    subtitle: 'Exclusive private vehicle allocations and authentic cultural experiences across Tokyo, Kyoto, and Hakone during peak cherry blossom season.',
+    content: '## Comprehensive Sakura Ground Planning\n\nTheUnbound DMC provides verified B2B partners with dedicated English-speaking licensed guides, luxury Alphard and HiAce vans, and private tea ceremony access during peak spring bloom.\n\n### Featured Operational Services\n- Fast-track Shinkansen luggage forwarding\n- Private temple morning permits prior to public entry\n- On-ground 24/7 bilingual dispatch support\n- Direct wholesaler contract rates with luxury Ryokans',
+    heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
+    isPublished: true,
+    showInMenu: true,
+    menuLabel: 'Sakura Guide',
+    menuOrder: 7,
+    metaDescription: 'Complete B2B and traveler guide to private luxury cherry blossom ground logistics in Japan by TheUnbound DMC.',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z'
+  },
+  {
+    id: 'page-uk-cotswolds-heritage',
+    slug: 'uk-cotswolds-private-estates',
+    title: 'UK & Cotswolds Bespoke Manor Tours',
+    subtitle: 'Private chauffeur excursions, historical estate access, and boutique country house hotels across Oxfordshire and Gloucestershire.',
+    content: '## Heritage British Touring\n\nExperience quintessential Britain with private luxury Mercedes V-Class transfers, accredited Blue Badge guides, and private dining in historic stately homes.',
+    heroImage: 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=1200&auto=format&fit=crop',
+    isPublished: true,
+    showInMenu: false,
+    menuLabel: 'Cotswolds Tours',
+    menuOrder: 8,
+    metaDescription: 'Bespoke Cotswolds private manor itineraries and luxury chauffeur services.',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z'
+  }
+];
 
 export class AppDatabase {
   private static instance: AppDatabase;
@@ -344,6 +428,24 @@ export class AppDatabase {
         }
       }, (err) => console.debug('Firestore users sync note:', err));
 
+      // 14. Sync Menu Items
+      onSnapshot(collection(firestoreDb, 'menu_items'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: MenuItemConfig[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as MenuItemConfig));
+          this.setItem('menu_items', list, false);
+        }
+      }, (err) => console.debug('Firestore menu_items sync note:', err));
+
+      // 15. Sync Custom Pages
+      onSnapshot(collection(firestoreDb, 'custom_pages'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: CustomPage[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as CustomPage));
+          this.setItem('custom_pages', list, false);
+        }
+      }, (err) => console.debug('Firestore custom_pages sync note:', err));
+
     } catch (error) {
       console.warn('Firestore real-time listeners initialized with local fallback:', error);
     }
@@ -379,6 +481,12 @@ export class AppDatabase {
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'homepage_config')) {
       this.setItem('homepage_config', INITIAL_HOMEPAGE_CONFIG);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'menu_items')) {
+      this.setItem('menu_items', INITIAL_MENU_ITEMS);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'custom_pages')) {
+      this.setItem('custom_pages', INITIAL_CUSTOM_PAGES);
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'leads')) {
       this.setItem('leads', INITIAL_LEADS);
@@ -881,6 +989,101 @@ export class AppDatabase {
     this.deleteFirestoreDoc('quotations', quoteId);
     this.logAudit(user, 'SETTINGS_UPDATED', 'Quotation', quoteId, `Deleted quote ${quote.quoteNumber}`);
     return true;
+  }
+
+  public createQuotationVersion(parentQuoteId: string, user: User | null): Quotation | null {
+    const parentQuote = this.getQuoteByIdAuthorized(parentQuoteId, user);
+    if (!parentQuote) return null;
+
+    // Lock the parent quote to prevent direct overwrite/mutation
+    const quotes = this.getAllSavedQuotes();
+    const parentIndex = quotes.findIndex(q => q.id === parentQuoteId);
+    if (parentIndex >= 0) {
+      quotes[parentIndex] = {
+        ...quotes[parentIndex],
+        isLocked: true,
+        updatedAt: new Date().toISOString()
+      };
+      this.syncFirestoreDoc('quotations', parentQuoteId, { isLocked: true });
+    }
+
+    const nextVersion = (parentQuote.version || 1) + 1;
+    const baseNumber = parentQuote.quoteNumber ? parentQuote.quoteNumber.split('-v')[0] : 'UBQ-2026';
+    const newQuoteNumber = `${baseNumber}-v${nextVersion}`;
+    const timestamp = new Date().toISOString();
+    const userName = user?.name || parentQuote.agentName || 'Travel Partner';
+
+    const newQuote: Quotation = {
+      ...parentQuote,
+      id: `quote-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      quoteNumber: newQuoteNumber,
+      version: nextVersion,
+      parentQuoteId: parentQuote.id,
+      isLocked: false,
+      leadId: parentQuote.leadId,
+      agentId: user?.id || parentQuote.agentId,
+      agentName: user?.name || parentQuote.agentName,
+      agentEmail: user?.email || parentQuote.agentEmail,
+      agentAgency: user?.companyName || user?.agencyName || parentQuote.agentAgency,
+      agentLogoUrl: user?.brandLogoUrl || parentQuote.agentLogoUrl,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      status: 'DRAFT',
+      versionHistory: [
+        ...(parentQuote.versionHistory || []),
+        {
+          version: nextVersion,
+          updatedAt: timestamp,
+          updatedBy: userName,
+          changesSummary: `Created new editable version ${nextVersion} branched from ${parentQuote.quoteNumber}`,
+          totalSellingPrice: parentQuote.totalSellingPrice
+        }
+      ],
+      activityLog: [
+        ...(parentQuote.activityLog || []),
+        {
+          id: `act-${Date.now()}`,
+          action: 'CREATED',
+          timestamp,
+          userName,
+          details: `Created new editable version ${newQuoteNumber} (v${nextVersion}) from parent ${parentQuote.quoteNumber}`
+        }
+      ]
+    };
+
+    quotes.unshift(newQuote);
+    this.setItem('saved_quotes', quotes);
+    this.syncFirestoreDoc('quotations', newQuote.id, newQuote);
+
+    this.logAudit(
+      user,
+      'BOOKING_CREATED',
+      'Quotation',
+      newQuote.id,
+      `Created version ${nextVersion} (${newQuoteNumber}) from parent quote ${parentQuote.quoteNumber}`
+    );
+
+    return newQuote;
+  }
+
+  public updateQuotationLeadId(quoteId: string, leadId: string, user: User | null): Quotation | null {
+    const quote = this.getQuoteByIdAuthorized(quoteId, user);
+    if (!quote) return null;
+
+    const quotes = this.getAllSavedQuotes();
+    const idx = quotes.findIndex(q => q.id === quoteId);
+    if (idx < 0) return null;
+
+    quotes[idx] = {
+      ...quotes[idx],
+      leadId: leadId.trim(),
+      updatedAt: new Date().toISOString()
+    };
+
+    this.setItem('saved_quotes', quotes);
+    this.syncFirestoreDoc('quotations', quoteId, { leadId: leadId.trim() });
+
+    return quotes[idx];
   }
 
   // ==========================================
@@ -2018,6 +2221,104 @@ export class AppDatabase {
     }
   }
 
+  public registerUser(userData: {
+    name: string;
+    email: string;
+    password?: string;
+    role: UserRole;
+    category?: UserCategory;
+    agencyName?: string;
+    companyName?: string;
+    country?: string;
+    contactNumber?: string;
+    jobTitle?: string;
+    businessType?: string;
+    taxOrGstNumber?: string;
+    iataOrAbtaNumber?: string;
+  }): { success: boolean; error?: string; user?: User; requiresApproval?: boolean } {
+    const trimmedEmail = (userData.email || '').trim().toLowerCase();
+    const trimmedName = (userData.name || '').trim();
+
+    if (!trimmedName || trimmedName.length < 2) {
+      return { success: false, error: 'Please enter your full legal name (minimum 2 characters).' };
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
+      return { success: false, error: 'Please enter a valid official business email address.' };
+    }
+
+    const users = this.getUsers();
+    const existing = users.find(u => u.email.toLowerCase() === trimmedEmail);
+    if (existing) {
+      return {
+        success: false,
+        error: 'An account with this email address already exists. Please sign in or contact admin.'
+      };
+    }
+
+    const isB2BAgent = userData.role === 'B2B_AGENT' || userData.role === 'AGENT';
+    const isInternal = userData.role === 'ADMIN' || userData.role === 'TEAM_MEMBER';
+    
+    // For B2B Agent, agency name is mandatory
+    if (isB2BAgent && !userData.agencyName && !userData.companyName) {
+      return { success: false, error: 'Travel Agency or Company Name is required for B2B Agent registration.' };
+    }
+
+    // B2B Agents are created with PENDING approval status and require admin approval before login
+    const approvalStatus: UserApprovalStatus = isB2BAgent ? 'PENDING' : 'APPROVED';
+    const category: UserCategory = isInternal ? 'INTERNAL' : 'EXTERNAL';
+
+    const newUser: User = {
+      id: `usr-${isB2BAgent ? 'agent' : userData.role.toLowerCase()}-${Date.now()}`,
+      name: trimmedName,
+      email: trimmedEmail,
+      password: userData.password || '',
+      role: userData.role,
+      category,
+      agencyName: userData.agencyName?.trim() || userData.companyName?.trim() || '',
+      companyName: userData.companyName?.trim() || userData.agencyName?.trim() || '',
+      country: userData.country?.trim() || 'Global',
+      contactNumber: userData.contactNumber?.trim() || '',
+      jobTitle: userData.jobTitle?.trim() || '',
+      businessType: userData.businessType?.trim() || '',
+      taxOrGstNumber: userData.taxOrGstNumber?.trim() || '',
+      iataOrAbtaNumber: userData.iataOrAbtaNumber?.trim() || '',
+      createdAt: new Date().toISOString().split('T')[0],
+      approvalStatus,
+      customBuyerMarginPercent: 25,
+      customAgentMarginPercent: 10,
+      permissions: {
+        canAccessPricingCalculator: approvalStatus === 'APPROVED',
+        canCreateBookings: approvalStatus === 'APPROVED',
+        canExportPDF: approvalStatus === 'APPROVED',
+        canViewWholesaleNetRates: approvalStatus === 'APPROVED' && (isB2BAgent || isInternal),
+        canAccessCMS: isInternal,
+        canAccessRoster: isInternal,
+        canAccessFinancials: userData.role === 'ADMIN',
+        canManageUsers: userData.role === 'ADMIN'
+      }
+    };
+
+    users.push(newUser);
+    this.setItem('system_users', users);
+    this.syncFirestoreDoc('users', newUser.id, newUser);
+
+    this.logAudit(
+      newUser,
+      'USER_ROLE_CHANGED',
+      'UserAccessControl',
+      newUser.id,
+      `New user profile created: ${newUser.name} (${newUser.email}), Role=${newUser.role}, Status=${newUser.approvalStatus}, Agency=${newUser.agencyName || 'N/A'}`
+    );
+
+    return {
+      success: true,
+      user: newUser,
+      requiresApproval: isB2BAgent
+    };
+  }
+
   // ==========================================
   // WISHLIST FOLDERS & CURATED PRODUCT SELECTIONS
   // ==========================================
@@ -2135,6 +2436,115 @@ export class AppDatabase {
       item.folderId = targetFolderId;
       this.setItem('wishlist_items', all);
       this.syncFirestoreDoc('wishlist_items', itemId, item);
+    }
+  }
+
+  // ==========================================
+  // MENU & NAVIGATION PAGES MANAGEMENT
+  // ==========================================
+  public getMenuItems(): MenuItemConfig[] {
+    return this.getItem<MenuItemConfig[]>('menu_items', INITIAL_MENU_ITEMS).sort((a, b) => a.displayOrder - b.displayOrder);
+  }
+
+  public saveMenuItem(item: MenuItemConfig, user?: User | null): void {
+    const items = this.getMenuItems();
+    const index = items.findIndex(m => m.id === item.id);
+    let savedItem: MenuItemConfig;
+    if (index >= 0) {
+      savedItem = item;
+      items[index] = savedItem;
+      this.logAudit(user || null, 'SETTINGS_UPDATED', 'NavigationMenu', item.id, `Updated menu item: ${item.label}`);
+    } else {
+      savedItem = {
+        ...item,
+        id: item.id || `menu-${Date.now()}`
+      };
+      items.push(savedItem);
+      this.logAudit(user || null, 'SETTINGS_UPDATED', 'NavigationMenu', savedItem.id, `Added menu item: ${item.label}`);
+    }
+    this.syncFirestoreDoc('menu_items', savedItem.id, savedItem);
+    this.setItem('menu_items', items);
+  }
+
+  public deleteMenuItem(itemId: string, user?: User | null): void {
+    const items = this.getMenuItems();
+    const target = items.find(m => m.id === itemId);
+    this.setItem('menu_items', items.filter(m => m.id !== itemId));
+    this.deleteFirestoreDoc('menu_items', itemId);
+    if (target) {
+      this.logAudit(user || null, 'SETTINGS_UPDATED', 'NavigationMenu', itemId, `Removed menu item: ${target.label}`);
+    }
+  }
+
+  public updateMenuOrdering(items: MenuItemConfig[], user?: User | null): void {
+    this.setItem('menu_items', items);
+    items.forEach(item => {
+      this.syncFirestoreDoc('menu_items', item.id, item);
+    });
+    this.logAudit(user || null, 'SETTINGS_UPDATED', 'NavigationMenu', 'menu-order', `Re-arranged navigation menu order (${items.length} items)`);
+  }
+
+  public getCustomPages(): CustomPage[] {
+    return this.getItem<CustomPage[]>('custom_pages', INITIAL_CUSTOM_PAGES);
+  }
+
+  public getCustomPageBySlug(slug: string): CustomPage | undefined {
+    return this.getCustomPages().find(p => p.slug === slug || p.id === slug);
+  }
+
+  public saveCustomPage(page: CustomPage, user?: User | null): void {
+    const pages = this.getCustomPages();
+    const index = pages.findIndex(p => p.id === page.id);
+    let savedPage: CustomPage;
+    const now = new Date().toISOString();
+    if (index >= 0) {
+      savedPage = { ...page, updatedAt: now };
+      pages[index] = savedPage;
+      this.logAudit(user || null, 'SETTINGS_UPDATED', 'CustomPage', page.id, `Updated custom page: ${page.title}`);
+    } else {
+      savedPage = {
+        ...page,
+        id: page.id || `page-${Date.now()}`,
+        createdAt: now,
+        updatedAt: now
+      };
+      pages.unshift(savedPage);
+      this.logAudit(user || null, 'SETTINGS_UPDATED', 'CustomPage', savedPage.id, `Created custom page: ${page.title}`);
+    }
+    this.syncFirestoreDoc('custom_pages', savedPage.id, savedPage);
+    this.setItem('custom_pages', pages);
+
+    // If showInMenu is enabled, ensure it exists in Menu items
+    const menuItems = this.getMenuItems();
+    const menuIndex = menuItems.findIndex(m => m.targetId === savedPage.slug || m.id === `menu-${savedPage.id}`);
+    if (savedPage.showInMenu && savedPage.isPublished) {
+      const menuItem: MenuItemConfig = {
+        id: `menu-${savedPage.id}`,
+        label: savedPage.menuLabel || savedPage.title,
+        type: 'CUSTOM_PAGE',
+        targetId: savedPage.slug,
+        displayOrder: savedPage.menuOrder || (menuItems.length + 1),
+        isVisible: true
+      };
+      if (menuIndex >= 0) {
+        menuItems[menuIndex] = menuItem;
+      } else {
+        menuItems.push(menuItem);
+      }
+      this.updateMenuOrdering(menuItems, user);
+    } else if (!savedPage.showInMenu && menuIndex >= 0) {
+      this.deleteMenuItem(menuItems[menuIndex].id, user);
+    }
+  }
+
+  public deleteCustomPage(pageId: string, user?: User | null): void {
+    const pages = this.getCustomPages();
+    const target = pages.find(p => p.id === pageId);
+    this.setItem('custom_pages', pages.filter(p => p.id !== pageId));
+    this.deleteFirestoreDoc('custom_pages', pageId);
+    if (target) {
+      this.deleteMenuItem(`menu-${pageId}`, user);
+      this.logAudit(user || null, 'SETTINGS_UPDATED', 'CustomPage', pageId, `Deleted custom page: ${target.title}`);
     }
   }
 }

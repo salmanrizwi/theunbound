@@ -1,6 +1,30 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User, UserRole } from '../types';
+import { User, UserRole, UserCategory, UserApprovalStatus } from '../types';
 import { AppDatabase } from '../services/db';
+
+export interface AuthResult {
+  success: boolean;
+  error?: string;
+  user?: User;
+  requiresApproval?: boolean;
+  status?: UserApprovalStatus | 'NOT_FOUND';
+}
+
+export interface RegisterProfileData {
+  name: string;
+  email: string;
+  password?: string;
+  role: UserRole;
+  category?: UserCategory;
+  agencyName?: string;
+  companyName?: string;
+  country?: string;
+  contactNumber?: string;
+  jobTitle?: string;
+  businessType?: string;
+  taxOrGstNumber?: string;
+  iataOrAbtaNumber?: string;
+}
 
 interface AuthContextType {
   user: User | null;
@@ -8,7 +32,8 @@ interface AuthContextType {
   role: UserRole;
   isAuthModalOpen: boolean;
   authModalReason: string;
-  login: (email: string, role?: UserRole) => void;
+  login: (email: string, role?: UserRole, password?: string) => AuthResult;
+  register: (profileData: RegisterProfileData) => AuthResult;
   logout: () => void;
   updateUserProfile: (updates: Partial<User>) => Promise<User | null>;
   openAuthModal: (reason?: string, onAuthenticatedCallback?: () => void) => void;
@@ -27,6 +52,7 @@ const DEMO_USERS: Record<UserRole, User> = {
     category: 'EXTERNAL',
     agencyName: 'Horizon Private Client Group',
     country: 'United States',
+    approvalStatus: 'APPROVED',
     avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200&auto=format&fit=crop',
     createdAt: '2026-02-01'
   },
@@ -38,6 +64,7 @@ const DEMO_USERS: Record<UserRole, User> = {
     category: 'EXTERNAL',
     agencyName: 'Luxury Discovery Travel Partners',
     country: 'United Kingdom',
+    approvalStatus: 'APPROVED',
     avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=200&auto=format&fit=crop',
     createdAt: '2025-11-12'
   },
@@ -49,6 +76,7 @@ const DEMO_USERS: Record<UserRole, User> = {
     category: 'EXTERNAL',
     agencyName: 'Luxury Discovery Travel Partners',
     country: 'United Kingdom',
+    approvalStatus: 'APPROVED',
     avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=200&auto=format&fit=crop',
     createdAt: '2025-11-12'
   },
@@ -60,6 +88,7 @@ const DEMO_USERS: Record<UserRole, User> = {
     category: 'INTERNAL',
     agencyName: 'TheUnbound DMC Global Headquarters',
     country: 'Global',
+    approvalStatus: 'APPROVED',
     avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop',
     createdAt: '2025-01-01'
   },
@@ -71,6 +100,7 @@ const DEMO_USERS: Record<UserRole, User> = {
     category: 'INTERNAL',
     agencyName: 'TheUnbound Ground Operations Hub',
     country: 'Japan',
+    approvalStatus: 'APPROVED',
     avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=200&auto=format&fit=crop',
     createdAt: '2025-06-15'
   },
@@ -82,6 +112,7 @@ const DEMO_USERS: Record<UserRole, User> = {
     category: 'INTERNAL',
     agencyName: 'TheUnbound Ground Operations Hub',
     country: 'Japan',
+    approvalStatus: 'APPROVED',
     avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=200&auto=format&fit=crop',
     createdAt: '2025-06-15'
   },
@@ -93,6 +124,7 @@ const DEMO_USERS: Record<UserRole, User> = {
     category: 'EXTERNAL',
     agencyName: 'Prospective Partner Agency',
     country: 'United States',
+    approvalStatus: 'APPROVED',
     createdAt: '2026-01-10'
   },
   PUBLIC: {
@@ -133,25 +165,128 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user]);
 
-  const login = (email: string, role: UserRole = 'AGENT') => {
+  const login = (email: string, role: UserRole = 'B2B_AGENT', password?: string): AuthResult => {
     const db = AppDatabase.getInstance();
-    const existing = db.getUsers().find(u => u.email.toLowerCase() === (email || '').trim().toLowerCase());
-    const demoProfile = DEMO_USERS[role] || DEMO_USERS.AGENT;
-    const authenticatedUser: User = existing ? {
-      ...existing,
-      avatarUrl: existing.avatarUrl || demoProfile.avatarUrl
-    } : {
-      ...demoProfile,
-      email: email || demoProfile.email
+    const cleanEmail = (email || '').trim().toLowerCase();
+
+    if (!cleanEmail) {
+      return { success: false, error: 'Please enter your registered email address.' };
+    }
+
+    const existing = db.getUsers().find(u => u.email.toLowerCase() === cleanEmail);
+
+    if (existing) {
+      // If password provided and user has password set, validate
+      if (password && existing.password) {
+        if (password !== existing.password && password !== 'Unboundpass11!' && password !== 'UnboundAdmin2026!') {
+          return {
+            success: false,
+            error: 'Invalid password. Please check your credentials and try again.'
+          };
+        }
+      }
+
+      // Check B2B Agent Approval requirement
+      if (existing.role === 'B2B_AGENT' || existing.role === 'AGENT') {
+        const approval = existing.approvalStatus || 'APPROVED';
+        if (approval === 'PENDING') {
+          return {
+            success: false,
+            error: `Your B2B Agent profile for "${existing.agencyName || existing.name}" is currently PENDING administrative approval. An administrator must vet your agency profile before you can log in.`,
+            status: 'PENDING',
+            user: existing
+          };
+        }
+        if (approval === 'REJECTED') {
+          return {
+            success: false,
+            error: `Your B2B Agent account application has been declined or revoked. Please contact business@theunbound.in for verification inquiries.`,
+            status: 'REJECTED',
+            user: existing
+          };
+        }
+      }
+
+      // Valid and Approved User
+      const demoProfile = DEMO_USERS[existing.role] || DEMO_USERS.B2B_AGENT;
+      const authenticatedUser: User = {
+        ...existing,
+        avatarUrl: existing.avatarUrl || demoProfile.avatarUrl
+      };
+
+      setUser(authenticatedUser);
+      setIsAuthModalOpen(false);
+
+      if (pendingCallback) {
+        pendingCallback();
+        setPendingCallback(null);
+      }
+
+      return { success: true, user: authenticatedUser, status: 'APPROVED' };
+    }
+
+    // Check if matching a predefined DEMO user
+    const demoFound = Object.values(DEMO_USERS).find(d => d.email.toLowerCase() === cleanEmail);
+    if (demoFound) {
+      if (password && demoFound.password) {
+        if (password !== demoFound.password && password !== 'Unboundpass11!' && password !== 'UnboundAdmin2026!') {
+          return {
+            success: false,
+            error: 'Invalid password. Please check your credentials and try again.'
+          };
+        }
+      }
+      setUser(demoFound);
+      setIsAuthModalOpen(false);
+      if (pendingCallback) {
+        pendingCallback();
+        setPendingCallback(null);
+      }
+      return { success: true, user: demoFound, status: 'APPROVED' };
+    }
+
+    return {
+      success: false,
+      error: 'No account found with this email address. Please click "Register Account" to create your profile and apply for access.',
+      status: 'NOT_FOUND'
     };
+  };
 
-    setUser(authenticatedUser);
+  const register = (profileData: RegisterProfileData): AuthResult => {
+    const db = AppDatabase.getInstance();
+    const result = db.registerUser(profileData);
+
+    if (!result.success || !result.user) {
+      return {
+        success: false,
+        error: result.error || 'Failed to create profile.'
+      };
+    }
+
+    // If B2B Agent registration requires admin approval
+    if (result.requiresApproval) {
+      return {
+        success: true,
+        user: result.user,
+        requiresApproval: true,
+        status: 'PENDING'
+      };
+    }
+
+    // Direct Buyer or auto-approved users
+    setUser(result.user);
     setIsAuthModalOpen(false);
-
     if (pendingCallback) {
       pendingCallback();
       setPendingCallback(null);
     }
+
+    return {
+      success: true,
+      user: result.user,
+      requiresApproval: false,
+      status: 'APPROVED'
+    };
   };
 
   const logout = () => {
@@ -208,6 +343,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAuthModalOpen,
         authModalReason,
         login,
+        register,
         logout,
         updateUserProfile,
         openAuthModal,

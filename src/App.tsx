@@ -1,9 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { QuotationProvider, useQuotation } from './context/QuotationContext';
 import { RosterProvider } from './context/RosterContext';
-import { DESTINATIONS } from './data/destinations';
-import { INITIAL_PRODUCTS } from './data/initialProducts';
+import { AppDatabase } from './services/db';
 import { Product, Destination, Quotation, Booking } from './types';
 import { Navbar, MainNavTab } from './components/Navbar';
 import { DestinationPage } from './pages/DestinationPage';
@@ -13,6 +12,7 @@ import { TermsOfPolicyPage } from './pages/TermsOfPolicyPage';
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { RefundPolicyPage } from './pages/RefundPolicyPage';
 import { AccountPage } from './pages/AccountPage';
+import { CustomPageView } from './pages/CustomPageView';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { PricingCalculatorModal } from './components/PricingCalculatorModal';
 import { QuoteBuilderDrawer } from './components/QuoteBuilderDrawer';
@@ -42,24 +42,24 @@ import {
 
 const MainAppContent: React.FC = () => {
   const { isAuthenticated, role, openAuthModal } = useAuth();
-  const { setIsQuoteDrawerOpen } = useQuotation();
+  const { setIsQuoteDrawerOpen, loadSavedQuote } = useQuotation();
+  const db = AppDatabase.getInstance();
 
   // Navigation State - Defaults to 'all' (All Destinations as Homepage)
   const [activeTab, setActiveTab] = useState<MainNavTab>('DESTINATIONS');
   const [selectedDestinationSlug, setSelectedDestinationSlug] = useState<string>('all');
+  const [activeCustomPageSlug, setActiveCustomPageSlug] = useState<string>('about-theunbound');
 
-  // Product Database State (initialized with INITIAL_PRODUCTS)
-  const [products, setProducts] = useState<Product[]>(() => {
-    const saved = localStorage.getItem('unbound_products');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return INITIAL_PRODUCTS;
-      }
-    }
-    return INITIAL_PRODUCTS;
-  });
+  // Real-time synced Database State for Destinations and Products
+  const [destinations, setDestinations] = useState<Destination[]>(() => db.getDestinations());
+  const [products, setProducts] = useState<Product[]>(() => db.getProducts());
+
+  useEffect(() => {
+    return db.subscribe(() => {
+      setDestinations(db.getDestinations());
+      setProducts(db.getProducts());
+    });
+  }, [db]);
 
   // Active Modals State
   const [inspectingProduct, setInspectingProduct] = useState<Product | null>(null);
@@ -77,11 +77,17 @@ const MainAppContent: React.FC = () => {
   const isAllDestinations = selectedDestinationSlug === 'all';
   const currentDestination = isAllDestinations
     ? null
-    : (DESTINATIONS.find(d => d.slug === selectedDestinationSlug) || DESTINATIONS[0]);
+    : (destinations.find(d => d.slug === selectedDestinationSlug) || destinations[0]);
 
   const handleSelectDestination = (slug: string) => {
     setSelectedDestinationSlug(slug);
     setActiveTab('DESTINATIONS');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSelectCustomPage = (slug: string) => {
+    setActiveCustomPageSlug(slug);
+    setActiveTab('CUSTOM_PAGE');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -109,11 +115,13 @@ const MainAppContent: React.FC = () => {
 
       {/* Top Main Navigation */}
       <Navbar
-        destinations={DESTINATIONS}
+        destinations={destinations}
         selectedDestinationSlug={selectedDestinationSlug}
         onSelectDestination={handleSelectDestination}
         activeTab={activeTab}
         onSelectTab={setActiveTab}
+        onSelectCustomPage={handleSelectCustomPage}
+        activeCustomPageSlug={activeCustomPageSlug}
         onOpenSpecs={() => setIsSpecsModalOpen(true)}
         onOpenBookings={() => setIsBookingsHistoryOpen(true)}
       />
@@ -123,7 +131,7 @@ const MainAppContent: React.FC = () => {
         {activeTab === 'DESTINATIONS' && (
           <DestinationPage
             destination={currentDestination}
-            allDestinations={DESTINATIONS}
+            allDestinations={destinations}
             onSelectDestination={handleSelectDestination}
             products={products}
             onViewProduct={(p) => {
@@ -137,7 +145,7 @@ const MainAppContent: React.FC = () => {
 
         {activeTab === 'B2B_BUILDER' && (
           <B2BQuotationBuilderPage
-            destinations={DESTINATIONS}
+            destinations={destinations}
             products={products}
             onViewProductDetails={(p) => {
               setInspectingProductHidePrice(true);
@@ -168,6 +176,13 @@ const MainAppContent: React.FC = () => {
           />
         )}
 
+        {activeTab === 'CUSTOM_PAGE' && (
+          <CustomPageView
+            pageSlug={activeCustomPageSlug}
+            onBackToExplore={() => setActiveTab('DESTINATIONS')}
+          />
+        )}
+
         {activeTab === 'BLOGS' && (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <PublicBlogHub
@@ -180,13 +195,14 @@ const MainAppContent: React.FC = () => {
         {activeTab === 'ADMIN' && (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <AdminCMSHub
-              destinations={DESTINATIONS}
+              destinations={destinations}
               products={products}
               onViewProduct={(p) => {
                 setInspectingProductHidePrice(false);
                 setInspectingProduct(p);
               }}
               onLoadQuote={(q) => {
+                loadSavedQuote(q);
                 setActiveTab('B2B_BUILDER');
               }}
             />
