@@ -29,34 +29,78 @@
         "updatedAt": { "type": "string", "required": true }
       }
     },
+    "Destination": {
+      "collection": "destinations",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "slug": { "type": "string", "required": true },
+        "country": { "type": "string", "required": true },
+        "region": { "type": "string", "required": true },
+        "regions": { "type": "array", "required": false },
+        "heroImage": { "type": "string", "required": true },
+        "tagline": { "type": "string", "required": false },
+        "description": { "type": "string", "required": false },
+        "currency": { "type": "string", "required": true },
+        "status": { "type": "string", "required": true, "enum": ["ACTIVE", "COMING_SOON", "ARCHIVED"] }
+      }
+    },
+    "Region": {
+      "collection": "regions",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "destinationId": { "type": "string", "required": true },
+        "destinationName": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "slug": { "type": "string", "required": true },
+        "description": { "type": "string", "required": false },
+        "displayOrder": { "type": "number", "required": false }
+      }
+    },
+    "CityHub": {
+      "collection": "city_hubs",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "destinationId": { "type": "string", "required": true },
+        "destinationName": { "type": "string", "required": true },
+        "regionId": { "type": "string", "required": false },
+        "regionName": { "type": "string", "required": false },
+        "name": { "type": "string", "required": true },
+        "tagline": { "type": "string", "required": false },
+        "description": { "type": "string", "required": false },
+        "heroImage": { "type": "string", "required": true },
+        "images": { "type": "array", "required": false },
+        "displayOrder": { "type": "number", "required": false },
+        "isPublished": { "type": "boolean", "required": true },
+        "status": { "type": "string", "required": true, "enum": ["ACTIVE", "ARCHIVED"] }
+      }
+    },
     "Product": {
       "collection": "products",
       "fields": {
         "id": { "type": "string", "required": true },
-        "title": { "type": "string", "required": true },
+        "sku": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
         "destinationId": { "type": "string", "required": true },
+        "destinationName": { "type": "string", "required": true },
+        "regionId": { "type": "string", "required": false },
+        "regionName": { "type": "string", "required": false },
+        "hubId": { "type": "string", "required": false },
         "city": { "type": "string", "required": true },
+        "country": { "type": "string", "required": true },
         "productType": { "type": "string", "required": true },
         "category": { "type": "string", "required": true },
         "subcategory": { "type": "string", "required": false },
         "duration": { "type": "string", "required": true },
-        "startingPrice": { "type": "number", "required": true },
-        "nettPrice": { "type": "number", "required": true },
-        "childPrice": { "type": "number", "required": false },
-        "infantPrice": { "type": "number", "required": false },
+        "adultNetPrice": { "type": "number", "required": true },
+        "childNetPrice": { "type": "number", "required": false },
+        "infantNetPrice": { "type": "number", "required": false },
+        "sellingPriceStartingFrom": { "type": "number", "required": true },
         "currency": { "type": "string", "required": true },
         "supplierId": { "type": "string", "required": true },
         "supplierName": { "type": "string", "required": true },
-        "supplierProductCode": { "type": "string", "required": false },
-        "supplierContactDetails": { "type": "string", "required": false },
-        "supplierLocalCurrency": { "type": "string", "required": false },
-        "sla": { "type": "string", "required": false },
-        "recommendedProductIds": { "type": "array", "required": false },
         "images": { "type": "array", "required": true },
-        "inclusions": { "type": "array", "required": false },
-        "exclusions": { "type": "array", "required": false },
-        "highlights": { "type": "array", "required": false },
-        "isPublished": { "type": "boolean", "required": true }
+        "status": { "type": "string", "required": true, "enum": ["ACTIVE", "DRAFT", "ARCHIVED"] }
       }
     },
     "Quotation": {

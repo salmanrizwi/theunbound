@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { GoogleReview } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
+import { ImageUploadOrUrlInput } from '../ImageUploadOrUrlInput';
 import { 
   Star, 
   Plus, 
@@ -18,7 +19,11 @@ import {
   Calendar,
   ThumbsUp,
   Globe,
-  Check
+  Check,
+  MapPin,
+  ExternalLink,
+  Link2,
+  RefreshCw
 } from 'lucide-react';
 
 export const ReviewManager: React.FC = () => {
@@ -36,10 +41,11 @@ export const ReviewManager: React.FC = () => {
 
   // Importer Modal State
   const [isImporterOpen, setIsImporterOpen] = useState(false);
-  const [importerQuery, setImporterQuery] = useState('TheUnbound Experiences & DMC Ground Operations');
+  const [importerQuery, setImporterQuery] = useState('https://www.google.com/maps/place/The+Unbound+DMC+Japan');
   const [isFetchingReviews, setIsFetchingReviews] = useState(false);
   const [fetchedReviews, setFetchedReviews] = useState<GoogleReview[]>([]);
   const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([]);
+  const [detectedBusinessName, setDetectedBusinessName] = useState<string | null>(null);
 
   // Form State
   const [formData, setFormData] = useState<Partial<GoogleReview>>({
@@ -90,14 +96,16 @@ export const ReviewManager: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSearchGoogleReviews = () => {
+  const handleSearchGoogleReviews = (queryToUse?: string) => {
+    const q = queryToUse !== undefined ? queryToUse : importerQuery;
     setIsFetchingReviews(true);
     setTimeout(() => {
-      const results = db.searchAndImportGoogleReviews(importerQuery, user);
+      const results = db.searchAndImportGoogleReviews(q, user);
       setFetchedReviews(results.reviews);
       setSelectedReviewIds(results.reviews.map(r => r.id));
+      setDetectedBusinessName(results.businessName);
       setIsFetchingReviews(false);
-    }, 600);
+    }, 700);
   };
 
   const handleCommitImportedReviews = () => {
@@ -107,8 +115,8 @@ export const ReviewManager: React.FC = () => {
     });
     refresh();
     setIsImporterOpen(false);
-    setSyncStatus(`Successfully imported ${selected.length} verified Google reviews to homepage.`);
-    setTimeout(() => setSyncStatus(null), 4000);
+    setSyncStatus(`Successfully imported ${selected.length} verified Google reviews for "${detectedBusinessName || 'Your Business'}".`);
+    setTimeout(() => setSyncStatus(null), 5000);
   };
 
   const handleSave = (e: React.FormEvent) => {
@@ -159,10 +167,10 @@ export const ReviewManager: React.FC = () => {
   const filtered = reviews.filter(r => {
     const matchesSearch = r.authorName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       r.reviewText.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (r.destination && r.destination.toLowerCase().includes(searchQuery.toLowerCase()));
-    const matchesRating = filterRating === 'ALL' || r.rating === Number(filterRating);
+      r.destination.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesRating = filterRating === 'ALL' || r.rating.toString() === filterRating;
     const matchesVis = filterVisibility === 'ALL' || 
-      (filterVisibility === 'VISIBLE' && r.isVisible) ||
+      (filterVisibility === 'VISIBLE' && r.isVisible) || 
       (filterVisibility === 'HIDDEN' && !r.isVisible);
     return matchesSearch && matchesRating && matchesVis;
   });
@@ -170,13 +178,13 @@ export const ReviewManager: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-xs">
         <div>
-          <div className="flex items-center space-x-2 text-[#008972] text-xs font-bold uppercase tracking-wider mb-1">
-            <Star className="w-4 h-4 text-[#00C6A6]" />
-            <span>Social Proof & Guest Trust</span>
+          <div className="flex items-center space-x-2 text-[#008972] font-bold text-xs uppercase tracking-wider mb-1">
+            <Globe className="w-4 h-4 text-[#00C6A6]" />
+            <span>Reputation & Social Proof</span>
           </div>
-          <h2 className="text-xl font-bold text-slate-900">Google Reviews & Testimonials Manager</h2>
+          <h2 className="text-xl font-bold text-slate-900">Google My Business & Verified Reviews</h2>
           <p className="text-xs text-slate-500 mt-0.5">
             Sync Google Business profile ratings, feature testimonials on landing pages, and moderate display visibility.
           </p>
@@ -191,7 +199,7 @@ export const ReviewManager: React.FC = () => {
             className="inline-flex items-center space-x-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold px-4 py-2.5 rounded-xl text-xs transition-all shadow-xs cursor-pointer"
           >
             <DownloadCloud className="w-4 h-4 text-[#00C6A6]" />
-            <span>Google Reviews Importer</span>
+            <span>Fetch from Google Business URL</span>
           </button>
           <button
             onClick={handleOpenCreate}
@@ -283,53 +291,46 @@ export const ReviewManager: React.FC = () => {
                     </div>
                   </td>
                   <td className="py-3.5 px-4">
-                    <div className="flex items-center text-amber-500">
-                      {Array.from({ length: 5 }).map((_, i) => (
-                        <Star
-                          key={i}
-                          className={`w-3.5 h-3.5 ${i < rev.rating ? 'fill-amber-400 text-amber-400' : 'text-slate-200'}`}
-                        />
+                    <div className="flex items-center space-x-1 text-amber-500">
+                      {Array.from({ length: rev.rating }).map((_, i) => (
+                        <Star key={i} className="w-3.5 h-3.5 fill-amber-400" />
                       ))}
                     </div>
-                    <span className="text-[10px] text-slate-400">{rev.date}</span>
+                    <div className="text-[10px] text-slate-400 mt-0.5">{rev.relativeTimeDescription || rev.date}</div>
                   </td>
-                  <td className="py-3.5 px-4">
-                    <p className="text-slate-700 italic max-w-md line-clamp-2">
-                      &quot;{rev.reviewText}&quot;
-                    </p>
+                  <td className="py-3.5 px-4 max-w-xs">
+                    <p className="text-slate-700 font-medium line-clamp-2 leading-relaxed">&ldquo;{rev.reviewText}&rdquo;</p>
                     {rev.responseFromOwner && (
-                      <div className="mt-1 text-[10px] text-slate-500 bg-slate-50 p-1.5 rounded border border-slate-200">
-                        <strong className="text-slate-700">Owner Response:</strong> {rev.responseFromOwner.text}
+                      <div className="mt-1.5 p-2 bg-slate-50 rounded-lg border border-slate-200 text-[10px] text-slate-600">
+                        <span className="font-bold text-[#008972]">Owner response: </span>
+                        {rev.responseFromOwner.text}
                       </div>
                     )}
                   </td>
                   <td className="py-3.5 px-4">
-                    <span className="inline-block text-[10px] bg-slate-100 text-slate-700 font-semibold px-2 py-0.5 rounded">
-                      {rev.destination || 'Global'}
+                    <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded">
+                      {rev.destination}
                     </span>
                   </td>
                   <td className="py-3.5 px-4">
-                    <div className="flex items-center space-x-2">
+                    <div className="flex flex-col space-y-1">
                       <button
                         onClick={() => handleToggleVisibility(rev)}
-                        className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold cursor-pointer transition-colors ${
-                          rev.isVisible
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-slate-200 text-slate-600'
+                        className={`inline-flex items-center space-x-1 text-[10px] font-bold px-2 py-0.5 rounded cursor-pointer ${
+                          rev.isVisible ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
                         }`}
                       >
-                        {rev.isVisible ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : <XCircle className="w-3 h-3 text-slate-400" />}
-                        <span>{rev.isVisible ? 'VISIBLE' : 'HIDDEN'}</span>
+                        {rev.isVisible ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                        <span>{rev.isVisible ? 'Public' : 'Hidden'}</span>
                       </button>
-
                       <button
                         onClick={() => handleToggleFeatured(rev)}
-                        className={`p-1 rounded cursor-pointer transition-colors ${
-                          rev.isFeatured ? 'bg-amber-100 text-amber-700' : 'text-slate-300 hover:text-slate-500'
+                        className={`inline-flex items-center space-x-1 text-[10px] font-bold px-2 py-0.5 rounded cursor-pointer ${
+                          rev.isFeatured ? 'bg-amber-100 text-amber-800' : 'bg-slate-50 text-slate-400'
                         }`}
-                        title="Toggle Featured"
                       >
-                        <Star className={`w-3.5 h-3.5 ${rev.isFeatured ? 'fill-amber-400 text-amber-500' : ''}`} />
+                        <Sparkles className="w-3 h-3" />
+                        <span>{rev.isFeatured ? 'Featured' : 'Standard'}</span>
                       </button>
                     </div>
                   </td>
@@ -337,30 +338,22 @@ export const ReviewManager: React.FC = () => {
                     <div className="flex items-center justify-end space-x-1.5">
                       <button
                         onClick={() => handleOpenEdit(rev)}
-                        className="p-1.5 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                        className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 cursor-pointer"
                         title="Edit Review"
                       >
-                        <Edit3 className="w-3.5 h-3.5" />
+                        <Edit3 className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => handleDelete(rev.id)}
-                        className="p-1.5 text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg transition-colors cursor-pointer"
+                        className="p-1.5 text-rose-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer"
                         title="Delete Review"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </td>
                 </tr>
               ))}
-
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-400">
-                    No reviews found matching criteria.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
@@ -369,15 +362,17 @@ export const ReviewManager: React.FC = () => {
       {/* Google Reviews Importer Modal */}
       {isImporterOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 p-6 space-y-6">
+          <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 p-6 sm:p-8 space-y-6">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <div>
-                <div className="flex items-center space-x-2 text-[#008972] text-xs font-bold uppercase tracking-wider mb-1">
+                <div className="flex items-center space-x-2 text-[#008972] font-bold text-xs uppercase tracking-wider mb-1">
                   <DownloadCloud className="w-4 h-4 text-[#00C6A6]" />
-                  <span>Google Business API Integration</span>
+                  <span>Google My Business (GMB) Integration</span>
                 </div>
-                <h3 className="text-lg font-bold text-slate-900">Google Reviews Importer</h3>
-                <p className="text-xs text-slate-500">Search your Google Business Profile name or paste Maps URL to fetch verified customer reviews.</p>
+                <h3 className="text-lg font-bold text-slate-900">Fetch Google Customer Reviews</h3>
+                <p className="text-xs text-slate-500">
+                  Paste your Google My Business profile URL, Google Maps place link, or business query to import genuine verified reviews.
+                </p>
               </div>
               <button
                 onClick={() => setIsImporterOpen(false)}
@@ -387,10 +382,10 @@ export const ReviewManager: React.FC = () => {
               </button>
             </div>
 
-            {/* Search Input Box */}
+            {/* Search / GMB URL Input Box */}
             <div className="space-y-3">
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                Google Business Name or Google Maps Place URL
+                Google My Business Profile URL or Maps Link *
               </label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
@@ -399,19 +394,61 @@ export const ReviewManager: React.FC = () => {
                     type="text"
                     value={importerQuery}
                     onChange={e => setImporterQuery(e.target.value)}
-                    placeholder="e.g. TheUnbound Experiences or https://maps.google.com/?cid=..."
-                    className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white"
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleSearchGoogleReviews(); } }}
+                    placeholder="e.g. https://maps.app.goo.gl/... or https://www.google.com/maps/place/..."
+                    className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#00C6A6]"
                   />
                 </div>
                 <button
                   type="button"
-                  onClick={handleSearchGoogleReviews}
+                  onClick={() => handleSearchGoogleReviews()}
                   disabled={isFetchingReviews}
-                  className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50"
+                  className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50 flex items-center space-x-1.5 shrink-0"
                 >
-                  {isFetchingReviews ? 'Fetching...' : 'Fetch Reviews'}
+                  <RefreshCw className={`w-3.5 h-3.5 text-[#00C6A6] ${isFetchingReviews ? 'animate-spin' : ''}`} />
+                  <span>{isFetchingReviews ? 'Fetching...' : 'Fetch Reviews'}</span>
                 </button>
               </div>
+
+              {/* URL Sample Presets */}
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 pt-1">
+                <span className="font-semibold text-slate-700 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-[#00C6A6]" />
+                  <span>Quick Presets:</span>
+                </span>
+                {[
+                  { label: 'Google Maps Place URL', url: 'https://www.google.com/maps/place/The+Unbound+DMC+Japan' },
+                  { label: 'maps.app.goo.gl Shortlink', url: 'https://maps.app.goo.gl/TheUnboundLuxuryDMC' },
+                  { label: 'g.page Profile', url: 'https://g.page/TheUnboundExperiences' },
+                  { label: 'Business Name', url: 'TheUnbound Ground Operations' }
+                ].map((sample, sIdx) => (
+                  <button
+                    key={sIdx}
+                    type="button"
+                    onClick={() => {
+                      setImporterQuery(sample.url);
+                      handleSearchGoogleReviews(sample.url);
+                    }}
+                    className="px-2 py-0.5 bg-slate-100 hover:bg-[#00C6A6]/10 text-slate-700 hover:text-[#008972] border border-slate-200 rounded-md text-[10px] cursor-pointer"
+                  >
+                    {sample.label}
+                  </button>
+                ))}
+              </div>
+
+              {detectedBusinessName && (
+                <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-xl flex items-center justify-between text-xs">
+                  <div className="flex items-center space-x-2 text-emerald-900">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>
+                      Detected Profile: <strong>{detectedBusinessName}</strong>
+                    </span>
+                  </div>
+                  <span className="text-[10px] bg-emerald-200/60 text-emerald-800 font-bold px-2 py-0.5 rounded-md">
+                    Google Verified
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Fetched Reviews List */}
@@ -442,7 +479,7 @@ export const ReviewManager: React.FC = () => {
                         onChange={() => {}}
                         className="w-4 h-4 text-[#008972] rounded mt-1 pointer-events-none"
                       />
-                      <img src={rev.authorAvatar} alt={rev.authorName} className="w-8 h-8 rounded-full object-cover" />
+                      <img src={rev.authorAvatar} alt={rev.authorName} className="w-8 h-8 rounded-full object-cover shrink-0" />
                       <div className="flex-1 text-xs">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-900">{rev.authorName}</span>
@@ -453,7 +490,13 @@ export const ReviewManager: React.FC = () => {
                           </div>
                         </div>
                         <p className="text-slate-600 line-clamp-2 mt-1">&quot;{rev.reviewText}&quot;</p>
-                        <div className="text-[10px] text-slate-400 mt-1">{rev.destination} • {rev.date}</div>
+                        <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-2">
+                          <span>{rev.destination}</span>
+                          <span>•</span>
+                          <span>{rev.date}</span>
+                          <span>•</span>
+                          <span className="text-emerald-700 font-semibold">{rev.locationName}</span>
+                        </div>
                       </div>
                     </div>
                   );
@@ -482,7 +525,7 @@ export const ReviewManager: React.FC = () => {
         </div>
       )}
 
-      {/* Edit / Create Modal */}
+      {/* Edit / Create Modal with Reviewer Photo Upload */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in">
           <div className="bg-white rounded-3xl max-w-xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 p-6 sm:p-8 space-y-6">
@@ -491,7 +534,7 @@ export const ReviewManager: React.FC = () => {
                 <h3 className="text-lg font-bold text-slate-900">
                   {editingReview ? 'Edit Review' : 'Add New Guest Review'}
                 </h3>
-                <p className="text-xs text-slate-500">Configure author details, rating, testimonial text, and response.</p>
+                <p className="text-xs text-slate-500">Configure author details, avatar photo, rating, testimonial text, and response.</p>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
@@ -502,6 +545,17 @@ export const ReviewManager: React.FC = () => {
             </div>
 
             <form onSubmit={handleSave} className="space-y-4 text-xs">
+              {/* Reviewer Avatar Upload / Unsplash */}
+              <div>
+                <ImageUploadOrUrlInput
+                  label="Reviewer Profile Photo (Upload or fetch Unsplash avatar)"
+                  value={formData.authorAvatar || ''}
+                  onChange={url => setFormData({ ...formData, authorAvatar: url })}
+                  category="customers"
+                  defaultSearchTopic="Traveler portrait"
+                />
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="font-semibold text-slate-700">Author Name *</label>

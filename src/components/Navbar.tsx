@@ -22,7 +22,7 @@ import { useQuotation } from '../context/QuotationContext';
 import { CurrencyCode, DestinationRegion, Destination, SUPPORTED_CURRENCIES, MenuItemConfig } from '../types';
 import { AppDatabase } from '../services/db';
 
-export type MainNavTab = 'DESTINATIONS' | 'B2B_BUILDER' | 'DASHBOARD' | 'ADMIN' | 'ACCOUNT' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND' | 'CUSTOM_PAGE';
+export type MainNavTab = 'DESTINATIONS' | 'VISAS' | 'B2B_BUILDER' | 'DASHBOARD' | 'ADMIN' | 'ACCOUNT' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND' | 'CUSTOM_PAGE';
 
 interface NavbarProps {
   destinations?: Destination[];
@@ -102,6 +102,8 @@ export const Navbar: React.FC<NavbarProps> = ({
       } else if (target === 'japan' || target === 'united-kingdom' || target === 'europe') {
         if (onSelectTab) onSelectTab('DESTINATIONS');
         onSelectDestination(target);
+      } else if (target === 'visas') {
+        if (onSelectTab) onSelectTab('VISAS');
       } else if (target === 'b2b') {
         if (onSelectTab) onSelectTab('B2B_BUILDER');
       } else if (target === 'contact') {

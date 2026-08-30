@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { AppDatabase } from '../../services/db';
-import { Hotel, HotelRoomType, HotelRate, HotelDailyPriceOverride, Destination, MealPlanCode } from '../../types';
+import { Hotel, HotelRoomType, HotelRate, HotelDailyPriceOverride, Destination, MealPlanCode, DestinationRegionItem, CityHub, MasterRegion } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { ImageUploadOrUrlInput } from '../ImageUploadOrUrlInput';
 import { 
   Hotel as HotelIcon, 
   Plus, 
@@ -28,7 +29,9 @@ import {
   ArrowRight,
   TrendingUp,
   Percent,
-  Sliders
+  Sliders,
+  Building2,
+  Globe2
 } from 'lucide-react';
 
 interface HotelManagerProps {
@@ -46,11 +49,16 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
   const [hotels, setHotels] = useState<Hotel[]>(db.getHotels());
+  const [masterRegions, setMasterRegions] = useState<MasterRegion[]>(() => db.getMasterRegions());
+  const [regions, setRegions] = useState<DestinationRegionItem[]>(() => db.getRegions());
+  const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());
   
   // Navigation View: Property Cards vs Dedicated Interactive Calendar Rate Matrix
   const [viewMode, setViewMode] = useState<'HOTELS_LIST' | 'CALENDAR_VIEW'>('HOTELS_LIST');
 
+  const [selectedRegionFilter, setSelectedRegionFilter] = useState<string>('all');
   const [selectedDestinationFilter, setSelectedDestinationFilter] = useState<string>('all');
+  const [selectedCityHubFilter, setSelectedCityHubFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [editingHotel, setEditingHotel] = useState<Partial<Hotel> | null>(null);
@@ -93,10 +101,13 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
 
   useEffect(() => {
     return db.subscribe(() => {
-      const updated = db.getHotels();
-      setHotels(updated);
-      if (!calendarHotelId && updated.length > 0) {
-        setCalendarHotelId(updated[0].id);
+      const updatedHotels = db.getHotels();
+      setHotels(updatedHotels);
+      setMasterRegions(db.getMasterRegions());
+      setRegions(db.getRegions());
+      setCityHubs(db.getCityHubs());
+      if (!calendarHotelId && updatedHotels.length > 0) {
+        setCalendarHotelId(updatedHotels[0].id);
       }
     });
   }, [calendarHotelId]);
@@ -116,12 +127,26 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
     setTimeout(() => setActionSuccessMsg(null), 4000);
   };
 
-  const filteredHotels = hotels.filter(h => {
+  const availableDestinationsForFilter = selectedRegionFilter === 'all'
+    ? destinations
+    : destinations.filter(d => d.regionId === selectedRegionFilter);
+
+  const availableHubsForFilter = cityHubs.filter(h => {
+    const matchesReg = selectedRegionFilter === 'all' || h.regionId === selectedRegionFilter;
     const matchesDest = selectedDestinationFilter === 'all' || h.destinationId === selectedDestinationFilter;
+    return matchesReg && matchesDest;
+  });
+
+  const filteredHotels = hotels.filter(h => {
+    const matchesReg = selectedRegionFilter === 'all' || h.regionId === selectedRegionFilter;
+    const matchesDest = selectedDestinationFilter === 'all' || h.destinationId === selectedDestinationFilter;
+    const matchesHub = selectedCityHubFilter === 'all' || h.hubId === selectedCityHubFilter || h.cityName.toLowerCase() === selectedCityHubFilter.toLowerCase();
     const matchesSearch = h.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           h.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          h.cityName.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesDest && matchesSearch;
+                          h.cityName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          (h.regionName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          (h.destinationName || '').toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesReg && matchesDest && matchesHub && matchesSearch;
   });
 
   const activeCalendarHotel = hotels.find(h => h.id === calendarHotelId) || hotels[0];
@@ -141,7 +166,12 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
   };
 
   const handleOpenAdd = () => {
-    const firstDest = destinations[0] || { id: 'japan', name: 'Japan' };
+    const firstReg = masterRegions[0] || { id: 'reg-asia', name: 'Asia', code: 'ASIA' };
+    const matchingDests = destinations.filter(d => !firstReg.id || d.regionId === firstReg.id);
+    const firstDest = matchingDests[0] || destinations[0] || { id: 'dest-japan', name: 'Japan', regionId: firstReg.id };
+    const matchingHubs = cityHubs.filter(h => h.destinationId === firstDest.id);
+    const firstHub = matchingHubs[0];
+
     const defaultRoom: HotelRoomType = {
       id: `room-${Date.now()}-1`,
       roomName: 'Deluxe Room',
@@ -183,10 +213,13 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
       id: `hotel-${Date.now()}`,
       name: '',
       code: `HTL-${Date.now().toString().slice(-4)}`,
+      regionId: firstReg.id,
+      regionName: firstReg.name,
       destinationId: firstDest.id,
       destinationName: firstDest.name,
-      cityId: 'tokyo',
-      cityName: 'Tokyo',
+      hubId: firstHub?.id || '',
+      cityId: firstHub?.id || 'tokyo',
+      cityName: firstHub?.name || 'Tokyo',
       country: firstDest.name,
       area: 'Central District',
       starRating: 5,
@@ -224,6 +257,8 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
     if (!editingHotel || !editingHotel.name || !editingHotel.destinationId) return;
 
     const targetDest = destinations.find(d => d.id === editingHotel.destinationId);
+    const targetReg = masterRegions.find(r => r.id === (editingHotel.regionId || targetDest?.regionId));
+    const targetHub = cityHubs.find(h => h.id === editingHotel.hubId);
     
     // Compute starting price per night from lowest room double net rate
     let lowestNet = editingHotel.startingNetPrice || 0;
@@ -240,8 +275,11 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
       code: editingHotel.code || `HTL-${Date.now().toString().slice(-4)}`,
       destinationId: editingHotel.destinationId,
       destinationName: targetDest?.name || editingHotel.destinationName || 'Destination',
-      cityId: editingHotel.cityId || 'central',
-      cityName: editingHotel.cityName || 'Capital City',
+      regionId: targetReg?.id || editingHotel.regionId || '',
+      regionName: targetReg?.name || editingHotel.regionName || '',
+      hubId: editingHotel.hubId || targetHub?.id || '',
+      cityId: editingHotel.hubId || editingHotel.cityId || 'central',
+      cityName: editingHotel.cityName || targetHub?.name || 'Capital City',
       country: editingHotel.country || targetDest?.name || 'Country',
       area: editingHotel.area || 'Downtown',
       starRating: Number(editingHotel.starRating || 5),
@@ -857,27 +895,60 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
       {viewMode === 'HOTELS_LIST' && (
         <div className="space-y-6">
           {/* Filter & Search */}
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1 relative">
-              <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs text-xs">
+            <div className="relative md:col-span-1">
+              <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search hotel name, property code, or city..."
+                placeholder="Search hotel name, code, region, city..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white text-xs text-slate-900 focus:outline-none focus:border-[#00C6A6]"
+                className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-900 focus:outline-none focus:border-[#00C6A6]"
               />
             </div>
-            <select
-              value={selectedDestinationFilter}
-              onChange={e => setSelectedDestinationFilter(e.target.value)}
-              className="px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-semibold"
-            >
-              <option value="all">All Destinations ({hotels.length} hotels)</option>
-              {destinations.map(d => (
-                <option key={d.id} value={d.id}>{d.name}</option>
-              ))}
-            </select>
+            <div>
+              <select
+                value={selectedRegionFilter}
+                onChange={e => {
+                  setSelectedRegionFilter(e.target.value);
+                  setSelectedDestinationFilter('all');
+                  setSelectedCityHubFilter('all');
+                }}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold"
+              >
+                <option value="all">1. All Master Regions ({masterRegions.length})</option>
+                {masterRegions.map(r => (
+                  <option key={r.id} value={r.id}>{r.name} ({r.code})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <select
+                value={selectedDestinationFilter}
+                onChange={e => {
+                  setSelectedDestinationFilter(e.target.value);
+                  setSelectedCityHubFilter('all');
+                }}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold"
+              >
+                <option value="all">2. All Destinations ({availableDestinationsForFilter.length})</option>
+                {availableDestinationsForFilter.map(d => (
+                  <option key={d.id} value={d.id}>{d.name} {d.regionName ? `(${d.regionName})` : ''}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <select
+                value={selectedCityHubFilter}
+                onChange={e => setSelectedCityHubFilter(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold"
+              >
+                <option value="all">3. All City Hubs ({availableHubsForFilter.length})</option>
+                {availableHubsForFilter.map(h => (
+                  <option key={h.id} value={h.id}>{h.name} {h.destinationName ? `(${h.destinationName})` : ''}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Hotel Cards Grid */}
@@ -899,6 +970,11 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                       <div className="absolute top-3 left-3 bg-slate-900/85 backdrop-blur-md text-white text-[11px] font-bold px-3 py-1 rounded-xl flex items-center space-x-1.5 shadow-sm">
                         <MapPin className="w-3.5 h-3.5 text-[#00C6A6]" />
                         <span>{hotel.cityName}, {hotel.destinationName}</span>
+                        {hotel.regionName && (
+                          <span className="text-[10px] bg-[#00C6A6]/20 text-[#00E5C0] px-1.5 py-0.2 rounded ml-1">
+                            {hotel.regionName}
+                          </span>
+                        )}
                       </div>
                       <div className="absolute top-3 right-3 bg-[#008972] text-white text-[10px] font-extrabold px-2.5 py-1 rounded-xl uppercase tracking-wider shadow-sm">
                         {hotel.propertyType.replace('_', ' ')}
@@ -1390,42 +1466,143 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        Destination
-                      </label>
-                      <select
-                        value={editingHotel.destinationId}
-                        onChange={e => {
-                          const d = destinations.find(dest => dest.id === e.target.value);
-                          setEditingHotel({ 
-                            ...editingHotel, 
-                            destinationId: e.target.value,
-                            destinationName: d?.name || 'Destination'
-                          });
-                        }}
-                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs"
-                      >
-                        {destinations.map(d => (
-                          <option key={d.id} value={d.id}>{d.name}</option>
-                        ))}
-                      </select>
+                  {/* Connected Destination Hierarchy */}
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2 text-[#008972] font-bold text-xs">
+                        <Building2 className="w-4 h-4" />
+                        <span>Connected Geography Hierarchy (Region → Destination → City Hub)</span>
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tier 1 → Tier 2 → Tier 3</span>
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        City / Hub
-                      </label>
-                      <input
-                        type="text"
-                        value={editingHotel.cityName || ''}
-                        onChange={e => setEditingHotel({ ...editingHotel, cityName: e.target.value })}
-                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs"
-                        placeholder="e.g. Tokyo"
-                      />
+                    {/* Live Hierarchy Breadcrumb Preview */}
+                    <div className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center gap-2 text-xs flex-wrap">
+                      <span className="font-bold text-slate-400 uppercase text-[10px]">Hierarchy:</span>
+                      <span className="font-bold text-[#008f77] flex items-center gap-1">
+                        <Globe2 className="w-3 h-3" />
+                        {editingHotel.regionName || 'Select Region'}
+                      </span>
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                      <span className="font-bold text-slate-800 flex items-center gap-1">
+                        <MapPin className="w-3 h-3 text-[#00C6A6]" />
+                        {editingHotel.destinationName || 'Select Destination'}
+                      </span>
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                      <span className="font-bold text-slate-900 flex items-center gap-1">
+                        <Building className="w-3 h-3 text-amber-600" />
+                        {editingHotel.cityName || 'Select City Hub'}
+                      </span>
                     </div>
 
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          1. Master Region (Tier 1) *
+                        </label>
+                        <select
+                          required
+                          value={editingHotel.regionId || ''}
+                          onChange={e => {
+                            const newRegId = e.target.value;
+                            const reg = masterRegions.find(r => r.id === newRegId);
+                            const matchingDests = destinations.filter(d => !newRegId || d.regionId === newRegId);
+                            const nextDest = matchingDests[0] || destinations[0];
+                            const matchingHubs = cityHubs.filter(h => h.destinationId === nextDest?.id);
+                            const nextHub = matchingHubs[0];
+
+                            setEditingHotel({ 
+                              ...editingHotel, 
+                              regionId: newRegId,
+                              regionName: reg?.name || '',
+                              destinationId: nextDest?.id || editingHotel.destinationId,
+                              destinationName: nextDest?.name || editingHotel.destinationName,
+                              hubId: nextHub?.id || '',
+                              cityId: nextHub?.id || 'central',
+                              cityName: nextHub?.name || 'Capital City',
+                              country: nextDest?.name || editingHotel.country
+                            });
+                          }}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold focus:outline-none focus:border-[#00C6A6]"
+                        >
+                          <option value="" disabled>-- Select Region --</option>
+                          {masterRegions.map(r => (
+                            <option key={r.id} value={r.id}>{r.name} ({r.code})</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          2. Destination (Tier 2) *
+                        </label>
+                        <select
+                          required
+                          value={editingHotel.destinationId}
+                          onChange={e => {
+                            const newDestId = e.target.value;
+                            const d = destinations.find(dest => dest.id === newDestId);
+                            const parentReg = masterRegions.find(r => r.id === d?.regionId);
+                            const matchingHubs = cityHubs.filter(h => h.destinationId === newDestId);
+                            const firstHub = matchingHubs[0];
+
+                            setEditingHotel({ 
+                              ...editingHotel, 
+                              destinationId: newDestId,
+                              destinationName: d?.name || 'Destination',
+                              regionId: d?.regionId || parentReg?.id || editingHotel.regionId || '',
+                              regionName: d?.regionName || parentReg?.name || editingHotel.regionName || '',
+                              hubId: firstHub?.id || '',
+                              cityId: firstHub?.id || 'central',
+                              cityName: firstHub?.name || 'Capital City',
+                              country: d?.name || editingHotel.country
+                            });
+                          }}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold focus:outline-none focus:border-[#00C6A6]"
+                        >
+                          {destinations
+                            .filter(d => !editingHotel.regionId || d.regionId === editingHotel.regionId)
+                            .map(d => (
+                              <option key={d.id} value={d.id}>{d.name} {d.regionName ? `(${d.regionName})` : ''}</option>
+                            ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          3. Destination Hub / City (Tier 3) *
+                        </label>
+                        <select
+                          value={editingHotel.hubId || ''}
+                          onChange={e => {
+                            const newHubId = e.target.value;
+                            const hub = cityHubs.find(h => h.id === newHubId);
+                            setEditingHotel({
+                              ...editingHotel,
+                              hubId: newHubId,
+                              cityId: newHubId,
+                              cityName: hub?.name || editingHotel.cityName || '',
+                              area: hub?.name || editingHotel.area
+                            });
+                          }}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold focus:outline-none focus:border-[#00C6A6]"
+                        >
+                          <option value="">-- Select City Hub --</option>
+                          {cityHubs
+                            .filter(h => {
+                              const matchesDest = !editingHotel.destinationId || h.destinationId === editingHotel.destinationId;
+                              const matchesReg = !editingHotel.regionId || h.regionId === editingHotel.regionId;
+                              return matchesDest && matchesReg;
+                            })
+                            .map(h => (
+                              <option key={h.id} value={h.id}>{h.name}</option>
+                            ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                         Star Rating
@@ -1460,14 +1637,13 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                      Hero Image URL
-                    </label>
-                    <input
-                      type="url"
+                    <ImageUploadOrUrlInput
                       value={editingHotel.heroImage || ''}
-                      onChange={e => setEditingHotel({ ...editingHotel, heroImage: e.target.value })}
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs"
+                      onChange={url => setEditingHotel({ ...editingHotel, heroImage: url })}
+                      label="Hotel Hero Image (Upload photo or fetch Unsplash HD)"
+                      placeholder="https://images.unsplash.com/... or upload hotel photo"
+                      category="hotels"
+                      defaultSearchTopic={editingHotel.name || editingHotel.cityName || 'Luxury Hotel in Japan'}
                     />
                   </div>
 
@@ -1624,6 +1800,22 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                           </div>
                         </div>
 
+                        {/* Room Category Photo */}
+                        <div className="bg-white p-3 rounded-xl border border-slate-200">
+                          <ImageUploadOrUrlInput
+                            label="Room Category Photo (Upload photo or fetch Unsplash)"
+                            value={(room.images && room.images[0]) || ''}
+                            onChange={url => {
+                              const updatedRooms = [...(editingHotel.roomTypes || [])];
+                              updatedRooms[roomIdx].images = url ? [url] : [];
+                              setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                            }}
+                            placeholder="https://images.unsplash.com/... or upload room photo"
+                            category="hotels"
+                            defaultSearchTopic={`${room.roomName} hotel room`}
+                          />
+                        </div>
+
                         {/* Smart Passenger & Children Age Configuration Panel */}
                         <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-3">
                           <div className="flex items-center justify-between">
@@ -1764,94 +1956,200 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                         </div>
 
                         {/* Rates within this room */}
-                        <div className="pt-3 border-t border-slate-200 space-y-2">
-                          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                            Per-Night Net Costs:
-                          </span>
+                        <div className="pt-3 border-t border-slate-200 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700 flex items-center space-x-1.5">
+                              <DollarSign className="w-3.5 h-3.5 text-[#008972]" />
+                              <span>Configure Per-Night Net Costs & Validity Periods</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                const currentRates = updatedRooms[roomIdx].rates || [];
+                                const newRate: HotelRate = {
+                                  id: `rate-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                                  mealPlan: 'BB',
+                                  mealPlanName: 'Breakfast Included',
+                                  singleNetRate: 350,
+                                  doubleNetRate: 420,
+                                  tripleNetRate: 520,
+                                  extraBedRate: 90,
+                                  childRate: 45,
+                                  markupPercent: 18,
+                                  taxPercent: 10,
+                                  feePercent: 2.5,
+                                  currency: (editingHotel.currency as any) || 'USD',
+                                  validityFrom: '2026-01-01',
+                                  validityTo: '2026-12-31'
+                                };
+                                updatedRooms[roomIdx].rates = [...currentRates, newRate];
+                                setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                              }}
+                              className="inline-flex items-center space-x-1 bg-[#008972] hover:bg-[#007460] text-white text-[11px] font-bold px-2.5 py-1 rounded-lg cursor-pointer transition-colors shadow-2xs"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>Add Rate Period</span>
+                            </button>
+                          </div>
+
                           {(room.rates || []).map((rate, rIdx) => (
-                            <div key={rate.id || rIdx} className="grid grid-cols-2 sm:grid-cols-6 gap-2 bg-white p-3 rounded-xl border border-slate-200 text-xs">
-                              <div>
-                                <label className="text-slate-400 text-[10px] uppercase font-bold">Meal Plan</label>
-                                <select
-                                  value={rate.mealPlan}
-                                  onChange={e => {
-                                    const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                    updatedRooms[roomIdx].rates[rIdx].mealPlan = e.target.value as any;
-                                    setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
-                                  }}
-                                  className="w-full p-1 border border-slate-200 rounded font-bold text-slate-800 text-xs"
-                                >
-                                  <option value="RO">RO (Room Only)</option>
-                                  <option value="BB">BB (Breakfast Incl)</option>
-                                  <option value="HB">HB (Half Board)</option>
-                                  <option value="FB">FB (Full Board)</option>
-                                  <option value="AI">AI (All Inclusive)</option>
-                                </select>
+                            <div key={rate.id || rIdx} className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-2.5">
+                              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                                <div className="flex items-center space-x-2">
+                                  <span className="text-[10px] font-bold uppercase bg-slate-100 text-slate-700 px-2 py-0.5 rounded">
+                                    Rate Period #{rIdx + 1}
+                                  </span>
+                                  <span className="text-[11px] font-bold text-slate-800">
+                                    {rate.mealPlanName || rate.mealPlan}
+                                  </span>
+                                </div>
+                                {(room.rates || []).length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                      updatedRooms[roomIdx].rates = updatedRooms[roomIdx].rates.filter((_, i) => i !== rIdx);
+                                      setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                    }}
+                                    className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded text-xs flex items-center space-x-1 cursor-pointer transition-colors"
+                                    title="Delete Rate Period"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span className="text-[10px] font-bold">Delete Rate</span>
+                                  </button>
+                                )}
                               </div>
-                              <div>
-                                <label className="text-slate-400 text-[10px] uppercase font-bold">Single Net / Nt</label>
-                                <input
-                                  type="number"
-                                  value={rate.singleNetRate}
-                                  onChange={e => {
-                                    const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                    updatedRooms[roomIdx].rates[rIdx].singleNetRate = Number(e.target.value);
-                                    setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
-                                  }}
-                                  className="w-full p-1 border border-slate-200 rounded font-mono font-bold text-xs"
-                                />
-                              </div>
-                              <div>
-                                <label className="text-slate-400 text-[10px] uppercase font-bold">Double Net / Nt</label>
-                                <input
-                                  type="number"
-                                  value={rate.doubleNetRate}
-                                  onChange={e => {
-                                    const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                    updatedRooms[roomIdx].rates[rIdx].doubleNetRate = Number(e.target.value);
-                                    setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
-                                  }}
-                                  className="w-full p-1 border border-slate-200 rounded font-mono font-bold text-xs"
-                                />
-                              </div>
-                              <div>
-                                <label className="text-slate-400 text-[10px] uppercase font-bold">Triple Net / Nt</label>
-                                <input
-                                  type="number"
-                                  value={rate.tripleNetRate}
-                                  onChange={e => {
-                                    const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                    updatedRooms[roomIdx].rates[rIdx].tripleNetRate = Number(e.target.value);
-                                    setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
-                                  }}
-                                  className="w-full p-1 border border-slate-200 rounded font-mono font-bold text-xs"
-                                />
-                              </div>
-                              <div>
-                                <label className="text-slate-400 text-[10px] uppercase font-bold">Extra Bed Net</label>
-                                <input
-                                  type="number"
-                                  value={rate.extraBedRate}
-                                  onChange={e => {
-                                    const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                    updatedRooms[roomIdx].rates[rIdx].extraBedRate = Number(e.target.value);
-                                    setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
-                                  }}
-                                  className="w-full p-1 border border-slate-200 rounded font-mono font-bold text-xs"
-                                />
-                              </div>
-                              <div>
-                                <label className="text-slate-400 text-[10px] uppercase font-bold">Child Net / Nt</label>
-                                <input
-                                  type="number"
-                                  value={rate.childRate}
-                                  onChange={e => {
-                                    const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                    updatedRooms[roomIdx].rates[rIdx].childRate = Number(e.target.value);
-                                    setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
-                                  }}
-                                  className="w-full p-1 border border-slate-200 rounded font-mono font-bold text-xs"
-                                />
+
+                              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 text-xs">
+                                <div>
+                                  <label className="text-slate-500 text-[10px] uppercase font-bold block mb-1">Valid From *</label>
+                                  <input
+                                    type="date"
+                                    required
+                                    value={rate.validityFrom || '2026-01-01'}
+                                    onChange={e => {
+                                      const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                      updatedRooms[roomIdx].rates[rIdx].validityFrom = e.target.value;
+                                      setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                    }}
+                                    className="w-full p-1.5 border border-slate-200 rounded-lg text-[11px] font-semibold text-slate-800 bg-slate-50 focus:bg-white"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="text-slate-500 text-[10px] uppercase font-bold block mb-1">Valid Till *</label>
+                                  <input
+                                    type="date"
+                                    required
+                                    value={rate.validityTo || '2026-12-31'}
+                                    onChange={e => {
+                                      const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                      updatedRooms[roomIdx].rates[rIdx].validityTo = e.target.value;
+                                      setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                    }}
+                                    className="w-full p-1.5 border border-slate-200 rounded-lg text-[11px] font-semibold text-slate-800 bg-slate-50 focus:bg-white"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="text-slate-500 text-[10px] uppercase font-bold block mb-1">Meal Plan</label>
+                                  <select
+                                    value={rate.mealPlan}
+                                    onChange={e => {
+                                      const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                      const plan = e.target.value as any;
+                                      const names: Record<string, string> = {
+                                        RO: 'Room Only',
+                                        BB: 'Breakfast Included',
+                                        HB: 'Half Board (Breakfast + Dinner)',
+                                        FB: 'Full Board',
+                                        AI: 'All Inclusive'
+                                      };
+                                      updatedRooms[roomIdx].rates[rIdx].mealPlan = plan;
+                                      updatedRooms[roomIdx].rates[rIdx].mealPlanName = names[plan] || plan;
+                                      setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                    }}
+                                    className="w-full p-1.5 border border-slate-200 rounded-lg font-bold text-slate-800 text-[11px] bg-slate-50 focus:bg-white"
+                                  >
+                                    <option value="RO">RO (Room Only)</option>
+                                    <option value="BB">BB (Breakfast Incl)</option>
+                                    <option value="HB">HB (Half Board)</option>
+                                    <option value="FB">FB (Full Board)</option>
+                                    <option value="AI">AI (All Inclusive)</option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="text-slate-500 text-[10px] uppercase font-bold block mb-1">Single Net / Nt</label>
+                                  <input
+                                    type="number"
+                                    value={rate.singleNetRate}
+                                    onChange={e => {
+                                      const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                      updatedRooms[roomIdx].rates[rIdx].singleNetRate = Number(e.target.value);
+                                      setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                    }}
+                                    className="w-full p-1.5 border border-slate-200 rounded-lg font-mono font-bold text-xs bg-slate-50 focus:bg-white"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="text-slate-500 text-[10px] uppercase font-bold block mb-1">Double Net / Nt *</label>
+                                  <input
+                                    type="number"
+                                    required
+                                    value={rate.doubleNetRate}
+                                    onChange={e => {
+                                      const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                      updatedRooms[roomIdx].rates[rIdx].doubleNetRate = Number(e.target.value);
+                                      setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                    }}
+                                    className="w-full p-1.5 border border-slate-200 rounded-lg font-mono font-bold text-xs bg-slate-50 focus:bg-white text-[#008972]"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="text-slate-500 text-[10px] uppercase font-bold block mb-1">Triple Net / Nt</label>
+                                  <input
+                                    type="number"
+                                    value={rate.tripleNetRate}
+                                    onChange={e => {
+                                      const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                      updatedRooms[roomIdx].rates[rIdx].tripleNetRate = Number(e.target.value);
+                                      setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                    }}
+                                    className="w-full p-1.5 border border-slate-200 rounded-lg font-mono font-bold text-xs bg-slate-50 focus:bg-white"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="text-slate-500 text-[10px] uppercase font-bold block mb-1">Extra Bed Net</label>
+                                  <input
+                                    type="number"
+                                    value={rate.extraBedRate}
+                                    onChange={e => {
+                                      const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                      updatedRooms[roomIdx].rates[rIdx].extraBedRate = Number(e.target.value);
+                                      setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                    }}
+                                    className="w-full p-1.5 border border-slate-200 rounded-lg font-mono font-bold text-xs bg-slate-50 focus:bg-white"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="text-slate-500 text-[10px] uppercase font-bold block mb-1">Child Net / Nt</label>
+                                  <input
+                                    type="number"
+                                    value={rate.childRate}
+                                    onChange={e => {
+                                      const updatedRooms = [...(editingHotel.roomTypes || [])];
+                                      updatedRooms[roomIdx].rates[rIdx].childRate = Number(e.target.value);
+                                      setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
+                                    }}
+                                    className="w-full p-1.5 border border-slate-200 rounded-lg font-mono font-bold text-xs bg-slate-50 focus:bg-white"
+                                  />
+                                </div>
                               </div>
                             </div>
                           ))}

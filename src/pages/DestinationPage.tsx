@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Destination, Product, ProductFilterState, Hotel } from '../types';
+import { Destination, Product, ProductFilterState, Hotel, CityHub } from '../types';
 import { DestinationHero } from '../components/DestinationHero';
 import { AllDestinationsHero } from '../components/AllDestinationsHero';
 import { CityHubs } from '../components/CityHubs';
@@ -39,12 +39,14 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
 
   const isAllDestinations = !destination || destination.slug === 'all';
 
-  // Hotel database state & inspection modal
+  // Database state for Hubs & Hotels
+  const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());
   const [hotels, setHotels] = useState<Hotel[]>(() => db.getHotels());
   const [inspectingHotel, setInspectingHotel] = useState<Hotel | null>(null);
 
   useEffect(() => {
     return db.subscribe(() => {
+      setCityHubs(db.getCityHubs());
       setHotels(db.getHotels());
     });
   }, [db]);
@@ -74,6 +76,19 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
 
   const [expandedFaqIdx, setExpandedFaqIdx] = useState<number | null>(null);
 
+  // Products belonging to current destination or all destinations
+  const destinationProducts = useMemo(() => {
+    if (isAllDestinations) {
+      return products;
+    }
+    return products.filter(
+      p => p.destinationSlug === destination.slug || 
+           p.destinationId === destination.id ||
+           p.destinationName.toLowerCase().includes(destination.name.toLowerCase()) ||
+           p.country.toLowerCase().includes(destination.name.toLowerCase())
+    );
+  }, [products, destination, isAllDestinations]);
+
   // Hotels filtered for this destination / city
   const destinationHotels = useMemo(() => {
     const published = hotels.filter(h => h.status === 'PUBLISHED' || !h.status);
@@ -97,25 +112,84 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
     return list;
   }, [hotels, isAllDestinations, destination, filters.city]);
 
-  // All combined city hubs across all destinations or single destination
+  // Hierarchical Hubs tagged for this destination (or all destinations)
+  const activeHubs = useMemo(() => {
+    let hubsList: CityHub[] = [];
+
+    if (isAllDestinations) {
+      hubsList = cityHubs;
+    } else if (destination) {
+      hubsList = cityHubs.filter(h => 
+        h.destinationId === destination.id || 
+        h.destinationId === destination.slug ||
+        h.destinationName.toLowerCase().includes(destination.name.toLowerCase()) ||
+        (destination.country && h.destinationName.toLowerCase().includes(destination.country.toLowerCase()))
+      );
+
+      // If no hubs found in cityHubs table yet for this destination, fallback to destination.cities
+      if (hubsList.length === 0 && destination.cities && destination.cities.length > 0) {
+        hubsList = destination.cities.map((c, idx) => ({
+          id: c.id,
+          destinationId: destination.id,
+          destinationName: destination.name,
+          regionId: destination.regionId || '',
+          regionName: destination.regionName || '',
+          name: c.name,
+          tagline: c.tagline || 'Contracted Touring Gateway',
+          description: 'Key regional gateway with verified direct DMC contracts and expert local guides.',
+          heroImage: c.image,
+          images: [c.image],
+          productCount: c.productCount || 0,
+          hotelCount: 3,
+          displayOrder: idx + 1,
+          highlights: ['Local Sightseeing', 'Private Transit', 'Bespoke Guides'],
+          isPublished: true,
+          status: 'ACTIVE'
+        }));
+      }
+    }
+
+    // Enhance with live product and hotel counts and sort by hierarchical displayOrder
+    return hubsList
+      .map(hub => {
+        const matchingTours = destinationProducts.filter(p => 
+          p.city.toLowerCase() === hub.name.toLowerCase() ||
+          p.city.toLowerCase().includes(hub.name.toLowerCase()) ||
+          hub.name.toLowerCase().includes(p.city.toLowerCase())
+        ).length;
+
+        const matchingHotels = hotels.filter(h => 
+          (h.status === 'PUBLISHED' || !h.status) &&
+          (h.cityName.toLowerCase() === hub.name.toLowerCase() ||
+           h.cityId.toLowerCase() === hub.id.toLowerCase() ||
+           h.area.toLowerCase().includes(hub.name.toLowerCase()))
+        ).length;
+
+        return {
+          ...hub,
+          productCount: matchingTours > 0 ? matchingTours : (hub.productCount || 0),
+          hotelCount: matchingHotels > 0 ? matchingHotels : (hub.hotelCount || 0)
+        };
+      })
+      .sort((a, b) => (a.displayOrder || 1) - (b.displayOrder || 1));
+  }, [isAllDestinations, destination, cityHubs, destinationProducts, hotels]);
+
+  // Legacy active cities for dropdown filters
   const activeCities = useMemo(() => {
+    if (activeHubs.length > 0) {
+      return activeHubs.map(h => ({
+        id: h.id,
+        name: h.name,
+        tagline: h.tagline,
+        image: h.heroImage,
+        productCount: h.productCount
+      }));
+    }
     if (isAllDestinations) {
       return allDestinations.flatMap(d => d.cities);
     }
     return destination ? destination.cities : [];
-  }, [isAllDestinations, allDestinations, destination]);
-
-  // Products belonging to current destination or all destinations
-  const destinationProducts = useMemo(() => {
-    if (isAllDestinations) {
-      return products;
-    }
-    return products.filter(
-      p => p.destinationSlug === destination.slug || 
-           p.destinationName.toLowerCase().includes(destination.name.toLowerCase()) ||
-           p.country.toLowerCase().includes(destination.name.toLowerCase())
-    );
-  }, [products, destination, isAllDestinations]);
+  }, [activeHubs, isAllDestinations, allDestinations, destination]);
 
   // Unique categories in this destination / all destinations
   const availableCategories = useMemo(() => {
@@ -282,9 +356,13 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
 
         {/* 3. City Hubs Navigation */}
         <CityHubs
+          hubs={activeHubs}
           cities={activeCities}
           selectedCity={filters.city}
           onSelectCity={handleCitySelect}
+          destinationName={destination?.name || 'All Destinations'}
+          parentRegionName={destination?.regionName || 'Global DMC Portfolio'}
+          totalProductsCount={destinationProducts.length}
         />
 
         {/* 4. Category Filter Tabs */}
@@ -385,23 +463,27 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
         </div>
 
         {/* 8. Destination Trade Information & FAQs */}
-        <div id="destination-info-section" className="bg-white rounded-xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6 mt-12">
-          <div className="flex items-center space-x-3 pb-4 border-b border-slate-100">
-            <div className="w-8 h-8 rounded-lg bg-[#00C6A6]/10 flex items-center justify-center text-[#00C6A6]">
-              <HelpCircle className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-slate-900">
-                {isAllDestinations ? 'Global Multi-Destination' : destination?.name} DMC Operations & Agent Advisory
-              </h3>
-              <p className="text-xs text-slate-500">
-                Important ground logistics, visa policies, and seasonal operational tips for travel designers.
-              </p>
-            </div>
-          </div>
+        {(() => {
+          // Dynamic FAQ resolution
+          let displayedFaqs: { q: string; a: string; category?: string }[] = [];
+          
+          if (isAllDestinations) {
+            const homeFaqs = db.getHomepageConfig().homepageFAQs?.filter(f => f.isPublished !== false) || [];
+            if (homeFaqs.length > 0) {
+              displayedFaqs = homeFaqs.map(f => ({ q: f.question, a: f.answer, category: f.category }));
+            }
+          } else if (destination) {
+            const destFaqs = db.getDestinationFAQs().filter(
+              f => (f.destinationId === destination.id || f.destinationId === destination.slug) && f.isPublished !== false
+            );
+            if (destFaqs.length > 0) {
+              displayedFaqs = destFaqs.map(f => ({ q: f.question, a: f.answer, category: f.category }));
+            }
+          }
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {[
+          // Fallbacks if no custom FAQs configured yet
+          if (displayedFaqs.length === 0) {
+            displayedFaqs = [
               {
                 q: isAllDestinations
                   ? `What is the standard cancellation window across ${allDestinations.map(d => d.name).join(', ')}?`
@@ -424,28 +506,59 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
                 q: 'Are child rates and infant seats provided on chauffeur vehicles?',
                 a: `Certified child safety seats and booster chairs can be added directly via our dynamic pricing calculator as complimentary or low-cost add-on selections.`
               }
-            ].map((faq, idx) => {
-              const isExpanded = expandedFaqIdx === idx;
-              return (
-                <div
-                  key={idx}
-                  onClick={() => setExpandedFaqIdx(isExpanded ? null : idx)}
-                  className="p-4 rounded-xl bg-slate-50 hover:bg-slate-100/80 border border-slate-200 transition-colors cursor-pointer space-y-2"
-                >
-                  <div className="flex justify-between items-center">
-                    <h4 className="text-xs font-bold text-slate-800 leading-snug">{faq.q}</h4>
-                    {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
-                  </div>
-                  {isExpanded && (
-                    <p className="text-xs text-slate-600 leading-relaxed pt-1">
-                      {faq.a}
-                    </p>
-                  )}
+            ];
+          }
+
+          return (
+            <div id="destination-info-section" className="bg-white rounded-xl border border-slate-200 p-6 sm:p-8 shadow-xs space-y-6 mt-12">
+              <div className="flex items-center space-x-3 pb-4 border-b border-slate-100">
+                <div className="w-8 h-8 rounded-lg bg-[#008972]/10 flex items-center justify-center text-[#008972]">
+                  <HelpCircle className="w-4 h-4" />
                 </div>
-              );
-            })}
-          </div>
-        </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    {isAllDestinations ? 'Global Multi-Destination' : destination?.name} DMC Operations & Agent Advisory
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {isAllDestinations 
+                      ? 'Managed from Homepage FAQs Manager (General & Trade Operations) in CMS.' 
+                      : 'Managed from Destination Management -> Destination FAQs & Trade Notes in CMS.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {displayedFaqs.map((faq, idx) => {
+                  const isExpanded = expandedFaqIdx === idx;
+                  return (
+                    <div
+                      key={idx}
+                      onClick={() => setExpandedFaqIdx(isExpanded ? null : idx)}
+                      className="p-4 rounded-xl bg-slate-50 hover:bg-slate-100/80 border border-slate-200 transition-colors cursor-pointer space-y-2"
+                    >
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center space-x-2 pr-2">
+                          {faq.category && (
+                            <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-[#008972]/10 text-[#008972]">
+                              {faq.category}
+                            </span>
+                          )}
+                          <h4 className="text-xs font-bold text-slate-800 leading-snug">{faq.q}</h4>
+                        </div>
+                        {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
+                      </div>
+                      {isExpanded && (
+                        <p className="text-xs text-slate-600 leading-relaxed pt-1">
+                          {faq.a}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Hotel Detail & Interactive Rate Calculator Modal */}

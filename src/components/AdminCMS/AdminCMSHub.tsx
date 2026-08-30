@@ -10,6 +10,7 @@ import { MenuAndPagesManager } from './MenuAndPagesManager';
 import { BlogCMSManager } from './BlogCMSManager';
 import { GalleryManager } from './GalleryManager';
 import { ReviewManager } from './ReviewManager';
+import { RegionCMSManager } from './RegionCMSManager';
 import { DestinationCMSManager } from './DestinationCMSManager';
 import { CityHubsManager } from './CityHubsManager';
 import { DestinationFAQManager } from './DestinationFAQManager';
@@ -21,6 +22,7 @@ import { EmailCampaignsManager } from './EmailCampaignsManager';
 import { AuditTrailViewer } from './AuditTrailViewer';
 import { GoogleSheetsSyncManager } from './GoogleSheetsSyncManager';
 import { FirestoreDiagnosticsViewer } from './FirestoreDiagnosticsViewer';
+import { VisaCMSManager } from './VisaCMSManager';
 import { RosterAdminManager } from '../RosterAdminManager';
 import { 
   ShieldCheck, 
@@ -29,6 +31,7 @@ import {
   CalendarCheck, 
   LayoutTemplate, 
   Compass, 
+  Globe2,
   Users, 
   UserCheck,
   Receipt, 
@@ -37,6 +40,7 @@ import {
   Bell, 
   Database, 
   FileSpreadsheet,
+  FileText,
   ChevronDown,
   Layers,
   Sparkles,
@@ -96,6 +100,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       description: 'Master ground tour inventory engine, SKU specifications, child/infant rates, adult tiers, and Google Sheets sync.',
       subTabs: [
         { id: 'PRODUCTS', label: 'Product Inventory Engine & SKUs', icon: Package },
+        { id: 'VISAS', label: 'Visa Products & Consular Checklists', icon: FileText },
         { id: 'SHEETS_SYNC', label: 'Google Sheets Live Sync', icon: FileSpreadsheet }
       ]
     },
@@ -143,10 +148,12 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       partNumber: 5,
       label: 'Destination Management',
       icon: Compass,
-      description: 'Destination definitions, city hubs, trade selling points, and local FAQ modules with base currency locks.',
+      badge: 'Hierarchy',
+      description: 'Connected 4-Tier Hierarchy: 1. REGION (Macro) ↓ 2. DESTINATION (Country) ↓ 3. DESTINATION HUB / CITY ↓ 4. PRODUCT / HOTEL / ACTIVITY / TRANSFER / GUIDE.',
       subTabs: [
-        { id: 'DESTINATIONS', label: 'Destination Master Directory', icon: Compass },
-        { id: 'CITIES', label: 'City Hubs & Gateways', icon: Layers },
+        { id: 'REGIONS', label: '1. Master Regions (Tier 1)', icon: Globe2 },
+        { id: 'DESTINATIONS', label: '2. Destinations (Tier 2)', icon: Compass },
+        { id: 'CITIES', label: '3. City Hubs (Tier 3)', icon: Layers },
         { id: 'FAQS', label: 'Destination FAQs & Trade Notes', icon: Sparkles }
       ]
     },
@@ -363,6 +370,9 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
               {activeSubTab === 'PRODUCTS' && (
                 <ProductManager destinations={destinations} onViewProduct={onViewProduct} />
               )}
+              {activeSubTab === 'VISAS' && (
+                <VisaCMSManager destinations={destinations} />
+              )}
               {activeSubTab === 'SHEETS_SYNC' && (
                 <GoogleSheetsSyncManager />
               )}
@@ -397,7 +407,18 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           {/* PART 5: DESTINATION MANAGEMENT */}
           {activeSection === 'DESTINATION_MANAGEMENT' && (
             <>
-              {activeSubTab === 'DESTINATIONS' && <DestinationCMSManager />}
+              {activeSubTab === 'REGIONS' && (
+                <RegionCMSManager
+                  onNavigateToDestinations={() => setActiveSubTab('DESTINATIONS')}
+                  onNavigateToHubs={() => setActiveSubTab('CITIES')}
+                />
+              )}
+              {activeSubTab === 'DESTINATIONS' && (
+                <DestinationCMSManager 
+                  onNavigateToHubs={() => setActiveSubTab('CITIES')}
+                  onNavigateToRegions={() => setActiveSubTab('REGIONS')}
+                />
+              )}
               {activeSubTab === 'CITIES' && <CityHubsManager destinations={destinations} />}
               {activeSubTab === 'FAQS' && <DestinationFAQManager destinations={destinations} />}
             </>

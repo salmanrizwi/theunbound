@@ -12,6 +12,7 @@ import { TermsOfPolicyPage } from './pages/TermsOfPolicyPage';
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { RefundPolicyPage } from './pages/RefundPolicyPage';
 import { AccountPage } from './pages/AccountPage';
+import { VisaPage } from './pages/VisaPage';
 import { CustomPageView } from './pages/CustomPageView';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { PricingCalculatorModal } from './components/PricingCalculatorModal';
@@ -209,6 +210,7 @@ const MainAppContent: React.FC = () => {
           </div>
         )}
 
+        {activeTab === 'VISAS' && <VisaPage />}
         {activeTab === 'CONTACT' && <ContactUsPage />}
         {activeTab === 'TERMS' && <TermsOfPolicyPage />}
         {activeTab === 'PRIVACY' && <PrivacyPolicyPage />}
@@ -218,7 +220,7 @@ const MainAppContent: React.FC = () => {
       {/* Global Comprehensive DMC Footer */}
       <footer className="bg-slate-950 text-white border-t border-slate-800/80 pt-14 pb-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
-          {/* Top Row: Brand & Value Proposition */}
+          {/* Top Row: Brand & Dynamic Footer Columns */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-8 pb-10 border-b border-slate-800">
             <div className="md:col-span-4 space-y-3.5">
               <div className="space-y-1">
@@ -245,115 +247,204 @@ const MainAppContent: React.FC = () => {
               </div>
             </div>
 
-            {/* Destinations Links */}
-            <div className="md:col-span-3 space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                Core Destinations
-              </h4>
-              <ul className="space-y-2 text-xs text-slate-400">
-                <li>
-                  <button 
-                    onClick={() => handleSelectDestination('all')}
-                    className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                  >
-                    <span>All Destinations (Global Overview)</span>
-                  </button>
-                </li>
-                <li>
-                  <button 
-                    onClick={() => handleSelectDestination('japan')}
-                    className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                  >
-                    <span>Japan (Tokyo, Kyoto, Osaka, Mt. Fuji)</span>
-                  </button>
-                </li>
-                <li>
-                  <button 
-                    onClick={() => handleSelectDestination('uk')}
-                    className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                  >
-                    <span>United Kingdom (London, Edinburgh, Highlands)</span>
-                  </button>
-                </li>
-                <li>
-                  <button 
-                    onClick={() => handleSelectDestination('europe')}
-                    className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                  >
-                    <span>Europe (Paris, Rome, Amalfi, Swiss Alps)</span>
-                  </button>
-                </li>
-              </ul>
-            </div>
+            {/* Dynamic CMS-Managed Columns or Fallbacks */}
+            {(() => {
+              const cmsFooterCols = db.getFooterColumns();
+              if (cmsFooterCols && cmsFooterCols.length > 0) {
+                return cmsFooterCols.map((col) => (
+                  <div key={col.id} className="md:col-span-2 space-y-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                      {col.title}
+                    </h4>
+                    <ul className="space-y-2 text-xs text-slate-400">
+                      {(col.links || []).map((link) => (
+                        <li key={link.id}>
+                          <button
+                            onClick={() => {
+                              if (link.type === 'DESTINATION') {
+                                handleSelectDestination(link.targetId || 'all');
+                              } else if (link.type === 'CUSTOM_PAGE') {
+                                setActiveCustomPageSlug(link.targetId || 'about-theunbound');
+                                setActiveTab('CUSTOM_PAGE');
+                              } else if (link.type === 'SYSTEM_VIEW') {
+                                if (link.targetId === 'visas') setActiveTab('VISAS');
+                                else if (link.targetId === 'contact') setActiveTab('CONTACT');
+                                else if (link.targetId === 'blogs') setActiveTab('BLOGS');
+                                else if (link.targetId === 'terms') setActiveTab('TERMS');
+                                else if (link.targetId === 'privacy') setActiveTab('PRIVACY');
+                                else if (link.targetId === 'refund') setActiveTab('REFUND');
+                                else if (link.targetId === 'b2b') setActiveTab('B2B_BUILDER');
+                                else setActiveTab('DESTINATIONS');
+                              } else if (link.url && link.url.startsWith('http')) {
+                                window.open(link.url, '_blank', 'noopener,noreferrer');
+                              }
+                              window.scrollTo({ top: 0, behavior: 'smooth' });
+                            }}
+                            className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5 text-left"
+                          >
+                            <span>{link.label}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ));
+              }
 
-            {/* Quick Policies, Editorial & Compliance */}
-            <div className="md:col-span-2 space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                Trust & Operations
-              </h4>
-              <ul className="space-y-2 text-xs text-slate-400">
-                <li>
-                  <button
-                    onClick={() => {
-                      setActiveTab('CONTACT');
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                  >
-                    <Mail className="w-3 h-3 text-[#00C6A6]" />
-                    <span>Contact Operations</span>
-                  </button>
-                </li>
-                <li>
-                  <button
-                    onClick={() => {
-                      setActiveTab('BLOGS');
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                  >
-                    <BookOpen className="w-3 h-3 text-[#00C6A6]" />
-                    <span>Editorial & Insights</span>
-                  </button>
-                </li>
-                <li>
-                  <button
-                    onClick={() => {
-                      setActiveTab('TERMS');
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                  >
-                    <FileText className="w-3 h-3 text-[#00C6A6]" />
-                    <span>Terms & Conditions</span>
-                  </button>
-                </li>
-                <li>
-                  <button
-                    onClick={() => {
-                      setActiveTab('PRIVACY');
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                  >
-                    <Lock className="w-3 h-3 text-[#00C6A6]" />
-                    <span>Privacy Policy</span>
-                  </button>
-                </li>
-                <li>
-                  <button
-                    onClick={() => {
-                      setActiveTab('REFUND');
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                  >
-                    <RotateCcw className="w-3 h-3 text-[#00C6A6]" />
-                    <span>Refund Policy</span>
-                  </button>
-                </li>
-              </ul>
-            </div>
+              // Default standard columns fallback
+              return (
+                <>
+                  <div className="md:col-span-3 space-y-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                      Core Destinations
+                    </h4>
+                    <ul className="space-y-2 text-xs text-slate-400">
+                      <li>
+                        <button 
+                          onClick={() => handleSelectDestination('all')}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        >
+                          <span>All Destinations (Global Overview)</span>
+                        </button>
+                      </li>
+                      <li>
+                        <button 
+                          onClick={() => handleSelectDestination('japan')}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        >
+                          <span>Japan (Tokyo, Kyoto, Osaka, Mt. Fuji)</span>
+                        </button>
+                      </li>
+                      <li>
+                        <button 
+                          onClick={() => handleSelectDestination('uk')}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        >
+                          <span>United Kingdom (London, Edinburgh, Highlands)</span>
+                        </button>
+                      </li>
+                      <li>
+                        <button 
+                          onClick={() => handleSelectDestination('europe')}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        >
+                          <span>Europe (Paris, Rome, Amalfi, Swiss Alps)</span>
+                        </button>
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div className="md:col-span-3 space-y-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                      Consular & Visas
+                    </h4>
+                    <ul className="space-y-2 text-xs text-slate-400">
+                      <li>
+                        <button 
+                          onClick={() => {
+                            setActiveTab('VISAS');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        >
+                          <span>Japan Tourist E-Visa Checklist</span>
+                        </button>
+                      </li>
+                      <li>
+                        <button 
+                          onClick={() => {
+                            setActiveTab('VISAS');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        >
+                          <span>UK Standard Visitor Visa Checklist</span>
+                        </button>
+                      </li>
+                      <li>
+                        <button 
+                          onClick={() => {
+                            setActiveTab('VISAS');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        >
+                          <span>Schengen Short-Stay Visa Requirements</span>
+                        </button>
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div className="md:col-span-2 space-y-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                      Trust & Operations
+                    </h4>
+                    <ul className="space-y-2 text-xs text-slate-400">
+                      <li>
+                        <button
+                          onClick={() => {
+                            setActiveTab('CONTACT');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        >
+                          <Mail className="w-3 h-3 text-[#00C6A6]" />
+                          <span>Contact Operations</span>
+                        </button>
+                      </li>
+                      <li>
+                        <button
+                          onClick={() => {
+                            setActiveTab('BLOGS');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        >
+                          <BookOpen className="w-3 h-3 text-[#00C6A6]" />
+                          <span>Editorial & Insights</span>
+                        </button>
+                      </li>
+                      <li>
+                        <button
+                          onClick={() => {
+                            setActiveTab('TERMS');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        >
+                          <FileText className="w-3 h-3 text-[#00C6A6]" />
+                          <span>Terms & Conditions</span>
+                        </button>
+                      </li>
+                      <li>
+                        <button
+                          onClick={() => {
+                            setActiveTab('PRIVACY');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        >
+                          <Lock className="w-3 h-3 text-[#00C6A6]" />
+                          <span>Privacy Policy</span>
+                        </button>
+                      </li>
+                      <li>
+                        <button
+                          onClick={() => {
+                            setActiveTab('REFUND');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        >
+                          <RotateCcw className="w-3 h-3 text-[#00C6A6]" />
+                          <span>Refund Policy</span>
+                        </button>
+                      </li>
+                    </ul>
+                  </div>
+                </>
+              );
+            })()}
 
             {/* Ground Operations Contact Details */}
             <div className="md:col-span-3 space-y-3">

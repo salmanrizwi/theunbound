@@ -110,12 +110,50 @@ export interface DestinationCity {
   productCount: number;
 }
 
+// Master Macro Region (Tier 1: REGION)
+export interface MasterRegion {
+  id: string; // e.g. 'reg-east-asia', 'reg-western-europe'
+  name: string; // e.g. 'East Asia', 'Western Europe'
+  code: string; // e.g. 'EA', 'WEU', 'SEA', 'ME', 'SCA', 'NA'
+  slug: string;
+  tagline?: string;
+  description?: string;
+  heroImage?: string;
+  currency?: CurrencyCode;
+  displayOrder?: number;
+  status: 'ACTIVE' | 'DRAFT' | 'INACTIVE';
+  isPublished?: boolean;
+  featured?: boolean;
+  destinationsCount?: number;
+  hubsCount?: number;
+  productsCount?: number;
+  hotelsCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type Region = MasterRegion;
+
+export interface DestinationRegionItem {
+  id: string;
+  destinationId: string;
+  destinationName: string;
+  name: string; // e.g. 'Kanto', 'Kansai', 'Hokkaido', 'Greater London', 'Scotland', 'Tuscany'
+  slug: string;
+  description?: string;
+  displayOrder?: number;
+  heroImage?: string;
+}
+
 export interface Destination {
   id: string;
   name: string;
   slug: string;
   country: string;
-  region: DestinationRegion;
+  regionId?: string; // Foreign key linking to MasterRegion (e.g. 'reg-east-asia')
+  regionName?: string; // Display name of Master Region (e.g. 'East Asia')
+  region?: DestinationRegion | string;
+  regions?: DestinationRegionItem[];
   heroImage: string;
   tagline: string;
   description: string;
@@ -159,6 +197,9 @@ export interface Product {
   sku: string;
   destinationId: string;
   destinationName: string;
+  regionId?: string;
+  regionName?: string;
+  hubId?: string;
   country: string;
   city: string;
   productType: string;
@@ -481,6 +522,32 @@ export interface SentEmailRecord {
   status: 'DELIVERED' | 'QUEUED';
 }
 
+export interface BookingPassenger {
+  id: string;
+  fullName: string;
+  dateOfBirth?: string;
+  passportNumber?: string;
+  passportExpiry?: string;
+  nationality?: string;
+  isLeadPax: boolean;
+  passportFrontUrl?: string;
+  passportBackUrl?: string;
+  panCardUrl?: string; // Only for lead passenger
+  panNumber?: string;
+}
+
+export interface BookingPaymentProof {
+  id: string;
+  amount: number;
+  currency: CurrencyCode;
+  trancheLabel: string; // e.g. "Tranche 1 (Deposit 30%)", "Tranche 2 (Final Balance)"
+  paymentDate: string;
+  transactionRef: string;
+  proofFileUrl: string;
+  verifiedStatus: 'PENDING_VERIFICATION' | 'VERIFIED' | 'REJECTED';
+  notes?: string;
+}
+
 export interface Booking {
   id: string;
   bookingReference: string; // e.g. TUB-BK-2026-8492
@@ -497,8 +564,28 @@ export interface Booking {
   travelStartDate: string;
   travelEndDate: string;
   status: BookingStatus;
+  paymentStatus?: 'PENDING_PAYMENT' | 'PARTIALLY_PAID' | 'PAID' | 'REFUNDED';
   supplierAllocationStatus?: 'UNALLOCATED' | 'DISPATCHED_TO_SUPPLIERS' | 'PARTIALLY_CONFIRMED' | 'FULLY_CONFIRMED_BY_SUPPLIERS';
   supplierAllocations?: BookingSupplierAllocation[];
+  
+  // Passenger & Document Uploads (up to N pax)
+  passengers?: BookingPassenger[];
+  
+  // Multi-tranche Payment Proofs
+  paymentProofs?: BookingPaymentProof[];
+  
+  // Supplier & Ground Operations Fields
+  paymentCutoffDate?: string;
+  serviceDate?: string;
+  serviceTime?: string;
+  supplierConfirmationRef?: string;
+  internalNotes?: string;
+  
+  // Financial Invoices & Service Vouchers
+  proformaInvoiceUrl?: string;
+  taxInvoiceUrl?: string;
+  voucherUrl?: string;
+  
   createdAt: string;
   updatedAt: string;
   confirmationNotice: string; // "Your booking has been submitted and will be updated in 24-48 Hrs."
@@ -643,6 +730,8 @@ export interface Promotion {
   isActive: boolean;
   viewCount?: number;
   clickCount?: number;
+  impressions?: number;
+  clicks?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -933,6 +1022,9 @@ export interface Hotel {
   code: string;
   destinationId: string;
   destinationName: string;
+  regionId?: string;
+  regionName?: string;
+  hubId?: string;
   cityId: string;
   cityName: string;
   country: string;
@@ -967,6 +1059,8 @@ export interface CityHub {
   id: string;
   destinationId: string;
   destinationName: string;
+  regionId?: string;
+  regionName?: string;
   name: string;
   tagline: string;
   description: string;
@@ -1055,7 +1149,7 @@ export interface GalleryImage {
 // INTERNAL COMPANY MANAGEMENT SYSTEM (LEADS & OPERATIONS)
 // ----------------------------------------------------
 export type LeadStatus = 'NEW' | 'CONTACTED' | 'QUALIFIED' | 'QUOTED' | 'FOLLOW_UP' | 'WON' | 'LOST';
-export type LeadSource = 'WEBSITE' | 'CONTACT_FORM' | 'QUOTATION_SAVED' | 'PROPOSAL_DOWNLOADED' | 'MARKETING' | 'MANUAL_ENTRY' | 'REFERRAL' | 'B2B_PARTNER';
+export type LeadSource = 'WEBSITE' | 'CONTACT_FORM' | 'QUOTATION_SAVED' | 'PROPOSAL_DOWNLOADED' | 'MARKETING' | 'MANUAL_ENTRY' | 'REFERRAL' | 'B2B_PARTNER' | 'VISA_PAGE' | 'VISA_PORTAL';
 
 export interface LeadNote {
   id: string;
@@ -1393,6 +1487,133 @@ export interface CustomPage {
   updatedAt: string;
 }
 
+// ----------------------------------------------------
+// FOOTER NAVIGATION STRUCTURE
+// ----------------------------------------------------
+export interface FooterMenuLink {
+  id: string;
+  label: string;
+  url: string;
+  type: 'DESTINATION' | 'CUSTOM_PAGE' | 'SYSTEM_VIEW' | 'EXTERNAL_LINK';
+  targetId?: string;
+  displayOrder: number;
+}
 
+export interface FooterMenuColumn {
+  id: string;
+  title: string;
+  displayOrder: number;
+  links?: FooterMenuLink[];
+  items?: MenuItemConfig[];
+}
 
+export interface FooterConfig {
+  tagline: string;
+  copyrightText: string;
+  showSocialLinks: boolean;
+  socialLinks: { platform: string; url: string }[];
+  columns: FooterMenuColumn[];
+}
 
+// ----------------------------------------------------
+// VISA PRODUCTS & CHECKLIST MANAGEMENT
+// ----------------------------------------------------
+export type VisaEntryType = 'SINGLE_ENTRY' | 'MULTIPLE_ENTRY' | 'DOUBLE_ENTRY';
+
+export interface VisaDocumentRequirement {
+  id: string;
+  name: string;
+  description: string;
+  isMandatory: boolean;
+  fileFormatAccepted?: string;
+  sampleTemplateUrl?: string;
+}
+
+export interface VisaProduct {
+  id: string;
+  country: string;
+  countryCode?: string;
+  destinationId?: string;
+  visaType: string; // e.g. 'Tourist E-Visa (Single Entry)', 'Business Visa', 'Long Stay Visa'
+  entryType: VisaEntryType;
+  validityDays: number;
+  stayDurationDays: number;
+  processingTimeDays: number;
+  expressProcessingAvailable: boolean;
+  expressProcessingTimeDays?: number;
+  embassyFee: number;
+  serviceFee: number;
+  expressServiceFee?: number;
+  currency: CurrencyCode;
+  description: string;
+  documentsChecklist: string[];
+  detailedRequirements?: VisaDocumentRequirement[];
+  submissionSteps: string[];
+  eligibilityNotes: string[];
+  downloadableForms?: { id: string; name: string; url: string; fileSize?: string }[];
+  faqs?: { question: string; answer: string }[];
+  heroImage?: string;
+  status: 'ACTIVE' | 'DRAFT' | 'ARCHIVED';
+  featured?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ----------------------------------------------------
+// USER ACTIVITY & TELEMETRY TRACKING
+// ----------------------------------------------------
+export interface UserActivityEvent {
+  id: string;
+  userId: string;
+  userEmail: string;
+  userName?: string;
+  agencyName?: string;
+  type: 'PROPOSAL_SAVED' | 'QUOTE_DOWNLOADED' | 'BOOKING_SUBMITTED' | 'PAGE_VIEW' | 'LOGIN' | 'CALCULATOR_USED';
+  targetId?: string;
+  targetTitle?: string;
+  details?: Record<string, any>;
+  timestamp: string;
+  durationSeconds?: number;
+}
+
+export interface UserTelemetrySummary {
+  userId: string;
+  userEmail: string;
+  userName: string;
+  agencyName?: string;
+  role: UserRole;
+  proposalsSavedCount: number;
+  savedProposals: Quotation[];
+  proposalsDownloadedCount: number;
+  downloadedQuotes: Quotation[];
+  bookingsCount: number;
+  bookings: Booking[];
+  totalTimeSpentMinutes: number;
+  lastActiveTimestamp: string;
+  createdAt: string;
+}
+
+// ----------------------------------------------------
+// GOOGLE CALENDAR TASK & GROUND SLA AUTOMATION
+// ----------------------------------------------------
+export interface CalendarTask {
+  id: string;
+  title: string;
+  description: string;
+  assignedToEmail: string;
+  assignedToName: string;
+  category: 'CLIENT_FOLLOW_UP' | 'GROUND_DISPATCH' | 'SUPPLIER_CUTOFF' | 'PAYMENT_REMINDER' | 'VIP_ARRIVAL' | 'VISA_SUBMISSION';
+  startDate: string; // YYYY-MM-DD
+  startTime: string; // HH:mm
+  endDate?: string;
+  endTime?: string;
+  bookingReference?: string;
+  leadNumber?: string;
+  googleCalendarEventId?: string;
+  googleCalendarLink?: string;
+  isSyncedToGoogleCalendar: boolean;
+  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+  createdAt: string;
+  updatedAt: string;
+}

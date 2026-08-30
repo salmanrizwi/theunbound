@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppDatabase } from '../../services/db';
-import { MenuItemConfig, CustomPage, Destination } from '../../types';
+import { MenuItemConfig, CustomPage, Destination, FooterMenuColumn, FooterMenuLink } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { 
   Menu, 
@@ -19,7 +19,9 @@ import {
   ExternalLink,
   Sparkles,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  FolderTree,
+  Columns
 } from 'lucide-react';
 
 export const MenuAndPagesManager: React.FC = () => {
@@ -29,7 +31,8 @@ export const MenuAndPagesManager: React.FC = () => {
   const [menuItems, setMenuItems] = useState<MenuItemConfig[]>([]);
   const [customPages, setCustomPages] = useState<CustomPage[]>([]);
   const [destinations, setDestinations] = useState<Destination[]>([]);
-  const [activeTab, setActiveTab] = useState<'MENU' | 'CUSTOM_PAGES'>('MENU');
+  const [footerColumns, setFooterColumns] = useState<FooterMenuColumn[]>([]);
+  const [activeTab, setActiveTab] = useState<'MENU' | 'CUSTOM_PAGES' | 'FOOTER'>('MENU');
 
   // Editing state for Menu Item
   const [editingMenuItem, setEditingMenuItem] = useState<MenuItemConfig | null>(null);
@@ -38,6 +41,14 @@ export const MenuAndPagesManager: React.FC = () => {
   // Editing state for Custom Page
   const [editingPage, setEditingPage] = useState<CustomPage | null>(null);
   const [isCreatingPage, setIsCreatingPage] = useState(false);
+
+  // Editing state for Footer Column
+  const [editingFooterCol, setEditingFooterCol] = useState<FooterMenuColumn | null>(null);
+  const [isCreatingFooterCol, setIsCreatingFooterCol] = useState(false);
+  const [newLinkModalColId, setNewLinkModalColId] = useState<string | null>(null);
+  const [newLinkLabel, setNewLinkLabel] = useState('');
+  const [newLinkUrl, setNewLinkUrl] = useState('');
+  const [newLinkType, setNewLinkType] = useState<'DESTINATION' | 'CUSTOM_PAGE' | 'SYSTEM_VIEW' | 'EXTERNAL_LINK'>('CUSTOM_PAGE');
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -50,6 +61,7 @@ export const MenuAndPagesManager: React.FC = () => {
     setMenuItems(db.getMenuItems());
     setCustomPages(db.getCustomPages());
     setDestinations(db.getDestinations());
+    setFooterColumns(db.getFooterColumns());
   };
 
   useEffect(() => {
@@ -182,6 +194,17 @@ export const MenuAndPagesManager: React.FC = () => {
             }`}
           >
             Custom Pages ({customPages.length})
+          </button>
+          <button
+            id="tab-sub-footer-menus"
+            onClick={() => setActiveTab('FOOTER')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'FOOTER'
+                ? 'bg-[#00C6A6] text-slate-950 shadow-xs'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Footer Columns ({footerColumns.length})
           </button>
         </div>
       </div>
@@ -733,6 +756,270 @@ export const MenuAndPagesManager: React.FC = () => {
                     className="px-5 py-2 text-xs font-bold bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 rounded-xl cursor-pointer"
                   >
                     Save Page
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SUBTAB 3: FOOTER NAVIGATION COLUMNS & LINKS */}
+      {activeTab === 'FOOTER' && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+            <div>
+              <h3 className="text-base font-bold text-slate-900 flex items-center space-x-2">
+                <Columns className="w-4 h-4 text-[#00C6A6]" />
+                <span>Footer Navigation Structure</span>
+              </h3>
+              <p className="text-xs text-slate-500">
+                Manage global multi-column footer navigation links, custom URLs, destination shortcuts, and policy pages.
+              </p>
+            </div>
+
+            <button
+              onClick={() => {
+                setEditingFooterCol({
+                  id: `col-${Date.now()}`,
+                  title: 'New Navigation Group',
+                  displayOrder: footerColumns.length + 1,
+                  links: []
+                });
+                setIsCreatingFooterCol(true);
+              }}
+              className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-xs text-xs"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Footer Column</span>
+            </button>
+          </div>
+
+          {/* Columns Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {footerColumns.map((col, cIdx) => (
+              <div key={col.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between space-y-4">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div className="flex items-center space-x-2">
+                      <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-600 font-mono text-[10px] font-bold flex items-center justify-center">
+                        {cIdx + 1}
+                      </span>
+                      <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">{col.title}</h4>
+                    </div>
+
+                    <div className="flex items-center space-x-1">
+                      <button
+                        onClick={() => {
+                          setEditingFooterCol(col);
+                          setIsCreatingFooterCol(false);
+                        }}
+                        className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg text-xs cursor-pointer"
+                        title="Edit Column Title"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm(`Delete footer column "${col.title}" and its links?`)) {
+                            db.deleteFooterColumn(col.id, user);
+                            showToast(`Deleted column "${col.title}"`);
+                          }
+                        }}
+                        className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg text-xs cursor-pointer"
+                        title="Delete Column"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Links List in Column */}
+                  <div className="space-y-1.5 min-h-24">
+                    {(col.links || []).map((link, lIdx) => (
+                      <div key={link.id || lIdx} className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                        <div className="flex items-center space-x-2 truncate">
+                          <LinkIcon className="w-3 h-3 text-[#00C6A6] shrink-0" />
+                          <span className="font-semibold text-slate-800 truncate">{link.label}</span>
+                          <span className="text-[9px] uppercase px-1.5 py-0.2 rounded bg-slate-200 text-slate-600 font-mono">
+                            {link.type}
+                          </span>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            const updatedLinks = (col.links || []).filter((_, i) => i !== lIdx);
+                            const updatedCol = { ...col, links: updatedLinks };
+                            db.saveFooterColumn(updatedCol, user);
+                            showToast(`Removed link "${link.label}"`);
+                          }}
+                          className="p-1 text-slate-400 hover:text-red-500 rounded cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+
+                    {(!col.links || col.links.length === 0) && (
+                      <div className="text-center py-6 text-slate-400 text-xs italic">
+                        No links in this column.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setNewLinkModalColId(col.id);
+                    setNewLinkLabel('');
+                    setNewLinkUrl('');
+                    setNewLinkType('CUSTOM_PAGE');
+                  }}
+                  className="w-full py-2 bg-slate-50 hover:bg-[#00C6A6]/10 text-slate-700 hover:text-slate-900 border border-dashed border-slate-300 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center space-x-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5 text-[#00C6A6]" />
+                  <span>Add Link to Column</span>
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Edit Column Modal */}
+          {editingFooterCol && (
+            <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200">
+                <h3 className="text-sm font-bold text-slate-900">
+                  {isCreatingFooterCol ? 'Add Footer Column' : 'Edit Footer Column'}
+                </h3>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Column Title
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editingFooterCol.title}
+                    onChange={e => setEditingFooterCol({ ...editingFooterCol, title: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs"
+                    placeholder="e.g. Destinations, Company, Legal"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+                  <button
+                    onClick={() => {
+                      setEditingFooterCol(null);
+                      setIsCreatingFooterCol(false);
+                    }}
+                    className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!editingFooterCol.title.trim()) return;
+                      db.saveFooterColumn(editingFooterCol, user);
+                      setEditingFooterCol(null);
+                      setIsCreatingFooterCol(false);
+                      showToast(`Saved column "${editingFooterCol.title}"`);
+                    }}
+                    className="px-5 py-2 text-xs font-bold bg-[#00C6A6] text-slate-950 rounded-xl cursor-pointer"
+                  >
+                    Save Column
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Add Link to Column Modal */}
+          {newLinkModalColId && (
+            <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200">
+                <h3 className="text-sm font-bold text-slate-900">
+                  Add Link to Footer Column
+                </h3>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Link Title / Label *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={newLinkLabel}
+                      onChange={e => setNewLinkLabel(e.target.value)}
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs"
+                      placeholder="e.g. Visa Guidelines, Japan Tours"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Link Type
+                    </label>
+                    <select
+                      value={newLinkType}
+                      onChange={e => setNewLinkType(e.target.value as any)}
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold"
+                    >
+                      <option value="CUSTOM_PAGE">Custom Landing Page</option>
+                      <option value="DESTINATION">Destination Gateway</option>
+                      <option value="SYSTEM_VIEW">Core System View (Visas, Contact, etc.)</option>
+                      <option value="EXTERNAL_LINK">External URL</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Target URL or Slug
+                    </label>
+                    <input
+                      type="text"
+                      value={newLinkUrl}
+                      onChange={e => setNewLinkUrl(e.target.value)}
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs"
+                      placeholder={newLinkType === 'EXTERNAL_LINK' ? 'https://...' : 'slug or id (e.g. visas, japan)'}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+                  <button
+                    onClick={() => setNewLinkModalColId(null)}
+                    className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!newLinkLabel.trim()) return;
+                      const col = footerColumns.find(c => c.id === newLinkModalColId);
+                      if (!col) return;
+
+                      const newLink: FooterMenuLink = {
+                        id: `link-${Date.now()}`,
+                        label: newLinkLabel.trim(),
+                        url: newLinkUrl.trim() || '#',
+                        type: newLinkType,
+                        targetId: newLinkUrl.trim(),
+                        displayOrder: (col.links?.length || 0) + 1
+                      };
+
+                      const updatedCol = {
+                        ...col,
+                        links: [...(col.links || []), newLink]
+                      };
+
+                      db.saveFooterColumn(updatedCol, user);
+                      setNewLinkModalColId(null);
+                      showToast(`Added link "${newLinkLabel}"`);
+                    }}
+                    className="px-5 py-2 text-xs font-bold bg-[#00C6A6] text-slate-950 rounded-xl cursor-pointer"
+                  >
+                    Add Link
                   </button>
                 </div>
               </div>

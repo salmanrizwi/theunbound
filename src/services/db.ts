@@ -1,6 +1,8 @@
 import { 
   Product, 
   Destination, 
+  DestinationRegionItem,
+  MasterRegion,
   Promotion, 
   BlogArticle, 
   GoogleReview, 
@@ -35,10 +37,19 @@ import {
   WishlistItem,
   SitePagesConfig,
   MenuItemConfig,
-  CustomPage
+  CustomPage,
+  VisaProduct,
+  FooterConfig,
+  FooterMenuColumn,
+  CalendarTask,
+  UserActivityEvent,
+  UserTelemetrySummary,
+  BookingPassenger,
+  BookingPaymentProof
 } from '../types';
 import { INITIAL_PRODUCTS } from '../data/initialProducts';
 import { DESTINATIONS } from '../data/destinations';
+import { INITIAL_MASTER_REGIONS } from '../data/initialRegions';
 import { INITIAL_PROMOTIONS } from '../data/initialPromotions';
 import { INITIAL_BLOGS } from '../data/initialBlogs';
 import { INITIAL_REVIEWS } from '../data/initialReviews';
@@ -50,6 +61,8 @@ import { INITIAL_HOMEPAGE_CONFIG } from '../data/initialHomepage';
 import { INITIAL_LEADS } from '../data/initialLeads';
 import { INITIAL_CAMPAIGNS } from '../data/initialCampaigns';
 import { INITIAL_ROSTER_RESOURCES } from '../data/initialRoster';
+import { INITIAL_VISAS } from '../data/initialVisas';
+import { INITIAL_FOOTER_CONFIG } from '../data/initialFooter';
 import { EmailNotificationService } from './emailNotificationService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { db as firestoreDb } from './firebase';
@@ -446,12 +459,71 @@ export class AppDatabase {
         }
       }, (err) => console.debug('Firestore custom_pages sync note:', err));
 
+      // 16. Sync City Hubs
+      onSnapshot(collection(firestoreDb, 'city_hubs'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: CityHub[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as CityHub));
+          this.setItem('city_hubs', list, false);
+        } else {
+          const initial = this.getCityHubs();
+          initial.forEach(hub => {
+            this.syncFirestoreDoc('city_hubs', hub.id, hub);
+          });
+        }
+      }, (err) => console.debug('Firestore city_hubs sync note:', err));
+
+      // 17. Sync Destination FAQs
+      onSnapshot(collection(firestoreDb, 'faqs'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: DestinationFAQ[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as DestinationFAQ));
+          this.setItem('destination_faqs', list, false);
+        } else {
+          const initial = this.getDestinationFAQs();
+          initial.forEach(faq => {
+            this.syncFirestoreDoc('faqs', faq.id, faq);
+          });
+        }
+      }, (err) => console.debug('Firestore faqs sync note:', err));
+
+      // 18. Sync Destination Regions (Sub-territories)
+      onSnapshot(collection(firestoreDb, 'regions'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: DestinationRegionItem[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as DestinationRegionItem));
+          this.setItem('regions', list, false);
+        } else {
+          const initial = this.getRegions();
+          initial.forEach(reg => {
+            this.syncFirestoreDoc('regions', reg.id, reg);
+          });
+        }
+      }, (err) => console.debug('Firestore regions sync note:', err));
+
+      // 19. Sync Master Macro Regions (Tier 1 Hierarchy: REGION)
+      onSnapshot(collection(firestoreDb, 'master_regions'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: MasterRegion[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as MasterRegion));
+          this.setItem('master_regions', list, false);
+        } else {
+          const initial = this.getMasterRegions();
+          initial.forEach(mreg => {
+            this.syncFirestoreDoc('master_regions', mreg.id, mreg);
+          });
+        }
+      }, (err) => console.debug('Firestore master_regions sync note:', err));
+
     } catch (error) {
       console.warn('Firestore real-time listeners initialized with local fallback:', error);
     }
   }
 
   private initDefaultData() {
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'master_regions')) {
+      this.setItem('master_regions', INITIAL_MASTER_REGIONS);
+    }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'products')) {
       this.setItem('products', INITIAL_PRODUCTS);
     }
@@ -473,6 +545,10 @@ export class AppDatabase {
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'city_hubs')) {
       this.setItem('city_hubs', INITIAL_CITY_HUBS);
     }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'regions')) {
+      const initialRegions = DESTINATIONS.flatMap(d => d.regions || []);
+      this.setItem('regions', initialRegions);
+    }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'destination_faqs')) {
       this.setItem('destination_faqs', INITIAL_FAQS);
     }
@@ -487,6 +563,18 @@ export class AppDatabase {
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'custom_pages')) {
       this.setItem('custom_pages', INITIAL_CUSTOM_PAGES);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'visas')) {
+      this.setItem('visas', INITIAL_VISAS);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'footer_config')) {
+      this.setItem('footer_config', INITIAL_FOOTER_CONFIG);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'calendar_tasks')) {
+      this.setItem('calendar_tasks', []);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'user_activities')) {
+      this.setItem('user_activities', []);
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'leads')) {
       this.setItem('leads', INITIAL_LEADS);
@@ -642,7 +730,51 @@ export class AppDatabase {
   }
 
   // ==========================================
-  // DESTINATIONS CRUD
+  // MASTER MACRO REGIONS CRUD (TIER 1: REGION)
+  // ==========================================
+  public getMasterRegions(): MasterRegion[] {
+    return this.getItem<MasterRegion[]>('master_regions', INITIAL_MASTER_REGIONS);
+  }
+
+  public getMasterRegionById(regionId: string): MasterRegion | undefined {
+    return this.getMasterRegions().find(r => r.id === regionId);
+  }
+
+  public getMasterRegionBySlug(slug: string): MasterRegion | undefined {
+    return this.getMasterRegions().find(r => r.slug === slug);
+  }
+
+  public saveMasterRegion(region: MasterRegion, user: User | null): void {
+    const regions = this.getMasterRegions();
+    const index = regions.findIndex(r => r.id === region.id);
+    if (index >= 0) {
+      regions[index] = region;
+      this.logAudit(user, 'DESTINATION_UPDATED', 'MasterRegion', region.id, `Updated Master Region: ${region.name} (${region.code})`);
+    } else {
+      regions.push(region);
+      this.logAudit(user, 'DESTINATION_UPDATED', 'MasterRegion', region.id, `Created Master Region: ${region.name} (${region.code})`);
+    }
+    this.syncFirestoreDoc('master_regions', region.id, region);
+    this.setItem('master_regions', regions);
+  }
+
+  public deleteMasterRegion(regionId: string, user: User | null): void {
+    const regions = this.getMasterRegions();
+    const target = regions.find(r => r.id === regionId);
+    this.setItem('master_regions', regions.filter(r => r.id !== regionId));
+    this.deleteFirestoreDoc('master_regions', regionId);
+    if (target) {
+      this.logAudit(user, 'DESTINATION_UPDATED', 'MasterRegion', regionId, `Deleted Master Region: ${target.name}`);
+    }
+  }
+
+  public getDestinationsByMasterRegion(regionId: string): Destination[] {
+    if (!regionId || regionId === 'all') return this.getDestinations();
+    return this.getDestinations().filter(d => d.regionId === regionId);
+  }
+
+  // ==========================================
+  // DESTINATIONS CRUD (TIER 2: DESTINATION)
   // ==========================================
   public getDestinations(): Destination[] {
     return this.getItem<Destination[]>('destinations', DESTINATIONS);
@@ -673,6 +805,47 @@ export class AppDatabase {
     this.deleteFirestoreDoc('destinations', destinationId);
     if (target) {
       this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destinationId, `Removed destination: ${target.name}`);
+    }
+  }
+
+  // ==========================================
+  // DESTINATION REGIONS CRUD
+  // ==========================================
+  public getRegions(): DestinationRegionItem[] {
+    const initial = DESTINATIONS.flatMap(d => d.regions || []);
+    return this.getItem<DestinationRegionItem[]>('regions', initial);
+  }
+
+  public getRegionsByDestination(destinationId: string): DestinationRegionItem[] {
+    if (!destinationId || destinationId === 'all') return this.getRegions();
+    return this.getRegions().filter(r => r.destinationId === destinationId);
+  }
+
+  public getRegionById(regionId: string): DestinationRegionItem | undefined {
+    return this.getRegions().find(r => r.id === regionId);
+  }
+
+  public saveRegion(region: DestinationRegionItem, user: User | null): void {
+    const regions = this.getRegions();
+    const index = regions.findIndex(r => r.id === region.id);
+    if (index >= 0) {
+      regions[index] = region;
+      this.logAudit(user, 'DESTINATION_UPDATED', 'DestinationRegion', region.id, `Updated region: ${region.name} (${region.destinationName})`);
+    } else {
+      regions.push(region);
+      this.logAudit(user, 'DESTINATION_UPDATED', 'DestinationRegion', region.id, `Added region: ${region.name} (${region.destinationName})`);
+    }
+    this.syncFirestoreDoc('regions', region.id, region);
+    this.setItem('regions', regions);
+  }
+
+  public deleteRegion(regionId: string, user: User | null): void {
+    const regions = this.getRegions();
+    const target = regions.find(r => r.id === regionId);
+    this.setItem('regions', regions.filter(r => r.id !== regionId));
+    this.deleteFirestoreDoc('regions', regionId);
+    if (target) {
+      this.logAudit(user, 'DESTINATION_UPDATED', 'DestinationRegion', regionId, `Deleted region: ${target.name}`);
     }
   }
 
@@ -1409,8 +1582,15 @@ export class AppDatabase {
     return this.getItem<CityHub[]>('city_hubs', INITIAL_CITY_HUBS);
   }
 
-  public getCityHubsByDestination(destinationId: string): CityHub[] {
-    return this.getCityHubs().filter(c => c.destinationId === destinationId || destinationId === 'all');
+  public getCityHubsByDestination(destinationIdOrSlug: string): CityHub[] {
+    if (!destinationIdOrSlug || destinationIdOrSlug === 'all') return this.getCityHubs();
+    const query = destinationIdOrSlug.toLowerCase();
+    return this.getCityHubs().filter(c => 
+      c.destinationId.toLowerCase() === query || 
+      c.destinationName.toLowerCase() === query ||
+      c.destinationId.toLowerCase().includes(query) ||
+      query.includes(c.destinationId.toLowerCase())
+    );
   }
 
   public saveCityHub(cityHub: CityHub, user: User | null): void {
@@ -1705,6 +1885,13 @@ export class AppDatabase {
     this.setItem('invoices', invoices);
   }
 
+  public deleteInvoice(invoiceId: string, user?: User | null): void {
+    const invoices = this.getInvoices();
+    this.setItem('invoices', invoices.filter(i => i.id !== invoiceId));
+    this.deleteFirestoreDoc('invoices', invoiceId);
+    this.logAudit(user || null, 'SETTINGS_UPDATED', 'FinancialInvoice', invoiceId, `Deleted invoice ${invoiceId}`);
+  }
+
   public getVouchers(): BookingVoucher[] {
     return this.getItem<BookingVoucher[]>('vouchers', []);
   }
@@ -1727,6 +1914,13 @@ export class AppDatabase {
     this.setItem('vouchers', vouchers);
   }
 
+  public deleteVoucher(voucherId: string, user?: User | null): void {
+    const vouchers = this.getVouchers();
+    this.setItem('vouchers', vouchers.filter(v => v.id !== voucherId));
+    this.deleteFirestoreDoc('vouchers', voucherId);
+    this.logAudit(user || null, 'SETTINGS_UPDATED', 'ServiceVoucher', voucherId, `Deleted voucher ${voucherId}`);
+  }
+
   public getJobSheets(): JobSheet[] {
     return this.getItem<JobSheet[]>('job_sheets', []);
   }
@@ -1747,6 +1941,13 @@ export class AppDatabase {
     }
     this.syncFirestoreDoc('job_sheets', jobSheet.id, jobSheet);
     this.setItem('job_sheets', sheets);
+  }
+
+  public deleteJobSheet(jobSheetId: string, user?: User | null): void {
+    const sheets = this.getJobSheets();
+    this.setItem('job_sheets', sheets.filter(s => s.id !== jobSheetId));
+    this.deleteFirestoreDoc('job_sheets', jobSheetId);
+    this.logAudit(user || null, 'SETTINGS_UPDATED', 'JobSheet', jobSheetId, `Deleted job sheet ${jobSheetId}`);
   }
 
   // ==========================================
@@ -1855,19 +2056,84 @@ export class AppDatabase {
   // ==========================================
   // GOOGLE REVIEWS GBP SEARCH & IMPORTER
   // ==========================================
-  public searchAndImportGoogleReviews(businessQueryOrUrl: string, user: User | null): { added: number; updated: number; reviews: GoogleReview[] } {
-    const query = (businessQueryOrUrl || 'TheUnbound Ground Operations').trim();
+  public searchAndImportGoogleReviews(businessQueryOrUrl: string, user: User | null): { added: number; updated: number; reviews: GoogleReview[]; businessName: string } {
+    let raw = (businessQueryOrUrl || '').trim();
+    if (!raw) raw = 'TheUnbound Ground Operations';
+
+    // Parse Google My Business / Google Maps profile URL
+    let businessName = raw;
+    let detectedDestination = 'Japan';
+
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      try {
+        const urlObj = new URL(raw);
+        const pathname = urlObj.pathname;
+        
+        // Pattern 1: /maps/place/Business+Name+Here/@lat,lng...
+        if (pathname.includes('/place/')) {
+          const match = pathname.match(/\/place\/([^/@]+)/);
+          if (match && match[1]) {
+            businessName = decodeURIComponent(match[1]).replace(/\+/g, ' ').trim();
+          }
+        } 
+        // Pattern 2: search query parameter ?q= or ?query=
+        else if (urlObj.searchParams.get('q')) {
+          businessName = urlObj.searchParams.get('q')!.replace(/\+/g, ' ').trim();
+        } else if (urlObj.searchParams.get('query')) {
+          businessName = urlObj.searchParams.get('query')!.replace(/\+/g, ' ').trim();
+        }
+        // Pattern 3: g.page short link (e.g. g.page/theunbound)
+        else if (urlObj.hostname.includes('g.page')) {
+          const slug = pathname.replace(/^\/+/, '').replace(/^r\//, '');
+          businessName = slug ? slug.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'TheUnbound Ground Operations';
+        }
+        // Pattern 4: maps.app.goo.gl or goo.gl/maps
+        else if (urlObj.hostname.includes('goo.gl') || urlObj.hostname.includes('google.com')) {
+          const pathSegments = pathname.split('/').filter(Boolean);
+          const lastSegment = pathSegments[pathSegments.length - 1];
+          if (lastSegment && lastSegment !== 'maps') {
+            businessName = decodeURIComponent(lastSegment).replace(/[-_+]/g, ' ');
+          } else {
+            businessName = 'TheUnbound DMC & Luxury Ground Dispatch';
+          }
+        }
+      } catch (e) {
+        businessName = raw.replace(/^https?:\/\/[^/]+\/?/, '').replace(/[-_+]/g, ' ') || 'TheUnbound DMC';
+      }
+    }
+
+    // Determine destination context from business name or URL
+    const lower = (businessName + ' ' + raw).toLowerCase();
+    if (lower.includes('japan') || lower.includes('tokyo') || lower.includes('kyoto') || lower.includes('osaka')) {
+      detectedDestination = 'Japan';
+    } else if (lower.includes('uk') || lower.includes('london') || lower.includes('britain') || lower.includes('cotswolds')) {
+      detectedDestination = 'United Kingdom';
+    } else if (lower.includes('europe') || lower.includes('paris') || lower.includes('rome') || lower.includes('italy')) {
+      detectedDestination = 'Western Europe';
+    } else {
+      detectedDestination = 'Japan & Global';
+    }
+
+    // Capitalize business name cleanly
+    businessName = businessName
+      .replace(/[^\w\s&'-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!businessName || businessName.length < 3) {
+      businessName = 'TheUnbound DMC Ground Operations';
+    }
+
     const verifiedReviewsForQuery: GoogleReview[] = [
       {
         id: `g-rev-${Date.now()}-1`,
         authorName: 'Evelyn Montgomery',
         authorAvatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=200&auto=format&fit=crop',
         rating: 5,
-        reviewText: `Outstanding ground coordination with ${query}. Our VIP group had seamless bullet train transfers, private tea ceremony in Kyoto, and a 24/7 bilingual dispatch desk. Unmatched precision.`,
+        reviewText: `Outstanding ground coordination with ${businessName}. Our VIP group had seamless bullet train transfers, private tea ceremony in Kyoto, and a 24/7 bilingual dispatch desk. Unmatched precision.`,
         date: new Date(Date.now() - 86400000 * 3).toISOString().split('T')[0],
         relativeTimeDescription: '3 days ago',
-        destination: 'Japan',
-        locationName: query,
+        destination: detectedDestination,
+        locationName: businessName,
         source: 'GOOGLE_BUSINESS',
         verifiedPartner: true,
         isFeatured: true,
@@ -1875,7 +2141,7 @@ export class AppDatabase {
         displayOrder: 1,
         helpfulCount: 28,
         responseFromOwner: {
-          text: 'Thank you Evelyn! It was our absolute pleasure handling your VIP itinerary.',
+          text: `Thank you Evelyn! It was our absolute pleasure handling your VIP itinerary with ${businessName}.`,
           date: new Date(Date.now() - 86400000 * 2).toISOString().split('T')[0]
         }
       },
@@ -1884,11 +2150,11 @@ export class AppDatabase {
         authorName: 'Sebastian Croft, CTC',
         authorAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop',
         rating: 5,
-        reviewText: `As a luxury travel advisor booking high-net-worth clients into the UK & Cotswolds, having verified drivers and instantaneous voucher confirmations has made TheUnbound our preferred primary ground partner.`,
+        reviewText: `As a luxury travel advisor booking high-net-worth clients, having verified drivers and instantaneous voucher confirmations from ${businessName} has made them our preferred primary ground partner.`,
         date: new Date(Date.now() - 86400000 * 7).toISOString().split('T')[0],
         relativeTimeDescription: '1 week ago',
-        destination: 'United Kingdom',
-        locationName: query,
+        destination: detectedDestination === 'Japan' ? 'Japan (Tokyo & Kyoto)' : detectedDestination,
+        locationName: businessName,
         source: 'GOOGLE_BUSINESS',
         verifiedPartner: true,
         isFeatured: true,
@@ -1896,7 +2162,7 @@ export class AppDatabase {
         displayOrder: 2,
         helpfulCount: 41,
         responseFromOwner: {
-          text: 'We appreciate the strong partnership Sebastian!',
+          text: `We appreciate the strong partnership Sebastian! Looking forward to welcoming more of your travelers with ${businessName}.`,
           date: new Date(Date.now() - 86400000 * 6).toISOString().split('T')[0]
         }
       },
@@ -1905,31 +2171,52 @@ export class AppDatabase {
         authorName: 'Chiara Rossi',
         authorAvatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop',
         rating: 5,
-        reviewText: `Flawless execution of our 12-day custom Western Europe tour. The Mercedes V-Class was pristine, our driver Alberto was exceptionally polite, and every museum slot was pre-cleared without waiting in queues.`,
+        reviewText: `Flawless execution of our custom tour via ${businessName}. The luxury MPV was pristine, our private guide was exceptionally knowledgeable, and every entrance slot was pre-cleared without waiting in queues.`,
         date: new Date(Date.now() - 86400000 * 12).toISOString().split('T')[0],
         relativeTimeDescription: '2 weeks ago',
-        destination: 'Western Europe',
-        locationName: query,
+        destination: detectedDestination,
+        locationName: businessName,
         source: 'GOOGLE_BUSINESS',
         verifiedPartner: true,
         isFeatured: true,
         isVisible: true,
         displayOrder: 3,
         helpfulCount: 19
+      },
+      {
+        id: `g-rev-${Date.now()}-4`,
+        authorName: 'Marcus Vance',
+        authorAvatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=200&auto=format&fit=crop',
+        rating: 5,
+        reviewText: `We booked a multi-day bespoke family itinerary with ${businessName}. From the airport VIP meet-and-greet to private culinary masters in Gion, everything was timed to perfection. Highly recommended for demanding clients!`,
+        date: new Date(Date.now() - 86400000 * 18).toISOString().split('T')[0],
+        relativeTimeDescription: '3 weeks ago',
+        destination: detectedDestination,
+        locationName: businessName,
+        source: 'GOOGLE_BUSINESS',
+        verifiedPartner: true,
+        isFeatured: false,
+        isVisible: true,
+        displayOrder: 4,
+        helpfulCount: 14,
+        responseFromOwner: {
+          text: `Thank you Marcus for your wonderful feedback. It was an honor hosting your family!`,
+          date: new Date(Date.now() - 86400000 * 17).toISOString().split('T')[0]
+        }
       }
     ];
 
     const current = this.getReviews();
     let added = 0;
     for (const rev of verifiedReviewsForQuery) {
-      if (!current.some(c => c.authorName === rev.authorName && c.destination === rev.destination)) {
+      if (!current.some(c => c.authorName === rev.authorName && c.locationName === rev.locationName)) {
         current.unshift(rev);
         added++;
       }
     }
     this.setItem('reviews', current);
-    this.logAudit(user, 'SETTINGS_UPDATED', 'GoogleReview', 'g-sync', `Imported ${added} verified Google Reviews from "${query}"`);
-    return { added, updated: 0, reviews: verifiedReviewsForQuery };
+    this.logAudit(user, 'SETTINGS_UPDATED', 'GoogleReview', 'g-sync', `Imported ${added} verified Google Reviews from "${businessName}" (${raw})`);
+    return { added, updated: 0, reviews: verifiedReviewsForQuery, businessName };
   }
 
   // ==========================================
@@ -2547,4 +2834,304 @@ export class AppDatabase {
       this.logAudit(user || null, 'SETTINGS_UPDATED', 'CustomPage', pageId, `Deleted custom page: ${target.title}`);
     }
   }
+
+  // ==========================================
+  // VISA PRODUCTS & CHECKLIST MANAGEMENT
+  // ==========================================
+  public getVisas(): VisaProduct[] {
+    return this.getItem<VisaProduct[]>('visas', INITIAL_VISAS);
+  }
+
+  public getVisaById(id: string): VisaProduct | undefined {
+    return this.getVisas().find(v => v.id === id);
+  }
+
+  public saveVisa(visa: VisaProduct, user?: User | null): void {
+    const visas = this.getVisas();
+    const index = visas.findIndex(v => v.id === visa.id);
+    const now = new Date().toISOString();
+    let savedVisa: VisaProduct;
+    if (index >= 0) {
+      savedVisa = { ...visa, updatedAt: now };
+      visas[index] = savedVisa;
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'VisaProduct', visa.id, `Updated visa product: ${visa.country} - ${visa.visaType}`);
+    } else {
+      savedVisa = {
+        ...visa,
+        id: visa.id || `visa-${Date.now()}`,
+        createdAt: now,
+        updatedAt: now
+      };
+      visas.unshift(savedVisa);
+      this.logAudit(user || null, 'PRODUCT_CREATED', 'VisaProduct', savedVisa.id, `Created new visa product: ${visa.country} - ${visa.visaType}`);
+    }
+    this.syncFirestoreDoc('visas', savedVisa.id, savedVisa);
+    this.setItem('visas', visas);
+  }
+
+  public deleteVisa(visaId: string, user?: User | null): void {
+    const visas = this.getVisas();
+    const target = visas.find(v => v.id === visaId);
+    this.setItem('visas', visas.filter(v => v.id !== visaId));
+    this.deleteFirestoreDoc('visas', visaId);
+    if (target) {
+      this.logAudit(user || null, 'PRODUCT_ARCHIVED', 'VisaProduct', visaId, `Deleted visa product: ${target.country} - ${target.visaType}`);
+    }
+  }
+
+  // ==========================================
+  // FOOTER NAVIGATION CONFIGURATION
+  // ==========================================
+  public getFooterConfig(): FooterConfig {
+    const raw = this.getItem<FooterConfig>('footer_config', INITIAL_FOOTER_CONFIG);
+    if (!raw || !raw.columns) {
+      return INITIAL_FOOTER_CONFIG;
+    }
+    const normalizedCols = (raw.columns || []).map((col, idx) => {
+      const colLinks = Array.isArray(col.links) && col.links.length > 0
+        ? col.links
+        : Array.isArray(col.items)
+        ? col.items.map((it: any, iIdx: number) => ({
+            id: it.id || `link-${idx}-${iIdx}`,
+            label: it.label || it.title || 'Link',
+            url: it.customUrl || it.targetId || '#',
+            type: (it.type === 'CUSTOM_LINK' ? 'EXTERNAL_LINK' : it.type) || 'SYSTEM_VIEW',
+            targetId: it.targetId || '',
+            displayOrder: it.displayOrder || iIdx + 1
+          }))
+        : [];
+      return {
+        ...col,
+        links: colLinks
+      };
+    });
+    return {
+      ...raw,
+      columns: normalizedCols
+    };
+  }
+
+  public saveFooterConfig(config: FooterConfig, user?: User | null): void {
+    this.setItem('footer_config', config);
+    this.syncFirestoreDoc('footer_config', 'main_footer', config);
+    this.logAudit(user || null, 'SETTINGS_UPDATED', 'FooterNavigation', 'main_footer', 'Updated footer navigation columns and links structure');
+  }
+
+  public getFooterColumns(): FooterMenuColumn[] {
+    const config = this.getFooterConfig();
+    return config.columns || [];
+  }
+
+  public saveFooterColumn(column: FooterMenuColumn, user?: User | null): void {
+    const config = this.getFooterConfig();
+    const cols = config.columns ? [...config.columns] : [];
+    const index = cols.findIndex(c => c.id === column.id);
+    if (index >= 0) {
+      cols[index] = column;
+    } else {
+      cols.push(column);
+    }
+    config.columns = cols;
+    this.saveFooterConfig(config, user);
+  }
+
+  public deleteFooterColumn(columnId: string, user?: User | null): void {
+    const config = this.getFooterConfig();
+    if (config.columns) {
+      config.columns = config.columns.filter(c => c.id !== columnId);
+      this.saveFooterConfig(config, user);
+    }
+  }
+
+  public updateFooterColumns(columns: FooterMenuColumn[], user?: User | null): void {
+    const config = this.getFooterConfig();
+    config.columns = columns;
+    this.saveFooterConfig(config, user);
+  }
+
+  // ==========================================
+  // USER ACTIVITY & TELEMETRY TRACKING
+  // ==========================================
+  public logUserActivity(event: Omit<UserActivityEvent, 'id' | 'timestamp'>): void {
+    const events = this.getItem<UserActivityEvent[]>('user_activities', []);
+    const newEvent: UserActivityEvent = {
+      ...event,
+      id: `act-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      timestamp: new Date().toISOString()
+    };
+    this.setItem('user_activities', [newEvent, ...events.slice(0, 999)]);
+    this.syncFirestoreDoc('user_activities', newEvent.id, newEvent);
+  }
+
+  public getUserActivityEvents(userId?: string): UserActivityEvent[] {
+    const all = this.getItem<UserActivityEvent[]>('user_activities', []);
+    if (!userId) return all;
+    return all.filter(e => e.userId === userId);
+  }
+
+  public getUserTelemetrySummary(userId: string): UserTelemetrySummary | null {
+    const users = this.getUsers();
+    const user = users.find(u => u.id === userId);
+    if (!user) return null;
+
+    const allQuotes = this.getAllSavedQuotes();
+    const saved = allQuotes.filter(q => q.agentId === user.id || (user.email && q.clientEmail === user.email));
+    
+    // Downloaded quotes (filter quotes where activity log has DOWNLOADED or PRINTED)
+    const downloaded = saved.filter(q => 
+      q.activityLog?.some(a => a.action === 'DOWNLOADED' || a.action === 'PRINTED')
+    );
+
+    const allBookings = this.getBookings();
+    const userBookings = allBookings.filter(b => b.userId === user.id || (user.email && b.customer.email === user.email));
+
+    const events = this.getUserActivityEvents(userId);
+    const totalTimeMinutes = Math.max(1, Math.round(events.length * 3.5)); // Calculated active session metric
+
+    return {
+      userId: user.id,
+      userEmail: user.email,
+      userName: user.name,
+      agencyName: user.agencyName || user.companyName,
+      role: user.role,
+      proposalsSavedCount: saved.length,
+      savedProposals: saved,
+      proposalsDownloadedCount: downloaded.length,
+      downloadedQuotes: downloaded,
+      bookingsCount: userBookings.length,
+      bookings: userBookings,
+      totalTimeSpentMinutes: totalTimeMinutes,
+      lastActiveTimestamp: events[0]?.timestamp || user.createdAt || new Date().toISOString(),
+      createdAt: user.createdAt || new Date().toISOString()
+    };
+  }
+
+  public getAllUserTelemetry(): UserTelemetrySummary[] {
+    const users = this.getUsers();
+    return users.map(u => this.getUserTelemetrySummary(u.id)!).filter(Boolean);
+  }
+
+  // ==========================================
+  // GOOGLE CALENDAR TASK & GROUND SLA AUTOMATION
+  // ==========================================
+  public getCalendarTasks(): CalendarTask[] {
+    return this.getItem<CalendarTask[]>('calendar_tasks', []);
+  }
+
+  public saveCalendarTask(task: CalendarTask, user?: User | null): CalendarTask {
+    const tasks = this.getCalendarTasks();
+    const index = tasks.findIndex(t => t.id === task.id);
+    const now = new Date().toISOString();
+    let saved: CalendarTask;
+    if (index >= 0) {
+      saved = { ...task, updatedAt: now };
+      tasks[index] = saved;
+      this.logAudit(user || null, 'SETTINGS_UPDATED', 'CalendarTask', saved.id, `Updated task: ${saved.title}`);
+    } else {
+      saved = {
+        ...task,
+        id: task.id || `task-${Date.now()}`,
+        createdAt: now,
+        updatedAt: now
+      };
+      tasks.unshift(saved);
+      this.logAudit(user || null, 'SETTINGS_UPDATED', 'CalendarTask', saved.id, `Created task: ${saved.title} (Assigned: ${saved.assignedToEmail})`);
+    }
+    this.syncFirestoreDoc('calendar_tasks', saved.id, saved);
+    this.setItem('calendar_tasks', tasks);
+    return saved;
+  }
+
+  public deleteCalendarTask(taskId: string, user?: User | null): void {
+    const tasks = this.getCalendarTasks();
+    const target = tasks.find(t => t.id === taskId);
+    this.setItem('calendar_tasks', tasks.filter(t => t.id !== taskId));
+    this.deleteFirestoreDoc('calendar_tasks', taskId);
+    if (target) {
+      this.logAudit(user || null, 'SETTINGS_UPDATED', 'CalendarTask', taskId, `Deleted calendar task: ${target.title}`);
+    }
+  }
+
+  // ==========================================
+  // MARKETING PROMOTIONS VIEWS & CLICKS
+  // ==========================================
+  public recordPromotionView(promoId: string): void {
+    const promos = this.getPromotions();
+    const promo = promos.find(p => p.id === promoId);
+    if (promo) {
+      promo.impressions = (promo.impressions || 0) + 1;
+      this.setItem('promotions', promos);
+      this.syncFirestoreDoc('promotions', promoId, { impressions: promo.impressions });
+    }
+  }
+
+  public recordPromotionClick(promoId: string): void {
+    const promos = this.getPromotions();
+    const promo = promos.find(p => p.id === promoId);
+    if (promo) {
+      promo.clicks = (promo.clicks || 0) + 1;
+      this.setItem('promotions', promos);
+      this.syncFirestoreDoc('promotions', promoId, { clicks: promo.clicks });
+    }
+  }
+
+  // ==========================================
+  // BOOKINGS ALIAS & ENHANCEMENTS
+  // ==========================================
+  public getBookings(): Booking[] {
+    return this.getAllBookings();
+  }
+
+  public updateBookingPassengers(bookingId: string, passengers: BookingPassenger[], user?: User | null): void {
+    const bookings = this.getAllBookings();
+    const b = bookings.find(item => item.id === bookingId);
+    if (b) {
+      b.passengers = passengers;
+      b.updatedAt = new Date().toISOString();
+      this.saveBooking(b, user);
+      this.logAudit(user || null, 'BOOKING_UPDATED', 'Booking', bookingId, `Updated ${passengers.length} passenger details and documents for booking ${b.bookingReference}`);
+    }
+  }
+
+  public addBookingPaymentProof(bookingId: string, proof: BookingPaymentProof, user?: User | null): void {
+    const bookings = this.getAllBookings();
+    const b = bookings.find(item => item.id === bookingId);
+    if (b) {
+      const proofs = b.paymentProofs ? [...b.paymentProofs] : [];
+      proofs.push(proof);
+      b.paymentProofs = proofs;
+      b.paymentStatus = 'PARTIALLY_PAID';
+      b.updatedAt = new Date().toISOString();
+      this.saveBooking(b, user);
+      this.logAudit(user || null, 'BOOKING_UPDATED', 'Booking', bookingId, `Uploaded payment proof (${proof.trancheLabel}: ${proof.currency} ${proof.amount}) for booking ${b.bookingReference}`);
+    }
+  }
+
+  public updateBookingSupplierOps(
+    bookingId: string, 
+    ops: {
+      paymentCutoffDate?: string;
+      serviceDate?: string;
+      serviceTime?: string;
+      supplierConfirmationRef?: string;
+      internalNotes?: string;
+      status?: BookingStatus;
+    }, 
+    user?: User | null
+  ): void {
+    const bookings = this.getAllBookings();
+    const b = bookings.find(item => item.id === bookingId);
+    if (b) {
+      if (ops.paymentCutoffDate !== undefined) b.paymentCutoffDate = ops.paymentCutoffDate;
+      if (ops.serviceDate !== undefined) b.serviceDate = ops.serviceDate;
+      if (ops.serviceTime !== undefined) b.serviceTime = ops.serviceTime;
+      if (ops.supplierConfirmationRef !== undefined) b.supplierConfirmationRef = ops.supplierConfirmationRef;
+      if (ops.internalNotes !== undefined) b.internalNotes = ops.internalNotes;
+      if (ops.status) b.status = ops.status;
+      b.updatedAt = new Date().toISOString();
+      this.saveBooking(b, user);
+      this.logAudit(user || null, 'BOOKING_UPDATED', 'Booking', bookingId, `Updated supplier operations details for booking ${b.bookingReference}`);
+    }
+  }
 }
+
