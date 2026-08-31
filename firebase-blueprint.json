@@ -287,6 +287,60 @@
         "recordId": { "type": "string", "required": true },
         "timestamp": { "type": "string", "required": true }
       }
+    },
+    "CalendarTask": {
+      "collection": "calendar_tasks",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "title": { "type": "string", "required": true },
+        "description": { "type": "string", "required": true },
+        "assignedToEmail": { "type": "string", "required": true },
+        "assignedToName": { "type": "string", "required": true },
+        "taskType": { "type": "string", "required": false },
+        "status": { "type": "string", "required": true },
+        "slaStatus": { "type": "string", "required": false },
+        "slaHours": { "type": "number", "required": false },
+        "dueAt": { "type": "string", "required": false },
+        "generatedAt": { "type": "string", "required": false },
+        "bookingReference": { "type": "string", "required": false },
+        "quoteNumber": { "type": "string", "required": false },
+        "googleCalendarId": { "type": "string", "required": false },
+        "googleCalendarEventId": { "type": "string", "required": false },
+        "isSyncedToGoogleCalendar": { "type": "boolean", "required": true },
+        "calendarSyncStatus": { "type": "string", "required": false },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": true }
+      }
+    },
+    "SLAAutomationRule": {
+      "collection": "sla_automation_rules",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "ruleName": { "type": "string", "required": true },
+        "triggerEvent": { "type": "string", "required": true },
+        "taskType": { "type": "string", "required": true },
+        "isEnabled": { "type": "boolean", "required": true },
+        "slaHours": { "type": "number", "required": true },
+        "department": { "type": "string", "required": true },
+        "calendarId": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": true }
+      }
+    },
+    "SLAAutomationAuditLog": {
+      "collection": "sla_automation_audit_logs",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "triggerEvent": { "type": "string", "required": true },
+        "automationRuleName": { "type": "string", "required": true },
+        "taskType": { "type": "string", "required": true },
+        "taskId": { "type": "string", "required": true },
+        "assignedUser": { "type": "string", "required": true },
+        "slaDeadline": { "type": "string", "required": true },
+        "slaStatus": { "type": "string", "required": true },
+        "calendarSyncStatus": { "type": "string", "required": true },
+        "action": { "type": "string", "required": true },
+        "createdAt": { "type": "string", "required": true }
+      }
     }
   }
 }

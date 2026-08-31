@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo } from '
 import { CurrencyCode, Product, QuoteItem, Quotation, TravelLead, B2BPackage } from '../types';
 import { calculateProductPrice } from '../services/pricingEngine';
 import { AppDatabase } from '../services/db';
+import { campaignAnalytics } from '../services/campaignAnalyticsService';
 import { useAuth } from './AuthContext';
 
 interface QuotationContextType {
@@ -436,6 +437,14 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Save to AppDatabase (which persists and notifies subscribers)
     db.saveQuote(newQuote, user);
     setActiveQuoteId(newQuote.id);
+
+    // Track Campaign Conversion Attribution if active
+    campaignAnalytics.trackQuoteCreated(
+      newQuote.id, 
+      Number(totals.totalSellingPrice) || 0, 
+      currency, 
+      items[0]?.product.destinationId
+    );
 
     setSavedQuotes(prev => {
       const filtered = prev.filter(q => q.id !== newQuote.id);

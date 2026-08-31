@@ -4,7 +4,7 @@ import { AppDatabase } from '../services/db';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { formatCurrency, calculateProductPrice, convertCurrency } from '../services/pricingEngine';
-import { GoogleTasksService } from '../services/googleTasksService';
+import { googleCalendarAutomation } from '../services/googleCalendarAutomationService';
 import { 
   X, 
   ShieldCheck, 
@@ -268,11 +268,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         travelEndDate
       }, currentUser);
 
-      // Trigger automated 12-hour ground operations confirmation task via Google Tasks Service
+      // Trigger automated 12-hour ground operations confirmation SLA via Google Calendar Automation Service
       try {
-        GoogleTasksService.getInstance().scheduleBookingConfirmationTask(newBooking);
-      } catch (gtaskErr) {
-        console.debug('Google task creation note:', gtaskErr);
+        await googleCalendarAutomation.triggerBookingConfirmationSLA(newBooking, currentUser);
+      } catch (gcalErr) {
+        console.debug('Google Calendar SLA automation note:', gcalErr);
       }
 
       setIsSubmitting(false);

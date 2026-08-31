@@ -5,7 +5,7 @@ import { useRoster } from '../context/RosterContext';
 import { formatCurrency } from '../services/pricingEngine';
 import { RosterCalendarPicker } from './RosterCalendarPicker';
 import { Quotation } from '../types';
-import { GoogleTasksService } from '../services/googleTasksService';
+import { googleCalendarAutomation } from '../services/googleCalendarAutomationService';
 import { downloadQuotationPDF } from '../services/pdfGenerator';
 import { 
   X, 
@@ -125,9 +125,9 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({ onBookQu
         });
 
         try {
-          GoogleTasksService.getInstance().schedulePdfQuoteFollowUpTask(activeQuote, user);
+          googleCalendarAutomation.triggerQuoteFollowUpSLA(activeQuote, user);
         } catch (e) {
-          console.debug('PDF follow-up task note:', e);
+          console.debug('PDF follow-up SLA automation note:', e);
         }
       }
     } catch (err) {
@@ -139,10 +139,10 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({ onBookQu
     try {
       const activeQuote = saveCurrentQuote();
       if (activeQuote) {
-        GoogleTasksService.getInstance().schedulePdfQuoteFollowUpTask(activeQuote, user);
+        googleCalendarAutomation.triggerQuoteFollowUpSLA(activeQuote, user);
       }
     } catch (e) {
-      console.debug('PDF follow-up task note:', e);
+      console.debug('PDF follow-up SLA automation note:', e);
     }
     window.print();
   };

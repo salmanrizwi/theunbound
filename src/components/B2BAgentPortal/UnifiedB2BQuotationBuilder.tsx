@@ -63,7 +63,7 @@ import { ManualHotelFormModal } from './ManualHotelFormModal';
 import { AppDatabase } from '../../services/db';
 import { hotelToProduct, manualHotelToProduct, calculateHotelStayPrice, validateRoomOccupancy, OccupancyValidationResult } from '../../utils/hotelHelpers';
 import { downloadQuotationPDF } from '../../services/pdfGenerator';
-import { GoogleTasksService } from '../../services/googleTasksService';
+import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { EmailNotificationService } from '../../services/emailNotificationService';
 
 export type QuotationScope = 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY';
@@ -987,9 +987,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         agentEmail: user?.email || 'agent@theunbound.com',
         leadId: selectedLeadId || saved.leadId
       });
-      // Auto-schedule Google Tasks follow-up
-      const tasksService = GoogleTasksService.getInstance();
-      tasksService.schedulePdfQuoteFollowUpTask(saved, user);
+      // Auto-schedule Google Calendar 24h Quote Follow-Up SLA
+      googleCalendarAutomation.triggerQuoteFollowUpSLA(saved, user);
     } catch (err) {
       console.error('PDF export error:', err);
     }

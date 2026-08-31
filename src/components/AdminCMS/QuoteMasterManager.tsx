@@ -4,6 +4,7 @@ import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { formatCurrency } from '../../services/pricingEngine';
 import { downloadQuotationPDF } from '../../services/pdfGenerator';
+import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { 
   FileSpreadsheet, 
   Search, 
@@ -102,6 +103,12 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({ onLoadQu
       agentLogoUrl: q.agentLogoUrl || user?.brandLogoUrl || user?.logoUrl,
       leadId: q.leadId
     });
+
+    try {
+      googleCalendarAutomation.triggerQuoteFollowUpSLA(q, user);
+    } catch (err) {
+      console.debug('Quote follow-up SLA trigger note:', err);
+    }
   };
 
   const filtered = quotes.filter(q => {

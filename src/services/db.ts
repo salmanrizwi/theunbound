@@ -4,6 +4,8 @@ import {
   DestinationRegionItem,
   MasterRegion,
   Promotion, 
+  CampaignEvent,
+  CampaignStatus,
   BlogArticle, 
   GoogleReview, 
   Quotation, 
@@ -25,7 +27,17 @@ import {
   HomepageFAQItem,
   TravelLead,
   LeadStatus,
+  LeadPriority,
   LeadSource,
+  LeadProductItem,
+  LeadTimelineEvent,
+  LeadFollowUpTask,
+  LeadDocument,
+  LeadAssignmentRecord,
+  LeadNote,
+  LeadQuoteSnapshot,
+  LeadQuoteVersion,
+  CurrencyCode,
   BookingInvoice,
   BookingVoucher,
   BookingFinancialRecord,
@@ -41,7 +53,13 @@ import {
   VisaProduct,
   FooterConfig,
   FooterMenuColumn,
+  FooterMenuLink,
   CalendarTask,
+  SLAAutomationRule,
+  SLAAutomationAuditLog,
+  SLATaskType,
+  SLAStatus,
+  TaskStatus,
   UserActivityEvent,
   UserTelemetrySummary,
   BookingPassenger,
@@ -77,6 +95,7 @@ import { INITIAL_B2B_PACKAGES } from '../data/initialPackages';
 import { INITIAL_B2B_CUSTOMERS, INITIAL_B2B_TASKS } from '../data/initialAgentCRM';
 import { EmailNotificationService } from './emailNotificationService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
+import { googleBusinessService } from './googleBusinessService';
 import { db as firestoreDb } from './firebase';
 import { 
   collection, 
@@ -229,9 +248,203 @@ Our operational footprint spans key gateway cities and cultural regions:
   }
 ];
 
+export const INITIAL_SLA_AUTOMATION_RULES: SLAAutomationRule[] = [
+  {
+    id: 'rule-booking-confirmation-12h',
+    ruleName: 'Booking Confirmation 12h SLA',
+    triggerEvent: 'BOOKING_CONFIRMED',
+    taskType: 'BOOKING_CONFIRMATION',
+    isEnabled: true,
+    slaHours: 12,
+    defaultAssignee: {
+      type: 'DEPARTMENT',
+      name: 'Operations Team (Marcus Vance)',
+      email: 'business@theunbound.in',
+      department: 'OPERATIONS',
+      role: 'Duty Operations Manager'
+    },
+    department: 'OPERATIONS',
+    titleTemplate: '[SLA] Booking Confirmation — {{bookingReference}}',
+    calendarId: 'primary',
+    reminders: [
+      { method: 'popup', minutesBefore: 360 }, // 6h before
+      { method: 'popup', minutesBefore: 120 }, // 2h before
+      { method: 'email', minutesBefore: 60 }   // 1h before
+    ],
+    updatedAt: '2026-01-01T00:00:00Z'
+  },
+  {
+    id: 'rule-quote-followup-24h',
+    ruleName: 'Downloaded PDF Quote 24h Follow-Up',
+    triggerEvent: 'QUOTE_PDF_DOWNLOADED',
+    taskType: 'QUOTE_FOLLOW_UP',
+    isEnabled: true,
+    slaHours: 24,
+    defaultAssignee: {
+      type: 'DEPARTMENT',
+      name: 'Sales Team (Sarah Lin)',
+      email: 'sales@theunbound.in',
+      department: 'SALES',
+      role: 'Senior Travel Specialist'
+    },
+    department: 'SALES',
+    titleTemplate: '[SLA] Quote Follow-Up — {{quoteNumber}}',
+    calendarId: 'primary',
+    reminders: [
+      { method: 'popup', minutesBefore: 720 }, // 12h before
+      { method: 'popup', minutesBefore: 120 }, // 2h before
+      { method: 'email', minutesBefore: 60 }   // 1h before
+    ],
+    updatedAt: '2026-01-01T00:00:00Z'
+  },
+  {
+    id: 'rule-transfer-confirmation-6h',
+    ruleName: 'Airport & Inter-City Transfer 6h SLA',
+    triggerEvent: 'GROUND_TRANSFER_BOOKED',
+    taskType: 'TRANSFER_CONFIRMATION',
+    isEnabled: true,
+    slaHours: 6,
+    defaultAssignee: {
+      type: 'DEPARTMENT',
+      name: 'Ground Fleet Logistics (Rajesh Sharma)',
+      email: 'fleet@theunbound.in',
+      department: 'GROUND_OPS',
+      role: 'Fleet Dispatcher'
+    },
+    department: 'GROUND_OPS',
+    titleTemplate: '[SLA] Ground Transfer Confirmation — {{bookingReference}}',
+    calendarId: 'primary',
+    reminders: [
+      { method: 'popup', minutesBefore: 180 },
+      { method: 'popup', minutesBefore: 60 }
+    ],
+    updatedAt: '2026-01-01T00:00:00Z'
+  },
+  {
+    id: 'rule-hotel-confirmation-12h',
+    ruleName: 'Hotel & Resort Allotment 12h Confirmation',
+    triggerEvent: 'GROUND_HOTEL_BOOKED',
+    taskType: 'HOTEL_CONFIRMATION',
+    isEnabled: true,
+    slaHours: 12,
+    defaultAssignee: {
+      type: 'DEPARTMENT',
+      name: 'Hospitality Procurement (Elena Rostova)',
+      email: 'hospitality@theunbound.in',
+      department: 'OPERATIONS',
+      role: 'Hotel Contracting Lead'
+    },
+    department: 'OPERATIONS',
+    titleTemplate: '[SLA] Hotel Confirmation — {{bookingReference}}',
+    calendarId: 'primary',
+    reminders: [
+      { method: 'popup', minutesBefore: 360 },
+      { method: 'email', minutesBefore: 60 }
+    ],
+    updatedAt: '2026-01-01T00:00:00Z'
+  },
+  {
+    id: 'rule-activity-confirmation-12h',
+    ruleName: 'Excursions & Activity Partner 12h SLA',
+    triggerEvent: 'GROUND_ACTIVITY_BOOKED',
+    taskType: 'ACTIVITY_CONFIRMATION',
+    isEnabled: true,
+    slaHours: 12,
+    defaultAssignee: {
+      type: 'DEPARTMENT',
+      name: 'Ground Experiences Team',
+      email: 'experiences@theunbound.in',
+      department: 'GROUND_OPS',
+      role: 'Tour Coordinator'
+    },
+    department: 'GROUND_OPS',
+    titleTemplate: '[SLA] Activity Confirmation — {{bookingReference}}',
+    calendarId: 'primary',
+    reminders: [
+      { method: 'popup', minutesBefore: 360 },
+      { method: 'popup', minutesBefore: 60 }
+    ],
+    updatedAt: '2026-01-01T00:00:00Z'
+  },
+  {
+    id: 'rule-guide-assignment-24h',
+    ruleName: 'Licensed Guide & Escort 24h Allocation',
+    triggerEvent: 'GROUND_GUIDE_REQUESTED',
+    taskType: 'GUIDE_ASSIGNMENT',
+    isEnabled: true,
+    slaHours: 24,
+    defaultAssignee: {
+      type: 'DEPARTMENT',
+      name: 'Staff Roster Manager',
+      email: 'roster@theunbound.in',
+      department: 'GROUND_OPS',
+      role: 'Roster Lead'
+    },
+    department: 'GROUND_OPS',
+    titleTemplate: '[SLA] Guide Duty Assignment — {{bookingReference}}',
+    calendarId: 'primary',
+    reminders: [
+      { method: 'popup', minutesBefore: 720 },
+      { method: 'email', minutesBefore: 120 }
+    ],
+    updatedAt: '2026-01-01T00:00:00Z'
+  },
+  {
+    id: 'rule-driver-assignment-12h',
+    ruleName: 'Private Chauffeur & Vehicle Allocation 12h',
+    triggerEvent: 'GROUND_DRIVER_REQUESTED',
+    taskType: 'DRIVER_ASSIGNMENT',
+    isEnabled: true,
+    slaHours: 12,
+    defaultAssignee: {
+      type: 'DEPARTMENT',
+      name: 'Fleet Dispatch Desk',
+      email: 'fleet@theunbound.in',
+      department: 'GROUND_OPS',
+      role: 'Transport Lead'
+    },
+    department: 'GROUND_OPS',
+    titleTemplate: '[SLA] Chauffeur Assignment — {{bookingReference}}',
+    calendarId: 'primary',
+    reminders: [
+      { method: 'popup', minutesBefore: 360 },
+      { method: 'popup', minutesBefore: 60 }
+    ],
+    updatedAt: '2026-01-01T00:00:00Z'
+  },
+  {
+    id: 'rule-supplier-followup-24h',
+    ruleName: 'Contracted Supplier Follow-Up 24h SLA',
+    triggerEvent: 'SUPPLIER_FOLLOWUP_REQUIRED',
+    taskType: 'SUPPLIER_FOLLOW_UP',
+    isEnabled: true,
+    slaHours: 24,
+    defaultAssignee: {
+      type: 'DEPARTMENT',
+      name: 'Supplier Relations Desk',
+      email: 'suppliers@theunbound.in',
+      department: 'OPERATIONS',
+      role: 'Vendor Relationship Officer'
+    },
+    department: 'OPERATIONS',
+    titleTemplate: '[SLA] Supplier Verification — {{bookingReference}}',
+    calendarId: 'primary',
+    reminders: [
+      { method: 'popup', minutesBefore: 720 },
+      { method: 'email', minutesBefore: 60 }
+    ],
+    updatedAt: '2026-01-01T00:00:00Z'
+  }
+];
+
+export type BookingSaveListener = (booking: Booking, user: User | null, isNew: boolean) => void;
+export type QuotationSaveListener = (quote: Quotation, user: User | null, isNew: boolean) => void;
+
 export class AppDatabase {
   private static instance: AppDatabase;
   private listeners: Set<() => void> = new Set();
+  private bookingSaveListeners: BookingSaveListener[] = [];
+  private quotationSaveListeners: QuotationSaveListener[] = [];
   private isFirestoreInitialized: boolean = false;
 
   private constructor() {
@@ -251,12 +464,46 @@ export class AppDatabase {
     return () => this.listeners.delete(callback);
   }
 
+  public onBookingSaved(listener: BookingSaveListener): () => void {
+    this.bookingSaveListeners.push(listener);
+    return () => {
+      this.bookingSaveListeners = this.bookingSaveListeners.filter(l => l !== listener);
+    };
+  }
+
+  public onQuotationSaved(listener: QuotationSaveListener): () => void {
+    this.quotationSaveListeners.push(listener);
+    return () => {
+      this.quotationSaveListeners = this.quotationSaveListeners.filter(l => l !== listener);
+    };
+  }
+
   public async runDiagnostics(): Promise<FirestoreDiagnosticReport> {
     return runFirestoreDiagnostics();
   }
 
   private notify() {
-    this.listeners.forEach(cb => cb());
+    if (typeof queueMicrotask === 'function') {
+      queueMicrotask(() => {
+        this.listeners.forEach(cb => {
+          try {
+            cb();
+          } catch (err) {
+            console.debug('Listener callback error:', err);
+          }
+        });
+      });
+    } else {
+      setTimeout(() => {
+        this.listeners.forEach(cb => {
+          try {
+            cb();
+          } catch (err) {
+            console.debug('Listener callback error:', err);
+          }
+        });
+      }, 0);
+    }
   }
 
   private getItem<T>(key: string, fallback: T): T {
@@ -527,6 +774,15 @@ export class AppDatabase {
         }
       }, (err) => console.debug('Firestore master_regions sync note:', err));
 
+      // 20. Sync Campaign Events (Real-time tracking analytics)
+      onSnapshot(collection(firestoreDb, 'campaign_events'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: CampaignEvent[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as CampaignEvent));
+          this.setItem('campaign_events', list, false);
+        }
+      }, (err) => console.debug('Firestore campaign_events sync note:', err));
+
     } catch (error) {
       console.warn('Firestore real-time listeners initialized with local fallback:', error);
     }
@@ -548,8 +804,40 @@ export class AppDatabase {
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'blogs')) {
       this.setItem('blogs', INITIAL_BLOGS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'reviews')) {
-      this.setItem('reviews', INITIAL_REVIEWS);
+    // Clean up any legacy dummy reviews from storage
+    const storedReviews = this.getItem<GoogleReview[]>('reviews', []);
+    const isMock = storedReviews.some(r => 
+      r.id.startsWith('rev-0') || 
+      r.id.startsWith('rev-google-') || 
+      r.id.startsWith('g-rev-') ||
+      r.authorName === 'Charlotte De Vries' ||
+      r.authorName === 'David Sterling (Director, Sterling Luxury Travel UK)' ||
+      r.authorName === 'Alexander Montgomery' ||
+      r.authorName === 'Sophie Van Der Bilt' ||
+      r.authorName === 'Evelyn Montgomery' ||
+      r.authorName === 'Sebastian Croft, CTC' ||
+      r.authorName === 'Chiara Rossi' ||
+      r.authorName === 'Marcus Vance' ||
+      r.authorName === 'Evelyn St. Claire (Travel Luxe Magazine)' ||
+      r.authorName === 'Siddharth Rao (Global Travel Club)'
+    );
+    if (isMock || !localStorage.getItem(STORAGE_KEY_PREFIX + 'reviews')) {
+      const cleaned = storedReviews.filter(r => 
+        !r.id.startsWith('rev-0') && 
+        !r.id.startsWith('rev-google-') && 
+        !r.id.startsWith('g-rev-') &&
+        r.authorName !== 'Charlotte De Vries' &&
+        r.authorName !== 'David Sterling (Director, Sterling Luxury Travel UK)' &&
+        r.authorName !== 'Alexander Montgomery' &&
+        r.authorName !== 'Sophie Van Der Bilt' &&
+        r.authorName !== 'Evelyn Montgomery' &&
+        r.authorName !== 'Sebastian Croft, CTC' &&
+        r.authorName !== 'Chiara Rossi' &&
+        r.authorName !== 'Marcus Vance' &&
+        r.authorName !== 'Evelyn St. Claire (Travel Luxe Magazine)' &&
+        r.authorName !== 'Siddharth Rao (Global Travel Club)'
+      );
+      this.setItem('reviews', cleaned);
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'hotels')) {
       this.setItem('hotels', INITIAL_HOTELS);
@@ -605,6 +893,12 @@ export class AppDatabase {
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'job_sheets')) {
       this.setItem('job_sheets', []);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'sla_automation_rules')) {
+      this.setItem('sla_automation_rules', INITIAL_SLA_AUTOMATION_RULES);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'sla_automation_audit_logs')) {
+      this.setItem('sla_automation_audit_logs', []);
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'audit_logs')) {
       const defaultLogs: AuditLog[] = [
@@ -1861,15 +2155,40 @@ export class AppDatabase {
   }
 
   // ==========================================
-  // PROMOTIONS CRUD
+  // PROMOTIONS & MARKETING CAMPAIGNS CRUD
   // ==========================================
   public getPromotions(): Promotion[] {
-    return this.getItem<Promotion[]>('promotions', INITIAL_PROMOTIONS);
+    const raw = this.getItem<Promotion[]>('promotions', INITIAL_PROMOTIONS);
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Normalize status and active states
+    return raw.map(p => {
+      let status = p.status;
+      if (p.isArchived) {
+        status = 'ARCHIVED';
+      } else if (!status) {
+        if (!p.isActive) {
+          status = 'PAUSED';
+        } else if (p.startDate && p.startDate > today) {
+          status = 'SCHEDULED';
+        } else if (p.endDate && p.endDate < today) {
+          status = 'EXPIRED';
+        } else {
+          status = 'ACTIVE';
+        }
+      }
+      return {
+        ...p,
+        status,
+        isActive: status === 'ACTIVE' || (p.isActive && status !== 'PAUSED' && status !== 'ARCHIVED' && status !== 'EXPIRED')
+      };
+    });
   }
 
   public getActivePromotions(audience?: 'ALL' | 'BUYER' | 'B2B_AGENT'): Promotion[] {
     const today = new Date().toISOString().split('T')[0];
     return this.getPromotions().filter(p => {
+      if (p.isArchived || p.status === 'ARCHIVED' || p.status === 'PAUSED' || p.status === 'DRAFT') return false;
       if (!p.isActive) return false;
       if (p.startDate && p.startDate > today) return false;
       if (p.endDate && p.endDate < today) return false;
@@ -1878,26 +2197,95 @@ export class AppDatabase {
     }).sort((a, b) => a.priority - b.priority);
   }
 
-  public savePromotion(promotion: Promotion, user: User | null): void {
+  public savePromotion(promotion: Promotion, user: User | null, actionContext?: 'STATUS_CHANGE' | 'TARGETING_CHANGE' | 'CTA_CHANGE' | 'GENERAL'): void {
     const promotions = this.getPromotions();
     const index = promotions.findIndex(p => p.id === promotion.id);
+    const today = new Date().toISOString().split('T')[0];
+
+    // Compute canonical status
+    let status = promotion.status;
+    if (promotion.isArchived || status === 'ARCHIVED') {
+      status = 'ARCHIVED';
+      promotion.isActive = false;
+      promotion.isArchived = true;
+    } else if (status === 'PAUSED' || !promotion.isActive) {
+      status = 'PAUSED';
+      promotion.isActive = false;
+    } else if (status === 'DRAFT') {
+      status = 'DRAFT';
+      promotion.isActive = false;
+    } else if (promotion.startDate && promotion.startDate > today) {
+      status = 'SCHEDULED';
+      promotion.isActive = true;
+    } else if (promotion.endDate && promotion.endDate < today) {
+      status = 'EXPIRED';
+      promotion.isActive = false;
+    } else {
+      status = 'ACTIVE';
+      promotion.isActive = true;
+    }
+
     let savedPromo: Promotion;
     if (index >= 0) {
-      savedPromo = { ...promotion, updatedAt: new Date().toISOString() };
+      const old = promotions[index];
+      savedPromo = { 
+        ...promotion, 
+        status, 
+        updatedAt: new Date().toISOString() 
+      };
       promotions[index] = savedPromo;
-      this.logAudit(user, 'PROMOTION_UPDATED', 'Promotion', promotion.id, `Updated promotion: ${promotion.title}`);
+
+      // Determine audit action type
+      if (actionContext === 'STATUS_CHANGE' || old.status !== savedPromo.status || old.isActive !== savedPromo.isActive) {
+        if (savedPromo.status === 'ACTIVE') {
+          this.logAudit(user, 'PROMOTION_ACTIVATED', 'Promotion', promotion.id, `Activated campaign: "${promotion.title}"`);
+        } else if (savedPromo.status === 'PAUSED') {
+          this.logAudit(user, 'PROMOTION_PAUSED', 'Promotion', promotion.id, `Paused campaign: "${promotion.title}"`);
+        } else if (savedPromo.status === 'ARCHIVED') {
+          this.logAudit(user, 'PROMOTION_ARCHIVED', 'Promotion', promotion.id, `Archived campaign: "${promotion.title}"`);
+        } else if (savedPromo.status === 'SCHEDULED') {
+          this.logAudit(user, 'PROMOTION_SCHEDULED', 'Promotion', promotion.id, `Scheduled campaign "${promotion.title}" for ${savedPromo.startDate}`);
+        } else {
+          this.logAudit(user, 'PROMOTION_UPDATED', 'Promotion', promotion.id, `Updated campaign status to ${savedPromo.status}: "${promotion.title}"`);
+        }
+      } else if (actionContext === 'TARGETING_CHANGE' || old.targetAudience !== savedPromo.targetAudience || old.displayPlacement !== savedPromo.displayPlacement || old.destinationId !== savedPromo.destinationId) {
+        this.logAudit(user, 'PROMOTION_TARGETING_CHANGED', 'Promotion', promotion.id, `Modified campaign targeting (${savedPromo.displayPlacement}, ${savedPromo.targetAudience}): "${promotion.title}"`);
+      } else if (actionContext === 'CTA_CHANGE' || old.ctaText !== savedPromo.ctaText || old.ctaLink !== savedPromo.ctaLink) {
+        this.logAudit(user, 'PROMOTION_CTA_CHANGED', 'Promotion', promotion.id, `Updated campaign CTA (${savedPromo.ctaText} → ${savedPromo.ctaLink}): "${promotion.title}"`);
+      } else {
+        this.logAudit(user, 'PROMOTION_UPDATED', 'Promotion', promotion.id, `Updated promotional campaign details: "${promotion.title}"`);
+      }
     } else {
       savedPromo = {
         ...promotion,
         id: promotion.id || `promo-${Date.now()}`,
+        status,
+        viewCount: promotion.viewCount || 0,
+        clickCount: promotion.clickCount || 0,
+        impressions: promotion.impressions || 0,
+        clicks: promotion.clicks || 0,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
       promotions.unshift(savedPromo);
-      this.logAudit(user, 'PROMOTION_CREATED', 'Promotion', promotion.id, `Created promotion: ${promotion.title}`);
+      this.logAudit(user, 'PROMOTION_CREATED', 'Promotion', savedPromo.id, `Created promotional campaign: "${promotion.title}" (${status})`);
     }
     this.syncFirestoreDoc('promotions', savedPromo.id, savedPromo);
     this.setItem('promotions', promotions);
+  }
+
+  public archivePromotion(promotionId: string, user: User | null): void {
+    const promotions = this.getPromotions();
+    const promo = promotions.find(p => p.id === promotionId);
+    if (promo) {
+      promo.status = 'ARCHIVED';
+      promo.isArchived = true;
+      promo.isActive = false;
+      promo.updatedAt = new Date().toISOString();
+      this.setItem('promotions', promotions);
+      this.syncFirestoreDoc('promotions', promo.id, promo);
+      this.logAudit(user, 'PROMOTION_ARCHIVED', 'Promotion', promotionId, `Archived promotional campaign: "${promo.title}" (historical analytics preserved)`);
+    }
   }
 
   public deletePromotion(promotionId: string, user: User | null): void {
@@ -1906,7 +2294,7 @@ export class AppDatabase {
     this.setItem('promotions', promotions.filter(p => p.id !== promotionId));
     this.deleteFirestoreDoc('promotions', promotionId);
     if (target) {
-      this.logAudit(user, 'PROMOTION_DELETED', 'Promotion', promotionId, `Deleted promotion: ${target.title}`);
+      this.logAudit(user, 'PROMOTION_DELETED', 'Promotion', promotionId, `Permanently deleted campaign: "${target.title}"`);
     }
   }
 
@@ -1964,16 +2352,32 @@ export class AppDatabase {
   }
 
   // ==========================================
-  // GOOGLE REVIEWS CRUD
+  // GOOGLE REVIEWS CRUD (Real Google Business Profile)
   // ==========================================
   public getReviews(): GoogleReview[] {
-    return this.getItem<GoogleReview[]>('reviews', INITIAL_REVIEWS);
+    const reviews = this.getItem<GoogleReview[]>('reviews', INITIAL_REVIEWS);
+    // Strict filter: Never return legacy dummy mock reviews
+    return reviews.filter(r => 
+      !r.id.startsWith('rev-0') && 
+      !r.id.startsWith('rev-google-') && 
+      !r.id.startsWith('g-rev-') &&
+      r.authorName !== 'Charlotte De Vries' &&
+      r.authorName !== 'David Sterling (Director, Sterling Luxury Travel UK)' &&
+      r.authorName !== 'Alexander Montgomery' &&
+      r.authorName !== 'Sophie Van Der Bilt' &&
+      r.authorName !== 'Evelyn Montgomery' &&
+      r.authorName !== 'Sebastian Croft, CTC' &&
+      r.authorName !== 'Chiara Rossi' &&
+      r.authorName !== 'Marcus Vance' &&
+      r.authorName !== 'Evelyn St. Claire (Travel Luxe Magazine)' &&
+      r.authorName !== 'Siddharth Rao (Global Travel Club)'
+    );
   }
 
   public getVisibleReviews(): GoogleReview[] {
     return this.getReviews()
       .filter(r => r.isVisible)
-      .sort((a, b) => a.displayOrder - b.displayOrder);
+      .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
   }
 
   public saveReview(review: GoogleReview, user: User | null): void {
@@ -1990,7 +2394,7 @@ export class AppDatabase {
         id: review.id || `rev-${Date.now()}`
       };
       reviews.unshift(savedReview);
-      this.logAudit(user, 'REVIEW_UPDATED', 'GoogleReview', review.id, `Added review from ${review.authorName}`);
+      this.logAudit(user, 'REVIEW_CREATED', 'GoogleReview', savedReview.id, `Added review from ${review.authorName}`);
     }
     this.syncFirestoreDoc('google_reviews', savedReview.id, savedReview);
     this.setItem('reviews', reviews);
@@ -2002,31 +2406,8 @@ export class AppDatabase {
     this.setItem('reviews', reviews.filter(r => r.id !== reviewId));
     this.deleteFirestoreDoc('google_reviews', reviewId);
     if (target) {
-      this.logAudit(user, 'REVIEW_UPDATED', 'GoogleReview', reviewId, `Deleted review from ${target.authorName}`);
+      this.logAudit(user, 'REVIEW_DELETED', 'GoogleReview', reviewId, `Deleted review from ${target.authorName}`);
     }
-  }
-
-  public importGoogleReviewsMock(user: User | null): { added: number; updated: number } {
-    const current = this.getReviews();
-    const newSample: GoogleReview = {
-      id: `rev-google-${Date.now()}`,
-      authorName: 'Evelyn St. Claire (Travel Luxe Magazine)',
-      authorAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=200&auto=format&fit=crop',
-      rating: 5,
-      reviewText: 'Flawless execution on our group tour across the Japanese Alps and Tokyo. The local bilingual guides and luxury coach partners exceeded all expectations.',
-      date: new Date().toISOString().split('T')[0],
-      relativeTimeDescription: 'Just now',
-      destination: 'Japan',
-      locationName: 'TheUnbound Ground Operations',
-      source: 'GOOGLE_BUSINESS',
-      verifiedPartner: true,
-      isFeatured: true,
-      isVisible: true,
-      displayOrder: current.length + 1,
-      helpfulCount: 5
-    };
-    this.saveReview(newSample, user);
-    return { added: 1, updated: current.length };
   }
 
   // ==========================================
@@ -2479,17 +2860,95 @@ export class AppDatabase {
 
     // Auto-capture or update CRM Lead for this client
     if (updatedQuote.clientEmail || (updatedQuote.clientName && updatedQuote.clientName !== 'Client Name Pending')) {
+      const mappedProducts: LeadProductItem[] = (updatedQuote.items || []).map((item, idx) => ({
+        id: `lp-${updatedQuote.id}-${idx}`,
+        productId: item.product?.id || `prod-${idx}`,
+        productName: item.product?.name || 'Custom Travel Service',
+        category: (item.product?.productType as any) || 'SERVICE',
+        destinationName: item.product?.destinationName || updatedQuote.destination || 'Japan',
+        city: item.product?.city,
+        travelDate: item.travelDate,
+        quantity: 1,
+        adults: item.pax?.adults || 2,
+        children: item.pax?.children || 0,
+        infants: item.pax?.infants || 0,
+        unitNetCost: item.calculation?.totalNetCost || 0,
+        unitSellingPrice: item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || 0,
+        totalNetCost: item.calculation?.totalNetCost || 0,
+        totalSellingPrice: item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || 0,
+        marginPercent: item.calculation?.markupRate ? Math.round(item.calculation.markupRate * 100) : 15,
+        currency: updatedQuote.currency || 'USD',
+        status: 'CONFIRMED',
+        selectedAddonNames: item.selectedAddonIds || []
+      }));
+
+      const quoteSnapshot: LeadQuoteSnapshot = {
+        quoteId: updatedQuote.id,
+        quoteNumber: updatedQuote.quoteNumber,
+        version: currentVersion,
+        quoteDate: timestamp,
+        status: updatedQuote.status,
+        totalNetCost: updatedQuote.totalNetCost || 0,
+        marginAmount: updatedQuote.totalMargin || 0,
+        marginPercent: updatedQuote.overallMarkupPercent || 15,
+        taxAmount: updatedQuote.totalTaxes || 0,
+        feesAmount: 0,
+        finalSellingPrice: updatedQuote.totalSellingPrice || 0,
+        currency: updatedQuote.currency,
+        itemsCount: (updatedQuote.items || []).length
+      };
+
+      const quoteVersions: LeadQuoteVersion[] = (updatedQuote.versionHistory || []).map(v => ({
+        version: v.version,
+        createdAt: v.updatedAt,
+        createdBy: v.updatedBy,
+        createdByUserType: 'DMC_STAFF',
+        totalItems: (updatedQuote.items || []).length,
+        totalNetCost: updatedQuote.totalNetCost || 0,
+        totalSellingPrice: v.totalSellingPrice,
+        marginPercent: updatedQuote.overallMarkupPercent || 15,
+        taxTotal: updatedQuote.totalTaxes || 0,
+        currency: updatedQuote.currency,
+        changesSummary: v.changesSummary
+      }));
+
       this.captureLeadFromSource({
         contactName: updatedQuote.clientName,
         email: updatedQuote.clientEmail || `${updatedQuote.clientName.toLowerCase().replace(/[^a-z0-9]/g, '')}@client.local`,
+        phone: updatedQuote.clientPhone,
         agencyName: updatedQuote.clientCompany,
+        companyName: updatedQuote.clientCompany,
+        userId: resolvedClientUserId || user?.id,
+        userType: createdByUserType === 'B2B_AGENT' ? 'B2B_AGENT' : 'BUYER',
+        b2bAgentId: createdByUserType === 'B2B_AGENT' ? user?.id : undefined,
         source: actionType === 'DOWNLOADED' || actionType === 'PRINTED' ? 'PROPOSAL_DOWNLOADED' : 'QUOTATION_SAVED',
         destinationName: updatedQuote.destination,
+        travelDates: updatedQuote.travelStartDate && updatedQuote.travelEndDate ? `${updatedQuote.travelStartDate} to ${updatedQuote.travelEndDate}` : undefined,
+        travelStartDate: updatedQuote.travelStartDate,
+        travelEndDate: updatedQuote.travelEndDate,
+        paxAdults: updatedQuote.adultsCount || updatedQuote.totalPax || 2,
+        paxChildren: updatedQuote.childrenCount || 0,
+        travelRequirements: updatedQuote.agentNotes || updatedQuote.title,
         estimatedBudget: updatedQuote.totalSellingPrice,
+        currency: updatedQuote.currency,
         quoteId: updatedQuote.id,
-        quoteNumber: updatedQuote.quoteNumber
+        quoteNumber: updatedQuote.quoteNumber,
+        quoteVersion: currentVersion,
+        quoteSnapshot,
+        quoteVersions,
+        requestedProducts: mappedProducts
       }, user);
     }
+
+    // Auto-trigger SLA & Google Calendar dispatch listeners
+    const isNewQuote = existingIndex < 0;
+    this.quotationSaveListeners.forEach(listener => {
+      try {
+        listener(updatedQuote, user, isNewQuote);
+      } catch (err) {
+        console.error('Error in quotationSaveListener:', err);
+      }
+    });
 
     return updatedQuote;
   }
@@ -2810,6 +3269,15 @@ export class AppDatabase {
       `Quotation ${quote.quoteNumber} converted to Booking ${bookingRef} for client ${quote.clientName}`
     );
 
+    // Auto-trigger SLA & Google Calendar dispatch listeners
+    this.bookingSaveListeners.forEach(listener => {
+      try {
+        listener(newBookingDraft, user, true);
+      } catch (err) {
+        console.error('Error in bookingSaveListener:', err);
+      }
+    });
+
     return newBookingDraft;
   }
 
@@ -3085,6 +3553,30 @@ export class AppDatabase {
     this.setItem('bookings', existing);
     this.syncFirestoreDoc('bookings', newBookingDraft.id, newBookingDraft);
 
+    // Track Campaign Booking Attribution if active in session
+    try {
+      if (typeof window !== 'undefined') {
+        const rawAttr = sessionStorage.getItem('theunbound_active_campaign_attribution');
+        if (rawAttr) {
+          const parsedAttr = JSON.parse(rawAttr);
+          if (parsedAttr.campaignId) {
+            this.recordCampaignEvent({
+              campaignId: parsedAttr.campaignId,
+              eventType: 'BOOKING_CREATED',
+              placement: parsedAttr.placement || 'BANNER',
+              bookingId: newBookingDraft.id,
+              bookingValue: Number(data.totalAmount) || 0,
+              currency: data.currency || 'USD',
+              sessionId: sessionStorage.getItem('theunbound_campaign_sess_id') || `sess_${Date.now().toString(36)}`,
+              userId: user?.id
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.debug('Attribution note:', e);
+    }
+
     // If booking was created from a quote, update quote status
     if (data.quoteId) {
       const quotes = this.getAllSavedQuotes();
@@ -3104,6 +3596,61 @@ export class AppDatabase {
       id, 
       `Submitted new booking ${bookingReference} for ${data.customer.leadTravelerName} (${data.items?.length || 0} services, ${data.currency} ${data.totalAmount}). Confirmation email dispatched.`
     );
+
+    // Auto-capture / link CRM Lead for this booking
+    try {
+      const bookingProducts: LeadProductItem[] = (data.items || []).map((item, idx) => ({
+        id: `lp-bk-${id}-${idx}`,
+        productId: item.productId || `prod-${idx}`,
+        productName: item.productName || 'Booked Travel Service',
+        category: (item.category as any) || 'SERVICE',
+        destinationName: item.destinationName || data.destinationName || 'Japan',
+        city: item.city,
+        travelDate: item.travelDate || data.travelStartDate,
+        quantity: 1,
+        adults: item.adults || data.customer?.totalAdults || 2,
+        children: item.children || data.customer?.totalChildren || 0,
+        infants: item.infants || 0,
+        unitNetCost: item.unitNetPrice || 0,
+        unitSellingPrice: item.unitSellingPrice || 0,
+        totalNetCost: (item.unitNetPrice || 0) * (item.totalPax || 1),
+        totalSellingPrice: item.totalPrice || 0,
+        marginPercent: 15,
+        currency: item.currency || data.currency || 'USD',
+        status: 'CONFIRMED'
+      }));
+
+      this.captureLeadFromSource({
+        contactName: data.customer?.leadTravelerName || 'Guest Traveler',
+        email: data.customer?.email || 'booking@client.local',
+        phone: data.customer?.phone,
+        country: data.customer?.nationality || 'Global',
+        agencyName: data.customer?.agencyName,
+        companyName: data.customer?.agencyName,
+        userId: user?.id,
+        userType: user?.role === 'B2B_AGENT' ? 'B2B_AGENT' : 'BUYER',
+        b2bAgentId: user?.role === 'B2B_AGENT' ? user.id : undefined,
+        source: 'BOOKING_SUBMISSION',
+        destinationName: data.destinationName || 'Japan',
+        travelDates: data.travelStartDate && data.travelEndDate ? `${data.travelStartDate} to ${data.travelEndDate}` : 'Upcoming 2026',
+        travelStartDate: data.travelStartDate,
+        travelEndDate: data.travelEndDate,
+        paxAdults: data.customer?.totalAdults || 2,
+        paxChildren: data.customer?.totalChildren || 0,
+        travelRequirements: data.customer?.specialRequests || `Direct booking submitted for ${data.destinationName || 'Selected Destination'}`,
+        specialRequests: data.customer?.specialRequests,
+        estimatedBudget: data.totalAmount,
+        currency: data.currency,
+        quoteId: data.quoteId,
+        quoteNumber: data.quoteNumber,
+        bookingId: newBookingDraft.id,
+        bookingReference: newBookingDraft.bookingReference,
+        bookingValue: data.totalAmount,
+        requestedProducts: bookingProducts
+      }, user);
+    } catch (err) {
+      console.warn('CRM Lead auto-capture on booking non-critical error:', err);
+    }
 
     return newBookingDraft;
   }
@@ -3157,6 +3704,16 @@ export class AppDatabase {
     }
     this.syncFirestoreDoc('bookings', updatedBooking.id, updatedBooking);
     this.setItem('bookings', all);
+
+    // Auto-trigger SLA & Google Calendar dispatch listeners
+    const isNew = index < 0;
+    this.bookingSaveListeners.forEach(listener => {
+      try {
+        listener(updatedBooking, user, isNew);
+      } catch (err) {
+        console.error('Error in bookingSaveListener:', err);
+      }
+    });
   }
 
   // ==========================================
@@ -3439,48 +3996,358 @@ export class AppDatabase {
   }
 
   // ==========================================
-  // INTERNAL CRM: LEADS MANAGEMENT
+  // INTERNAL CRM: LEADS & CUSTOMER JOURNEY ENGINE
   // ==========================================
   public getLeads(): TravelLead[] {
-    return this.getItem<TravelLead[]>('leads', INITIAL_LEADS);
+    const raw = this.getItem<TravelLead[]>('leads', INITIAL_LEADS);
+    // Ensure all leads have required CRM arrays and valid defaults
+    return raw.map(l => ({
+      ...l,
+      priority: l.priority || 'NORMAL',
+      notes: l.notes || [],
+      timeline: l.timeline || [],
+      followUps: l.followUps || [],
+      requestedProducts: l.requestedProducts || [],
+      assignmentHistory: l.assignmentHistory || [],
+      documents: l.documents || [],
+      quoteIds: l.quoteIds || (l.quoteId ? [l.quoteId] : []),
+      bookingIds: l.bookingIds || (l.bookingId ? [l.bookingId] : []),
+      totalPassengers: l.totalPassengers || (Number(l.paxAdults || 0) + Number(l.paxChildren || 0) + Number(l.paxInfants || 0)) || 1
+    }));
   }
 
   public getLeadById(id: string): TravelLead | undefined {
-    return this.getLeads().find(l => l.id === id);
+    return this.getLeads().find(l => l.id === id || l.leadNumber === id);
   }
 
-  public saveLead(lead: TravelLead, user: User | null): void {
+  public getLeadsAuthorized(user: User | null): TravelLead[] {
+    const allLeads = this.getLeads();
+    if (!user) return [];
+
+    // Admins and DMC internal staff see all leads
+    if (user.role === 'ADMIN' || user.role === 'DMC_STAFF' || user.role === 'TEAM_MEMBER') {
+      return allLeads;
+    }
+
+    // B2B Agent sees their own company / agency leads
+    if (user.role === 'B2B_AGENT') {
+      return allLeads.filter(l => 
+        l.b2bAgentId === user.id || 
+        l.userId === user.id ||
+        (user.email && l.email.toLowerCase() === user.email.toLowerCase()) ||
+        (user.agencyName && l.agencyName?.toLowerCase() === user.agencyName.toLowerCase())
+      );
+    }
+
+    // Buyer sees only their own inquiries
+    return allLeads.filter(l => 
+      l.userId === user.id || 
+      (user.email && l.email.toLowerCase() === user.email.toLowerCase())
+    );
+  }
+
+  public saveLead(lead: TravelLead, user: User | null): TravelLead {
     const leads = this.getLeads();
-    const index = leads.findIndex(l => l.id === lead.id);
+    const index = leads.findIndex(l => l.id === lead.id || l.leadNumber === lead.leadNumber);
+    const timestamp = new Date().toISOString();
     let savedLead: TravelLead;
+
     if (index >= 0) {
-      savedLead = { ...lead, updatedAt: new Date().toISOString() };
+      savedLead = {
+        ...leads[index],
+        ...lead,
+        updatedAt: timestamp,
+        lastActivityAt: lead.lastActivityAt || timestamp
+      };
       leads[index] = savedLead;
-      this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', lead.id, `Updated lead for ${lead.contactName}`);
+      this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', savedLead.id, `Updated CRM lead profile for ${savedLead.leadNumber} (${savedLead.contactName})`);
     } else {
+      const randomNum = Math.floor(1000 + Math.random() * 9000);
       savedLead = {
         ...lead,
-        id: lead.id || `lead-${Date.now()}`,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        id: lead.id || `lead-${Date.now()}-${randomNum}`,
+        leadNumber: lead.leadNumber || `LED-${new Date().getFullYear()}-${randomNum}`,
+        priority: lead.priority || 'NORMAL',
+        createdAt: lead.createdAt || timestamp,
+        updatedAt: timestamp,
+        lastActivityAt: timestamp,
+        notes: lead.notes || [],
+        timeline: lead.timeline || [
+          {
+            id: `tl-${Date.now()}`,
+            type: 'CUSTOM_ACTIVITY',
+            title: 'Lead Captured',
+            description: `Lead profile created via ${lead.source || 'Direct Entry'}`,
+            timestamp,
+            performedBy: user?.name || 'CRM Lead Engine',
+            performedByUserType: user?.role || 'SYSTEM'
+          }
+        ],
+        followUps: lead.followUps || [],
+        requestedProducts: lead.requestedProducts || [],
+        assignmentHistory: lead.assignmentHistory || [],
+        documents: lead.documents || []
       };
       leads.unshift(savedLead);
-      this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', lead.id, `Created new lead for ${lead.contactName} (${lead.destinationName})`);
+      this.logAudit(user, 'BOOKING_CREATED', 'TravelLead', savedLead.id, `Captured new CRM lead ${savedLead.leadNumber} for ${savedLead.contactName} (${savedLead.destinationName})`);
     }
-    this.syncFirestoreDoc('leads', savedLead.id, savedLead);
+
     this.setItem('leads', leads);
+    this.syncFirestoreDoc('leads', savedLead.id, savedLead);
+    return savedLead;
   }
 
-  public updateLeadStatus(leadId: string, status: LeadStatus, user: User | null): void {
+  public updateLeadStatus(leadId: string, status: LeadStatus, user: User | null, noteText?: string): TravelLead | null {
     const leads = this.getLeads();
-    const index = leads.findIndex(l => l.id === leadId);
-    if (index >= 0) {
-      leads[index].status = status;
-      leads[index].updatedAt = new Date().toISOString();
-      this.setItem('leads', leads);
-      this.syncFirestoreDoc('leads', leadId, { status, updatedAt: leads[index].updatedAt });
-      this.logAudit(user, 'BOOKING_UPDATED', 'TravelLead', leadId, `Updated CRM lead status to ${status} for ${leads[index].leadNumber}`);
+    const index = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
+    if (index === -1) return null;
+
+    const timestamp = new Date().toISOString();
+    const prevStatus = leads[index].status;
+    leads[index].status = status;
+    leads[index].updatedAt = timestamp;
+    leads[index].lastActivityAt = timestamp;
+    leads[index].lastActivitySummary = `Status updated to ${status}`;
+
+    // Timeline event
+    const newTimelineEvent: LeadTimelineEvent = {
+      id: `tl-${Date.now()}`,
+      type: 'STATUS_CHANGED',
+      title: `Status Changed to ${status}`,
+      description: noteText ? `Status changed from ${prevStatus} to ${status}: ${noteText}` : `Status transitioned from ${prevStatus} to ${status}`,
+      timestamp,
+      performedBy: user?.name || 'CRM Engine',
+      performedByUserType: user?.role || 'DMC_STAFF'
+    };
+    leads[index].timeline = [newTimelineEvent, ...(leads[index].timeline || [])];
+
+    if (noteText) {
+      leads[index].notes = [
+        {
+          id: `note-${Date.now()}`,
+          authorId: user?.id,
+          authorName: user?.name || 'Staff',
+          authorRole: user?.role || 'DMC_STAFF',
+          text: `[Status Change: ${status}] ${noteText}`,
+          timestamp,
+          isInternal: true
+        },
+        ...(leads[index].notes || [])
+      ];
     }
+
+    this.setItem('leads', leads);
+    this.syncFirestoreDoc('leads', leads[index].id, leads[index]);
+    this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', leads[index].id, `Updated status to ${status} for ${leads[index].leadNumber} (${leads[index].contactName})`);
+    return leads[index];
+  }
+
+  public updateLeadPriority(leadId: string, priority: LeadPriority, user: User | null): TravelLead | null {
+    const leads = this.getLeads();
+    const index = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
+    if (index === -1) return null;
+
+    const timestamp = new Date().toISOString();
+    const prev = leads[index].priority || 'NORMAL';
+    leads[index].priority = priority;
+    leads[index].updatedAt = timestamp;
+    leads[index].lastActivityAt = timestamp;
+
+    leads[index].timeline = [
+      {
+        id: `tl-${Date.now()}`,
+        type: 'PRIORITY_CHANGED',
+        title: `Priority Changed to ${priority}`,
+        description: `Lead priority modified from ${prev} to ${priority}`,
+        timestamp,
+        performedBy: user?.name || 'Staff'
+      },
+      ...(leads[index].timeline || [])
+    ];
+
+    this.setItem('leads', leads);
+    this.syncFirestoreDoc('leads', leads[index].id, leads[index]);
+    this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', leads[index].id, `Changed priority to ${priority} for ${leads[index].leadNumber}`);
+    return leads[index];
+  }
+
+  public assignLead(
+    leadId: string, 
+    staff: { id: string; name: string; email?: string; department?: 'SALES' | 'OPERATIONS' | 'MANAGEMENT' }, 
+    user: User | null, 
+    notes?: string
+  ): TravelLead | null {
+    const leads = this.getLeads();
+    const index = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
+    if (index === -1) return null;
+
+    const timestamp = new Date().toISOString();
+    const prevStaff = leads[index].assignedStaffName;
+    leads[index].assignedStaffId = staff.id;
+    leads[index].assignedStaffName = staff.name;
+    leads[index].assignedStaffEmail = staff.email;
+    leads[index].assignedDepartment = staff.department || 'SALES';
+    leads[index].updatedAt = timestamp;
+    leads[index].lastActivityAt = timestamp;
+    leads[index].lastActivitySummary = `Assigned to ${staff.name}`;
+
+    const assignmentRecord: LeadAssignmentRecord = {
+      id: `asg-${Date.now()}`,
+      assignedStaffId: staff.id,
+      assignedStaffName: staff.name,
+      assignedStaffEmail: staff.email,
+      assignedDepartment: staff.department,
+      assignedBy: user?.name || 'Manager',
+      assignedAt: timestamp,
+      notes
+    };
+    leads[index].assignmentHistory = [assignmentRecord, ...(leads[index].assignmentHistory || [])];
+
+    leads[index].timeline = [
+      {
+        id: `tl-${Date.now()}`,
+        type: 'ASSIGNMENT_CHANGED',
+        title: `Assigned to ${staff.name}`,
+        description: notes ? `Reassigned from ${prevStaff} to ${staff.name}: ${notes}` : `Reassigned from ${prevStaff} to ${staff.name}`,
+        timestamp,
+        performedBy: user?.name || 'Manager'
+      },
+      ...(leads[index].timeline || [])
+    ];
+
+    this.setItem('leads', leads);
+    this.syncFirestoreDoc('leads', leads[index].id, leads[index]);
+    this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', leads[index].id, `Assigned lead ${leads[index].leadNumber} to ${staff.name}`);
+    return leads[index];
+  }
+
+  public addLeadNote(leadId: string, noteText: string, user: User | null, isInternal: boolean = true): TravelLead | null {
+    const leads = this.getLeads();
+    const index = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
+    if (index === -1 || !noteText.trim()) return null;
+
+    const timestamp = new Date().toISOString();
+    const newNote: LeadNote = {
+      id: `note-${Date.now()}`,
+      authorId: user?.id,
+      authorName: user?.name || 'Travel Specialist',
+      authorRole: user?.role || 'DMC_STAFF',
+      text: noteText.trim(),
+      timestamp,
+      isInternal
+    };
+
+    leads[index].notes = [newNote, ...(leads[index].notes || [])];
+    leads[index].updatedAt = timestamp;
+    leads[index].lastActivityAt = timestamp;
+    leads[index].lastActivitySummary = `Note added by ${newNote.authorName}`;
+
+    leads[index].timeline = [
+      {
+        id: `tl-${Date.now()}`,
+        type: 'NOTE_ADDED',
+        title: 'Internal Note Added',
+        description: `${newNote.authorName} added a note: "${noteText.substring(0, 80)}${noteText.length > 80 ? '...' : ''}"`,
+        timestamp,
+        performedBy: user?.name || 'Staff'
+      },
+      ...(leads[index].timeline || [])
+    ];
+
+    this.setItem('leads', leads);
+    this.syncFirestoreDoc('leads', leads[index].id, leads[index]);
+    this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', leads[index].id, `Added note to lead ${leads[index].leadNumber}`);
+    return leads[index];
+  }
+
+  public addLeadTimelineEvent(leadId: string, event: Omit<LeadTimelineEvent, 'id' | 'timestamp'>, user: User | null): TravelLead | null {
+    const leads = this.getLeads();
+    const index = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
+    if (index === -1) return null;
+
+    const timestamp = new Date().toISOString();
+    const fullEvent: LeadTimelineEvent = {
+      ...event,
+      id: `tl-${Date.now()}`,
+      timestamp
+    };
+
+    leads[index].timeline = [fullEvent, ...(leads[index].timeline || [])];
+    leads[index].updatedAt = timestamp;
+    leads[index].lastActivityAt = timestamp;
+    leads[index].lastActivitySummary = fullEvent.title;
+
+    this.setItem('leads', leads);
+    this.syncFirestoreDoc('leads', leads[index].id, leads[index]);
+    return leads[index];
+  }
+
+  public addLeadFollowUp(leadId: string, task: Omit<LeadFollowUpTask, 'id' | 'createdAt'>, user: User | null): TravelLead | null {
+    const leads = this.getLeads();
+    const index = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
+    if (index === -1) return null;
+
+    const timestamp = new Date().toISOString();
+    const fullTask: LeadFollowUpTask = {
+      ...task,
+      id: `fu-${Date.now()}`,
+      createdAt: timestamp
+    };
+
+    leads[index].followUps = [fullTask, ...(leads[index].followUps || [])];
+    leads[index].updatedAt = timestamp;
+    leads[index].lastActivityAt = timestamp;
+    leads[index].lastActivitySummary = `Follow-Up Scheduled: ${fullTask.title}`;
+
+    leads[index].timeline = [
+      {
+        id: `tl-${Date.now()}`,
+        type: 'FOLLOWUP_CREATED',
+        title: `Follow-Up Scheduled: ${fullTask.title}`,
+        description: `Due: ${new Date(fullTask.dueAt).toLocaleString()} (Assigned: ${fullTask.assignedToName})`,
+        timestamp,
+        performedBy: user?.name || 'System'
+      },
+      ...(leads[index].timeline || [])
+    ];
+
+    this.setItem('leads', leads);
+    this.syncFirestoreDoc('leads', leads[index].id, leads[index]);
+    this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', leads[index].id, `Scheduled follow-up for ${leads[index].leadNumber}: ${fullTask.title}`);
+    return leads[index];
+  }
+
+  public completeLeadFollowUp(leadId: string, followUpId: string, user: User | null): TravelLead | null {
+    const leads = this.getLeads();
+    const index = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
+    if (index === -1) return null;
+
+    const timestamp = new Date().toISOString();
+    const fuIndex = (leads[index].followUps || []).findIndex(f => f.id === followUpId);
+    if (fuIndex >= 0 && leads[index].followUps) {
+      leads[index].followUps![fuIndex].status = 'COMPLETED';
+      leads[index].followUps![fuIndex].completedAt = timestamp;
+      leads[index].followUps![fuIndex].completedBy = user?.name || 'Staff';
+
+      leads[index].timeline = [
+        {
+          id: `tl-${Date.now()}`,
+          type: 'FOLLOWUP_COMPLETED',
+          title: `Follow-Up Completed: ${leads[index].followUps![fuIndex].title}`,
+          description: `Completed by ${user?.name || 'Staff'}`,
+          timestamp,
+          performedBy: user?.name || 'Staff'
+        },
+        ...(leads[index].timeline || [])
+      ];
+
+      leads[index].updatedAt = timestamp;
+      leads[index].lastActivityAt = timestamp;
+      this.setItem('leads', leads);
+      this.syncFirestoreDoc('leads', leads[index].id, leads[index]);
+      this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', leads[index].id, `Completed follow-up ${followUpId} on lead ${leads[index].leadNumber}`);
+    }
+    return leads[index];
   }
 
   public captureLeadFromSource(
@@ -3488,50 +4355,148 @@ export class AppDatabase {
       contactName: string;
       email: string;
       phone?: string;
+      country?: string;
       agencyName?: string;
+      companyName?: string;
+      userId?: string;
+      userType?: 'BUYER' | 'B2B_AGENT' | 'PUBLIC' | 'DMC_STAFF' | 'ADMIN';
+      b2bAgentId?: string;
       source: LeadSource;
+      campaignId?: string;
+      campaignName?: string;
+      destinationId?: string;
       destinationName?: string;
       travelDates?: string;
+      travelStartDate?: string;
+      travelEndDate?: string;
+      numberOfNights?: number;
+      paxAdults?: number;
+      paxChildren?: number;
+      paxInfants?: number;
+      roomsCount?: number;
+      roomOccupancy?: string;
+      mealPlan?: string;
       travelRequirements?: string;
+      specialRequests?: string;
       estimatedBudget?: number;
+      currency?: CurrencyCode;
       quoteId?: string;
       quoteNumber?: string;
+      quoteVersion?: number;
+      quoteSnapshot?: LeadQuoteSnapshot;
+      quoteVersions?: LeadQuoteVersion[];
+      requestedProducts?: LeadProductItem[];
+      bookingId?: string;
+      bookingReference?: string;
+      bookingValue?: number;
     },
     user?: User | null
   ): TravelLead {
     const leads = this.getLeads();
     const emailLower = (data.email || '').trim().toLowerCase();
-    
-    // Check if lead already exists with this email
-    const existingIdx = emailLower ? leads.findIndex(l => l.email.toLowerCase() === emailLower) : -1;
     const timestamp = new Date().toISOString();
+
+    // Deduplication matching strategy: match by authenticated userId, or quoteId/bookingId, or email
+    let existingIdx = -1;
+    if (data.userId) {
+      existingIdx = leads.findIndex(l => l.userId === data.userId && l.destinationName.toLowerCase() === (data.destinationName || '').toLowerCase());
+    }
+    if (existingIdx === -1 && emailLower) {
+      existingIdx = leads.findIndex(l => l.email.toLowerCase() === emailLower && (!data.destinationName || l.destinationName.toLowerCase() === data.destinationName.toLowerCase() || !l.quoteId));
+    }
+    if (existingIdx === -1 && data.quoteId) {
+      existingIdx = leads.findIndex(l => l.quoteId === data.quoteId || (l.quoteIds && l.quoteIds.includes(data.quoteId)));
+    }
+    if (existingIdx === -1 && emailLower) {
+      existingIdx = leads.findIndex(l => l.email.toLowerCase() === emailLower);
+    }
+
+    // Auto calculate priority: URGENT if travel within 7 days, HIGH if budget > $10,000
+    let calculatedPriority: LeadPriority = 'NORMAL';
+    if (data.travelStartDate) {
+      const daysUntil = (new Date(data.travelStartDate).getTime() - new Date().getTime()) / (1000 * 3600 * 24);
+      if (daysUntil > 0 && daysUntil <= 7) calculatedPriority = 'URGENT';
+      else if (daysUntil <= 14) calculatedPriority = 'HIGH';
+    }
+    if ((data.estimatedBudget || 0) >= 10000 && calculatedPriority !== 'URGENT') {
+      calculatedPriority = 'HIGH';
+    }
 
     if (existingIdx >= 0) {
       const existing = leads[existingIdx];
+      const allQuoteIds = Array.from(new Set([...(existing.quoteIds || []), ...(data.quoteId ? [data.quoteId] : [])]));
+      const allBookingIds = Array.from(new Set([...(existing.bookingIds || []), ...(data.bookingId ? [data.bookingId] : [])]));
+
+      let newStatus = existing.status;
+      if (data.source === 'BOOKING_SUBMISSION' || data.bookingId) newStatus = 'BOOKING_SUBMITTED';
+      else if (data.source === 'PROPOSAL_DOWNLOADED') newStatus = 'QUOTE_DOWNLOADED';
+      else if (data.source === 'QUOTATION_SAVED' && existing.status === 'NEW') newStatus = 'PROPOSAL_SAVED';
+
       const updatedLead: TravelLead = {
         ...existing,
         contactName: data.contactName && data.contactName !== 'Client Name Pending' ? data.contactName : existing.contactName,
         phone: data.phone || existing.phone,
+        country: data.country || existing.country,
         agencyName: data.agencyName || existing.agencyName,
+        companyName: data.companyName || existing.companyName,
+        userId: data.userId || existing.userId,
+        userType: data.userType || existing.userType,
+        b2bAgentId: data.b2bAgentId || existing.b2bAgentId,
+        destinationId: data.destinationId || existing.destinationId,
         destinationName: data.destinationName || existing.destinationName,
         travelDates: data.travelDates || existing.travelDates,
-        travelRequirements: data.travelRequirements 
-          ? `${existing.travelRequirements ? existing.travelRequirements + ' | ' : ''}${data.travelRequirements}`
-          : existing.travelRequirements,
+        travelStartDate: data.travelStartDate || existing.travelStartDate,
+        travelEndDate: data.travelEndDate || existing.travelEndDate,
+        numberOfNights: data.numberOfNights || existing.numberOfNights,
+        paxAdults: data.paxAdults !== undefined ? data.paxAdults : existing.paxAdults,
+        paxChildren: data.paxChildren !== undefined ? data.paxChildren : existing.paxChildren,
+        paxInfants: data.paxInfants !== undefined ? data.paxInfants : existing.paxInfants,
+        totalPassengers: (data.paxAdults || existing.paxAdults || 1) + (data.paxChildren || existing.paxChildren || 0) + (data.paxInfants || existing.paxInfants || 0),
+        roomsCount: data.roomsCount || existing.roomsCount,
+        roomOccupancy: data.roomOccupancy || existing.roomOccupancy,
+        mealPlan: data.mealPlan || existing.mealPlan,
+        travelRequirements: data.travelRequirements || existing.travelRequirements,
+        specialRequests: data.specialRequests || existing.specialRequests,
         estimatedBudget: data.estimatedBudget || existing.estimatedBudget,
+        currency: data.currency || existing.currency,
+        status: newStatus,
+        priority: calculatedPriority !== 'NORMAL' ? calculatedPriority : existing.priority || 'NORMAL',
         quoteId: data.quoteId || existing.quoteId,
         quoteNumber: data.quoteNumber || existing.quoteNumber,
+        quoteIds: allQuoteIds,
+        quoteVersion: data.quoteVersion || existing.quoteVersion,
+        quoteSnapshot: data.quoteSnapshot || existing.quoteSnapshot,
+        quoteVersions: data.quoteVersions || existing.quoteVersions,
+        bookingId: data.bookingId || existing.bookingId,
+        bookingReference: data.bookingReference || existing.bookingReference,
+        bookingIds: allBookingIds,
+        bookingValue: data.bookingValue || existing.bookingValue,
+        requestedProducts: data.requestedProducts || existing.requestedProducts,
         updatedAt: timestamp,
-        notes: [
-          ...(existing.notes || []),
+        lastActivityAt: timestamp,
+        lastActivitySummary: `Activity from ${data.source}: ${data.quoteNumber ? 'Quote #' + data.quoteNumber : data.bookingReference ? 'Booking #' + data.bookingReference : 'Inquiry updated'}`,
+        timeline: [
           {
-            id: `note-${Date.now()}`,
-            authorName: user?.name || 'CRM Lead Engine',
-            text: `Activity tracked from ${data.source}: ${data.quoteNumber ? 'Quotation #' + data.quoteNumber : 'Inquiry updated'}.`,
-            timestamp
-          }
+            id: `tl-${Date.now()}`,
+            type: data.source === 'BOOKING_SUBMISSION' ? 'BOOKING_SUBMITTED' :
+                  data.source === 'PROPOSAL_DOWNLOADED' ? 'QUOTE_DOWNLOADED' :
+                  data.source === 'QUOTATION_SAVED' ? 'PROPOSAL_SAVED' : 'CUSTOM_ACTIVITY',
+            title: data.source === 'BOOKING_SUBMISSION' ? `Booking Submitted (${data.bookingReference || data.bookingId})` :
+                   data.source === 'PROPOSAL_DOWNLOADED' ? `Quote PDF Downloaded (${data.quoteNumber || data.quoteId})` :
+                   data.source === 'QUOTATION_SAVED' ? `Proposal Saved (${data.quoteNumber || data.quoteId})` : `Inquiry via ${data.source}`,
+            description: `Commercial interaction tracked for ${data.destinationName || existing.destinationName}. Value: ${data.currency || existing.currency} ${(data.estimatedBudget || existing.estimatedBudget).toLocaleString()}`,
+            timestamp,
+            performedBy: user?.name || data.contactName || 'Client',
+            performedByUserType: user?.role || data.userType || 'BUYER',
+            quoteId: data.quoteId,
+            quoteNumber: data.quoteNumber,
+            bookingId: data.bookingId,
+            bookingReference: data.bookingReference
+          },
+          ...(existing.timeline || [])
         ]
       };
+
       leads[existingIdx] = updatedLead;
       this.setItem('leads', leads);
       this.syncFirestoreDoc('leads', updatedLead.id, updatedLead);
@@ -3539,38 +4504,104 @@ export class AppDatabase {
       return updatedLead;
     } else {
       const randomNum = Math.floor(1000 + Math.random() * 9000);
+      const newLeadNumber = `LED-${new Date().getFullYear()}-${randomNum}`;
       const newLead: TravelLead = {
-        id: `lead-${Date.now()}`,
-        leadNumber: `LED-2026-${randomNum}`,
-        contactName: data.contactName || 'Valued Guest / Agent',
-        email: data.email,
-        phone: data.phone || '',
-        agencyName: data.agencyName || '',
+        id: `lead-${Date.now()}-${randomNum}`,
+        leadNumber: newLeadNumber,
+        contactName: data.contactName || (user?.name && user.name !== 'Anonymous' ? user.name : 'Valued Traveler / Agency'),
+        email: data.email || user?.email || 'inquiry@client.local',
+        phone: data.phone || user?.phone || '',
+        country: data.country || user?.country,
+        agencyName: data.agencyName || user?.agencyName || user?.companyName,
+        companyName: data.companyName || user?.companyName,
+        userId: data.userId || user?.id,
+        userType: data.userType || (user?.role === 'B2B_AGENT' ? 'B2B_AGENT' : user?.role === 'BUYER' ? 'BUYER' : 'PUBLIC'),
+        b2bAgentId: data.b2bAgentId || (user?.role === 'B2B_AGENT' ? user.id : undefined),
         source: data.source || 'WEBSITE',
-        status: 'NEW',
-        assignedStaffId: user?.id || 'staff-ops-01',
-        assignedStaffName: user?.name || 'Operations Desk',
-        destinationId: 'japan',
+        campaignId: data.campaignId,
+        campaignName: data.campaignName,
+        status: data.source === 'BOOKING_SUBMISSION' ? 'BOOKING_SUBMITTED' :
+                data.source === 'PROPOSAL_DOWNLOADED' ? 'QUOTE_DOWNLOADED' :
+                data.source === 'QUOTATION_SAVED' ? 'PROPOSAL_SAVED' : 'NEW',
+        priority: calculatedPriority,
+        conversionStatus: data.source === 'BOOKING_SUBMISSION' ? 'CONVERTED' : 'IN_PROGRESS',
+        assignedStaffId: user?.id || 'staff-01',
+        assignedStaffName: user?.name || 'Marcus Vance (Senior Ops)',
+        assignedStaffEmail: user?.email || 'business@theunbound.in',
+        assignedDepartment: 'OPERATIONS',
+        destinationId: data.destinationId || 'japan',
         destinationName: data.destinationName || 'Japan',
         travelDates: data.travelDates || 'Upcoming 2026',
-        paxAdults: 2,
-        paxChildren: 0,
-        estimatedBudget: data.estimatedBudget || 6500,
-        currency: 'USD',
-        travelRequirements: data.travelRequirements || '',
+        travelStartDate: data.travelStartDate,
+        travelEndDate: data.travelEndDate,
+        numberOfNights: data.numberOfNights || 7,
+        paxAdults: data.paxAdults !== undefined ? data.paxAdults : 2,
+        paxChildren: data.paxChildren !== undefined ? data.paxChildren : 0,
+        paxInfants: data.paxInfants !== undefined ? data.paxInfants : 0,
+        totalPassengers: (data.paxAdults || 2) + (data.paxChildren || 0) + (data.paxInfants || 0),
+        roomsCount: data.roomsCount || 1,
+        roomOccupancy: data.roomOccupancy || 'Double / Twin',
+        mealPlan: data.mealPlan || 'Daily Breakfast',
+        travelRequirements: data.travelRequirements || `Travel inquiry for ${data.destinationName || 'selected destinations'}`,
+        specialRequests: data.specialRequests,
+        estimatedBudget: data.estimatedBudget || 5000,
+        currency: data.currency || 'USD',
+        quoteId: data.quoteId,
+        quoteNumber: data.quoteNumber,
+        quoteIds: data.quoteId ? [data.quoteId] : [],
+        quoteVersion: data.quoteVersion || 1,
+        quoteSnapshot: data.quoteSnapshot,
+        quoteVersions: data.quoteVersions,
+        bookingId: data.bookingId,
+        bookingReference: data.bookingReference,
+        bookingIds: data.bookingId ? [data.bookingId] : [],
+        bookingValue: data.bookingValue,
+        requestedProducts: data.requestedProducts || [],
+        timeline: [
+          {
+            id: `tl-${Date.now()}`,
+            type: data.source === 'BOOKING_SUBMISSION' ? 'BOOKING_SUBMITTED' :
+                  data.source === 'PROPOSAL_DOWNLOADED' ? 'QUOTE_DOWNLOADED' :
+                  data.source === 'QUOTATION_SAVED' ? 'PROPOSAL_SAVED' : 'CUSTOM_ACTIVITY',
+            title: `Lead Captured via ${data.source}`,
+            description: `Initial contact created with ${data.destinationName || 'Destination'} travel requirement.`,
+            timestamp,
+            performedBy: user?.name || data.contactName || 'Lead Engine',
+            performedByUserType: user?.role || data.userType || 'BUYER',
+            quoteId: data.quoteId,
+            quoteNumber: data.quoteNumber,
+            bookingId: data.bookingId,
+            bookingReference: data.bookingReference
+          }
+        ],
+        followUps: [],
         notes: [
           {
             id: `note-${Date.now()}`,
+            authorId: user?.id,
             authorName: user?.name || 'CRM Lead Engine',
-            text: `Lead automatically captured via ${data.source}.`,
-            timestamp
+            authorRole: 'SYSTEM',
+            text: `Lead automatically initialized via ${data.source}.`,
+            timestamp,
+            isInternal: true
           }
         ],
-        quoteId: data.quoteId,
-        quoteNumber: data.quoteNumber,
+        documents: data.quoteNumber ? [
+          {
+            id: `doc-${Date.now()}`,
+            type: 'QUOTE_PDF',
+            title: `Quotation_${data.quoteNumber}.pdf`,
+            createdAt: timestamp,
+            createdBy: user?.name || 'System',
+            quoteId: data.quoteId
+          }
+        ] : [],
         createdAt: timestamp,
-        updatedAt: timestamp
+        updatedAt: timestamp,
+        lastActivityAt: timestamp,
+        lastActivitySummary: `Lead captured via ${data.source}`
       };
+
       leads.unshift(newLead);
       this.setItem('leads', leads);
       this.syncFirestoreDoc('leads', newLead.id, newLead);
@@ -3581,12 +4612,11 @@ export class AppDatabase {
 
   public deleteLead(leadId: string, user: User | null): void {
     const leads = this.getLeads();
-    const target = leads.find(l => l.id === leadId);
-    this.setItem('leads', leads.filter(l => l.id !== leadId));
-    this.deleteFirestoreDoc('leads', leadId);
-    if (target) {
-      this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', leadId, `Deleted lead ${target.leadNumber}`);
-    }
+    const target = leads.find(l => l.id === leadId || l.leadNumber === leadId);
+    if (!target) return;
+    this.setItem('leads', leads.filter(l => l.id !== target.id));
+    this.deleteFirestoreDoc('leads', target.id);
+    this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', target.id, `Deleted CRM lead ${target.leadNumber} (${target.contactName})`);
   }
 
   // ==========================================
@@ -3785,205 +4815,40 @@ export class AppDatabase {
   // ==========================================
   // GOOGLE REVIEWS GBP SEARCH & IMPORTER
   // ==========================================
-  public searchAndImportGoogleReviews(businessQueryOrUrl: string, user: User | null): { added: number; updated: number; reviews: GoogleReview[]; businessName: string } {
-    let raw = (businessQueryOrUrl || '').trim();
-    if (!raw) raw = 'TheUnbound Ground Operations';
+  public async searchAndImportGoogleReviews(businessQueryOrUrl: string, user: User | null): Promise<{ added: number; updated: number; reviews: GoogleReview[]; businessName: string; error?: string }> {
+    const resolved = googleBusinessService.resolveMapsUrl(businessQueryOrUrl);
+    
+    // Save URL to configuration
+    googleBusinessService.saveConfig({
+      mapsUrl: resolved.cleanUrl,
+      businessName: resolved.businessName
+    }, user);
 
-    // Parse Google My Business / Google Maps profile URL
-    let businessName = raw;
-    let detectedDestination = 'Japan';
-
-    if (raw.startsWith('http://') || raw.startsWith('https://')) {
-      try {
-        const urlObj = new URL(raw);
-        const pathname = urlObj.pathname;
-        
-        // Pattern 1: /maps/place/Business+Name+Here/@lat,lng...
-        if (pathname.includes('/place/')) {
-          const match = pathname.match(/\/place\/([^/@]+)/);
-          if (match && match[1]) {
-            businessName = decodeURIComponent(match[1]).replace(/\+/g, ' ').trim();
-          }
-        } 
-        // Pattern 2: search query parameter ?q= or ?query=
-        else if (urlObj.searchParams.get('q')) {
-          businessName = urlObj.searchParams.get('q')!.replace(/\+/g, ' ').trim();
-        } else if (urlObj.searchParams.get('query')) {
-          businessName = urlObj.searchParams.get('query')!.replace(/\+/g, ' ').trim();
-        }
-        // Pattern 3: g.page short link (e.g. g.page/theunbound)
-        else if (urlObj.hostname.includes('g.page')) {
-          const slug = pathname.replace(/^\/+/, '').replace(/^r\//, '');
-          businessName = slug ? slug.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'TheUnbound Ground Operations';
-        }
-        // Pattern 4: maps.app.goo.gl or goo.gl/maps
-        else if (urlObj.hostname.includes('goo.gl') || urlObj.hostname.includes('google.com')) {
-          const pathSegments = pathname.split('/').filter(Boolean);
-          const lastSegment = pathSegments[pathSegments.length - 1];
-          if (lastSegment && lastSegment !== 'maps') {
-            businessName = decodeURIComponent(lastSegment).replace(/[-_+]/g, ' ');
-          } else {
-            businessName = 'TheUnbound DMC & Luxury Ground Dispatch';
-          }
-        }
-      } catch (e) {
-        businessName = raw.replace(/^https?:\/\/[^/]+\/?/, '').replace(/[-_+]/g, ' ') || 'TheUnbound DMC';
-      }
+    const syncResult = await googleBusinessService.syncGoogleReviews(user);
+    if (!syncResult.success) {
+      return {
+        added: 0,
+        updated: 0,
+        reviews: [],
+        businessName: resolved.businessName,
+        error: syncResult.errorMessage || 'Unable to sync reviews from Google Business Profile.'
+      };
     }
 
-    // Determine destination context from business name or URL
-    const lower = (businessName + ' ' + raw).toLowerCase();
-    if (lower.includes('japan') || lower.includes('tokyo') || lower.includes('kyoto') || lower.includes('osaka')) {
-      detectedDestination = 'Japan';
-    } else if (lower.includes('uk') || lower.includes('london') || lower.includes('britain') || lower.includes('cotswolds')) {
-      detectedDestination = 'United Kingdom';
-    } else if (lower.includes('europe') || lower.includes('paris') || lower.includes('rome') || lower.includes('italy')) {
-      detectedDestination = 'Western Europe';
-    } else {
-      detectedDestination = 'Japan & Global';
-    }
-
-    // Capitalize business name cleanly
-    businessName = businessName
-      .replace(/[^\w\s&'-]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!businessName || businessName.length < 3) {
-      businessName = 'TheUnbound DMC Ground Operations';
-    }
-
-    const verifiedReviewsForQuery: GoogleReview[] = [
-      {
-        id: `g-rev-${Date.now()}-1`,
-        authorName: 'Evelyn Montgomery',
-        authorAvatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=200&auto=format&fit=crop',
-        rating: 5,
-        reviewText: `Outstanding ground coordination with ${businessName}. Our VIP group had seamless bullet train transfers, private tea ceremony in Kyoto, and a 24/7 bilingual dispatch desk. Unmatched precision.`,
-        date: new Date(Date.now() - 86400000 * 3).toISOString().split('T')[0],
-        relativeTimeDescription: '3 days ago',
-        destination: detectedDestination,
-        locationName: businessName,
-        source: 'GOOGLE_BUSINESS',
-        verifiedPartner: true,
-        isFeatured: true,
-        isVisible: true,
-        displayOrder: 1,
-        helpfulCount: 28,
-        responseFromOwner: {
-          text: `Thank you Evelyn! It was our absolute pleasure handling your VIP itinerary with ${businessName}.`,
-          date: new Date(Date.now() - 86400000 * 2).toISOString().split('T')[0]
-        }
-      },
-      {
-        id: `g-rev-${Date.now()}-2`,
-        authorName: 'Sebastian Croft, CTC',
-        authorAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop',
-        rating: 5,
-        reviewText: `As a luxury travel advisor booking high-net-worth clients, having verified drivers and instantaneous voucher confirmations from ${businessName} has made them our preferred primary ground partner.`,
-        date: new Date(Date.now() - 86400000 * 7).toISOString().split('T')[0],
-        relativeTimeDescription: '1 week ago',
-        destination: detectedDestination === 'Japan' ? 'Japan (Tokyo & Kyoto)' : detectedDestination,
-        locationName: businessName,
-        source: 'GOOGLE_BUSINESS',
-        verifiedPartner: true,
-        isFeatured: true,
-        isVisible: true,
-        displayOrder: 2,
-        helpfulCount: 41,
-        responseFromOwner: {
-          text: `We appreciate the strong partnership Sebastian! Looking forward to welcoming more of your travelers with ${businessName}.`,
-          date: new Date(Date.now() - 86400000 * 6).toISOString().split('T')[0]
-        }
-      },
-      {
-        id: `g-rev-${Date.now()}-3`,
-        authorName: 'Chiara Rossi',
-        authorAvatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=200&auto=format&fit=crop',
-        rating: 5,
-        reviewText: `Flawless execution of our custom tour via ${businessName}. The luxury MPV was pristine, our private guide was exceptionally knowledgeable, and every entrance slot was pre-cleared without waiting in queues.`,
-        date: new Date(Date.now() - 86400000 * 12).toISOString().split('T')[0],
-        relativeTimeDescription: '2 weeks ago',
-        destination: detectedDestination,
-        locationName: businessName,
-        source: 'GOOGLE_BUSINESS',
-        verifiedPartner: true,
-        isFeatured: true,
-        isVisible: true,
-        displayOrder: 3,
-        helpfulCount: 19
-      },
-      {
-        id: `g-rev-${Date.now()}-4`,
-        authorName: 'Marcus Vance',
-        authorAvatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=200&auto=format&fit=crop',
-        rating: 5,
-        reviewText: `We booked a multi-day bespoke family itinerary with ${businessName}. From the airport VIP meet-and-greet to private culinary masters in Gion, everything was timed to perfection. Highly recommended for demanding clients!`,
-        date: new Date(Date.now() - 86400000 * 18).toISOString().split('T')[0],
-        relativeTimeDescription: '3 weeks ago',
-        destination: detectedDestination,
-        locationName: businessName,
-        source: 'GOOGLE_BUSINESS',
-        verifiedPartner: true,
-        isFeatured: false,
-        isVisible: true,
-        displayOrder: 4,
-        helpfulCount: 14,
-        responseFromOwner: {
-          text: `Thank you Marcus for your wonderful feedback. It was an honor hosting your family!`,
-          date: new Date(Date.now() - 86400000 * 17).toISOString().split('T')[0]
-        }
-      }
-    ];
-
-    const current = this.getReviews();
-    let added = 0;
-    for (const rev of verifiedReviewsForQuery) {
-      if (!current.some(c => c.authorName === rev.authorName && c.locationName === rev.locationName)) {
-        current.unshift(rev);
-        added++;
-      }
-    }
-    this.setItem('reviews', current);
-    this.logAudit(user, 'SETTINGS_UPDATED', 'GoogleReview', 'g-sync', `Imported ${added} verified Google Reviews from "${businessName}" (${raw})`);
-    return { added, updated: 0, reviews: verifiedReviewsForQuery, businessName };
+    return {
+      added: syncResult.newCount,
+      updated: syncResult.updatedCount,
+      reviews: syncResult.reviews,
+      businessName: resolved.businessName
+    };
   }
 
   // ==========================================
   // GOOGLE REVIEWS GBP SYNC
   // ==========================================
   public async syncGoogleReviewsFromGBP(user: User | null): Promise<GoogleReview[]> {
-    const startTime = Date.now();
-    await new Promise(r => setTimeout(r, 1200));
-
-    const reviews = this.getReviews();
-    // Simulate updating or adding a new fresh review from Google Business Profile
-    const newReview: GoogleReview = {
-      id: `rev-gbp-${Date.now()}`,
-      authorName: 'Siddharth Rao (Global Travel Club)',
-      rating: 5,
-      relativeTimeDescription: 'Just now (Google Verified)',
-      reviewText: 'Exceptional private ground dispatch across Tokyo and Kyoto. Luxury Alphard MPV and our Blue Badge level licensed guide made our 14-day client itinerary seamless. 24/7 ground operations SLA is rock solid.',
-      authorAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=150&auto=format&fit=crop',
-      date: new Date().toISOString().split('T')[0],
-      source: 'GOOGLE_BUSINESS',
-      verifiedPartner: true,
-      isFeatured: true,
-      isVisible: true,
-      displayOrder: 1
-    };
-
-    const updatedReviews = [newReview, ...reviews.slice(0, 19)];
-    this.setItem('reviews', updatedReviews);
-
-    this.logAudit(
-      user,
-      'SETTINGS_UPDATED',
-      'GoogleReviews',
-      'gbp-sync',
-      `Synchronized Google Business Profile reviews. ${updatedReviews.length} verified customer reviews live on homepage.`
-    );
-
-    return updatedReviews;
+    const syncResult = await googleBusinessService.syncGoogleReviews(user);
+    return syncResult.reviews;
   }
 
   // ==========================================
@@ -4616,38 +5481,117 @@ export class AppDatabase {
     if (!raw || !raw.columns) {
       return INITIAL_FOOTER_CONFIG;
     }
-    const normalizedCols = (raw.columns || []).map((col, idx) => {
-      const colLinks = Array.isArray(col.links) && col.links.length > 0
-        ? col.links
-        : Array.isArray(col.items)
-        ? col.items.map((it: any, iIdx: number) => ({
-            id: it.id || `link-${idx}-${iIdx}`,
-            label: it.label || it.title || 'Link',
-            url: it.customUrl || it.targetId || '#',
-            type: (it.type === 'CUSTOM_LINK' ? 'EXTERNAL_LINK' : it.type) || 'SYSTEM_VIEW',
-            targetId: it.targetId || '',
-            displayOrder: it.displayOrder || iIdx + 1
-          }))
-        : [];
-      return {
-        ...col,
-        links: colLinks
-      };
-    });
+    const normalizeColList = (cols: FooterMenuColumn[]): FooterMenuColumn[] => {
+      return cols.map((col, idx) => {
+        const colLinks: FooterMenuLink[] = Array.isArray(col.links) && col.links.length > 0
+          ? col.links.map((l, lIdx) => ({
+              ...l,
+              id: l.id || `link-${idx}-${lIdx}`,
+              displayOrder: l.displayOrder ?? lIdx + 1,
+              status: (l.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE') as 'ACTIVE' | 'INACTIVE',
+              openIn: (l.openIn === '_blank' ? '_blank' : (l.url?.startsWith('http') ? '_blank' : '_self')) as '_self' | '_blank'
+            }))
+          : Array.isArray(col.items)
+          ? col.items.map((it: any, iIdx: number): FooterMenuLink => ({
+              id: it.id || `link-${idx}-${iIdx}`,
+              label: it.label || it.title || 'Link',
+              url: it.customUrl || it.targetId || '#',
+              type: (it.type === 'CUSTOM_LINK' ? 'EXTERNAL_LINK' : it.type) || 'SYSTEM_VIEW',
+              targetId: it.targetId || '',
+              displayOrder: it.displayOrder || iIdx + 1,
+              status: 'ACTIVE',
+              openIn: (it.customUrl?.startsWith('http') ? '_blank' : '_self') as '_self' | '_blank'
+            }))
+          : [];
+        return {
+          ...col,
+          id: col.id || `col-${idx + 1}`,
+          title: col.title || `Column ${idx + 1}`,
+          displayOrder: col.displayOrder ?? idx + 1,
+          status: (col.status === 'INACTIVE' || col.status === 'DRAFT') ? col.status : 'ACTIVE',
+          isVisible: col.isVisible ?? true,
+          links: colLinks
+        };
+      });
+    };
+
+    const normalizedCols = normalizeColList(raw.columns || []);
+    const normalizedDraftCols = raw.draftColumns ? normalizeColList(raw.draftColumns) : undefined;
+
     return {
       ...raw,
-      columns: normalizedCols
+      status: raw.status || 'PUBLISHED',
+      columns: normalizedCols,
+      draftColumns: normalizedDraftCols
     };
   }
 
   public saveFooterConfig(config: FooterConfig, user?: User | null): void {
-    this.setItem('footer_config', config);
-    this.syncFirestoreDoc('footer_config', 'main_footer', config);
+    const updatedConfig: FooterConfig = {
+      ...config,
+      columns: config.columns.map((c, idx) => ({ ...c, displayOrder: c.displayOrder ?? idx + 1 }))
+    };
+    this.setItem('footer_config', updatedConfig);
+    this.syncFirestoreDoc('footer_config', 'main_footer', updatedConfig);
     this.logAudit(user || null, 'SETTINGS_UPDATED', 'FooterNavigation', 'main_footer', 'Updated footer navigation columns and links structure');
   }
 
-  public getFooterColumns(): FooterMenuColumn[] {
+  public publishFooterConfig(columns: FooterMenuColumn[], user?: User | null): void {
+    const prev = this.getFooterConfig();
+    const cleanCols = columns.map((c, idx) => ({
+      ...c,
+      displayOrder: idx + 1,
+      updatedAt: new Date().toISOString()
+    }));
+    const newConfig: FooterConfig = {
+      ...prev,
+      columns: cleanCols,
+      draftColumns: undefined,
+      status: 'PUBLISHED',
+      lastPublishedAt: new Date().toISOString(),
+      lastPublishedBy: user?.name || user?.email || 'Administrator'
+    };
+    this.setItem('footer_config', newConfig);
+    this.syncFirestoreDoc('footer_config', 'main_footer', newConfig);
+    this.logAudit(
+      user || null,
+      'SETTINGS_UPDATED',
+      'FooterNavigation',
+      'main_footer',
+      `Published Footer Navigation with ${cleanCols.length} columns and ${cleanCols.reduce((acc, c) => acc + (c.links?.length || 0), 0)} links.`,
+      `Previous columns: ${prev.columns.length}`,
+      `Published columns: ${cleanCols.length}`
+    );
+  }
+
+  public saveFooterDraft(draftColumns: FooterMenuColumn[], user?: User | null): void {
+    const prev = this.getFooterConfig();
+    const cleanCols = draftColumns.map((c, idx) => ({
+      ...c,
+      displayOrder: idx + 1,
+      updatedAt: new Date().toISOString()
+    }));
+    const newConfig: FooterConfig = {
+      ...prev,
+      draftColumns: cleanCols,
+      status: 'DRAFT_PENDING'
+    };
+    this.setItem('footer_config', newConfig);
+    this.syncFirestoreDoc('footer_config', 'main_footer', newConfig);
+    this.logAudit(
+      user || null,
+      'SETTINGS_UPDATED',
+      'FooterNavigation',
+      'main_footer',
+      `Saved Footer Navigation draft with ${cleanCols.length} columns.`
+    );
+  }
+
+  public getFooterColumns(includeDraft: boolean = false): FooterMenuColumn[] {
     const config = this.getFooterConfig();
+    if (includeDraft && config.draftColumns && config.draftColumns.length > 0) {
+      return config.draftColumns;
+    }
     return config.columns || [];
   }
 
@@ -4655,10 +5599,37 @@ export class AppDatabase {
     const config = this.getFooterConfig();
     const cols = config.columns ? [...config.columns] : [];
     const index = cols.findIndex(c => c.id === column.id);
+    const now = new Date().toISOString();
+    const colToSave: FooterMenuColumn = {
+      ...column,
+      updatedAt: now,
+      createdAt: column.createdAt || now,
+      status: column.status || 'ACTIVE',
+      isVisible: column.isVisible ?? true
+    };
+
     if (index >= 0) {
-      cols[index] = column;
+      const prevTitle = cols[index].title;
+      cols[index] = colToSave;
+      this.logAudit(
+        user || null,
+        'SETTINGS_UPDATED',
+        'FooterColumn',
+        column.id,
+        `Updated footer column "${column.title}" (order ${column.displayOrder})`,
+        prevTitle,
+        column.title
+      );
     } else {
-      cols.push(column);
+      colToSave.displayOrder = colToSave.displayOrder || cols.length + 1;
+      cols.push(colToSave);
+      this.logAudit(
+        user || null,
+        'SETTINGS_UPDATED',
+        'FooterColumn',
+        column.id,
+        `Created footer column "${column.title}"`
+      );
     }
     config.columns = cols;
     this.saveFooterConfig(config, user);
@@ -4667,15 +5638,195 @@ export class AppDatabase {
   public deleteFooterColumn(columnId: string, user?: User | null): void {
     const config = this.getFooterConfig();
     if (config.columns) {
+      const target = config.columns.find(c => c.id === columnId);
       config.columns = config.columns.filter(c => c.id !== columnId);
+      // Re-index display orders
+      config.columns = config.columns.map((c, idx) => ({ ...c, displayOrder: idx + 1 }));
+      if (config.draftColumns) {
+        config.draftColumns = config.draftColumns.filter(c => c.id !== columnId).map((c, idx) => ({ ...c, displayOrder: idx + 1 }));
+      }
       this.saveFooterConfig(config, user);
+      this.logAudit(
+        user || null,
+        'SETTINGS_UPDATED',
+        'FooterColumn',
+        columnId,
+        `Deleted footer column: "${target?.title || columnId}" (${target?.links?.length || 0} links removed from footer navigation)`
+      );
     }
   }
 
   public updateFooterColumns(columns: FooterMenuColumn[], user?: User | null): void {
     const config = this.getFooterConfig();
-    config.columns = columns;
+    config.columns = columns.map((c, idx) => ({ ...c, displayOrder: idx + 1 }));
     this.saveFooterConfig(config, user);
+    this.logAudit(
+      user || null,
+      'SETTINGS_UPDATED',
+      'FooterNavigation',
+      'columns_order',
+      `Reordered footer columns sequence (${columns.length} columns active)`
+    );
+  }
+
+  public addFooterLink(columnId: string, link: FooterMenuLink, user?: User | null): void {
+    const config = this.getFooterConfig();
+    const cols = config.columns ? [...config.columns] : [];
+    const colIndex = cols.findIndex(c => c.id === columnId);
+    if (colIndex >= 0) {
+      const col = cols[colIndex];
+      const links = col.links ? [...col.links] : [];
+      const newLink: FooterMenuLink = {
+        ...link,
+        id: link.id || `link-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        displayOrder: link.displayOrder || links.length + 1,
+        status: link.status || 'ACTIVE',
+        openIn: link.openIn || '_self',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      links.push(newLink);
+      cols[colIndex] = { ...col, links };
+      config.columns = cols;
+      this.saveFooterConfig(config, user);
+      this.logAudit(
+        user || null,
+        'SETTINGS_UPDATED',
+        'FooterLink',
+        newLink.id,
+        `Added footer link "${newLink.label}" to column "${col.title}" (target: ${newLink.targetId || newLink.url})`
+      );
+    }
+  }
+
+  public updateFooterLink(columnId: string, link: FooterMenuLink, user?: User | null): void {
+    const config = this.getFooterConfig();
+    const cols = config.columns ? [...config.columns] : [];
+    const colIndex = cols.findIndex(c => c.id === columnId);
+    if (colIndex >= 0) {
+      const col = cols[colIndex];
+      const links = col.links ? [...col.links] : [];
+      const lIdx = links.findIndex(l => l.id === link.id);
+      if (lIdx >= 0) {
+        const prevLabel = links[lIdx].label;
+        links[lIdx] = {
+          ...links[lIdx],
+          ...link,
+          updatedAt: new Date().toISOString()
+        };
+        cols[colIndex] = { ...col, links };
+        config.columns = cols;
+        this.saveFooterConfig(config, user);
+        this.logAudit(
+          user || null,
+          'SETTINGS_UPDATED',
+          'FooterLink',
+          link.id,
+          `Updated footer link in column "${col.title}": "${prevLabel}" -> "${link.label}"`
+        );
+      }
+    }
+  }
+
+  public deleteFooterLink(columnId: string, linkId: string, user?: User | null): void {
+    const config = this.getFooterConfig();
+    const cols = config.columns ? [...config.columns] : [];
+    const colIndex = cols.findIndex(c => c.id === columnId);
+    if (colIndex >= 0) {
+      const col = cols[colIndex];
+      const targetLink = col.links?.find(l => l.id === linkId);
+      const links = (col.links || []).filter(l => l.id !== linkId).map((l, idx) => ({ ...l, displayOrder: idx + 1 }));
+      cols[colIndex] = { ...col, links };
+      config.columns = cols;
+      this.saveFooterConfig(config, user);
+      this.logAudit(
+        user || null,
+        'SETTINGS_UPDATED',
+        'FooterLink',
+        linkId,
+        `Deleted footer link "${targetLink?.label || linkId}" from column "${col.title}" (underlying page preserved)`
+      );
+    }
+  }
+
+  public validateFooterNavigation(): {
+    totalChecked: number;
+    brokenCount: number;
+    issues: { columnId: string; columnTitle: string; linkId: string; linkLabel: string; reason: string; severity: 'ERROR' | 'WARN' }[];
+  } {
+    const config = this.getFooterConfig();
+    const customPages = this.getCustomPages();
+    const destinations = this.getDestinations();
+    const issues: { columnId: string; columnTitle: string; linkId: string; linkLabel: string; reason: string; severity: 'ERROR' | 'WARN' }[] = [];
+    let totalChecked = 0;
+
+    (config.columns || []).forEach(col => {
+      (col.links || []).forEach(link => {
+        totalChecked++;
+        if (link.type === 'CUSTOM_PAGE') {
+          const page = customPages.find(p => p.slug === link.targetId || p.id === link.targetId);
+          if (!page) {
+            issues.push({
+              columnId: col.id,
+              columnTitle: col.title,
+              linkId: link.id,
+              linkLabel: link.label,
+              reason: `Linked CMS page "${link.targetId}" does not exist in the database.`,
+              severity: 'ERROR'
+            });
+          } else if (!page.isPublished) {
+            issues.push({
+              columnId: col.id,
+              columnTitle: col.title,
+              linkId: link.id,
+              linkLabel: link.label,
+              reason: `Linked CMS page "${page.title}" is currently unpublished / draft.`,
+              severity: 'WARN'
+            });
+          }
+        } else if (link.type === 'DESTINATION') {
+          if (link.targetId !== 'all') {
+            const dest = destinations.find(d => d.slug === link.targetId || d.id === link.targetId);
+            if (!dest) {
+              issues.push({
+                columnId: col.id,
+                columnTitle: col.title,
+                linkId: link.id,
+                linkLabel: link.label,
+                reason: `Linked destination "${link.targetId}" is not found.`,
+                severity: 'ERROR'
+              });
+            } else if (dest.status === 'COMING_SOON') {
+              issues.push({
+                columnId: col.id,
+                columnTitle: col.title,
+                linkId: link.id,
+                linkLabel: link.label,
+                reason: `Linked destination "${dest.name}" is marked Coming Soon (not active yet).`,
+                severity: 'WARN'
+              });
+            }
+          }
+        } else if (link.type === 'EXTERNAL_LINK' || link.type === 'CUSTOM_LINK') {
+          if (!link.url || link.url === '#' || link.url.trim() === '') {
+            issues.push({
+              columnId: col.id,
+              columnTitle: col.title,
+              linkId: link.id,
+              linkLabel: link.label,
+              reason: 'Empty URL destination configured for custom/external link.',
+              severity: 'ERROR'
+            });
+          }
+        }
+      });
+    });
+
+    return {
+      totalChecked,
+      brokenCount: issues.length,
+      issues
+    };
   }
 
   // ==========================================
@@ -4781,27 +5932,137 @@ export class AppDatabase {
     }
   }
 
-  // ==========================================
-  // MARKETING PROMOTIONS VIEWS & CLICKS
-  // ==========================================
-  public recordPromotionView(promoId: string): void {
-    const promos = this.getPromotions();
-    const promo = promos.find(p => p.id === promoId);
-    if (promo) {
-      promo.impressions = (promo.impressions || 0) + 1;
-      this.setItem('promotions', promos);
-      this.syncFirestoreDoc('promotions', promoId, { impressions: promo.impressions });
+  // SLA AUTOMATION RULES
+  public getSLAAutomationRules(): SLAAutomationRule[] {
+    const existing = this.getItem<SLAAutomationRule[]>('sla_automation_rules', []);
+    if (existing && existing.length > 0) {
+      return existing;
     }
+    return INITIAL_SLA_AUTOMATION_RULES;
   }
 
-  public recordPromotionClick(promoId: string): void {
-    const promos = this.getPromotions();
-    const promo = promos.find(p => p.id === promoId);
-    if (promo) {
-      promo.clicks = (promo.clicks || 0) + 1;
-      this.setItem('promotions', promos);
-      this.syncFirestoreDoc('promotions', promoId, { clicks: promo.clicks });
+  public initDefaultSLAAutomationRules(): SLAAutomationRule[] {
+    this.setItem('sla_automation_rules', INITIAL_SLA_AUTOMATION_RULES);
+    INITIAL_SLA_AUTOMATION_RULES.forEach(r => this.syncFirestoreDoc('sla_automation_rules', r.id, r));
+    return INITIAL_SLA_AUTOMATION_RULES;
+  }
+
+  public saveSLAAutomationRule(rule: SLAAutomationRule, user?: User | null): SLAAutomationRule {
+    const rules = this.getSLAAutomationRules();
+    const index = rules.findIndex(r => r.id === rule.id);
+    const now = new Date().toISOString();
+    let saved: SLAAutomationRule;
+
+    if (index >= 0) {
+      saved = { ...rule, updatedAt: now };
+      rules[index] = saved;
+    } else {
+      saved = { ...rule, id: rule.id || `rule-${Date.now()}`, updatedAt: now };
+      rules.push(saved);
     }
+
+    this.setItem('sla_automation_rules', rules);
+    this.syncFirestoreDoc('sla_automation_rules', saved.id, saved);
+    this.logAudit(user || null, 'SETTINGS_UPDATED', 'SLAAutomationRule', saved.id, `Configured SLA Rule: "${saved.ruleName}" (${saved.slaHours}h SLA, ${saved.isEnabled ? 'Enabled' : 'Disabled'})`);
+    return saved;
+  }
+
+  // SLA AUDIT LOGS
+  public getSLAAutomationAuditLogs(): SLAAutomationAuditLog[] {
+    return this.getItem<SLAAutomationAuditLog[]>('sla_automation_audit_logs', []);
+  }
+
+  public saveSLAAutomationAuditLog(log: SLAAutomationAuditLog): SLAAutomationAuditLog {
+    const logs = this.getSLAAutomationAuditLogs();
+    logs.unshift(log);
+    if (logs.length > 200) {
+      logs.length = 200; // retain most recent 200 logs
+    }
+    this.setItem('sla_automation_audit_logs', logs);
+    this.syncFirestoreDoc('sla_automation_audit_logs', log.id, log);
+    return log;
+  }
+
+  // ==========================================
+  // MARKETING CAMPAIGN EVENTS & REAL-TIME TRACKING
+  // ==========================================
+  public getCurrentUser(): User | null {
+    try {
+      if (typeof window !== 'undefined') {
+        const raw = localStorage.getItem('theunbound_auth_user');
+        if (raw) return JSON.parse(raw);
+      }
+    } catch {}
+    return null;
+  }
+
+  public getCampaignEvents(): CampaignEvent[] {
+    return this.getItem<CampaignEvent[]>('campaign_events', []);
+  }
+
+  public getCampaignEventsForCampaign(campaignId: string): CampaignEvent[] {
+    return this.getCampaignEvents().filter(e => e.campaignId === campaignId);
+  }
+
+  public recordCampaignEvent(eventData: Omit<CampaignEvent, 'id' | 'timestamp'> & { id?: string; timestamp?: string }): CampaignEvent {
+    const events = this.getCampaignEvents();
+    const newEvent: CampaignEvent = {
+      id: eventData.id || `cevent-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      timestamp: eventData.timestamp || new Date().toISOString(),
+      ...eventData
+    };
+
+    // Prepend event, capped at 5000 in storage for high performance
+    events.unshift(newEvent);
+    if (events.length > 5000) {
+      events.length = 5000;
+    }
+    this.setItem('campaign_events', events);
+    this.syncFirestoreDoc('campaign_events', newEvent.id, newEvent);
+
+    // Update the live aggregate counters on the promotion record
+    const promos = this.getPromotions();
+    const promo = promos.find(p => p.id === newEvent.campaignId);
+    if (promo) {
+      if (newEvent.eventType === 'VIEW') {
+        promo.viewCount = (promo.viewCount || 0) + 1;
+        promo.impressions = promo.viewCount;
+      } else if (newEvent.eventType === 'CLICK') {
+        promo.clickCount = (promo.clickCount || 0) + 1;
+        promo.clicks = promo.clickCount;
+      }
+      promo.updatedAt = new Date().toISOString();
+      this.setItem('promotions', promos);
+      this.syncFirestoreDoc('promotions', promo.id, promo);
+    }
+
+    return newEvent;
+  }
+
+  public recordPromotionView(promoId: string, placement: string = 'BANNER', sessionId?: string): void {
+    const promo = this.getPromotions().find(p => p.id === promoId);
+    if (!promo) return;
+    this.recordCampaignEvent({
+      campaignId: promoId,
+      eventType: 'VIEW',
+      placement: placement || promo.displayPlacement || 'BANNER',
+      sessionId: sessionId || `sess_${Date.now().toString(36)}`,
+      destinationId: promo.destinationId
+    });
+  }
+
+  public recordPromotionClick(promoId: string, placement: string = 'BANNER', ctaId: string = 'cta_click', ctaText?: string, sessionId?: string): void {
+    const promo = this.getPromotions().find(p => p.id === promoId);
+    if (!promo) return;
+    this.recordCampaignEvent({
+      campaignId: promoId,
+      eventType: 'CLICK',
+      placement: placement || promo.displayPlacement || 'BANNER',
+      ctaId,
+      ctaText: ctaText || promo.ctaText || 'Claim Deal',
+      sessionId: sessionId || `sess_${Date.now().toString(36)}`,
+      destinationId: promo.destinationId
+    });
   }
 
   // ==========================================

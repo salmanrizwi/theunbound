@@ -331,13 +331,13 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
         {
           id: 'NOTIFICATIONS_MANAGEMENT',
           partNumber: 10,
-          label: 'Notifications & Tasks',
+          label: 'Calendar & Ground SLAs',
           icon: Bell,
           badge: `${pendingTasks > 0 ? pendingTasks + ' Tasks' : 'SLAs'}`,
           alertCount: pendingTasks,
-          description: 'Google Calendar Task SLA automation, 12h booking confirmation alerts, and quote follow-up triggers.',
+          description: 'Google Calendar Task SLA automation, 12h booking confirmation alerts, and 24h quote follow-up triggers.',
           subTabs: [
-            { id: 'TASKS', label: 'Google Calendar & Ground SLAs', icon: Bell }
+            { id: 'TASKS', label: 'Calendar & Ground SLAs', icon: Bell }
           ]
         },
         {

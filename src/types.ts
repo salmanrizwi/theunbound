@@ -133,6 +133,7 @@ export interface User {
   bio?: string;
   emergencyContactPerson?: string;
   emergencyContactPhone?: string;
+  phone?: string;
   createdAt: string;
   approvalStatus?: UserApprovalStatus;
   permissions?: UserPermissionAccess;
@@ -870,12 +871,86 @@ export interface AvailabilityCheckResult {
 }
 
 // ----------------------------------------------------
-// PROMOTIONS & MARKETING CAMPAIGNS
+// PROMOTIONS & MARKETING CAMPAIGNS & REAL-TIME ANALYTICS
 // ----------------------------------------------------
 export type PromotionDiscountType = 'PERCENTAGE' | 'FIXED';
 export type PromotionAudience = 'ALL' | 'BUYER' | 'B2B_AGENT';
 export type PromotionPlacement = 'BANNER' | 'MODAL' | 'SLIDER' | 'PRODUCT_PAGE' | 'DESTINATION_PAGE' | 'PROMO_SECTION';
 export type PromotionFrequency = 'ONCE_PER_SESSION' | 'ONCE_PER_DAY' | 'ALWAYS';
+
+export type CampaignStatus = 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'ARCHIVED';
+
+export type CampaignEventType = 'VIEW' | 'CLICK' | 'PRODUCT_VIEW' | 'QUOTE_CREATED' | 'BOOKING_CREATED';
+
+export interface CampaignEvent {
+  id: string;
+  campaignId: string;
+  eventType: CampaignEventType;
+  placement: PromotionPlacement | string;
+  ctaId?: string;
+  ctaText?: string;
+  timestamp: string; // ISO 8601
+  sessionId: string; // Anonymous browser session identifier
+  userId?: string;
+  destinationId?: string;
+  productId?: string;
+  packageId?: string;
+  quotationId?: string;
+  bookingId?: string;
+  bookingValue?: number;
+  currency?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface CampaignPlacementStats {
+  placement: string;
+  views: number;
+  uniqueViews: number;
+  clicks: number;
+  uniqueClicks: number;
+  ctr: number | null;
+}
+
+export interface CampaignCTAStats {
+  ctaId: string;
+  ctaText: string;
+  clicks: number;
+  uniqueClicks: number;
+}
+
+export interface CampaignDailyTrend {
+  date: string; // YYYY-MM-DD
+  views: number;
+  uniqueViews: number;
+  clicks: number;
+  uniqueClicks: number;
+  ctr: number | null;
+  quotes: number;
+  bookings: number;
+  revenue: number;
+}
+
+export interface CampaignAnalyticsSummary {
+  campaignId: string;
+  campaignTitle: string;
+  status: CampaignStatus;
+  startDate: string;
+  endDate: string;
+  views: number;
+  uniqueViews: number;
+  clicks: number;
+  uniqueClicks: number;
+  ctr: number | null; // null if views === 0
+  quotesCount: number;
+  bookingsCount: number;
+  conversionRate: number | null; // null if clicks === 0 (or bookings / clicks * 100)
+  revenueAttributed: number;
+  placementsBreakdown: CampaignPlacementStats[];
+  ctaBreakdown: CampaignCTAStats[];
+  dailyTrends: CampaignDailyTrend[];
+}
+
+export type CampaignDateFilter = 'TODAY' | 'YESTERDAY' | 'LAST_7_DAYS' | 'LAST_30_DAYS' | 'THIS_MONTH' | 'PREVIOUS_MONTH' | 'CUSTOM';
 
 export interface Promotion {
   id: string;
@@ -900,11 +975,15 @@ export interface Promotion {
   applicableProductIds: string[]; // empty array = all
   applyToAllProducts: boolean;
   
-  // Lifecycle
+  // Lifecycle & Status
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
   priority: number; // 1 (highest) to 10
+  status?: CampaignStatus; // 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'ARCHIVED'
   isActive: boolean;
+  isArchived?: boolean;
+  
+  // Aggregated Real-time counters (synced from actual campaign_events)
   viewCount?: number;
   clickCount?: number;
   impressions?: number;
@@ -948,19 +1027,28 @@ export interface BlogArticle {
 }
 
 // ----------------------------------------------------
-// GOOGLE REVIEWS INTEGRATION
+// GOOGLE REVIEWS & GOOGLE BUSINESS PROFILE INTEGRATION
 // ----------------------------------------------------
 export interface GoogleReview {
   id: string;
+  googleReviewId?: string;
+  googleAccountId?: string;
+  googleLocationId?: string;
+  placeId?: string;
+  businessName?: string;
   authorName: string;
   authorAvatar?: string;
+  isAnonymous?: boolean;
   rating: number; // 1 to 5
   reviewText: string;
   date: string;
+  reviewCreatedAt?: string;
+  reviewUpdatedAt?: string;
   relativeTimeDescription?: string;
   destination?: string;
   locationName?: string;
   source: 'GOOGLE_BUSINESS' | 'TRIPADVISOR' | 'DIRECT_B2B_PARTNER';
+  sourceUrl?: string;
   verifiedPartner: boolean;
   isFeatured: boolean;
   isVisible: boolean;
@@ -969,7 +1057,88 @@ export interface GoogleReview {
   responseFromOwner?: {
     text: string;
     date: string;
+    updateTime?: string;
   };
+  reviewReply?: string;
+  reviewReplyUrl?: string;
+  reviewMedia?: Array<{
+    photoUrl: string;
+    thumbnailUrl?: string;
+  }>;
+  fetchedAt?: string;
+  lastSyncedAt?: string;
+  status?: 'ACTIVE' | 'ARCHIVED' | 'PENDING_REVIEW';
+}
+
+export interface GoogleBusinessProfileConfig {
+  mapsUrl: string;
+  businessName: string;
+  googleAccountId: string | null;
+  googleLocationId: string | null;
+  placeId: string | null;
+  placesApiKey?: string | null;
+  formattedAddress?: string;
+  websiteUrl?: string;
+  isConnected: boolean;
+  lastSyncedAt: string | null;
+  lastVerifiedAt: string | null;
+  reviewsCount: number;
+  averageRating: number;
+  status: 'DISCONNECTED' | 'CONNECTED' | 'ACTION_REQUIRED' | 'ERROR';
+  lastError?: string | null;
+  errorDetails?: {
+    code: string | number;
+    message: string;
+    reason: string;
+    resolution: string;
+    rawError?: string;
+  } | null;
+  displaySettings: {
+    showOnHomepage: boolean;
+    minRating: number;
+    maxDisplayCount: number;
+    sortBy: 'LATEST' | 'HIGHEST_RATED' | 'FEATURED_FIRST';
+    autoSync: boolean;
+  };
+}
+
+export interface GoogleReviewSyncResult {
+  success: boolean;
+  retrievedCount: number;
+  newCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+  errorCount: number;
+  lastSyncedAt: string;
+  reviews: GoogleReview[];
+  errorMessage?: string;
+  errorDetails?: {
+    code: string | number;
+    message: string;
+    reason: string;
+    resolution: string;
+  };
+}
+
+export interface GoogleBusinessVerificationStep {
+  id: string;
+  name: string;
+  status: 'PASS' | 'FAIL' | 'WARN' | 'PENDING';
+  message: string;
+  details?: string;
+}
+
+export interface GoogleBusinessVerificationReport {
+  timestamp: string;
+  isHealthy: boolean;
+  status: 'HEALTHY' | 'ACTION_REQUIRED' | 'FAILED';
+  steps: GoogleBusinessVerificationStep[];
+  accountId: string | null;
+  locationId: string | null;
+  placeId: string | null;
+  reviewsApiWorking: boolean;
+  errorMessage?: string;
+  recommendedAction?: string;
 }
 
 // ----------------------------------------------------
@@ -1070,18 +1239,37 @@ export type AuditAction =
   | 'INTEGRATION_SYNC_COMPLETED'
   | 'INTEGRATION_SYNC_FAILED'
   | 'INTEGRATION_SETTINGS_UPDATED'
+  | 'GBP_AUTH_CONNECTED'
+  | 'GBP_LOCATION_CONFIGURED'
+  | 'GBP_INTEGRATION_VERIFIED'
+  | 'GBP_SYNC_STARTED'
+  | 'GBP_SYNC_COMPLETED'
+  | 'GBP_SYNC_FAILED'
+  | 'GBP_DISCONNECTED'
+  | 'REVIEW_SYNC'
+  | 'REVIEW_CREATED'
+  | 'REVIEW_UPDATED'
+  | 'REVIEW_DELETED'
+  | 'REVIEW_VISIBILITY_CHANGED'
+  | 'REVIEW_FEATURED_CHANGED'
   | 'GMAIL_TEST_SENT'
   | 'GMAIL_DISPATCH_RETRY'
   | 'CALENDAR_EVENT_CREATED'
   | 'CALENDAR_SYNC_EXECUTED'
   | 'GOOGLE_SHEETS_SYNC'
   | 'GOOGLE_SHEETS_PULL'
-  // Pricing Actions
+  // Pricing & Promotion Actions
   | 'PRICE_CHANGED'
   | 'MARGIN_CHANGED'
   | 'PROMOTION_CREATED'
   | 'PROMOTION_UPDATED'
+  | 'PROMOTION_ACTIVATED'
+  | 'PROMOTION_PAUSED'
+  | 'PROMOTION_SCHEDULED'
+  | 'PROMOTION_ARCHIVED'
   | 'PROMOTION_DELETED'
+  | 'PROMOTION_TARGETING_CHANGED'
+  | 'PROMOTION_CTA_CHANGED'
   // Quote Actions
   | 'QUOTE_CREATED'
   | 'QUOTE_EDITED'
@@ -1288,6 +1476,14 @@ export interface GmailNotificationToggleConfig {
 
 export interface GoogleCalendarSyncConfig {
   calendarId: string;
+  apiKey?: string;
+  accessToken?: string;
+  clientId?: string;
+  clientSecret?: string;
+  serviceAccountEmail?: string;
+  authMode?: 'API_KEY' | 'OAUTH_POPUP' | 'ACCESS_TOKEN' | 'DEMO_SIMULATION';
+  accountEmail?: string;
+  defaultTimeZone?: string;
   syncBookings: boolean;
   syncTransfers: boolean;
   syncActivities: boolean;
@@ -1295,6 +1491,9 @@ export interface GoogleCalendarSyncConfig {
   syncDriverDuties: boolean;
   syncPaymentSlas: boolean;
   autoCreateAlerts: boolean;
+  enableTwoWaySync?: boolean;
+  lastVerifiedAt?: string;
+  lastVerifiedStatus?: 'CONNECTED' | 'DISCONNECTED' | 'ERROR';
 }
 
 export interface SheetsColumnMappingItem {
@@ -1616,16 +1815,192 @@ export interface GalleryImage {
 }
 
 // ----------------------------------------------------
-// INTERNAL COMPANY MANAGEMENT SYSTEM (LEADS & OPERATIONS)
+// INTERNAL COMPANY MANAGEMENT SYSTEM (LEADS & OPERATIONS & CRM)
 // ----------------------------------------------------
-export type LeadStatus = 'NEW' | 'CONTACTED' | 'QUALIFIED' | 'QUOTED' | 'FOLLOW_UP' | 'WON' | 'LOST';
-export type LeadSource = 'WEBSITE' | 'CONTACT_FORM' | 'PACKAGE_INQUIRY' | 'QUOTATION_SAVED' | 'PROPOSAL_DOWNLOADED' | 'MARKETING' | 'MANUAL_ENTRY' | 'REFERRAL' | 'B2B_PARTNER' | 'VISA_PAGE' | 'VISA_PORTAL';
+export type LeadStatus = 
+  | 'NEW' 
+  | 'CONTACTED' 
+  | 'QUALIFIED' 
+  | 'QUOTE_CREATED' 
+  | 'PROPOSAL_SAVED' 
+  | 'QUOTED' 
+  | 'QUOTE_DOWNLOADED' 
+  | 'FOLLOW_UP' 
+  | 'BOOKING_SUBMITTED' 
+  | 'CONFIRMED' 
+  | 'COMPLETED' 
+  | 'WON' 
+  | 'LOST' 
+  | 'ARCHIVED';
+
+export type LeadPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+
+export type LeadSource = 
+  | 'WEBSITE' 
+  | 'DESTINATION_PAGE'
+  | 'PRODUCT_PAGE'
+  | 'PACKAGE_INQUIRY' 
+  | 'PACKAGE_PAGE'
+  | 'QUOTATION_SAVED' 
+  | 'PROPOSAL_DOWNLOADED' 
+  | 'PROMOTION_DEAL'
+  | 'MARKETING_CAMPAIGN'
+  | 'MARKETING'
+  | 'CONTACT_FORM' 
+  | 'MANUAL_ENTRY' 
+  | 'REFERRAL' 
+  | 'B2B_PARTNER' 
+  | 'VISA_PAGE' 
+  | 'VISA_PORTAL'
+  | 'BOOKING_SUBMISSION'
+  | 'DIRECT';
 
 export interface LeadNote {
   id: string;
+  authorId?: string;
   authorName: string;
+  authorRole?: string;
   text: string;
   timestamp: string;
+  isInternal?: boolean;
+}
+
+export interface LeadProductItem {
+  id: string;
+  productId: string;
+  productName: string;
+  category: string;
+  destinationName: string;
+  regionName?: string;
+  city?: string;
+  hub?: string;
+  travelDate: string;
+  serviceTime?: string;
+  quantity: number;
+  adults: number;
+  children: number;
+  infants: number;
+  unitNetCost: number;
+  unitSellingPrice: number;
+  totalNetCost: number;
+  totalSellingPrice: number;
+  marginPercent?: number;
+  currency: CurrencyCode;
+  status: 'ACTIVE' | 'CONFIRMED' | 'CANCELLED' | 'REQUESTED';
+  selectedAddonNames?: string[];
+}
+
+export interface LeadQuoteSnapshot {
+  quoteId: string;
+  quoteNumber: string;
+  version: number;
+  quoteDate: string;
+  status: QuoteStatus;
+  totalNetCost: number;
+  marginAmount: number;
+  marginPercent: number;
+  taxAmount: number;
+  feesAmount: number;
+  finalSellingPrice: number;
+  currency: CurrencyCode;
+  buyerMarginPercent?: number;
+  b2bMarginPercent?: number;
+  customAccountMarginPercent?: number;
+  exchangeRateUsed?: number;
+  capacityTiersUsed?: string;
+  infantCostIncluded?: boolean;
+  itemsCount: number;
+}
+
+export interface LeadQuoteVersion {
+  version: number;
+  createdAt: string;
+  createdBy: string;
+  createdByUserType?: string;
+  totalItems: number;
+  totalNetCost: number;
+  totalSellingPrice: number;
+  marginPercent: number;
+  taxTotal: number;
+  currency: CurrencyCode;
+  changesSummary?: string;
+  pdfUrl?: string;
+}
+
+export interface LeadTimelineEvent {
+  id: string;
+  type: 
+    | 'VIEWED_PACKAGE' 
+    | 'ADDED_PRODUCT' 
+    | 'QUOTE_CREATED' 
+    | 'PROPOSAL_SAVED' 
+    | 'QUOTE_DOWNLOADED' 
+    | 'BOOKING_SUBMITTED' 
+    | 'BOOKING_CONFIRMED' 
+    | 'STATUS_CHANGED' 
+    | 'ASSIGNMENT_CHANGED' 
+    | 'PRIORITY_CHANGED'
+    | 'NOTE_ADDED' 
+    | 'FOLLOWUP_CREATED' 
+    | 'FOLLOWUP_COMPLETED' 
+    | 'EMAIL_SENT' 
+    | 'CAMPAIGN_CLICK'
+    | 'CUSTOM_ACTIVITY';
+  title: string;
+  description: string;
+  timestamp: string;
+  performedBy: string;
+  performedByUserType?: string;
+  quoteId?: string;
+  quoteNumber?: string;
+  bookingId?: string;
+  bookingReference?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface LeadFollowUpTask {
+  id: string;
+  calendarTaskId?: string;
+  taskType: 'QUOTE_FOLLOW_UP' | 'BOOKING_CONFIRMATION' | 'MANUAL_FOLLOW_UP' | 'PAYMENT_REMINDER' | 'CUSTOM';
+  title: string;
+  description: string;
+  assignedToName: string;
+  assignedToEmail: string;
+  assignedDepartment: 'SALES' | 'OPERATIONS' | 'MANAGEMENT';
+  createdAt: string;
+  dueAt: string;
+  slaHours: number;
+  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'OVERDUE' | 'CANCELLED';
+  googleCalendarId?: string;
+  googleCalendarEventId?: string;
+  googleCalendarLink?: string;
+  calendarSyncStatus?: 'SYNCED' | 'NOT_SYNCED' | 'FAILED';
+  completedAt?: string;
+  completedBy?: string;
+  priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+}
+
+export interface LeadDocument {
+  id: string;
+  type: 'QUOTE_PDF' | 'PROPOSAL_DOC' | 'BOOKING_VOUCHER' | 'INVOICE' | 'PASSPORT_DOC' | 'ITINERARY_SHEET' | 'CUSTOM';
+  title: string;
+  fileUrl?: string;
+  fileSize?: string;
+  createdAt: string;
+  createdBy: string;
+  quoteId?: string;
+  bookingId?: string;
+}
+
+export interface LeadAssignmentRecord {
+  id: string;
+  assignedStaffId: string;
+  assignedStaffName: string;
+  assignedStaffEmail?: string;
+  assignedDepartment?: string;
+  assignedBy: string;
+  assignedAt: string;
+  notes?: string;
 }
 
 export interface TravelLead {
@@ -1634,26 +2009,99 @@ export interface TravelLead {
   contactName: string;
   email: string;
   phone: string;
+  country?: string;
   agencyName?: string;
+  companyName?: string;
+
+  // User & Account attribution
+  userId?: string;
+  userType?: 'BUYER' | 'B2B_AGENT' | 'PUBLIC' | 'DMC_STAFF' | 'ADMIN';
+  b2bAgentId?: string;
+  accountApprovalStatus?: string;
+
+  // Source & Marketing Attribution
   source: LeadSource;
+  campaignId?: string;
+  campaignName?: string;
+  campaignSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+
+  // Status & Priority
   status: LeadStatus;
+  priority?: LeadPriority;
+  conversionStatus?: 'IN_PROGRESS' | 'CONVERTED' | 'LOST' | 'ARCHIVED';
+
+  // Staff Assignment
   assignedStaffId: string;
   assignedStaffName: string;
+  assignedStaffEmail?: string;
+  assignedDepartment?: 'SALES' | 'OPERATIONS' | 'MANAGEMENT';
+  assignmentHistory?: LeadAssignmentRecord[];
+
+  // Destination & Travel Requirements
   destinationId: string;
   destinationName: string;
+  regionName?: string;
+  cities?: string[];
+  destinationHubs?: string[];
   travelDates: string;
+  travelStartDate?: string;
+  travelEndDate?: string;
+  numberOfNights?: number;
   paxAdults: number;
   paxChildren: number;
-  estimatedBudget: number;
-  currency: CurrencyCode;
+  paxInfants?: number;
+  totalPassengers?: number;
+  roomsCount?: number;
+  roomOccupancy?: string;
+  mealPlan?: string;
+  hotelPreferences?: string;
+  transportPreferences?: string;
+  activityPreferences?: string;
+  specialRequests?: string;
+  additionalNotes?: string;
   travelRequirements: string;
-  notes: LeadNote[];
+
+  // Products Requested (Historical snapshot)
+  requestedProducts?: LeadProductItem[];
+
+  // Quotation snapshot & Version control
   quoteId?: string;
   quoteNumber?: string;
+  quoteIds?: string[];
+  quoteVersion?: number;
+  quoteSnapshot?: LeadQuoteSnapshot;
+  quoteVersions?: LeadQuoteVersion[];
+
+  // Booking linkage
   bookingId?: string;
   bookingReference?: string;
+  bookingIds?: string[];
+  bookingValue?: number;
+  bookingStatus?: BookingStatus;
+
+  // Activity Timeline
+  timeline?: LeadTimelineEvent[];
+
+  // Follow-ups & Calendar integration
+  followUps?: LeadFollowUpTask[];
+
+  // Internal Notes (protected)
+  notes: LeadNote[];
+
+  // Documents
+  documents?: LeadDocument[];
+
+  // Financial Overview
+  estimatedBudget: number;
+  currency: CurrencyCode;
+
+  // Timestamps
   createdAt: string;
   updatedAt: string;
+  lastActivityAt?: string;
+  lastActivitySummary?: string;
 }
 
 // ----------------------------------------------------
@@ -1964,17 +2412,28 @@ export interface FooterMenuLink {
   id: string;
   label: string;
   url: string;
-  type: 'DESTINATION' | 'CUSTOM_PAGE' | 'SYSTEM_VIEW' | 'EXTERNAL_LINK';
+  type: 'DESTINATION' | 'CUSTOM_PAGE' | 'SYSTEM_VIEW' | 'EXTERNAL_LINK' | 'CUSTOM_LINK';
   targetId?: string;
   displayOrder: number;
+  status?: 'ACTIVE' | 'INACTIVE';
+  openIn?: '_self' | '_blank';
+  description?: string;
+  badge?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface FooterMenuColumn {
   id: string;
   title: string;
   displayOrder: number;
+  status?: 'ACTIVE' | 'INACTIVE' | 'DRAFT';
+  isVisible?: boolean;
+  description?: string;
   links?: FooterMenuLink[];
   items?: MenuItemConfig[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface FooterConfig {
@@ -1983,6 +2442,10 @@ export interface FooterConfig {
   showSocialLinks: boolean;
   socialLinks: { platform: string; url: string }[];
   columns: FooterMenuColumn[];
+  draftColumns?: FooterMenuColumn[];
+  status?: 'PUBLISHED' | 'DRAFT_PENDING';
+  lastPublishedAt?: string;
+  lastPublishedBy?: string;
 }
 
 // ----------------------------------------------------
@@ -2066,26 +2529,158 @@ export interface UserTelemetrySummary {
 // ----------------------------------------------------
 // GOOGLE CALENDAR TASK & GROUND SLA AUTOMATION
 // ----------------------------------------------------
+export type SLATaskType = 
+  | 'BOOKING_CONFIRMATION'
+  | 'QUOTE_FOLLOW_UP'
+  | 'HOTEL_CONFIRMATION'
+  | 'ACTIVITY_CONFIRMATION'
+  | 'TRANSFER_CONFIRMATION'
+  | 'TRANSPORT_ASSIGNMENT'
+  | 'DRIVER_ASSIGNMENT'
+  | 'GUIDE_ASSIGNMENT'
+  | 'RESTAURANT_CONFIRMATION'
+  | 'RAIL_CONFIRMATION'
+  | 'TICKET_CONFIRMATION'
+  | 'YACHT_CONFIRMATION'
+  | 'SUPPLIER_FOLLOW_UP'
+  | 'CUSTOM';
+
+export type SLAStatus = 
+  | 'WITHIN_SLA'
+  | 'APPROACHING_DEADLINE'
+  | 'SLA_BREACHED'
+  | 'COMPLETED_ON_TIME'
+  | 'COMPLETED_BREACHED';
+
+export type TaskStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'OVERDUE' | 'CANCELLED';
+
+export interface CalendarReminderOption {
+  method: 'popup' | 'email';
+  minutesBefore: number;
+}
+
 export interface CalendarTask {
   id: string;
+  automationId?: string;
+  taskType?: SLATaskType;
   title: string;
   description: string;
   assignedToEmail: string;
   assignedToName: string;
-  category: 'CLIENT_FOLLOW_UP' | 'GROUND_DISPATCH' | 'SUPPLIER_CUTOFF' | 'PAYMENT_REMINDER' | 'VIP_ARRIVAL' | 'VISA_SUBMISSION';
+  assignedDepartment?: 'OPERATIONS' | 'SALES' | 'GROUND_OPS' | 'FINANCE';
+  category: 'CLIENT_FOLLOW_UP' | 'GROUND_DISPATCH' | 'SUPPLIER_CUTOFF' | 'PAYMENT_REMINDER' | 'VIP_ARRIVAL' | 'VISA_SUBMISSION' | 'OPERATIONS_SLA';
+  
+  // Timestamps & SLA
+  generatedAt?: string; // ISO 8601
+  dueAt?: string; // ISO 8601 = generatedAt + slaHours
+  slaHours?: number;
+  slaStatus?: SLAStatus;
+  
+  // Date/Time fields for Calendar
   startDate: string; // YYYY-MM-DD
   startTime: string; // HH:mm
   endDate?: string;
   endTime?: string;
+  
+  // Relations
+  bookingId?: string;
   bookingReference?: string;
+  quoteId?: string;
+  quoteNumber?: string;
   leadNumber?: string;
+  leadId?: string;
+  customerName?: string;
+  customerEmail?: string;
+  destination?: string;
+  travelDate?: string;
+  bookingType?: string;
+  supplierName?: string;
+  quoteValue?: number;
+  currency?: string;
+  requiredAction?: string;
+  cmsLink?: string;
+  
+  // Google Calendar Sync
+  googleCalendarId?: string;
   googleCalendarEventId?: string;
   googleCalendarLink?: string;
   isSyncedToGoogleCalendar: boolean;
-  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  calendarSyncStatus?: 'SYNCED' | 'FAILED' | 'NOT_SYNCED' | 'PENDING_RETRY';
+  syncError?: string;
+  syncRetries?: number;
+  reminders?: CalendarReminderOption[];
+  
+  // State
+  status: TaskStatus;
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+  completedAt?: string;
+  completedBy?: string;
+  notes?: string;
+  
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SLAAutomationRule {
+  id: string;
+  ruleName: string;
+  triggerEvent: 
+    | 'BOOKING_CONFIRMED'
+    | 'QUOTE_PDF_DOWNLOADED'
+    | 'GROUND_HOTEL_BOOKED'
+    | 'GROUND_TRANSFER_BOOKED'
+    | 'GROUND_ACTIVITY_BOOKED'
+    | 'GROUND_GUIDE_REQUESTED'
+    | 'GROUND_TRANSPORT_REQUESTED'
+    | 'GROUND_DRIVER_REQUESTED'
+    | 'GROUND_RESTAURANT_BOOKED'
+    | 'GROUND_RAIL_BOOKED'
+    | 'GROUND_TICKET_BOOKED'
+    | 'GROUND_YACHT_BOOKED'
+    | 'SUPPLIER_FOLLOWUP_REQUIRED'
+    | 'CUSTOM';
+  taskType: SLATaskType;
+  isEnabled: boolean;
+  slaHours: number; // e.g. 12 or 24 or 6
+  defaultAssignee: {
+    type: 'DEPARTMENT' | 'ROLE' | 'SPECIFIC_USER';
+    name: string;
+    email: string;
+    department?: 'OPERATIONS' | 'SALES' | 'GROUND_OPS' | 'FINANCE';
+    role?: string;
+  };
+  department: 'OPERATIONS' | 'SALES' | 'GROUND_OPS' | 'FINANCE';
+  titleTemplate: string;
+  calendarId: string; // 'primary' or custom Google Calendar ID
+  reminders: CalendarReminderOption[];
+  applicableDestinations?: string[]; // Empty means all
+  applicableProductTypes?: string[]; // Empty means all
+  descriptionTemplate?: string;
+  updatedAt: string;
+}
+
+export interface SLAAutomationAuditLog {
+  id: string;
+  triggerEvent: string;
+  automationRuleId: string;
+  automationRuleName: string;
+  taskType: string;
+  taskId: string;
+  bookingId?: string;
+  quoteId?: string;
+  assignedUser: string;
+  assignedEmail: string;
+  googleCalendarId: string;
+  googleCalendarEventId?: string;
+  createdAt: string;
+  slaDeadline: string;
+  completionTime?: string;
+  slaStatus: SLAStatus | string;
+  calendarSyncStatus: 'SUCCESS' | 'FAILED' | 'SKIPPED';
+  error?: string;
+  retries: number;
+  action: string;
+  performedBy?: string;
 }
 
 // ----------------------------------------------------

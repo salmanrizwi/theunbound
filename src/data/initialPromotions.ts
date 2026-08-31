@@ -24,9 +24,10 @@ export const INITIAL_PROMOTIONS: Promotion[] = [
     startDate: '2026-01-01',
     endDate: '2027-04-30',
     priority: 1,
+    status: 'ACTIVE',
     isActive: true,
-    viewCount: 1420,
-    clickCount: 284,
+    viewCount: 0,
+    clickCount: 0,
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-02-15T00:00:00Z'
   },
@@ -52,9 +53,10 @@ export const INITIAL_PROMOTIONS: Promotion[] = [
     startDate: '2026-02-01',
     endDate: '2026-11-30',
     priority: 2,
+    status: 'ACTIVE',
     isActive: true,
-    viewCount: 890,
-    clickCount: 135,
+    viewCount: 0,
+    clickCount: 0,
     createdAt: '2026-02-01T00:00:00Z',
     updatedAt: '2026-02-18T00:00:00Z'
   },
@@ -80,9 +82,10 @@ export const INITIAL_PROMOTIONS: Promotion[] = [
     startDate: '2026-03-01',
     endDate: '2026-12-31',
     priority: 3,
+    status: 'ACTIVE',
     isActive: true,
-    viewCount: 650,
-    clickCount: 110,
+    viewCount: 0,
+    clickCount: 0,
     createdAt: '2026-03-01T00:00:00Z',
     updatedAt: '2026-03-10T00:00:00Z'
   }

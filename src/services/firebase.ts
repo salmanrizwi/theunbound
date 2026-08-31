@@ -19,8 +19,9 @@ const firebaseConfig = {
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
 // Initialize Firestore
-export const db = firebaseConfigJson.firestoreDatabaseId && firebaseConfigJson.firestoreDatabaseId !== '(default)'
-  ? getFirestore(app, firebaseConfigJson.firestoreDatabaseId)
+const customDatabaseId = (firebaseConfigJson as any).firestoreDatabaseId;
+export const db = customDatabaseId && customDatabaseId !== '(default)'
+  ? getFirestore(app, customDatabaseId)
   : getFirestore(app);
 
 // Initialize Auth

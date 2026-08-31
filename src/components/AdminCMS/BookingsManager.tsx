@@ -3,6 +3,7 @@ import { Booking, BookingStatus, BookingItem, BookingSupplierAllocation } from '
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { formatCurrency } from '../../services/pricingEngine';
+import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { 
   Calendar, 
   Clock, 
@@ -58,6 +59,24 @@ export const BookingsManager: React.FC = () => {
     if (selectedBooking && selectedBooking.id === bookingId) {
       setSelectedBooking(prev => prev ? { ...prev, status: newStatus } : null);
     }
+
+    // Two-way synchronization: If booking is confirmed or cancelled, update internal SLA task & Google Calendar
+    try {
+      const activeTask = googleCalendarAutomation.findActiveTaskByRelationship({
+        bookingId,
+        taskType: 'BOOKING_CONFIRMATION'
+      });
+      if (activeTask) {
+        if (newStatus === 'CONFIRMED') {
+          googleCalendarAutomation.updateTaskStatus(activeTask.id, 'COMPLETED', user);
+        } else if (newStatus === 'CANCELLED') {
+          googleCalendarAutomation.updateTaskStatus(activeTask.id, 'CANCELLED', user);
+        }
+      }
+    } catch (e) {
+      console.debug('SLA status sync error:', e);
+    }
+
     setTimeout(() => setIsUpdatingStatus(false), 300);
   };
 

@@ -3,7 +3,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { QuotationProvider, useQuotation } from './context/QuotationContext';
 import { RosterProvider } from './context/RosterContext';
 import { AppDatabase } from './services/db';
-import { Product, Destination, Quotation, Booking, Hotel } from './types';
+import { Product, Destination, Quotation, Booking, Hotel, FooterConfig } from './types';
 import { Navbar, MainNavTab } from './components/Navbar';
 import { DestinationPage } from './pages/DestinationPage';
 import { B2BQuotationBuilderPage } from './pages/B2BQuotationBuilderPage';
@@ -41,7 +41,8 @@ import {
   Lock, 
   RotateCcw,
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  ExternalLink
 } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
@@ -58,6 +59,7 @@ const MainAppContent: React.FC = () => {
   const [destinations, setDestinations] = useState<Destination[]>(() => db.getDestinations());
   const [products, setProducts] = useState<Product[]>(() => db.getProducts());
   const [hotels, setHotels] = useState<Hotel[]>(() => db.getHotels());
+  const [footerConfig, setFooterConfig] = useState<FooterConfig>(() => db.getFooterConfig());
   const [isAgentPreviewingBuyerMode, setIsAgentPreviewingBuyerMode] = useState(false);
 
   const isB2BAgent = isAuthenticated && (role === 'B2B_AGENT' || role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF');
@@ -74,6 +76,7 @@ const MainAppContent: React.FC = () => {
       setDestinations(db.getDestinations());
       setProducts(db.getProducts());
       setHotels(db.getHotels());
+      setFooterConfig(db.getFooterConfig());
     });
   }, [db]);
 
@@ -269,7 +272,7 @@ const MainAppContent: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
           {/* Top Row: Brand & Dynamic Footer Columns */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-8 pb-10 border-b border-slate-800">
-            <div className="md:col-span-4 space-y-3.5">
+            <div className="md:col-span-4 lg:col-span-3 space-y-3.5">
               <div className="space-y-1">
                 <span className="text-2xl font-black tracking-tight text-white font-sans block lowercase">
                   theunbound
@@ -296,52 +299,97 @@ const MainAppContent: React.FC = () => {
 
             {/* Dynamic CMS-Managed Columns or Fallbacks */}
             {(() => {
-              const cmsFooterCols = db.getFooterColumns();
-              if (cmsFooterCols && cmsFooterCols.length > 0) {
-                return cmsFooterCols.map((col) => (
-                  <div key={col.id} className="md:col-span-2 space-y-3">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                      {col.title}
-                    </h4>
-                    <ul className="space-y-2 text-xs text-slate-400">
-                      {(col.links || []).map((link) => (
-                        <li key={link.id}>
-                          <button
-                            onClick={() => {
-                              if (link.type === 'DESTINATION') {
-                                handleSelectDestination(link.targetId || 'all');
-                              } else if (link.type === 'CUSTOM_PAGE') {
-                                setActiveCustomPageSlug(link.targetId || 'about-theunbound');
-                                setActiveTab('CUSTOM_PAGE');
-                              } else if (link.type === 'SYSTEM_VIEW') {
-                                if (link.targetId === 'visas') setActiveTab('VISAS');
-                                else if (link.targetId === 'contact') setActiveTab('CONTACT');
-                                else if (link.targetId === 'blogs') setActiveTab('BLOGS');
-                                else if (link.targetId === 'terms') setActiveTab('TERMS');
-                                else if (link.targetId === 'privacy') setActiveTab('PRIVACY');
-                                else if (link.targetId === 'refund') setActiveTab('REFUND');
-                                else if (link.targetId === 'b2b') setActiveTab('B2B_BUILDER');
-                                else setActiveTab('DESTINATIONS');
-                              } else if (link.url && link.url.startsWith('http')) {
-                                window.open(link.url, '_blank', 'noopener,noreferrer');
-                              }
-                              window.scrollTo({ top: 0, behavior: 'smooth' });
-                            }}
-                            className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5 text-left"
-                          >
-                            <span>{link.label}</span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+              const liveColumns = (footerConfig?.columns || db.getFooterColumns() || [])
+                .filter(col => col.isVisible !== false && col.status !== 'INACTIVE')
+                .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+
+              if (liveColumns.length > 0) {
+                return (
+                  <div className={`md:col-span-5 lg:col-span-6 grid grid-cols-2 ${liveColumns.length >= 3 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-6`}>
+                    {liveColumns.map((col) => {
+                      const activeLinks = (col.links || [])
+                        .filter(link => link.status !== 'INACTIVE')
+                        .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+
+                      return (
+                        <div key={col.id} className="space-y-3">
+                          <div>
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                              {col.title}
+                            </h4>
+                            {col.description && (
+                              <p className="text-[11px] text-slate-500 mt-0.5">{col.description}</p>
+                            )}
+                          </div>
+                          <ul className="space-y-2 text-xs text-slate-400">
+                            {activeLinks.map((link) => (
+                              <li key={link.id}>
+                                <button
+                                  onClick={() => {
+                                    if (link.openIn === '_blank') {
+                                      if (link.url.startsWith('http://') || link.url.startsWith('https://')) {
+                                        window.open(link.url, '_blank', 'noopener,noreferrer');
+                                      } else if (link.type === 'DESTINATION') {
+                                        window.open(`/#/destination/${link.targetId || 'all'}`, '_blank');
+                                      } else if (link.type === 'CUSTOM_PAGE') {
+                                        window.open(`/#/page/${link.targetId || ''}`, '_blank');
+                                      } else {
+                                        window.open(link.url, '_blank');
+                                      }
+                                      return;
+                                    }
+
+                                    if (link.type === 'DESTINATION') {
+                                      handleSelectDestination(link.targetId || 'all');
+                                    } else if (link.type === 'CUSTOM_PAGE') {
+                                      setActiveCustomPageSlug(link.targetId || 'about-theunbound');
+                                      setActiveTab('CUSTOM_PAGE');
+                                    } else if (link.type === 'SYSTEM_VIEW') {
+                                      if (link.targetId === 'visas') setActiveTab('VISAS');
+                                      else if (link.targetId === 'contact') setActiveTab('CONTACT');
+                                      else if (link.targetId === 'blogs') setActiveTab('BLOGS');
+                                      else if (link.targetId === 'terms') setActiveTab('TERMS');
+                                      else if (link.targetId === 'privacy') setActiveTab('PRIVACY');
+                                      else if (link.targetId === 'refund') setActiveTab('REFUND');
+                                      else if (link.targetId === 'b2b') setActiveTab('B2B_BUILDER');
+                                      else setActiveTab('DESTINATIONS');
+                                    } else if (link.url && (link.url.startsWith('mailto:') || link.url.startsWith('tel:'))) {
+                                      window.location.href = link.url;
+                                    } else if (link.url && (link.url.startsWith('http://') || link.url.startsWith('https://'))) {
+                                      window.open(link.url, '_blank', 'noopener,noreferrer');
+                                    } else if (link.url && link.url.startsWith('/')) {
+                                      const rawSlug = link.url.replace(/^\//, '');
+                                      const customPages = db.getCustomPages();
+                                      if (customPages.some(p => p.slug === rawSlug)) {
+                                        setActiveCustomPageSlug(rawSlug);
+                                        setActiveTab('CUSTOM_PAGE');
+                                      } else {
+                                        handleSelectDestination(rawSlug);
+                                      }
+                                    }
+                                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                                  }}
+                                  className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5 text-left group"
+                                >
+                                  <span>{link.label}</span>
+                                  {link.openIn === '_blank' && (
+                                    <ExternalLink className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity text-slate-500" />
+                                  )}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })}
                   </div>
-                ));
+                );
               }
 
               // Default standard columns fallback
               return (
-                <>
-                  <div className="md:col-span-3 space-y-3">
+                <div className="md:col-span-5 lg:col-span-6 grid grid-cols-2 sm:grid-cols-3 gap-6">
+                  <div className="space-y-3">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
                       Core Destinations
                     </h4>
@@ -381,7 +429,7 @@ const MainAppContent: React.FC = () => {
                     </ul>
                   </div>
 
-                  <div className="md:col-span-3 space-y-3">
+                  <div className="space-y-3">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
                       Consular & Visas
                     </h4>
@@ -422,7 +470,7 @@ const MainAppContent: React.FC = () => {
                     </ul>
                   </div>
 
-                  <div className="md:col-span-2 space-y-3">
+                  <div className="space-y-3">
                     <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
                       Trust & Operations
                     </h4>
@@ -489,7 +537,7 @@ const MainAppContent: React.FC = () => {
                       </li>
                     </ul>
                   </div>
-                </>
+                </div>
               );
             })()}
 

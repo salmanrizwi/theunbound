@@ -210,8 +210,8 @@ export const FirestoreManagementPanel: React.FC<FirestoreManagementPanelProps> =
 
           <div className="bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700/60">
             <div className="text-[10px] uppercase font-bold text-slate-400">Firestore Database ID</div>
-            <div className="font-mono font-bold text-[#00E5C0] mt-1 truncate" title={firebaseConfigJson.firestoreDatabaseId}>
-              {firebaseConfigJson.firestoreDatabaseId || '(default)'}
+            <div className="font-mono font-bold text-[#00E5C0] mt-1 truncate" title={(firebaseConfigJson as any).firestoreDatabaseId}>
+              {(firebaseConfigJson as any).firestoreDatabaseId || '(default)'}
             </div>
           </div>
 

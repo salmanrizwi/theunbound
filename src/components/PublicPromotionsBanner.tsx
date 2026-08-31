@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Promotion } from '../types';
 import { AppDatabase } from '../services/db';
 import { useAuth } from '../context/AuthContext';
+import { campaignAnalytics } from '../services/campaignAnalyticsService';
 import { 
   Tag, 
   Sparkles, 
@@ -32,6 +33,22 @@ export const PublicPromotionsBanner: React.FC<PublicPromotionsBannerProps> = ({ 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
 
+  // Deduplication refs for component lifecycle
+  const trackedBannerIdRef = useRef<string | null>(null);
+  const trackedModalIdRef = useRef<string | null>(null);
+
+  // Track Banner View
+  useEffect(() => {
+    if (bannerPromo && !isBannerDismissed && trackedBannerIdRef.current !== bannerPromo.id) {
+      trackedBannerIdRef.current = bannerPromo.id;
+      campaignAnalytics.trackView(bannerPromo.id, 'BANNER', {
+        title: bannerPromo.title,
+        destinationId: bannerPromo.destinationId
+      });
+    }
+  }, [bannerPromo?.id, isBannerDismissed]);
+
+  // Modal display logic & View Tracking
   useEffect(() => {
     if (modalPromo) {
       const hasSeenModal = sessionStorage.getItem(`seen_promo_${modalPromo.id}`);
@@ -39,22 +56,45 @@ export const PublicPromotionsBanner: React.FC<PublicPromotionsBannerProps> = ({ 
         const timer = setTimeout(() => {
           setIsModalOpen(true);
           sessionStorage.setItem(`seen_promo_${modalPromo.id}`, 'true');
+          
+          if (trackedModalIdRef.current !== modalPromo.id) {
+            trackedModalIdRef.current = modalPromo.id;
+            campaignAnalytics.trackView(modalPromo.id, 'MODAL', {
+              title: modalPromo.title,
+              destinationId: modalPromo.destinationId
+            });
+          }
         }, 1200);
         return () => clearTimeout(timer);
       }
     }
-  }, [modalPromo]);
+  }, [modalPromo?.id]);
 
-  const handleCopyCode = (code: string) => {
-    navigator.clipboard.writeText(code);
+  const handleCopyCode = (promo: Promotion, placement: string, ctaId: string) => {
+    if (!promo.promoCode) return;
+    navigator.clipboard.writeText(promo.promoCode);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
+
+    // Track click on promo code copy
+    campaignAnalytics.trackClick(
+      promo.id,
+      placement,
+      ctaId,
+      `Copy Code: ${promo.promoCode}`,
+      { destinationId: promo.destinationId }
+    );
   };
 
-  const handlePromoClick = (promo: Promotion) => {
-    // Record click count
-    promo.clickCount = (promo.clickCount || 0) + 1;
-    db.savePromotion(promo, user);
+  const handlePromoClick = (promo: Promotion, placement: string, ctaId: string) => {
+    // Record genuine campaign click event with attribution
+    campaignAnalytics.trackClick(
+      promo.id,
+      placement,
+      ctaId,
+      promo.ctaText || 'Learn More',
+      { destinationId: promo.destinationId, ctaLink: promo.ctaLink }
+    );
 
     if (promo.ctaLink && onNavigateDestination) {
       if (promo.ctaLink.startsWith('/destinations/')) {
@@ -83,7 +123,7 @@ export const PublicPromotionsBanner: React.FC<PublicPromotionsBannerProps> = ({ 
 
               {bannerPromo.promoCode && (
                 <button
-                  onClick={() => handleCopyCode(bannerPromo.promoCode!)}
+                  onClick={() => handleCopyCode(bannerPromo, 'BANNER', 'banner_copy_code')}
                   className="hidden sm:inline-flex items-center space-x-1 font-mono text-[10px] bg-slate-800 hover:bg-slate-700 text-[#00E5C0] border border-slate-700 px-2 py-0.5 rounded font-bold transition-colors cursor-pointer"
                   title="Click to copy promo code"
                 >
@@ -96,7 +136,7 @@ export const PublicPromotionsBanner: React.FC<PublicPromotionsBannerProps> = ({ 
             <div className="flex items-center space-x-3 shrink-0">
               {bannerPromo.ctaText && (
                 <button
-                  onClick={() => handlePromoClick(bannerPromo)}
+                  onClick={() => handlePromoClick(bannerPromo, 'BANNER', 'banner_explore_btn')}
                   className="inline-flex items-center space-x-1 text-[#00E5C0] hover:text-white font-bold text-[11px] underline underline-offset-4 cursor-pointer"
                 >
                   <span>{bannerPromo.ctaText}</span>
@@ -161,7 +201,7 @@ export const PublicPromotionsBanner: React.FC<PublicPromotionsBannerProps> = ({ 
                     </span>
                   </div>
                   <button
-                    onClick={() => handleCopyCode(modalPromo.promoCode!)}
+                    onClick={() => handleCopyCode(modalPromo, 'MODAL', 'modal_copy_code')}
                     className="inline-flex items-center space-x-1 bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-xl font-bold text-xs cursor-pointer transition-colors"
                   >
                     {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -179,7 +219,7 @@ export const PublicPromotionsBanner: React.FC<PublicPromotionsBannerProps> = ({ 
                 </button>
                 <button
                   onClick={() => {
-                    handlePromoClick(modalPromo);
+                    handlePromoClick(modalPromo, 'MODAL', 'modal_claim_btn');
                     setIsModalOpen(false);
                   }}
                   className="px-6 py-2.5 bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold rounded-xl shadow-md cursor-pointer transition-colors text-xs"

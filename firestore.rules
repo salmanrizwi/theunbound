@@ -124,6 +124,18 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /calendar_tasks/{id} {
+      allow read, write: if true;
+    }
+
+    match /sla_automation_rules/{id} {
+      allow read, write: if true;
+    }
+
+    match /sla_automation_audit_logs/{id} {
+      allow read, write: if true;
+    }
+
     match /email_logs/{id} {
       allow read, write: if true;
     }

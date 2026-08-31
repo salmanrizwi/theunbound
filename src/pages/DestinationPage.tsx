@@ -14,6 +14,7 @@ import { useQuotation } from '../context/QuotationContext';
 import { convertCurrency } from '../services/pricingEngine';
 import { AppDatabase } from '../services/db';
 import { countingEngine } from '../services/countingEngine';
+import { campaignAnalytics } from '../services/campaignAnalyticsService';
 import { PublicReviewsCarousel } from '../components/PublicReviewsCarousel';
 import { PublicHappyCustomerGallery } from '../components/PublicHappyCustomerGallery';
 import { Sparkles, MapPin, Compass, ShieldCheck, HelpCircle, ChevronDown, ChevronUp, Globe2, Layers, CheckCircle2 } from 'lucide-react';
@@ -237,6 +238,35 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
     return list;
   }, [destinationProducts, filters, currency]);
 
+  // Active destination-specific promo
+  const destPromo = useMemo(() => {
+    const active = db.getActivePromotions();
+    return active.find(p => 
+      (p.displayPlacement === 'DESTINATION_PAGE' || p.displayPlacement === 'PROMO_SECTION') &&
+      (!p.destinationId || p.destinationId === 'all' || p.destinationId === destination?.id || p.destinationId === destination?.slug)
+    );
+  }, [db, destination]);
+
+  // Track destination promo view
+  useEffect(() => {
+    if (destPromo) {
+      campaignAnalytics.trackView(destPromo.id, 'DESTINATION_PAGE', {
+        destinationId: destination?.id || destination?.slug,
+        title: destPromo.title
+      });
+    }
+  }, [destPromo?.id, destination?.id]);
+
+  const handleProductViewTracking = (product: Product) => {
+    campaignAnalytics.trackProductView(product.id, destination?.id || product.destinationId);
+    onViewProduct(product);
+  };
+
+  const handleProductCalcTracking = (product: Product) => {
+    campaignAnalytics.trackProductView(product.id, destination?.id || product.destinationId);
+    onOpenCalculator(product);
+  };
+
   const handleCitySelect = (cityName: string) => {
     setFilters(prev => ({
       ...prev,
@@ -361,6 +391,47 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
           totalResults={filteredProducts.length}
         />
 
+        {/* Active Destination Campaign Promo Ribbon */}
+        {destPromo && (
+          <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 rounded-2xl p-4 sm:p-6 border border-[#00C6A6]/30 shadow-md text-white flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center space-x-2">
+                <span className="bg-[#00C6A6] text-slate-950 font-bold text-[10px] uppercase tracking-wider px-2.5 py-0.5 rounded-full">
+                  {destPromo.discountType === 'PERCENTAGE' ? `${destPromo.discountValue}% OFF` : `${destPromo.discountValue} ${destPromo.currency || 'USD'} OFF`}
+                </span>
+                {destPromo.promoCode && (
+                  <span className="font-mono text-xs text-[#00E5C0] font-bold bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700">
+                    CODE: {destPromo.promoCode}
+                  </span>
+                )}
+              </div>
+              <h3 className="text-base sm:text-lg font-bold text-white leading-tight">
+                {destPromo.title}
+              </h3>
+              <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+                {destPromo.subtitle || destPromo.description}
+              </p>
+            </div>
+
+            <button
+              onClick={() => {
+                campaignAnalytics.trackClick(
+                  destPromo.id,
+                  'DESTINATION_PAGE',
+                  'dest_promo_action_btn',
+                  destPromo.ctaText || 'Claim Deal',
+                  { destinationId: destination?.id }
+                );
+                const el = document.getElementById('products-grid-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold text-xs px-5 py-2.5 rounded-xl shadow transition-colors shrink-0 cursor-pointer"
+            >
+              {destPromo.ctaText || 'Explore Contracted Rates'} →
+            </button>
+          </div>
+        )}
+
         {/* 6. Products Section Heading */}
         <div id="products-grid-section" className="flex items-center justify-between pt-2">
           <div>
@@ -414,8 +485,8 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
               <ProductCard
                 key={product.id}
                 product={product}
-                onViewDetails={onViewProduct}
-                onOpenCalculator={onOpenCalculator}
+                onViewDetails={handleProductViewTracking}
+                onOpenCalculator={handleProductCalcTracking}
                 onInstantBook={onInstantBook}
               />
             ))}

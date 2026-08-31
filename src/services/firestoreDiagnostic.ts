@@ -61,7 +61,7 @@ export async function runFirestoreDiagnostics(): Promise<FirestoreDiagnosticRepo
   const notes: string[] = [];
 
   const projectId = firebaseConfigJson.projectId || 'unknown-project';
-  const databaseId = firebaseConfigJson.firestoreDatabaseId || '(default)';
+  const databaseId = (firebaseConfigJson as any).firestoreDatabaseId || '(default)';
 
   notes.push(`[${new Date().toLocaleTimeString()}] Initiating Firestore Diagnostics for Project: "${projectId}", Database: "${databaseId}"`);
 
