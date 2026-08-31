@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { CityHub, DestinationCity } from '../types';
+import { countingEngine } from '../services/countingEngine';
 import { 
   MapPin, 
   Layers, 
@@ -40,30 +41,39 @@ export const CityHubs: React.FC<CityHubsProps> = ({
   const [viewMode, setViewMode] = useState<'sequence' | 'grouped'>('sequence');
   const [inspectingHub, setInspectingHub] = useState<CityHub | null>(null);
 
-  // Normalize incoming data into rich CityHub array
+  // Normalize incoming data into rich CityHub array with synchronized live metrics
   const normalizedHubs: CityHub[] = useMemo(() => {
-    if (hubs && hubs.length > 0) {
-      return [...hubs].sort((a, b) => (a.displayOrder || 1) - (b.displayOrder || 1));
-    }
-    // Fallback from legacy cities if no hubs passed
-    return cities.map((c, idx) => ({
-      id: c.id,
-      destinationId: destinationName?.toLowerCase() || 'dest',
-      destinationName: destinationName || 'Destination',
-      regionId: '',
-      regionName: '',
-      name: c.name,
-      tagline: c.tagline || 'Contracted DMC Gateway & Touring Center',
-      description: 'Major regional gateway with verified direct DMC contracts, hotel allocations, and local licensed guides.',
-      heroImage: c.image || 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1200&auto=format&fit=crop',
-      images: [c.image || 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1200&auto=format&fit=crop'],
-      productCount: c.productCount || 0,
-      hotelCount: 3,
-      displayOrder: idx + 1,
-      highlights: ['Local Sightseeing', 'Private Transit', 'Curated Excursions'],
-      isPublished: true,
-      status: 'ACTIVE'
-    }));
+    const rawList: CityHub[] = (hubs && hubs.length > 0)
+      ? [...hubs]
+      : (cities || []).map((c, idx) => ({
+          id: c.id,
+          destinationId: destinationName?.toLowerCase() || 'dest',
+          destinationName: destinationName || 'Destination',
+          regionId: '',
+          regionName: '',
+          name: c.name,
+          tagline: c.tagline || 'Contracted DMC Gateway & Touring Center',
+          description: 'Major regional gateway with verified direct DMC contracts, hotel allocations, and local licensed guides.',
+          heroImage: c.image || 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1200&auto=format&fit=crop',
+          images: [c.image || 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1200&auto=format&fit=crop'],
+          productCount: c.productCount || 0,
+          hotelCount: 3,
+          displayOrder: idx + 1,
+          highlights: ['Local Sightseeing', 'Private Transit', 'Curated Excursions'],
+          isPublished: true,
+          status: 'ACTIVE'
+        }));
+
+    return rawList
+      .map(hub => {
+        const metrics = countingEngine.getHubMetrics(hub.id || hub.name);
+        return {
+          ...hub,
+          productCount: metrics.productsCount,
+          hotelCount: metrics.hotelsCount
+        };
+      })
+      .sort((a, b) => (a.displayOrder || 1) - (b.displayOrder || 1));
   }, [hubs, cities, destinationName]);
 
   // Extract unique sub-regions
@@ -288,9 +298,9 @@ export const CityHubs: React.FC<CityHubsProps> = ({
                   </p>
 
                   {/* Highlights Badges */}
-                  {hub.highlights && hub.highlights.length > 0 && (
+                  {hub.highlights && (hub.highlights || []).length > 0 && (
                     <div className="flex flex-wrap gap-1">
-                      {hub.highlights.slice(0, 2).map((hl, hIdx) => (
+                      {(hub.highlights || []).slice(0, 2).map((hl, hIdx) => (
                         <span
                           key={hIdx}
                           className="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded font-medium truncate max-w-full"
@@ -306,14 +316,12 @@ export const CityHubs: React.FC<CityHubsProps> = ({
                     <div className="flex items-center space-x-2 text-slate-500 font-semibold">
                       <span className="flex items-center space-x-1">
                         <Compass className="w-3 h-3 text-[#00C6A6]" />
-                        <span>{hub.productCount || 0} Tours</span>
+                        <span>{hub.productCount === 1 ? '1 Tour' : `${hub.productCount || 0} Tours`}</span>
                       </span>
-                      {hub.hotelCount ? (
-                        <span className="flex items-center space-x-1">
-                          <Building2 className="w-3 h-3 text-blue-500" />
-                          <span>{hub.hotelCount} Stays</span>
-                        </span>
-                      ) : null}
+                      <span className="flex items-center space-x-1">
+                        <Building2 className="w-3 h-3 text-blue-500" />
+                        <span>{hub.hotelCount === 1 ? '1 Stay' : `${hub.hotelCount || 0} Stays`}</span>
+                      </span>
                     </div>
 
                     <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
@@ -341,13 +349,13 @@ export const CityHubs: React.FC<CityHubsProps> = ({
                     {group.regionName}
                   </h3>
                   <span className="text-xs font-semibold text-slate-400 bg-white px-2 py-0.5 rounded-full border border-slate-200">
-                    {group.hubs.length} Hubs
+                    {(group.hubs || []).length} Hubs
                   </span>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5">
-                {group.hubs.map(hub => {
+                {(group.hubs || []).map(hub => {
                   const isSelected = selectedCity.toLowerCase() === hub.name.toLowerCase() || 
                                      selectedCity.toLowerCase() === hub.id.toLowerCase();
                   return (
@@ -374,7 +382,7 @@ export const CityHubs: React.FC<CityHubsProps> = ({
                             <h4 className="text-xs font-bold text-slate-900 truncate">{hub.name}</h4>
                           </div>
                           <p className="text-[10px] text-slate-500 truncate mt-0.5">
-                            {hub.productCount || 0} Tours • {hub.hotelCount || 0} Stays
+                            {hub.productCount === 1 ? '1 Tour' : `${hub.productCount || 0} Tours`} • {hub.hotelCount === 1 ? '1 Stay' : `${hub.hotelCount || 0} Stays`}
                           </p>
                         </div>
                       </div>
@@ -435,13 +443,13 @@ export const CityHubs: React.FC<CityHubsProps> = ({
                 </p>
               </div>
 
-              {inspectingHub.highlights && inspectingHub.highlights.length > 0 && (
+              {inspectingHub.highlights && (inspectingHub.highlights || []).length > 0 && (
                 <div>
                   <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
                     Key Highlights & Experiences
                   </h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {inspectingHub.highlights.map((h, i) => (
+                    {(inspectingHub.highlights || []).map((h, i) => (
                       <div key={i} className="flex items-center space-x-2 text-xs text-slate-700 bg-slate-50 p-2 rounded-xl border border-slate-100">
                         <CheckCircle2 className="w-3.5 h-3.5 text-[#00C6A6] shrink-0" />
                         <span className="font-medium">{h}</span>
@@ -455,11 +463,15 @@ export const CityHubs: React.FC<CityHubsProps> = ({
               <div className="grid grid-cols-2 gap-3 pt-2">
                 <div className="bg-emerald-50/60 p-3 rounded-xl border border-emerald-100 text-center">
                   <span className="text-xs text-emerald-800 font-semibold block">DMC Verified Tours</span>
-                  <span className="text-lg font-black text-emerald-950">{inspectingHub.productCount || 0} Products</span>
+                  <span className="text-lg font-black text-emerald-950">
+                    {inspectingHub.productCount === 1 ? '1 Tour' : `${inspectingHub.productCount || 0} Tours`}
+                  </span>
                 </div>
                 <div className="bg-blue-50/60 p-3 rounded-xl border border-blue-100 text-center">
                   <span className="text-xs text-blue-800 font-semibold block">Contracted Hotel Inventory</span>
-                  <span className="text-lg font-black text-blue-950">{inspectingHub.hotelCount || 0} Hotels</span>
+                  <span className="text-lg font-black text-blue-950">
+                    {inspectingHub.hotelCount === 1 ? '1 Stay' : `${inspectingHub.hotelCount || 0} Stays`}
+                  </span>
                 </div>
               </div>
             </div>

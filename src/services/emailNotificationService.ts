@@ -1,4 +1,4 @@
-import { Booking, SentEmailRecord } from '../types';
+import { Booking, SentEmailRecord, Quotation } from '../types';
 import { formatCurrency } from './pricingEngine';
 
 function base64UrlEncode(str: string): string {
@@ -161,7 +161,7 @@ export class EmailNotificationService {
 
           <!-- Booked Services Table -->
           <h3 style="margin: 0 0 12px 0; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b;">
-            Itemized Ground Services (${booking.items.length})
+            Itemized Ground Services (${(booking.items || []).length})
           </h3>
           <div style="border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; margin-bottom: 24px;">
             <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 12px;">
@@ -173,15 +173,15 @@ export class EmailNotificationService {
                 </tr>
               </thead>
               <tbody>
-                ${booking.items.map((item, i) => `
-                  <tr style="border-bottom: ${i === booking.items.length - 1 ? 'none' : '1px solid #f1f5f9'};">
+                ${(booking.items || []).map((item, i) => `
+                  <tr style="border-bottom: ${i === (booking.items || []).length - 1 ? 'none' : '1px solid #f1f5f9'};">
                     <td style="padding: 12px 14px;">
                       <div style="font-weight: 700; color: #0f172a; font-size: 13px;">${item.productName}</div>
                       <div style="color: #64748b; font-size: 11px; margin-top: 2px;">
                         <span style="font-family: monospace; color: #008972; font-weight: 600;">${item.productSku}</span> • ${item.destinationName} (${item.city}) • ${item.category}
                       </div>
-                      ${item.selectedAddonNames && item.selectedAddonNames.length > 0 ? `
-                        <div style="font-size: 10px; color: #0284c7; margin-top: 3px;">+ Addons: ${item.selectedAddonNames.join(', ')}</div>
+                      ${item.selectedAddonNames && (item.selectedAddonNames || []).length > 0 ? `
+                        <div style="font-size: 10px; color: #0284c7; margin-top: 3px;">+ Addons: ${(item.selectedAddonNames || []).join(', ')}</div>
                       ` : ''}
                     </td>
                     <td style="padding: 12px 14px; color: #334155;">
@@ -281,9 +281,9 @@ export class EmailNotificationService {
           </div>
 
           <!-- Services to Dispatch -->
-          <h4 style="margin: 0 0 8px 0; font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 700;">Services to Dispatch (${booking.items.length})</h4>
+          <h4 style="margin: 0 0 8px 0; font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 700;">Services to Dispatch (${(booking.items || []).length})</h4>
           <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 16px;">
-            ${booking.items.map(item => `
+            ${(booking.items || []).map(item => `
               <tr style="border-bottom: 1px solid #e2e8f0;">
                 <td style="padding: 8px 0;">
                   <strong>${item.productName}</strong> (${item.productSku})<br/>
@@ -324,5 +324,75 @@ export class EmailNotificationService {
         status: 'DELIVERED'
       }
     ];
+  }
+
+  /**
+   * Generates and dispatches client-facing quotation proposal email
+   */
+  public generateQuotationProposalEmail(quote: Quotation, agentInfo?: { name?: string; agencyName?: string; email?: string }): SentEmailRecord {
+    const sentAt = new Date().toISOString();
+    const recipient = quote.clientEmail || 'client@example.com';
+    const clientName = quote.clientName || 'Valued Guest';
+    const subject = `Your Bespoke Travel Itinerary & Proposal [${quote.quoteNumber}] - ${quote.destination}`;
+    const travelDatesText = quote.travelStartDate && quote.travelEndDate 
+      ? `${quote.travelStartDate} to ${quote.travelEndDate}`
+      : quote.items[0]?.travelDate 
+        ? `${quote.items[0]?.travelDate} (Itinerary Services)`
+        : 'Flexible Travel Dates';
+    const totalGuests = quote.totalPax || (quote.adultsCount || 2) + (quote.childrenCount || 0);
+    
+    const htmlBody = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; color: #0f172a;">
+        <div style="background-color: #0f172a; padding: 28px 24px; text-align: left; border-bottom: 3px solid #00C6A6;">
+          <h1 style="margin: 0; font-size: 26px; font-weight: 900; color: #ffffff; text-transform: lowercase;">theunbound</h1>
+          <p style="margin: 4px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #00E5C0;">Bespoke Travel Proposal</p>
+        </div>
+        <div style="padding: 24px;">
+          <h2 style="font-size: 18px; font-weight: 800; margin: 0 0 12px 0;">Dear ${clientName},</h2>
+          <p style="font-size: 13px; line-height: 1.6; color: #334155; margin-bottom: 20px;">
+            We are delighted to present your tailored itinerary proposal for <strong>${quote.destination}</strong> (${travelDatesText}).
+          </p>
+
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin-bottom: 20px;">
+            <h3 style="margin: 0 0 8px 0; font-size: 12px; text-transform: uppercase; color: #64748b; font-weight: 700;">Quotation Overview</h3>
+            <p style="margin: 0 0 4px 0; font-size: 12px;"><strong>Quote Ref:</strong> <span style="font-family: monospace; font-weight: 700;">${quote.quoteNumber} (v${quote.version || 1})</span></p>
+            <p style="margin: 0 0 4px 0; font-size: 12px;"><strong>Travel Dates:</strong> ${travelDatesText}</p>
+            <p style="margin: 0 0 4px 0; font-size: 12px;"><strong>Passengers:</strong> ${totalGuests} Guests</p>
+          </div>
+
+          <h3 style="font-size: 13px; text-transform: uppercase; color: #64748b; font-weight: 700; margin: 0 0 10px 0;">Included Itinerary Highlights (${quote.items.length} Items)</h3>
+          <div style="margin-bottom: 20px;">
+            ${quote.items.map((item, idx) => `
+              <div style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between;">
+                <div>
+                  <strong style="font-size: 13px; color: #0f172a;">${idx + 1}. ${item.product.name}</strong><br/>
+                  <span style="font-size: 11px; color: #64748b;">${item.product.category} • ${item.travelDate || 'Flexible'} • ${item.pax?.adults || 2} Adults</span>
+                </div>
+                <span style="font-size: 11px; font-weight: 700; color: #00C6A6;">Included</span>
+              </div>
+            `).join('')}
+          </div>
+
+          <div style="background: #0f172a; color: white; padding: 16px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <span style="font-size: 13px; font-weight: 700;">Total Package Investment:</span>
+            <span style="font-size: 20px; font-weight: 900; color: #00E5C0; font-family: monospace;">${formatCurrency(quote.totalSellingPrice, quote.currency)}</span>
+          </div>
+
+          <p style="font-size: 12px; color: #64748b; margin: 0;">
+            Prepared by <strong>${agentInfo?.name || 'Your Travel Specialist'}</strong> (${agentInfo?.agencyName || 'TheUnbound Partner Network'}). Please contact us to confirm your reservation.
+          </p>
+        </div>
+      </div>
+    `;
+
+    return {
+      recipient,
+      recipientType: 'CLIENT_AGENT',
+      subject,
+      bodySnippet: `Proposal ${quote.quoteNumber} for ${quote.destination} - Total: ${formatCurrency(quote.totalSellingPrice, quote.currency)}`,
+      fullHtml: htmlBody,
+      sentAt,
+      status: 'DELIVERED'
+    };
   }
 }

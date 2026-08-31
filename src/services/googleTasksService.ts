@@ -124,7 +124,7 @@ export class GoogleTasksService {
 • Lead Traveler: ${booking.customer.leadTravelerName} (${booking.customer.email})
 • Agency: ${booking.customer.agencyName || 'Direct Buyer'}
 • Total Value: ${booking.currency} ${booking.totalAmount}
-• Services Count: ${booking.items.length} items
+• Services Count: ${(booking.items || []).length} items
 • Travel Date: ${booking.travelStartDate}
 
 Checklist:
@@ -148,7 +148,7 @@ Checklist:
 • Client / Agency: ${quotation.clientName} (${quotation.destination})
 • Total Quoted: ${quotation.currency} ${quotation.totalSellingPrice}
 • Quoted By: ${user?.name || 'Agent'} (${user?.email || 'N/A'})
-• Created: ${new Date(quotation.createdAt).toLocaleDateString()}
+• Created: ${quotation.createdAt ? new Date(quotation.createdAt).toLocaleDateString() : new Date().toLocaleDateString()}
 
 Action:
 • Check in with client regarding itinerary customisation, hotel upgrades, or booking confirmation.`,

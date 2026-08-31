@@ -77,9 +77,9 @@ export const PublicHappyCustomerGallery: React.FC<PublicHappyCustomerGalleryProp
                 "{item.caption}"
               </p>
 
-              {item.tags && item.tags.length > 0 && (
+              {item.tags && (item.tags || []).length > 0 && (
                 <div className="flex flex-wrap gap-1.5 pt-2 border-t border-slate-100">
-                  {item.tags.map((tag, idx) => (
+                  {(item.tags || []).map((tag, idx) => (
                     <span
                       key={idx}
                       className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md"

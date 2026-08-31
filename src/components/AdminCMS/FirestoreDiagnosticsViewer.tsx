@@ -234,11 +234,11 @@ export const FirestoreDiagnosticsViewer: React.FC = () => {
                     </div>
                   </div>
 
-                  {item.sampleIds.length > 0 && (
+                  {item.sampleIds && (item.sampleIds || []).length > 0 && (
                     <div className="pt-2 border-t border-slate-200">
                       <span className="text-slate-400 text-[10px] block mb-1">Sample Firestore Document IDs:</span>
                       <div className="flex flex-wrap gap-1">
-                        {item.sampleIds.map(id => (
+                        {(item.sampleIds || []).map(id => (
                           <span key={id} className="text-[9px] font-mono bg-white border border-slate-200 text-slate-700 px-1.5 py-0.5 rounded truncate max-w-full">
                             {id}
                           </span>
@@ -260,14 +260,14 @@ export const FirestoreDiagnosticsViewer: React.FC = () => {
       )}
 
       {/* Terminal Output / Diagnostic Trace Logs */}
-      {report && report.notes.length > 0 && (
+      {report && report.notes && (report.notes || []).length > 0 && (
         <div className="bg-slate-950 text-slate-200 rounded-3xl p-5 sm:p-6 shadow-xl border border-slate-800 space-y-3">
           <div className="flex items-center space-x-2 border-b border-slate-800 pb-3 text-xs font-mono text-[#00E5C0]">
             <Terminal className="w-4 h-4" />
             <span>Diagnostic Audit Trace Logs</span>
           </div>
           <div className="space-y-1.5 font-mono text-xs max-h-48 overflow-y-auto pr-2 text-slate-300">
-            {report.notes.map((note, idx) => (
+            {(report.notes || []).map((note, idx) => (
               <div key={idx} className="leading-relaxed">
                 <span className="text-slate-500 mr-2">&gt;</span>
                 {note}

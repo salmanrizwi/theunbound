@@ -1,0 +1,131 @@
+import { B2BCustomer, B2BTask } from '../types';
+
+export const INITIAL_B2B_CUSTOMERS: B2BCustomer[] = [
+  {
+    id: 'cust-01',
+    agentId: 'usr-agent-01',
+    name: 'Alexander Wright',
+    email: 'alexander.wright@manorcapital.co.uk',
+    phone: '+44 7700 900142',
+    company: 'Manor Capital Partners',
+    country: 'United Kingdom',
+    city: 'London',
+    notes: 'High-net-worth family of 4 looking for private cherry blossom tour in Japan. Prefers 5★ ryokans with private open-air onsen.',
+    preferredDestination: 'Japan',
+    budgetPerPersonUSD: 6500,
+    totalQuotesCount: 3,
+    totalBookingsCount: 1,
+    tags: ['VIP Luxury', 'Family Travel', 'High Net Worth'],
+    lastContactDate: '2026-08-25',
+    createdAt: '2026-01-14'
+  },
+  {
+    id: 'cust-02',
+    agentId: 'usr-agent-01',
+    name: 'Dr. Sophia Vance & Julian Vance',
+    email: 'sophia.vance@stanford.edu',
+    phone: '+1 650 555 0198',
+    company: 'Vance Heritage Foundation',
+    country: 'United States',
+    city: 'Palo Alto',
+    notes: 'Honeymoon couple visiting Swiss Alps and Italian Lakes. Demands First Class rail passes and scenic mountain suites.',
+    preferredDestination: 'Europe',
+    budgetPerPersonUSD: 7200,
+    totalQuotesCount: 2,
+    totalBookingsCount: 1,
+    tags: ['Honeymoon', 'Scenic Rail', 'Fine Dining'],
+    lastContactDate: '2026-08-28',
+    createdAt: '2026-02-03'
+  },
+  {
+    id: 'cust-03',
+    agentId: 'usr-agent-01',
+    name: 'Marcus & Catherine Sterling',
+    email: 'm.sterling@sterlingarch.com',
+    phone: '+61 2 9876 5432',
+    company: 'Sterling Architectural Studio',
+    country: 'Australia',
+    city: 'Sydney',
+    notes: 'Heritage tour of UK palaces, castles, and historic Cotswolds manors. Interested in after-hours museum entries and Blue Badge guides.',
+    preferredDestination: 'United Kingdom',
+    budgetPerPersonUSD: 5500,
+    totalQuotesCount: 4,
+    totalBookingsCount: 2,
+    tags: ['Architecture', 'Heritage', 'Repeat Client'],
+    lastContactDate: '2026-08-29',
+    createdAt: '2025-11-20'
+  },
+  {
+    id: 'cust-04',
+    agentId: 'usr-agent-01',
+    name: 'Emir Al-Maktoum Family Office',
+    email: 'travel.director@almaktoumfo.ae',
+    phone: '+971 4 300 8899',
+    company: 'Global Private Office',
+    country: 'United Arab Emirates',
+    city: 'Dubai',
+    notes: 'VIP delegation of 8 pax requiring Mercedes V-Class private fleet, presidential suites, and 24/7 dedicated concierge.',
+    preferredDestination: 'Europe',
+    budgetPerPersonUSD: 12000,
+    totalQuotesCount: 5,
+    totalBookingsCount: 3,
+    tags: ['Ultra High Net Worth', 'Private Fleet', 'Presidential Suites'],
+    lastContactDate: '2026-08-20',
+    createdAt: '2025-09-10'
+  }
+];
+
+export const INITIAL_B2B_TASKS: B2BTask[] = [
+  {
+    id: 'task-01',
+    agentId: 'usr-agent-01',
+    title: 'Follow up with Alexander Wright regarding Hakone ryokan room upgrade',
+    description: 'Call client to confirm whether they want the Panoramic Fuji View Ryokan Suite upgrade for the 2 nights in Hakone.',
+    dueDate: '2026-09-02',
+    priority: 'HIGH',
+    status: 'PENDING',
+    relatedCustomerName: 'Alexander Wright',
+    relatedCustomerEmail: 'alexander.wright@manorcapital.co.uk',
+    createdAt: '2026-08-28T10:00:00Z',
+    updatedAt: '2026-08-28T10:00:00Z'
+  },
+  {
+    id: 'task-02',
+    agentId: 'usr-agent-01',
+    title: 'Send revised Swiss Alps Glacier Express quotation to Dr. Sophia Vance',
+    description: 'Updated with First Class Glacier Express Excellence Class seating supplement.',
+    dueDate: '2026-09-01',
+    priority: 'URGENT',
+    status: 'IN_PROGRESS',
+    relatedCustomerName: 'Dr. Sophia Vance',
+    relatedCustomerEmail: 'sophia.vance@stanford.edu',
+    createdAt: '2026-08-29T14:30:00Z',
+    updatedAt: '2026-08-29T14:30:00Z'
+  },
+  {
+    id: 'task-03',
+    agentId: 'usr-agent-01',
+    title: 'Confirm Blue Badge Guide assignment for Marcus Sterling UK tour',
+    description: 'Verify with TheUnbound UK ground operations that Master Guide Sir David is confirmed for Edinburgh Royal Mile.',
+    dueDate: '2026-09-05',
+    priority: 'MEDIUM',
+    status: 'PENDING',
+    relatedCustomerName: 'Marcus & Catherine Sterling',
+    relatedCustomerEmail: 'm.sterling@sterlingarch.com',
+    createdAt: '2026-08-27T09:15:00Z',
+    updatedAt: '2026-08-27T09:15:00Z'
+  },
+  {
+    id: 'task-04',
+    agentId: 'usr-agent-01',
+    title: 'Check flight arrival times for Tokyo Narita VIP Meet & Greet',
+    description: 'Confirm JL005 flight number and arrival gate with dispatch desk for automated chauffeur tracking.',
+    dueDate: '2026-09-08',
+    priority: 'LOW',
+    status: 'PENDING',
+    relatedCustomerName: 'Alexander Wright',
+    relatedCustomerEmail: 'alexander.wright@manorcapital.co.uk',
+    createdAt: '2026-08-25T11:00:00Z',
+    updatedAt: '2026-08-25T11:00:00Z'
+  }
+];

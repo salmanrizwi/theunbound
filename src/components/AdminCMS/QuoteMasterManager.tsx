@@ -420,7 +420,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({ onLoadQu
                 <div>
                   <span className="text-slate-400 block">Items Count</span>
                   <span className="font-mono font-bold text-white">
-                    {viewingQuote.items.length} Activities
+                    {viewingQuote.items?.length || 0} Activities
                   </span>
                 </div>
               </div>
@@ -428,9 +428,9 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({ onLoadQu
 
             {/* Line Items */}
             <div className="space-y-2 text-xs">
-              <h4 className="font-bold text-slate-800">Itinerary Line Items ({viewingQuote.items.length})</h4>
+              <h4 className="font-bold text-slate-800">Itinerary Line Items ({viewingQuote.items?.length || 0})</h4>
               <div className="space-y-1.5">
-                {viewingQuote.items.map((item, idx) => (
+                {(viewingQuote.items || []).map((item, idx) => (
                   <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
                     <div>
                       <div className="font-bold text-slate-900">{item.product?.name || `Item ${idx + 1}`}</div>

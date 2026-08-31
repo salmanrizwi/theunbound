@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppDatabase } from '../../services/db';
+import { countingEngine } from '../../services/countingEngine';
 import { CityHub, Destination, MasterRegion } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { 
@@ -226,9 +227,9 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
                 <p className="text-xs text-slate-600 line-clamp-2">{hub.description}</p>
 
                 {/* Highlights */}
-                {hub.highlights && hub.highlights.length > 0 && (
+                {hub.highlights && (hub.highlights || []).length > 0 && (
                   <div className="flex flex-wrap gap-1.5 pt-2">
-                    {hub.highlights.slice(0, 3).map((h, i) => (
+                    {(hub.highlights || []).slice(0, 3).map((h, i) => (
                       <span key={i} className="text-[10px] bg-slate-100 text-slate-700 font-medium px-2 py-0.5 rounded-md">
                         {h}
                       </span>
@@ -239,9 +240,14 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
             </div>
 
             <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500">
-                {hub.productCount} Services • {hub.hotelCount} Hotels
-              </span>
+              {(() => {
+                const metrics = countingEngine.getHubMetrics(hub.id || hub.name);
+                return (
+                  <span className="text-xs font-bold text-slate-500">
+                    {metrics.productsCount === 1 ? '1 Tour' : `${metrics.productsCount} Tours`} • {metrics.hotelsCount === 1 ? '1 Stay' : `${metrics.hotelsCount} Stays`}
+                  </span>
+                );
+              })()}
               <div className="flex items-center space-x-2">
                 <button
                   onClick={() => {

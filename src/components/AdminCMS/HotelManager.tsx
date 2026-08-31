@@ -115,9 +115,9 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
   // Set default calendar room when hotel changes
   useEffect(() => {
     const currentHotel = hotels.find(h => h.id === calendarHotelId) || hotels[0];
-    if (currentHotel && currentHotel.roomTypes.length > 0) {
+    if (currentHotel && currentHotel.roomTypes && (currentHotel.roomTypes || []).length > 0) {
       if (!calendarRoomId || !currentHotel.roomTypes.some(r => r.id === calendarRoomId)) {
-        setCalendarRoomId(currentHotel.roomTypes[0].id);
+        setCalendarRoomId(currentHotel.roomTypes[0]?.id || '');
       }
     }
   }, [calendarHotelId, hotels, calendarRoomId]);
@@ -262,8 +262,8 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
     
     // Compute starting price per night from lowest room double net rate
     let lowestNet = editingHotel.startingNetPrice || 0;
-    if (editingHotel.roomTypes && editingHotel.roomTypes.length > 0) {
-      const roomNets = editingHotel.roomTypes.flatMap(r => r.rates.map(rate => rate.doubleNetRate || rate.singleNetRate)).filter(p => p > 0);
+    if (editingHotel.roomTypes && (editingHotel.roomTypes || []).length > 0) {
+      const roomNets = (editingHotel.roomTypes || []).flatMap(r => (r.rates || []).map(rate => rate.doubleNetRate || rate.singleNetRate)).filter(p => p > 0);
       if (roomNets.length > 0) {
         lowestNet = Math.min(...roomNets);
       }
@@ -1001,7 +1001,7 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2.5 py-1 rounded-lg flex items-center space-x-1">
                           <Bed className="w-3 h-3 text-slate-500" />
-                          <span>{hotel.roomTypes.length} Room Categories</span>
+                          <span>{hotel.roomTypes?.length || 0} Room Categories</span>
                         </span>
                         <span className="bg-emerald-50 text-emerald-800 border border-emerald-200/60 text-[10px] font-bold px-2 py-1 rounded-lg">
                           Max {maxRoomOccupancy} Pax / Room (Kids ≤ {maxChildAge}y)

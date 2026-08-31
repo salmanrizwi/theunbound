@@ -1,6 +1,7 @@
 import React from 'react';
 import { Destination } from '../types';
-import { Compass, ArrowRight, ShieldCheck, CheckCircle2, Globe2 } from 'lucide-react';
+import { Compass, ArrowRight, ShieldCheck, CheckCircle2, Globe2, Building2 } from 'lucide-react';
+import { countingEngine } from '../services/countingEngine';
 
 interface AllDestinationsHeroProps {
   destinations: Destination[];
@@ -13,10 +14,14 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
   onSelectDestination,
   onExploreProducts
 }) => {
-  const totalDestinations = destinations.length;
-  const totalHubs = destinations.reduce((acc, d) => acc + (d.cities ? d.cities.length : 0), 0);
-  const destinationNamesList = destinations.map(d => d.name).join(', ');
-  const sampleHubNames = destinations.flatMap(d => (d.cities ? d.cities.map(c => c.name) : [])).slice(0, 3).join(', ');
+  const destList = destinations || [];
+  const breakdown = countingEngine.getCountsBreakdown();
+  const totalDestinations = destList.length;
+  const totalHubs = breakdown.hubs;
+  const totalProducts = breakdown.totalProducts;
+  const totalHotels = breakdown.hotels;
+  const destinationNamesList = destList.map(d => d.name).join(', ');
+  const sampleHubNames = destList.flatMap(d => (d.cities ? d.cities.map(c => c.name) : [])).slice(0, 3).join(', ');
 
   return (
     <div className="space-y-8 mb-10">
@@ -101,10 +106,10 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
         {/* Value Highlights Bar */}
         <div className="relative z-10 bg-slate-900/90 backdrop-blur-md border-t border-white/10 px-6 py-3.5">
           <div className="max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs text-slate-300">
-            {destinations.slice(0, 6).map((dest) => (
-              <div key={dest.id} className="flex items-center space-x-2">
+            {destinations.slice(0, 6).map((dest, idx) => (
+              <div key={`dest-hero-highlight-${dest.id || dest.slug}-${idx}`} className="flex items-center space-x-2">
                 <CheckCircle2 className="w-4 h-4 text-[#00C6A6] shrink-0" />
-                <span className="truncate"><strong>{dest.name}:</strong> {dest.tagline || (dest.highlights && dest.highlights[0]) || `${dest.cities.length} Gateways`}</span>
+                <span className="truncate"><strong>{dest.name}:</strong> {dest.tagline || (dest.highlights && dest.highlights[0]) || `${dest.cities?.length || 0} Gateways`}</span>
               </div>
             ))}
           </div>
@@ -126,9 +131,11 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {destinations.map((dest) => (
+          {destinations.map((dest, idx) => {
+            const metrics = countingEngine.getDestinationMetrics(dest.slug || dest.id);
+            return (
             <div
-              key={dest.id}
+              key={`dest-hero-card-${dest.id || dest.slug}-${idx}`}
               id={`destination-card-${dest.slug}`}
               onClick={() => onSelectDestination(dest.slug)}
               className="group bg-white rounded-2xl border border-slate-200 hover:border-[#00C6A6] hover:shadow-xl transition-all duration-300 overflow-hidden cursor-pointer flex flex-col"
@@ -149,11 +156,16 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
                   </span>
                 </div>
 
-                {/* Hub Count Pill */}
-                <div className="absolute top-3 right-3">
+                {/* Hub Count & Inventory Pill */}
+                <div className="absolute top-3 right-3 flex items-center space-x-1.5">
                   <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#00C6A6] text-slate-950 shadow-xs">
-                    {dest.cities ? dest.cities.length : 0} Hubs
+                    {metrics.hubsCount || (dest.cities ? (dest.cities || []).length : 0)} Hubs
                   </span>
+                  {metrics.productsCount > 0 && (
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-900/90 text-white border border-white/20 backdrop-blur-xs">
+                      {metrics.productsCount} Tours
+                    </span>
+                  )}
                 </div>
 
                 {/* Destination Name on Image */}
@@ -175,13 +187,13 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
                   </p>
 
                   {/* Highlights Pill List */}
-                  {dest.highlights && dest.highlights.length > 0 && (
+                  {dest.highlights && (dest.highlights || []).length > 0 && (
                     <div className="space-y-1.5 pt-1">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
                         DMC Key Highlights
                       </span>
                       <ul className="space-y-1">
-                        {dest.highlights.slice(0, 2).map((h, i) => (
+                        {(dest.highlights || []).slice(0, 2).map((h, i) => (
                           <li key={i} className="text-xs text-slate-700 flex items-start space-x-1.5">
                             <span className="text-[#00C6A6] font-bold mt-0.5">•</span>
                             <span className="line-clamp-1">{h}</span>
@@ -192,9 +204,9 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
                   )}
 
                   {/* Hub Preview */}
-                  {dest.cities && dest.cities.length > 0 && (
+                  {dest.cities && (dest.cities || []).length > 0 && (
                     <div className="flex flex-wrap gap-1.5 pt-2">
-                      {dest.cities.slice(0, 4).map((c) => (
+                      {(dest.cities || []).slice(0, 4).map((c) => (
                         <span
                           key={c.id}
                           className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-medium"
@@ -202,9 +214,9 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
                           {c.name}
                         </span>
                       ))}
-                      {dest.cities.length > 4 && (
+                      {(dest.cities || []).length > 4 && (
                         <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-400 text-[11px]">
-                          +{dest.cities.length - 4}
+                          +{(dest.cities || []).length - 4}
                         </span>
                       )}
                     </div>
@@ -214,7 +226,7 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
                 {/* Card Action Link */}
                 <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-900 group-hover:text-[#008972] transition-colors flex items-center space-x-1">
-                    <span>View {dest.name} Products</span>
+                    <span>View {dest.name} Products ({metrics.productsCount})</span>
                     <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
                   </span>
                   <span className="text-[11px] font-mono font-semibold text-slate-400">
@@ -223,7 +235,8 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

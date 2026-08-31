@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { Product, Quotation, CurrencyCode, User, Booking, BookingItem } from '../types';
+import { Product, Quotation, CurrencyCode, User, Booking, BookingItem, B2BPackage } from '../types';
 import { AppDatabase } from '../services/db';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
-import { formatCurrency, calculateProductPrice } from '../services/pricingEngine';
+import { formatCurrency, calculateProductPrice, convertCurrency } from '../services/pricingEngine';
 import { GoogleTasksService } from '../services/googleTasksService';
 import { 
   X, 
@@ -21,7 +21,9 @@ import {
   Send,
   AlertCircle,
   CheckCircle2,
-  Sparkles
+  Sparkles,
+  Hotel,
+  Car
 } from 'lucide-react';
 
 interface BookingModalProps {
@@ -29,6 +31,7 @@ interface BookingModalProps {
   onClose: () => void;
   product?: Product | null;
   quotation?: Quotation | null;
+  packageItem?: B2BPackage | null;
   currentUser?: User | null;
   currency?: CurrencyCode;
   onBookingComplete: (booking: Booking) => void;
@@ -39,6 +42,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   onClose,
   product,
   quotation,
+  packageItem,
   currentUser: propUser,
   currency: propCurrency,
   onBookingComplete
@@ -46,14 +50,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const { user: authUser } = useAuth();
   const { currency: quoteCurrency } = useQuotation();
   const currentUser = propUser || authUser;
-  const currency = propCurrency || quotation?.currency || quoteCurrency || 'USD';
+  const currency = propCurrency || quotation?.currency || packageItem?.currency || quoteCurrency || 'USD';
 
   const db = AppDatabase.getInstance();
 
-  // For single product booking state
+  // For single product / package booking state
   const [travelDate, setTravelDate] = useState<string>(() => {
     const d = new Date();
-    d.setDate(d.getDate() + 7);
+    d.setDate(d.getDate() + 14);
     return d.toISOString().split('T')[0];
   });
   const [adults, setAdults] = useState<number>(2);
@@ -84,7 +88,21 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
-  if (!isOpen || (!product && !quotation)) return null;
+  if (!isOpen || (!product && !quotation && !packageItem)) return null;
+
+  const isB2BAgent = currentUser && (currentUser.role === 'B2B_AGENT' || currentUser.role === 'AGENT' || currentUser.role === 'ADMIN');
+
+  // Calculate pricing for package
+  const packageBaseNetUSD = packageItem?.baseNetCostUSD || 2500;
+  const packageRetailUSD = packageItem?.suggestedSellingPriceUSD || Math.round(packageBaseNetUSD * 1.3);
+  const packageB2BUSD = Math.round(packageBaseNetUSD * (1 + (packageItem?.pricingConfiguration?.b2bMarkupPercent || 12) / 100));
+
+  const packagePerPaxPriceUSD = isB2BAgent ? packageB2BUSD : packageRetailUSD;
+  const packagePerPaxPrice = convertCurrency(packagePerPaxPriceUSD, 'USD', currency);
+  const packagePerPaxNet = convertCurrency(packageBaseNetUSD, 'USD', currency);
+
+  const packageTotalAmount = (packagePerPaxPrice * adults) + (packagePerPaxPrice * 0.75 * children);
+  const packageTotalNetCost = (packagePerPaxNet * adults) + (packagePerPaxNet * 0.75 * children);
 
   // Calculate pricing for single product
   const singleProductCalculation = product ? calculateProductPrice(product, {
@@ -101,10 +119,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   // Calculate totals
   const totalAmount = quotation
     ? quotation.totalSellingPrice
+    : packageItem
+    ? packageTotalAmount
     : singleProductCalculation?.finalTotalSellingPrice || 0;
 
   const totalNetCost = quotation
     ? quotation.totalNetCost
+    : packageItem
+    ? packageTotalNetCost
     : singleProductCalculation?.totalNetCost || 0;
 
   const handleToggleAddon = (addonId: string) => {
@@ -139,7 +161,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
       if (quotation) {
         // Items from quotation
-        bookingItems = quotation.items.map(item => ({
+        const qItems = quotation.items || [];
+        bookingItems = qItems.map(item => ({
           id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
           productId: item.product.id,
           productName: item.product.name,
@@ -161,13 +184,38 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           currency: quotation.currency
         }));
 
-        if (quotation.items.length > 0) {
-          const dates = quotation.items.map(i => i.travelDate).filter(Boolean).sort();
+        if (qItems.length > 0) {
+          const dates = qItems.map(i => i.travelDate).filter(Boolean).sort();
           if (dates.length > 0) {
             travelStartDate = dates[0];
             travelEndDate = dates[dates.length - 1];
           }
         }
+      } else if (packageItem) {
+        // Items from Ready-Made Package
+        const durationNights = packageItem.durationNights || (packageItem.durationDays - 1);
+        const startD = new Date(travelDate);
+        const endD = new Date(startD.getTime() + durationNights * 86400000);
+        travelEndDate = endD.toISOString().split('T')[0];
+
+        bookingItems = [{
+          id: `item-pkg-${packageItem.id}-${Date.now()}`,
+          productId: packageItem.id,
+          productName: `Ready-Made Circuit: ${packageItem.title}`,
+          productSku: `PKG-${(packageItem.destinationName || 'GLOBAL').slice(0, 3).toUpperCase()}-${packageItem.durationDays}D`,
+          destinationName: packageItem.destinationName,
+          city: packageItem.routeSummary?.[0] || packageItem.destinationName,
+          category: 'Ready-Made Tour Package',
+          travelDate,
+          adults,
+          children,
+          infants,
+          totalPax: adults + children + infants,
+          unitNetPrice: packagePerPaxNet,
+          unitSellingPrice: packagePerPaxPrice,
+          totalPrice: packageTotalAmount,
+          currency
+        }];
       } else if (product && singleProductCalculation) {
         // Items from single product
         const selectedAddonNames = product.addons
@@ -197,9 +245,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
       // Create and dispatch the booking
       const newBooking = db.createBooking({
-        sourceType: quotation ? 'QUOTATION' : 'PRODUCT_DIRECT',
+        sourceType: quotation ? 'QUOTATION' : packageItem ? 'PACKAGE' : 'PRODUCT_DIRECT',
         quoteId: quotation?.id,
         quoteNumber: quotation?.quoteNumber,
+        destinationName: packageItem?.destinationName || product?.destinationName || quotation?.destinationName,
         customer: {
           leadTravelerName: leadTravelerName.trim(),
           bookerName: bookerName.trim() || undefined,
@@ -248,12 +297,16 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             <div>
               <div className="flex items-center space-x-2">
                 <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#00E5C0] bg-white/10 px-2 py-0.5 rounded-md">
-                  DMC Reservation Desk
+                  {packageItem ? 'Package Reservation Desk' : 'DMC Reservation Desk'}
                 </span>
                 <span className="text-[10px] text-slate-400 font-semibold">24–48h Ground Update SLA</span>
               </div>
               <h2 className="text-xl font-bold font-sans mt-0.5 text-white">
-                {quotation ? `Book Entire Quotation (${quotation.quoteNumber})` : `Book Service: ${product?.name}`}
+                {quotation 
+                  ? `Book Entire Quotation (${quotation.quoteNumber})` 
+                  : packageItem 
+                  ? `Book Circuit: ${packageItem.title}`
+                  : `Book Service: ${product?.name}`}
               </h2>
             </div>
           </div>
@@ -286,7 +339,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             </div>
           )}
 
-          {/* Product / Itinerary Summary Section */}
+          {/* Product / Package / Itinerary Summary Section */}
           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center space-x-1.5">
@@ -294,17 +347,52 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <span>Selected Reservation Itinerary</span>
               </span>
               <span className="text-xs font-mono font-bold text-slate-700">
-                {quotation ? `${quotation.items.length} Products Included` : `SKU: ${product?.sku}`}
+                {quotation 
+                  ? `${quotation.items?.length || 0} Products Included` 
+                  : packageItem
+                  ? `${packageItem.durationNights || packageItem.durationDays - 1}N / ${packageItem.durationDays}D Circuit`
+                  : `SKU: ${product?.sku}`}
               </span>
             </div>
 
-            {/* If Single Product: Configuration inputs */}
-            {product && (
+            {/* If Package Item: Summary and highlights */}
+            {packageItem && (
+              <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center space-x-2">
+                    <span className="px-2 py-0.5 rounded-md bg-[#008972] text-white text-[10px] font-black uppercase">
+                      {packageItem.destinationName}
+                    </span>
+                    <span className="text-xs font-bold text-slate-900">
+                      {packageItem.title}
+                    </span>
+                  </div>
+                  <span className="text-xs font-mono font-bold text-[#008972]">
+                    {formatCurrency(packagePerPaxPrice, currency)} <span className="text-[10px] text-slate-400 font-sans font-normal">/ pax</span>
+                  </span>
+                </div>
+
+                {packageItem.routeSummary && packageItem.routeSummary.length > 0 && (
+                  <div className="text-[11px] text-slate-600 flex items-center space-x-1 overflow-x-auto py-1">
+                    <span className="font-semibold text-slate-400 shrink-0">Circuit:</span>
+                    {packageItem.routeSummary.map((r, i) => (
+                      <React.Fragment key={i}>
+                        <span className="px-1.5 py-0.5 bg-slate-100 rounded text-[10px] font-medium text-slate-700 shrink-0">{r}</span>
+                        {i < packageItem.routeSummary.length - 1 && <span className="text-slate-400 font-bold shrink-0">→</span>}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* If Single Product or Package: Configuration inputs (Travel Date, Pax) */}
+            {(product || packageItem) && (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-2 border-t border-slate-200">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center space-x-1">
                     <Calendar className="w-3.5 h-3.5 text-[#008972]" />
-                    <span>Travel Date</span>
+                    <span>Travel Start Date</span>
                   </label>
                   <input
                     type="date"
@@ -364,13 +452,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             )}
 
             {/* Addons Selection if single product */}
-            {product?.addons && product.addons.length > 0 && (
+            {product?.addons && (product.addons || []).length > 0 && (
               <div className="pt-2 border-t border-slate-200">
                 <span className="text-[11px] font-bold text-slate-700 block mb-2">
                   Optional Product Add-ons & Upgrades:
                 </span>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {product.addons.map((addon) => {
+                  {(product.addons || []).map((addon) => {
                     const isSelected = selectedAddonIds.includes(addon.id);
                     return (
                       <div

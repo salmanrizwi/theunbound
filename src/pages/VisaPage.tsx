@@ -236,7 +236,7 @@ Support Desk: business@theunbound.in | Operations Team
                     <div>
                       <span className="text-[10px] uppercase font-bold text-emerald-800 block">Net Package Fee</span>
                       <span className="text-lg font-mono font-extrabold text-slate-900">
-                        {visa.currency} {(visa.embassyFee + visa.serviceFee).toLocaleString()}
+                        {visa.currency || 'USD'} {((Number(visa.embassyFee) || 0) + (Number(visa.serviceFee) || 0)).toLocaleString()}
                       </span>
                     </div>
                     <span className="text-[11px] font-semibold text-emerald-700">

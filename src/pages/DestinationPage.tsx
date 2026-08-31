@@ -8,9 +8,12 @@ import { SearchAndFilter } from '../components/SearchAndFilter';
 import { ProductCard } from '../components/ProductCard';
 import { FeaturedHotelsSection } from '../components/FeaturedHotelsSection';
 import { HotelDetailModal } from '../components/HotelDetailModal';
+import { ReadyMadePackagesSection } from '../components/ReadyMadePackagesSection';
+import { B2BPackage } from '../types';
 import { useQuotation } from '../context/QuotationContext';
 import { convertCurrency } from '../services/pricingEngine';
 import { AppDatabase } from '../services/db';
+import { countingEngine } from '../services/countingEngine';
 import { PublicReviewsCarousel } from '../components/PublicReviewsCarousel';
 import { PublicHappyCustomerGallery } from '../components/PublicHappyCustomerGallery';
 import { Sparkles, MapPin, Compass, ShieldCheck, HelpCircle, ChevronDown, ChevronUp, Globe2, Layers, CheckCircle2 } from 'lucide-react';
@@ -23,6 +26,7 @@ interface DestinationPageProps {
   onViewProduct: (product: Product) => void;
   onOpenCalculator: (product: Product) => void;
   onInstantBook?: (product: Product) => void;
+  onCustomizePackage?: (pkg: B2BPackage) => void;
 }
 
 export const DestinationPage: React.FC<DestinationPageProps> = ({
@@ -32,7 +36,8 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
   products,
   onViewProduct,
   onOpenCalculator,
-  onInstantBook
+  onInstantBook,
+  onCustomizePackage
 }) => {
   const { currency } = useQuotation();
   const db = AppDatabase.getInstance();
@@ -77,58 +82,36 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
   const [expandedFaqIdx, setExpandedFaqIdx] = useState<number | null>(null);
 
   // Products belonging to current destination or all destinations
+  const safeProducts = products || [];
+  const safeAllDestinations = allDestinations || [];
+
   const destinationProducts = useMemo(() => {
     if (isAllDestinations) {
-      return products;
+      return safeProducts;
     }
-    return products.filter(
-      p => p.destinationSlug === destination.slug || 
-           p.destinationId === destination.id ||
-           p.destinationName.toLowerCase().includes(destination.name.toLowerCase()) ||
-           p.country.toLowerCase().includes(destination.name.toLowerCase())
-    );
-  }, [products, destination, isAllDestinations]);
+    return countingEngine.getFilteredProducts({ destinationId: destination?.slug || destination?.id }) || [];
+  }, [safeProducts, destination, isAllDestinations]);
 
   // Hotels filtered for this destination / city
   const destinationHotels = useMemo(() => {
-    const published = hotels.filter(h => h.status === 'PUBLISHED' || !h.status);
-    let list = published;
-    if (!isAllDestinations && destination) {
-      list = list.filter(h => 
-        h.destinationId === destination.id || 
-        h.destinationId === destination.slug || 
-        h.country.toLowerCase().includes(destination.name.toLowerCase()) ||
-        h.destinationName.toLowerCase().includes(destination.name.toLowerCase())
-      );
-    }
-    // If city filter is active
-    if (filters.city) {
-      list = list.filter(h => 
-        h.cityName.toLowerCase() === filters.city.toLowerCase() ||
-        h.cityId.toLowerCase() === filters.city.toLowerCase() ||
-        h.area.toLowerCase().includes(filters.city.toLowerCase())
-      );
-    }
-    return list;
-  }, [hotels, isAllDestinations, destination, filters.city]);
+    return countingEngine.getFilteredHotels({
+      destinationId: isAllDestinations ? undefined : (destination?.slug || destination?.id),
+      hubId: filters.city || undefined
+    });
+  }, [isAllDestinations, destination, filters.city, hotels]);
 
   // Hierarchical Hubs tagged for this destination (or all destinations)
   const activeHubs = useMemo(() => {
     let hubsList: CityHub[] = [];
 
     if (isAllDestinations) {
-      hubsList = cityHubs;
+      hubsList = cityHubs || [];
     } else if (destination) {
-      hubsList = cityHubs.filter(h => 
-        h.destinationId === destination.id || 
-        h.destinationId === destination.slug ||
-        h.destinationName.toLowerCase().includes(destination.name.toLowerCase()) ||
-        (destination.country && h.destinationName.toLowerCase().includes(destination.country.toLowerCase()))
-      );
+      hubsList = countingEngine.getFilteredHubs({ destinationId: destination.slug || destination.id }) || [];
 
       // If no hubs found in cityHubs table yet for this destination, fallback to destination.cities
-      if (hubsList.length === 0 && destination.cities && destination.cities.length > 0) {
-        hubsList = destination.cities.map((c, idx) => ({
+      if ((hubsList || []).length === 0 && destination.cities && (destination.cities || []).length > 0) {
+        hubsList = (destination.cities || []).map((c, idx) => ({
           id: c.id,
           destinationId: destination.id,
           destinationName: destination.name,
@@ -150,25 +133,13 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
     }
 
     // Enhance with live product and hotel counts and sort by hierarchical displayOrder
-    return hubsList
+    return (hubsList || [])
       .map(hub => {
-        const matchingTours = destinationProducts.filter(p => 
-          p.city.toLowerCase() === hub.name.toLowerCase() ||
-          p.city.toLowerCase().includes(hub.name.toLowerCase()) ||
-          hub.name.toLowerCase().includes(p.city.toLowerCase())
-        ).length;
-
-        const matchingHotels = hotels.filter(h => 
-          (h.status === 'PUBLISHED' || !h.status) &&
-          (h.cityName.toLowerCase() === hub.name.toLowerCase() ||
-           h.cityId.toLowerCase() === hub.id.toLowerCase() ||
-           h.area.toLowerCase().includes(hub.name.toLowerCase()))
-        ).length;
-
+        const metrics = countingEngine.getHubMetrics(hub.id || hub.name);
         return {
           ...hub,
-          productCount: matchingTours > 0 ? matchingTours : (hub.productCount || 0),
-          hotelCount: matchingHotels > 0 ? matchingHotels : (hub.hotelCount || 0)
+          productCount: metrics.productsCount,
+          hotelCount: metrics.hotelsCount
         };
       })
       .sort((a, b) => (a.displayOrder || 1) - (b.displayOrder || 1));
@@ -186,15 +157,25 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
       }));
     }
     if (isAllDestinations) {
-      return allDestinations.flatMap(d => d.cities);
+      return allDestinations.flatMap(d => (d.cities || []));
     }
-    return destination ? destination.cities : [];
+    return destination ? (destination.cities || []) : [];
   }, [activeHubs, isAllDestinations, allDestinations, destination]);
 
-  // Unique categories in this destination / all destinations
+  // Unique categories & live category counts in this destination / all destinations
   const availableCategories = useMemo(() => {
     const set = new Set(destinationProducts.map(p => p.category));
     return Array.from(set);
+  }, [destinationProducts]);
+
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    destinationProducts.forEach(p => {
+      if (p.category) {
+        counts[p.category] = (counts[p.category] || 0) + 1;
+      }
+    });
+    return counts;
   }, [destinationProducts]);
 
   // Filtered & Sorted Products
@@ -306,25 +287,23 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
                   <span>Filter Products by Destination</span>
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Switch view or filter all travel experiences across our {allDestinations.length} premier regions: {allDestinations.map(d => d.name).join(', ')}
+                  Switch view or filter all travel experiences across our {safeAllDestinations.length} premier regions: {safeAllDestinations.map(d => d.name).join(', ')}
                 </p>
               </div>
               <div className="flex items-center space-x-2">
                 <span className="text-xs font-semibold text-slate-400">Total Portfolio:</span>
                 <span className="text-xs font-bold bg-slate-900 text-white px-2.5 py-0.5 rounded-full">
-                  {products.length} Products
+                  {safeProducts.length} Products
                 </span>
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-              {allDestinations.map(d => {
-                const count = products.filter(
-                  p => p.destinationSlug === d.slug || p.destinationName.toLowerCase().includes(d.name.toLowerCase())
-                ).length;
+              {safeAllDestinations.map((d, idx) => {
+                const metrics = countingEngine.getDestinationMetrics(d.slug || d.id);
                 return (
                   <button
-                    key={d.id}
+                    key={`dest-portfolio-btn-${d.id || d.slug}-${idx}`}
                     type="button"
                     onClick={() => onSelectDestination(d.slug)}
                     className="flex items-center justify-between p-3 rounded-xl border border-slate-200 hover:border-[#00C6A6] bg-slate-50 hover:bg-white hover:shadow-xs transition-all text-left group cursor-pointer"
@@ -340,7 +319,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
                           {d.name}
                         </h4>
                         <span className="text-[11px] text-slate-500">
-                          {d.cities ? d.cities.length : 0} Hubs • {count} Tours
+                          {metrics.hubsCount} Hubs • {metrics.productsCount} Tours
                         </span>
                       </div>
                     </div>
@@ -370,6 +349,8 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
           categories={availableCategories}
           selectedCategory={filters.category}
           onSelectCategory={handleCategorySelect}
+          categoryCounts={categoryCounts}
+          totalCount={destinationProducts.length}
         />
 
         {/* 5. Live Search and Secondary Filters */}
@@ -387,12 +368,12 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
               {filters.category
                 ? `${filters.category} in ${isAllDestinations ? 'All Destinations' : destination?.name}`
                 : isAllDestinations
-                ? `All Available Products across ${allDestinations.map(d => d.name).join(', ')}`
+                ? `All Available Products across ${safeAllDestinations.map(d => d.name).join(', ')}`
                 : `Featured Products in ${destination?.name}`}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               {isAllDestinations
-                ? `Showing direct wholesale DMC inventory across all ${allDestinations.length} destination portfolios`
+                ? `Showing direct wholesale DMC inventory across all ${safeAllDestinations.length} destination portfolios`
                 : `Verified ground contracts and bespoke experiences in ${destination?.country}`}
             </p>
           </div>
@@ -440,6 +421,16 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
             ))}
           </div>
         )}
+
+        {/* 7. Ready-Made Packages Section */}
+        <div className="mt-14 pt-8 border-t border-slate-200">
+          <ReadyMadePackagesSection
+            destinationId={isAllDestinations ? 'all' : (destination?.slug || destination?.id)}
+            destinationName={isAllDestinations ? 'Signature Circuits' : destination?.name}
+            onCustomizePackage={onCustomizePackage}
+            currency={currency}
+          />
+        </div>
 
         {/* 7.1 Featured Hotel Section - ONLY visible if there are hotels to show */}
         {destinationHotels.length > 0 && (

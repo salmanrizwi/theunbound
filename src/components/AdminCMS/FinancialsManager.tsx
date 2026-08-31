@@ -208,7 +208,7 @@ export const FinancialsManager: React.FC = () => {
                       <td className="p-3 font-mono font-bold text-slate-900">{inv.invoiceNumber}</td>
                       <td className="p-3 font-mono text-slate-600">{inv.bookingReference}</td>
                       <td className="p-3 font-medium text-slate-800">{inv.customerName}</td>
-                      <td className="p-3 font-mono font-bold text-[#008f77]">{inv.currency} {inv.totalAmount?.toLocaleString()}</td>
+                      <td className="p-3 font-mono font-bold text-[#008f77]">{inv.currency || 'USD'} {(Number(inv.totalAmount) || 0).toLocaleString()}</td>
                       <td className="p-3 font-mono text-slate-500">{inv.currency} {inv.taxTotal}</td>
                       <td className="p-3">
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${

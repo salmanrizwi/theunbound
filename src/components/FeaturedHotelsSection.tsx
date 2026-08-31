@@ -43,7 +43,8 @@ export const FeaturedHotelsSection: React.FC<FeaturedHotelsSectionProps> = ({
 
   const handleQuickAddHotel = (hotel: Hotel, e: React.MouseEvent) => {
     e.stopPropagation();
-    const prod = hotelToProduct(hotel, hotel.roomTypes[0], undefined, 3);
+    const firstRoom = (hotel.roomTypes || [])[0];
+    const prod = hotelToProduct(hotel, firstRoom, undefined, 3);
     addProductToQuote(prod, {
       adults: 2,
       children: 0,
@@ -142,28 +143,30 @@ export const FeaturedHotelsSection: React.FC<FeaturedHotelsSectionProps> = ({
                   </p>
 
                   {/* Amenities Highlights */}
-                  <div className="flex flex-wrap gap-1.5">
-                    {hotel.amenities.slice(0, 3).map((amenity, i) => (
-                      <span
-                        key={i}
-                        className="text-[10px] font-medium bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md flex items-center space-x-1"
-                      >
-                        <CheckCircle2 className="w-2.5 h-2.5 text-teal-600" />
-                        <span className="truncate max-w-[140px]">{amenity}</span>
-                      </span>
-                    ))}
-                    {hotel.amenities.length > 3 && (
-                      <span className="text-[10px] font-semibold text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-md">
-                        +{hotel.amenities.length - 3} more
-                      </span>
-                    )}
-                  </div>
+                  {hotel.amenities && (hotel.amenities || []).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {(hotel.amenities || []).slice(0, 3).map((amenity, i) => (
+                        <span
+                          key={i}
+                          className="text-[10px] font-medium bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md flex items-center space-x-1"
+                        >
+                          <CheckCircle2 className="w-2.5 h-2.5 text-teal-600" />
+                          <span className="truncate max-w-[140px]">{amenity}</span>
+                        </span>
+                      ))}
+                      {(hotel.amenities || []).length > 3 && (
+                        <span className="text-[10px] font-semibold text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-md">
+                          +{(hotel.amenities || []).length - 3} more
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   {/* Room Categories preview */}
                   <div className="flex items-center space-x-2 text-xs text-slate-500 pt-1">
                     <Bed className="w-3.5 h-3.5 text-slate-400" />
                     <span>
-                      {hotel.roomTypes.length} {hotel.roomTypes.length === 1 ? 'Room Category' : 'Room Categories'} Available
+                      {hotel.roomTypes?.length || 1} {(hotel.roomTypes?.length || 1) === 1 ? 'Room Category' : 'Room Categories'} Available
                     </span>
                   </div>
                 </div>

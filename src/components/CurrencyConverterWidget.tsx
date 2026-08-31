@@ -162,7 +162,7 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
 
       <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/80">
         <span>Feed: Open ER & Live Interbank Market</span>
-        <span className="font-mono">Synced: {new Date(fxData.lastUpdated).toLocaleTimeString()}</span>
+        <span className="font-mono">Synced: {fxData.lastUpdated ? new Date(fxData.lastUpdated).toLocaleTimeString() : 'Live'}</span>
       </div>
     </div>
   );

@@ -45,7 +45,17 @@ import {
   UserActivityEvent,
   UserTelemetrySummary,
   BookingPassenger,
-  BookingPaymentProof
+  BookingPaymentProof,
+  B2BPackage,
+  B2BCustomer,
+  B2BTask,
+  QuoteStatus,
+  BookingSourceType,
+  CMSDeletableEntityType,
+  DependencyDetailItem,
+  DependencyGroup,
+  DeletionCheckResult,
+  SecureDeleteResult
 } from '../types';
 import { INITIAL_PRODUCTS } from '../data/initialProducts';
 import { DESTINATIONS } from '../data/destinations';
@@ -63,6 +73,8 @@ import { INITIAL_CAMPAIGNS } from '../data/initialCampaigns';
 import { INITIAL_ROSTER_RESOURCES } from '../data/initialRoster';
 import { INITIAL_VISAS } from '../data/initialVisas';
 import { INITIAL_FOOTER_CONFIG } from '../data/initialFooter';
+import { INITIAL_B2B_PACKAGES } from '../data/initialPackages';
+import { INITIAL_B2B_CUSTOMERS, INITIAL_B2B_TASKS } from '../data/initialAgentCRM';
 import { EmailNotificationService } from './emailNotificationService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { db as firestoreDb } from './firebase';
@@ -610,6 +622,84 @@ export class AppDatabase {
       ];
       this.setItem('audit_logs', defaultLogs);
     }
+
+    // AUTOMATIC MIGRATION: 
+    // 1. Rename 'Cruises' to 'Private Yacht' and enforce capacity-based vehicleConfig
+    // 2. Remove 'Hotels' from ProductCategory catalog (managed solely via Hotel Management)
+    // 3. Populate new Private Yacht products if missing
+    try {
+      const storedProducts = this.getItem<Product[]>('products', INITIAL_PRODUCTS);
+      let modified = false;
+      const updatedProducts = storedProducts.map(p => {
+        let current = { ...p };
+        if ((current.category as any) === 'Cruises') {
+          current.category = 'Private Yacht';
+          current.pricingMethod = current.pricingMethod || 'capacity_based';
+          if (!current.vehicleConfig) {
+            current.vehicleConfig = {
+              vehicleModel: current.name,
+              vehicleType: 'Motor Yacht',
+              yachtModel: current.name,
+              yachtType: 'Motor Yacht',
+              yachtSize: '66 ft / 20.8 m',
+              maxSeats: current.maxPax || 10,
+              passengerCapacity: current.maxPax || 10,
+              totalSeats: current.maxPax || 10,
+              unitVehicleNetCost: current.adultNetPrice || current.adultNettCost || 500,
+              totalTransferCost: current.adultNetPrice || current.adultNettCost || 500,
+              pricingMethod: 'capacity_based',
+              adultSeatCount: 1,
+              childSeatCount: 1,
+              infantSeatCount: 0,
+              allowMultipleVehicles: true,
+              autoAllocateVehicles: true,
+              maxVehicles: 5,
+              isYacht: true
+            };
+          }
+          modified = true;
+        } else if (current.category === 'Private Yacht') {
+          if (!current.vehicleConfig) {
+            current.vehicleConfig = {
+              vehicleModel: current.name,
+              vehicleType: 'Motor Yacht',
+              yachtModel: current.name,
+              yachtType: 'Motor Yacht',
+              yachtSize: '66 ft / 20.8 m',
+              maxSeats: current.maxPax || 10,
+              passengerCapacity: current.maxPax || 10,
+              totalSeats: current.maxPax || 10,
+              unitVehicleNetCost: current.adultNetPrice || current.adultNettCost || 500,
+              totalTransferCost: current.adultNetPrice || current.adultNettCost || 500,
+              pricingMethod: 'capacity_based',
+              adultSeatCount: 1,
+              childSeatCount: 1,
+              infantSeatCount: 0,
+              allowMultipleVehicles: true,
+              autoAllocateVehicles: true,
+              maxVehicles: 5,
+              isYacht: true
+            };
+            modified = true;
+          }
+        }
+        return current;
+      }).filter(p => (p.category as any) !== 'Hotels');
+
+      // Ensure new initial Private Yacht products are added
+      INITIAL_PRODUCTS.forEach(initP => {
+        if (initP.category === 'Private Yacht' && !updatedProducts.some(p => p.id === initP.id)) {
+          updatedProducts.push(initP);
+          modified = true;
+        }
+      });
+
+      if (modified) {
+        this.setItem('products', updatedProducts);
+      }
+    } catch (e) {
+      console.warn('Migration note for products catalog:', e);
+    }
   }
 
   // ==========================================
@@ -644,6 +734,913 @@ export class AppDatabase {
 
   public getAuditLogs(): AuditLog[] {
     return this.getItem<AuditLog[]>('audit_logs', []);
+  }
+
+  // ==========================================
+  // GLOBAL CMS DELETE & ARCHIVE PERMISSION CONTROL
+  // ==========================================
+  public canUserDelete(user: User | null, moduleName?: string): { allowed: boolean; reason?: string } {
+    if (!user) {
+      return { allowed: false, reason: 'Authentication required. Please sign in.' };
+    }
+    if (user.role === 'ADMIN') {
+      return { allowed: true };
+    }
+    if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+      const perms = user.permissions;
+      if (perms?.canDeleteRecords) {
+        return { allowed: true };
+      }
+      if (moduleName && perms) {
+        const specificKey = `canDelete${moduleName}` as keyof typeof perms;
+        if (perms[specificKey]) {
+          return { allowed: true };
+        }
+      }
+      return { 
+        allowed: false, 
+        reason: 'Restricted Action: Your Team Member profile does not have Admin-granted deletion permissions.' 
+      };
+    }
+    return { 
+      allowed: false, 
+      reason: 'Access Denied: External accounts (B2B Agents & Buyers) cannot delete or archive CMS records.' 
+    };
+  }
+
+  // ==========================================
+  // RECORD DEPENDENCY CHECK ENGINE
+  // ==========================================
+  public checkRecordDependencies(entityType: CMSDeletableEntityType, recordId: string): DeletionCheckResult {
+    const groups: DependencyGroup[] = [];
+
+    const products = this.getProducts();
+    const hotels = this.getHotels();
+    const packages = this.getPackages();
+    const hubs = this.getCityHubs();
+    const destinations = this.getDestinations();
+    const regions = this.getMasterRegions();
+    const quotes = this.getAllSavedQuotes();
+    const bookings = this.getAllBookings();
+    const faqs = this.getDestinationFAQs();
+    const tasks = this.getCalendarTasks();
+    const leads = this.getLeads();
+    const sitePages = this.getSitePagesConfig();
+    const footerConfig = this.getFooterConfig();
+
+    switch (entityType) {
+      case 'MasterRegion': {
+        const reg = regions.find(r => r.id === recordId);
+        const regName = (reg?.name || '').toLowerCase();
+
+        // Check Destinations
+        const linkedDests = destinations.filter(d => d.regionId === recordId || (regName && d.regionName?.toLowerCase() === regName));
+        if (linkedDests.length > 0) {
+          groups.push({
+            entityType: 'Destination',
+            count: linkedDests.length,
+            label: `${linkedDests.length} Destination${linkedDests.length > 1 ? 's' : ''}`,
+            items: linkedDests.map(d => ({ id: d.id, name: d.name, type: 'Destination', details: `Country: ${d.country}` }))
+          });
+        }
+
+        // Check City Hubs
+        const linkedHubs = hubs.filter(h => h.regionId === recordId || linkedDests.some(d => d.id === h.destinationId));
+        if (linkedHubs.length > 0) {
+          groups.push({
+            entityType: 'CityHub',
+            count: linkedHubs.length,
+            label: `${linkedHubs.length} City Hub${linkedHubs.length > 1 ? 's' : ''}`,
+            items: linkedHubs.map(h => ({ id: h.id, name: h.name, type: 'City Hub', details: `Destination: ${h.destinationName}` }))
+          });
+        }
+
+        // Check Products
+        const linkedProds = products.filter(p => p.regionId === recordId || (regName && p.regionName?.toLowerCase() === regName) || linkedDests.some(d => d.id === p.destinationId));
+        if (linkedProds.length > 0) {
+          groups.push({
+            entityType: 'Product',
+            count: linkedProds.length,
+            label: `${linkedProds.length} Product${linkedProds.length > 1 ? 's' : ''}`,
+            items: linkedProds.slice(0, 15).map(p => ({ id: p.id, name: p.name, type: 'Product', details: `SKU: ${p.sku}` }))
+          });
+        }
+
+        // Check Hotels
+        const linkedHotels = hotels.filter(h => h.regionId === recordId || (regName && h.regionName?.toLowerCase() === regName) || linkedDests.some(d => d.id === h.destinationId));
+        if (linkedHotels.length > 0) {
+          groups.push({
+            entityType: 'Hotel',
+            count: linkedHotels.length,
+            label: `${linkedHotels.length} Hotel${linkedHotels.length > 1 ? 's' : ''}`,
+            items: linkedHotels.slice(0, 15).map(h => ({ id: h.id, name: h.name, type: 'Hotel', details: `City: ${h.cityName}` }))
+          });
+        }
+        break;
+      }
+
+      case 'Destination': {
+        const dest = destinations.find(d => d.id === recordId || d.slug === recordId);
+        const destName = (dest?.name || '').toLowerCase();
+        const destId = dest?.id || recordId;
+
+        // Check Hubs
+        const linkedHubs = hubs.filter(h => h.destinationId === destId || (destName && h.destinationName?.toLowerCase() === destName));
+        if (linkedHubs.length > 0) {
+          groups.push({
+            entityType: 'CityHub',
+            count: linkedHubs.length,
+            label: `${linkedHubs.length} City Hub${linkedHubs.length > 1 ? 's' : ''}`,
+            items: linkedHubs.map(h => ({ id: h.id, name: h.name, type: 'City Hub', details: h.tagline }))
+          });
+        }
+
+        // Check Hotels
+        const linkedHotels = hotels.filter(h => h.destinationId === destId || (destName && (h.destinationName?.toLowerCase() === destName || h.country?.toLowerCase() === destName)));
+        if (linkedHotels.length > 0) {
+          groups.push({
+            entityType: 'Hotel',
+            count: linkedHotels.length,
+            label: `${linkedHotels.length} Hotel${linkedHotels.length > 1 ? 's' : ''}`,
+            items: linkedHotels.slice(0, 15).map(h => ({ id: h.id, name: h.name, type: 'Hotel', details: `Code: ${h.code}` }))
+          });
+        }
+
+        // Check Products
+        const linkedProds = products.filter(p => p.destinationId === destId || (destName && (p.destinationName?.toLowerCase() === destName || p.country?.toLowerCase() === destName)));
+        if (linkedProds.length > 0) {
+          groups.push({
+            entityType: 'Product',
+            count: linkedProds.length,
+            label: `${linkedProds.length} Product${linkedProds.length > 1 ? 's' : ''}`,
+            items: linkedProds.slice(0, 15).map(p => ({ id: p.id, name: p.name, type: 'Product', details: `SKU: ${p.sku}` }))
+          });
+        }
+
+        // Check Packages
+        const linkedPkgs = packages.filter(pkg => pkg.destinationId === destId || (destName && pkg.destinationName?.toLowerCase() === destName));
+        if (linkedPkgs.length > 0) {
+          groups.push({
+            entityType: 'Package',
+            count: linkedPkgs.length,
+            label: `${linkedPkgs.length} Package${linkedPkgs.length > 1 ? 's' : ''}`,
+            items: linkedPkgs.slice(0, 15).map(pkg => ({ id: pkg.id, name: pkg.title, type: 'Package', details: `${pkg.durationDays}D / ${pkg.durationNights}N` }))
+          });
+        }
+
+        // Check FAQs
+        const linkedFaqs = faqs.filter(f => f.destinationId === destId);
+        if (linkedFaqs.length > 0) {
+          groups.push({
+            entityType: 'DestinationFAQ',
+            count: linkedFaqs.length,
+            label: `${linkedFaqs.length} FAQ${linkedFaqs.length > 1 ? 's' : ''}`,
+            items: linkedFaqs.map(f => ({ id: f.id, name: f.question, type: 'FAQ', details: f.category }))
+          });
+        }
+        break;
+      }
+
+      case 'CityHub': {
+        const hub = hubs.find(h => h.id === recordId);
+        const hubName = (hub?.name || '').toLowerCase();
+
+        // Check Products
+        const linkedProds = products.filter(p => p.hubId === recordId || (hubName && (p.city?.toLowerCase() === hubName || p.subcategory?.toLowerCase().includes(hubName))));
+        if (linkedProds.length > 0) {
+          groups.push({
+            entityType: 'Product',
+            count: linkedProds.length,
+            label: `${linkedProds.length} Product${linkedProds.length > 1 ? 's' : ''}`,
+            items: linkedProds.slice(0, 15).map(p => ({ id: p.id, name: p.name, type: 'Product', details: `SKU: ${p.sku}` }))
+          });
+        }
+
+        // Check Hotels
+        const linkedHotels = hotels.filter(h => h.hubId === recordId || h.cityId === recordId || (hubName && h.cityName?.toLowerCase() === hubName));
+        if (linkedHotels.length > 0) {
+          groups.push({
+            entityType: 'Hotel',
+            count: linkedHotels.length,
+            label: `${linkedHotels.length} Hotel${linkedHotels.length > 1 ? 's' : ''}`,
+            items: linkedHotels.slice(0, 15).map(h => ({ id: h.id, name: h.name, type: 'Hotel', details: `Code: ${h.code}` }))
+          });
+        }
+
+        // Check Packages
+        const linkedPkgs = packages.filter(pkg => 
+          (pkg.hubIds && pkg.hubIds.includes(recordId)) ||
+          (hubName && pkg.routeSummary && pkg.routeSummary.some(r => r.toLowerCase().includes(hubName))) ||
+          (hubName && pkg.routeHubs && pkg.routeHubs.some(rh => rh.hubId === recordId || rh.hubName?.toLowerCase() === hubName))
+        );
+        if (linkedPkgs.length > 0) {
+          groups.push({
+            entityType: 'Package',
+            count: linkedPkgs.length,
+            label: `${linkedPkgs.length} Package${linkedPkgs.length > 1 ? 's' : ''}`,
+            items: linkedPkgs.slice(0, 15).map(pkg => ({ id: pkg.id, name: pkg.title, type: 'Package', details: `${pkg.durationDays}D / ${pkg.durationNights}N` }))
+          });
+        }
+
+        // Check Active Quotations
+        const linkedQuotes = quotes.filter(q => 
+          q.routeHubs && q.routeHubs.some(rh => rh.hubId === recordId || (hubName && rh.hubName?.toLowerCase() === hubName))
+        );
+        if (linkedQuotes.length > 0) {
+          groups.push({
+            entityType: 'Quote',
+            count: linkedQuotes.length,
+            label: `${linkedQuotes.length} Active Proposal${linkedQuotes.length > 1 ? 's' : ''}`,
+            items: linkedQuotes.slice(0, 10).map(q => ({ id: q.id, name: `Quote #${q.quoteNumber || q.id}`, type: 'Quote', details: `Client: ${q.clientName || 'Direct'}` }))
+          });
+        }
+        break;
+      }
+
+      case 'Hotel': {
+        const hotel = hotels.find(h => h.id === recordId);
+        const hotelName = (hotel?.name || '').toLowerCase();
+
+        // Check Packages
+        const linkedPkgs = packages.filter(pkg => 
+          (pkg.hotelReferences && pkg.hotelReferences.some(hr => hr.hotelId === recordId || (hotelName && hr.hotelName?.toLowerCase() === hotelName))) ||
+          (pkg.hotelsSummary && pkg.hotelsSummary.some(hs => hs.hotelId === recordId || (hotelName && hs.name?.toLowerCase() === hotelName))) ||
+          (pkg.itinerary && pkg.itinerary.some(d => d.hotelId === recordId || (hotelName && d.hotelName?.toLowerCase() === hotelName)))
+        );
+        if (linkedPkgs.length > 0) {
+          groups.push({
+            entityType: 'Package',
+            count: linkedPkgs.length,
+            label: `${linkedPkgs.length} Package Itinerary Circuit${linkedPkgs.length > 1 ? 's' : ''}`,
+            items: linkedPkgs.map(pkg => ({ id: pkg.id, name: pkg.title, type: 'Package', details: `${pkg.durationDays} Days` }))
+          });
+        }
+
+        // Check Quotes
+        const linkedQuotes = quotes.filter(q => 
+          (q.items && q.items.some(item => item.product?.id === recordId || (hotelName && item.manualHotelDetails?.hotelName?.toLowerCase() === hotelName))) ||
+          (q.routeHubs && q.routeHubs.some(rh => rh.hotelId === recordId || (hotelName && rh.manualHotel?.hotelName?.toLowerCase() === hotelName)))
+        );
+        if (linkedQuotes.length > 0) {
+          groups.push({
+            entityType: 'Quote',
+            count: linkedQuotes.length,
+            label: `${linkedQuotes.length} Proposal${linkedQuotes.length > 1 ? 's' : ''}`,
+            items: linkedQuotes.slice(0, 10).map(q => ({ id: q.id, name: `Quote #${q.quoteNumber || q.id}`, type: 'Quote', details: q.status }))
+          });
+        }
+
+        // Check Bookings
+        const linkedBookings = bookings.filter(b => 
+          b.items && b.items.some(i => i.productId === recordId || (hotelName && i.manualHotelDetails?.hotelName?.toLowerCase() === hotelName))
+        );
+        if (linkedBookings.length > 0) {
+          groups.push({
+            entityType: 'Booking',
+            count: linkedBookings.length,
+            label: `${linkedBookings.length} Confirmed/Pending Booking${linkedBookings.length > 1 ? 's' : ''}`,
+            items: linkedBookings.map(b => ({ id: b.id, name: `Booking ${b.bookingReference}`, type: 'Booking', details: `Status: ${b.status}` }))
+          });
+        }
+        break;
+      }
+
+      case 'Product': {
+        const product = products.find(p => p.id === recordId);
+        const prodSku = product?.sku || '';
+
+        // Check Packages
+        const linkedPkgs = packages.filter(pkg => 
+          (pkg.productIds && pkg.productIds.includes(recordId)) ||
+          (pkg.productReferences && pkg.productReferences.some(pr => pr.productId === recordId)) ||
+          (pkg.recommendedProductIds && pkg.recommendedProductIds.includes(recordId)) ||
+          (pkg.itinerary && pkg.itinerary.some(d => d.productIds?.includes(recordId)))
+        );
+        if (linkedPkgs.length > 0) {
+          groups.push({
+            entityType: 'Package',
+            count: linkedPkgs.length,
+            label: `${linkedPkgs.length} Package Itinerary Circuit${linkedPkgs.length > 1 ? 's' : ''}`,
+            items: linkedPkgs.map(pkg => ({ id: pkg.id, name: pkg.title, type: 'Package', details: `${pkg.durationDays} Days` }))
+          });
+        }
+
+        // Check Quotes
+        const linkedQuotes = quotes.filter(q => 
+          q.items && q.items.some(item => item.product?.id === recordId || item.calculation?.productId === recordId)
+        );
+        if (linkedQuotes.length > 0) {
+          groups.push({
+            entityType: 'Quote',
+            count: linkedQuotes.length,
+            label: `${linkedQuotes.length} Proposal${linkedQuotes.length > 1 ? 's' : ''}`,
+            items: linkedQuotes.slice(0, 10).map(q => ({ id: q.id, name: `Quote #${q.quoteNumber || q.id}`, type: 'Quote', details: `Status: ${q.status}` }))
+          });
+        }
+
+        // Check Bookings
+        const linkedBookings = bookings.filter(b => 
+          b.items && b.items.some(i => i.productId === recordId || (prodSku && i.productSku === prodSku))
+        );
+        if (linkedBookings.length > 0) {
+          groups.push({
+            entityType: 'Booking',
+            count: linkedBookings.length,
+            label: `${linkedBookings.length} Active Booking${linkedBookings.length > 1 ? 's' : ''}`,
+            items: linkedBookings.map(b => ({ id: b.id, name: `Booking ${b.bookingReference}`, type: 'Booking', details: `Client: ${b.customer.leadTravelerName}` }))
+          });
+        }
+        break;
+      }
+
+      case 'Package': {
+        const pkg = packages.find(p => p.id === recordId);
+        const pkgTitle = (pkg?.title || '').toLowerCase();
+
+        // Check Quotes
+        const linkedQuotes = quotes.filter(q => 
+          q.parentQuoteId === recordId || 
+          (pkgTitle && q.title?.toLowerCase().includes(pkgTitle)) ||
+          (q.items && q.items.some(i => i.product?.id === recordId))
+        );
+        if (linkedQuotes.length > 0) {
+          groups.push({
+            entityType: 'Quote',
+            count: linkedQuotes.length,
+            label: `${linkedQuotes.length} Linked Proposal${linkedQuotes.length > 1 ? 's' : ''}`,
+            items: linkedQuotes.slice(0, 10).map(q => ({ id: q.id, name: `Quote #${q.quoteNumber || q.id}`, type: 'Quote', details: `Status: ${q.status}` }))
+          });
+        }
+
+        // Check Bookings
+        const linkedBookings = bookings.filter(b => 
+          b.quoteId === recordId || (b.items && b.items.some(i => i.productId === recordId))
+        );
+        if (linkedBookings.length > 0) {
+          groups.push({
+            entityType: 'Booking',
+            count: linkedBookings.length,
+            label: `${linkedBookings.length} Active Booking${linkedBookings.length > 1 ? 's' : ''}`,
+            items: linkedBookings.map(b => ({ id: b.id, name: `Booking ${b.bookingReference}`, type: 'Booking', details: b.status }))
+          });
+        }
+        break;
+      }
+
+      case 'RosterResource': {
+        const res = this.getResources().find(r => r.id === recordId);
+        const resName = (res?.name || '').toLowerCase();
+        const resEmail = (res?.email || '').toLowerCase();
+
+        // Check Tasks
+        const linkedTasks = tasks.filter(t => 
+          (resEmail && t.assignedToEmail?.toLowerCase() === resEmail) || 
+          (resName && t.assignedToName?.toLowerCase() === resName)
+        );
+        if (linkedTasks.length > 0) {
+          groups.push({
+            entityType: 'CalendarTask',
+            count: linkedTasks.length,
+            label: `${linkedTasks.length} Assigned Operational Task${linkedTasks.length > 1 ? 's' : ''}`,
+            items: linkedTasks.map(t => ({ id: t.id, name: t.title, type: 'Calendar Task', details: `Category: ${t.category}` }))
+          });
+        }
+
+        // Check Products
+        const linkedProds = products.filter(p => p.supplierId === recordId || (resName && p.supplierName?.toLowerCase() === resName));
+        if (linkedProds.length > 0) {
+          groups.push({
+            entityType: 'Product',
+            count: linkedProds.length,
+            label: `${linkedProds.length} Contracted Product${linkedProds.length > 1 ? 's' : ''}`,
+            items: linkedProds.slice(0, 10).map(p => ({ id: p.id, name: p.name, type: 'Product', details: `SKU: ${p.sku}` }))
+          });
+        }
+
+        // Check Bookings allocations
+        const linkedBookings = bookings.filter(b => 
+          b.supplierAllocations && b.supplierAllocations.some(sa => sa.supplierId === recordId || (resName && sa.supplierName?.toLowerCase() === resName))
+        );
+        if (linkedBookings.length > 0) {
+          groups.push({
+            entityType: 'Booking',
+            count: linkedBookings.length,
+            label: `${linkedBookings.length} Booking Ground Allocation${linkedBookings.length > 1 ? 's' : ''}`,
+            items: linkedBookings.map(b => ({ id: b.id, name: `Booking ${b.bookingReference}`, type: 'Booking', details: b.status }))
+          });
+        }
+        break;
+      }
+
+      case 'Lead': {
+        const lead = leads.find(l => l.id === recordId);
+        const leadNum = lead?.leadNumber || '';
+
+        // Check Quotes
+        const linkedQuotes = quotes.filter(q => q.leadId === recordId || (leadNum && q.agentNotes?.includes(leadNum)));
+        if (linkedQuotes.length > 0) {
+          groups.push({
+            entityType: 'Quote',
+            count: linkedQuotes.length,
+            label: `${linkedQuotes.length} Linked Proposal${linkedQuotes.length > 1 ? 's' : ''}`,
+            items: linkedQuotes.map(q => ({ id: q.id, name: `Quote #${q.quoteNumber || q.id}`, type: 'Quote', details: q.status }))
+          });
+        }
+
+        // Check Tasks
+        const linkedTasks = tasks.filter(t => t.leadNumber === leadNum);
+        if (linkedTasks.length > 0) {
+          groups.push({
+            entityType: 'CalendarTask',
+            count: linkedTasks.length,
+            label: `${linkedTasks.length} Follow-up Task${linkedTasks.length > 1 ? 's' : ''}`,
+            items: linkedTasks.map(t => ({ id: t.id, name: t.title, type: 'Calendar Task', details: t.status }))
+          });
+        }
+        break;
+      }
+
+      case 'Quote': {
+        const quote = quotes.find(q => q.id === recordId);
+        const quoteNum = quote?.quoteNumber || '';
+
+        // Check Bookings
+        const linkedBookings = bookings.filter(b => b.quoteId === recordId || (quoteNum && b.quoteNumber === quoteNum));
+        if (linkedBookings.length > 0) {
+          groups.push({
+            entityType: 'Booking',
+            count: linkedBookings.length,
+            label: `${linkedBookings.length} Linked Booking${linkedBookings.length > 1 ? 's' : ''}`,
+            items: linkedBookings.map(b => ({ id: b.id, name: `Booking ${b.bookingReference}`, type: 'Booking', details: b.status }))
+          });
+        }
+        break;
+      }
+
+      case 'CustomPage': {
+        const customPages = this.getCustomPages();
+        const page = customPages.find(p => p.id === recordId || p.slug === recordId);
+        const pageSlug = page?.slug || '';
+
+        // Check Menu items
+        const menuItems = this.getMenuItems();
+        const linkedMenus = menuItems.filter(m => m.targetId === pageSlug || m.targetId === recordId || (pageSlug && m.targetId?.includes(pageSlug)));
+        if (linkedMenus.length > 0) {
+          groups.push({
+            entityType: 'MenuItem',
+            count: linkedMenus.length,
+            label: `${linkedMenus.length} Header Navigation Link${linkedMenus.length > 1 ? 's' : ''}`,
+            items: linkedMenus.map(m => ({ id: m.id, name: m.label, type: 'Menu Item', details: m.targetId }))
+          });
+        }
+
+        // Check Footer columns
+        const footerCols = footerConfig.columns || [];
+        const linkedFooter = footerCols.filter(col => 
+          col.links && col.links.some(l => l.targetId === pageSlug || l.targetId === recordId || (pageSlug && l.url?.includes(pageSlug)))
+        );
+        if (linkedFooter.length > 0) {
+          groups.push({
+            entityType: 'FooterColumn',
+            count: linkedFooter.length,
+            label: `${linkedFooter.length} Footer Column${linkedFooter.length > 1 ? 's' : ''}`,
+            items: linkedFooter.map(c => ({ id: c.id, name: c.title, type: 'Footer Column', details: 'Contains active link to this page' }))
+          });
+        }
+        break;
+      }
+
+      case 'FooterColumn': {
+        const col = footerConfig.columns?.find(c => c.id === recordId);
+        if (col && col.links && col.links.length > 0) {
+          groups.push({
+            entityType: 'FooterLink',
+            count: col.links.length,
+            label: `${col.links.length} Connected Footer Link${col.links.length > 1 ? 's' : ''}`,
+            items: col.links.map(l => ({ id: l.id, name: l.label, type: 'Footer Link', details: l.url }))
+          });
+        }
+        break;
+      }
+
+      default:
+        break;
+    }
+
+    const totalDependencyCount = groups.reduce((acc, g) => acc + g.count, 0);
+    const hasDependencies = totalDependencyCount > 0;
+    
+    // Construct readable summary sentence matching user specification:
+    // e.g. "This Hub is currently being used by 24 Products, 12 Hotels and 3 Packages."
+    let dependencySummary = '';
+    if (hasDependencies) {
+      const parts = groups.map(g => `${g.count} ${g.label.split(' ')[1] || g.entityType}`);
+      const formattedParts = parts.length === 1 
+        ? parts[0] 
+        : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+      dependencySummary = `Cannot Delete This ${entityType}: This record is currently connected to ${formattedParts}. Remove or reassign linked records before hard deletion, or choose "Archive" instead.`;
+    } else {
+      dependencySummary = `No dependent records found. This ${entityType} can be safely deleted or archived.`;
+    }
+
+    const canArchive = true;
+    const canHardDelete = !hasDependencies;
+    const suggestedAction = hasDependencies ? 'BLOCK_AND_SUGGEST_ARCHIVE' : 'ALLOW_DELETE';
+
+    return {
+      canHardDelete,
+      hasDependencies,
+      totalDependencyCount,
+      dependencySummary,
+      groups,
+      canArchive,
+      suggestedAction
+    };
+  }
+
+  // ==========================================
+  // GLOBAL SECURE DELETE WITH DEPENDENCY ENFORCEMENT
+  // ==========================================
+  public secureDeleteRecord(
+    entityType: CMSDeletableEntityType,
+    recordId: string,
+    user: User | null,
+    options?: { forceHardDelete?: boolean }
+  ): SecureDeleteResult {
+    // 1. Permission Validation
+    const permCheck = this.canUserDelete(user, entityType);
+    if (!permCheck.allowed) {
+      this.logAudit(
+        user,
+        'UNAUTHORIZED_DELETE_ATTEMPT',
+        entityType,
+        recordId,
+        `Unauthorized delete attempt on ${entityType} #${recordId}: ${permCheck.reason}`
+      );
+      return {
+        success: false,
+        action: 'BLOCKED',
+        message: permCheck.reason || 'Permission denied.'
+      };
+    }
+
+    // 2. Dependency Analysis
+    const depCheck = this.checkRecordDependencies(entityType, recordId);
+    if (depCheck.hasDependencies && !options?.forceHardDelete) {
+      this.logAudit(
+        user,
+        'DELETION_BLOCKED_DEPENDENCY',
+        entityType,
+        recordId,
+        `Deletion blocked on ${entityType} #${recordId} due to ${depCheck.totalDependencyCount} linked dependencies. ${depCheck.dependencySummary}`
+      );
+      return {
+        success: false,
+        action: 'BLOCKED',
+        message: depCheck.dependencySummary,
+        dependencies: depCheck
+      };
+    }
+
+    // 3. Perform Verified Deletion across Collections & Firestore
+    switch (entityType) {
+      case 'Product': {
+        const prods = this.getProducts();
+        const target = prods.find(p => p.id === recordId);
+        this.setItem('products', prods.filter(p => p.id !== recordId));
+        this.deleteFirestoreDoc('products', recordId);
+        this.logAudit(user, 'PRODUCT_DELETED', 'Product', recordId, `Permanently deleted product: ${target?.name || recordId} (SKU: ${target?.sku || ''})`);
+        break;
+      }
+
+      case 'Hotel': {
+        const hotels = this.getHotels();
+        const target = hotels.find(h => h.id === recordId);
+        this.setItem('hotels', hotels.filter(h => h.id !== recordId));
+        this.deleteFirestoreDoc('hotels', recordId);
+        this.logAudit(user, 'HOTEL_DELETED', 'Hotel', recordId, `Permanently deleted hotel property: ${target?.name || recordId} (${target?.code || ''})`);
+        break;
+      }
+
+      case 'Package': {
+        const pkgs = this.getPackages();
+        const target = pkgs.find(p => p.id === recordId);
+        this.setItem('b2b_packages', pkgs.filter(p => p.id !== recordId));
+        this.deleteFirestoreDoc('b2b_packages', recordId);
+        this.logAudit(user, 'PACKAGE_DELETED', 'Package', recordId, `Permanently deleted package circuit: "${target?.title || recordId}"`);
+        break;
+      }
+
+      case 'CityHub': {
+        const hubs = this.getCityHubs();
+        const target = hubs.find(h => h.id === recordId);
+        this.setItem('city_hubs', hubs.filter(h => h.id !== recordId));
+        this.deleteFirestoreDoc('city_hubs', recordId);
+        this.logAudit(user, 'CITY_HUB_DELETED', 'CityHub', recordId, `Permanently deleted city hub: "${target?.name || recordId}" (${target?.destinationName || ''})`);
+        break;
+      }
+
+      case 'Destination': {
+        const dests = this.getDestinations();
+        const target = dests.find(d => d.id === recordId || d.slug === recordId);
+        this.setItem('destinations', dests.filter(d => d.id !== recordId && d.slug !== recordId));
+        this.deleteFirestoreDoc('destinations', target?.id || recordId);
+        this.logAudit(user, 'DESTINATION_DELETED', 'Destination', recordId, `Permanently deleted destination: "${target?.name || recordId}"`);
+        break;
+      }
+
+      case 'MasterRegion': {
+        const regs = this.getMasterRegions();
+        const target = regs.find(r => r.id === recordId);
+        this.setItem('master_regions', regs.filter(r => r.id !== recordId));
+        this.deleteFirestoreDoc('master_regions', recordId);
+        this.logAudit(user, 'REGION_DELETED', 'MasterRegion', recordId, `Permanently deleted master macro region: "${target?.name || recordId}"`);
+        break;
+      }
+
+      case 'DestinationRegion': {
+        const regItems = this.getRegions();
+        const target = regItems.find(r => r.id === recordId);
+        this.setItem('regions', regItems.filter(r => r.id !== recordId));
+        this.deleteFirestoreDoc('regions', recordId);
+        this.logAudit(user, 'REGION_DELETED', 'DestinationRegionItem', recordId, `Permanently deleted sub-region: "${target?.name || recordId}"`);
+        break;
+      }
+
+      case 'DestinationFAQ': {
+        const faqs = this.getDestinationFAQs();
+        const target = faqs.find(f => f.id === recordId);
+        this.setItem('destination_faqs', faqs.filter(f => f.id !== recordId));
+        this.deleteFirestoreDoc('faqs', recordId);
+        this.logAudit(user, 'FAQ_DELETED', 'DestinationFAQ', recordId, `Deleted FAQ: "${target?.question || recordId}"`);
+        break;
+      }
+
+      case 'Blog': {
+        const blogs = this.getBlogs();
+        const target = blogs.find(b => b.id === recordId);
+        this.setItem('blogs', blogs.filter(b => b.id !== recordId));
+        this.deleteFirestoreDoc('blogs', recordId);
+        this.logAudit(user, 'BLOG_DELETED', 'BlogArticle', recordId, `Deleted blog article: "${target?.title || recordId}"`);
+        break;
+      }
+
+      case 'Review': {
+        const reviews = this.getReviews();
+        const target = reviews.find(r => r.id === recordId);
+        this.setItem('reviews', reviews.filter(r => r.id !== recordId));
+        this.deleteFirestoreDoc('reviews', recordId);
+        this.logAudit(user, 'REVIEW_DELETED', 'GoogleReview', recordId, `Deleted review from ${target?.authorName || recordId}`);
+        break;
+      }
+
+      case 'Promotion': {
+        const promos = this.getPromotions();
+        const target = promos.find(p => p.id === recordId);
+        this.setItem('promotions', promos.filter(p => p.id !== recordId));
+        this.deleteFirestoreDoc('promotions', recordId);
+        this.logAudit(user, 'PROMOTION_DELETED', 'Promotion', recordId, `Deleted promotion campaign: "${target?.title || recordId}"`);
+        break;
+      }
+
+      case 'GalleryImage': {
+        const images = this.getGalleryImages();
+        const target = images.find(g => g.id === recordId);
+        this.setItem('gallery', images.filter(g => g.id !== recordId));
+        this.deleteFirestoreDoc('gallery', recordId);
+        this.logAudit(user, 'GALLERY_DELETED', 'GalleryImage', recordId, `Deleted gallery photo: "${target?.caption || recordId}"`);
+        break;
+      }
+
+      case 'VisaRequirement': {
+        const visas = this.getVisas();
+        const target = visas.find(v => v.id === recordId);
+        this.setItem('visas', visas.filter(v => v.id !== recordId));
+        this.deleteFirestoreDoc('visas', recordId);
+        this.logAudit(user, 'VISA_DELETED', 'VisaProduct', recordId, `Deleted visa guidelines for ${target?.country || recordId}`);
+        break;
+      }
+
+      case 'CustomPage': {
+        this.deleteCustomPage(recordId, user);
+        this.logAudit(user, 'PAGE_DELETED', 'CustomPage', recordId, `Deleted institutional page: ${recordId}`);
+        break;
+      }
+
+      case 'MenuItem': {
+        this.deleteMenuItem(recordId, user);
+        this.logAudit(user, 'PAGE_UPDATED', 'MenuItem', recordId, `Deleted header menu navigation item: ${recordId}`);
+        break;
+      }
+
+      case 'FooterColumn': {
+        const config = this.getFooterConfig();
+        const target = config.columns?.find(c => c.id === recordId);
+        config.columns = (config.columns || []).filter(c => c.id !== recordId);
+        this.saveFooterConfig(config, user);
+        this.logAudit(user, 'SETTINGS_UPDATED', 'FooterColumn', recordId, `Deleted footer column: "${target?.title || recordId}"`);
+        break;
+      }
+
+      case 'FooterLink': {
+        const config = this.getFooterConfig();
+        let deletedLink: any = null;
+        if (config.columns) {
+          config.columns.forEach(col => {
+            if (col.links) {
+              const idx = col.links.findIndex(l => l.id === recordId);
+              if (idx >= 0) {
+                deletedLink = col.links[idx];
+                col.links.splice(idx, 1);
+              }
+            }
+          });
+          this.saveFooterConfig(config, user);
+          this.logAudit(user, 'SETTINGS_UPDATED', 'FooterLink', recordId, `Deleted footer link: "${deletedLink?.label || recordId}"`);
+        }
+        break;
+      }
+
+      case 'Quote': {
+        this.deleteQuote(recordId, user);
+        this.logAudit(user, 'QUOTE_DELETED', 'Quotation', recordId, `Permanently deleted quotation #${recordId}`);
+        break;
+      }
+
+      case 'Lead': {
+        const leads = this.getLeads();
+        const target = leads.find(l => l.id === recordId);
+        this.setItem('travel_leads', leads.filter(l => l.id !== recordId));
+        this.deleteFirestoreDoc('leads', recordId);
+        this.logAudit(user, 'LEAD_DELETED', 'TravelLead', recordId, `Deleted travel lead ${target?.leadNumber || recordId} (${target?.contactName || ''})`);
+        break;
+      }
+
+      case 'RosterResource': {
+        this.deleteResource(recordId, user);
+        break;
+      }
+
+      case 'CalendarTask': {
+        this.deleteCalendarTask(recordId, user);
+        break;
+      }
+
+      default:
+        return {
+          success: false,
+          action: 'BLOCKED',
+          message: `Unknown entity type: ${entityType}`
+        };
+    }
+
+    return {
+      success: true,
+      action: 'DELETED',
+      message: `Successfully deleted ${entityType} record from Firebase & database.`
+    };
+  }
+
+  // ==========================================
+  // SAFE ARCHIVE WITH PERMISSION CONTROL
+  // ==========================================
+  public secureArchiveRecord(
+    entityType: CMSDeletableEntityType,
+    recordId: string,
+    user: User | null
+  ): SecureDeleteResult {
+    // 1. Permission Validation
+    const permCheck = this.canUserDelete(user, entityType);
+    if (!permCheck.allowed) {
+      return {
+        success: false,
+        action: 'BLOCKED',
+        message: permCheck.reason || 'Permission denied to archive records.'
+      };
+    }
+
+    switch (entityType) {
+      case 'Product': {
+        const prods = this.getProducts();
+        const p = prods.find(item => item.id === recordId);
+        if (p) {
+          p.status = 'DRAFT';
+          this.saveProduct(p, user);
+          this.logAudit(user, 'PRODUCT_ARCHIVED', 'Product', recordId, `Archived product: ${p.name} (status set to DRAFT/ARCHIVED)`);
+        }
+        break;
+      }
+
+      case 'Hotel': {
+        const hotels = this.getHotels();
+        const h = hotels.find(item => item.id === recordId);
+        if (h) {
+          h.status = 'ARCHIVED';
+          this.saveHotel(h, user);
+          this.logAudit(user, 'HOTEL_ARCHIVED', 'Hotel', recordId, `Archived hotel property: ${h.name} (status set to ARCHIVED)`);
+        }
+        break;
+      }
+
+      case 'Package': {
+        const pkgs = this.getPackages();
+        const pkg = pkgs.find(item => item.id === recordId);
+        if (pkg) {
+          pkg.status = 'ARCHIVED';
+          pkg.isPublished = false;
+          this.savePackage(pkg);
+          this.logAudit(user, 'PACKAGE_ARCHIVED', 'Package', recordId, `Archived tour package circuit: ${pkg.title}`);
+        }
+        break;
+      }
+
+      case 'CityHub': {
+        const hubs = this.getCityHubs();
+        const hub = hubs.find(item => item.id === recordId);
+        if (hub) {
+          hub.status = 'ARCHIVED';
+          hub.isPublished = false;
+          this.saveCityHub(hub, user);
+          this.logAudit(user, 'CITY_HUB_ARCHIVED', 'CityHub', recordId, `Archived city hub: ${hub.name}`);
+        }
+        break;
+      }
+
+      case 'Destination': {
+        const dests = this.getDestinations();
+        const dest = dests.find(item => item.id === recordId || item.slug === recordId);
+        if (dest) {
+          dest.status = 'COMING_SOON';
+          this.saveDestination(dest, user);
+          this.logAudit(user, 'DESTINATION_ARCHIVED', 'Destination', recordId, `Archived destination: ${dest.name} (set to Coming Soon)`);
+        }
+        break;
+      }
+
+      case 'MasterRegion': {
+        const regs = this.getMasterRegions();
+        const reg = regs.find(item => item.id === recordId);
+        if (reg) {
+          reg.status = 'INACTIVE';
+          reg.isPublished = false;
+          this.saveMasterRegion(reg, user);
+          this.logAudit(user, 'REGION_ARCHIVED', 'MasterRegion', recordId, `Archived macro region: ${reg.name}`);
+        }
+        break;
+      }
+
+      case 'Blog': {
+        const blogs = this.getBlogs();
+        const blog = blogs.find(item => item.id === recordId);
+        if (blog) {
+          blog.status = 'ARCHIVED';
+          this.saveBlog(blog, user);
+          this.logAudit(user, 'BLOG_ARCHIVED', 'BlogArticle', recordId, `Archived editorial article: ${blog.title}`);
+        }
+        break;
+      }
+
+      case 'Promotion': {
+        const promos = this.getPromotions();
+        const promo = promos.find(item => item.id === recordId);
+        if (promo) {
+          promo.isActive = false;
+          this.savePromotion(promo, user);
+          this.logAudit(user, 'PROMOTION_UPDATED', 'Promotion', recordId, `Deactivated/Archived promotion campaign: ${promo.title}`);
+        }
+        break;
+      }
+
+      case 'VisaRequirement': {
+        const visas = this.getVisas();
+        const v = visas.find(item => item.id === recordId);
+        if (v) {
+          v.status = 'ARCHIVED';
+          this.saveVisa(v, user);
+          this.logAudit(user, 'VISA_ARCHIVED', 'VisaProduct', recordId, `Archived visa guidelines for ${v.country}`);
+        }
+        break;
+      }
+
+      case 'Quote': {
+        this.updateQuotationStatus(recordId, 'EXPIRED', user);
+        break;
+      }
+
+      case 'Lead': {
+        this.updateLeadStatus(recordId, 'LOST', user);
+        break;
+      }
+
+      default:
+        return this.secureDeleteRecord(entityType, recordId, user);
+    }
+
+    return {
+      success: true,
+      action: 'ARCHIVED',
+      message: `Successfully archived ${entityType} record. Live dependencies remain safe.`
+    };
   }
 
   // ==========================================
@@ -777,7 +1774,21 @@ export class AppDatabase {
   // DESTINATIONS CRUD (TIER 2: DESTINATION)
   // ==========================================
   public getDestinations(): Destination[] {
-    return this.getItem<Destination[]>('destinations', DESTINATIONS);
+    const raw = this.getItem<Destination[]>('destinations', DESTINATIONS);
+    if (!Array.isArray(raw)) return DESTINATIONS;
+    const seen = new Set<string>();
+    const deduped: Destination[] = [];
+    for (const d of raw) {
+      if (!d) continue;
+      const keyId = d.id ? d.id.trim().toLowerCase() : '';
+      const keySlug = d.slug ? d.slug.trim().toLowerCase() : '';
+      if (keyId && seen.has(keyId)) continue;
+      if (keySlug && seen.has(keySlug)) continue;
+      if (keyId) seen.add(keyId);
+      if (keySlug) seen.add(keySlug);
+      deduped.push(d);
+    }
+    return deduped;
   }
 
   public getDestinationBySlug(slug: string): Destination | undefined {
@@ -1019,65 +2030,368 @@ export class AppDatabase {
   }
 
   // ==========================================
-  // STRICT QUOTE AUTHORIZATION & MANAGEMENT
+  // STRICT SHARED QUOTE AUTHORIZATION & MANAGEMENT
   // ==========================================
   public getAllSavedQuotes(): Quotation[] {
-    return this.getItem<Quotation[]>('saved_quotes', []);
+    const defaultQuotes: Quotation[] = [
+      {
+        id: 'quote-sample-01',
+        quoteNumber: 'UBQ-2026-9104',
+        version: 1,
+        title: 'Japan Golden Triangle & Alpine Heritage (10 Nights)',
+        destination: 'Japan',
+        currency: 'USD',
+        status: 'PROPOSAL_GENERATED',
+        scope: 'HOTEL_LAND',
+        travelStartDate: '2026-10-10',
+        travelEndDate: '2026-10-20',
+        totalPax: 2,
+        adultsCount: 2,
+        childrenCount: 0,
+        infantsCount: 0,
+        overallMarkupPercent: 15,
+        overallDiscountPercent: 0,
+        totalNetCost: 8450,
+        totalSellingPrice: 9717.5,
+        totalTaxes: 0,
+        totalMargin: 1267.5,
+        termsAndConditions: 'All wholesale tariffs confirmed. 20% refundable deposit secures hotel allotments and private vehicle dispatch.',
+        agentNotes: 'Client prefers English-speaking private chauffeurs and high-floor panoramic suites in Tokyo and Kyoto.',
+        createdAt: '2026-08-20T10:00:00Z',
+        updatedAt: '2026-08-25T14:30:00Z',
+        lastActivityAt: '2026-08-25T14:30:00Z',
+        validUntil: '2026-09-30T23:59:59Z',
+        
+        // Ownership & Attribution (Created by Admin for James Harrison)
+        createdBy: 'usr-admin-business',
+        createdByName: 'TheUnbound Executive Admin',
+        createdByUserType: 'ADMIN',
+        agentId: 'usr-admin-business',
+        agentName: 'TheUnbound Bespoke Concierge',
+        agentEmail: 'business@theunbound.in',
+        agentAgency: 'TheUnbound DMC Global Operations',
+        agentPhone: '+91 9811654959',
+        
+        // Target Registered Client (Buyer)
+        clientUserId: 'usr-buyer-01',
+        clientName: 'James Harrison',
+        clientEmail: 'james.buyer@horizonventures.com',
+        clientPhone: '+1 415 555 2671',
+        clientCompany: 'Horizon Private Client Group',
+        
+        routeHubs: [
+          { id: 'rh-1', hubId: 'hub-tokyo', hubName: 'Tokyo', nights: 4, order: 1, notes: 'Stay in Ginza / Shinjuku' },
+          { id: 'rh-2', hubId: 'hub-kyoto', hubName: 'Kyoto', nights: 4, order: 2, notes: 'Gion cultural exploration' },
+          { id: 'rh-3', hubId: 'hub-osaka', hubName: 'Osaka', nights: 2, order: 3, notes: 'Gastronomy and Dotonbori' }
+        ],
+        items: [
+          {
+            id: 'item-jp-01',
+            product: INITIAL_PRODUCTS[0] || {
+              id: 'jp-tok-01',
+              name: 'Tokyo Modern & Edo Heritage Private VIP Chauffeur Tour',
+              destinationName: 'Japan',
+              country: 'Japan',
+              city: 'Tokyo',
+              category: 'Private Tours',
+              productType: 'Private Day Tour',
+              sellingPriceStartingFrom: 480,
+              currency: 'USD',
+              images: ['https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=1200&auto=format&fit=crop'],
+              shortDescription: 'Full-day custom itinerary in a luxury Toyota Alphard with English-speaking licensed guide.',
+              minPax: 1,
+              maxPax: 6
+            } as any,
+            pax: { adults: 2, children: 0, infants: 0 },
+            travelDate: '2026-10-11',
+            serviceTime: '09:00 AM',
+            notes: 'Pickup at Tokyo Hotel Lobby at 09:00 AM',
+            selectedAddonIds: [],
+            calculation: {
+              productId: 'jp-tok-01',
+              productName: 'Tokyo Modern & Edo Heritage Private VIP Chauffeur Tour',
+              pricingTier: 'B2B',
+              pax: { adults: 2, children: 0, infants: 0, totalPax: 2 },
+              travelDate: '2026-10-11',
+              currency: 'USD',
+              adultsSubtotalNet: 700,
+              childrenSubtotalNet: 0,
+              infantsSubtotalNet: 0,
+              addonsSubtotalNet: 0,
+              totalNetCost: 700,
+              b2bWholesaleMarkupRate: 0.15,
+              b2bWholesaleNetToAgent: 805,
+              agentClientMarkupRate: 0,
+              agentProfitAmount: 0,
+              markupRate: 0.15,
+              markupAmount: 105,
+              grossBeforeTax: 805,
+              taxRate: 0,
+              taxAmount: 0,
+              serviceFee: 0,
+              discountRate: 0,
+              discountAmount: 0,
+              commissionRate: 0,
+              commissionAmount: 0,
+              adultsSubtotalSelling: 805,
+              childrenSubtotalSelling: 0,
+              infantsSubtotalSelling: 0,
+              addonsSubtotalSelling: 0,
+              adultPricePerPax: 402.5,
+              childPricePerPax: 0,
+              finalTotalSellingPrice: 805,
+              sellingPriceFinal: 805,
+              pricePerPerson: 402.5,
+              dmcMarginAmount: 105,
+              dmcMarginPercent: 15
+            }
+          }
+        ],
+        versionHistory: [
+          {
+            version: 1,
+            updatedAt: '2026-08-20T10:00:00Z',
+            updatedBy: 'TheUnbound Executive Admin',
+            changesSummary: 'Initial comprehensive 10-Night Japan bespoke itinerary generated for James Harrison.',
+            totalSellingPrice: 9717.5
+          }
+        ],
+        activityLog: [
+          {
+            id: 'act-init-01',
+            action: 'CREATED',
+            timestamp: '2026-08-20T10:00:00Z',
+            userName: 'TheUnbound Executive Admin',
+            userRole: 'ADMIN',
+            userType: 'ADMIN',
+            details: 'Admin created bespoke quotation for registered client James Harrison (usr-buyer-01)'
+          },
+          {
+            id: 'act-init-02',
+            action: 'PROPOSAL_GENERATED',
+            timestamp: '2026-08-22T11:15:00Z',
+            userName: 'TheUnbound Executive Admin',
+            userRole: 'ADMIN',
+            userType: 'ADMIN',
+            details: 'Official Digital Proposal generated and linked to client account'
+          }
+        ]
+      },
+      {
+        id: 'quote-sample-02',
+        quoteNumber: 'TUB-QT-2026-4421',
+        version: 1,
+        title: 'Scottish Highlands & Edinburgh Private Castles Tour (7 Nights)',
+        destination: 'United Kingdom',
+        currency: 'GBP',
+        status: 'SENT_TO_CLIENT',
+        scope: 'HOTEL_LAND',
+        travelStartDate: '2026-09-15',
+        travelEndDate: '2026-09-22',
+        totalPax: 2,
+        adultsCount: 2,
+        childrenCount: 0,
+        infantsCount: 0,
+        overallMarkupPercent: 12,
+        overallDiscountPercent: 0,
+        totalNetCost: 4200,
+        totalSellingPrice: 4704,
+        totalTaxes: 0,
+        totalMargin: 504,
+        termsAndConditions: 'Direct Mercedes V-Class chauffeur service and Blue Badge docent guide included throughout.',
+        agentNotes: 'VIP client celebrating 25th wedding anniversary in the Highlands.',
+        createdAt: '2026-08-24T09:00:00Z',
+        updatedAt: '2026-08-26T16:00:00Z',
+        lastActivityAt: '2026-08-26T16:00:00Z',
+        validUntil: '2026-09-25T23:59:59Z',
+        
+        // Ownership & Attribution (Created by B2B Agent Elena Rostova)
+        createdBy: 'usr-agent-01',
+        createdByName: 'Elena Rostova',
+        createdByUserType: 'B2B_AGENT',
+        agentId: 'usr-agent-01',
+        agentName: 'Elena Rostova',
+        agentEmail: 'elena@luxurydiscovery.com',
+        agentAgency: 'Luxury Discovery Travel Partners',
+        agentPhone: '+44 20 7946 0912',
+        
+        // Client details
+        clientName: 'Lady Catherine Montgomery',
+        clientEmail: 'catherine.montgomery@ukestates.co.uk',
+        clientPhone: '+44 7700 900451',
+        clientCompany: 'Montgomery Private Office',
+        
+        routeHubs: [
+          { id: 'rh-uk-1', hubId: 'hub-edinburgh', hubName: 'Edinburgh', nights: 3, order: 1, notes: 'Old Town & Castle View' },
+          { id: 'rh-uk-2', hubId: 'hub-highlands', hubName: 'Scottish Highlands', nights: 4, order: 2, notes: 'Loch Ness & Private Estate' }
+        ],
+        items: [],
+        versionHistory: [
+          {
+            version: 1,
+            updatedAt: '2026-08-24T09:00:00Z',
+            updatedBy: 'Elena Rostova',
+            changesSummary: 'Initial proposal created for Lady Catherine Montgomery.',
+            totalSellingPrice: 4704
+          }
+        ],
+        activityLog: [
+          {
+            id: 'act-uk-01',
+            action: 'CREATED',
+            timestamp: '2026-08-24T09:00:00Z',
+            userName: 'Elena Rostova',
+            userRole: 'B2B_AGENT',
+            userType: 'B2B_AGENT',
+            details: 'Created quote for Lady Catherine Montgomery'
+          },
+          {
+            id: 'act-uk-02',
+            action: 'SENT_TO_CLIENT',
+            timestamp: '2026-08-26T16:00:00Z',
+            userName: 'Elena Rostova',
+            userRole: 'B2B_AGENT',
+            userType: 'B2B_AGENT',
+            details: 'Emailed customized proposal document to client'
+          }
+        ]
+      }
+    ];
+
+    return this.getItem<Quotation[]>('saved_quotes', defaultQuotes);
   }
 
   /**
-   * Enforces strict Authorization Layer:
-   * - ADMIN / TEAM_MEMBER: Can view all quotes across the entire organization.
-   * - BUYER / B2B_AGENT: Can strictly ONLY view their own quotes matching agentId or clientEmail.
+   * Enforces strict Shared Quotation Authorization Layer:
+   * - ADMIN / TEAM_MEMBER / DMC_STAFF: Can view and manage all quotes across the entire organization.
+   * - B2B_AGENT: Can view quotes created by them, quotes where they are assigned as agent, or assignedTo.
+   * - BUYER / REGISTERED USER: Can view quotes where clientUserId matches user.id OR clientEmail matches user.email.
    */
   public getQuotesForUser(user: User | null): Quotation[] {
     const all = this.getAllSavedQuotes();
     if (!user) return [];
+
+    // 1. Admin & Internal Staff see ALL quotes
     if (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
       return all;
     }
-    // Strict isolation for Buyer & Agent
-    return all.filter(q => q.agentId === user.id || (user.email && q.clientEmail === user.email));
+
+    // 2. B2B Agents see their own created quotes or assigned quotes
+    if (user.role === 'B2B_AGENT') {
+      return all.filter(q => 
+        q.createdBy === user.id || 
+        q.agentId === user.id || 
+        q.b2bAgentId === user.id || 
+        q.assignedTo === user.id ||
+        (user.email && q.agentEmail?.toLowerCase().trim() === user.email.toLowerCase().trim())
+      );
+    }
+
+    // 3. Buyers / Registered Users see quotes created for their account or email
+    const userEmail = user.email ? user.email.toLowerCase().trim() : '';
+    return all.filter(q => 
+      (q.clientUserId && q.clientUserId === user.id) ||
+      (userEmail && q.clientEmail && q.clientEmail.toLowerCase().trim() === userEmail)
+    );
+  }
+
+  public getAllSavedQuotesForUser(user: User | null): Quotation[] {
+    return this.getQuotesForUser(user);
   }
 
   public getQuoteByIdAuthorized(quoteId: string, user: User | null): Quotation | null {
     const all = this.getAllSavedQuotes();
-    const found = all.find(q => q.id === quoteId);
+    const found = all.find(q => q.id === quoteId || q.quoteNumber === quoteId);
     if (!found) return null;
     if (!user) return null;
+
+    // 1. Admin & Internal Staff
     if (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
       return found;
     }
-    if (found.agentId === user.id || (user.email && found.clientEmail === user.email)) {
+
+    // 2. B2B Agent
+    if (user.role === 'B2B_AGENT') {
+      if (
+        found.createdBy === user.id ||
+        found.agentId === user.id ||
+        found.b2bAgentId === user.id ||
+        found.assignedTo === user.id ||
+        (user.email && found.agentEmail?.toLowerCase().trim() === user.email.toLowerCase().trim())
+      ) {
+        return found;
+      }
+    }
+
+    // 3. Buyer / User
+    const userEmail = user.email ? user.email.toLowerCase().trim() : '';
+    if (
+      (found.clientUserId && found.clientUserId === user.id) ||
+      (userEmail && found.clientEmail && found.clientEmail.toLowerCase().trim() === userEmail)
+    ) {
       return found;
     }
-    // Access denied by authorization layer
-    console.warn(`SECURITY: Unauthorized quote access attempt to quote ${quoteId} by user ${user.id}`);
+
+    // Access denied
+    console.warn(`SECURITY: Unauthorized quote access attempt to quote ${quoteId} by user ${user.id} (${user.role})`);
     return null;
   }
 
   public saveQuote(
     quote: Quotation, 
     user: User | null, 
-    actionType: 'CREATED' | 'EDITED' | 'PRINTED' | 'DOWNLOADED' = 'EDITED'
+    actionType: 
+      | 'CREATED' 
+      | 'EDITED' 
+      | 'PRICING_UPDATED' 
+      | 'SAVED' 
+      | 'PROPOSAL_GENERATED' 
+      | 'PRINTED' 
+      | 'DOWNLOADED' 
+      | 'SENT' 
+      | 'SENT_TO_CLIENT' 
+      | 'VIEWED_BY_CLIENT' 
+      | 'STATUS_CHANGED' 
+      | 'BOOKING_REQUESTED' 
+      | 'BOOKED' 
+      | 'VERSION_BRANCHED' 
+      | 'CONVERTED' = 'EDITED',
+    customDetails?: string
   ): Quotation {
     const quotes = this.getAllSavedQuotes();
     const existingIndex = quotes.findIndex(q => q.id === quote.id);
     const timestamp = new Date().toISOString();
-    const userName = user?.name || 'Travel Consultant';
+    const userName = user?.name || quote.createdByName || 'Travel Consultant';
+    const userRole = user?.role || 'B2B_AGENT';
 
     let currentVersion = quote.version || 1;
     let versionHistory = quote.versionHistory ? [...quote.versionHistory] : [];
     let activityLog = quote.activityLog ? [...quote.activityLog] : [];
 
+    // Attempt to resolve registered client user account if clientUserId is not set
+    let resolvedClientUserId = quote.clientUserId;
+    if (!resolvedClientUserId && quote.clientEmail) {
+      const allUsers = this.getUsers();
+      const matched = allUsers.find(u => u.email.toLowerCase().trim() === quote.clientEmail?.toLowerCase().trim());
+      if (matched) {
+        resolvedClientUserId = matched.id;
+      }
+    }
+
+    // Determine createdBy attribution
+    const existingQuote = existingIndex >= 0 ? quotes[existingIndex] : null;
+    const createdBy = existingQuote?.createdBy || quote.createdBy || user?.id || 'usr-anonymous';
+    const createdByName = existingQuote?.createdByName || quote.createdByName || user?.name || 'TheUnbound Consultant';
+    const createdByUserType = existingQuote?.createdByUserType || quote.createdByUserType || (user?.role as any) || 'B2B_AGENT';
+
     if (existingIndex >= 0) {
-      if (actionType === 'EDITED') {
+      if (actionType === 'EDITED' || actionType === 'PRICING_UPDATED') {
         currentVersion += 1;
         versionHistory.push({
           version: currentVersion,
           updatedAt: timestamp,
           updatedBy: userName,
-          changesSummary: `Updated itinerary: ${quote.items.length} services (${quote.currency} ${quote.totalSellingPrice})`,
+          changesSummary: customDetails || `Updated itinerary: ${quote.items?.length || 0} services (${quote.currency} ${quote.totalSellingPrice})`,
           totalSellingPrice: quote.totalSellingPrice
         });
       }
@@ -1088,10 +2402,38 @@ export class AppDatabase {
           version: 1,
           updatedAt: timestamp,
           updatedBy: userName,
-          changesSummary: `Initial quotation generated with ${quote.items.length} items`,
+          changesSummary: customDetails || `Initial quotation generated with ${quote.items?.length || 0} items`,
           totalSellingPrice: quote.totalSellingPrice
         }
       ];
+    }
+
+    let defaultActionDetails = '';
+    switch (actionType) {
+      case 'PRINTED':
+        defaultActionDetails = `Printed client presentation for ${quote.clientName}`;
+        break;
+      case 'DOWNLOADED':
+        defaultActionDetails = `Downloaded PDF proposal for ${quote.clientName}`;
+        break;
+      case 'PROPOSAL_GENERATED':
+        defaultActionDetails = `Generated digital proposal document for ${quote.clientName}`;
+        break;
+      case 'SENT_TO_CLIENT':
+      case 'SENT':
+        defaultActionDetails = `Sent quotation proposal directly to client (${quote.clientEmail || quote.clientName})`;
+        break;
+      case 'VIEWED_BY_CLIENT':
+        defaultActionDetails = `Client ${quote.clientName} opened and viewed the quotation proposal`;
+        break;
+      case 'BOOKING_REQUESTED':
+        defaultActionDetails = `Booking requested by client ${quote.clientName}`;
+        break;
+      case 'CREATED':
+        defaultActionDetails = `Created quote ${quote.quoteNumber} (v1) by ${userName} (${userRole})`;
+        break;
+      default:
+        defaultActionDetails = customDetails || `Saved changes to quote ${quote.quoteNumber} (v${currentVersion})`;
     }
 
     activityLog.push({
@@ -1099,22 +2441,23 @@ export class AppDatabase {
       action: actionType,
       timestamp,
       userName,
-      details: actionType === 'PRINTED'
-        ? `Printed client presentation for ${quote.clientName}`
-        : actionType === 'DOWNLOADED'
-        ? `Downloaded PDF proposal for ${quote.clientName}`
-        : actionType === 'CREATED'
-        ? `Created quote ${quote.quoteNumber} (v1)`
-        : `Saved changes to quote ${quote.quoteNumber} (v${currentVersion})`
+      userRole,
+      userType: createdByUserType,
+      details: customDetails || defaultActionDetails
     });
 
     const updatedQuote: Quotation = {
       ...quote,
       version: currentVersion,
+      createdBy,
+      createdByName,
+      createdByUserType,
+      clientUserId: resolvedClientUserId,
       versionHistory,
       activityLog,
       updatedAt: timestamp,
-      createdAt: quote.createdAt || timestamp
+      lastActivityAt: timestamp,
+      createdAt: quote.createdAt || existingQuote?.createdAt || timestamp
     };
 
     if (existingIndex >= 0) {
@@ -1122,14 +2465,16 @@ export class AppDatabase {
     } else {
       quotes.unshift(updatedQuote);
     }
+    
     this.syncFirestoreDoc('quotations', updatedQuote.id, updatedQuote);
     this.setItem('saved_quotes', quotes);
+    
     this.logAudit(
       user, 
       existingIndex >= 0 ? 'SETTINGS_UPDATED' : 'BOOKING_CREATED', 
       'Quotation', 
       quote.id, 
-      `${actionType} quote ${quote.quoteNumber} v${currentVersion} (${quote.title}) for client ${quote.clientName}`
+      `${actionType} quote ${quote.quoteNumber} v${currentVersion} (${quote.title}) for client ${quote.clientName} (Created by ${createdByName})`
     );
 
     // Auto-capture or update CRM Lead for this client
@@ -1185,6 +2530,7 @@ export class AppDatabase {
     const newQuoteNumber = `${baseNumber}-v${nextVersion}`;
     const timestamp = new Date().toISOString();
     const userName = user?.name || parentQuote.agentName || 'Travel Partner';
+    const userRole = user?.role || 'B2B_AGENT';
 
     const newQuote: Quotation = {
       ...parentQuote,
@@ -1194,13 +2540,17 @@ export class AppDatabase {
       parentQuoteId: parentQuote.id,
       isLocked: false,
       leadId: parentQuote.leadId,
-      agentId: user?.id || parentQuote.agentId,
-      agentName: user?.name || parentQuote.agentName,
-      agentEmail: user?.email || parentQuote.agentEmail,
+      createdBy: user?.id || parentQuote.createdBy,
+      createdByName: user?.name || parentQuote.createdByName,
+      createdByUserType: (user?.role as any) || parentQuote.createdByUserType,
+      agentId: user?.role === 'B2B_AGENT' ? user.id : parentQuote.agentId,
+      agentName: user?.role === 'B2B_AGENT' ? user.name : parentQuote.agentName,
+      agentEmail: user?.role === 'B2B_AGENT' ? user.email : parentQuote.agentEmail,
       agentAgency: user?.companyName || user?.agencyName || parentQuote.agentAgency,
       agentLogoUrl: user?.brandLogoUrl || parentQuote.agentLogoUrl,
       createdAt: timestamp,
       updatedAt: timestamp,
+      lastActivityAt: timestamp,
       status: 'DRAFT',
       versionHistory: [
         ...(parentQuote.versionHistory || []),
@@ -1216,9 +2566,11 @@ export class AppDatabase {
         ...(parentQuote.activityLog || []),
         {
           id: `act-${Date.now()}`,
-          action: 'CREATED',
+          action: 'VERSION_BRANCHED',
           timestamp,
           userName,
+          userRole,
+          userType: (user?.role as any) || 'B2B_AGENT',
           details: `Created new editable version ${newQuoteNumber} (v${nextVersion}) from parent ${parentQuote.quoteNumber}`
         }
       ]
@@ -1250,13 +2602,388 @@ export class AppDatabase {
     quotes[idx] = {
       ...quotes[idx],
       leadId: leadId.trim(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString()
     };
 
     this.setItem('saved_quotes', quotes);
-    this.syncFirestoreDoc('quotations', quoteId, { leadId: leadId.trim() });
+    this.syncFirestoreDoc('quotations', quoteId, { leadId: leadId.trim(), updatedAt: quotes[idx].updatedAt });
 
     return quotes[idx];
+  }
+
+  public updateQuotationStatus(quoteId: string, status: QuoteStatus, user: User | null): Quotation | null {
+    const quote = this.getQuoteByIdAuthorized(quoteId, user);
+    if (!quote) return null;
+
+    const quotes = this.getAllSavedQuotes();
+    const idx = quotes.findIndex(q => q.id === quoteId);
+    if (idx < 0) return null;
+
+    const timestamp = new Date().toISOString();
+    quotes[idx] = {
+      ...quotes[idx],
+      status,
+      updatedAt: timestamp,
+      lastActivityAt: timestamp,
+      activityLog: [
+        ...(quotes[idx].activityLog || []),
+        {
+          id: `act-${Date.now()}`,
+          action: 'STATUS_CHANGED',
+          timestamp,
+          userName: user?.name || 'Staff',
+          userRole: user?.role,
+          userType: (user?.role as any) || 'ADMIN',
+          details: `Updated quote status to ${status}`
+        }
+      ]
+    };
+
+    this.setItem('saved_quotes', quotes);
+    this.syncFirestoreDoc('quotations', quoteId, quotes[idx]);
+    return quotes[idx];
+  }
+
+  public duplicateQuotation(quoteId: string, user: User | null): Quotation | null {
+    const sourceQuote = this.getQuoteByIdAuthorized(quoteId, user);
+    if (!sourceQuote) return null;
+
+    const quotes = this.getAllSavedQuotes();
+    const timestamp = new Date().toISOString();
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const newQuoteNumber = `TUB-QT-2026-${randomSuffix}`;
+    const newQuoteId = `quote-${Date.now()}-${randomSuffix}`;
+    const userName = user?.name || 'Elena Rostova';
+
+    const duplicatedQuote: Quotation = {
+      ...sourceQuote,
+      id: newQuoteId,
+      quoteNumber: newQuoteNumber,
+      title: `${sourceQuote.title || 'Custom Itinerary'} (Copy)`,
+      version: 1,
+      parentQuoteId: undefined,
+      isLocked: false,
+      status: 'DRAFT',
+      createdBy: user?.id || sourceQuote.createdBy,
+      createdByName: user?.name || sourceQuote.createdByName,
+      createdByUserType: (user?.role as any) || sourceQuote.createdByUserType,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      lastActivityAt: timestamp,
+      validUntil: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+      activityLog: [
+        {
+          id: `act-${Date.now()}`,
+          action: 'CREATED',
+          timestamp,
+          userName,
+          userRole: user?.role,
+          userType: (user?.role as any) || 'B2B_AGENT',
+          details: `Duplicated quote from template ${sourceQuote.quoteNumber}`
+        }
+      ]
+    };
+
+    quotes.unshift(duplicatedQuote);
+    this.setItem('saved_quotes', quotes);
+    this.syncFirestoreDoc('quotations', duplicatedQuote.id, duplicatedQuote);
+
+    this.logAudit(
+      user,
+      'BOOKING_CREATED',
+      'Quotation',
+      duplicatedQuote.id,
+      `Duplicated quote ${duplicatedQuote.quoteNumber} from ${sourceQuote.quoteNumber}`
+    );
+
+    return duplicatedQuote;
+  }
+
+  /**
+   * Direct Conversion of Quotation to Booking by Buyer or Admin
+   */
+  public convertQuotationToBooking(quoteId: string, user: User | null, specialNotes?: string): Booking | null {
+    const quote = this.getQuoteByIdAuthorized(quoteId, user);
+    if (!quote) return null;
+
+    const timestamp = new Date().toISOString();
+    const bookingRef = `TUB-BK-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const newBookingDraft: Booking = {
+      id: `bk-${Date.now()}`,
+      bookingReference: bookingRef,
+      quoteId: quote.id,
+      quoteNumber: quote.quoteNumber,
+      sourceType: 'QUOTATION',
+      destination: quote.destination,
+      travelStartDate: quote.travelStartDate || new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+      travelEndDate: quote.travelEndDate || new Date(Date.now() + 24 * 86400000).toISOString().split('T')[0],
+      totalAmount: quote.totalSellingPrice,
+      currency: quote.currency,
+      status: 'PENDING_CONFIRMATION',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      userId: quote.clientUserId || user?.id || 'usr-guest',
+      agentId: quote.agentId || quote.createdBy,
+      agentName: quote.agentName,
+      agentAgency: quote.agentAgency,
+      customer: {
+        leadTravelerName: quote.clientName,
+        email: quote.clientEmail || user?.email || 'sales@theunbound.in',
+        phone: quote.clientPhone || user?.contactNumber || '+1 415 555 2671',
+        nationality: 'International',
+        totalAdults: quote.adultsCount || quote.totalPax || 2,
+        totalChildren: quote.childrenCount || 0,
+        totalInfants: quote.infantsCount || 0,
+        specialRequests: specialNotes || quote.agentNotes || 'Proposal accepted by client. Automatic booking reservation initiated.'
+      },
+      confirmationNotice: 'Your booking has been submitted and ground allocation is underway with a 24-48h confirmation SLA.',
+      notificationEmailsSent: [
+        {
+          recipient: quote.clientEmail || 'client@theunbound.in',
+          recipientType: 'CLIENT_AGENT',
+          subject: `Ground Booking Initiated - ${bookingRef}`,
+          bodySnippet: `Your quotation ${quote.quoteNumber} has been accepted and submitted for ground dispatch.`,
+          fullHtml: `<p>Booking ${bookingRef} has been received for processing.</p>`,
+          sentAt: timestamp,
+          status: 'DELIVERED'
+        }
+      ],
+      items: quote.items.map(item => ({
+        id: item.id || `bitem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        productId: item.product?.id || 'prod-custom',
+        productName: item.product?.name || 'Custom Travel Service',
+        productSku: item.product?.sku || 'SKU-CUSTOM',
+        destinationName: item.product?.destinationName || quote.destination || 'Japan',
+        city: item.product?.city || 'Tokyo',
+        category: item.product?.category || item.product?.productType || 'Activity',
+        travelDate: item.travelDate || quote.travelStartDate || new Date().toISOString().split('T')[0],
+        adults: item.pax?.adults ?? 2,
+        children: item.pax?.children ?? 0,
+        infants: item.pax?.infants ?? 0,
+        totalPax: (item.pax?.adults ?? 2) + (item.pax?.children ?? 0) + (item.pax?.infants ?? 0),
+        selectedAddonNames: [],
+        unitNetPrice: item.calculation?.totalNetCost || 0,
+        unitSellingPrice: item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || item.product?.sellingPriceStartingFrom || 0,
+        totalPrice: item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || item.product?.sellingPriceStartingFrom || 0,
+        currency: quote.currency || 'USD',
+        supplierStatus: 'PENDING_DISPATCH' as const,
+        supplierNotes: item.notes
+      }))
+    };
+
+    // Save Booking
+    const bookings = this.getAllBookings();
+    bookings.unshift(newBookingDraft);
+    this.setItem('bookings', bookings);
+    this.syncFirestoreDoc('bookings', newBookingDraft.id, newBookingDraft);
+
+    // Update Quotation status and log activity
+    const quotes = this.getAllSavedQuotes();
+    const qIdx = quotes.findIndex(q => q.id === quote.id);
+    if (qIdx >= 0) {
+      quotes[qIdx].status = 'BOOKING_REQUESTED';
+      quotes[qIdx].updatedAt = timestamp;
+      quotes[qIdx].lastActivityAt = timestamp;
+      quotes[qIdx].activityLog = [
+        ...(quotes[qIdx].activityLog || []),
+        {
+          id: `act-${Date.now()}`,
+          action: 'BOOKING_REQUESTED',
+          timestamp,
+          userName: user?.name || quote.clientName,
+          userRole: user?.role,
+          userType: (user?.role as any) || 'BUYER',
+          details: `Client accepted quotation and requested booking reservation (Ref: ${bookingRef})`
+        }
+      ];
+      this.setItem('saved_quotes', quotes);
+      this.syncFirestoreDoc('quotations', quote.id, quotes[qIdx]);
+    }
+
+    this.logAudit(
+      user,
+      'BOOKING_CREATED',
+      'Booking',
+      newBookingDraft.id,
+      `Quotation ${quote.quoteNumber} converted to Booking ${bookingRef} for client ${quote.clientName}`
+    );
+
+    return newBookingDraft;
+  }
+
+  // ==========================================
+  // B2B READY-MADE PACKAGES MANAGEMENT
+  // ==========================================
+  public getPackages(): B2BPackage[] {
+    return this.getItem<B2BPackage[]>('b2b_packages', INITIAL_B2B_PACKAGES);
+  }
+
+  public getPackageById(id: string): B2BPackage | null {
+    const pkgs = this.getPackages();
+    return pkgs.find(p => p.id === id || p.slug === id) || null;
+  }
+
+  public savePackage(pkg: B2BPackage, user?: User | null): void {
+    const pkgs = this.getPackages();
+    const idx = pkgs.findIndex(p => p.id === pkg.id);
+    const timestamp = new Date().toISOString();
+    const isNew = idx < 0;
+    
+    // Automatically keep title/name synced and normalize status
+    const status = pkg.status || (pkg.isPublished ? 'PUBLISHED' : 'DRAFT');
+    const isPublished = status === 'PUBLISHED' || !!pkg.isPublished;
+
+    const updatedPkg: B2BPackage = { 
+      ...pkg, 
+      title: pkg.title || pkg.name || 'Custom Package Itinerary',
+      name: pkg.title || pkg.name || 'Custom Package Itinerary',
+      status,
+      isPublished,
+      updatedBy: user?.name || user?.email || 'Admin CMS',
+      updatedAt: timestamp 
+    };
+
+    if (isNew) {
+      updatedPkg.createdAt = pkg.createdAt || timestamp;
+      updatedPkg.createdBy = pkg.createdBy || user?.name || 'Admin CMS';
+      pkgs.unshift(updatedPkg);
+    } else {
+      pkgs[idx] = updatedPkg;
+    }
+
+    this.setItem('b2b_packages', pkgs);
+    this.syncFirestoreDoc('b2b_packages', pkg.id, updatedPkg);
+
+    this.logAudit(
+      user || null,
+      isNew ? 'PACKAGE_CREATE' as any : 'PACKAGE_UPDATE' as any,
+      'Package',
+      pkg.id,
+      `${isNew ? 'Created' : 'Updated'} package "${updatedPkg.title}" (${updatedPkg.destinationName})`
+    );
+  }
+
+  public duplicatePackage(id: string, user?: User | null): B2BPackage | null {
+    const source = this.getPackageById(id);
+    if (!source) return null;
+
+    const timestamp = new Date().toISOString();
+    const newId = `pkg-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+    const newTitle = `${source.title} (Copy)`;
+    const newSlug = `${source.slug || source.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-copy-${Date.now().toString().slice(-4)}`;
+
+    const duplicated: B2BPackage = {
+      ...source,
+      id: newId,
+      title: newTitle,
+      name: newTitle,
+      slug: newSlug,
+      status: 'DRAFT',
+      isPublished: false,
+      createdBy: user?.name || 'Admin CMS',
+      updatedBy: user?.name || 'Admin CMS',
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+
+    this.savePackage(duplicated, user);
+    return duplicated;
+  }
+
+  public archivePackage(id: string, user?: User | null): void {
+    const pkg = this.getPackageById(id);
+    if (!pkg) return;
+    this.savePackage({ ...pkg, status: 'ARCHIVED', isPublished: false }, user);
+  }
+
+  public togglePackagePublishStatus(id: string, isPublished: boolean, user?: User | null): void {
+    const pkg = this.getPackageById(id);
+    if (!pkg) return;
+    this.savePackage({
+      ...pkg,
+      isPublished,
+      status: isPublished ? 'PUBLISHED' : 'UNPUBLISHED'
+    }, user);
+  }
+
+  public deletePackage(id: string, user?: User | null): void {
+    const pkg = this.getPackageById(id);
+    const pkgs = this.getPackages().filter(p => p.id !== id);
+    this.setItem('b2b_packages', pkgs);
+    this.deleteFirestoreDoc('b2b_packages', id);
+
+    this.logAudit(
+      user || null,
+      'PACKAGE_DELETE' as any,
+      'Package',
+      id,
+      `Deleted package "${pkg?.title || id}"`
+    );
+  }
+
+  // ==========================================
+  // B2B AGENT CUSTOMERS CRM
+  // ==========================================
+  public getB2BCustomers(agentId?: string): B2BCustomer[] {
+    const all = this.getItem<B2BCustomer[]>('b2b_customers', INITIAL_B2B_CUSTOMERS);
+    if (!agentId) return all;
+    return all.filter(c => c.agentId === agentId || !c.agentId || c.agentId === 'usr-agent-01');
+  }
+
+  public saveB2BCustomer(customer: B2BCustomer): B2BCustomer {
+    const customers = this.getB2BCustomers();
+    const idx = customers.findIndex(c => c.id === customer.id);
+    const updated = { ...customer };
+
+    if (idx >= 0) {
+      customers[idx] = updated;
+    } else {
+      customers.unshift(updated);
+    }
+
+    this.setItem('b2b_customers', customers);
+    this.syncFirestoreDoc('b2b_customers', customer.id, updated);
+    return updated;
+  }
+
+  public deleteB2BCustomer(id: string): void {
+    const customers = this.getB2BCustomers().filter(c => c.id !== id);
+    this.setItem('b2b_customers', customers);
+    this.deleteFirestoreDoc('b2b_customers', id);
+  }
+
+  // ==========================================
+  // B2B AGENT TASKS & FOLLOW-UPS
+  // ==========================================
+  public getB2BTasks(agentId?: string): B2BTask[] {
+    const all = this.getItem<B2BTask[]>('b2b_tasks', INITIAL_B2B_TASKS);
+    if (!agentId) return all;
+    return all.filter(t => t.agentId === agentId || !t.agentId || t.agentId === 'usr-agent-01');
+  }
+
+  public saveB2BTask(task: B2BTask): B2BTask {
+    const tasks = this.getB2BTasks();
+    const idx = tasks.findIndex(t => t.id === task.id);
+    const timestamp = new Date().toISOString();
+    const updated = { ...task, updatedAt: timestamp };
+
+    if (idx >= 0) {
+      tasks[idx] = updated;
+    } else {
+      tasks.unshift({ ...updated, createdAt: timestamp });
+    }
+
+    this.setItem('b2b_tasks', tasks);
+    this.syncFirestoreDoc('b2b_tasks', task.id, updated);
+    return updated;
+  }
+
+  public deleteB2BTask(id: string): void {
+    const tasks = this.getB2BTasks().filter(t => t.id !== id);
+    this.setItem('b2b_tasks', tasks);
+    this.deleteFirestoreDoc('b2b_tasks', id);
   }
 
   // ==========================================
@@ -1291,9 +3018,10 @@ export class AppDatabase {
 
   public createBooking(
     data: {
-      sourceType: 'QUOTATION' | 'PRODUCT_DIRECT';
+      sourceType: BookingSourceType;
       quoteId?: string;
       quoteNumber?: string;
+      destinationName?: string;
       customer: Booking['customer'];
       items: Booking['items'];
       currency: Booking['currency'];
@@ -1316,6 +3044,7 @@ export class AppDatabase {
       sourceType: data.sourceType,
       quoteId: data.quoteId,
       quoteNumber: data.quoteNumber,
+      destinationName: data.destinationName,
       userId: user?.id,
       userRole: user?.role || 'BUYER',
       customer: data.customer,
@@ -1373,7 +3102,7 @@ export class AppDatabase {
       'BOOKING_CREATED', 
       'Booking', 
       id, 
-      `Submitted new booking ${bookingReference} for ${data.customer.leadTravelerName} (${data.items.length} services, ${data.currency} ${data.totalAmount}). Confirmation email dispatched.`
+      `Submitted new booking ${bookingReference} for ${data.customer.leadTravelerName} (${data.items?.length || 0} services, ${data.currency} ${data.totalAmount}). Confirmation email dispatched.`
     );
 
     return newBookingDraft;
@@ -3134,4 +4863,6 @@ export class AppDatabase {
     }
   }
 }
+
+export const db = AppDatabase.getInstance();
 

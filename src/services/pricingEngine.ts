@@ -6,14 +6,20 @@ export const EXCHANGE_RATES: Record<CurrencyCode, number> = {
   ...DEFAULT_EXCHANGE_RATES
 };
 
-export function convertCurrency(amount: number, from: CurrencyCode, to: CurrencyCode): number {
-  if (from === to) return amount;
-  return ExchangeRateService.getInstance().convert(amount, from, to);
+export function convertCurrency(amount: number, from: CurrencyCode | any, to: CurrencyCode | any): number {
+  const fromCode: CurrencyCode = (typeof from === 'object' && from !== null) ? (from.code || 'USD') : (from || 'USD');
+  const toCode: CurrencyCode = (typeof to === 'object' && to !== null) ? (to.code || 'USD') : (to || 'USD');
+  if (fromCode === toCode) return amount;
+  return ExchangeRateService.getInstance().convert(amount, fromCode, toCode);
 }
 
-export function formatCurrency(amount: number, currency: CurrencyCode): string {
-  const decimals = (currency === 'JPY' || currency === 'THB') ? 0 : 2;
-  const symbolMap: Record<CurrencyCode, string> = {
+export function formatCurrency(amount?: number | null, currency: CurrencyCode | any = 'USD'): string {
+  const safeAmount = (typeof amount === 'number' && !isNaN(amount)) ? amount : (Number(amount) || 0);
+  const safeCurrency: string = (typeof currency === 'object' && currency !== null) 
+    ? (currency.code || 'USD') 
+    : (typeof currency === 'string' ? currency : 'USD');
+  const decimals = (safeCurrency === 'JPY' || safeCurrency === 'THB') ? 0 : 2;
+  const symbolMap: Record<string, string> = {
     USD: '$',
     EUR: '€',
     GBP: '£',
@@ -27,11 +33,82 @@ export function formatCurrency(amount: number, currency: CurrencyCode): string {
     CHF: 'CHF '
   };
 
-  const symbol = symbolMap[currency] || `${currency} `;
-  return `${symbol}${amount.toLocaleString(undefined, {
+  const symbol = symbolMap[safeCurrency] || `${safeCurrency} `;
+  return `${symbol}${safeAmount.toLocaleString(undefined, {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals
   })}`;
+}
+
+// Product categories that use capacity-based vehicle/yacht calculation by default
+export const CAPACITY_BASED_CATEGORIES = ['Private Tours', 'Transfers', 'Transport', 'Private Yacht'];
+
+export function isCapacityBasedProduct(product: Product): boolean {
+  if (product.pricingMethod === 'capacity_based') return true;
+  if (product.pricingMethod === 'per_person') return false;
+  if (product.vehicleConfig?.pricingMethod === 'capacity_based') return true;
+  if (product.isTransfer) return true;
+  return CAPACITY_BASED_CATEGORIES.includes(product.category as string) || 
+         product.category === 'Private Yacht' || 
+         (product.category as string) === 'Cruises';
+}
+
+export interface CapacitySimulationRow {
+  pax: number;
+  perPersonNett: number;
+  totalNett: number;
+  perPersonSelling: number;
+  totalSelling: number;
+  vehiclesAllocated: number;
+  isCapacityExceeded: boolean;
+  status: 'optimal' | 'full' | 'exceeded';
+}
+
+export function generateCapacitySimulationMatrix(
+  product: Product,
+  targetCurrency?: CurrencyCode,
+  appliedMarkupPercent?: number
+): CapacitySimulationRow[] {
+  const isCap = isCapacityBasedProduct(product);
+  if (!isCap) return [];
+
+  const baseCost = product.vehicleConfig?.unitVehicleNetCost ?? 
+                   product.vehicleConfig?.totalTransferCost ?? 
+                   product.adultNetPrice ?? 
+                   product.adultNettCost ?? 
+                   500;
+  const maxCapacity = Math.max(1, product.vehicleConfig?.maxSeats || product.vehicleConfig?.passengerCapacity || product.maxPax || 10);
+  const markup = appliedMarkupPercent !== undefined ? appliedMarkupPercent : (product.buyerMarkupPercent ?? product.defaultMarkupPercent ?? 25);
+  const tax = product.taxPercent ?? 10;
+  const curr = targetCurrency || product.currency;
+
+  const convertedUnitCost = convertCurrency(baseCost, product.currency, curr);
+  const unitSelling = calculateSellingPrice(convertedUnitCost, markup, tax, 0);
+
+  const rows: CapacitySimulationRow[] = [];
+  const maxSimulationPax = Math.max(maxCapacity + 2, Math.min(maxCapacity * 2, 20));
+
+  for (let pax = 1; pax <= maxSimulationPax; pax++) {
+    const isExceeded = pax > maxCapacity;
+    const vehiclesAllocated = Math.ceil(pax / maxCapacity);
+    const totalNett = isExceeded ? vehiclesAllocated * convertedUnitCost : convertedUnitCost;
+    const perPersonNett = totalNett / pax;
+    const totalSelling = isExceeded ? vehiclesAllocated * unitSelling : unitSelling;
+    const perPersonSelling = totalSelling / pax;
+
+    rows.push({
+      pax,
+      perPersonNett,
+      totalNett,
+      perPersonSelling,
+      totalSelling,
+      vehiclesAllocated,
+      isCapacityExceeded: isExceeded,
+      status: pax === maxCapacity ? 'full' : pax > maxCapacity ? 'exceeded' : 'optimal'
+    });
+  }
+
+  return rows;
 }
 
 export function calculateSellingPrice(
@@ -55,6 +132,12 @@ export interface DeliveredPriceInfo {
   userTier: 'BUYER' | 'B2B_AGENT' | 'ADMIN';
   isCustomMargin: boolean;
   currency: CurrencyCode;
+  isCapacityBased?: boolean;
+  totalVehicleSellingPrice?: number;
+  perPersonStartingFrom?: number;
+  vehicleCapacity?: number;
+  vehicleModel?: string;
+  unitVehicleNetCost?: number;
 }
 
 /**
@@ -110,9 +193,47 @@ export function calculateDeliveredPriceForUser(
     }
   }
 
+  const isCapacity = isCapacityBasedProduct(product);
   const baseAdultNet = product.adultNetPrice ?? product.adultNettCost ?? 0;
   const baseChildNet = product.childNetPrice ?? product.childNettCost ?? (baseAdultNet * 0.5);
   const baseInfantNet = product.infantNetPrice ?? product.infantNettCost ?? 0;
+
+  if (isCapacity) {
+    const vehicleCost = product.vehicleConfig?.unitVehicleNetCost ?? 
+                        product.vehicleConfig?.totalTransferCost ?? 
+                        baseAdultNet ?? 
+                        500;
+    const maxSeats = product.vehicleConfig?.maxSeats || product.vehicleConfig?.passengerCapacity || product.maxPax || 7;
+    const vehicleModel = product.vehicleConfig?.vehicleModel || product.vehicleConfig?.vehicleName || product.name;
+
+    const rawVehicleSelling = calculateSellingPrice(
+      vehicleCost,
+      appliedMarkupPercent,
+      product.taxPercent ?? 10,
+      product.serviceFeeFixed ?? 0
+    );
+
+    const totalVehicleSellingPrice = convertCurrency(rawVehicleSelling, product.currency, targetCurrency);
+    const perPersonStartingFrom = totalVehicleSellingPrice / Math.max(1, maxSeats);
+
+    return {
+      deliveredPrice: totalVehicleSellingPrice,
+      rawPriceInBaseCurrency: rawVehicleSelling,
+      baseAdultNet: vehicleCost,
+      baseChildNet: 0,
+      baseInfantNet: 0,
+      appliedMarkupPercent,
+      userTier,
+      isCustomMargin,
+      currency: targetCurrency,
+      isCapacityBased: true,
+      totalVehicleSellingPrice,
+      perPersonStartingFrom,
+      vehicleCapacity: maxSeats,
+      vehicleModel,
+      unitVehicleNetCost: vehicleCost
+    };
+  }
 
   const rawSellingInBase = calculateSellingPrice(
     baseAdultNet,
@@ -132,7 +253,8 @@ export function calculateDeliveredPriceForUser(
     appliedMarkupPercent,
     userTier,
     isCustomMargin,
-    currency: targetCurrency
+    currency: targetCurrency,
+    isCapacityBased: false
   };
 }
 
@@ -165,34 +287,114 @@ export function calculateProductPrice(
   }
 
   // Check Tiered Pricing if available
-  if (product.tieredPricing && product.tieredPricing.length > 0) {
-    const matchingTier = product.tieredPricing.find(t => totalPax >= t.minPax && totalPax <= t.maxPax);
+  if (product.tieredPricing && (product.tieredPricing || []).length > 0) {
+    const matchingTier = (product.tieredPricing || []).find(t => totalPax >= t.minPax && totalPax <= t.maxPax);
     if (matchingTier) {
       baseAdultNet = matchingTier.netCostPerPax;
       baseChildNet = matchingTier.netCostPerPax * 0.5;
     }
   }
 
-  // Check if Product is Transfer (Fixed Vehicle Cost Engine)
-  const isTransfer = product.isTransfer || 
-                     product.category === 'Transfers' || 
-                     product.category === 'Transport' || 
-                     product.productType?.toLowerCase().includes('transfer');
+  // 2. Capacity-Based Pricing Engine for Private Tours, Transfers & Transport
+  const isCapacity = isCapacityBasedProduct(product);
+  const isFixedStayHotel = product.accommodationType === 'manual' || 
+                          product.isManualHotel || 
+                          product.sku?.startsWith('MAN-HTL-');
 
   let rawTotalNetCostInNative = 0;
   let adultNetInNative = 0;
   let childNetInNative = 0;
   let infantNetInNative = 0;
 
-  if (isTransfer) {
-    // Fixed Total Vehicle Cost
-    const vehicleCost = product.vehicleConfig?.totalTransferCost || baseAdultNet || 200;
-    rawTotalNetCostInNative = vehicleCost * quantity;
+  // Capacity calculations
+  let vehicleDetails: PricingCalculationResult['vehicleDetails'] | undefined = undefined;
+
+  if (isCapacity) {
+    // --- CAPACITY-BASED PRICING MODEL ---
+    // Rule: Total Vehicle Cost / Actual Occupied Seats = Per-Person Nett Cost.
+    // Total Vehicle Cost remains unchanged until the vehicle's maximum capacity is exceeded.
+    const vehicleConfig = product.vehicleConfig;
+    const vehicleModel = vehicleConfig?.vehicleModel || vehicleConfig?.vehicleName || product.name;
+    const vehicleType = vehicleConfig?.vehicleType || 'Executive Vehicle';
+    const maxSeats = Math.max(1, vehicleConfig?.maxSeats || vehicleConfig?.passengerCapacity || vehicleConfig?.totalSeats || product.maxPax || 7);
+    const unitVehicleNetCost = vehicleConfig?.unitVehicleNetCost ?? 
+                               vehicleConfig?.totalTransferCost ?? 
+                               baseAdultNet ?? 
+                               500;
+
+    // Occupancy rules (configurable by Admin)
+    const adultSeatsPerPax = vehicleConfig?.adultSeatCount !== undefined ? vehicleConfig.adultSeatCount : 1;
+    const childSeatsPerPax = vehicleConfig?.childSeatCount !== undefined ? vehicleConfig.childSeatCount : 1;
+    const infantSeatsPerPax = vehicleConfig?.infantSeatCount !== undefined ? vehicleConfig.infantSeatCount : 0;
+
+    const adultSeatsOccupied = adults * adultSeatsPerPax;
+    const childSeatsOccupied = children * childSeatsPerPax;
+    const infantSeatsOccupied = infants * infantSeatsPerPax;
+    const totalOccupiedSeats = adultSeatsOccupied + childSeatsOccupied + infantSeatsOccupied;
+
+    const allowMultiple = vehicleConfig?.allowMultipleVehicles ?? true;
+    const autoAllocate = vehicleConfig?.autoAllocateVehicles ?? true;
+    const maxVehicles = vehicleConfig?.maxVehicles || 10;
+
+    let vehiclesAllocated = quantity;
+    let capacityExceeded = false;
+    let capacityErrorMessage: string | undefined = undefined;
+
+    if (totalOccupiedSeats <= (maxSeats * quantity)) {
+      vehiclesAllocated = quantity;
+      capacityExceeded = false;
+    } else {
+      // Passenger count exceeds configured vehicle capacity
+      if (autoAllocate || allowMultiple) {
+        vehiclesAllocated = Math.max(quantity, Math.ceil(totalOccupiedSeats / maxSeats));
+        if (vehiclesAllocated > maxVehicles) {
+          capacityExceeded = true;
+          capacityErrorMessage = `Passenger count (${totalOccupiedSeats} seats) exceeds maximum allowed fleet capacity (${maxVehicles * maxSeats} seats across ${maxVehicles} vehicles).`;
+        }
+      } else {
+        vehiclesAllocated = quantity;
+        capacityExceeded = true;
+        capacityErrorMessage = `Vehicle capacity of ${maxSeats} seats exceeded (${totalOccupiedSeats} seats required). Please add another vehicle or select a higher-capacity transport option.`;
+      }
+    }
+
+    // Total Vehicle Nett Cost: remains fixed per vehicle (e.g. ₹500 for 1–7 passengers on 1 vehicle)
+    rawTotalNetCostInNative = vehiclesAllocated * unitVehicleNetCost;
+    const perPersonNetInNative = totalPax > 0 ? rawTotalNetCostInNative / totalPax : rawTotalNetCostInNative;
+
     adultNetInNative = rawTotalNetCostInNative;
     childNetInNative = 0;
     infantNetInNative = 0;
+
+    vehicleDetails = {
+      vehicleName: vehicleConfig?.vehicleName || vehicleModel,
+      vehicleModel,
+      vehicleType,
+      maxSeats,
+      occupiedSeats: totalOccupiedSeats,
+      vehiclesAllocated,
+      unitVehicleNetCost,
+      totalVehicleNetCost: rawTotalNetCostInNative,
+      perPersonNetCost: perPersonNetInNative,
+      capacityExceeded,
+      capacityErrorMessage,
+      seatBreakdown: {
+        adultSeats: adultSeatsOccupied,
+        childSeats: childSeatsOccupied,
+        infantSeats: infantSeatsOccupied,
+        totalSeats: totalOccupiedSeats
+      },
+      allowMultipleVehicles: allowMultiple
+    };
+  } else if (isFixedStayHotel) {
+    // Fixed Total Stay Net Cost for Manual Hotel / Room Configuration
+    rawTotalNetCostInNative = baseAdultNet * quantity;
+    adultNetInNative = rawTotalNetCostInNative;
+    childNetInNative = (baseChildNet || 0) * children * quantity;
+    infantNetInNative = (baseInfantNet || 0) * infants * quantity;
+    rawTotalNetCostInNative = adultNetInNative + childNetInNative + infantNetInNative;
   } else {
-    // Tour / Activity / Hotel Pricing Engine with Adult, Child & Infant Costs
+    // Standard Per-Person Tour / Activity / Hotel Pricing Engine
     adultNetInNative = baseAdultNet * adults * quantity;
     childNetInNative = baseChildNet * children * quantity;
     infantNetInNative = baseInfantNet * infants * quantity;
@@ -201,10 +403,10 @@ export function calculateProductPrice(
 
   // Add-ons Calculation
   let addonsNetInNative = 0;
-  if (request.selectedAddonIds && request.selectedAddonIds.length > 0 && product.addons) {
-    const selectedAddons = product.addons.filter(a => request.selectedAddonIds?.includes(a.id));
+  if (request.selectedAddonIds && (request.selectedAddonIds || []).length > 0 && product.addons) {
+    const selectedAddons = (product.addons || []).filter(a => (request.selectedAddonIds || []).includes(a.id));
     for (const addon of selectedAddons) {
-      const chargeablePax = isTransfer ? 1 : (adults + children);
+      const chargeablePax = isCapacity ? 1 : (adults + children);
       const addonAmountConverted = convertCurrency(addon.pricePerPax * chargeablePax * quantity, addon.currency, product.currency);
       addonsNetInNative += addonAmountConverted;
     }
@@ -219,6 +421,13 @@ export function calculateProductPrice(
   const infantsSubtotalNet = convertCurrency(infantNetInNative, product.currency, targetCurrency);
   const addonsSubtotalNet = convertCurrency(addonsNetInNative, product.currency, targetCurrency);
   const totalNetCost = convertCurrency(rawTotalNetCostInNative, product.currency, targetCurrency);
+
+  // Update vehicle details with converted currency costs if applicable
+  if (vehicleDetails) {
+    vehicleDetails.unitVehicleNetCost = convertCurrency(vehicleDetails.unitVehicleNetCost, product.currency, targetCurrency);
+    vehicleDetails.totalVehicleNetCost = convertCurrency(vehicleDetails.totalVehicleNetCost, product.currency, targetCurrency);
+    vehicleDetails.perPersonNetCost = totalPax > 0 ? vehicleDetails.totalVehicleNetCost / totalPax : vehicleDetails.totalVehicleNetCost;
+  }
 
   // Configurable Commercial Rates with User-Type Hierarchy:
   let configuredMarkupPercent = 25;
@@ -260,13 +469,15 @@ export function calculateProductPrice(
     markupRate = totalNetCost > 0 ? markupAmount / totalNetCost : 0;
   }
 
-  // TAX SPEC: Tax is calculated on the MARGIN amount
+  // TAX SPEC: Tax is calculated on the MARGIN amount only!
   const configuredTaxPercent = product.taxPercent !== undefined ? product.taxPercent : 10;
   const taxRate = configuredTaxPercent / 100;
   const taxAmount = markupAmount * taxRate;
 
-  // Dynamic Fee %: default 2.5% on net cost or product service fee
-  const configuredFeePercent = product.serviceFeeFixed > 0 ? (product.serviceFeeFixed / (totalNetCost || 1)) * 100 : 2.5;
+  // Dynamic Fee %: 0 if explicitly 0 or Hotels / Manual Accommodations, otherwise default service fee
+  const configuredFeePercent = product.serviceFeeFixed !== undefined 
+    ? (totalNetCost > 0 ? (product.serviceFeeFixed / totalNetCost) * 100 : 0)
+    : (product.productType === 'Hotel' || product.accommodationType === 'manual' || product.isManualHotel ? 0 : 2.5);
   const feeRate = configuredFeePercent / 100;
   const serviceFee = totalNetCost * feeRate;
 
@@ -290,12 +501,12 @@ export function calculateProductPrice(
 
   // Proportional breakdown of selling price
   const sellingMultiplier = totalNetCost > 0 ? finalTotalSellingPrice / totalNetCost : 1;
-  const adultsSubtotalSelling = isTransfer ? finalTotalSellingPrice : (adultsSubtotalNet * sellingMultiplier);
-  const childrenSubtotalSelling = isTransfer ? 0 : (childrenSubtotalNet * sellingMultiplier);
-  const infantsSubtotalSelling = isTransfer ? 0 : (infantsSubtotalNet * sellingMultiplier);
+  const adultsSubtotalSelling = isCapacity ? finalTotalSellingPrice : (adultsSubtotalNet * sellingMultiplier);
+  const childrenSubtotalSelling = isCapacity ? 0 : (childrenSubtotalNet * sellingMultiplier);
+  const infantsSubtotalSelling = isCapacity ? 0 : (infantsSubtotalNet * sellingMultiplier);
   const addonsSubtotalSelling = addonsSubtotalNet * sellingMultiplier;
-  const adultPricePerPax = adults > 0 ? (isTransfer ? pricePerPerson : (adultsSubtotalSelling / adults)) : 0;
-  const childPricePerPax = children > 0 ? (isTransfer ? pricePerPerson : (childrenSubtotalSelling / children)) : 0;
+  const adultPricePerPax = adults > 0 ? (isCapacity ? pricePerPerson : (adultsSubtotalSelling / adults)) : 0;
+  const childPricePerPax = children > 0 ? (isCapacity ? pricePerPerson : (childrenSubtotalSelling / children)) : 0;
 
   return {
     productId: product.id,
@@ -335,8 +546,12 @@ export function calculateProductPrice(
     adultPricePerPax,
     childPricePerPax,
     finalTotalSellingPrice,
+    sellingPriceFinal: finalTotalSellingPrice,
     pricePerPerson,
     dmcMarginAmount,
-    dmcMarginPercent
+    dmcMarginPercent,
+    isCapacityBased: isCapacity,
+    pricingMethod: isCapacity ? 'capacity_based' : 'per_person',
+    vehicleDetails
   };
 }

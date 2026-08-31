@@ -184,7 +184,7 @@ export const BookingsManagementModal: React.FC<BookingsManagementModalProps> = (
                       </span>
 
                       <span className="text-[11px] text-slate-500 font-medium">
-                        Submitted: {new Date(b.createdAt).toLocaleDateString()}
+                        Submitted: {b.createdAt ? new Date(b.createdAt).toLocaleDateString() : 'Recent'}
                       </span>
                     </div>
 
@@ -201,7 +201,7 @@ export const BookingsManagementModal: React.FC<BookingsManagementModalProps> = (
                         <span className="text-[10px] text-slate-400 font-bold uppercase block">Travel Dates & Pax</span>
                         <span className="text-slate-700">📅 {b.travelStartDate} {b.travelEndDate && b.travelEndDate !== b.travelStartDate ? `to ${b.travelEndDate}` : ''}</span>
                         <span className="text-[10px] text-slate-500 block">
-                          👥 {b.items.reduce((acc, i) => acc + i.totalPax, 0)} Pax ({b.items.length} services)
+                          👥 {(b.items || []).reduce((acc, i) => acc + (i.totalPax || 1), 0)} Pax ({(b.items || []).length} services)
                         </span>
                       </div>
 
@@ -213,14 +213,14 @@ export const BookingsManagementModal: React.FC<BookingsManagementModalProps> = (
                     </div>
 
                     <div className="flex items-center space-x-2 pt-1">
-                      {b.items.slice(0, 2).map((item, idx) => (
+                      {(b.items || []).slice(0, 2).map((item, idx) => (
                         <span key={idx} className="bg-slate-50 border border-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded-md truncate max-w-[200px]">
                           {item.productName}
                         </span>
                       ))}
-                      {b.items.length > 2 && (
+                      {(b.items || []).length > 2 && (
                         <span className="text-[10px] text-slate-400 font-semibold">
-                          +{b.items.length - 2} more
+                          +{(b.items || []).length - 2} more
                         </span>
                       )}
                     </div>
@@ -307,14 +307,14 @@ export const BookingsManagementModal: React.FC<BookingsManagementModalProps> = (
               </span>
             </div>
 
-            {selectedBooking.notificationEmailsSent.length > 0 && (
+            {selectedBooking.notificationEmailsSent && (selectedBooking.notificationEmailsSent || []).length > 0 && (
               <div className="space-y-2 pt-2 border-t">
                 <h4 className="text-xs font-bold uppercase text-slate-500 flex items-center space-x-1.5">
                   <Mail className="w-3.5 h-3.5 text-[#008972]" />
-                  <span>Dispatched Notifications ({selectedBooking.notificationEmailsSent.length})</span>
+                  <span>Dispatched Notifications ({(selectedBooking.notificationEmailsSent || []).length})</span>
                 </h4>
                 <div className="space-y-1.5">
-                  {selectedBooking.notificationEmailsSent.map((em, i) => (
+                  {(selectedBooking.notificationEmailsSent || []).map((em, i) => (
                     <div key={i} className="p-2.5 bg-slate-50 rounded-lg text-xs flex justify-between items-center">
                       <div>
                         <span className="font-bold text-slate-800 block">{em.subject}</span>

@@ -278,7 +278,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({ onBookQu
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">
                     Itinerary Product Items ({items.length})
                   </h3>
-                  <span className="text-[11px] text-slate-500 font-mono">Currency: {currency}</span>
+                  <span className="text-[11px] text-slate-500 font-mono">Currency: {typeof currency === 'object' && currency !== null ? (currency as any).code : currency}</span>
                 </div>
 
                 {items.map((item, idx) => {

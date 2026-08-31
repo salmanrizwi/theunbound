@@ -27,7 +27,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [activeTab, setActiveTab] = useState<'ROSTER' | 'BOOKINGS' | 'PRODUCTS' | 'SUPPLIERS'>('ROSTER');
   const [productFilter, setProductFilter] = useState('');
 
-  const filteredProducts = products.filter(p => 
+  const safeProducts = products || [];
+  const filteredProducts = safeProducts.filter(p => 
     p.name.toLowerCase().includes(productFilter.toLowerCase()) ||
     p.sku.toLowerCase().includes(productFilter.toLowerCase()) ||
     p.city.toLowerCase().includes(productFilter.toLowerCase())
@@ -56,7 +57,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {[
           { id: 'ROSTER', label: 'Operations Roster & Calendar', icon: Calendar },
           { id: 'BOOKINGS', label: 'Bookings & 24-48h SLA Dispatch', icon: CalendarCheck },
-          { id: 'PRODUCTS', label: `Master Product Inventory (${products.length})`, icon: Table },
+          { id: 'PRODUCTS', label: `Master Product Inventory (${safeProducts.length})`, icon: Table },
           { id: 'SUPPLIERS', label: `Contracted Ground Suppliers (${SUPPLIERS.length})`, icon: Building2 }
         ].map((tab) => {
           const Icon = tab.icon;
@@ -103,7 +104,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               />
             </div>
             <div className="text-xs text-slate-500">
-              Displaying <strong className="text-slate-900">{filteredProducts.length}</strong> of {products.length} products
+              Displaying <strong className="text-slate-900">{filteredProducts.length}</strong> of {safeProducts.length} products
             </div>
           </div>
 

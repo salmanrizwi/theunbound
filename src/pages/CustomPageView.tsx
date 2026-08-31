@@ -110,7 +110,7 @@ export const CustomPageView: React.FC<CustomPageViewProps> = ({ pageSlug, onBack
         <div className="flex items-center justify-between border-b border-slate-100 pb-4 text-xs text-slate-500">
           <div className="flex items-center space-x-2">
             <Calendar className="w-4 h-4 text-[#00C6A6]" />
-            <span>Last Updated: {new Date(page.updatedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span>
+            <span>Last Updated: {page.updatedAt ? new Date(page.updatedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Recent'}</span>
           </div>
 
           <button

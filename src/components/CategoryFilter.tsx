@@ -1,7 +1,6 @@
 import React from 'react';
 import { ProductCategory } from '../types';
 import { 
-  Building2, 
   Compass, 
   Car, 
   Route, 
@@ -12,6 +11,7 @@ import {
   UserCheck, 
   Bus, 
   Briefcase,
+  Anchor,
   Sparkles
 } from 'lucide-react';
 
@@ -19,6 +19,8 @@ interface CategoryFilterProps {
   categories?: string[];
   selectedCategory: string;
   onSelectCategory: (cat: string) => void;
+  categoryCounts?: Record<string, number>;
+  totalCount?: number;
 }
 
 export const CATEGORIES: { name: ProductCategory; icon: React.ElementType }[] = [
@@ -26,19 +28,21 @@ export const CATEGORIES: { name: ProductCategory; icon: React.ElementType }[] = 
   { name: 'Day Trips', icon: Sun },
   { name: 'Activities', icon: Compass },
   { name: 'Transfers', icon: Car },
-  { name: 'Hotels', icon: Building2 },
-  { name: 'Rail', icon: Train },
-  { name: 'Tours', icon: Route },
-  { name: 'Cruises', icon: Ship },
-  { name: 'Guides', icon: UserCheck },
   { name: 'Transport', icon: Bus },
+  { name: 'Private Yacht', icon: Ship },
+  { name: 'Tours', icon: Route },
+  { name: 'Rail', icon: Train },
+  { name: 'Ferries', icon: Anchor },
+  { name: 'Guides', icon: UserCheck },
   { name: 'Travel Services', icon: Briefcase },
 ];
 
 export const CategoryFilter: React.FC<CategoryFilterProps> = ({
   categories,
   selectedCategory,
-  onSelectCategory
+  onSelectCategory,
+  categoryCounts,
+  totalCount
 }) => {
   const displayCategories = categories && categories.length > 0
     ? CATEGORIES.filter(c => categories.includes(c.name))
@@ -58,10 +62,18 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
         >
           <Sparkles className={`w-3.5 h-3.5 ${selectedCategory === '' ? 'text-[#00C6A6]' : 'text-slate-400'}`} />
           <span>All Categories</span>
+          {typeof totalCount === 'number' && (
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ml-1 ${
+              selectedCategory === '' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+            }`}>
+              {totalCount}
+            </span>
+          )}
         </button>
 
         {displayCategories.map(({ name, icon: Icon }) => {
           const isActive = selectedCategory === name;
+          const count = categoryCounts ? categoryCounts[name] : undefined;
           return (
             <button
               key={name}
@@ -75,6 +87,13 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
             >
               <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-slate-400'}`} />
               <span>{name}</span>
+              {typeof count === 'number' && (
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ml-0.5 ${
+                  isActive ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-500'
+                }`}>
+                  {count}
+                </span>
+              )}
             </button>
           );
         })}

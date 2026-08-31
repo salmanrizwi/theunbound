@@ -45,19 +45,22 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
   // Active Photo Index in Gallery
   const [activePhotoIdx, setActivePhotoIdx] = useState(0);
 
+  const roomTypes = hotel?.roomTypes || [];
+
   // Selected Room & Meal Plan
   const [selectedRoomId, setSelectedRoomId] = useState<string>(() => {
-    return hotel?.roomTypes[0]?.id || '';
+    return roomTypes[0]?.id || '';
   });
 
-  const selectedRoom = hotel?.roomTypes.find(r => r.id === selectedRoomId) || hotel?.roomTypes[0];
+  const selectedRoom = roomTypes.find(r => r.id === selectedRoomId) || roomTypes[0];
+  const roomRates = selectedRoom?.rates || [];
 
   const [selectedRateId, setSelectedRateId] = useState<string>(() => {
-    return selectedRoom?.rates[0]?.id || '';
+    return roomRates[0]?.id || '';
   });
 
   // Keep rate updated if room changes
-  const activeRate = selectedRoom?.rates.find(r => r.id === selectedRateId) || selectedRoom?.rates[0] || {
+  const activeRate = roomRates.find(r => r.id === selectedRateId) || roomRates[0] || {
     id: 'std',
     mealPlan: 'BB' as MealPlanCode,
     mealPlanName: 'Bed & Breakfast Included',
@@ -88,7 +91,7 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
 
   if (!hotel) return null;
 
-  const galleryImages = hotel.images && hotel.images.length > 0 ? hotel.images : [hotel.heroImage];
+  const galleryImages = hotel.images && (hotel.images || []).length > 0 ? hotel.images : [hotel.heroImage];
 
   // Calculate live stay price
   const stayCalc = selectedRoom ? calculateHotelStayPrice({
@@ -286,20 +289,22 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
               </div>
 
               {/* Amenities */}
-              <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-2xs">
-                <h4 className="text-sm font-bold text-slate-900 mb-3 flex items-center space-x-2">
-                  <Sparkles className="w-4 h-4 text-[#00C6A6]" />
-                  <span>Signature Hotel Amenities & VIP Privileges</span>
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {hotel.amenities.map((amenity, i) => (
-                    <div key={i} className="flex items-center space-x-2.5 p-2 rounded-lg bg-slate-50 border border-slate-100 text-xs text-slate-700">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                      <span className="font-medium">{amenity}</span>
-                    </div>
-                  ))}
+              {hotel.amenities && (hotel.amenities || []).length > 0 && (
+                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-2xs">
+                  <h4 className="text-sm font-bold text-slate-900 mb-3 flex items-center space-x-2">
+                    <Sparkles className="w-4 h-4 text-[#00C6A6]" />
+                    <span>Signature Hotel Amenities & VIP Privileges</span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {(hotel.amenities || []).map((amenity, i) => (
+                      <div key={i} className="flex items-center space-x-2.5 p-2 rounded-lg bg-slate-50 border border-slate-100 text-xs text-slate-700">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <span className="font-medium">{amenity}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Location & Transfer Distances */}
               {hotel.locationDetails && (
@@ -333,11 +338,11 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                     )}
                   </div>
 
-                  {hotel.locationDetails.nearbyAttractions && hotel.locationDetails.nearbyAttractions.length > 0 && (
+                  {hotel.locationDetails?.nearbyAttractions && (hotel.locationDetails.nearbyAttractions || []).length > 0 && (
                     <div className="mt-3 pt-3 border-t border-slate-100">
                       <span className="text-xs font-bold text-slate-700 block mb-1.5">Nearby Cultural Highlights:</span>
                       <div className="flex flex-wrap gap-1.5">
-                        {hotel.locationDetails.nearbyAttractions.map((att, i) => (
+                        {(hotel.locationDetails.nearbyAttractions || []).map((att, i) => (
                           <span key={i} className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md">
                             {att}
                           </span>
@@ -374,14 +379,14 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                     value={selectedRoomId}
                     onChange={(e) => {
                       setSelectedRoomId(e.target.value);
-                      const rm = hotel.roomTypes.find(r => r.id === e.target.value);
-                      if (rm && rm.rates.length > 0) {
+                      const rm = (hotel.roomTypes || []).find(r => r.id === e.target.value);
+                      if (rm && (rm.rates || []).length > 0) {
                         setSelectedRateId(rm.rates[0].id);
                       }
                     }}
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-white focus:ring-1 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
                   >
-                    {hotel.roomTypes.map((room) => (
+                    {(hotel.roomTypes || []).map((room) => (
                       <option key={room.id} value={room.id}>
                         {room.roomName} ({room.roomCategory})
                       </option>
@@ -390,7 +395,7 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                 </div>
 
                 {/* 2. Meal Plan Selector */}
-                {selectedRoom && selectedRoom.rates.length > 0 && (
+                {selectedRoom && (selectedRoom.rates || []).length > 0 && (
                   <div>
                     <label className="text-xs font-semibold text-slate-300 block mb-1">
                       Meal Plan & Rate Policy:
@@ -400,7 +405,7 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                       onChange={(e) => setSelectedRateId(e.target.value)}
                       className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-white focus:ring-1 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
                     >
-                      {selectedRoom.rates.map((r) => (
+                      {(selectedRoom.rates || []).map((r) => (
                         <option key={r.id} value={r.id}>
                           {r.mealPlan} - {r.mealPlanName || getMealPlanLabel(r.mealPlan)} ({formatCurrency(convertCurrency(r.doubleNetRate, r.currency, currency), currency)}/nt)
                         </option>

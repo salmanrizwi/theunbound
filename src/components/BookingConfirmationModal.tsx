@@ -133,20 +133,20 @@ export const BookingConfirmationModal: React.FC<BookingConfirmationModalProps> =
           <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50 space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center space-x-1.5">
               <FileCheck className="w-4 h-4 text-[#008972]" />
-              <span>Booked Ground Services ({booking.items.length})</span>
+              <span>Booked Ground Services ({booking.items?.length || 0})</span>
             </h4>
 
             <div className="space-y-2">
-              {booking.items.map((item, idx) => (
+              {(booking.items || []).map((item, idx) => (
                 <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between text-xs">
                   <div>
                     <div className="font-bold text-slate-900">{item.productName}</div>
                     <div className="text-[11px] text-slate-500 mt-0.5">
                       📅 {item.travelDate} • 📍 {item.destinationName} ({item.city}) • 👥 {item.totalPax} Pax
                     </div>
-                    {item.selectedAddonNames && item.selectedAddonNames.length > 0 && (
+                    {item.selectedAddonNames && (item.selectedAddonNames || []).length > 0 && (
                       <div className="text-[10px] text-sky-600 font-medium mt-0.5">
-                        + Addons: {item.selectedAddonNames.join(', ')}
+                        + Addons: {(item.selectedAddonNames || []).join(', ')}
                       </div>
                     )}
                   </div>

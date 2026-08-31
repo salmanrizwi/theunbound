@@ -86,7 +86,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         onClick={() => onViewDetails(product)}
       >
         <img
-          src={product.images[0] || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
+          src={(product.images && product.images[0]) || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
           alt={product.name}
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           loading="lazy"
@@ -138,8 +138,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
             <span className="flex items-center gap-1">
               <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-              <span className="font-semibold text-slate-700">{product.rating.toFixed(1)}</span>
-              <span>({product.reviewCount})</span>
+              <span className="font-semibold text-slate-700">{(Number(product.rating) || 5.0).toFixed(1)}</span>
+              <span>({product.reviewCount || 0})</span>
             </span>
 
             <span className="flex items-center gap-1">

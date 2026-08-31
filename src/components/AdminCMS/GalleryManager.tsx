@@ -129,9 +129,9 @@ export const GalleryManager: React.FC = () => {
                 </div>
                 <p className="text-xs text-slate-600 italic leading-relaxed">&ldquo;{img.caption}&rdquo;</p>
 
-                {img.tags && img.tags.length > 0 && (
+                {img.tags && (img.tags || []).length > 0 && (
                   <div className="flex flex-wrap gap-1.5 pt-1">
-                    {img.tags.map((tag, i) => (
+                    {(img.tags || []).map((tag, i) => (
                       <span key={i} className="text-[10px] bg-slate-100 text-slate-700 font-semibold px-2 py-0.5 rounded-md">
                         #{tag}
                       </span>

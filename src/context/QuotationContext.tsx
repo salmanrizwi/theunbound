@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { CurrencyCode, Product, QuoteItem, Quotation, TravelLead } from '../types';
+import { CurrencyCode, Product, QuoteItem, Quotation, TravelLead, B2BPackage } from '../types';
 import { calculateProductPrice } from '../services/pricingEngine';
 import { AppDatabase } from '../services/db';
 import { useAuth } from './AuthContext';
@@ -17,6 +17,8 @@ interface QuotationContextType {
       children?: number; 
       infants?: number; 
       travelDate?: string; 
+      serviceTime?: string;
+      notes?: string;
       selectedAddonIds?: string[];
       openDrawer?: boolean;
     }
@@ -24,6 +26,17 @@ interface QuotationContextType {
   removeProductFromQuote: (itemId: string) => void;
   updateItemPax: (itemId: string, pax: { adults: number; children: number; infants: number }) => void;
   updateItemTravelDate: (itemId: string, date: string) => void;
+  updateItemServiceTime: (itemId: string, time: string) => void;
+  updateItemFull: (
+    itemId: string, 
+    updates: { 
+      travelDate?: string; 
+      serviceTime?: string; 
+      pax?: { adults: number; children: number; infants: number }; 
+      selectedAddonIds?: string[]; 
+      notes?: string 
+    }
+  ) => void;
   toggleItemAddon: (itemId: string, addonId: string) => void;
   updateItemNotes: (itemId: string, notes: string) => void;
   clearQuote: () => void;
@@ -35,6 +48,14 @@ interface QuotationContextType {
   setClientEmail: (email: string) => void;
   clientCompany: string;
   setClientCompany: (company: string) => void;
+  clientPhone: string;
+  setClientPhone: (phone: string) => void;
+  destination: string;
+  setDestination: (dest: string) => void;
+  travelStartDate: string;
+  travelEndDate: string;
+  setQuotationDates: (startDate: string, endDate: string) => void;
+  setClientDetails: (name: string, email: string, phone?: string, company?: string) => void;
   leadId: string;
   setLeadId: (leadId: string) => void;
   agentNotes: string;
@@ -54,10 +75,11 @@ interface QuotationContextType {
   totalMarginAmount: number;
   totalPaxAcrossItems: number;
   
-  // Saved Quotes
+  // Saved Quotes & Package Customization
   savedQuotes: Quotation[];
   saveCurrentQuote: () => Quotation | null;
   loadSavedQuote: (quote: Quotation) => void;
+  loadPackageIntoQuote: (pkg: B2BPackage) => void;
   deleteSavedQuote: (quoteId: string) => void;
 }
 
@@ -74,6 +96,10 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
   const [clientCompany, setClientCompany] = useState('');
+  const [clientPhone, setClientPhone] = useState('');
+  const [destination, setDestination] = useState('Japan');
+  const [travelStartDate, setTravelStartDate] = useState(new Date(Date.now() + 86400000 * 14).toISOString().split('T')[0]);
+  const [travelEndDate, setTravelEndDate] = useState(new Date(Date.now() + 86400000 * 24).toISOString().split('T')[0]);
   const [leadId, setLeadId] = useState('');
   const [agentNotes, setAgentNotes] = useState('');
   const [overallDiscountPercent, setOverallDiscountPercent] = useState(0);
@@ -81,23 +107,37 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [currentVersion, setCurrentVersion] = useState(1);
   const [isLocked, setIsLocked] = useState(false);
 
+  const setQuotationDates = (startDate: string, endDate: string) => {
+    setTravelStartDate(startDate);
+    setTravelEndDate(endDate);
+  };
+
+  const setClientDetails = (name: string, email: string, phone?: string, company?: string) => {
+    setClientName(name);
+    setClientEmail(email);
+    if (phone) setClientPhone(phone);
+    if (company) setClientCompany(company);
+  };
+
   const pricingTier = user && user.role !== 'PUBLIC' ? 'B2B' : 'B2C';
 
   const [savedQuotes, setSavedQuotes] = useState<Quotation[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_SAVED_QUOTES);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved quotes', e);
-      }
-    }
-    return [];
+    const db = AppDatabase.getInstance();
+    return db.getQuotesForUser(user);
   });
 
+  // Sync savedQuotes when user changes or DB updates
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_SAVED_QUOTES, JSON.stringify(savedQuotes));
-  }, [savedQuotes]);
+    const db = AppDatabase.getInstance();
+    const refreshQuotes = () => {
+      setSavedQuotes(db.getQuotesForUser(user));
+    };
+    refreshQuotes();
+    const unsub = db.subscribe(refreshQuotes);
+    return () => {
+      unsub();
+    };
+  }, [user]);
 
   // Recalculate all items whenever currency or user pricingTier changes
   useEffect(() => {
@@ -128,6 +168,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       children?: number;
       infants?: number;
       travelDate?: string;
+      serviceTime?: string;
+      notes?: string;
       selectedAddonIds?: string[];
       openDrawer?: boolean;
     }
@@ -137,6 +179,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const infants = options?.infants ?? 0;
     const travelDate = options?.travelDate ?? new Date(Date.now() + 86400000 * 14).toISOString().split('T')[0];
     const selectedAddonIds = options?.selectedAddonIds ?? [];
+    const serviceTime = options?.serviceTime;
+    const notes = options?.notes;
 
     const calculation = calculateProductPrice(product, {
       productId: product.id,
@@ -154,6 +198,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       product,
       pax: { adults, children, infants },
       travelDate,
+      serviceTime,
+      notes,
       selectedAddonIds,
       calculation
     };
@@ -214,13 +260,63 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     );
   };
 
+  const updateItemServiceTime = (itemId: string, time: string) => {
+    setItems(prev =>
+      prev.map(item => (item.id === itemId ? { ...item, serviceTime: time } : item))
+    );
+  };
+
+  const updateItemFull = (
+    itemId: string,
+    updates: {
+      travelDate?: string;
+      serviceTime?: string;
+      pax?: { adults: number; children: number; infants: number };
+      selectedAddonIds?: string[];
+      notes?: string;
+    }
+  ) => {
+    setItems(prev =>
+      prev.map(item => {
+        if (item.id !== itemId) return item;
+        const nextDate = updates.travelDate ?? item.travelDate;
+        const nextPax = updates.pax ?? item.pax;
+        const nextAddons = updates.selectedAddonIds ?? item.selectedAddonIds;
+        const nextServiceTime = updates.serviceTime !== undefined ? updates.serviceTime : item.serviceTime;
+        const nextNotes = updates.notes !== undefined ? updates.notes : item.notes;
+
+        const calculation = calculateProductPrice(item.product, {
+          productId: item.product.id,
+          pricingTier,
+          adults: nextPax.adults,
+          children: nextPax.children,
+          infants: nextPax.infants,
+          travelDate: nextDate,
+          targetCurrency: currency,
+          selectedAddonIds: nextAddons
+        });
+
+        return {
+          ...item,
+          travelDate: nextDate,
+          serviceTime: nextServiceTime,
+          pax: nextPax,
+          selectedAddonIds: nextAddons,
+          notes: nextNotes,
+          calculation
+        };
+      })
+    );
+  };
+
   const toggleItemAddon = (itemId: string, addonId: string) => {
     setItems(prev =>
       prev.map(item => {
         if (item.id !== itemId) return item;
-        const nextAddons = item.selectedAddonIds.includes(addonId)
-          ? item.selectedAddonIds.filter(id => id !== addonId)
-          : [...item.selectedAddonIds, addonId];
+        const currentAddons = item.selectedAddonIds || [];
+        const nextAddons = currentAddons.includes(addonId)
+          ? currentAddons.filter(id => id !== addonId)
+          : [...currentAddons, addonId];
 
         const calculation = calculateProductPrice(item.product, {
           productId: item.product.id,
@@ -374,7 +470,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           {
             id: `note-${Date.now()}`,
             authorName: user?.name || 'System Automation',
-            text: `B2B Quotation ${newQuote.quoteNumber} (v${newQuote.version || 1}) created/saved for value ${totals.totalSellingPrice.toLocaleString()} ${currency}.`,
+            text: `B2B Quotation ${newQuote.quoteNumber} (v${newQuote.version || 1}) created/saved for value ${(Number(totals?.totalSellingPrice) || 0).toLocaleString()} ${currency}.`,
             timestamp: new Date().toISOString()
           }
         ],
@@ -390,9 +486,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const loadSavedQuote = (quote: Quotation) => {
-    setItems(quote.items);
-    setCurrency(quote.currency);
-    setClientName(quote.clientName);
+    setItems(quote.items || []);
+    setCurrency(quote.currency || 'USD');
+    setClientName(quote.clientName || '');
     setClientEmail(quote.clientEmail || '');
     setClientCompany(quote.clientCompany || '');
     setLeadId(quote.leadId || '');
@@ -401,6 +497,95 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActiveQuoteId(quote.id);
     setCurrentVersion(quote.version || 1);
     setIsLocked(!!quote.isLocked);
+    setIsQuoteDrawerOpen(true);
+  };
+
+  const loadPackageIntoQuote = (pkg: B2BPackage) => {
+    const db = AppDatabase.getInstance();
+    const allProducts = db.getProducts();
+    const packageCurrency = pkg.currency || 'USD';
+    setCurrency(packageCurrency);
+
+    // Compute start date: 14 days in future
+    const startDateObj = new Date(Date.now() + 86400000 * 14);
+    const startDateStr = startDateObj.toISOString().split('T')[0];
+    const durationDays = pkg.durationDays || 5;
+    const endDateObj = new Date(startDateObj.getTime() + 86400000 * (durationDays - 1));
+    const endDateStr = endDateObj.toISOString().split('T')[0];
+
+    setTravelStartDate(startDateStr);
+    setTravelEndDate(endDateStr);
+    setDestination(pkg.destinationName || 'Japan');
+    setClientName(`Bespoke Traveler - ${pkg.title}`);
+    setAgentNotes(`Customized from Ready-Made Package Circuit: "${pkg.title}" (${durationDays} Days / ${pkg.durationNights || durationDays - 1} Nights). Route: ${(pkg.routeSummary || []).join(' → ')}`);
+
+    // Build QuoteItems from package itinerary & products
+    const newItems: QuoteItem[] = [];
+    const defaultPax = { adults: 2, children: 0, infants: 0 };
+
+    if (pkg.itinerary && pkg.itinerary.length > 0) {
+      pkg.itinerary.forEach((day, dayIndex) => {
+        const dayDate = new Date(startDateObj.getTime() + 86400000 * dayIndex).toISOString().split('T')[0];
+        (day.productIds || []).forEach((prodId, pIdx) => {
+          const product = allProducts.find(p => p.id === prodId);
+          if (product) {
+            const calculation = calculateProductPrice(product, {
+              productId: product.id,
+              travelDate: dayDate,
+              adults: defaultPax.adults,
+              children: defaultPax.children,
+              infants: defaultPax.infants,
+              targetCurrency: packageCurrency,
+              userRole: 'B2B_AGENT'
+            });
+            newItems.push({
+              id: `item-pkg-${pkg.id}-d${day.dayNumber}-${pIdx}-${Date.now()}`,
+              product,
+              travelDate: dayDate,
+              serviceTime: pIdx === 0 ? '09:00' : '14:00',
+              pax: defaultPax,
+              calculation,
+              selectedAddonIds: [],
+              notes: `Day ${day.dayNumber}: ${day.title}`
+            });
+          }
+        });
+      });
+    }
+
+    // Fallback: If itinerary had no productIds, attach top-level productIds
+    if (newItems.length === 0 && pkg.productIds && pkg.productIds.length > 0) {
+      pkg.productIds.forEach((prodId, idx) => {
+        const product = allProducts.find(p => p.id === prodId);
+        if (product) {
+          const dayDate = new Date(startDateObj.getTime() + 86400000 * (idx % durationDays)).toISOString().split('T')[0];
+          const calculation = calculateProductPrice(product, {
+            productId: product.id,
+            travelDate: dayDate,
+            adults: defaultPax.adults,
+            children: defaultPax.children,
+            infants: defaultPax.infants,
+            targetCurrency: packageCurrency,
+            userRole: 'B2B_AGENT'
+          });
+          newItems.push({
+            id: `item-pkg-${pkg.id}-${idx}-${Date.now()}`,
+            product,
+            travelDate: dayDate,
+            serviceTime: '09:00',
+            pax: defaultPax,
+            calculation,
+            selectedAddonIds: [],
+            notes: `Package Component ${idx + 1}`
+          });
+        }
+      });
+    }
+
+    setItems(newItems);
+    setActiveQuoteId(null); // Fresh bespoke quote derived from package
+    setCurrentVersion(1);
+    setIsLocked(false);
     setIsQuoteDrawerOpen(true);
   };
 
@@ -422,6 +607,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         removeProductFromQuote,
         updateItemPax,
         updateItemTravelDate,
+        updateItemServiceTime,
+        updateItemFull,
         toggleItemAddon,
         updateItemNotes,
         clearQuote,
@@ -431,6 +618,14 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setClientEmail,
         clientCompany,
         setClientCompany,
+        clientPhone,
+        setClientPhone,
+        destination,
+        setDestination,
+        travelStartDate,
+        travelEndDate,
+        setQuotationDates,
+        setClientDetails,
         leadId,
         setLeadId,
         agentNotes,
@@ -444,6 +639,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         savedQuotes,
         saveCurrentQuote,
         loadSavedQuote,
+        loadPackageIntoQuote,
         deleteSavedQuote
       }}
     >

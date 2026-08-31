@@ -3,7 +3,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { QuotationProvider, useQuotation } from './context/QuotationContext';
 import { RosterProvider } from './context/RosterContext';
 import { AppDatabase } from './services/db';
-import { Product, Destination, Quotation, Booking } from './types';
+import { Product, Destination, Quotation, Booking, Hotel } from './types';
 import { Navbar, MainNavTab } from './components/Navbar';
 import { DestinationPage } from './pages/DestinationPage';
 import { B2BQuotationBuilderPage } from './pages/B2BQuotationBuilderPage';
@@ -28,6 +28,7 @@ import { SpecificationModal } from './components/SpecificationModal';
 import { BookingModal } from './components/BookingModal';
 import { BookingConfirmationModal } from './components/BookingConfirmationModal';
 import { BookingsManagementModal } from './components/BookingsManagementModal';
+import { B2BAgentPortal } from './components/B2BAgentPortal/B2BAgentPortal';
 import { 
   Globe2, 
   ShieldCheck, 
@@ -38,12 +39,14 @@ import {
   BookOpen, 
   FileText, 
   Lock, 
-  RotateCcw
+  RotateCcw,
+  Sparkles,
+  ArrowRight
 } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
   const { isAuthenticated, role, openAuthModal } = useAuth();
-  const { setIsQuoteDrawerOpen, loadSavedQuote } = useQuotation();
+  const { setIsQuoteDrawerOpen, loadSavedQuote, loadPackageIntoQuote } = useQuotation();
   const db = AppDatabase.getInstance();
 
   // Navigation State - Defaults to 'all' (All Destinations as Homepage)
@@ -54,11 +57,23 @@ const MainAppContent: React.FC = () => {
   // Real-time synced Database State for Destinations and Products
   const [destinations, setDestinations] = useState<Destination[]>(() => db.getDestinations());
   const [products, setProducts] = useState<Product[]>(() => db.getProducts());
+  const [hotels, setHotels] = useState<Hotel[]>(() => db.getHotels());
+  const [isAgentPreviewingBuyerMode, setIsAgentPreviewingBuyerMode] = useState(false);
+
+  const isB2BAgent = isAuthenticated && (role === 'B2B_AGENT' || role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF');
+
+  const handleCustomizePackage = (pkg: any) => {
+    if (!isB2BAgent) return;
+    loadPackageIntoQuote(pkg);
+    setActiveTab('B2B_BUILDER');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   useEffect(() => {
     return db.subscribe(() => {
       setDestinations(db.getDestinations());
       setProducts(db.getProducts());
+      setHotels(db.getHotels());
     });
   }, [db]);
 
@@ -109,8 +124,38 @@ const MainAppContent: React.FC = () => {
     setConfirmedBooking(booking);
   };
 
+  // Render dedicated B2B Agent Portal if authenticated as B2B Agent and not previewing Buyer mode
+  if (isAuthenticated && role === 'B2B_AGENT' && !isAgentPreviewingBuyerMode) {
+    return (
+      <B2BAgentPortal
+        destinations={destinations}
+        hotels={hotels}
+        products={products}
+        onOpenBookingModal={handleOpenQuotationBooking}
+        onSwitchToBuyerMode={() => setIsAgentPreviewingBuyerMode(true)}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex flex-col font-sans selection:bg-[#00C6A6] selection:text-white">
+      {/* Agent Preview Mode Banner */}
+      {isAuthenticated && role === 'B2B_AGENT' && isAgentPreviewingBuyerMode && (
+        <div className="bg-slate-950 text-white px-4 py-2 text-xs flex items-center justify-between border-b border-[#00C6A6]/40 sticky top-0 z-50 shadow-md">
+          <div className="flex items-center space-x-2">
+            <span className="w-2 h-2 rounded-full bg-[#00E5C0] animate-ping" />
+            <span className="font-bold text-[#00E5C0]">Agent Preview Mode:</span>
+            <span className="text-slate-300">You are browsing the public Buyer Experience to inspect consumer pricing and itineraries.</span>
+          </div>
+          <button
+            onClick={() => setIsAgentPreviewingBuyerMode(false)}
+            className="px-3 py-1 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 rounded-lg text-xs font-black transition-colors cursor-pointer"
+          >
+            Return to Travel Agent Portal →
+          </button>
+        </div>
+      )}
+
       {/* Dynamic Promotions Banner & Modals */}
       <PublicPromotionsBanner onNavigateDestination={handleSelectDestination} />
 
@@ -141,6 +186,7 @@ const MainAppContent: React.FC = () => {
             }}
             onOpenCalculator={(p) => setCalculatorProduct(p)}
             onInstantBook={(p) => handleOpenProductBooking(p)}
+            onCustomizePackage={isB2BAgent ? handleCustomizePackage : undefined}
           />
         )}
 
@@ -206,6 +252,7 @@ const MainAppContent: React.FC = () => {
                 loadSavedQuote(q);
                 setActiveTab('B2B_BUILDER');
               }}
+              onCustomizePackage={handleCustomizePackage}
             />
           </div>
         )}

@@ -13,17 +13,16 @@ export type UserRole =
 export type DestinationRegion = 'EUROPE' | 'UNITED_KINGDOM' | 'JAPAN' | 'SOUTHEAST_ASIA' | 'MIDDLE_EAST' | 'USA' | 'AUSTRALIA';
 
 export type ProductCategory = 
-  | 'Hotels' 
+  | 'Private Tours' 
+  | 'Day Trips' 
   | 'Activities' 
   | 'Transfers' 
+  | 'Transport' 
+  | 'Private Yacht' 
   | 'Tours' 
   | 'Rail' 
   | 'Ferries' 
-  | 'Cruises' 
-  | 'Private Tours' 
-  | 'Day Trips' 
   | 'Guides' 
-  | 'Transport' 
   | 'Travel Services';
 
 export type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'JPY' | 'AED' | 'THB' | 'AUD' | 'CAD' | 'SGD' | 'INR' | 'CHF';
@@ -59,6 +58,46 @@ export interface UserPermissionAccess {
   canAccessRoster?: boolean;
   canAccessFinancials?: boolean;
   canManageUsers?: boolean;
+  canAddManualHotelRates?: boolean;
+  canManagePackages?: boolean;
+  canDeleteRecords?: boolean;
+  canDeleteProducts?: boolean;
+  canDeleteHotels?: boolean;
+  canDeletePackages?: boolean;
+  canDeleteDestinations?: boolean;
+  canDeleteCityHubs?: boolean;
+  canDeleteRegions?: boolean;
+  canDeleteEditorial?: boolean;
+  canDeleteQuotes?: boolean;
+}
+
+export type AccommodationType = 'master' | 'manual';
+
+export interface ManualHotelDetails {
+  id?: string;
+  hotelName: string;
+  city: string;
+  hubId?: string;
+  hubName?: string;
+  starRating?: string; // e.g. '5-Star Luxury', '4-Star Superior', '3-Star Standard', 'Ryokan', 'Boutique'
+  address?: string;
+  roomType: string;
+  numberOfRooms: number;
+  numberOfNights: number;
+  checkInDate: string;
+  checkOutDate: string;
+  mealPlan: MealPlanCode | string;
+  mealPlanName?: string;
+  ratePerNight: number;
+  rateCurrency: CurrencyCode;
+  rateType?: 'PER_ROOM_PER_NIGHT' | 'PER_PERSON_PER_NIGHT' | 'TOTAL_STAY';
+  adultRate?: number;
+  childRate?: number;
+  infantRate?: number;
+  extraBedRate?: number;
+  internalNotes?: string;
+  supplierContact?: string;
+  calculatedPrice?: number;
 }
 
 export interface User {
@@ -267,11 +306,17 @@ export interface Product {
   addons?: ProductAddon[];
   
   // Advanced Pricing & Operational Enhancements
+  pricingMethod?: 'per_person' | 'capacity_based' | 'fixed_stay';
   tieredPricing?: TieredPrice[];
   datePricingOverrides?: Record<string, ProductDatePricingOverride>;
   vehicleConfig?: TransferVehicleConfig;
   isTransfer?: boolean;
+  accommodationType?: AccommodationType;
+  isManualHotel?: boolean;
+  manualHotelDetails?: ManualHotelDetails;
 }
+
+export type ProductPricingMethod = 'per_person' | 'capacity_based' | 'fixed_stay';
 
 export interface TieredPrice {
   id: string;
@@ -292,14 +337,39 @@ export interface ProductDatePricingOverride {
 }
 
 export interface TransferVehicleConfig {
-  vehicleName: string; // e.g. 'Toyota Alphard Luxury VIP'
-  vehicleType: string; // e.g. 'Luxury MPV'
-  totalSeats: number; // e.g. 7
-  driverSeats: number; // e.g. 1
-  passengerCapacity: number; // e.g. 6
-  totalTransferCost: number; // e.g. 200 (Fixed total vehicle cost)
-  currency: CurrencyCode;
+  vehicleName?: string; // e.g. 'Toyota Hiace Grand Cabin' or 'Azimut 66 Flybridge'
+  vehicleModel?: string; // e.g. 'Toyota Hiace Grand Cabin (7-Seater)' or 'Azimut 66 Flybridge Luxury Yacht'
+  vehicleType: string; // e.g. 'Luxury MPV', 'Minivan', 'Van', 'Minibus', 'Sedan', 'Coach', 'Motor Yacht', 'Catamaran', 'Sailing Yacht', 'Superyacht', 'Speedboat'
+  totalSeats: number; // e.g. 7 or 10
+  maxSeats: number; // Maximum passenger capacity (e.g. 6, 8, 10, 12, 15, 20, 30, 50 Pax)
+  driverSeats?: number; // e.g. 1
+  passengerCapacity?: number; // e.g. 7 or 10
+  totalTransferCost?: number; // e.g. 500 (Fixed total vehicle / yacht charter nett cost)
+  unitVehicleNetCost?: number; // Total vehicle / yacht nett cost (e.g. 500)
+  currency?: CurrencyCode;
   route?: string;
+  maxLuggage?: number;
+  supplierId?: string;
+  supplierName?: string;
+
+  // Private Yacht specific properties
+  yachtName?: string; // e.g. 'Azimut 66 Flybridge'
+  yachtModel?: string; // e.g. 'Azimut 66 Flybridge'
+  yachtType?: string; // e.g. 'Motor Yacht', 'Catamaran', 'Sailing Yacht', 'Superyacht', 'Speedboat'
+  yachtSize?: string; // e.g. '66 ft / 20.8 m'
+  yachtLength?: string; // e.g. '66 ft'
+  isYacht?: boolean;
+  
+  // Occupancy rules (Configurable by Admin)
+  adultSeatCount?: number; // default 1 seat
+  childSeatCount?: number; // default 1 seat
+  infantSeatCount?: number; // default 0 seats (lap child) or 1 seat
+  
+  // Multi-vehicle / yacht & Capacity allocation rules
+  allowMultipleVehicles?: boolean;
+  autoAllocateVehicles?: boolean;
+  maxVehicles?: number;
+  pricingMethod?: 'capacity_based' | 'per_person';
 }
 
 export type PricingTier = 'B2C' | 'B2B';
@@ -375,11 +445,36 @@ export interface PricingCalculationResult {
   
   // Final Results
   finalTotalSellingPrice: number;
+  sellingPriceFinal: number;
   pricePerPerson: number;
   
   // Transparency badge
   dmcMarginAmount: number;
   dmcMarginPercent: number;
+
+  // Capacity-Based Pricing & Vehicle Allocation Details
+  isCapacityBased?: boolean;
+  pricingMethod?: 'per_person' | 'capacity_based' | 'fixed_stay';
+  vehicleDetails?: {
+    vehicleName?: string;
+    vehicleModel: string;
+    vehicleType: string;
+    maxSeats: number;
+    occupiedSeats: number;
+    vehiclesAllocated: number;
+    unitVehicleNetCost: number;
+    totalVehicleNetCost: number;
+    perPersonNetCost: number;
+    capacityExceeded: boolean;
+    capacityErrorMessage?: string;
+    seatBreakdown?: {
+      adultSeats: number;
+      childSeats: number;
+      infantSeats: number;
+      totalSeats: number;
+    };
+    allowMultipleVehicles?: boolean;
+  };
 }
 
 export interface QuoteItem {
@@ -391,12 +486,35 @@ export interface QuoteItem {
     infants: number;
   };
   travelDate: string;
+  serviceTime?: string;
   notes?: string;
   selectedAddonIds: string[];
   calculation: PricingCalculationResult;
+  accommodationType?: AccommodationType;
+  isManualHotel?: boolean;
+  manualHotelDetails?: ManualHotelDetails;
 }
 
-export type QuoteStatus = 'DRAFT' | 'ISSUED' | 'SENT_TO_CLIENT' | 'ACCEPTED' | 'EXPIRED' | 'CONFIRMED' | 'BOOKING_SUBMITTED' | 'ARCHIVED';
+export type QuoteStatus = 
+  | 'DRAFT' 
+  | 'SAVED'
+  | 'PROPOSAL_GENERATED'
+  | 'SENT'
+  | 'SENT_TO_CLIENT' 
+  | 'VIEWED'
+  | 'VIEWED_BY_CLIENT'
+  | 'APPROVED'
+  | 'ACCEPTED' 
+  | 'DOWNLOADED'
+  | 'DOWNLOADED_PDF'
+  | 'BOOKING_REQUESTED'
+  | 'CONFIRMED' 
+  | 'CANCELLED'
+  | 'EXPIRED' 
+  | 'IN_PROGRESS'
+  | 'CONVERTED'
+  | 'BOOKING_SUBMITTED' 
+  | 'ARCHIVED';
 
 export interface QuoteVersionRecord {
   version: number;
@@ -408,9 +526,26 @@ export interface QuoteVersionRecord {
 
 export interface QuoteActivityRecord {
   id: string;
-  action: 'CREATED' | 'EDITED' | 'PRINTED' | 'DOWNLOADED' | 'SENT' | 'STATUS_CHANGED' | 'BOOKED';
+  action: 
+    | 'CREATED' 
+    | 'EDITED' 
+    | 'PRICING_UPDATED'
+    | 'SAVED'
+    | 'PROPOSAL_GENERATED'
+    | 'PRINTED' 
+    | 'DOWNLOADED' 
+    | 'SENT' 
+    | 'SENT_TO_CLIENT'
+    | 'VIEWED_BY_CLIENT'
+    | 'STATUS_CHANGED' 
+    | 'BOOKING_REQUESTED'
+    | 'BOOKED'
+    | 'VERSION_BRANCHED'
+    | 'CONVERTED';
   timestamp: string;
   userName: string;
+  userRole?: string;
+  userType?: 'ADMIN' | 'TEAM_MEMBER' | 'B2B_AGENT' | 'DMC_STAFF' | 'BUYER' | 'PUBLIC';
   details: string;
 }
 
@@ -421,17 +556,37 @@ export interface Quotation {
   parentQuoteId?: string;
   isLocked?: boolean;
   leadId?: string;
-  agentLogoUrl?: string;
-  agentEmail?: string;
-  agentAgency?: string;
-  versionHistory?: QuoteVersionRecord[];
-  activityLog?: QuoteActivityRecord[];
-  title: string;
-  clientName: string;
-  clientEmail?: string;
-  clientCompany?: string;
+  
+  // Ownership & Creation Attribution
+  createdBy?: string;
+  createdByName?: string;
+  createdByUserType?: 'ADMIN' | 'TEAM_MEMBER' | 'B2B_AGENT' | 'DMC_STAFF' | 'BUYER' | 'PUBLIC';
+  assignedTo?: string;
+  assignedToName?: string;
+  b2bAgentId?: string;
+  
+  // Agent Details
   agentId: string;
   agentName: string;
+  agentEmail?: string;
+  agentAgency?: string;
+  agentCompany?: string;
+  agentLogoUrl?: string;
+  agentPhone?: string;
+
+  // Target Client / User Details
+  clientUserId?: string; // Links to registered User account (e.g. usr-buyer-01)
+  clientName: string;
+  clientEmail?: string;
+  clientPhone?: string;
+  clientCompany?: string;
+
+  // Version History & Activity Log
+  versionHistory?: QuoteVersionRecord[];
+  activityLog?: QuoteActivityRecord[];
+
+  // Itinerary Details
+  title: string;
   destination: string;
   currency: CurrencyCode;
   items: QuoteItem[];
@@ -440,8 +595,18 @@ export interface Quotation {
   agentNotes: string;
   termsAndConditions: string;
   status: QuoteStatus;
+  travelStartDate?: string;
+  travelEndDate?: string;
+  totalPax?: number;
+  adultsCount?: number;
+  childrenCount?: number;
+  infantsCount?: number;
+  scope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY';
+  routeHubs?: TripRouteHub[];
+  dayThemes?: Record<number, string>;
   createdAt: string;
   updatedAt: string;
+  lastActivityAt?: string;
   validUntil: string;
   
   // Aggregated totals
@@ -455,7 +620,7 @@ export interface Quotation {
 // BOOKINGS & RESERVATIONS SYSTEM
 // ----------------------------------------------------
 export type BookingStatus = 'PENDING_CONFIRMATION' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
-export type BookingSourceType = 'QUOTATION' | 'PRODUCT_DIRECT';
+export type BookingSourceType = 'QUOTATION' | 'PRODUCT_DIRECT' | 'PACKAGE';
 
 export interface BookingCustomerInfo {
   leadTravelerName: string;
@@ -468,6 +633,10 @@ export interface BookingCustomerInfo {
   flightDetails?: string;
   pickupLocation?: string;
   emergencyContact?: string;
+  nationality?: string;
+  totalAdults?: number;
+  totalChildren?: number;
+  totalInfants?: number;
 }
 
 export interface BookingSupplierAllocation {
@@ -510,6 +679,9 @@ export interface BookingItem {
   supplierStatus?: 'PENDING_DISPATCH' | 'SENT_TO_SUPPLIER' | 'CONFIRMED_BY_SUPPLIER' | 'REJECTED_BY_SUPPLIER' | 'AMENDMENT_REQUESTED';
   supplierConfirmationRef?: string;
   supplierNotes?: string;
+  accommodationType?: AccommodationType;
+  isManualHotel?: boolean;
+  manualHotelDetails?: ManualHotelDetails;
 }
 
 export interface SentEmailRecord {
@@ -554,6 +726,11 @@ export interface Booking {
   sourceType: BookingSourceType;
   quoteId?: string;
   quoteNumber?: string;
+  destination?: string;
+  destinationName?: string;
+  agentId?: string;
+  agentName?: string;
+  agentAgency?: string;
   userId?: string;
   userRole?: UserRole;
   customer: BookingCustomerInfo;
@@ -798,37 +975,203 @@ export interface GoogleReview {
 // ----------------------------------------------------
 // AUDIT TRAIL & SYSTEM LOGGING
 // ----------------------------------------------------
+export type AuditCategory = 
+  | 'USER'
+  | 'CMS'
+  | 'DATABASE'
+  | 'INTEGRATION'
+  | 'PRICING'
+  | 'QUOTE'
+  | 'BOOKING'
+  | 'SECURITY';
+
 export type AuditAction = 
+  // User Actions
+  | 'USER_LOGIN'
+  | 'USER_LOGOUT'
+  | 'USER_REGISTERED'
+  | 'USER_APPROVED'
+  | 'USER_REJECTED'
+  | 'USER_ROLE_CHANGED'
+  | 'USER_PERMISSIONS_CHANGED'
+  // CMS Actions
   | 'PRODUCT_CREATED'
   | 'PRODUCT_UPDATED'
+  | 'PRODUCT_PUBLISHED'
+  | 'PRODUCT_UNPUBLISHED'
   | 'PRODUCT_ARCHIVED'
-  | 'PRICE_CHANGED'
-  | 'PROMOTION_CREATED'
-  | 'PROMOTION_UPDATED'
-  | 'PROMOTION_DELETED'
+  | 'PRODUCT_DELETED'
+  | 'HOTEL_CREATED'
+  | 'HOTEL_UPDATED'
+  | 'HOTEL_ARCHIVED'
+  | 'HOTEL_DELETED'
+  | 'PACKAGE_CREATED'
+  | 'PACKAGE_UPDATED'
+  | 'PACKAGE_ARCHIVED'
+  | 'PACKAGE_DELETED'
+  | 'PACKAGE_DELETE'
+  | 'DESTINATION_CREATED'
+  | 'DESTINATION_UPDATED'
+  | 'DESTINATION_ARCHIVED'
+  | 'DESTINATION_DELETED'
+  | 'REGION_CREATED'
+  | 'REGION_UPDATED'
+  | 'REGION_ARCHIVED'
+  | 'REGION_DELETED'
+  | 'CITY_HUB_CREATED'
+  | 'CITY_HUB_UPDATED'
+  | 'CITY_HUB_ARCHIVED'
+  | 'CITY_HUB_DELETED'
+  | 'FAQ_CREATED'
+  | 'FAQ_UPDATED'
+  | 'FAQ_DELETED'
   | 'BLOG_CREATED'
   | 'BLOG_PUBLISHED'
   | 'BLOG_UPDATED'
-  | 'DESTINATION_UPDATED'
+  | 'BLOG_ARCHIVED'
+  | 'BLOG_DELETED'
+  | 'REVIEW_CREATED'
+  | 'REVIEW_UPDATED'
+  | 'REVIEW_DELETED'
+  | 'GALLERY_CREATED'
+  | 'GALLERY_UPDATED'
+  | 'GALLERY_DELETED'
+  | 'PAGE_CREATED'
+  | 'PAGE_UPDATED'
+  | 'PAGE_ARCHIVED'
+  | 'PAGE_DELETED'
+  | 'VISA_CREATED'
+  | 'VISA_UPDATED'
+  | 'VISA_ARCHIVED'
+  | 'VISA_DELETED'
+  | 'ROSTER_RESOURCE_ADDED'
+  | 'ROSTER_RESOURCE_UPDATED'
+  | 'ROSTER_RESOURCE_ARCHIVED'
+  | 'ROSTER_RESOURCE_DELETED'
+  | 'BLACKOUT_DATE_MODIFIED'
+  | 'RECORD_DELETED'
+  | 'RECORD_ARCHIVED'
+  | 'DELETION_BLOCKED_DEPENDENCY'
+  | 'UNAUTHORIZED_DELETE_ATTEMPT'
+  // Database Actions
+  | 'DATABASE_HEALTH_CHECK'
+  | 'DATABASE_REPAIR_EXECUTED'
+  | 'COLLECTION_VERIFIED'
+  | 'DATABASE_MIGRATION'
+  | 'DATA_IMPORTED'
+  | 'DATA_EXPORTED'
+  | 'ORPHAN_CLEANUP'
+  | 'SCHEMA_VALIDATED'
+  // Integration Actions
+  | 'INTEGRATION_CONNECTED'
+  | 'INTEGRATION_DISCONNECTED'
+  | 'INTEGRATION_VERIFIED'
+  | 'INTEGRATION_SYNC_STARTED'
+  | 'INTEGRATION_SYNC_COMPLETED'
+  | 'INTEGRATION_SYNC_FAILED'
+  | 'INTEGRATION_SETTINGS_UPDATED'
+  | 'GMAIL_TEST_SENT'
+  | 'GMAIL_DISPATCH_RETRY'
+  | 'CALENDAR_EVENT_CREATED'
+  | 'CALENDAR_SYNC_EXECUTED'
+  | 'GOOGLE_SHEETS_SYNC'
+  | 'GOOGLE_SHEETS_PULL'
+  // Pricing Actions
+  | 'PRICE_CHANGED'
+  | 'MARGIN_CHANGED'
+  | 'PROMOTION_CREATED'
+  | 'PROMOTION_UPDATED'
+  | 'PROMOTION_DELETED'
+  // Quote Actions
+  | 'QUOTE_CREATED'
+  | 'QUOTE_EDITED'
+  | 'QUOTE_DOWNLOADED'
+  | 'QUOTE_SENT'
+  | 'QUOTE_CONVERTED'
+  | 'QUOTE_ARCHIVED'
+  | 'QUOTE_DELETED'
+  // Lead & Task Actions
+  | 'LEAD_CREATED'
+  | 'LEAD_UPDATED'
+  | 'LEAD_ARCHIVED'
+  | 'LEAD_DELETED'
+  | 'CALENDAR_TASK_CREATED'
+  | 'CALENDAR_TASK_UPDATED'
+  | 'CALENDAR_TASK_DELETED'
+  // Booking Actions
   | 'BOOKING_CREATED'
   | 'BOOKING_UPDATED'
   | 'BOOKING_CANCELLED'
-  | 'GOOGLE_SHEETS_SYNC'
-  | 'REVIEW_UPDATED'
-  | 'ROSTER_RESOURCE_ADDED'
-  | 'ROSTER_RESOURCE_UPDATED'
-  | 'BLACKOUT_DATE_MODIFIED'
-  | 'USER_ROLE_CHANGED'
-  | 'USER_APPROVED'
-  | 'USER_REJECTED'
+  | 'BOOKING_CONFIRMED'
+  | 'BOOKING_EMAIL_DISPATCHED'
+  // General & Settings
   | 'STATUS_UPDATED'
   | 'SETTINGS_UPDATED';
+
+export type CMSDeletableEntityType =
+  | 'Product'
+  | 'Hotel'
+  | 'HotelRoom'
+  | 'HotelRate'
+  | 'Package'
+  | 'CityHub'
+  | 'Destination'
+  | 'MasterRegion'
+  | 'DestinationRegion'
+  | 'DestinationFAQ'
+  | 'Blog'
+  | 'Review'
+  | 'Promotion'
+  | 'GalleryImage'
+  | 'VisaRequirement'
+  | 'CustomPage'
+  | 'MenuItem'
+  | 'FooterColumn'
+  | 'FooterLink'
+  | 'Quote'
+  | 'Lead'
+  | 'RosterResource'
+  | 'CalendarTask'
+  | 'Campaign';
+
+export interface DependencyDetailItem {
+  id: string;
+  name: string;
+  type: string; // e.g. 'Product', 'Hotel', 'Package', 'Quote', 'Booking', 'City Hub', 'Destination', 'Master Region', 'Calendar Task', 'Lead'
+  details?: string;
+  url?: string;
+}
+
+export interface DependencyGroup {
+  entityType: string;
+  count: number;
+  label: string; // e.g. "24 Products", "12 Hotels", "3 Packages"
+  items: DependencyDetailItem[];
+}
+
+export interface DeletionCheckResult {
+  canHardDelete: boolean;
+  hasDependencies: boolean;
+  totalDependencyCount: number;
+  dependencySummary: string; // e.g. "This Hub is currently being used by 24 Products, 12 Hotels and 3 Packages."
+  groups: DependencyGroup[];
+  canArchive: boolean;
+  suggestedAction: 'ALLOW_DELETE' | 'BLOCK_AND_SUGGEST_ARCHIVE' | 'BLOCK_HARD_DELETE';
+}
+
+export interface SecureDeleteResult {
+  success: boolean;
+  action: 'DELETED' | 'ARCHIVED' | 'BLOCKED';
+  message: string;
+  dependencies?: DeletionCheckResult;
+}
 
 export interface AuditLog {
   id: string;
   userId: string;
   userName: string;
   userRole: UserRole;
+  category?: AuditCategory;
   action: AuditAction;
   entity: string;
   entityId: string;
@@ -836,6 +1179,132 @@ export interface AuditLog {
   details: string;
   previousValue?: string;
   newValue?: string;
+  integrationService?: 'FIRESTORE' | 'GMAIL' | 'CALENDAR' | 'SHEETS' | 'NONE';
+  status?: 'SUCCESS' | 'WARNING' | 'FAILED';
+  clientIp?: string;
+}
+
+// ----------------------------------------------------
+// INTEGRATIONS & DATABASE GOVERNANCE TYPES
+// ----------------------------------------------------
+export type IntegrationServiceId = 'FIRESTORE' | 'GMAIL' | 'CALENDAR' | 'SHEETS';
+
+export type IntegrationStatus = 'CONNECTED' | 'ACTION_REQUIRED' | 'CONNECTION_FAILED' | 'NOT_CONNECTED';
+
+export interface IntegrationSummaryItem {
+  id: IntegrationServiceId;
+  name: string;
+  description: string;
+  status: IntegrationStatus;
+  statusMessage: string;
+  lastSync?: string;
+  lastVerification?: string;
+  errorCount: number;
+  iconName: string;
+  isProductionReady: boolean;
+  activeAccount?: string;
+}
+
+export type IssueSeverity = 'CRITICAL' | 'WARNING' | 'INFO';
+export type IssueCategory = 'MISSING_FIELD' | 'BROKEN_RELATION' | 'DUPLICATE_KEY' | 'ORPHAN_RECORD' | 'PRICING_INVARIANT' | 'SCHEMA_MISMATCH';
+
+export interface DatabaseIssueItem {
+  id: string;
+  collection: string;
+  documentId: string;
+  recordTitle: string;
+  category: IssueCategory;
+  severity: IssueSeverity;
+  problem: string;         // Plain business language explanation of the problem
+  businessImpact: string;  // Plain business language explanation of why it matters
+  recommendedFix: string;  // Plain business language explanation of how to fix
+  technicalDetails: {      // Expandable developer mode technical inspection
+    fieldName?: string;
+    expectedType?: string;
+    actualValue?: any;
+    invalidReferenceId?: string;
+    targetCollection?: string;
+    rawDocument?: Record<string, any>;
+  };
+  canAutoFix: boolean;
+  autoFixAction?: string;
+}
+
+export interface CollectionVerificationResult {
+  collectionKey: string;
+  displayName: string;
+  totalRecords: number;
+  validRecords: number;
+  invalidRecords: number;
+  missingFieldsCount: number;
+  brokenRelationshipsCount: number;
+  duplicateRecordsCount: number;
+  orphanRecordsCount: number;
+  lastChecked: string;
+  status: 'HEALTHY' | 'ACTION_REQUIRED' | 'CRITICAL';
+  issues: DatabaseIssueItem[];
+}
+
+export interface DatabaseHealthCategoryScore {
+  name: string;
+  score: number; // 0 - 100
+  totalChecked: number;
+  issuesCount: number;
+  status: 'OPTIMAL' | 'FAIR' | 'ATTENTION';
+}
+
+export interface DatabaseHealthScoreReport {
+  overallScore: number; // 0 - 100
+  ratingLabel: 'EXCELLENT' | 'GOOD' | 'NEEDS_ATTENTION' | 'CRITICAL';
+  totalCollectionsAudited: number;
+  totalDocumentsAudited: number;
+  totalIssuesCount: number;
+  criticalIssuesCount: number;
+  warningIssuesCount: number;
+  categories: {
+    collections: DatabaseHealthCategoryScore;
+    relationships: DatabaseHealthCategoryScore;
+    requiredFields: DatabaseHealthCategoryScore;
+    duplicateRecords: DatabaseHealthCategoryScore;
+    orphanRecords: DatabaseHealthCategoryScore;
+    pricingData: DatabaseHealthCategoryScore;
+    publishedProducts: DatabaseHealthCategoryScore;
+  };
+  collectionResults: Record<string, CollectionVerificationResult>;
+  lastAuditedAt: string;
+}
+
+export interface GmailNotificationToggleConfig {
+  newUserRegistration: boolean;
+  userApprovalRejection: boolean;
+  quoteGenerated: boolean;
+  quoteDownloaded: boolean;
+  bookingConfirmation: boolean;
+  bookingStatusUpdate: boolean;
+  bookingCancellation: boolean;
+  operationsDossier: boolean;
+  adminAlerts: boolean;
+}
+
+export interface GoogleCalendarSyncConfig {
+  calendarId: string;
+  syncBookings: boolean;
+  syncTransfers: boolean;
+  syncActivities: boolean;
+  syncGuideDuties: boolean;
+  syncDriverDuties: boolean;
+  syncPaymentSlas: boolean;
+  autoCreateAlerts: boolean;
+}
+
+export interface SheetsColumnMappingItem {
+  sheetColumn: string;
+  dbField: string;
+  displayName: string;
+  isRequired: boolean;
+  dataType: 'string' | 'number' | 'currency' | 'array' | 'boolean';
+  sampleValue?: string;
+  status: 'MAPPED' | 'UNMAPPED' | 'OPTIONAL';
 }
 
 // ----------------------------------------------------
@@ -964,6 +1433,7 @@ export interface HotelRate {
   tripleNetRate: number;
   extraBedRate: number;
   childRate: number;
+  adultNettCost?: number;
   markupPercent: number;
   taxPercent: number;
   feePercent: number;
@@ -1149,7 +1619,7 @@ export interface GalleryImage {
 // INTERNAL COMPANY MANAGEMENT SYSTEM (LEADS & OPERATIONS)
 // ----------------------------------------------------
 export type LeadStatus = 'NEW' | 'CONTACTED' | 'QUALIFIED' | 'QUOTED' | 'FOLLOW_UP' | 'WON' | 'LOST';
-export type LeadSource = 'WEBSITE' | 'CONTACT_FORM' | 'QUOTATION_SAVED' | 'PROPOSAL_DOWNLOADED' | 'MARKETING' | 'MANUAL_ENTRY' | 'REFERRAL' | 'B2B_PARTNER' | 'VISA_PAGE' | 'VISA_PORTAL';
+export type LeadSource = 'WEBSITE' | 'CONTACT_FORM' | 'PACKAGE_INQUIRY' | 'QUOTATION_SAVED' | 'PROPOSAL_DOWNLOADED' | 'MARKETING' | 'MANUAL_ENTRY' | 'REFERRAL' | 'B2B_PARTNER' | 'VISA_PAGE' | 'VISA_PORTAL';
 
 export interface LeadNote {
   id: string;
@@ -1617,3 +2087,234 @@ export interface CalendarTask {
   createdAt: string;
   updatedAt: string;
 }
+
+// ----------------------------------------------------
+// B2B TRAVEL AGENT PORTAL WORKSPACE & CRM TYPES
+// ----------------------------------------------------
+
+export interface TripRouteHub {
+  id: string;
+  hubId: string;
+  hubName: string;
+  destinationId?: string;
+  destinationName?: string;
+  nights: number;
+  order: number;
+  hotelId?: string;
+  roomTypeId?: string;
+  roomsCount?: number;
+  accommodationType?: AccommodationType;
+  isManualHotel?: boolean;
+  manualHotel?: ManualHotelDetails;
+  notes?: string;
+}
+
+export type PackageStatus = 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'UNPUBLISHED' | 'ARCHIVED';
+
+export type PackagePricingMode = 'LIVE' | 'LOCKED';
+
+export interface PackageProductRef {
+  productId: string;
+  dayNumber: number;
+  productName?: string;
+  category?: ProductCategory | string;
+  productType?: string;
+  hubId?: string;
+  hubName?: string;
+  notes?: string;
+  isOptional?: boolean;
+  lockedAdultNetCost?: number;
+  lockedChildNetCost?: number;
+  lockedInfantNetCost?: number;
+}
+
+export interface PackageHotelRef {
+  hotelId: string;
+  hotelName?: string;
+  cityName?: string;
+  hubId?: string;
+  hubName?: string;
+  roomTypeId?: string;
+  roomTypeName?: string;
+  mealPlanCode?: string;
+  mealPlanName?: string;
+  nights: number;
+  startDay: number;
+  endDay: number;
+  lockedRatePerNight?: number;
+}
+
+export interface PackageItineraryDay {
+  dayNumber: number;
+  title: string;
+  hubId?: string;
+  hubName?: string;
+  destinationId?: string;
+  destinationName?: string;
+  description: string;
+  operationalNotes?: string;
+  hotelId?: string;
+  hotelName?: string;
+  roomTypeId?: string;
+  mealPlan?: string;
+  mealsIncluded?: {
+    breakfast: boolean;
+    lunch: boolean;
+    dinner: boolean;
+  };
+  productIds: string[]; // references to master Product IDs
+  transferId?: string; // reference to master transfer product
+  railId?: string; // reference to master rail product
+  guideIncluded?: boolean;
+  freeTime?: boolean;
+  notes?: string;
+}
+
+export interface PackagePricingConfig {
+  pricingMode: PackagePricingMode;
+  baseNetCostUSD: number;
+  suggestedSellingPriceUSD: number;
+  adultNettUSD?: number;
+  childNettUSD?: number;
+  infantNettUSD?: number;
+  buyerMarkupPercent?: number;
+  b2bMarkupPercent?: number;
+  customMarginPercent?: number;
+  taxOnMarginPercent?: number;
+  commercialMarginUSD?: number;
+  currency: CurrencyCode;
+}
+
+export interface PackageCustomizationRules {
+  allowHotelCustomization: boolean;
+  allowActivityCustomization: boolean;
+  allowTransferCustomization: boolean;
+  allowDurationCustomization: boolean;
+  allowMealCustomization: boolean;
+}
+
+export interface PackageVisibility {
+  destinationPage: boolean;
+  hubPage: boolean;
+  homepage: boolean;
+  promotions: boolean;
+  search: boolean;
+  featured: boolean;
+}
+
+export interface PackageSEO {
+  metaTitle: string;
+  metaDescription: string;
+  keywords: string[];
+  canonicalUrl?: string;
+}
+
+export interface B2BPackage {
+  id: string;
+  title: string;
+  name?: string; // Alias for title
+  slug: string;
+  regionId?: string;
+  regionName?: string;
+  destinationId: string;
+  destinationName: string;
+  hubIds?: string[];
+  hubNames?: string[];
+  durationDays: number;
+  durationNights: number;
+  heroImage: string;
+  galleryImages?: string[];
+  tagline: string;
+  description: string;
+  detailedDescription?: string;
+  routeSummary: string[]; // e.g. ['Tokyo (3N)', 'Kyoto (2N)', 'Osaka (2N)']
+  routeHubs?: TripRouteHub[];
+  hotelsSummary: {
+    hotelId?: string;
+    name: string;
+    cityName: string;
+    nights: number;
+    roomType: string;
+    mealPlan?: string;
+  }[];
+  productIds: string[]; // references to Product.id
+  productReferences?: PackageProductRef[];
+  hotelReferences?: PackageHotelRef[];
+  itinerary?: PackageItineraryDay[];
+  recommendedProductIds?: string[]; // references to recommended optional master products
+  pricingConfiguration?: PackagePricingConfig;
+  customizationRules?: PackageCustomizationRules;
+  highlights: string[];
+  inclusions: string[];
+  exclusions: string[];
+  termsAndConditions?: string;
+  cancellationPolicy?: string;
+  importantInformation?: string;
+  baseNetCostUSD: number;
+  suggestedSellingPriceUSD: number;
+  currency: CurrencyCode;
+  tripType: 'LUXURY' | 'FAMILY' | 'HONEYMOON' | 'CULTURAL' | 'ADVENTURE' | 'CLASSIC';
+  tags: string[];
+  status?: PackageStatus;
+  visibility?: PackageVisibility;
+  seo?: PackageSEO;
+  isFeatured?: boolean;
+  isPublished: boolean;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type TourPackage = B2BPackage;
+
+export interface B2BCustomer {
+  id: string;
+  agentId: string;
+  name: string;
+  email: string;
+  phone: string;
+  company?: string;
+  country: string;
+  city?: string;
+  notes?: string;
+  preferredDestination?: string;
+  budgetPerPersonUSD?: number;
+  totalQuotesCount: number;
+  totalBookingsCount: number;
+  tags?: string[];
+  lastContactDate: string;
+  createdAt: string;
+}
+
+export interface B2BTask {
+  id: string;
+  agentId: string;
+  title: string;
+  description: string;
+  dueDate: string;
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  relatedQuoteId?: string;
+  relatedQuoteNumber?: string;
+  relatedCustomerName?: string;
+  relatedCustomerEmail?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type B2BTabType = 
+  | 'dashboard' 
+  | 'create-quote' 
+  | 'packages' 
+  | 'products' 
+  | 'hotels' 
+  | 'my-quotes' 
+  | 'bookings' 
+  | 'customers' 
+  | 'tasks' 
+  | 'account';
+
+export type B2BNavTab = B2BTabType;
+
+

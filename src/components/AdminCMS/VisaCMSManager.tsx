@@ -249,7 +249,7 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({ destinations }) 
                   <div>
                     <span className="text-[10px] font-bold text-slate-500 block uppercase">Total Cost</span>
                     <span className="font-mono font-bold text-slate-900 text-sm">
-                      {visa.currency} {(visa.embassyFee + visa.serviceFee).toLocaleString()}
+                      {visa.currency || 'USD'} {((Number(visa.embassyFee) || 0) + (Number(visa.serviceFee) || 0)).toLocaleString()}
                     </span>
                   </div>
                   <span className="text-[10px] text-slate-500 font-semibold">
@@ -258,17 +258,17 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({ destinations }) 
                 </div>
 
                 <div className="space-y-1">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Required Documents ({visa.documentsChecklist.length})</span>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Required Documents ({(visa.documentsChecklist || []).length})</span>
                   <ul className="text-[11px] text-slate-600 space-y-1">
-                    {visa.documentsChecklist.slice(0, 3).map((doc, idx) => (
+                    {(visa.documentsChecklist || []).slice(0, 3).map((doc, idx) => (
                       <li key={idx} className="flex items-start space-x-1.5 truncate">
                         <CheckSquare className="w-3 h-3 text-[#008972] shrink-0 mt-0.5" />
                         <span className="truncate">{doc}</span>
                       </li>
                     ))}
-                    {visa.documentsChecklist.length > 3 && (
+                    {(visa.documentsChecklist || []).length > 3 && (
                       <li className="text-[10px] text-[#008972] font-bold">
-                        +{visa.documentsChecklist.length - 3} more required items
+                        +{(visa.documentsChecklist || []).length - 3} more required items
                       </li>
                     )}
                   </ul>

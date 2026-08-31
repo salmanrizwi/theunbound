@@ -70,7 +70,8 @@ export const UserApprovalAccessManager: React.FC = () => {
       canAccessCMS: false,
       canAccessRoster: false,
       canAccessFinancials: false,
-      canManageUsers: false
+      canManageUsers: false,
+      canAddManualHotelRates: true
     };
 
     const updated: User = {
@@ -115,7 +116,8 @@ export const UserApprovalAccessManager: React.FC = () => {
         canAccessCMS: isInternal,
         canAccessRoster: isInternal,
         canAccessFinancials: newRole === 'ADMIN',
-        canManageUsers: newRole === 'ADMIN'
+        canManageUsers: newRole === 'ADMIN',
+        canAddManualHotelRates: true
       }
     };
 
@@ -482,6 +484,18 @@ export const UserApprovalAccessManager: React.FC = () => {
                           />
                           <span className={perms.canAccessFinancials ? 'text-rose-700 font-bold' : 'text-slate-400'}>
                             Financial Audit
+                          </span>
+                        </label>
+
+                        <label className="flex items-center space-x-1.5 cursor-pointer text-[10px]">
+                          <input
+                            type="checkbox"
+                            checked={perms.canAddManualHotelRates !== false}
+                            onChange={() => handleTogglePermission(userItem.id, 'canAddManualHotelRates')}
+                            className="rounded text-[#00C6A6] focus:ring-0 w-3.5 h-3.5"
+                          />
+                          <span className={perms.canAddManualHotelRates !== false ? 'text-amber-700 font-bold' : 'text-slate-400'}>
+                            Manual Hotel Rates
                           </span>
                         </label>
                       </div>

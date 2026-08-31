@@ -54,12 +54,16 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
   // Inline Expansion State
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // Selected Room & Meal Plan
-  const [selectedRoomId, setSelectedRoomId] = useState<string>(() => hotel.roomTypes[0]?.id || '');
-  const selectedRoom = hotel.roomTypes.find(r => r.id === selectedRoomId) || hotel.roomTypes[0];
+  // Safe room types array
+  const roomTypes = hotel.roomTypes || [];
 
-  const [selectedRateId, setSelectedRateId] = useState<string>(() => selectedRoom?.rates[0]?.id || '');
-  const activeRate = selectedRoom?.rates.find(r => r.id === selectedRateId) || selectedRoom?.rates[0] || {
+  // Selected Room & Meal Plan
+  const [selectedRoomId, setSelectedRoomId] = useState<string>(() => roomTypes[0]?.id || '');
+  const selectedRoom = roomTypes.find(r => r.id === selectedRoomId) || roomTypes[0];
+
+  const roomRates = selectedRoom?.rates || [];
+  const [selectedRateId, setSelectedRateId] = useState<string>(() => roomRates[0]?.id || '');
+  const activeRate = roomRates.find(r => r.id === selectedRateId) || roomRates[0] || {
     id: 'default',
     mealPlan: 'BB' as MealPlanCode,
     mealPlanName: 'Bed & Breakfast Included',
@@ -183,7 +187,7 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
               <span>•</span>
               <span className="flex items-center space-x-1 text-slate-600">
                 <Bed className="w-3 h-3 text-slate-400" />
-                <span>{hotel.roomTypes.length} Room Types</span>
+                <span>{roomTypes.length} Room Types</span>
               </span>
             </div>
 
@@ -250,14 +254,14 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
                 value={selectedRoomId}
                 onChange={(e) => {
                   setSelectedRoomId(e.target.value);
-                  const rm = hotel.roomTypes.find(r => r.id === e.target.value);
-                  if (rm && rm.rates.length > 0) {
+                  const rm = roomTypes.find(r => r.id === e.target.value);
+                  if (rm && rm.rates && (rm.rates || []).length > 0) {
                     setSelectedRateId(rm.rates[0].id);
                   }
                 }}
                 className="w-full bg-white border border-slate-300 rounded-xl px-2.5 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#00C6A6] cursor-pointer"
               >
-                {hotel.roomTypes.map((room) => (
+                {roomTypes.map((room) => (
                   <option key={room.id} value={room.id}>
                     {room.roomName} ({room.roomCategory})
                   </option>

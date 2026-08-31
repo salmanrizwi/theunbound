@@ -262,7 +262,7 @@ export const BookingsManager: React.FC = () => {
                   <span className="text-base font-extrabold font-mono text-slate-900 block">
                     {formatCurrency(b.totalAmount, b.currency)}
                   </span>
-                  <span className="text-[10px] text-slate-400">{b.items.length} Ground Service(s)</span>
+                  <span className="text-[10px] text-slate-400">{b.items?.length || 0} Ground Service(s)</span>
                 </div>
 
                 <div className="flex items-center justify-start md:justify-end space-x-2">

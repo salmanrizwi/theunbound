@@ -189,7 +189,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               </span>
               <span className="flex items-center space-x-1">
                 <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                <span>Operating Days: {product.operatingDays.join(', ')}</span>
+                <span>Operating Days: {(product.operatingDays || []).join(', ') || 'Daily'}</span>
               </span>
             </div>
           </div>
@@ -198,16 +198,16 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
           <div className="space-y-3">
             <div className="aspect-21/9 sm:aspect-16/7 w-full rounded-2xl overflow-hidden bg-slate-900 relative shadow-inner">
               <img
-                src={product.images[activeImageIdx] || product.images[0]}
+                src={(product.images || [])[activeImageIdx] || (product.images || [])[0] || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
                 alt={product.name}
                 className="w-full h-full object-cover"
               />
               <div className="absolute bottom-3 right-3 bg-slate-950/80 backdrop-blur-md text-white text-xs px-3 py-1 rounded-lg">
-                Photo {activeImageIdx + 1} of {product.images.length}
+                Photo {activeImageIdx + 1} of {(product.images || []).length || 1}
               </div>
             </div>
 
-            {product.images.length > 1 && (
+            {(product.images || []).length > 1 && (
               <div className="flex items-center space-x-3 overflow-x-auto pb-1">
                 {product.images.map((img, idx) => (
                   <button
@@ -245,7 +245,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     <span>Included Services</span>
                   </h4>
                   <ul className="space-y-2 text-xs text-emerald-950">
-                    {product.inclusions.map((inc, i) => (
+                    {(product.inclusions || []).map((inc, i) => (
                       <li key={i} className="flex items-start space-x-2">
                         <span className="text-emerald-500 font-bold">•</span>
                         <span>{inc}</span>
@@ -260,7 +260,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     <span>Exclusions</span>
                   </h4>
                   <ul className="space-y-2 text-xs text-rose-950">
-                    {product.exclusions.map((exc, i) => (
+                    {(product.exclusions || []).map((exc, i) => (
                       <li key={i} className="flex items-start space-x-2">
                         <span className="text-rose-400 font-bold">•</span>
                         <span>{exc}</span>

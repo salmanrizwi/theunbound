@@ -236,7 +236,7 @@ export const LeadManager: React.FC = () => {
                   <span>Destination: <strong className="text-slate-700">{lead.destinationName}</strong></span>
                   <span>Travel Dates: <strong className="text-slate-700">{lead.travelDates || 'Flexible'}</strong></span>
                   <span>Pax: <strong className="text-slate-700">{lead.paxAdults} Adults, {lead.paxChildren} Children</strong></span>
-                  <span>Est Budget: <strong className="text-slate-700">{lead.currency} {lead.estimatedBudget?.toLocaleString()}</strong></span>
+                  <span>Est Budget: <strong className="text-slate-700">{lead.currency || 'USD'} {(Number(lead.estimatedBudget) || 0).toLocaleString()}</strong></span>
                   {lead.quoteNumber && (
                     <span className="text-[#008f77] font-bold">Quote: {lead.quoteNumber}</span>
                   )}
@@ -394,7 +394,7 @@ export const LeadManager: React.FC = () => {
                     <div key={note.id} className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-xs">
                       <div className="flex items-center justify-between text-slate-500 mb-1">
                         <strong>{note.authorName}</strong>
-                        <span>{new Date(note.timestamp).toLocaleString()}</span>
+                        <span>{note.timestamp ? new Date(note.timestamp).toLocaleString() : ''}</span>
                       </div>
                       <p className="text-slate-700">{note.text}</p>
                     </div>

@@ -164,6 +164,40 @@
         "isPublished": { "type": "boolean", "required": true }
       }
     },
+    "Package": {
+      "collection": "b2b_packages",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "title": { "type": "string", "required": true },
+        "slug": { "type": "string", "required": true },
+        "regionId": { "type": "string", "required": false },
+        "regionName": { "type": "string", "required": false },
+        "destinationId": { "type": "string", "required": true },
+        "destinationName": { "type": "string", "required": true },
+        "hubIds": { "type": "array", "required": false },
+        "durationDays": { "type": "number", "required": true },
+        "durationNights": { "type": "number", "required": true },
+        "heroImage": { "type": "string", "required": true },
+        "tagline": { "type": "string", "required": true },
+        "description": { "type": "string", "required": true },
+        "routeSummary": { "type": "array", "required": true },
+        "hotelsSummary": { "type": "array", "required": true },
+        "productIds": { "type": "array", "required": true },
+        "itinerary": { "type": "array", "required": false },
+        "highlights": { "type": "array", "required": true },
+        "inclusions": { "type": "array", "required": true },
+        "exclusions": { "type": "array", "required": true },
+        "baseNetCostUSD": { "type": "number", "required": true },
+        "suggestedSellingPriceUSD": { "type": "number", "required": true },
+        "currency": { "type": "string", "required": true },
+        "tripType": { "type": "string", "required": true },
+        "tags": { "type": "array", "required": true },
+        "status": { "type": "string", "required": true },
+        "isPublished": { "type": "boolean", "required": true },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": true }
+      }
+    },
     "Lead": {
       "collection": "leads",
       "fields": {

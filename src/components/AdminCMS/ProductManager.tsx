@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Product, ProductCategory, CurrencyCode, Destination, Supplier, DestinationRegionItem, CityHub, MasterRegion } from '../../types';
+import { Product, ProductCategory, CurrencyCode, Destination, Supplier, DestinationRegionItem, CityHub, MasterRegion, ProductPricingMethod, TransferVehicleConfig } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { SUPPLIERS } from '../../data/suppliers';
-import { formatCurrency } from '../../services/pricingEngine';
+import { formatCurrency, CAPACITY_BASED_CATEGORIES } from '../../services/pricingEngine';
 import { 
   Package, 
   Plus, 
@@ -31,7 +31,14 @@ import {
   Upload,
   Camera,
   RefreshCw,
-  Link2
+  Link2,
+  Car,
+  Ship,
+  Anchor,
+  Users,
+  Calculator,
+  ShieldAlert,
+  Gauge
 } from 'lucide-react';
 import { fileToDataUrl, convertUnsplashUrl, fetchUnsplashImagesByQuery } from '../../utils/imageUtils';
 
@@ -41,7 +48,7 @@ interface ProductManagerProps {
 }
 
 const CATEGORIES: ProductCategory[] = [
-  'Tours', 'Hotels', 'Activities', 'Transfers', 'Rail', 'Ferries', 'Cruises', 'Private Tours', 'Day Trips', 'Guides', 'Transport', 'Travel Services'
+  'Private Tours', 'Day Trips', 'Activities', 'Transfers', 'Transport', 'Private Yacht', 'Tours', 'Rail', 'Ferries', 'Guides', 'Travel Services'
 ];
 
 export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, onViewProduct }) => {
@@ -95,8 +102,21 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     duration: '8 Hours',
     operatingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
     operatingHours: '09:00 - 17:00',
-    adultNetPrice: 350,
-    childNetPrice: 200,
+    pricingMethod: 'capacity_based',
+    vehicleConfig: {
+      vehicleModel: 'Toyota Hiace Grand Cabin (7-Seater)',
+      vehicleType: 'Executive MPV / Van',
+      maxSeats: 7,
+      unitVehicleNetCost: 500,
+      adultSeatCount: 1,
+      childSeatCount: 1,
+      infantSeatCount: 0,
+      allowMultipleVehicles: true,
+      autoAllocateVehicles: true,
+      maxVehicles: 5
+    },
+    adultNetPrice: 500,
+    childNetPrice: 0,
     infantNetPrice: 0,
     currency: 'USD',
     defaultMarkupPercent: 30,
@@ -105,7 +125,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     taxPercent: 10,
     commissionPercent: 10,
     serviceFeeFixed: 25,
-    sellingPriceStartingFrom: 462,
+    sellingPriceStartingFrom: 660,
     optionalUpgradeProductIds: [],
     shortDescription: '',
     longDescription: '',
@@ -252,8 +272,22 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
 
   const handleOpenEdit = (product: Product) => {
     setEditingProduct(product);
+    const isCapCat = CAPACITY_BASED_CATEGORIES.includes(product.category as string);
     setFormData({
       ...product,
+      pricingMethod: product.pricingMethod || (isCapCat ? 'capacity_based' : 'per_person'),
+      vehicleConfig: product.vehicleConfig || (isCapCat ? {
+        vehicleModel: product.name || 'Executive MPV / Van',
+        vehicleType: 'Executive MPV / Van',
+        maxSeats: product.maxPax || 7,
+        unitVehicleNetCost: product.adultNetPrice || 500,
+        adultSeatCount: 1,
+        childSeatCount: 1,
+        infantSeatCount: 0,
+        allowMultipleVehicles: true,
+        autoAllocateVehicles: true,
+        maxVehicles: 5
+      } : undefined),
       buyerMarkupPercent: product.buyerMarkupPercent !== undefined ? product.buyerMarkupPercent : (product.defaultMarkupPercent || 30),
       b2bAgentMarkupPercent: product.b2bAgentMarkupPercent !== undefined ? product.b2bAgentMarkupPercent : 20,
       optionalUpgradeProductIds: product.optionalUpgradeProductIds || []
@@ -291,9 +325,13 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     e.preventDefault();
     if (!formData.name || !formData.sku) return;
 
-    const adultNet = Number(formData.adultNetPrice) || 0;
-    const childNet = Number(formData.childNetPrice) || 0;
-    const infantNet = Number(formData.infantNetPrice) || 0;
+    const isCapacityBased = formData.pricingMethod === 'capacity_based' || CAPACITY_BASED_CATEGORIES.includes(formData.category as string);
+    const maxSeats = Number(formData.vehicleConfig?.maxSeats) || Number(formData.maxPax) || 7;
+    const vehicleNet = Number(formData.vehicleConfig?.unitVehicleNetCost) || Number(formData.adultNetPrice) || 0;
+    
+    const adultNet = isCapacityBased ? vehicleNet : (Number(formData.adultNetPrice) || 0);
+    const childNet = isCapacityBased ? 0 : (Number(formData.childNetPrice) || 0);
+    const infantNet = isCapacityBased ? 0 : (Number(formData.infantNetPrice) || 0);
     const buyerMarkup = Number(formData.buyerMarkupPercent) || Number(formData.defaultMarkupPercent) || 30;
     const b2bAgentMarkup = Number(formData.b2bAgentMarkupPercent) || 20;
     const tax = Number(formData.taxPercent) || 10;
@@ -326,6 +364,22 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       duration: formData.duration || 'Full Day',
       operatingDays: formData.operatingDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
       operatingHours: formData.operatingHours || '09:00 - 18:00',
+      pricingMethod: isCapacityBased ? 'capacity_based' : (formData.pricingMethod || 'per_person'),
+      vehicleConfig: isCapacityBased ? {
+        vehicleModel: formData.vehicleConfig?.vehicleModel || formData.name || 'Executive Vehicle',
+        vehicleType: formData.vehicleConfig?.vehicleType || 'Executive MPV / Van',
+        maxSeats: maxSeats,
+        unitVehicleNetCost: vehicleNet,
+        adultSeatCount: Number(formData.vehicleConfig?.adultSeatCount ?? 1),
+        childSeatCount: Number(formData.vehicleConfig?.childSeatCount ?? 1),
+        infantSeatCount: Number(formData.vehicleConfig?.infantSeatCount ?? 0),
+        allowMultipleVehicles: formData.vehicleConfig?.allowMultipleVehicles ?? true,
+        autoAllocateVehicles: formData.vehicleConfig?.autoAllocateVehicles ?? true,
+        maxVehicles: Number(formData.vehicleConfig?.maxVehicles) || 5,
+        totalSeats: maxSeats,
+        passengerCapacity: maxSeats,
+        totalTransferCost: vehicleNet
+      } : formData.vehicleConfig,
       adultNetPrice: adultNet,
       childNetPrice: childNet,
       infantNetPrice: infantNet,
@@ -345,7 +399,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       validityFrom: formData.validityFrom || '2026-01-01',
       validityTo: formData.validityTo || '2026-12-31',
       minPax: Number(formData.minPax) || 1,
-      maxPax: Number(formData.maxPax) || 10,
+      maxPax: maxSeats,
       availability: (formData.availability as any) || 'INSTANT',
       bookingRequiredDays: Number(formData.bookingRequiredDays) || 2,
       cancellationPolicy: formData.cancellationPolicy || 'Standard 72-hour notice.',
@@ -354,7 +408,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       importantInformation: formData.importantInformation || [],
       meetingPoint: formData.meetingPoint || 'Hotel Lobby',
       pickupInformation: formData.pickupInformation || 'Concierge Desk Pick-up',
-      images: formData.images && formData.images.length > 0 ? formData.images : ['https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=800&auto=format&fit=crop'],
+      images: formData.images && (formData.images || []).length > 0 ? formData.images : ['https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=800&auto=format&fit=crop'],
       location: `${formData.city || targetHub?.name || 'Tokyo'}, ${formData.country || targetDest?.name || 'Japan'}`,
       latitude: formData.latitude || 35.6762,
       longitude: formData.longitude || 139.6503,
@@ -861,7 +915,15 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                     <label className="text-xs font-semibold text-slate-700">Category *</label>
                     <select
                       value={formData.category}
-                      onChange={e => setFormData({ ...formData, category: e.target.value as ProductCategory })}
+                      onChange={e => {
+                        const newCat = e.target.value as ProductCategory;
+                        const isCapCat = CAPACITY_BASED_CATEGORIES.includes(newCat);
+                        setFormData({ 
+                          ...formData, 
+                          category: newCat,
+                          pricingMethod: isCapCat ? 'capacity_based' : formData.pricingMethod || 'per_person'
+                        });
+                      }}
                       className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-medium"
                     >
                       {CATEGORIES.map(c => (
@@ -882,73 +944,629 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                 </div>
               </div>
 
-              {/* Net Pricing Engine Specs */}
+              {/* Pricing Calculation Architecture Selector */}
               <div className="bg-slate-900 text-white p-5 rounded-2xl space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-[#00E5C0] font-bold text-xs flex items-center space-x-1.5">
-                    <DollarSign className="w-4 h-4" />
-                    <span>Product Nett Cost & User-Type Markup Engine</span>
-                  </span>
-                  <span className="text-[10px] text-slate-400">Stored in Product Base Currency</span>
-                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                  <div className="flex items-center space-x-2">
+                    <div className="p-2 bg-teal-500/20 text-[#00E5C0] rounded-lg">
+                      <Calculator className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                        <span>Commercial Pricing & Calculation Engine</span>
+                        {formData.pricingMethod === 'capacity_based' ? (
+                          <span className="text-[10px] bg-teal-500/20 text-[#00E5C0] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-teal-500/30">
+                            Capacity-Based Vehicle Engine
+                          </span>
+                        ) : (
+                          <span className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-blue-500/30">
+                            Per-Person Rate Engine
+                          </span>
+                        )}
+                      </h4>
+                      <p className="text-[11px] text-slate-400">
+                        {formData.pricingMethod === 'capacity_based'
+                          ? 'Vehicle calculation: Total Vehicle Cost ÷ Actual Occupied Seats = Per-Person Nett Cost (Capped at Capacity).'
+                          : 'Per-person calculation: Adult Net × Adults + Child Net × Children + Infant Net × Infants.'}
+                      </p>
+                    </div>
+                  </div>
 
-                {/* 1. Base Nett Costs */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-800">
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-slate-300 font-medium">Base Currency</label>
-                    <select
-                      value={formData.currency}
-                      onChange={e => setFormData({ ...formData, currency: e.target.value as CurrencyCode })}
-                      className="w-full p-2 bg-white rounded-lg font-bold"
+                  {/* Method Toggle Buttons */}
+                  <div className="flex items-center bg-slate-800 p-1 rounded-xl border border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, pricingMethod: 'capacity_based' })}
+                      className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        formData.pricingMethod === 'capacity_based'
+                          ? 'bg-[#00C6A6] text-slate-950 shadow-md'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
                     >
-                      <option value="USD">USD ($)</option>
-                      <option value="EUR">EUR (€)</option>
-                      <option value="GBP">GBP (£)</option>
-                      <option value="JPY">JPY (¥)</option>
-                      <option value="INR">INR (₹)</option>
-                      <option value="AED">AED (AED)</option>
-                      <option value="THB">THB (฿)</option>
-                      <option value="AUD">AUD (A$)</option>
-                      <option value="CAD">CAD (CA$)</option>
-                      <option value="SGD">SGD (S$)</option>
-                      <option value="CHF">CHF (CHF)</option>
-                    </select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-slate-300 font-medium">Adult Nett Cost *</label>
-                    <input
-                      type="number"
-                      required
-                      min="0"
-                      value={formData.adultNetPrice || 0}
-                      onChange={e => setFormData({ ...formData, adultNetPrice: Number(e.target.value) })}
-                      className="w-full p-2 bg-white rounded-lg font-bold"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-slate-300 font-medium">Child Nett Cost</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={formData.childNetPrice || 0}
-                      onChange={e => setFormData({ ...formData, childNetPrice: Number(e.target.value) })}
-                      className="w-full p-2 bg-white rounded-lg"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-slate-300 font-medium">Infant Nett Cost</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={formData.infantNetPrice || 0}
-                      onChange={e => setFormData({ ...formData, infantNetPrice: Number(e.target.value) })}
-                      className="w-full p-2 bg-white rounded-lg"
-                    />
+                      <Car className="w-3.5 h-3.5" />
+                      <span>Capacity-Based</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, pricingMethod: 'per_person' })}
+                      className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        formData.pricingMethod === 'per_person' || !formData.pricingMethod
+                          ? 'bg-blue-600 text-white shadow-md'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      <span>Per-Person</span>
+                    </button>
                   </div>
                 </div>
+
+                {/* CAPACITY-BASED VEHICLE / YACHT & SEAT ALLOCATION CONFIGURATION */}
+                {formData.pricingMethod === 'capacity_based' ? (
+                  <div className="space-y-4">
+                    <div className="bg-slate-800/80 p-4 rounded-xl border border-teal-500/30 space-y-4">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-[#00E5C0] flex items-center gap-1.5">
+                          {formData.category === 'Private Yacht' ? <Ship className="w-4 h-4" /> : <Car className="w-4 h-4" />}
+                          <span>
+                            {formData.category === 'Private Yacht' 
+                              ? 'Private Yacht Specifications & Charter Capacity' 
+                              : 'Vehicle Fleet & Seating Capacity Specifications'}
+                          </span>
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {formData.category === 'Private Yacht'
+                            ? 'Auto-allocates multiple yachts when guest capacity is exceeded'
+                            : 'Auto-allocates multiple vehicles when capacity is exceeded'}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs text-slate-800">
+                        <div className="space-y-1 sm:col-span-2">
+                          <label className="text-[11px] text-slate-300 font-medium">
+                            {formData.category === 'Private Yacht' ? 'Yacht Model / Charter Name *' : 'Vehicle Model / Fleet Name *'}
+                          </label>
+                          <input
+                            type="text"
+                            value={formData.vehicleConfig?.vehicleModel || formData.vehicleConfig?.yachtModel || formData.vehicleConfig?.vehicleName || (formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge Luxury Yacht' : 'Toyota Hiace Grand Cabin (7-Seater)')}
+                            onChange={e => setFormData({
+                              ...formData,
+                              vehicleConfig: {
+                                ...(formData.vehicleConfig || {
+                                  vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge Luxury Yacht' : 'Toyota Hiace Grand Cabin (7-Seater)',
+                                  vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
+                                  maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
+                                  unitVehicleNetCost: 500,
+                                  adultSeatCount: 1,
+                                  childSeatCount: 1,
+                                  infantSeatCount: 0,
+                                  allowMultipleVehicles: true,
+                                  autoAllocateVehicles: true,
+                                  maxVehicles: 5
+                                }),
+                                vehicleModel: e.target.value,
+                                vehicleName: e.target.value,
+                                yachtModel: e.target.value,
+                                yachtName: e.target.value
+                              }
+                            })}
+                            placeholder={formData.category === 'Private Yacht' ? 'e.g. Azimut 66 Flybridge (10-Pax)' : 'e.g. Toyota Hiace Grand Cabin (7-Seater)'}
+                            className="w-full p-2 bg-white rounded-lg font-semibold"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[11px] text-slate-300 font-medium">
+                            {formData.category === 'Private Yacht' ? 'Yacht Classification' : 'Vehicle Classification'}
+                          </label>
+                          <select
+                            value={formData.vehicleConfig?.vehicleType || (formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van')}
+                            onChange={e => setFormData({
+                              ...formData,
+                              vehicleConfig: {
+                                ...(formData.vehicleConfig || {
+                                  vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge Luxury Yacht' : 'Toyota Hiace Grand Cabin (7-Seater)',
+                                  vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
+                                  maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
+                                  unitVehicleNetCost: 500,
+                                  adultSeatCount: 1,
+                                  childSeatCount: 1,
+                                  infantSeatCount: 0,
+                                  allowMultipleVehicles: true,
+                                  autoAllocateVehicles: true,
+                                  maxVehicles: 5
+                                }),
+                                vehicleType: e.target.value,
+                                yachtType: e.target.value
+                              }
+                            })}
+                            className="w-full p-2 bg-white rounded-lg font-medium text-xs"
+                          >
+                            {formData.category === 'Private Yacht' ? (
+                              <>
+                                <option value="Motor Yacht">Motor Yacht (Luxury Flybridge)</option>
+                                <option value="Catamaran">Catamaran (High Stability)</option>
+                                <option value="Sailing Yacht">Sailing Yacht / Monohull</option>
+                                <option value="Superyacht">Superyacht / Megayacht</option>
+                                <option value="Speedboat">Speedboat / Day Cruiser</option>
+                                <option value="Gulet / Wooden Boat">Gulet / Wooden Classic</option>
+                              </>
+                            ) : (
+                              <>
+                                <option value="Executive Sedan">Executive Sedan (1–3 Seats)</option>
+                                <option value="Executive MPV / Van">Executive MPV / Van (4–7 Seats)</option>
+                                <option value="Minibus / Sprinter">Minibus / Sprinter (8–16 Seats)</option>
+                                <option value="Luxury Coach">Luxury Coach (17–45 Seats)</option>
+                                <option value="Private Yacht / Boat">Private Yacht / Boat</option>
+                              </>
+                            )}
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[11px] text-slate-300 font-medium">
+                            {formData.category === 'Private Yacht' ? 'Max Passenger Capacity *' : 'Max Seating Capacity *'}
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="1"
+                              max="100"
+                              value={formData.vehicleConfig?.maxSeats || (formData.category === 'Private Yacht' ? 10 : 7)}
+                              onChange={e => {
+                                const seats = Math.max(1, Number(e.target.value));
+                                setFormData({
+                                  ...formData,
+                                  maxPax: seats,
+                                  vehicleConfig: {
+                                    ...(formData.vehicleConfig || {
+                                      vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge' : 'Toyota Hiace Grand Cabin (7-Seater)',
+                                      vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
+                                      maxSeats: seats,
+                                      unitVehicleNetCost: 500,
+                                      adultSeatCount: 1,
+                                      childSeatCount: 1,
+                                      infantSeatCount: 0,
+                                      allowMultipleVehicles: true,
+                                      autoAllocateVehicles: true,
+                                      maxVehicles: 5
+                                    }),
+                                    maxSeats: seats,
+                                    passengerCapacity: seats,
+                                    totalSeats: seats
+                                  }
+                                });
+                              }}
+                              className="w-full p-2 bg-white rounded-lg font-bold pr-12"
+                            />
+                            <span className="absolute right-2.5 top-2 text-[10px] font-bold text-slate-400">
+                              {formData.category === 'Private Yacht' ? 'GUESTS' : 'SEATS'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Yacht Size / Length when Category is Private Yacht */}
+                      {formData.category === 'Private Yacht' && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-800 pt-2 border-t border-slate-700">
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Yacht Length / Dimensions</label>
+                            <input
+                              type="text"
+                              value={formData.vehicleConfig?.yachtSize || formData.vehicleConfig?.yachtLength || '66 ft / 20.8 m'}
+                              onChange={e => setFormData({
+                                ...formData,
+                                vehicleConfig: {
+                                  ...(formData.vehicleConfig || {
+                                    vehicleModel: 'Azimut 66 Flybridge',
+                                    vehicleType: 'Motor Yacht',
+                                    maxSeats: 10,
+                                    unitVehicleNetCost: 500,
+                                    adultSeatCount: 1,
+                                    childSeatCount: 1,
+                                    infantSeatCount: 0,
+                                    allowMultipleVehicles: true,
+                                    autoAllocateVehicles: true,
+                                    maxVehicles: 5
+                                  }),
+                                  yachtSize: e.target.value,
+                                  yachtLength: e.target.value
+                                }
+                              })}
+                              placeholder="e.g. 66 ft / 20.8 m"
+                              className="w-full p-2 bg-white rounded-lg font-medium text-xs"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Standard Capacity Presets</label>
+                            <div className="flex flex-wrap gap-1.5 pt-0.5">
+                              {[6, 8, 10, 12, 15, 20, 30, 50].map(cap => (
+                                <button
+                                  key={cap}
+                                  type="button"
+                                  onClick={() => {
+                                    setFormData({
+                                      ...formData,
+                                      maxPax: cap,
+                                      vehicleConfig: {
+                                        ...(formData.vehicleConfig || {
+                                          vehicleModel: 'Azimut 66 Flybridge',
+                                          vehicleType: 'Motor Yacht',
+                                          maxSeats: cap,
+                                          unitVehicleNetCost: 500,
+                                          adultSeatCount: 1,
+                                          childSeatCount: 1,
+                                          infantSeatCount: 0,
+                                          allowMultipleVehicles: true,
+                                          autoAllocateVehicles: true,
+                                          maxVehicles: 5
+                                        }),
+                                        maxSeats: cap,
+                                        passengerCapacity: cap,
+                                        totalSeats: cap
+                                      }
+                                    });
+                                  }}
+                                  className={`px-2 py-1 rounded text-[11px] font-bold cursor-pointer transition-all ${
+                                    (formData.vehicleConfig?.maxSeats || 10) === cap
+                                      ? 'bg-[#00C6A6] text-slate-950 shadow-xs'
+                                      : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+                                  }`}
+                                >
+                                  {cap} Pax
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Total Vehicle / Yacht Net Cost & Currency */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-800 pt-2 border-t border-slate-700">
+                        <div className="space-y-1">
+                          <label className="text-[11px] text-slate-300 font-medium">Base Currency</label>
+                          <select
+                            value={formData.currency}
+                            onChange={e => setFormData({ ...formData, currency: e.target.value as CurrencyCode })}
+                            className="w-full p-2 bg-white rounded-lg font-bold"
+                          >
+                            <option value="USD">USD ($)</option>
+                            <option value="EUR">EUR (€)</option>
+                            <option value="GBP">GBP (£)</option>
+                            <option value="JPY">JPY (¥)</option>
+                            <option value="INR">INR (₹)</option>
+                            <option value="AED">AED (AED)</option>
+                            <option value="THB">THB (฿)</option>
+                            <option value="AUD">AUD (A$)</option>
+                            <option value="CAD">CAD (CA$)</option>
+                            <option value="SGD">SGD (S$)</option>
+                            <option value="CHF">CHF (CHF)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-1 sm:col-span-2">
+                          <label className="text-[11px] text-emerald-400 font-bold flex items-center justify-between">
+                            <span>
+                              {formData.category === 'Private Yacht'
+                                ? `Total Unit Yacht Charter Nett Cost * (Constant for 1 to ${formData.vehicleConfig?.maxSeats || 10} Pax)`
+                                : `Total Unit Vehicle Nett Cost * (Constant for 1 to ${formData.vehicleConfig?.maxSeats || 7} Pax)`}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-normal">DMC Contracted Cost</span>
+                          </label>
+                          <input
+                            type="number"
+                            required
+                            min="0"
+                            value={formData.vehicleConfig?.unitVehicleNetCost !== undefined ? formData.vehicleConfig.unitVehicleNetCost : (formData.adultNetPrice || 500)}
+                            onChange={e => {
+                              const cost = Number(e.target.value);
+                              setFormData({
+                                ...formData,
+                                adultNetPrice: cost,
+                                adultNettCost: cost,
+                                vehicleConfig: {
+                                  ...(formData.vehicleConfig || {
+                                    vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge' : 'Toyota Hiace Grand Cabin (7-Seater)',
+                                    vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
+                                    maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
+                                    unitVehicleNetCost: 500,
+                                    adultSeatCount: 1,
+                                    childSeatCount: 1,
+                                    infantSeatCount: 0,
+                                    allowMultipleVehicles: true,
+                                    autoAllocateVehicles: true,
+                                    maxVehicles: 5
+                                  }),
+                                  unitVehicleNetCost: cost,
+                                  totalTransferCost: cost
+                                }
+                              });
+                            }}
+                            placeholder="e.g. 500"
+                            className="w-full p-2 bg-white rounded-lg font-bold text-sm"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Operational Occupancy Constraints */}
+                      <div className="p-3 bg-slate-900/90 rounded-lg border border-slate-700 space-y-2">
+                        <div className="flex items-center justify-between text-[11px] text-slate-300 font-semibold">
+                          <span className="flex items-center gap-1 text-slate-200">
+                            <Gauge className="w-3.5 h-3.5 text-[#00E5C0]" />
+                            <span>
+                              {formData.category === 'Private Yacht' 
+                                ? 'Guest Capacity & Manifest Rules' 
+                                : 'Passenger Seat Occupancy Rules (Operational Constraints)'}
+                            </span>
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            {formData.category === 'Private Yacht' ? 'Passenger capacity slots utilized' : 'Number of physical seats occupied per person'}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3 text-slate-800 text-xs">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-300 font-medium">Adults</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="4"
+                              value={formData.vehicleConfig?.adultSeatCount ?? 1}
+                              onChange={e => setFormData({
+                                ...formData,
+                                vehicleConfig: {
+                                  ...(formData.vehicleConfig || {
+                                    vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge' : 'Toyota Hiace Grand Cabin (7-Seater)',
+                                    vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
+                                    maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
+                                    unitVehicleNetCost: 500,
+                                    adultSeatCount: 1,
+                                    childSeatCount: 1,
+                                    infantSeatCount: 0,
+                                    allowMultipleVehicles: true,
+                                    autoAllocateVehicles: true,
+                                    maxVehicles: 5
+                                  }),
+                                  adultSeatCount: Number(e.target.value)
+                                }
+                              })}
+                              className="w-full p-1.5 bg-white rounded text-center font-bold"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-300 font-medium">Children</label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="2"
+                              value={formData.vehicleConfig?.childSeatCount ?? 1}
+                              onChange={e => setFormData({
+                                ...formData,
+                                vehicleConfig: {
+                                  ...(formData.vehicleConfig || {
+                                    vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge' : 'Toyota Hiace Grand Cabin (7-Seater)',
+                                    vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
+                                    maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
+                                    unitVehicleNetCost: 500,
+                                    adultSeatCount: 1,
+                                    childSeatCount: 1,
+                                    infantSeatCount: 0,
+                                    allowMultipleVehicles: true,
+                                    autoAllocateVehicles: true,
+                                    maxVehicles: 5
+                                  }),
+                                  childSeatCount: Number(e.target.value)
+                                }
+                              })}
+                              className="w-full p-1.5 bg-white rounded text-center font-bold"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-300 font-medium">Infants (Lap = 0 / Slot = 1)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="1"
+                              value={formData.vehicleConfig?.infantSeatCount ?? 0}
+                              onChange={e => setFormData({
+                                ...formData,
+                                vehicleConfig: {
+                                  ...(formData.vehicleConfig || {
+                                    vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge' : 'Toyota Hiace Grand Cabin (7-Seater)',
+                                    vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
+                                    maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
+                                    unitVehicleNetCost: 500,
+                                    adultSeatCount: 1,
+                                    childSeatCount: 1,
+                                    infantSeatCount: 0,
+                                    allowMultipleVehicles: true,
+                                    autoAllocateVehicles: true,
+                                    maxVehicles: 5
+                                  }),
+                                  infantSeatCount: Number(e.target.value)
+                                }
+                              })}
+                              className="w-full p-1.5 bg-white rounded text-center font-bold"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Multi-Vehicle / Yacht Allocation Toggle */}
+                      <div className="flex items-center justify-between text-xs pt-1">
+                        <label className="flex items-center space-x-2 text-slate-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={formData.vehicleConfig?.allowMultipleVehicles ?? true}
+                            onChange={e => setFormData({
+                              ...formData,
+                              vehicleConfig: {
+                                ...(formData.vehicleConfig || {
+                                  vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge' : 'Toyota Hiace Grand Cabin (7-Seater)',
+                                  vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
+                                  maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
+                                  unitVehicleNetCost: 500,
+                                  adultSeatCount: 1,
+                                  childSeatCount: 1,
+                                  infantSeatCount: 0,
+                                  allowMultipleVehicles: true,
+                                  autoAllocateVehicles: true,
+                                  maxVehicles: 5
+                                }),
+                                allowMultipleVehicles: e.target.checked,
+                                autoAllocateVehicles: e.target.checked
+                              }
+                            })}
+                            className="rounded text-[#00C6A6] focus:ring-[#00C6A6] w-4 h-4"
+                          />
+                          <span>
+                            {formData.category === 'Private Yacht'
+                              ? `Allow auto-allocation of multiple yachts if passenger count exceeds ${formData.vehicleConfig?.maxSeats || 10} guests`
+                              : `Allow auto-allocation of multiple vehicles if passenger count exceeds ${formData.vehicleConfig?.maxSeats || 7} seats`}
+                          </span>
+                        </label>
+                        <span className="text-[10px] text-slate-400">
+                          {formData.category === 'Private Yacht' ? 'Max charter: 5 yachts' : 'Max fleet: 5 vehicles'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* LIVE INTERACTIVE PASSENGER CAPACITY SIMULATION TABLE */}
+                    <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-[#00E5C0] flex items-center gap-1.5">
+                          <Calculator className="w-3.5 h-3.5" />
+                          <span>
+                            {formData.category === 'Private Yacht' 
+                              ? 'Live Yacht Charter Capacity & Pricing Simulation Table' 
+                              : 'Live Capacity-Based Pricing Simulation Table'}
+                          </span>
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {formData.category === 'Private Yacht'
+                            ? 'Total Yacht Nett remains constant until max capacity is exceeded'
+                            : 'Total Nett remains constant until vehicle capacity is exceeded'}
+                        </span>
+                      </div>
+
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-[11px] text-left">
+                          <thead>
+                            <tr className="border-b border-slate-800 text-slate-400">
+                              <th className="pb-1.5 font-semibold">Pax Count</th>
+                              <th className="pb-1.5 font-semibold">
+                                {formData.category === 'Private Yacht' ? 'Yachts' : 'Vehicles'}
+                              </th>
+                              <th className="pb-1.5 font-semibold text-right">
+                                {formData.category === 'Private Yacht' ? 'Total Yacht Nett' : 'Total Vehicle Nett'}
+                              </th>
+                              <th className="pb-1.5 font-semibold text-right text-[#00E5C0]">Per-Person Nett</th>
+                              <th className="pb-1.5 font-semibold text-right text-emerald-400">Buyer Delivered Total</th>
+                              <th className="pb-1.5 font-semibold text-right text-emerald-300">Buyer Per-Person</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-900 text-slate-300">
+                            {[1, 2, 5, (formData.vehicleConfig?.maxSeats || (formData.category === 'Private Yacht' ? 10 : 7)), (formData.vehicleConfig?.maxSeats || (formData.category === 'Private Yacht' ? 10 : 7)) + 1, (formData.vehicleConfig?.maxSeats || (formData.category === 'Private Yacht' ? 10 : 7)) * 2].filter((v, i, a) => a.indexOf(v) === i).sort((a,b) => a-b).map(simPax => {
+                              const maxS = formData.vehicleConfig?.maxSeats || (formData.category === 'Private Yacht' ? 10 : 7);
+                              const unitCost = formData.vehicleConfig?.unitVehicleNetCost !== undefined ? formData.vehicleConfig.unitVehicleNetCost : (formData.adultNetPrice || 500);
+                              const vehCount = Math.max(1, Math.ceil(simPax / maxS));
+                              const totalVehNett = vehCount * unitCost;
+                              const perPersonNett = totalVehNett / simPax;
+                              const buyerMarkup = formData.buyerMarkupPercent !== undefined ? formData.buyerMarkupPercent : 30;
+                              const taxPct = formData.taxPercent !== undefined ? formData.taxPercent : 10;
+                              const markupAmt = totalVehNett * (buyerMarkup / 100);
+                              const taxAmt = markupAmt * (taxPct / 100);
+                              const totalSelling = totalVehNett + markupAmt + taxAmt + (formData.serviceFeeFixed || 0);
+                              const perPersonSelling = totalSelling / simPax;
+                              const isFull = simPax === maxS;
+                              const isOver = simPax > maxS;
+
+                              return (
+                                <tr key={simPax} className={`hover:bg-slate-900/60 ${isFull ? 'bg-teal-950/40 text-teal-200 font-semibold' : ''}`}>
+                                  <td className="py-1.5 flex items-center gap-1">
+                                    <Users className="w-3 h-3 text-slate-500" />
+                                    <span>{simPax} {simPax === 1 ? 'Pax' : 'Pax'}</span>
+                                    {isFull && <span className="text-[9px] bg-teal-500/20 text-[#00E5C0] px-1 rounded ml-1">MAX CAPACITY</span>}
+                                    {isOver && (
+                                      <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1 rounded ml-1">
+                                        {formData.category === 'Private Yacht' ? '2nd YACHT' : '2nd VEHICLE'}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-1.5">
+                                    {vehCount} {formData.category === 'Private Yacht' ? (vehCount === 1 ? 'Yacht' : 'Yachts') : (vehCount === 1 ? 'Vehicle' : 'Vehicles')}
+                                  </td>
+                                  <td className="py-1.5 text-right font-mono">{formatCurrency(totalVehNett, formData.currency || 'USD')}</td>
+                                  <td className="py-1.5 text-right font-mono font-bold text-[#00E5C0]">{formatCurrency(perPersonNett, formData.currency || 'USD')}</td>
+                                  <td className="py-1.5 text-right font-mono text-emerald-400">{formatCurrency(totalSelling, formData.currency || 'USD')}</td>
+                                  <td className="py-1.5 text-right font-mono font-bold text-emerald-300">{formatCurrency(perPersonSelling, formData.currency || 'USD')}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  /* STANDARD PER-PERSON PRICING INPUTS */
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-800">
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-slate-300 font-medium">Base Currency</label>
+                      <select
+                        value={formData.currency}
+                        onChange={e => setFormData({ ...formData, currency: e.target.value as CurrencyCode })}
+                        className="w-full p-2 bg-white rounded-lg font-bold"
+                      >
+                        <option value="USD">USD ($)</option>
+                        <option value="EUR">EUR (€)</option>
+                        <option value="GBP">GBP (£)</option>
+                        <option value="JPY">JPY (¥)</option>
+                        <option value="INR">INR (₹)</option>
+                        <option value="AED">AED (AED)</option>
+                        <option value="THB">THB (฿)</option>
+                        <option value="AUD">AUD (A$)</option>
+                        <option value="CAD">CAD (CA$)</option>
+                        <option value="SGD">SGD (S$)</option>
+                        <option value="CHF">CHF (CHF)</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-slate-300 font-medium">Adult Nett Cost *</label>
+                      <input
+                        type="number"
+                        required
+                        min="0"
+                        value={formData.adultNetPrice || 0}
+                        onChange={e => setFormData({ ...formData, adultNetPrice: Number(e.target.value) })}
+                        className="w-full p-2 bg-white rounded-lg font-bold"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-slate-300 font-medium">Child Nett Cost</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={formData.childNetPrice || 0}
+                        onChange={e => setFormData({ ...formData, childNetPrice: Number(e.target.value) })}
+                        className="w-full p-2 bg-white rounded-lg"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-slate-300 font-medium">Infant Nett Cost</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={formData.infantNetPrice || 0}
+                        onChange={e => setFormData({ ...formData, infantNetPrice: Number(e.target.value) })}
+                        className="w-full p-2 bg-white rounded-lg"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {/* 2. User-Type Default Markups & Tax */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-800 pt-2 border-t border-slate-800">
@@ -977,11 +1595,11 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] text-slate-300 font-medium">Tax % (on Margin)</label>
+                    <label className="text-[11px] text-slate-300 font-medium">Tax % (on Margin Only)</label>
                     <input
                       type="number"
                       min="0"
-                      value={formData.taxPercent || 10}
+                      value={formData.taxPercent !== undefined ? formData.taxPercent : 10}
                       onChange={e => setFormData({ ...formData, taxPercent: Number(e.target.value) })}
                       className="w-full p-2 bg-white rounded-lg"
                     />
@@ -1002,29 +1620,41 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                 {/* 3. Dual Live Preview */}
                 <div className="pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs border-t border-slate-800 bg-slate-950/60 p-3 rounded-xl">
                   <div>
-                    <span className="text-slate-400 block text-[10px] uppercase tracking-wider font-semibold">Direct Buyer Delivered Rate:</span>
+                    <span className="text-slate-400 block text-[10px] uppercase tracking-wider font-semibold">
+                      {formData.pricingMethod === 'capacity_based' ? 'Buyer Vehicle Delivered Rate (1 Vehicle):' : 'Direct Buyer Delivered Rate:'}
+                    </span>
                     <span className="text-base font-bold font-mono text-emerald-400">
                       {formatCurrency(
                         calculateSellingPrice(
-                          formData.adultNetPrice || 0,
+                          (formData.pricingMethod === 'capacity_based' 
+                            ? (formData.vehicleConfig?.unitVehicleNetCost || formData.adultNetPrice || 500)
+                            : (formData.adultNetPrice || 0)),
                           formData.buyerMarkupPercent !== undefined ? formData.buyerMarkupPercent : 30,
-                          formData.taxPercent || 10,
+                          formData.taxPercent !== undefined ? formData.taxPercent : 10,
                           formData.serviceFeeFixed || 0
                         ),
                         formData.currency || 'USD'
                       )}
                     </span>
-                    <span className="text-[10px] text-slate-500 ml-1.5">(Net + {formData.buyerMarkupPercent || 30}% markup)</span>
+                    <span className="text-[10px] text-slate-500 ml-1.5">
+                      {formData.pricingMethod === 'capacity_based' 
+                        ? `(Starting at ${formatCurrency((calculateSellingPrice((formData.vehicleConfig?.unitVehicleNetCost || formData.adultNetPrice || 500), formData.buyerMarkupPercent || 30, formData.taxPercent || 10, formData.serviceFeeFixed || 0) / (formData.vehicleConfig?.maxSeats || 7)), formData.currency || 'USD')}/pax at full capacity)`
+                        : `(Net + ${formData.buyerMarkupPercent || 30}% markup)`}
+                    </span>
                   </div>
 
                   <div className="sm:text-right">
-                    <span className="text-slate-400 block text-[10px] uppercase tracking-wider font-semibold">B2B Agent Delivered Rate:</span>
+                    <span className="text-slate-400 block text-[10px] uppercase tracking-wider font-semibold">
+                      {formData.pricingMethod === 'capacity_based' ? 'B2B Agent Wholesale Rate (1 Vehicle):' : 'B2B Agent Delivered Rate:'}
+                    </span>
                     <span className="text-base font-bold font-mono text-[#00E5C0]">
                       {formatCurrency(
                         calculateSellingPrice(
-                          formData.adultNetPrice || 0,
+                          (formData.pricingMethod === 'capacity_based' 
+                            ? (formData.vehicleConfig?.unitVehicleNetCost || formData.adultNetPrice || 500)
+                            : (formData.adultNetPrice || 0)),
                           formData.b2bAgentMarkupPercent !== undefined ? formData.b2bAgentMarkupPercent : 20,
-                          formData.taxPercent || 10,
+                          formData.taxPercent !== undefined ? formData.taxPercent : 10,
                           formData.serviceFeeFixed || 0
                         ),
                         formData.currency || 'USD'
@@ -1294,9 +1924,9 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                 )}
 
                 {/* Picture Thumbnails Grid */}
-                {formData.images && formData.images.length > 0 ? (
+                {formData.images && (formData.images || []).length > 0 ? (
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
-                    {formData.images.map((imgUrl, idx) => (
+                    {(formData.images || []).map((imgUrl, idx) => (
                       <div key={idx} className="relative group rounded-xl overflow-hidden border border-slate-200 bg-white aspect-4/3 shadow-2xs">
                         <img src={imgUrl} alt={`Product ${idx + 1}`} className="w-full h-full object-cover" />
                         {idx === 0 && (

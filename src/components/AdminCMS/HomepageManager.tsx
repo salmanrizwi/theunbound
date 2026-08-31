@@ -505,20 +505,20 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
 
             {/* Destination Selection & Reordering List */}
             <div className="space-y-3">
-              {config.destinationOrdering
+              {(config.destinationOrdering || [])
                 .filter(destId => {
                   if (!destSearchQuery) return true;
-                  const d = destinations.find(dest => dest.id === destId);
+                  const d = destinations.find(dest => dest.id === destId || dest.slug === destId);
                   return d?.name.toLowerCase().includes(destSearchQuery.toLowerCase());
                 })
                 .map((destId, idx) => {
-                  const destination = destinations.find(d => d.id === destId);
+                  const destination = destinations.find(d => d.id === destId || d.slug === destId);
                   if (!destination) return null;
-                  const isFeatured = (config.featuredDestinationIds || []).includes(destId);
+                  const isFeatured = (config.featuredDestinationIds || []).some(id => id === destId || id === destination.id || id === destination.slug);
 
                   return (
                     <div 
-                      key={destId}
+                      key={`homepage-dest-order-${destId}-${destination.id}-${idx}`}
                       className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition-colors"
                     >
                       <div className="flex items-center space-x-4">
@@ -539,7 +539,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                       <div className="flex items-center space-x-3">
                         <button
                           type="button"
-                          onClick={() => toggleFeaturedDestination(destId)}
+                          onClick={() => toggleFeaturedDestination(destination.id || destId)}
                           className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                             isFeatured 
                               ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-extrabold' 
@@ -561,7 +561,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                           </button>
                           <button
                             type="button"
-                            disabled={idx === config.destinationOrdering.length - 1}
+                            disabled={idx === (config.destinationOrdering?.length || 0) - 1}
                             onClick={() => moveDestination(idx, 'down')}
                             className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 cursor-pointer"
                             title="Move Down"
@@ -576,17 +576,17 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
             </div>
 
             {/* Unlisted Destinations Pool */}
-            {destinations.some(d => !(config.destinationOrdering || []).includes(d.id)) && (
+            {destinations.some(d => !(config.destinationOrdering || []).some(id => id === d.id || id === d.slug)) && (
               <div className="pt-4 border-t border-slate-100">
                 <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                   Available Destinations (Click to Add to Homepage Ordering)
                 </h4>
                 <div className="flex flex-wrap gap-2">
                   {destinations
-                    .filter(d => !(config.destinationOrdering || []).includes(d.id))
-                    .map(d => (
+                    .filter(d => !(config.destinationOrdering || []).some(id => id === d.id || id === d.slug))
+                    .map((d, dIdx) => (
                       <button
-                        key={d.id}
+                        key={`unlisted-dest-${d.id || d.slug}-${dIdx}`}
                         onClick={() => toggleDestinationInOrdering(d.id)}
                         className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-[#00C6A6]/20 text-slate-700 hover:text-slate-900 border border-slate-200 text-xs font-semibold cursor-pointer"
                       >
@@ -693,7 +693,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                 </div>
               ))}
 
-              {(!config.homepageFAQs || config.homepageFAQs.length === 0) && (
+              {(!config.homepageFAQs || (config.homepageFAQs || []).length === 0) && (
                 <div className="text-center py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-500 text-xs">
                   No homepage FAQs defined yet. Click &quot;Add Homepage FAQ&quot; to create one.
                 </div>

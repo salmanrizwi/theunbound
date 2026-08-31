@@ -559,7 +559,7 @@ export const MenuAndPagesManager: React.FC = () => {
 
                   <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
                     <span className="text-[10px] text-slate-400">
-                      Updated: {new Date(page.updatedAt).toLocaleDateString()}
+                      Updated: {page.updatedAt ? new Date(page.updatedAt).toLocaleDateString() : 'Recent'}
                     </span>
                     <div className="flex items-center space-x-1.5">
                       <button
@@ -860,7 +860,7 @@ export const MenuAndPagesManager: React.FC = () => {
                       </div>
                     ))}
 
-                    {(!col.links || col.links.length === 0) && (
+                    {(!col.links || (col.links || []).length === 0) && (
                       <div className="text-center py-6 text-slate-400 text-xs italic">
                         No links in this column.
                       </div>

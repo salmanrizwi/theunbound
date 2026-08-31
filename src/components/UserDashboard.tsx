@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { formatCurrency } from '../services/pricingEngine';
-import { Product, WishlistFolder, WishlistItem } from '../types';
+import { Product, WishlistFolder, WishlistItem, Quotation } from '../types';
 import { AppDatabase } from '../services/db';
+import { ProposalDocumentView } from './ProposalDocumentView';
 import { 
   User, 
   Bookmark, 
@@ -24,7 +25,14 @@ import {
   Plus,
   ShoppingBag,
   Eye,
-  Check
+  Check,
+  Send,
+  Calendar,
+  Download,
+  Printer,
+  ShieldCheck,
+  UserCheck,
+  X
 } from 'lucide-react';
 
 interface UserDashboardProps {
@@ -45,6 +53,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const { user } = useAuth();
   const { savedQuotes, loadSavedQuote, deleteSavedQuote, currency, addProductToQuote } = useQuotation();
   const [activeDashboardTab, setActiveDashboardTab] = useState<'QUOTES' | 'WISHLIST'>('WISHLIST');
+
+  // Proposal modal & booking state
+  const [viewingProposalQuote, setViewingProposalQuote] = useState<Quotation | null>(null);
+  const [bookingSuccessToast, setBookingSuccessToast] = useState<string | null>(null);
 
   // Wishlist state
   const [folders, setFolders] = useState<WishlistFolder[]>([]);
@@ -102,10 +114,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     setTimeout(() => setAddedItemToast(null), 3000);
   };
 
-  // Filter items in the currently selected folder
-  const activeFolderItems = wishlistItems.filter(item => item.folderId === selectedFolderId);
-  const activeFolder = folders.find(f => f.id === selectedFolderId);
+  const handleAcceptQuoteAndBook = (quote: Quotation) => {
+    const booking = db.convertQuotationToBooking(quote.id, user, 'Proposal accepted by client via My Quotes portal.');
+    if (booking) {
+      setBookingSuccessToast(`Booking reservation ${booking.bookingReference} confirmed! Ground operations desk notified.`);
+      setViewingProposalQuote(null);
+      setTimeout(() => setBookingSuccessToast(null), 6000);
+    }
+  };
 
+  const activeFolder = folders.find(f => f.id === selectedFolderId);
+  const filteredWishlistItems = wishlistItems.filter(item => item.folderId === selectedFolderId);
   const featuredProducts = products.slice(0, 4);
 
   return (
@@ -115,6 +134,17 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white border border-[#00C6A6] px-4 py-3 rounded-2xl shadow-xl flex items-center space-x-2 text-xs animate-in slide-in-from-bottom-3 duration-200">
           <Check className="w-4 h-4 text-[#00E5C0]" />
           <span>Added <strong>{addedItemToast}</strong> to active quotation</span>
+        </div>
+      )}
+
+      {/* Booking Success Toast */}
+      {bookingSuccessToast && (
+        <div className="fixed top-20 right-6 z-50 bg-emerald-950 text-white px-5 py-4 rounded-2xl shadow-2xl border border-emerald-500 flex items-center space-x-3 text-xs font-semibold animate-in fade-in slide-in-from-top-3 duration-300 max-w-md">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <div>
+            <p className="font-bold text-white">Quotation Accepted</p>
+            <p className="text-emerald-200 text-[11px]">{bookingSuccessToast}</p>
+          </div>
         </div>
       )}
 
@@ -129,14 +159,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             />
             <div>
               <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#00C6A6]/20 text-[#00E5C0] border border-[#00C6A6]/30 mb-1">
-                <span>Verified {user?.role || 'Agent'} Account</span>
+                <span>Verified {user?.role === 'BUYER' ? 'Client / Buyer' : user?.role || 'User'} Account</span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-bold font-sans">
                 Welcome back, {user?.name || 'Travel Designer'}
               </h1>
               <p className="text-xs text-slate-300 flex items-center space-x-2 mt-0.5">
                 <Building2 className="w-3.5 h-3.5 text-[#00C6A6]" />
-                <span>{user?.agencyName || 'Luxury Discovery Travel Partners'}</span>
+                <span>{user?.agencyName || user?.companyName || 'Private Client Account'}</span>
                 <span>•</span>
                 <span>{user?.email}</span>
               </p>
@@ -150,7 +180,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 className="bg-slate-800 hover:bg-slate-700 text-white font-semibold px-4 py-2.5 rounded-xl text-xs transition-all border border-slate-700 flex items-center space-x-1.5 cursor-pointer"
               >
                 <User className="w-3.5 h-3.5 text-[#00C6A6]" />
-                <span>Account & Company Details</span>
+                <span>Account & Profile</span>
               </button>
             )}
 
@@ -190,7 +220,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             }`}
           >
             <Bookmark className="w-3.5 h-3.5" />
-            <span>Saved Quotations</span>
+            <span>My Quotes & Proposals</span>
             <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-950/40 text-white font-mono">
               {savedQuotes.length}
             </span>
@@ -200,197 +230,172 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
 
       {/* Main Grid Content */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left / Main Workspace */}
         <div className="lg:col-span-8 space-y-6">
           {activeDashboardTab === 'WISHLIST' ? (
-            /* MY WISHLIST SECTION */
+            /* WISHLIST SECTION */
             <div className="space-y-6">
-              {/* Folder Management Header */}
-              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-                  <div>
-                    <h2 className="text-base font-bold text-slate-900 flex items-center space-x-2">
-                      <Heart className="w-4 h-4 text-rose-500 fill-rose-500" />
-                      <span>My Curated Wishlist Folders</span>
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Organize favorite hotels, tours, and transfers into client or destination-specific folders.
-                    </p>
-                  </div>
-
+              {/* Folder Selector Tabs */}
+              <div className="flex flex-wrap items-center gap-2">
+                {folders.map(folder => (
                   <button
-                    onClick={() => setIsCreatingFolder(!isCreatingFolder)}
-                    className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-3.5 py-2 rounded-xl flex items-center space-x-1.5 cursor-pointer transition-colors shrink-0"
+                    key={folder.id}
+                    onClick={() => setSelectedFolderId(folder.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer ${
+                      selectedFolderId === folder.id
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                    }`}
                   >
-                    <FolderPlus className="w-3.5 h-3.5 text-[#00E5C0]" />
-                    <span>Create New Folder</span>
+                    {selectedFolderId === folder.id ? (
+                      <FolderOpen className="w-3.5 h-3.5 text-[#00C6A6]" />
+                    ) : (
+                      <Folder className="w-3.5 h-3.5 text-slate-400" />
+                    )}
+                    <span>{folder.name}</span>
+                    <span className="text-[10px] opacity-70">
+                      ({wishlistItems.filter(i => i.folderId === folder.id).length})
+                    </span>
                   </button>
-                </div>
+                ))}
 
-                {/* Inline New Folder Form */}
-                {isCreatingFolder && (
-                  <form onSubmit={handleCreateFolder} className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 mb-4 space-y-3 animate-in fade-in duration-150">
-                    <p className="text-xs font-bold text-slate-800">Create a New Wishlist Folder</p>
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="text"
-                        required
-                        placeholder="e.g. VIP Japan Honeymoon 2026, UK Castle Tours..."
-                        value={newFolderName}
-                        onChange={(e) => setNewFolderName(e.target.value)}
-                        className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#00C6A6]"
-                        autoFocus
-                      />
-                      <button
-                        type="submit"
-                        className="bg-[#00C6A6] text-slate-950 font-bold px-4 py-1.5 rounded-lg text-xs hover:bg-[#008972] cursor-pointer"
-                      >
-                        Create
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsCreatingFolder(false);
-                          setNewFolderName('');
-                        }}
-                        className="bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs hover:bg-slate-300 cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                    </div>
+                {!isCreatingFolder ? (
+                  <button
+                    onClick={() => setIsCreatingFolder(true)}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 flex items-center space-x-1 transition-colors cursor-pointer border border-dashed border-slate-300"
+                  >
+                    <FolderPlus className="w-3.5 h-3.5 text-slate-500" />
+                    <span>New Folder</span>
+                  </button>
+                ) : (
+                  <form onSubmit={handleCreateFolder} className="flex items-center space-x-1.5">
+                    <input
+                      type="text"
+                      placeholder="Folder name..."
+                      value={newFolderName}
+                      onChange={e => setNewFolderName(e.target.value)}
+                      autoFocus
+                      className="px-3 py-1 rounded-xl text-xs border border-slate-300 bg-white focus:outline-hidden focus:ring-1 focus:ring-slate-900"
+                    />
+                    <button
+                      type="submit"
+                      className="p-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold cursor-pointer"
+                    >
+                      <Check className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsCreatingFolder(false)}
+                      className="p-1.5 bg-slate-200 text-slate-600 rounded-lg text-xs cursor-pointer"
+                    >
+                      ✕
+                    </button>
                   </form>
                 )}
-
-                {/* Folder Tabs / Pills */}
-                <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin">
-                  {folders.map((folder) => {
-                    const count = wishlistItems.filter(i => i.folderId === folder.id).length;
-                    const isSelected = folder.id === selectedFolderId;
-                    return (
-                      <button
-                        key={folder.id}
-                        onClick={() => setSelectedFolderId(folder.id)}
-                        className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
-                          isSelected
-                            ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900'
-                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                        }`}
-                      >
-                        {isSelected ? (
-                          <FolderOpen className="w-3.5 h-3.5 text-[#00E5C0]" />
-                        ) : (
-                          <Folder className="w-3.5 h-3.5 text-slate-400" />
-                        )}
-                        <span>{folder.name}</span>
-                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
-                          isSelected ? 'bg-slate-800 text-slate-200' : 'bg-slate-200 text-slate-600'
-                        }`}>
-                          {count}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
               </div>
 
-              {/* Active Folder Products View */}
-              <div>
-                <div className="flex items-center justify-between mb-3 px-1">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center space-x-2">
-                    <span>{activeFolder?.name || 'Selected Folder'}</span>
-                    <span className="text-slate-400">({activeFolderItems.length} Products)</span>
+              {/* Items in Active Folder */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Products in {activeFolder?.name || 'Folder'} ({filteredWishlistItems.length})
                   </h3>
 
-                  {activeFolder && !activeFolder.isDefault && (
+                  {folders.length > 1 && selectedFolderId && (
                     <button
-                      onClick={() => handleDeleteFolder(activeFolder.id)}
-                      className="text-xs text-red-500 hover:text-red-700 flex items-center space-x-1 cursor-pointer"
+                      onClick={() => handleDeleteFolder(selectedFolderId)}
+                      className="text-[11px] text-red-500 hover:text-red-700 font-medium cursor-pointer"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Delete Folder</span>
+                      Delete Folder
                     </button>
                   )}
                 </div>
 
-                {activeFolderItems.length === 0 ? (
-                  <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center">
-                    <Heart className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-                    <p className="text-sm font-bold text-slate-700">No items saved in this folder</p>
-                    <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">
-                      Browse product cards in the destination catalog and click the heart icon to save products to "{activeFolder?.name}".
-                    </p>
+                {filteredWishlistItems.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-3">
+                    <Heart className="w-10 h-10 text-slate-300 mx-auto" />
+                    <div>
+                      <p className="text-sm font-bold text-slate-700">This folder is empty</p>
+                      <p className="text-xs text-slate-500">
+                        Browse the portfolio and click the heart icon on any hotel, tour, or experience to save it here.
+                      </p>
+                    </div>
                     <button
                       onClick={onExploreProducts}
-                      className="bg-[#00C6A6] text-slate-950 font-bold px-4 py-2 rounded-xl text-xs shadow-sm hover:bg-[#008972] cursor-pointer"
+                      className="bg-slate-900 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer"
                     >
-                      Browse Catalogue
+                      Browse Products
                     </button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {activeFolderItems.map((item) => {
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {filteredWishlistItems.map(item => {
                       const prod = products.find(p => p.id === item.productId);
                       if (!prod) return null;
+
                       return (
                         <div
                           key={item.id}
-                          className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs hover:border-[#00C6A6]/60 transition-all flex flex-col justify-between"
+                          className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
                         >
-                          <div className="relative h-40 bg-slate-100 overflow-hidden">
-                            <img
-                              src={prod.images[0] || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
-                              alt={prod.name}
-                              className="w-full h-full object-cover"
-                            />
-                            <span className="absolute top-2.5 left-2.5 bg-slate-900/80 backdrop-blur text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center space-x-1">
-                              <MapPin className="w-3 h-3 text-[#00C6A6]" />
-                              <span>{prod.city}</span>
-                            </span>
-                            <span className="absolute top-2.5 right-2.5 bg-white/95 backdrop-blur px-2 py-0.5 rounded-md text-[10px] font-bold uppercase text-[#008972]">
-                              {prod.category}
-                            </span>
-                          </div>
-
-                          <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
-                            <div>
-                              <h4 className="font-bold text-slate-900 text-sm line-clamp-1">{prod.name}</h4>
-                              <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{prod.shortDescription}</p>
+                          <div>
+                            <div className="relative h-36 overflow-hidden">
+                              <img
+                                src={prod.images?.[0] || 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=1200&auto=format&fit=crop'}
+                                alt={prod.name}
+                                className="w-full h-full object-cover"
+                              />
+                              <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-950/80 text-white backdrop-blur-xs">
+                                {prod.productType || prod.category}
+                              </span>
                             </div>
 
-                            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                              <div>
-                                <span className="text-[10px] text-slate-400 block">Starting from</span>
-                                <span className="text-sm font-black text-slate-900 font-sans">
-                                  {formatCurrency(prod.sellingPriceStartingFrom, prod.currency)}
-                                </span>
+                            <div className="p-4 space-y-2">
+                              <div className="flex items-center space-x-1.5 text-slate-500 text-[11px]">
+                                <MapPin className="w-3 h-3 text-[#00C6A6]" />
+                                <span>{prod.city}, {prod.country}</span>
                               </div>
+                              <h4 className="text-xs font-bold text-slate-900 line-clamp-1">
+                                {prod.name}
+                              </h4>
+                              <p className="text-[11px] text-slate-500 line-clamp-2">
+                                {prod.shortDescription}
+                              </p>
+                            </div>
+                          </div>
 
-                              <div className="flex items-center space-x-1.5">
-                                <button
-                                  onClick={() => onViewProduct(prod)}
-                                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
-                                  title="View Details"
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                </button>
+                          <div className="p-4 pt-0 flex items-center justify-between border-t border-slate-100 mt-2">
+                            <div>
+                              <span className="text-[10px] text-slate-400 block">Starting From:</span>
+                              <span className="text-xs font-black text-slate-900 font-mono">
+                                {formatCurrency(prod.sellingPriceStartingFrom, prod.currency)}
+                              </span>
+                            </div>
 
-                                <button
-                                  onClick={() => handleQuickAddQuote(prod)}
-                                  className="p-2 rounded-xl bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold transition-colors cursor-pointer flex items-center space-x-1 text-xs"
-                                  title="Add to Itinerary Quote"
-                                >
-                                  <Plus className="w-3.5 h-3.5" />
-                                  <span>Quote</span>
-                                </button>
+                            <div className="flex items-center space-x-1.5">
+                              <button
+                                onClick={() => onViewProduct(prod)}
+                                className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+                                title="View Product Details"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
 
-                                <button
-                                  onClick={() => handleRemoveItem(item.folderId, item.productId)}
-                                  className="p-2 rounded-xl hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
-                                  title="Remove from Wishlist Folder"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
+                              <button
+                                onClick={() => handleQuickAddQuote(prod)}
+                                className="p-2 rounded-xl bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold transition-colors cursor-pointer flex items-center space-x-1 text-xs"
+                                title="Add to Itinerary Quote"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Quote</span>
+                              </button>
+
+                              <button
+                                onClick={() => handleRemoveItem(item.folderId, item.productId)}
+                                className="p-2 rounded-xl hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
+                                title="Remove from Wishlist Folder"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -401,80 +406,147 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </div>
             </div>
           ) : (
-            /* SAVED CLIENT QUOTATIONS SECTION */
+            /* SHARED QUOTATIONS & PROPOSALS SECTION */
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-base font-bold text-slate-900 flex items-center space-x-2">
-                  <Bookmark className="w-4 h-4 text-[#008972]" />
-                  <span>Saved Client Quotations ({savedQuotes.length})</span>
-                </h2>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 flex items-center space-x-2">
+                    <Bookmark className="w-4 h-4 text-[#008972]" />
+                    <span>My Quotations & Proposals ({savedQuotes.length})</span>
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Bespoke itineraries prepared by DMC operations and your travel consultants.
+                  </p>
+                </div>
               </div>
 
               {savedQuotes.length === 0 ? (
-                <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center">
-                  <FileText className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-                  <p className="text-sm font-bold text-slate-700">No saved quotations yet</p>
-                  <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">
-                    Use the pricing calculator on any product to select items, calculate tiered markups, and save quotations.
-                  </p>
+                <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-3">
+                  <FileText className="w-10 h-10 text-slate-300 mx-auto" />
+                  <div>
+                    <p className="text-sm font-bold text-slate-700">No active quotations found</p>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+                      When our DMC operations team or your travel agent prepares a quotation for your account, it will automatically appear here.
+                    </p>
+                  </div>
                   <button
                     onClick={onExploreProducts}
                     className="bg-slate-900 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer"
                   >
-                    Start New Itinerary Quote
+                    Explore Products & Request Quote
                   </button>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {savedQuotes.map((quote) => (
-                    <div
-                      key={quote.id}
-                      className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs hover:border-slate-300 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                    >
-                      <div className="space-y-1">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-800 px-2 py-0.5 rounded">
-                            {quote.quoteNumber}
-                          </span>
-                          <span className="text-xs font-bold text-slate-900">{quote.clientName}</span>
-                          <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-                            {quote.items.length} Products
-                          </span>
+                <div className="space-y-4">
+                  {savedQuotes.map((quote) => {
+                    const isBookingRequested = quote.status === 'BOOKING_REQUESTED' || quote.status === 'CONFIRMED';
+                    return (
+                      <div
+                        key={quote.id}
+                        className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:shadow-md transition-all space-y-4"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[11px] font-mono font-bold bg-slate-900 text-[#00E5C0] px-2.5 py-0.5 rounded-md">
+                                {quote.quoteNumber} (v{quote.version || 1})
+                              </span>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                isBookingRequested 
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
+                                  : 'bg-teal-50 text-teal-800 border border-teal-100'
+                              }`}>
+                                {isBookingRequested ? 'Booking Requested / In Progress' : quote.status}
+                              </span>
+                            </div>
+
+                            <h3 className="text-sm font-bold text-slate-900">{quote.title || `Itinerary for ${quote.clientName}`}</h3>
+                            
+                            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                              <span className="flex items-center space-x-1">
+                                <Compass className="w-3.5 h-3.5 text-[#00C6A6]" />
+                                <span className="font-semibold text-slate-700">{quote.destination}</span>
+                              </span>
+                              {quote.travelStartDate && (
+                                <span className="flex items-center space-x-1">
+                                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                                  <span>{quote.travelStartDate} {quote.travelEndDate ? `→ ${quote.travelEndDate}` : ''}</span>
+                                </span>
+                              )}
+                              <span>•</span>
+                              <span>{quote.totalPax || (quote.adultsCount || 2)} Travelers</span>
+                              <span>•</span>
+                              <span>{quote.items?.length || 0} Included Experiences</span>
+                            </div>
+                          </div>
+
+                          <div className="sm:text-right shrink-0">
+                            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Total Proposal Value</span>
+                            <span className="text-lg font-black text-slate-900 font-mono">
+                              {formatCurrency(quote.totalSellingPrice, quote.currency)}
+                            </span>
+                          </div>
                         </div>
 
-                        <p className="text-xs text-slate-500">
-                          Destination: <span className="font-medium text-slate-700">{quote.destination}</span> • Created: {new Date(quote.createdAt).toLocaleDateString()}
-                        </p>
+                        {/* Prepared by & Route summary */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-slate-50 p-3 rounded-xl border border-slate-100">
+                          <div className="flex items-center space-x-2 text-slate-600">
+                            <UserCheck className="w-4 h-4 text-slate-400 shrink-0" />
+                            <span>
+                              Prepared By: <strong className="text-slate-900">{quote.createdByName || quote.agentName || 'TheUnbound Concierge'}</strong> 
+                              {quote.agentAgency ? ` (${quote.agentAgency})` : ''}
+                            </span>
+                          </div>
+
+                          {quote.validUntil && (
+                            <div className="text-slate-400 text-[11px]">
+                              Valid Until: {new Date(quote.validUntil).toLocaleDateString()}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Action Buttons Strip */}
+                        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => setViewingProposalQuote(quote)}
+                              className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-3.5 py-2 rounded-xl text-xs transition-colors flex items-center space-x-1.5 cursor-pointer shadow-xs"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-[#00E5C0]" />
+                              <span>View Proposal Document</span>
+                            </button>
+
+                            <button
+                              onClick={() => setViewingProposalQuote(quote)}
+                              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-2 rounded-xl text-xs transition-colors flex items-center space-x-1.5 cursor-pointer border border-slate-200"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span>Print / PDF</span>
+                            </button>
+                          </div>
+
+                          <div className="flex items-center space-x-2">
+                            {!isBookingRequested && (
+                              <button
+                                onClick={() => handleAcceptQuoteAndBook(quote)}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition-colors flex items-center space-x-1.5 cursor-pointer shadow-sm"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Accept & Request Booking</span>
+                              </button>
+                            )}
+
+                            {isBookingRequested && (
+                              <div className="flex items-center space-x-1 text-emerald-700 font-bold text-xs bg-emerald-50 px-3 py-1.5 rounded-xl">
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Booking Reservation Active</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
-
-                      <div className="flex items-center justify-between sm:justify-end space-x-4 shrink-0">
-                        <div className="text-right">
-                          <span className="text-[10px] text-slate-400 block">Total Quotation:</span>
-                          <span className="text-sm font-black text-slate-900 font-mono">
-                            {formatCurrency(quote.totalSellingPrice, quote.currency)}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center space-x-1.5">
-                          <button
-                            onClick={() => loadSavedQuote(quote)}
-                            className="bg-[#00C6A6]/10 hover:bg-[#00C6A6]/20 text-[#008972] font-bold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center space-x-1 cursor-pointer"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5" />
-                            <span>Open</span>
-                          </button>
-
-                          <button
-                            onClick={() => deleteSavedQuote(quote.id)}
-                            className="text-slate-400 hover:text-red-500 p-1.5 rounded-lg transition-colors cursor-pointer"
-                            title="Delete Quote"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -524,6 +596,21 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
             </div>
           </div>
 
+          {/* Direct DMC Ground Support Box */}
+          <div className="bg-slate-900 text-white rounded-2xl p-5 space-y-3">
+            <div className="flex items-center space-x-2 text-[#00E5C0]">
+              <ShieldCheck className="w-4 h-4" />
+              <span className="text-xs font-bold uppercase tracking-wider">Ground Operations Desk</span>
+            </div>
+            <p className="text-xs text-slate-300">
+              Need custom routing or high-volume group quotes? Our operations consultants are available 24/7.
+            </p>
+            <div className="text-[11px] font-mono text-slate-400 space-y-0.5 pt-1">
+              <div>Email: operations@theunbound.in</div>
+              <div>Direct: +91 9811654959</div>
+            </div>
+          </div>
+
           {/* Quick Recommended Products */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3 shadow-xs">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 flex items-center space-x-1.5">
@@ -553,6 +640,26 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Interactive Proposal Modal */}
+      {viewingProposalQuote && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+          <div className="relative w-full max-w-5xl my-8">
+            <button
+              onClick={() => setViewingProposalQuote(null)}
+              className="absolute -top-3 -right-3 z-10 w-9 h-9 rounded-full bg-slate-900 text-white hover:bg-slate-800 flex items-center justify-center shadow-xl border border-slate-700 cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <ProposalDocumentView
+              quote={viewingProposalQuote}
+              onClose={() => setViewingProposalQuote(null)}
+              onBookNow={(q) => handleAcceptQuoteAndBook(q)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

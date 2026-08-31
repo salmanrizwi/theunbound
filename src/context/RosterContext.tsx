@@ -77,8 +77,14 @@ export const RosterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const getRuleForProduct = (productId: string): ProductRosterRule => {
-    if (rosterRules[productId]) {
-      return rosterRules[productId];
+    const existing = rosterRules[productId];
+    if (existing) {
+      return {
+        ...existing,
+        operatingDays: existing.operatingDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        blackoutDates: existing.blackoutDates || [],
+        dateOverrides: existing.dateOverrides || {}
+      };
     }
     // Default fallback rule if product doesn't have custom roster rule yet
     return {

@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import { Quotation, QuoteItem, CurrencyCode } from '../types';
+import { Quotation, QuoteItem, CurrencyCode, TripRouteHub } from '../types';
 import { formatCurrency } from './pricingEngine';
 
 export interface PDFExportOptions {
@@ -12,11 +12,25 @@ export interface PDFExportOptions {
   leadId?: string;
 }
 
+interface ItineraryDayData {
+  dayNumber: number;
+  dateString: string;
+  dayOfWeek: string;
+  formattedDate: string;
+  hub: TripRouteHub | null;
+  isTransitionDay: boolean;
+  prevHub: TripRouteHub | null;
+  customTheme?: string;
+  items: QuoteItem[];
+}
+
 export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
   const { quote, agentName, agentAgency, agentEmail, agentRole, agentLogoUrl, leadId } = options;
 
   const effectiveLeadId = leadId || quote.leadId;
   const effectiveAgentLogo = agentLogoUrl || quote.agentLogoUrl;
+  const effectiveAgency = agentAgency || quote.agentAgency;
+  const effectiveAgentName = agentName || quote.agentName || 'Travel Specialist';
 
   // Initialize jsPDF document (A4 format, millimeters)
   const doc = new jsPDF({
@@ -32,9 +46,118 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
 
   let currentY = margin;
 
+  // ----------------------------------------------------
+  // DAY-WISE CHRONOLOGICAL ITINERARY COMPUTATION
+  // ----------------------------------------------------
+  const items = quote.items || [];
+  const hubs = quote.routeHubs || [];
+  const sortedHubs = [...hubs].sort((a, b) => a.order - b.order);
+
+  const startDateStr = quote.travelStartDate;
+  const endDateStr = quote.travelEndDate;
+
+  let calDays: Array<{ dayNumber: number; dateString: string; dayOfWeek: string; formattedDate: string }> = [];
+
+  if (startDateStr && endDateStr) {
+    const start = new Date(startDateStr);
+    const end = new Date(endDateStr);
+    if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end) {
+      const current = new Date(start);
+      let dayCount = 1;
+      while (current <= end) {
+        const iso = current.toISOString().split('T')[0];
+        calDays.push({
+          dayNumber: dayCount,
+          dateString: iso,
+          dayOfWeek: current.toLocaleDateString('en-US', { weekday: 'short' }),
+          formattedDate: current.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        });
+        current.setDate(current.getDate() + 1);
+        dayCount++;
+      }
+    }
+  }
+
+  // Fallback: If no dates or invalid, derive from items travelDates or generate default
+  if (calDays.length === 0) {
+    const validDates: string[] = items.map(it => it.travelDate).filter((d): d is string => Boolean(d));
+    const uniqueDates: string[] = Array.from(new Set<string>(validDates)).sort();
+    if (uniqueDates.length > 0) {
+      calDays = uniqueDates.map((dateStr, idx) => {
+        const d = new Date(dateStr);
+        return {
+          dayNumber: idx + 1,
+          dateString: dateStr,
+          dayOfWeek: isNaN(d.getTime()) ? `Day ${idx + 1}` : d.toLocaleDateString('en-US', { weekday: 'short' }),
+          formattedDate: isNaN(d.getTime()) ? dateStr : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        };
+      });
+    } else {
+      const totalNights = hubs.reduce((sum, h) => sum + (h.nights || 0), 0) || Math.max(items.length, 3);
+      const base = new Date();
+      for (let i = 0; i <= totalNights; i++) {
+        const d = new Date(base);
+        d.setDate(base.getDate() + i);
+        calDays.push({
+          dayNumber: i + 1,
+          dateString: d.toISOString().split('T')[0],
+          dayOfWeek: d.toLocaleDateString('en-US', { weekday: 'short' }),
+          formattedDate: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        });
+      }
+    }
+  }
+
+  // Map each day to active hub and items
+  const itineraryDays: ItineraryDayData[] = calDays.map((calDay) => {
+    let activeHub: TripRouteHub | null = null;
+    let isTransitionDay = false;
+    let prevHub: TripRouteHub | null = null;
+
+    if (sortedHubs.length > 0) {
+      let runningNightCount = 0;
+      for (let i = 0; i < sortedHubs.length; i++) {
+        const hub = sortedHubs[i];
+        const hubNights = hub.nights || 1;
+        const hubStartDay = runningNightCount + 1;
+        const hubEndDay = runningNightCount + hubNights;
+
+        if (calDay.dayNumber >= hubStartDay && calDay.dayNumber <= hubEndDay) {
+          activeHub = hub;
+          if (calDay.dayNumber === hubStartDay && i > 0) {
+            isTransitionDay = true;
+            prevHub = sortedHubs[i - 1];
+          }
+          break;
+        }
+        runningNightCount += hubNights;
+      }
+
+      if (!activeHub && sortedHubs.length > 0) {
+        activeHub = sortedHubs[sortedHubs.length - 1];
+      }
+    }
+
+    const dayItems = items.filter(it => it.travelDate === calDay.dateString);
+    const customTheme = quote.dayThemes?.[calDay.dayNumber];
+
+    return {
+      ...calDay,
+      hub: activeHub,
+      isTransitionDay,
+      prevHub,
+      customTheme,
+      items: dayItems
+    };
+  });
+
+  const generalInclusionItems = items.filter(it => !it.travelDate || !calDays.some(d => d.dateString === it.travelDate));
+  const totalNights = hubs.reduce((sum, h) => sum + (h.nights || 0), 0) || Math.max(1, itineraryDays.length - 1);
+  const totalPax = quote.totalPax || (quote.adultsCount || 2) + (quote.childrenCount || 0);
+
   // Helper for page break check
   const checkPageBreak = (neededHeight: number) => {
-    if (currentY + neededHeight > pageHeight - 20) {
+    if (currentY + neededHeight > pageHeight - 16) {
       doc.addPage();
       currentY = margin;
       drawSubsequentHeader();
@@ -43,327 +166,485 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
 
   const drawSubsequentHeader = () => {
     doc.setFillColor(15, 23, 42); // slate-900
-    doc.rect(margin, currentY, contentWidth, 8, 'F');
+    doc.rect(margin, currentY, contentWidth, 7.5, 'F');
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(0, 198, 166);
-    doc.text('THEUNBOUND DMC • OFFICIAL ITINERARY PROPOSAL', margin + 3, currentY + 5.5);
+    doc.setFontSize(7.5);
+    doc.setTextColor(0, 229, 192);
+    doc.text('THEUNBOUND DMC • BESPOKE ITINERARY PROPOSAL', margin + 3, currentY + 5);
     doc.setTextColor(255, 255, 255);
     const refText = `REF: ${quote.quoteNumber || 'UBQ-2026'}${effectiveLeadId ? ` • LEAD: ${effectiveLeadId}` : ''}`;
-    doc.text(refText, pageWidth - margin - 3, currentY + 5.5, { align: 'right' });
-    currentY += 12;
+    doc.text(refText, pageWidth - margin - 3, currentY + 5, { align: 'right' });
+    currentY += 11;
   };
 
   // ----------------------------------------------------
-  // 1. TOP HEADER & BRANDING BAR (With Agent Brand Logo)
+  // 1. TOP HEADER & BRANDING BAR (With Partner Agency Co-Branding)
   // ----------------------------------------------------
   doc.setFillColor(15, 23, 42); // slate-900
-  doc.roundedRect(margin, currentY, contentWidth, 30, 3, 3, 'F');
+  doc.roundedRect(margin, currentY, contentWidth, 28, 2.5, 2.5, 'F');
 
-  // If Agent Logo is present, attempt to render it in header or draw agency logo badge
-  let textStartX = margin + 6;
+  let textStartX = margin + 5;
   if (effectiveAgentLogo) {
     try {
-      // White container box for Agent Logo
       doc.setFillColor(255, 255, 255);
-      doc.roundedRect(margin + 4, currentY + 4, 22, 22, 2, 2, 'F');
-      
+      doc.roundedRect(margin + 4, currentY + 3.5, 21, 21, 1.5, 1.5, 'F');
       if (effectiveAgentLogo.startsWith('data:image') || effectiveAgentLogo.startsWith('http')) {
-        doc.addImage(effectiveAgentLogo, 'JPEG', margin + 5, currentY + 5, 20, 20);
+        doc.addImage(effectiveAgentLogo, 'JPEG', margin + 4.5, currentY + 4, 20, 20);
       } else {
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8);
+        doc.setFontSize(7.5);
         doc.setTextColor(15, 23, 42);
-        doc.text('LOGO', margin + 8, currentY + 16);
+        doc.text('AGENCY', margin + 6, currentY + 15);
       }
-      textStartX = margin + 29;
+      textStartX = margin + 28;
     } catch (e) {
-      // Graceful fallback to text
-      textStartX = margin + 6;
+      textStartX = margin + 5;
     }
   }
 
-  // Brand Titles
+  // Brand Header Titles
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(15);
-  const mainHeaderTitle = agentAgency ? agentAgency.toUpperCase() : 'THEUNBOUND DMC';
-  doc.text(mainHeaderTitle, textStartX, currentY + 10);
+  doc.setFontSize(14);
+  const mainHeaderTitle = effectiveAgency ? effectiveAgency.toUpperCase() : 'THEUNBOUND DMC';
+  doc.text(mainHeaderTitle, textStartX, currentY + 9);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
+  doc.setFontSize(7.5);
   doc.setTextColor(0, 229, 192); // Teal
-  const subTitle = agentAgency 
-    ? `Authorized Travel Partner • In Association with TheUnbound DMC`
-    : `Destination Management Company • Ground Logistics & Wholesaler`;
-  doc.text(subTitle, textStartX, currentY + 16);
+  const subTitle = effectiveAgency 
+    ? `Authorized Travel Partner • In Association with TheUnbound Wholesale DMC Network`
+    : `Destination Management Company • Direct Ground Logistics & Wholesale Hub`;
+  doc.text(subTitle, textStartX, currentY + 15);
 
   doc.setFontSize(7);
   doc.setTextColor(148, 163, 184); // slate-400
   const contactLine = agentEmail
-    ? `Partner Contact: ${agentEmail} ${agentName ? `(${agentName})` : ''} • Ground Ops: sales@theunbound.in`
-    : `Official Contact: sales@theunbound.in • +91-9811654959 / 011-41185542`;
-  doc.text(contactLine, textStartX, currentY + 22);
+    ? `Specialist: ${effectiveAgentName} (${agentEmail}) • Ground Desk: sales@theunbound.in`
+    : `Direct Operations Desk: sales@theunbound.in • 24/7 Global Dispatch & Support`;
+  doc.text(contactLine, textStartX, currentY + 21);
 
-  // Right Quotation Info
+  // Right Side Quotation Metadata
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9.5);
+  doc.setFontSize(9);
   doc.setTextColor(255, 255, 255);
-  doc.text(`QUOTE: ${quote.quoteNumber || 'UBQ-2026'}${quote.version ? ` (v${quote.version})` : ''}`, pageWidth - margin - 6, currentY + 9, { align: 'right' });
+  doc.text(`QUOTE: ${quote.quoteNumber || 'UBQ-2026'}${quote.version ? ` (v${quote.version})` : ''}`, pageWidth - margin - 5, currentY + 8.5, { align: 'right' });
 
   if (effectiveLeadId) {
-    doc.setFontSize(8);
+    doc.setFontSize(7.5);
     doc.setTextColor(0, 229, 192);
-    doc.text(`LEAD ID: ${effectiveLeadId}`, pageWidth - margin - 6, currentY + 15, { align: 'right' });
+    doc.text(`LEAD REF: ${effectiveLeadId}`, pageWidth - margin - 5, currentY + 14, { align: 'right' });
   }
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(203, 213, 225); // slate-300
-  doc.text(`Issue Date: ${new Date(quote.createdAt || Date.now()).toLocaleDateString()}`, pageWidth - margin - 6, currentY + (effectiveLeadId ? 21 : 16), { align: 'right' });
-  doc.text(`Valid For: 14 Days`, pageWidth - margin - 6, currentY + (effectiveLeadId ? 26 : 22), { align: 'right' });
+  doc.setFontSize(7);
+  doc.setTextColor(203, 213, 225);
+  doc.text(`Issue Date: ${new Date(quote.createdAt || Date.now()).toLocaleDateString()}`, pageWidth - margin - 5, currentY + (effectiveLeadId ? 19.5 : 15), { align: 'right' });
+  doc.text(`Validity: 14 Days`, pageWidth - margin - 5, currentY + (effectiveLeadId ? 24 : 20.5), { align: 'right' });
 
-  currentY += 34;
+  currentY += 31;
 
   // ----------------------------------------------------
-  // 2. CLIENT & AGENT DETAILS CARD
+  // 2. HERO JOURNEY OVERVIEW CARD (Destination & Route Hubs)
   // ----------------------------------------------------
-  doc.setFillColor(248, 250, 252); // slate-50
-  doc.setDrawColor(226, 232, 240); // slate-200
-  doc.roundedRect(margin, currentY, contentWidth, 24, 2, 2, 'FD');
+  doc.setFillColor(30, 41, 59); // slate-800
+  doc.roundedRect(margin, currentY, contentWidth, 24, 2, 2, 'F');
 
-  // Left: Valued Client
+  // Left: Journey Title & Stats
   doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(0, 229, 192);
+  doc.text('CURATED ITINERARY OVERVIEW', margin + 4, currentY + 6);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(255, 255, 255);
+  doc.text(`${quote.destination || 'Japan'} Bespoke Travel Journey`, margin + 4, currentY + 12);
+
+  doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
-  doc.setTextColor(100, 116, 139); // slate-500
-  doc.text('CLIENT / GUEST PROFILE', margin + 4, currentY + 6);
+  doc.setTextColor(203, 213, 225);
+  const tripStats = `${itineraryDays.length} Days / ${totalNights} Nights • ${totalPax} Guests (${quote.adultsCount || 2} Adults${quote.childrenCount ? `, ${quote.childrenCount} Ch` : ''})${quote.travelStartDate ? ` • ${quote.travelStartDate} → ${quote.travelEndDate || 'Open'}` : ''}`;
+  doc.text(tripStats, margin + 4, currentY + 18);
+
+  // Right: Price Per Person Block
+  const pricePerPerson = quote.totalSellingPrice / Math.max(1, totalPax);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.5);
+  doc.setTextColor(148, 163, 184);
+  doc.text('PACKAGE RATE PER PERSON', pageWidth - margin - 4, currentY + 6, { align: 'right' });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(0, 229, 192);
+  doc.text(formatCurrency(pricePerPerson, quote.currency), pageWidth - margin - 4, currentY + 12.5, { align: 'right' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.5);
+  doc.setTextColor(148, 163, 184);
+  doc.text('All local taxes & fees included', pageWidth - margin - 4, currentY + 18, { align: 'right' });
+
+  currentY += 27;
+
+  // ----------------------------------------------------
+  // 3. ROUTE HUBS BAR (If Route Hubs exist)
+  // ----------------------------------------------------
+  if (sortedHubs.length > 0) {
+    checkPageBreak(12);
+    doc.setFillColor(241, 245, 249); // slate-100
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(margin, currentY, contentWidth, 10, 1.5, 1.5, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(51, 65, 85);
+    doc.text('ROUTE FLOW:', margin + 3, currentY + 6.5);
+
+    let hubX = margin + 25;
+    sortedHubs.forEach((hub, idx) => {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(hub.hubName, hubX, currentY + 6.5);
+      const nameW = doc.getTextWidth(hub.hubName);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(0, 168, 143);
+      const nightStr = ` (${hub.nights}N)`;
+      doc.text(nightStr, hubX + nameW, currentY + 6.5);
+      const nightW = doc.getTextWidth(nightStr);
+
+      hubX += nameW + nightW;
+
+      if (idx < sortedHubs.length - 1) {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.setTextColor(148, 163, 184);
+        doc.text(' -> ', hubX + 1, currentY + 6.5);
+        hubX += 8;
+      }
+    });
+
+    currentY += 13;
+  }
+
+  // ----------------------------------------------------
+  // 4. CLIENT & SPECIALIST DOSSIER STRIP
+  // ----------------------------------------------------
+  checkPageBreak(22);
+  doc.setFillColor(248, 250, 252); // slate-50
+  doc.setDrawColor(226, 232, 240);
+  doc.roundedRect(margin, currentY, contentWidth, 18, 1.5, 1.5, 'FD');
+
+  // Left: Client
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text('PREPARED FOR VALUED GUEST', margin + 4, currentY + 5);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(15, 23, 42);
+  doc.text(quote.clientName || 'Private Client Group', margin + 4, currentY + 10);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(71, 85, 105);
+  const clientInfo = [quote.clientEmail, quote.clientCompany, quote.clientPhone].filter(Boolean).join(' • ');
+  doc.text(clientInfo || 'Direct Traveler Account', margin + 4, currentY + 15);
+
+  // Right: Specialist
+  const rightX = pageWidth / 2 + 4;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text('PREPARED BY DESTINATION SPECIALIST', rightX, currentY + 5);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(15, 23, 42);
+  doc.text(effectiveAgentName, rightX, currentY + 10);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(71, 85, 105);
+  const agentInfo = [effectiveAgency, '24/7 Operations Support'].filter(Boolean).join(' • ');
+  doc.text(agentInfo, rightX, currentY + 15);
+
+  currentY += 22;
+
+  // ----------------------------------------------------
+  // 5. DAY-BY-DAY CHRONOLOGICAL ITINERARY FLOW (MAIN)
+  // ----------------------------------------------------
+  checkPageBreak(25);
+
+  // Main Section Headline
+  doc.setFillColor(15, 23, 42);
+  doc.rect(margin, currentY, contentWidth, 7, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(255, 255, 255);
+  doc.text('DAY-BY-DAY ITINERARY & SCHEDULED EXPERIENCES', margin + 3, currentY + 5);
+  doc.setTextColor(0, 229, 192);
+  doc.text(`${itineraryDays.length} DAYS • ${items.length} ALLOCATED SERVICES`, pageWidth - margin - 3, currentY + 5, { align: 'right' });
+
+  currentY += 10;
+
+  // Iterate each Day
+  itineraryDays.forEach((day) => {
+    const hasItems = day.items && day.items.length > 0;
+    const dayCity = day.hub?.hubName || quote.destination || 'Japan';
+
+    // Calculate approximate height needed for this day block
+    let estimatedDayHeight = 12; // header
+    if (hasItems) {
+      estimatedDayHeight += day.items.length * 15;
+    } else {
+      estimatedDayHeight += 11; // leisure card
+    }
+
+    checkPageBreak(Math.min(estimatedDayHeight, 40));
+
+    // Day Header Bar
+    doc.setFillColor(30, 41, 59); // slate-800
+    doc.roundedRect(margin, currentY, contentWidth, 8, 1, 1, 'F');
+
+    // Day Badge: [01]
+    doc.setFillColor(0, 229, 192);
+    doc.roundedRect(margin + 2, currentY + 1.5, 9, 5, 0.8, 0.8, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(15, 23, 42);
+    doc.text(String(day.dayNumber).padStart(2, '0'), margin + 6.5, currentY + 5, { align: 'center' });
+
+    // Day Date & Hub
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(255, 255, 255);
+    const dayTitle = `Day ${day.dayNumber}: ${day.dayOfWeek}, ${day.formattedDate}`;
+    doc.text(dayTitle, margin + 14, currentY + 5.5);
+
+    const titleW = doc.getTextWidth(dayTitle);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(0, 229, 192);
+    const hubText = ` • ${dayCity} Base${day.isTransitionDay && day.prevHub ? ` (Transfer from ${day.prevHub.hubName})` : ''}${day.customTheme ? ` • ${day.customTheme}` : ''}`;
+    doc.text(hubText, margin + 14 + titleW, currentY + 5.5);
+
+    // Right Count
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(203, 213, 225);
+    doc.text(hasItems ? `${day.items.length} ${day.items.length === 1 ? 'Service' : 'Services'}` : 'Leisure / Free Exploration', pageWidth - margin - 3, currentY + 5.5, { align: 'right' });
+
+    currentY += 10;
+
+    // Day Items
+    if (hasItems) {
+      day.items.forEach((item, itemIdx) => {
+        checkPageBreak(16);
+
+        const isEven = itemIdx % 2 === 0;
+        doc.setFillColor(isEven ? 248 : 255, isEven ? 250 : 255, isEven ? 252 : 255);
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(margin + 2, currentY, contentWidth - 4, 13, 1, 1, 'FD');
+
+        // Service Category Badge
+        const cat = (item.product.category || item.product.productType || 'EXPERIENCE').toUpperCase();
+        doc.setFillColor(241, 245, 249);
+        doc.roundedRect(margin + 4, currentY + 2, 24, 4.5, 0.5, 0.5, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(5.5);
+        doc.setTextColor(51, 65, 85);
+        doc.text(cat.substring(0, 16), margin + 16, currentY + 5, { align: 'center' });
+
+        // Service Name (Bold)
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(15, 23, 42);
+        const pName = item.product.name || 'Curated Experience';
+        const truncatedName = pName.length > 55 ? pName.substring(0, 52) + '...' : pName;
+        doc.text(truncatedName, margin + 31, currentY + 5.5);
+
+        // Details Sub-line (Duration, Timing, Pax, Location)
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.5);
+        doc.setTextColor(100, 116, 139);
+        const subDetails = [
+          item.serviceTime ? `Time: ${item.serviceTime}` : null,
+          item.product.duration ? `Duration: ${item.product.duration}` : null,
+          `${item.pax?.adults || 2} Adults${item.pax?.children ? `, ${item.pax.children} Ch` : ''}`,
+          item.product.city || dayCity
+        ].filter(Boolean).join(' • ');
+        doc.text(subDetails, margin + 31, currentY + 10);
+
+        // Price
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(15, 23, 42);
+        const itemPriceStr = formatCurrency(item.calculation?.finalTotalSellingPrice || 0, quote.currency);
+        doc.text(itemPriceStr, pageWidth - margin - 5, currentY + 6, { align: 'right' });
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(5.5);
+        doc.setTextColor(0, 168, 143);
+        doc.text('Confirmed Allotment', pageWidth - margin - 5, currentY + 10, { align: 'right' });
+
+        currentY += 15;
+      });
+    } else {
+      // Leisure Box
+      checkPageBreak(12);
+      doc.setFillColor(250, 250, 250);
+      doc.setDrawColor(226, 232, 240);
+      doc.roundedRect(margin + 2, currentY, contentWidth - 4, 10, 1, 1, 'FD');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`* Day at Leisure in ${dayCity}`, margin + 6, currentY + 5);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text('Free time for independent sightseeing, shopping, and dining. 24/7 on-ground concierge support active.', margin + 6, currentY + 8.5);
+
+      currentY += 12;
+    }
+
+    currentY += 2;
+  });
+
+  // ----------------------------------------------------
+  // 6. GENERAL INCLUSIONS (Items without specific travel date)
+  // ----------------------------------------------------
+  if (generalInclusionItems.length > 0) {
+    checkPageBreak(20);
+    doc.setFillColor(241, 245, 249);
+    doc.rect(margin, currentY, contentWidth, 6, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('ADDITIONAL PACKAGE INCLUSIONS & PRIVILEGES', margin + 3, currentY + 4.5);
+
+    currentY += 8;
+
+    generalInclusionItems.forEach((item) => {
+      checkPageBreak(10);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`• ${item.product.name} (${item.product.category || 'Service'})`, margin + 4, currentY + 4);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.text(formatCurrency(item.calculation?.finalTotalSellingPrice || 0, quote.currency), pageWidth - margin - 4, currentY + 4, { align: 'right' });
+
+      currentY += 6;
+    });
+
+    currentY += 3;
+  }
+
+  // ----------------------------------------------------
+  // 7. DMC SERVICE STANDARDS & GUARANTEES
+  // ----------------------------------------------------
+  checkPageBreak(24);
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(226, 232, 240);
+  doc.roundedRect(margin, currentY, contentWidth, 20, 1.5, 1.5, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(15, 23, 42);
+  doc.text('THEUNBOUND GROUND OPERATIONS SERVICE STANDARDS:', margin + 4, currentY + 5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.5);
+  doc.setTextColor(71, 85, 105);
+  doc.text('• Chauffeur Fleet: Guaranteed pristine, commercially licensed air-conditioned vehicles with meet & assist.', margin + 4, currentY + 9.5);
+  doc.text('• Licensed Guides: Certified English-speaking local experts with priority VIP access and admissions.', margin + 4, currentY + 13.5);
+  doc.text('• 24/7 Dispatch Desk: Live flight monitoring, multilingual ground emergency assistance via WhatsApp / Phone.', margin + 4, currentY + 17.5);
+
+  currentY += 24;
+
+  // ----------------------------------------------------
+  // 8. INVESTMENT TOTAL & FINANCIAL SUMMARY
+  // ----------------------------------------------------
+  checkPageBreak(30);
+  const summaryBoxWidth = contentWidth;
+  doc.setFillColor(15, 23, 42); // slate-900
+  doc.roundedRect(margin, currentY, summaryBoxWidth, 24, 2, 2, 'F');
+
+  // Left Note
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(0, 229, 192);
+  doc.text('OFFICIAL PROPOSAL TARIFF', margin + 5, currentY + 6);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
-  doc.setTextColor(15, 23, 42); // slate-900
-  doc.text(quote.clientName || 'Private Client Group', margin + 4, currentY + 12);
+  doc.setTextColor(255, 255, 255);
+  doc.text('Guaranteed Total Package Investment', margin + 5, currentY + 12);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(71, 85, 105);
-  const clientSub = [quote.clientEmail, quote.clientCompany].filter(Boolean).join(' • ');
-  doc.text(clientSub || 'Destination Itinerary Inquiry', margin + 4, currentY + 18);
+  doc.setFontSize(6.5);
+  doc.setTextColor(203, 213, 225);
+  doc.text('Inclusive of all private transport, hotels, guides, activities & applicable local taxes.', margin + 5, currentY + 18);
 
-  // Right: Consultant & Lead Reference
+  // Right Totals
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(100, 116, 139);
-  doc.text('CONSULTANT & LEAD DETAILS', pageWidth / 2 + 6, currentY + 6);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9.5);
-  doc.setTextColor(15, 23, 42);
-  doc.text(`Destination: ${quote.destination || 'Japan & East Asia'}`, pageWidth / 2 + 6, currentY + 12);
+  doc.setFontSize(14);
+  doc.setTextColor(0, 229, 192);
+  doc.text(formatCurrency(quote.totalSellingPrice, quote.currency), pageWidth - margin - 5, currentY + 12, { align: 'right' });
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(71, 85, 105);
-  const consultantText = (agentAgency || quote.agentAgency)
-    ? `${agentName || quote.agentName || 'Travel Partner'} (${agentAgency || quote.agentAgency})`
-    : `TheUnbound Ground Operations (${agentName || quote.agentName || 'Operations Desk'})`;
-  doc.text(consultantText, pageWidth / 2 + 6, currentY + 18);
+  doc.setFontSize(7);
+  doc.setTextColor(203, 213, 225);
+  doc.text(`${formatCurrency(pricePerPerson, quote.currency)} / Traveler (${totalPax} Guests)`, pageWidth - margin - 5, currentY + 18, { align: 'right' });
 
   currentY += 28;
 
   // ----------------------------------------------------
-  // 3. ITINERARY LINE ITEMS TABLE
+  // 9. TERMS & CONDITIONS
   // ----------------------------------------------------
-  checkPageBreak(30);
-
-  // Table Header
-  doc.setFillColor(30, 41, 59); // slate-800
-  doc.rect(margin, currentY, contentWidth, 7, 'F');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(255, 255, 255);
-
-  const colX = {
-    idx: margin + 2,
-    service: margin + 10,
-    city: margin + 80,
-    date: margin + 112,
-    pax: margin + 138,
-    total: pageWidth - margin - 3
-  };
-
-  doc.text('#', colX.idx, currentY + 5);
-  doc.text('SERVICE / EXPERIENCE', colX.service, currentY + 5);
-  doc.text('CITY / HUB', colX.city, currentY + 5);
-  doc.text('DATE', colX.date, currentY + 5);
-  doc.text('PAX', colX.pax, currentY + 5);
-  doc.text('RATE (' + quote.currency + ')', colX.total, currentY + 5, { align: 'right' });
-
-  currentY += 7;
-
-  // Table Body Rows
-  quote.items.forEach((item, index) => {
-    checkPageBreak(14);
-
-    const isEven = index % 2 === 0;
-    if (isEven) {
-      doc.setFillColor(248, 250, 252);
-      doc.rect(margin, currentY, contentWidth, 12, 'F');
-    }
-
-    doc.setDrawColor(241, 245, 249);
-    doc.line(margin, currentY + 12, margin + contentWidth, currentY + 12);
-
-    // Item Index
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
-    doc.text(`${index + 1}`, colX.idx, currentY + 6);
-
-    // Product Name (truncated if too long)
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8.5);
-    doc.setTextColor(15, 23, 42);
-    const serviceName = item.product.name.length > 38 
-      ? item.product.name.substring(0, 36) + '...' 
-      : item.product.name;
-    doc.text(serviceName, colX.service, currentY + 5.5);
-
-    // Product Category / Duration Subtitle
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.5);
-    doc.setTextColor(100, 116, 139);
-    doc.text(`${item.product.category} • ${item.product.duration}`, colX.service, currentY + 9.5);
-
-    // City
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.setTextColor(51, 65, 85);
-    doc.text(item.product.city || quote.destination, colX.city, currentY + 7);
-
-    // Travel Date
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(15, 23, 42);
-    doc.text(item.travelDate || 'Date Open', colX.date, currentY + 7);
-
-    // Pax
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.setTextColor(71, 85, 105);
-    const paxText = `${item.pax.adults}A` + (item.pax.children > 0 ? ` ${item.pax.children}C` : '');
-    doc.text(paxText, colX.pax, currentY + 7);
-
-    // Price
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8.5);
-    doc.setTextColor(15, 23, 42);
-    const itemTotal = formatCurrency(item.calculation.finalTotalSellingPrice, quote.currency);
-    doc.text(itemTotal, colX.total, currentY + 7, { align: 'right' });
-
-    currentY += 12;
-  });
-
-  currentY += 4;
-
-  // ----------------------------------------------------
-  // 4. FINANCIAL SUMMARY & TOTALS CARD
-  // ----------------------------------------------------
-  checkPageBreak(38);
-
-  const summaryWidth = 85;
-  const summaryX = pageWidth - margin - summaryWidth;
-
-  doc.setFillColor(241, 245, 249); // slate-100
-  doc.setDrawColor(203, 213, 225);
-  doc.roundedRect(summaryX, currentY, summaryWidth, 32, 2, 2, 'FD');
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(71, 85, 105);
-  doc.text('Total Itinerary Services:', summaryX + 4, currentY + 6);
-  doc.text(`${quote.items.length} Curated Products`, summaryX + summaryWidth - 4, currentY + 6, { align: 'right' });
-
-  const totalPaxCount = Math.max(1, (quote.items[0]?.pax?.adults || 1) + (quote.items[0]?.pax?.children || 0));
-  doc.text('Package Rate Per Person:', summaryX + 4, currentY + 12);
-  doc.text(formatCurrency(quote.totalSellingPrice / totalPaxCount, quote.currency), summaryX + summaryWidth - 4, currentY + 12, { align: 'right' });
-
-  doc.setDrawColor(148, 163, 184);
-  doc.line(summaryX + 4, currentY + 16, summaryX + summaryWidth - 4, currentY + 16);
-
-  // Grand Total Box
-  doc.setFillColor(15, 23, 42); // slate-900
-  doc.roundedRect(summaryX + 2, currentY + 18, summaryWidth - 4, 11, 1.5, 1.5, 'F');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.setTextColor(0, 229, 192); // Teal
-  doc.text('FINAL QUOTATION TOTAL:', summaryX + 5, currentY + 25);
-
-  doc.setFontSize(11);
-  doc.setTextColor(255, 255, 255);
-  doc.text(formatCurrency(quote.totalSellingPrice, quote.currency), summaryX + summaryWidth - 5, currentY + 25.5, { align: 'right' });
-
-  // Left Note Box on the same row
-  const noteBoxWidth = contentWidth - summaryWidth - 6;
-  doc.setFillColor(248, 250, 252);
-  doc.setDrawColor(226, 232, 240);
-  doc.roundedRect(margin, currentY, noteBoxWidth, 32, 2, 2, 'FD');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(15, 23, 42);
-  doc.text('OPERATIONAL GROUND SERVICE GUARANTEE', margin + 4, currentY + 6);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7);
-  doc.setTextColor(71, 85, 105);
-  doc.text('• All services include 24/7 on-ground bilingual dispatch coordination.', margin + 4, currentY + 12);
-  doc.text('• Private vehicle transfers guaranteed with pristine late-model fleet.', margin + 4, currentY + 18);
-  doc.text('• Direct supplier allotment held provisionally upon voucher release.', margin + 4, currentY + 24);
-
-  currentY += 37;
-
-  // ----------------------------------------------------
-  // 5. TERMS & CONDITIONS
-  // ----------------------------------------------------
-  checkPageBreak(24);
-
+  checkPageBreak(20);
   doc.setFillColor(255, 255, 255);
   doc.setDrawColor(226, 232, 240);
-  doc.roundedRect(margin, currentY, contentWidth, 20, 2, 2, 'D');
+  doc.roundedRect(margin, currentY, contentWidth, 16, 1.5, 1.5, 'D');
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
-  doc.setTextColor(100, 116, 139);
-  doc.text('STANDARD TERMS & CONDITIONS:', margin + 4, currentY + 5);
-
-  doc.setFont('helvetica', 'normal');
   doc.setFontSize(6.5);
   doc.setTextColor(100, 116, 139);
-  doc.text('1. Confirmation is subject to operational availability at the time of final confirmation & voucher issuance.', margin + 4, currentY + 9.5);
-  doc.text('2. Standard cancellation protocol: full refund up to 72 hours prior to service commencement unless specified otherwise.', margin + 4, currentY + 13.5);
-  doc.text('3. Rates are locked in ' + quote.currency + ' and guaranteed against dynamic foreign exchange fluctuations once confirmed.', margin + 4, currentY + 17.5);
+  doc.text('COMMERCIAL QUOTATION TERMS:', margin + 4, currentY + 4.5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6);
+  doc.setTextColor(100, 116, 139);
+  doc.text('1. All allocations held provisionally for 14 calendar days from generation date.', margin + 4, currentY + 8);
+  doc.text('2. 20% deposit confirms reservations; balance payable 14 days prior to departure.', margin + 4, currentY + 11.5);
+  doc.text('3. Rates are guaranteed in ' + quote.currency + ' with no post-confirmation currency fluctuations.', margin + 4, currentY + 14.5);
 
   // ----------------------------------------------------
-  // 6. EXACT PAGE NUMBERING (PREVENTS DUPLICATES)
+  // 10. EXACT PAGE NUMBERING (Applied across all pages)
   // ----------------------------------------------------
   const totalPages = doc.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
+    doc.setFontSize(6.5);
     doc.setTextColor(148, 163, 184); // slate-400
 
     // Footer line
     doc.setDrawColor(226, 232, 240);
-    doc.line(margin, pageHeight - 10, pageWidth - margin, pageHeight - 10);
+    doc.line(margin, pageHeight - 9, pageWidth - margin, pageHeight - 9);
 
     // Left Footer
-    doc.text('TheUnbound DMC • Confidential Client Quotation Document', margin, pageHeight - 6);
+    doc.text('TheUnbound DMC Global Operations • Confidential Client Itinerary Quotation', margin, pageHeight - 5.5);
 
     // Right Footer
-    doc.text(`Page ${i} of ${totalPages}`, pageWidth - margin, pageHeight - 6, { align: 'right' });
+    doc.text(`Page ${i} of ${totalPages}`, pageWidth - margin, pageHeight - 5.5, { align: 'right' });
   }
 
   return doc;
@@ -371,6 +652,7 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
 
 export function downloadQuotationPDF(options: PDFExportOptions): void {
   const doc = generateQuotationPDF(options);
-  const filename = `TheUnbound-Quotation-${options.quote.quoteNumber || 'Proposal'}.pdf`;
+  const filename = `TheUnbound-Itinerary-${options.quote.quoteNumber || 'Proposal'}.pdf`;
   doc.save(filename);
 }
+

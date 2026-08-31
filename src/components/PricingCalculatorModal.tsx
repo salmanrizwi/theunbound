@@ -308,14 +308,14 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
             </div>
 
             {/* Optional Add-ons */}
-            {product.addons && product.addons.length > 0 && (
+            {product.addons && (product.addons || []).length > 0 && (
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2 flex items-center space-x-1.5">
                   <Sparkles className="w-4 h-4 text-[#008972]" />
                   <span>Optional Experience Upgrades</span>
                 </label>
                 <div className="space-y-2">
-                  {product.addons.map((addon) => {
+                  {(product.addons || []).map((addon) => {
                     const isSelected = selectedAddonIds.includes(addon.id);
                     const convertedAddonPrice = convertCurrency(addon.pricePerPax, addon.currency, targetCurrency);
                     return (
@@ -382,6 +382,20 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
 
               {/* Breakdown Rows */}
               <div className="space-y-2.5 text-xs">
+                {/* Capacity-Based Vehicle / Yacht Info Badge */}
+                {calculation.pricingMethod === 'capacity_based' && (
+                  <div className="bg-teal-950/40 p-2.5 rounded-xl border border-teal-500/30 text-[11px] text-teal-200 mb-2 space-y-1">
+                    <div className="flex items-center justify-between font-bold text-[#00E5C0]">
+                      <span>{product.category === 'Private Yacht' ? 'Private Yacht Charter' : 'Capacity-Based Fleet Allocation'}</span>
+                      <span>{calculation.vehicleCount} {product.category === 'Private Yacht' ? (calculation.vehicleCount === 1 ? 'Yacht' : 'Yachts') : (calculation.vehicleCount === 1 ? 'Vehicle' : 'Vehicles')}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-400 text-[10px]">
+                      <span>Max Capacity per unit: {calculation.maxSeatsPerVehicle || product.vehicleConfig?.maxSeats || product.maxPax || 7} Pax</span>
+                      <span>Total Unit Net: {formatCurrency(convertCurrency(product.vehicleConfig?.unitVehicleNetCost || product.adultNetPrice, product.currency, targetCurrency), targetCurrency)}</span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Adults */}
                 <div className="flex justify-between text-slate-300">
                   <span>Adult Participants ({adults} × {formatCurrency(calculation.adultPricePerPax, targetCurrency)})</span>
@@ -439,7 +453,7 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
                         <ShieldAlert className="w-3.5 h-3.5" />
                         <span>Gross Margin:</span>
                       </span>
-                      <span className="font-mono">{formatCurrency(calculation.dmcMarginAmount, targetCurrency)} ({calculation.dmcMarginPercent.toFixed(1)}%)</span>
+                      <span className="font-mono">{formatCurrency(calculation.dmcMarginAmount, targetCurrency)} ({(Number(calculation.dmcMarginPercent) || 0).toFixed(1)}%)</span>
                     </div>
                   </div>
                 )}

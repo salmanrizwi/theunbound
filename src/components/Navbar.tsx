@@ -213,41 +213,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                 );
               })}
 
-              {/* B2B Builder & Admin Quick Tabs for Authorized Agents/Staff */}
-              {onSelectTab && isB2BAgentOrAdmin && (
-                <>
-                  <button
-                    id="nav-tab-b2b-builder"
-                    onClick={() => onSelectTab('B2B_BUILDER')}
-                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
-                      activeTab === 'B2B_BUILDER'
-                        ? 'bg-slate-900 text-[#00E5C0] font-bold shadow-xs'
-                        : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
-                    }`}
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full ${activeTab === 'B2B_BUILDER' ? 'bg-[#00C6A6]' : 'bg-slate-300'}`}></span>
-                    <span>B2B Quote Builder</span>
-                    <span className="text-[10px] font-bold bg-[#00C6A6]/20 text-[#00C6A6] px-1.5 py-0.2 rounded font-mono">
-                      B2B
-                    </span>
-                  </button>
-
-                  {(role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF') && (
-                    <button
-                      id="nav-tab-admin"
-                      onClick={() => onSelectTab('ADMIN')}
-                      className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
-                        activeTab === 'ADMIN'
-                          ? 'bg-[#00C6A6]/10 text-[#00C6A6] font-bold'
-                          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                      }`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${activeTab === 'ADMIN' ? 'bg-[#00C6A6]' : 'bg-slate-300'}`}></span>
-                      <span>Admin Hub</span>
-                    </button>
-                  )}
-                </>
-              )}
             </nav>
           </div>
 
@@ -262,19 +227,6 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <Search className="w-4 h-4 text-slate-400" />
                 <span className="hidden xl:inline text-xs text-slate-500 font-medium">Quick Search...</span>
-              </button>
-            )}
-
-            {/* Bookings Hub Button - Accessible to ALL logged in users */}
-            {isAuthenticated && onOpenBookings && (
-              <button
-                id="navbar-bookings-btn"
-                onClick={onOpenBookings}
-                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
-                title="View All Ground Bookings & SLA Status"
-              >
-                <Calendar className="w-3.5 h-3.5 text-[#00C6A6]" />
-                <span>My Bookings</span>
               </button>
             )}
 
@@ -343,60 +295,54 @@ export const Navbar: React.FC<NavbarProps> = ({
                       </button>
 
                       <button
+                        id="user-menu-b2b-builder"
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          if (onSelectTab) onSelectTab('B2B_BUILDER');
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-slate-800 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer font-medium"
+                      >
+                        <Briefcase className="w-4 h-4 text-[#00C6A6]" />
+                        <span>B2B Quote Builder</span>
+                      </button>
+
+                      <button
                         id="user-menu-bookings"
                         onClick={() => {
                           setIsUserMenuOpen(false);
                           if (onOpenBookings) onOpenBookings();
                         }}
-                        className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer font-medium"
+                        className="w-full px-4 py-2 text-left text-sm text-slate-800 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer font-medium"
                       >
                         <Calendar className="w-4 h-4 text-[#00C6A6]" />
-                        <span>My Bookings (24-48h SLA)</span>
+                        <span>Bookings</span>
                       </button>
 
-                      {isB2BAgentOrAdmin && (
-                        <>
-                          <button
-                            id="user-menu-b2b-builder"
-                            onClick={() => {
-                              setIsUserMenuOpen(false);
-                              if (onSelectTab) onSelectTab('B2B_BUILDER');
-                            }}
-                            className="w-full px-4 py-2 text-left text-sm text-slate-900 font-semibold bg-[#00C6A6]/10 hover:bg-[#00C6A6]/20 flex items-center space-x-2 cursor-pointer text-[#008f77]"
-                          >
-                            <Briefcase className="w-4 h-4 text-[#00C6A6]" />
-                            <span>B2B Quotation Builder</span>
-                          </button>
+                      <button
+                        id="user-menu-admin"
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          if (onSelectTab) onSelectTab('ADMIN');
+                          if (onOpenAdmin) onOpenAdmin();
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-slate-800 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer font-medium"
+                      >
+                        <ShieldCheck className="w-4 h-4 text-[#00C6A6]" />
+                        <span>Admin Hub</span>
+                      </button>
 
-                          <button
-                            id="user-menu-dashboard"
-                            onClick={() => {
-                              setIsUserMenuOpen(false);
-                              if (onSelectTab) onSelectTab('DASHBOARD');
-                              if (onOpenDashboard) onOpenDashboard();
-                            }}
-                            className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer"
-                          >
-                            <Layers className="w-4 h-4 text-slate-400" />
-                            <span>Agent Dashboard & Quotes</span>
-                          </button>
-                        </>
-                      )}
-
-                      {(role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF') && (
-                        <button
-                          id="user-menu-admin"
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            if (onSelectTab) onSelectTab('ADMIN');
-                            if (onOpenAdmin) onOpenAdmin();
-                          }}
-                          className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer"
-                        >
-                          <ShieldCheck className="w-4 h-4 text-[#00C6A6]" />
-                          <span>Admin & Operations CMS</span>
-                        </button>
-                      )}
+                      <button
+                        id="user-menu-dashboard"
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          if (onSelectTab) onSelectTab('DASHBOARD');
+                          if (onOpenDashboard) onOpenDashboard();
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer"
+                      >
+                        <Layers className="w-4 h-4 text-slate-400" />
+                        <span>Quotes & Dashboard</span>
+                      </button>
 
                       <button
                         id="user-menu-specs"
@@ -504,52 +450,58 @@ export const Navbar: React.FC<NavbarProps> = ({
 
                     <button
                       onClick={() => {
+                        onSelectTab('B2B_BUILDER');
+                        setIsMobileNavOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-slate-800 hover:bg-slate-50 flex items-center justify-between"
+                    >
+                      <span className="flex items-center space-x-2">
+                        <Briefcase className="w-4 h-4 text-[#00C6A6]" />
+                        <span>B2B Quote Builder</span>
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => {
                         if (onOpenBookings) onOpenBookings();
                         setIsMobileNavOpen(false);
                       }}
                       className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-slate-800 hover:bg-slate-50 flex items-center justify-between"
                     >
-                      <span>My Bookings (24-48h SLA)</span>
-                      <span className="text-[10px] bg-slate-900 text-[#00E5C0] px-1.5 py-0.5 rounded font-mono font-bold">Bookings</span>
+                      <span className="flex items-center space-x-2">
+                        <Calendar className="w-4 h-4 text-[#00C6A6]" />
+                        <span>Bookings</span>
+                      </span>
                     </button>
-                  </>
-                )}
 
-                {isB2BAgentOrAdmin && (
-                  <>
                     <button
                       onClick={() => {
-                        onSelectTab('B2B_BUILDER');
+                        onSelectTab('ADMIN');
+                        if (onOpenAdmin) onOpenAdmin();
                         setIsMobileNavOpen(false);
                       }}
-                      className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-[#008f77] bg-[#00C6A6]/10 hover:bg-[#00C6A6]/20 flex items-center justify-between"
+                      className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-slate-800 hover:bg-slate-50 flex items-center justify-between"
                     >
-                      <span>B2B Quotation Builder</span>
-                      <span className="text-[10px] bg-[#00C6A6] text-slate-950 px-1.5 py-0.5 rounded font-mono font-bold">B2B</span>
+                      <span className="flex items-center space-x-2">
+                        <ShieldCheck className="w-4 h-4 text-[#00C6A6]" />
+                        <span>Admin Hub</span>
+                      </span>
                     </button>
 
                     <button
                       onClick={() => {
                         onSelectTab('DASHBOARD');
+                        if (onOpenDashboard) onOpenDashboard();
                         setIsMobileNavOpen(false);
                       }}
-                      className="w-full text-left px-3 py-2 rounded-md text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      className="w-full text-left px-3 py-2 rounded-md text-sm font-medium text-slate-700 hover:bg-slate-50 flex items-center justify-between"
                     >
-                      Quotes & Dashboard
+                      <span className="flex items-center space-x-2">
+                        <Layers className="w-4 h-4 text-slate-400" />
+                        <span>Quotes & Dashboard</span>
+                      </span>
                     </button>
                   </>
-                )}
-
-                {(role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF') && (
-                  <button
-                    onClick={() => {
-                      onSelectTab('ADMIN');
-                      setIsMobileNavOpen(false);
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-md text-sm font-medium text-slate-700 hover:bg-slate-50"
-                  >
-                    Admin Hub
-                  </button>
                 )}
               </div>
             )}

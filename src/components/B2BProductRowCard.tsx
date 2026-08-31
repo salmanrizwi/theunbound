@@ -87,10 +87,10 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
 
   // Optional Upgrade products tagged on this product
   const taggedUpgrades = useMemo(() => {
-    if (!product.optionalUpgradeProductIds || product.optionalUpgradeProductIds.length === 0) {
+    if (!product.optionalUpgradeProductIds || (product.optionalUpgradeProductIds || []).length === 0) {
       return [];
     }
-    return allProducts.filter(p => product.optionalUpgradeProductIds?.includes(p.id));
+    return allProducts.filter(p => (product.optionalUpgradeProductIds || []).includes(p.id));
   }, [product.optionalUpgradeProductIds, allProducts]);
 
   // Real-time calculated price for the current dropdown form values
@@ -196,8 +196,8 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
             <div className="flex items-center space-x-3 text-[11px] text-slate-400 pt-0.5">
               <span className="flex items-center space-x-1">
                 <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                <span className="font-bold text-slate-700">{product.rating.toFixed(1)}</span>
-                <span>({product.reviewCount})</span>
+                <span className="font-bold text-slate-700">{(Number(product.rating) || 5.0).toFixed(1)}</span>
+                <span>({product.reviewCount || 0})</span>
               </span>
               <span>•</span>
               <span className="text-slate-500 font-medium">
@@ -488,7 +488,7 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
           )}
 
           {/* 4. Optional Upgrades & Add-ons Section (if available) */}
-          {( (product.addons && product.addons.length > 0) || taggedUpgrades.length > 0 ) && (
+          {( ((product.addons && (product.addons || []).length > 0)) || (taggedUpgrades || []).length > 0 ) && (
             <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-2.5">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-bold text-slate-800 flex items-center space-x-1.5">

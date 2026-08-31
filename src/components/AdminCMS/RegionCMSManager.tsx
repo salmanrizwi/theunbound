@@ -89,11 +89,16 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
   }, []);
 
   const getRegionStats = (reg: MasterRegion) => {
-    const linkedDests = destinations.filter(d => d.regionId === reg.id || d.regionName?.toLowerCase() === reg.name.toLowerCase());
+    const dList = destinations || [];
+    const hList = cityHubs || [];
+    const pList = products || [];
+    const hotList = hotels || [];
+
+    const linkedDests = dList.filter(d => d.regionId === reg.id || d.regionName?.toLowerCase() === reg.name.toLowerCase());
     const destIds = new Set(linkedDests.map(d => d.id));
-    const linkedHubs = cityHubs.filter(h => h.regionId === reg.id || destIds.has(h.destinationId));
-    const linkedProds = products.filter(p => p.regionId === reg.id || destIds.has(p.destinationId));
-    const linkedHotels = hotels.filter(h => h.regionId === reg.id || destIds.has(h.destinationId));
+    const linkedHubs = hList.filter(h => h.regionId === reg.id || destIds.has(h.destinationId));
+    const linkedProds = pList.filter(p => p.regionId === reg.id || destIds.has(p.destinationId));
+    const linkedHotels = hotList.filter(h => h.regionId === reg.id || destIds.has(h.destinationId));
 
     return {
       destinationsCount: linkedDests.length,
@@ -411,14 +416,14 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
                 </div>
 
                 {/* Linked Destinations List Preview */}
-                {stats.linkedDestinations.length > 0 && (
+                {(stats.linkedDestinations || []).length > 0 && (
                   <div className="pt-2 border-t border-slate-100">
                     <div className="text-[11px] font-semibold text-slate-500 mb-1.5 flex items-center justify-between">
                       <span>Linked Destinations:</span>
-                      <span className="text-[10px] text-amber-600 font-bold">{stats.linkedDestinations.length} active</span>
+                      <span className="text-[10px] text-amber-600 font-bold">{(stats.linkedDestinations || []).length} active</span>
                     </div>
                     <div className="flex flex-wrap gap-1">
-                      {stats.linkedDestinations.map(d => (
+                      {(stats.linkedDestinations || []).map(d => (
                         <span key={d.id} className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200/60 text-amber-800 text-[11px] font-medium">
                           {d.name}
                         </span>
