@@ -3,6 +3,7 @@ import { AppDatabase } from '../../services/db';
 import { VisaProduct, Destination } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { ImageUploadOrUrlInput } from '../ImageUploadOrUrlInput';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { 
   FileText, 
   Plus, 
@@ -36,6 +37,7 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({ destinations }) 
   const [selectedCountry, setSelectedCountry] = useState<string>('all');
   const [isEditing, setIsEditing] = useState(false);
   const [editingVisa, setEditingVisa] = useState<Partial<VisaProduct> | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   // New checklist item input
   const [newDocText, setNewDocText] = useState('');
@@ -143,9 +145,9 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({ destinations }) 
   };
 
   const handleDelete = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this visa product record?')) {
-      db.deleteVisa(id, user);
-    }
+    const target = visas.find(v => v.id === id) || (editingVisa?.id === id ? editingVisa : null);
+    const targetName = target ? `${target.country} - ${target.visaType}` : 'Visa Requirement';
+    setDeleteTarget({ id, name: targetName });
   };
 
   return (
@@ -519,27 +521,61 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({ destinations }) 
                 </div>
               </div>
 
-              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsEditing(false);
-                    setEditingVisa(null);
-                  }}
-                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2 rounded-xl bg-[#008972] text-white text-xs font-bold hover:bg-[#007460] cursor-pointer shadow-xs"
-                >
-                  Save Visa Product
-                </button>
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                <div>
+                  {editingVisa?.id && visas.some(v => v.id === editingVisa.id) && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(editingVisa.id!)}
+                      className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer border border-red-200"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Visa</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditing(false);
+                      setEditingVisa(null);
+                    }}
+                    className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-6 py-2 rounded-xl bg-[#008972] text-white text-xs font-bold hover:bg-[#007460] cursor-pointer shadow-xs"
+                  >
+                    Save Visa Product
+                  </button>
+                </div>
               </div>
             </form>
           </div>
         </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          isOpen={Boolean(deleteTarget)}
+          onClose={() => setDeleteTarget(null)}
+          onSuccess={() => {
+            if (editingVisa?.id === deleteTarget.id) {
+              setIsEditing(false);
+              setEditingVisa(null);
+            }
+            setDeleteTarget(null);
+            setVisas(db.getVisas());
+          }}
+          entityType="VisaRequirement"
+          recordId={deleteTarget.id}
+          recordTitle={deleteTarget.name}
+          user={user}
+        />
       )}
     </div>
   );

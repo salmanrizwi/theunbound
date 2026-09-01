@@ -202,7 +202,7 @@ export const CMSGlobalSearch: React.FC<CMSGlobalSearchProps> = ({
           title: `${q.quoteNumber} — ${q.clientName}`,
           subtitle: `${q.destination} • Agent: ${q.agentName} • Total: ${q.currency} ${(q.totalSellingPrice || 0).toLocaleString()}`,
           entityType: 'QUOTE',
-          moduleSection: 'BOOKING_MANAGEMENT',
+          moduleSection: 'LEAD_MANAGEMENT',
           subTab: 'QUOTES',
           badge: q.status,
           record: q

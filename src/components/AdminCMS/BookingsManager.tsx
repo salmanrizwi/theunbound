@@ -1,50 +1,53 @@
 import React, { useState, useEffect } from 'react';
-import { Booking, BookingStatus, BookingItem, BookingSupplierAllocation } from '../../types';
+import { Booking, BookingStatus } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { formatCurrency } from '../../services/pricingEngine';
-import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
+import { BookingDashboardCards } from '../Bookings/BookingDashboardCards';
+import { BookingWorkspace } from '../Bookings/BookingWorkspace';
 import { 
-  Calendar, 
-  Clock, 
   Search, 
-  CheckCircle2, 
-  AlertTriangle, 
-  Mail, 
-  Phone, 
-  Building2, 
+  Filter, 
+  Plus, 
+  Calendar, 
   Users, 
-  Eye, 
+  CreditCard, 
+  Building2, 
   FileText, 
-  Check, 
-  RefreshCw, 
-  ShieldCheck, 
-  X,
-  Send,
-  UserCheck,
-  Truck,
-  ExternalLink,
-  Save,
-  Plus
+  ChevronRight, 
+  CheckCircle2, 
+  Clock, 
+  AlertCircle, 
+  FileWarning, 
+  Sparkles,
+  ArrowUpDown,
+  Download,
+  RotateCcw,
+  X
 } from 'lucide-react';
 
 export const BookingsManager: React.FC = () => {
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
-  const [bookings, setBookings] = useState<Booking[]>(() => db.getAllBookings());
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | BookingStatus>('ALL');
-  const [supplierFilter, setSupplierFilter] = useState<'ALL' | 'UNALLOCATED' | 'SENT_TO_SUPPLIER' | 'CONFIRMED_BY_SUPPLIER' | 'REJECTED_BY_SUPPLIER'>('ALL');
-  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
-  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
-  const [editingAllocationItemIdx, setEditingAllocationItemIdx] = useState<number | null>(null);
   
-  // Supplier allocation form state
-  const [supplierName, setSupplierName] = useState('');
-  const [supplierStatus, setSupplierStatus] = useState<'PENDING_DISPATCH' | 'SENT_TO_SUPPLIER' | 'CONFIRMED_BY_SUPPLIER' | 'REJECTED_BY_SUPPLIER' | 'AMENDMENT_REQUESTED'>('SENT_TO_SUPPLIER');
-  const [supplierRefNumber, setSupplierRefNumber] = useState('');
-  const [supplierContact, setSupplierContact] = useState('');
-  const [supplierNotes, setSupplierNotes] = useState('');
+  const [bookings, setBookings] = useState<Booking[]>(() => db.getAllBookings());
+  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState('ALL');
+  const [channelFilter, setChannelFilter] = useState('ALL');
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+
+  // New Booking Form State
+  const [leadName, setLeadName] = useState('');
+  const [leadEmail, setLeadEmail] = useState('');
+  const [leadPhone, setLeadPhone] = useState('');
+  const [totalAdults, setTotalAdults] = useState('2');
+  const [totalChildren, setTotalChildren] = useState('0');
+  const [agencyName, setAgencyName] = useState('');
+  const [travelStartDate, setTravelStartDate] = useState('');
+  const [travelEndDate, setTravelEndDate] = useState('');
+  const [currency, setCurrency] = useState('USD');
+  const [initialAmount, setInitialAmount] = useState('2500');
 
   useEffect(() => {
     const unsub = db.subscribe(() => {
@@ -53,503 +56,492 @@ export const BookingsManager: React.FC = () => {
     return unsub;
   }, []);
 
-  const handleUpdateStatus = (bookingId: string, newStatus: BookingStatus) => {
-    setIsUpdatingStatus(true);
-    db.updateBookingStatus(bookingId, newStatus, user);
-    if (selectedBooking && selectedBooking.id === bookingId) {
-      setSelectedBooking(prev => prev ? { ...prev, status: newStatus } : null);
-    }
+  const handleSelectFilter = (filterKey: string) => {
+    setActiveFilter(filterKey);
+  };
 
-    // Two-way synchronization: If booking is confirmed or cancelled, update internal SLA task & Google Calendar
-    try {
-      const activeTask = googleCalendarAutomation.findActiveTaskByRelationship({
-        bookingId,
-        taskType: 'BOOKING_CONFIRMATION'
-      });
-      if (activeTask) {
-        if (newStatus === 'CONFIRMED') {
-          googleCalendarAutomation.updateTaskStatus(activeTask.id, 'COMPLETED', user);
-        } else if (newStatus === 'CANCELLED') {
-          googleCalendarAutomation.updateTaskStatus(activeTask.id, 'CANCELLED', user);
+  const handleCreateBooking = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!leadName.trim() || !leadEmail.trim()) return;
+
+    const adults = Math.max(1, parseInt(totalAdults) || 1);
+    const children = Math.max(0, parseInt(totalChildren) || 0);
+    const totalPax = adults + children;
+    const amount = parseFloat(initialAmount) || 2500;
+
+    const newBooking = db.createBooking({
+      sourceType: 'MANUAL',
+      destinationName: 'Japan',
+      currency: (currency || 'USD') as any,
+      totalAmount: amount,
+      travelStartDate: travelStartDate || '2026-10-15',
+      travelEndDate: travelEndDate || '2026-10-22',
+      customer: {
+        leadTravelerName: leadName.trim(),
+        bookerName: leadName.trim(),
+        email: leadEmail.trim(),
+        phone: leadPhone.trim() || '+1 555 019 2831',
+        nationality: 'Indian',
+        totalAdults: adults,
+        totalChildren: children
+      },
+      items: [
+        {
+          id: `item-${Date.now()}-1`,
+          productId: 'PKG-JP-CUSTOM-01',
+          productSku: 'PKG-JP-CUSTOM-01',
+          productName: 'Bespoke Private Japan Itinerary & DMC Land Arrangements',
+          destinationName: 'Japan',
+          category: 'PACKAGE',
+          travelDate: travelStartDate || '2026-10-15',
+          serviceDate: travelStartDate || '2026-10-15',
+          serviceTime: '09:00 AM',
+          serviceTimezone: 'Asia/Tokyo (JST, UTC+9)',
+          unitNetPrice: amount / totalPax,
+          unitSellingPrice: amount / totalPax,
+          totalPrice: amount,
+          currency: currency || 'USD',
+          totalPax: totalPax,
+          adults: adults,
+          children: children,
+          infants: 0,
+          city: 'Tokyo & Kyoto',
+          supplierStatus: 'PENDING_DISPATCH',
+          supplierName: 'Unbound Ground Operations Japan',
+          supplierType: 'GROUND_RESOURCE'
         }
-      }
-    } catch (e) {
-      console.debug('SLA status sync error:', e);
-    }
+      ]
+    }, user);
 
-    setTimeout(() => setIsUpdatingStatus(false), 300);
+    setIsCreateModalOpen(false);
+    setSelectedBookingId(newBooking.id);
   };
 
-  const handleOpenAllocationEditor = (item: BookingItem, idx: number) => {
-    setEditingAllocationItemIdx(idx);
-    setSupplierName(item.supplierName || 'Japan Ground Logistics DMC');
-    setSupplierStatus(item.supplierStatus || 'SENT_TO_SUPPLIER');
-    setSupplierRefNumber(item.supplierConfirmationRef || '');
-    setSupplierContact('');
-    setSupplierNotes(item.supplierNotes || '');
-  };
+  // Filter Bookings
+  const filteredBookings = bookings.filter((b) => {
+    // Search matching
+    const q = searchQuery.toLowerCase();
+    const matchesSearch = 
+      !q ||
+      b.bookingReference.toLowerCase().includes(q) ||
+      b.customer?.leadTravelerName?.toLowerCase().includes(q) ||
+      b.customer?.name?.toLowerCase().includes(q) ||
+      b.customer?.email?.toLowerCase().includes(q) ||
+      b.agencyName?.toLowerCase().includes(q) ||
+      b.items?.some(it => it.productName.toLowerCase().includes(q));
 
-  const handleSaveSupplierAllocation = () => {
-    if (!selectedBooking || editingAllocationItemIdx === null) return;
+    if (!matchesSearch) return false;
 
-    const updatedItems = [...selectedBooking.items];
-    const currentItem = updatedItems[editingAllocationItemIdx];
+    // Channel filter
+    if (channelFilter !== 'ALL' && b.channel !== channelFilter) return false;
 
-    const updatedItem: BookingItem = {
-      ...currentItem,
-      supplierName: supplierName,
-      supplierStatus: supplierStatus,
-      supplierConfirmationRef: supplierRefNumber,
-      supplierNotes: supplierNotes
-    };
+    // Metrics Card Active Filter
+    if (activeFilter === 'STATUS_NEW') return b.status === 'NEW' || b.status === 'PENDING_CONFIRMATION';
+    if (activeFilter === 'STATUS_TO_BE_PROCESSED') return b.status === 'TO_BE_PROCESSED';
+    if (activeFilter === 'STATUS_PROCESSING') return b.status === 'PROCESSING' || b.status === 'IN_PROGRESS';
+    if (activeFilter === 'STATUS_WAITING_FOR_UPDATE') return b.status === 'WAITING_FOR_UPDATE';
+    if (activeFilter === 'PAY_PENDING') return b.paymentStatus === 'PENDING_PAYMENT';
+    if (activeFilter === 'PAY_PARTIAL') return b.paymentStatus === 'PARTIALLY_PAID';
+    if (activeFilter === 'PAY_PAID') return b.paymentStatus === 'PAID';
+    if (activeFilter === 'DOCS_PENDING') return b.documentStatus === 'DOCUMENTS_PENDING' || (b.missingDocuments && b.missingDocuments.length > 0);
+    if (activeFilter === 'SUPPLIER_PENDING') return b.supplierAllocationStatus !== 'FULLY_CONFIRMED_BY_SUPPLIERS' && b.status !== 'CANCELLED' && b.status !== 'COMPLETED';
+    if (activeFilter === 'STATUS_CONFIRMED') return b.status === 'CONFIRMED';
+    if (activeFilter === 'STATUS_CANCELLED') return b.status === 'CANCELLED';
+    if (activeFilter === 'STATUS_COMPLETED') return b.status === 'COMPLETED';
 
-    updatedItems[editingAllocationItemIdx] = updatedItem;
-
-    const allocationRecord: BookingSupplierAllocation = {
-      supplierId: `supp-${supplierName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
-      supplierName: supplierName,
-      supplierType: 'DMC_PARTNER',
-      serviceName: currentItem.productName,
-      status: supplierStatus,
-      dispatchedAt: new Date().toISOString(),
-      confirmedAt: supplierStatus === 'CONFIRMED_BY_SUPPLIER' ? new Date().toISOString() : undefined,
-      supplierConfirmationRef: supplierRefNumber,
-      assignedContact: supplierContact,
-      contactPhone: supplierContact,
-      notes: supplierNotes
-    };
-
-    const existingAllocations = selectedBooking.supplierAllocations || [];
-    const updatedAllocations = [
-      ...existingAllocations.filter(a => a.serviceName !== currentItem.productName),
-      allocationRecord
-    ];
-
-    const updatedBooking: Booking = {
-      ...selectedBooking,
-      items: updatedItems,
-      supplierAllocations: updatedAllocations,
-      updatedAt: new Date().toISOString()
-    };
-
-    db.saveBooking(updatedBooking, user);
-    setSelectedBooking(updatedBooking);
-    setEditingAllocationItemIdx(null);
-  };
-
-  const filteredBookings = bookings.filter(b => {
-    const matchesQuery = 
-      b.bookingReference.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      b.customer.leadTravelerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (b.customer.agencyName && b.customer.agencyName.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (b.customer.email && b.customer.email.toLowerCase().includes(searchQuery.toLowerCase()));
-
-    const matchesStatus = statusFilter === 'ALL' || b.status === statusFilter;
-
-    let matchesSupplier = true;
-    if (supplierFilter === 'UNALLOCATED') {
-      matchesSupplier = b.items.some(it => !it.supplierName || it.supplierStatus === 'PENDING_DISPATCH');
-    } else if (supplierFilter === 'SENT_TO_SUPPLIER') {
-      matchesSupplier = b.items.some(it => it.supplierStatus === 'SENT_TO_SUPPLIER');
-    } else if (supplierFilter === 'CONFIRMED_BY_SUPPLIER') {
-      matchesSupplier = b.items.every(it => it.supplierStatus === 'CONFIRMED_BY_SUPPLIER');
-    } else if (supplierFilter === 'REJECTED_BY_SUPPLIER') {
-      matchesSupplier = b.items.some(it => it.supplierStatus === 'REJECTED_BY_SUPPLIER');
-    }
-
-    return matchesQuery && matchesStatus && matchesSupplier;
+    return true;
   });
 
-  return (
-    <div className="space-y-6">
-      {/* Header & Metrics */}
-      <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-bold text-slate-900 font-sans">
-              Booking Management & Ground Supplier Allocation
-            </h2>
-            <p className="text-xs text-slate-500">
-              Manage received client reservations, assign ground tour/fleet suppliers, check status, and track SLAs.
-            </p>
-          </div>
+  // If a booking is selected, render the full Workspace
+  if (selectedBookingId) {
+    return (
+      <div id="booking-management-view" className="p-6 max-w-7xl mx-auto">
+        <BookingWorkspace
+          bookingId={selectedBookingId}
+          currentUser={user}
+          onBack={() => setSelectedBookingId(null)}
+        />
+      </div>
+    );
+  }
 
-          <div className="flex items-center space-x-2">
-            <span className="text-xs font-bold text-slate-500">Total Active Bookings:</span>
-            <span className="px-3 py-1 bg-slate-900 text-white rounded-full font-mono text-xs font-bold">
-              {bookings.length}
-            </span>
+  return (
+    <div id="booking-management-dashboard-view" className="p-6 max-w-7xl mx-auto space-y-6">
+      {/* Top Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300">
+              <Building2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-black tracking-tight text-stone-900 dark:text-stone-100">
+                Booking Operations Engine
+              </h1>
+              <p className="text-xs text-stone-500 dark:text-stone-400">
+                Full end-to-end booking journey: Passengers, Documents, Payments, Ground Suppliers, & Confirmation.
+              </p>
+            </div>
           </div>
         </div>
 
-        {/* Filters */}
-        <div className="pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-            <input
-              type="text"
-              placeholder="Search reference, traveler, agent..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-hidden focus:border-[#008972]"
-            />
-          </div>
-
-          <div>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="w-full py-2 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700"
-            >
-              <option value="ALL">All Reservation Statuses</option>
-              <option value="PENDING_CONFIRMATION">⏳ Pending Confirmation</option>
-              <option value="CONFIRMED">✓ Confirmed</option>
-              <option value="IN_PROGRESS">🚀 In Progress</option>
-              <option value="COMPLETED">✅ Completed</option>
-              <option value="CANCELLED">🚫 Cancelled</option>
-            </select>
-          </div>
-
-          <div>
-            <select
-              value={supplierFilter}
-              onChange={(e) => setSupplierFilter(e.target.value as any)}
-              className="w-full py-2 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700"
-            >
-              <option value="ALL">All Supplier Allocations</option>
-              <option value="UNALLOCATED">⚠️ Unallocated Items</option>
-              <option value="SENT_TO_SUPPLIER">⏳ Sent to Supplier</option>
-              <option value="CONFIRMED_BY_SUPPLIER">✓ Supplier Confirmed</option>
-              <option value="REJECTED_BY_SUPPLIER">🚫 Rejected / Reallocate</option>
-            </select>
-          </div>
+        <div className="flex items-center gap-2">
+          <button
+            id="btn-create-booking"
+            onClick={() => setIsCreateModalOpen(true)}
+            className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm flex items-center gap-2 transition-all active:scale-95"
+          >
+            <Plus className="w-4 h-4" />
+            Create Booking Request
+          </button>
         </div>
       </div>
 
-      {/* Bookings List */}
-      <div className="space-y-4">
+      {/* 13 Live Dashboard Status Cards */}
+      <BookingDashboardCards
+        bookings={bookings}
+        activeFilter={activeFilter}
+        onSelectFilter={handleSelectFilter}
+      />
+
+      {/* Filter and Search Bar */}
+      <div className="bg-white dark:bg-stone-900 rounded-2xl p-4 border border-stone-200 dark:border-stone-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+          <input
+            id="input-search-bookings"
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by Booking Ref, Lead Traveler, Email, Agency, or SKU..."
+            className="w-full pl-10 pr-4 py-2 rounded-xl text-xs bg-stone-50 dark:bg-stone-800/80 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100 focus:ring-2 focus:ring-amber-500"
+          />
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <select
+            id="select-channel-filter"
+            value={channelFilter}
+            onChange={(e) => setChannelFilter(e.target.value)}
+            className="px-3 py-2 rounded-xl text-xs bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-700 dark:text-stone-300 font-medium"
+          >
+            <option value="ALL">All Channels</option>
+            <option value="B2B_PORTAL">B2B Agent Portal</option>
+            <option value="DIRECT_WEB">Direct B2C Web</option>
+            <option value="INTERNAL_OPS">Internal Ops</option>
+          </select>
+
+          {activeFilter !== 'ALL' && (
+            <button
+              onClick={() => setActiveFilter('ALL')}
+              className="px-3 py-2 rounded-xl text-xs text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex items-center gap-1 font-semibold"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset Filter
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Bookings Table */}
+      <div className="bg-white dark:bg-stone-900 rounded-2xl border border-stone-200 dark:border-stone-800 shadow-sm overflow-hidden">
         {filteredBookings.length === 0 ? (
-          <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 space-y-2">
-            <Truck className="w-8 h-8 mx-auto text-slate-300" />
-            <p className="font-bold text-slate-600 text-sm">No reservations match the filter criteria.</p>
+          <div className="p-12 text-center">
+            <AlertCircle className="w-8 h-8 text-stone-400 mx-auto mb-2" />
+            <p className="text-sm font-semibold text-stone-700 dark:text-stone-300">
+              No Bookings Found Matching Current Criteria
+            </p>
+            <p className="text-xs text-stone-500 max-w-sm mx-auto mt-1">
+              Try adjusting your search query or reset the dashboard metric card filter.
+            </p>
           </div>
         ) : (
-          filteredBookings.map((b) => (
-            <div
-              key={b.id}
-              className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:border-slate-300 transition-all space-y-4"
-            >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                <div className="flex items-center space-x-3">
-                  <span className="font-mono font-bold text-sm bg-slate-100 text-slate-900 px-3 py-1 rounded-lg">
-                    {b.bookingReference}
-                  </span>
-                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
-                    b.status === 'CONFIRMED' 
-                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
-                      : b.status === 'PENDING_CONFIRMATION'
-                      ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                      : 'bg-slate-100 text-slate-700'
-                  }`}>
-                    {b.status.replace('_', ' ')}
-                  </span>
-                </div>
+          <div className="overflow-x-auto">
+            <table id="table-booking-records" className="w-full text-left text-xs">
+              <thead className="bg-stone-50 dark:bg-stone-800/60 border-b border-stone-200 dark:border-stone-800 text-[11px] font-bold text-stone-500 uppercase tracking-wider">
+                <tr>
+                  <th className="py-3 px-4">Booking Ref & Date</th>
+                  <th className="py-3 px-4">Lead Traveler & Agency</th>
+                  <th className="py-3 px-4">Travel Dates & PAX</th>
+                  <th className="py-3 px-4">Value & Payment</th>
+                  <th className="py-3 px-4">Documents</th>
+                  <th className="py-3 px-4">Suppliers</th>
+                  <th className="py-3 px-4">Operational Status</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-stone-100 dark:divide-stone-800/80">
+                {filteredBookings.map((b) => {
+                  const maxPax = (b.customer?.totalAdults || 0) + (b.customer?.totalChildren || 0) || 
+                    b.items?.reduce((max, it) => Math.max(max, it.totalPax), 0) || 1;
+                  const currentPax = b.passengers?.length || 0;
+                  const paymentSummary = db.calculateBookingPaymentSummary(b);
+                  const isReady = db.checkBookingConfirmationReadiness(b).canConfirm;
 
-                <div className="flex items-center space-x-2 text-xs text-slate-500 font-mono">
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span>Travel: {b.travelStartDate} → {b.travelEndDate}</span>
-                </div>
-              </div>
-
-              {/* Guest, Agency & Financials */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
-                <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Lead Traveler & Contact</span>
-                  <strong className="text-slate-900 block">{b.customer.leadTravelerName}</strong>
-                  <span className="text-slate-500 font-mono block">{b.customer.email}</span>
-                  <span className="text-slate-500 font-mono block">{b.customer.phone}</span>
-                </div>
-
-                <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Agency & Source</span>
-                  <span className="font-bold text-[#008972] block">{b.customer.agencyName || 'Direct Traveler'}</span>
-                  <span className="text-slate-500 block">Source: {b.sourceType}</span>
-                </div>
-
-                <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Total Value</span>
-                  <span className="text-base font-extrabold font-mono text-slate-900 block">
-                    {formatCurrency(b.totalAmount, b.currency)}
-                  </span>
-                  <span className="text-[10px] text-slate-400">{b.items?.length || 0} Ground Service(s)</span>
-                </div>
-
-                <div className="flex items-center justify-start md:justify-end space-x-2">
-                  {b.status === 'PENDING_CONFIRMATION' && (
-                    <button
-                      onClick={() => handleUpdateStatus(b.id, 'CONFIRMED')}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors flex items-center space-x-1 cursor-pointer"
+                  return (
+                    <tr 
+                      key={b.id} 
+                      id={`booking-row-${b.id}`}
+                      onClick={() => setSelectedBookingId(b.id)}
+                      className="hover:bg-stone-50/80 dark:hover:bg-stone-800/50 cursor-pointer transition-colors"
                     >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Confirm Booking</span>
-                    </button>
-                  )}
+                      {/* Ref & Date */}
+                      <td className="py-3.5 px-4 font-mono">
+                        <div className="font-bold text-stone-900 dark:text-stone-100 flex items-center gap-1.5">
+                          {b.bookingReference}
+                          {isReady && b.status !== 'CONFIRMED' && (
+                            <span title="All conditions met for confirmation" className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                          )}
+                        </div>
+                        <div className="text-[10px] text-stone-400">
+                          {new Date(b.createdAt).toLocaleDateString()}
+                        </div>
+                      </td>
 
-                  <button
-                    onClick={() => setSelectedBooking(b)}
-                    className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-colors flex items-center space-x-1.5 cursor-pointer shadow-xs"
-                  >
-                    <Truck className="w-3.5 h-3.5 text-[#00E5C0]" />
-                    <span>Manage Suppliers</span>
-                  </button>
-                </div>
-              </div>
+                      {/* Lead Traveler & Agency */}
+                      <td className="py-3.5 px-4">
+                        <div className="font-bold text-stone-900 dark:text-stone-100">
+                          {b.customer?.leadTravelerName || b.customer?.name || 'Guest'}
+                        </div>
+                        <div className="text-[11px] text-stone-500 truncate max-w-[180px]">
+                          {b.agencyName || b.agentName || 'Direct B2C VIP'}
+                        </div>
+                      </td>
 
-              {/* Itemized Suppliers overview */}
-              <div className="pt-2 border-t border-slate-100">
-                <div className="flex flex-wrap gap-2">
-                  {b.items.map((item, idx) => {
-                    const suppStatus = item.supplierStatus || 'PENDING_DISPATCH';
-                    return (
-                      <div key={idx} className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs flex items-center space-x-2">
-                        <span className="font-bold text-slate-800 truncate max-w-xs">{item.productName}</span>
-                        <span className="text-[10px] text-slate-400">({item.supplierName || 'Unassigned'})</span>
-                        <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ${
-                          suppStatus === 'CONFIRMED_BY_SUPPLIER' 
-                            ? 'bg-emerald-100 text-emerald-800' 
-                            : suppStatus === 'SENT_TO_SUPPLIER'
-                            ? 'bg-blue-100 text-blue-800'
-                            : suppStatus === 'REJECTED_BY_SUPPLIER'
-                            ? 'bg-rose-100 text-rose-800'
-                            : 'bg-slate-200 text-slate-700'
+                      {/* Travel Dates & PAX */}
+                      <td className="py-3.5 px-4">
+                        <div className="font-medium text-stone-800 dark:text-stone-200">
+                          {b.travelStartDate || 'Flexible'}
+                        </div>
+                        <div className="text-[10px] text-stone-400 font-mono">
+                          {currentPax}/{maxPax} PAX Configured
+                        </div>
+                      </td>
+
+                      {/* Value & Payment */}
+                      <td className="py-3.5 px-4">
+                        <div className="font-bold font-mono text-stone-900 dark:text-stone-100">
+                          {formatCurrency(paymentSummary.totalAmount, b.currency)}
+                        </div>
+                        <span className={`inline-block mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          b.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' :
+                          b.paymentStatus === 'PARTIALLY_PAID' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-300' :
+                          'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
                         }`}>
-                          {suppStatus.replace(/_/g, ' ')}
+                          {b.paymentStatus ? b.paymentStatus.replace(/_/g, ' ') : 'PENDING PAYMENT'}
                         </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          ))
+                      </td>
+
+                      {/* Documents */}
+                      <td className="py-3.5 px-4">
+                        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          b.documentStatus === 'DOCUMENTS_VERIFIED' || b.documentStatus === 'DOCUMENTS_SUBMITTED'
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                            : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                        }`}>
+                          {b.documentStatus ? b.documentStatus.replace(/_/g, ' ') : 'DOCS PENDING'}
+                        </span>
+                        {b.missingDocuments && b.missingDocuments.length > 0 && (
+                          <div className="text-[10px] text-amber-700 dark:text-amber-400 font-mono mt-0.5">
+                            {b.missingDocuments.length} files missing
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Suppliers */}
+                      <td className="py-3.5 px-4">
+                        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          b.supplierAllocationStatus === 'FULLY_CONFIRMED_BY_SUPPLIERS'
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                            : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300'
+                        }`}>
+                          {b.supplierAllocationStatus ? b.supplierAllocationStatus.replace(/_/g, ' ') : 'UNALLOCATED'}
+                        </span>
+                      </td>
+
+                      {/* Operational Status */}
+                      <td className="py-3.5 px-4">
+                        <span className={`inline-block px-2.5 py-1 rounded-lg text-xs font-extrabold ${
+                          b.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800' :
+                          b.status === 'CANCELLED' ? 'bg-stone-200 text-stone-800 dark:bg-stone-800 dark:text-stone-300' :
+                          b.status === 'PROCESSING' ? 'bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200 border border-blue-300 dark:border-blue-800' :
+                          b.status === 'TO_BE_PROCESSED' ? 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-200 border border-orange-300 dark:border-orange-800' :
+                          'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 border border-amber-300 dark:border-amber-800'
+                        }`}>
+                          {b.status}
+                        </span>
+                      </td>
+
+                      {/* Action */}
+                      <td className="py-3.5 px-4 text-right">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedBookingId(b.id);
+                          }}
+                          className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 rounded-lg text-xs font-bold inline-flex items-center gap-1 transition-colors"
+                        >
+                          Workspace
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
-      {/* Booking Detail & Supplier Operations Modal */}
-      {selectedBooking && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-3xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto border border-slate-200 shadow-2xl">
-            <div className="flex items-center justify-between border-b pb-3">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#008972]">DMC Ground Operations & Supplier Control</span>
-                <h3 className="text-lg font-extrabold text-slate-900 font-mono">{selectedBooking.bookingReference}</h3>
+      {/* Create Booking Request Modal */}
+      {isCreateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-stone-900 rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto border border-stone-200 dark:border-stone-800 shadow-2xl p-6">
+            <div className="flex items-center justify-between pb-4 border-b border-stone-100 dark:border-stone-800 mb-4">
+              <div className="flex items-center gap-2">
+                <Plus className="w-5 h-5 text-amber-600" />
+                <h3 className="text-base font-bold text-stone-900 dark:text-stone-100">
+                  Create Operational Booking Record
+                </h3>
               </div>
-              <button
-                onClick={() => {
-                  setSelectedBooking(null);
-                  setEditingAllocationItemIdx(null);
-                }}
-                className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 cursor-pointer"
+              <button 
+                onClick={() => setIsCreateModalOpen(false)}
+                className="p-1 rounded-lg text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Customer Overview */}
-            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-2">
-              <span className="font-bold text-slate-900 block">Lead Guest & Agency Info:</span>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-slate-700">
-                <div>Lead Traveler: <strong>{selectedBooking.customer.leadTravelerName}</strong></div>
-                <div>Agency: <strong>{selectedBooking.customer.agencyName || 'Direct Traveler'}</strong></div>
-                <div>Email: <strong className="font-mono">{selectedBooking.customer.email}</strong></div>
-                <div>Phone: <strong className="font-mono">{selectedBooking.customer.phone}</strong></div>
-                {selectedBooking.customer.specialRequests && (
-                  <div className="col-span-2 sm:col-span-4 text-slate-600 bg-white p-2 rounded border mt-1">
-                    Special Requests: {selectedBooking.customer.specialRequests}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Ground Services & Supplier Allocation Matrix */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold uppercase text-slate-700 flex items-center space-x-1.5">
-                  <Truck className="w-4 h-4 text-[#008972]" />
-                  <span>Ground Services & Supplier Allocation Matrix</span>
-                </h4>
-                <span className="text-[10px] text-slate-400 font-medium">Click "Allocate / Update Supplier" to update ground status</span>
+            <form onSubmit={handleCreateBooking} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Lead Traveler Full Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={leadName}
+                  onChange={(e) => setLeadName(e.target.value)}
+                  placeholder="e.g. Vikramaditya Singhania"
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                />
               </div>
 
-              {selectedBooking.items.map((item, idx) => {
-                const isEditingThis = editingAllocationItemIdx === idx;
-                const suppStatus = item.supplierStatus || 'PENDING_DISPATCH';
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Email *</label>
+                  <input
+                    type="email"
+                    required
+                    value={leadEmail}
+                    onChange={(e) => setLeadEmail(e.target.value)}
+                    placeholder="e.g. vikram@luxuryholidays.in"
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Phone</label>
+                  <input
+                    type="text"
+                    value={leadPhone}
+                    onChange={(e) => setLeadPhone(e.target.value)}
+                    placeholder="e.g. +91 98200 11223"
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                  />
+                </div>
+              </div>
 
-                return (
-                  <div key={idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div>
-                        <strong className="text-slate-900 block text-xs">{item.productName}</strong>
-                        <span className="text-slate-500 text-[11px]">
-                          📅 {item.travelDate} • 📍 {item.destinationName} • 👥 {item.totalPax} Pax
-                        </span>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                          suppStatus === 'CONFIRMED_BY_SUPPLIER'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : suppStatus === 'SENT_TO_SUPPLIER'
-                            ? 'bg-blue-100 text-blue-800'
-                            : suppStatus === 'REJECTED_BY_SUPPLIER'
-                            ? 'bg-rose-100 text-rose-800'
-                            : 'bg-slate-200 text-slate-700'
-                        }`}>
-                          {suppStatus.replace(/_/g, ' ')}
-                        </span>
-                        <span className="font-mono font-bold text-slate-900 text-xs">
-                          {formatCurrency(item.totalPrice, item.currency)}
-                        </span>
-                      </div>
-                    </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Adults *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={totalAdults}
+                    onChange={(e) => setTotalAdults(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs font-mono font-bold bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Children</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={totalChildren}
+                    onChange={(e) => setTotalChildren(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs font-mono bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Currency</label>
+                  <input
+                    type="text"
+                    value={currency}
+                    onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+                    className="w-full px-3 py-2 rounded-xl text-xs font-mono uppercase bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                  />
+                </div>
+              </div>
 
-                    {/* Supplier Summary if already assigned */}
-                    {!isEditingThis && item.supplierName && (
-                      <div className="bg-white p-3 rounded-xl border border-slate-200 text-xs grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <div>
-                          <span className="text-[10px] text-slate-400 font-bold block">Assigned Supplier</span>
-                          <span className="font-bold text-slate-800">{item.supplierName}</span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-slate-400 font-bold block">Supplier Voucher / Ref #</span>
-                          <span className="font-mono font-bold text-slate-700">{item.supplierConfirmationRef || 'Pending Issue'}</span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-slate-400 font-bold block">Internal Notes</span>
-                          <span className="text-slate-600 truncate block">{item.supplierNotes || 'No notes logged'}</span>
-                        </div>
-                      </div>
-                    )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Agency Name (Optional)</label>
+                  <input
+                    type="text"
+                    value={agencyName}
+                    onChange={(e) => setAgencyName(e.target.value)}
+                    placeholder="e.g. Wanderlust Luxury Voyages"
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Total Booking Value</label>
+                  <input
+                    type="number"
+                    value={initialAmount}
+                    onChange={(e) => setInitialAmount(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs font-mono font-bold bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                  />
+                </div>
+              </div>
 
-                    {/* Actions & In-place Allocation Form */}
-                    {!isEditingThis ? (
-                      <div className="flex justify-end pt-1">
-                        <button
-                          onClick={() => handleOpenAllocationEditor(item, idx)}
-                          className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center space-x-1.5 cursor-pointer shadow-xs"
-                        >
-                          <Truck className="w-3.5 h-3.5 text-[#00E5C0]" />
-                          <span>{item.supplierName ? 'Update Supplier Status' : 'Allocate Supplier'}</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="bg-white p-4 rounded-xl border-2 border-[#008972] space-y-3 text-xs animate-in fade-in">
-                        <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                          <span className="font-extrabold text-slate-900 flex items-center space-x-1">
-                            <span>Supplier Assignment for {item.productName}</span>
-                          </span>
-                          <button
-                            onClick={() => setEditingAllocationItemIdx(null)}
-                            className="text-slate-400 hover:text-slate-600 text-xs font-bold"
-                          >
-                            Cancel
-                          </button>
-                        </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Travel Start Date</label>
+                  <input
+                    type="date"
+                    value={travelStartDate}
+                    onChange={(e) => setTravelStartDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Travel End Date</label>
+                  <input
+                    type="date"
+                    value={travelEndDate}
+                    onChange={(e) => setTravelEndDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                  />
+                </div>
+              </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Supplier / Fleet Partner Name *
-                            </label>
-                            <input
-                              type="text"
-                              required
-                              value={supplierName}
-                              onChange={(e) => setSupplierName(e.target.value)}
-                              placeholder="e.g. Tokyo Express Transport DMC, Kyoto Local Guides"
-                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Supplier Confirmation Status *
-                            </label>
-                            <select
-                              value={supplierStatus}
-                              onChange={(e) => setSupplierStatus(e.target.value as any)}
-                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900"
-                            >
-                              <option value="SENT_TO_SUPPLIER">⏳ Sent to Supplier (Awaiting Confirmation)</option>
-                              <option value="CONFIRMED_BY_SUPPLIER">✓ Confirmed & Vouched by Supplier</option>
-                              <option value="REJECTED_BY_SUPPLIER">🚫 Declined by Supplier (Reallocate)</option>
-                              <option value="AMENDMENT_REQUESTED">🔄 Amendment Requested</option>
-                              <option value="PENDING_DISPATCH">⚠️ Pending Dispatch</option>
-                            </select>
-                          </div>
-
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Supplier Confirmation / Booking Ref #
-                            </label>
-                            <input
-                              type="text"
-                              value={supplierRefNumber}
-                              onChange={(e) => setSupplierRefNumber(e.target.value)}
-                              placeholder="e.g. SUP-TYO-99482"
-                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-900"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Supplier Contact Person / Phone
-                            </label>
-                            <input
-                              type="text"
-                              value={supplierContact}
-                              onChange={(e) => setSupplierContact(e.target.value)}
-                              placeholder="e.g. Kenji Sato (+81 90 1234 5678)"
-                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900"
-                            />
-                          </div>
-
-                          <div className="sm:col-span-2">
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Operational Notes & Dispatch Updates
-                            </label>
-                            <input
-                              type="text"
-                              value={supplierNotes}
-                              onChange={(e) => setSupplierNotes(e.target.value)}
-                              placeholder="e.g. Driver assigned Toyota Alphard, meeting at Terminal 3 Exit"
-                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
-                          <button
-                            type="button"
-                            onClick={() => setEditingAllocationItemIdx(null)}
-                            className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 font-bold text-xs"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleSaveSupplierAllocation}
-                            className="px-4 py-1.5 bg-[#008972] hover:bg-[#007460] text-white rounded-lg font-bold text-xs flex items-center space-x-1"
-                          >
-                            <Save className="w-3.5 h-3.5" />
-                            <span>Save Supplier Status</span>
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-stone-100 dark:border-stone-800">
+                <button
+                  type="button"
+                  onClick={() => setIsCreateModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-medium text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm"
+                >
+                  Create & Open Workspace
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

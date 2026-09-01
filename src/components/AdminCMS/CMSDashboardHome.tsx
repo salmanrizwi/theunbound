@@ -103,7 +103,7 @@ export const CMSDashboardHome: React.FC<CMSDashboardHomeProps> = ({
         value: activeQuotes,
         subtext: pdfDownloadedQuotes > 0 ? `${pdfDownloadedQuotes} proposals exported` : 'B2B proposals ready',
         alert: false,
-        section: 'BOOKING_MANAGEMENT',
+        section: 'LEAD_MANAGEMENT',
         subTab: 'QUOTES'
       },
       {
@@ -211,7 +211,7 @@ export const CMSDashboardHome: React.FC<CMSDashboardHomeProps> = ({
         description: 'Custom luxury itineraries exported by clients ready for concierge outreach.',
         priority: 'NORMAL',
         actionLabel: 'View Quotes',
-        section: 'BOOKING_MANAGEMENT',
+        section: 'LEAD_MANAGEMENT',
         subTab: 'QUOTES'
       });
     }
@@ -292,7 +292,7 @@ export const CMSDashboardHome: React.FC<CMSDashboardHomeProps> = ({
 
   // 4. CURATED TOP 6 QUICK ACTIONS
   const primaryQuickActions = [
-    { label: 'Create Quote', icon: Receipt, section: 'BOOKING_MANAGEMENT', subTab: 'QUOTES' },
+    { label: 'Create Quote', icon: Receipt, section: 'LEAD_MANAGEMENT', subTab: 'QUOTES' },
     { label: 'Add Product', icon: Package, section: 'PRODUCT_MANAGEMENT', subTab: 'PRODUCTS' },
     { label: 'Add Hotel', icon: HotelIcon, section: 'HOTEL_MANAGEMENT', subTab: 'HOTELS' },
     { label: 'Add Lead', icon: Users, section: 'LEAD_MANAGEMENT', subTab: 'LEADS' },
@@ -325,7 +325,7 @@ export const CMSDashboardHome: React.FC<CMSDashboardHomeProps> = ({
     { name: 'Gmail Gateway', status: 'Connected', section: 'DATABASE_MANAGEMENT', subTab: 'AUDIT_TRAIL' },
     { name: 'Google Calendar', status: 'Connected', section: 'NOTIFICATIONS_MANAGEMENT', subTab: 'TASKS' },
     { name: 'Google Business', status: 'Connected', section: 'PAGE_MANAGEMENT', subTab: 'REVIEWS' },
-    { name: 'PDF Generation', status: 'Operational', section: 'BOOKING_MANAGEMENT', subTab: 'QUOTES' }
+    { name: 'PDF Generation', status: 'Operational', section: 'LEAD_MANAGEMENT', subTab: 'QUOTES' }
   ];
 
   // Format relative timestamp helper

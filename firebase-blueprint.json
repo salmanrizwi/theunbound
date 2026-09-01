@@ -341,6 +341,59 @@
         "action": { "type": "string", "required": true },
         "createdAt": { "type": "string", "required": true }
       }
+    },
+    "VisaProduct": {
+      "collection": "visas",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "country": { "type": "string", "required": true },
+        "destinationId": { "type": "string", "required": false },
+        "destinationName": { "type": "string", "required": false },
+        "visaType": { "type": "string", "required": true },
+        "entryType": { "type": "string", "required": true },
+        "validity": { "type": "string", "required": true },
+        "stayDuration": { "type": "string", "required": true },
+        "processingTime": { "type": "string", "required": true },
+        "embassyFee": { "type": "number", "required": true },
+        "serviceFee": { "type": "number", "required": true },
+        "totalSellingPrice": { "type": "number", "required": true },
+        "currency": { "type": "string", "required": true },
+        "requiredDocuments": { "type": "array", "required": true },
+        "status": { "type": "string", "required": true }
+      }
+    },
+    "B2BCustomer": {
+      "collection": "b2b_customers",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "agentId": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "email": { "type": "string", "required": true },
+        "phone": { "type": "string", "required": true },
+        "company": { "type": "string", "required": false },
+        "status": { "type": "string", "required": true },
+        "tags": { "type": "array", "required": false },
+        "totalQuotes": { "type": "number", "required": true },
+        "totalBookings": { "type": "number", "required": true },
+        "totalSpend": { "type": "number", "required": true },
+        "createdAt": { "type": "string", "required": true }
+      }
+    },
+    "B2BTask": {
+      "collection": "b2b_tasks",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "agentId": { "type": "string", "required": true },
+        "title": { "type": "string", "required": true },
+        "description": { "type": "string", "required": false },
+        "customerId": { "type": "string", "required": false },
+        "customerName": { "type": "string", "required": false },
+        "dueDate": { "type": "string", "required": true },
+        "priority": { "type": "string", "required": true },
+        "status": { "type": "string", "required": true },
+        "category": { "type": "string", "required": true },
+        "createdAt": { "type": "string", "required": true }
+      }
     }
   }
 }

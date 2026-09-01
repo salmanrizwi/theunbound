@@ -34,7 +34,10 @@ import {
   AlertTriangle,
   AlertCircle,
   ShieldAlert,
-  Info
+  Info,
+  Globe,
+  FileCheck,
+  ShieldCheck
 } from 'lucide-react';
 import { 
   Product, 
@@ -60,6 +63,8 @@ import { ProposalDocumentView } from '../ProposalDocumentView';
 import { ProductDetailModal } from '../ProductDetailModal';
 import { PricingCalculatorModal } from '../PricingCalculatorModal';
 import { ManualHotelFormModal } from './ManualHotelFormModal';
+import { VISA_CATALOG, VisaProduct } from './B2BVisaView';
+import { AddVisaToQuoteModal, visaProductToProduct } from './AddVisaToQuoteModal';
 import { AppDatabase } from '../../services/db';
 import { hotelToProduct, manualHotelToProduct, calculateHotelStayPrice, validateRoomOccupancy, OccupancyValidationResult } from '../../utils/hotelHelpers';
 import { downloadQuotationPDF } from '../../services/pdfGenerator';
@@ -330,6 +335,13 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [dayThemes, setDayThemes] = useState<Record<number, string>>({});
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
 
+  // Visa Section & Picker Modal State
+  const [isVisaSectionExpanded, setIsVisaSectionExpanded] = useState<boolean>(true);
+  const [selectedVisaForQuoteModal, setSelectedVisaForQuoteModal] = useState<VisaProduct | null>(null);
+  const [showVisaPickerModal, setShowVisaPickerModal] = useState<boolean>(false);
+  const [visaPickerSearch, setVisaPickerSearch] = useState<string>('');
+  const [visaPickerCategory, setVisaPickerCategory] = useState<string>('ALL');
+
   // Quick Add Modal State
   const [quickAddModalDay, setQuickAddModalDay] = useState<{ 
     dayNum: number; 
@@ -522,10 +534,19 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                (it.product as any).category === 'Hotels';
       };
 
+      // Helper predicate for Visa quotation items
+      const isVisaQuoteItem = (it: QuoteItem): boolean => {
+        return it.product.productType === 'Visa Service' || 
+               it.product.subcategory === 'Visa Facilitation' || 
+               it.product.sku?.startsWith('VSA-') ||
+               (it.product.category === 'Travel Services' && it.product.name?.toLowerCase().includes('visa')) ||
+               Boolean(it.product.name?.toLowerCase().includes('visa') && it.product.name?.toLowerCase().includes('entry'));
+      };
+
       // Find items matching this day's date
       const dayItems = items.filter(it => it.travelDate === calDay.dateString);
       const dayHotelItems = dayItems.filter(isHotelQuoteItem);
-      const dayProductItems = dayItems.filter(it => !isHotelQuoteItem(it));
+      const dayProductItems = dayItems.filter(it => !isHotelQuoteItem(it) && !isVisaQuoteItem(it));
 
       const dayNetCost = dayItems.reduce((sum, it) => sum + (it.calculation?.totalNetCost || 0), 0);
       const daySellingPrice = dayItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
@@ -555,11 +576,26 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
            (it.product as any).category === 'Hotels';
   };
 
+  // Helper predicate for Visa quotation items
+  const isVisaQuoteItem = (it: QuoteItem): boolean => {
+    return it.product.productType === 'Visa Service' || 
+           it.product.subcategory === 'Visa Facilitation' || 
+           it.product.sku?.startsWith('VSA-') ||
+           (it.product.category === 'Travel Services' && it.product.name?.toLowerCase().includes('visa')) ||
+           Boolean(it.product.name?.toLowerCase().includes('visa') && it.product.name?.toLowerCase().includes('entry'));
+  };
+
+  const isVisaInQuote = (visaId: string): boolean => {
+    return items.some(it => it.product.id === visaId || it.product.sku?.includes(visaId));
+  };
+
   // Grouped items
   const hotelItems = useMemo(() => items.filter(isHotelQuoteItem), [items]);
-  const experienceItems = useMemo(() => items.filter(it => !isHotelQuoteItem(it)), [items]);
+  const visaItems = useMemo(() => items.filter(isVisaQuoteItem), [items]);
+  const experienceItems = useMemo(() => items.filter(it => !isHotelQuoteItem(it) && !isVisaQuoteItem(it)), [items]);
 
   const hotelTotalSelling = useMemo(() => hotelItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [hotelItems]);
+  const visaTotalSelling = useMemo(() => visaItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [visaItems]);
   const experienceTotalSelling = useMemo(() => experienceItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [experienceItems]);
 
   const finalClientPrice = useMemo(() => {
@@ -2332,6 +2368,189 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           )}
 
           {/* --------------------------------------------------------------------- */}
+          {/* SECTION 3.5: VISA & TRAVEL DOCUMENTATION SERVICES (DEDICATED VISA SECTION) */}
+          {/* --------------------------------------------------------------------- */}
+          <section className="bg-white rounded-3xl border border-slate-200/80 p-5 sm:p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between cursor-pointer" onClick={() => setIsVisaSectionExpanded(!isVisaSectionExpanded)}>
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center">
+                  <Globe className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-sm sm:text-base font-bold text-slate-900 flex items-center space-x-2">
+                    <span>Visa Services & Facilitation</span>
+                    <span className="text-xs font-mono font-bold text-emerald-700">
+                      ({visaItems.length} {visaItems.length === 1 ? 'Visa' : 'Visas'} • {formatCurrency(visaTotalSelling, currency)})
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-500">Dedicated tourist, business & transit visa documentation facilitation.</p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowVisaPickerModal(true);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Add Visa to Quote</span>
+                </button>
+                <button type="button" className="text-slate-400 hover:text-slate-600 p-1">
+                  {isVisaSectionExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+
+            {isVisaSectionExpanded && (
+              <div className="pt-4 border-t border-slate-200 space-y-3 animate-fadeIn">
+                {visaItems.length === 0 ? (
+                  <div className="bg-emerald-50/40 rounded-2xl p-5 border border-dashed border-emerald-200 text-center space-y-2">
+                    <Globe className="w-6 h-6 text-emerald-500 mx-auto" />
+                    <p className="text-xs text-emerald-950 font-semibold">
+                      No Visa services added to this quotation yet.
+                    </p>
+                    <p className="text-[11px] text-slate-500 max-w-md mx-auto">
+                      Add official tourist eVisas, embassy submission packages, or express entry facilitation directly with wholesale B2B pricing.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowVisaPickerModal(true)}
+                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors inline-flex items-center space-x-1.5 cursor-pointer shadow-xs mt-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Browse Available Visa Catalog</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {visaItems.map((item) => {
+                      const totalApplicants = (item.pax?.adults || 0) + (item.pax?.children || 0) + (item.pax?.infants || 0);
+                      const matchingVisaCatalog = VISA_CATALOG.find(v => v.id === item.product.id || v.countryCode === item.product.sku?.split('-')?.[1]);
+
+                      return (
+                        <div
+                          key={item.id}
+                          className="bg-slate-50 hover:bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 hover:border-emerald-300 transition-all shadow-xs space-y-3"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="flex items-start space-x-3 min-w-0">
+                              <div className="w-10 h-10 rounded-xl bg-emerald-100/70 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+                                <Globe className="w-5 h-5" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-900 border border-emerald-200">
+                                    {item.product.destinationName || item.product.country || 'Destination Visa'}
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-white text-slate-700 border border-slate-200 font-mono">
+                                    SKU: {item.product.sku || 'VSA-EXP'}
+                                  </span>
+                                  {item.product.duration && (
+                                    <span className="text-[11px] font-medium text-slate-500 flex items-center space-x-1">
+                                      <Clock className="w-3 h-3 text-slate-400" />
+                                      <span>{item.product.duration}</span>
+                                    </span>
+                                  )}
+                                </div>
+
+                                <h4 className="text-sm sm:text-base font-bold text-slate-900 mt-1">
+                                  {item.product.name}
+                                </h4>
+                                <p className="text-xs text-slate-500 line-clamp-2 mt-0.5">
+                                  {item.product.shortDescription || item.product.longDescription}
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Price & Actions */}
+                            <div className="flex items-center space-x-2 shrink-0">
+                              <div className="text-right mr-2">
+                                <span className="text-[10px] text-slate-400 block font-medium">Selling Price</span>
+                                <span className="text-sm sm:text-base font-black text-slate-900 font-mono">
+                                  {formatCurrency(item.calculation?.finalTotalSellingPrice || 0, currency)}
+                                </span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenProductDetails(item.product)}
+                                className="p-2 rounded-xl bg-white hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200 transition-colors cursor-pointer"
+                                title="View Requirements & Checklist"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditItem(item)}
+                                className="p-2 rounded-xl bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 transition-colors cursor-pointer"
+                                title="Edit Applicants or Notes"
+                              >
+                                <Sliders className="w-4 h-4" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => removeProductFromQuote(item.id)}
+                                className="p-2 rounded-xl bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 transition-colors cursor-pointer"
+                                title="Remove Visa from Quote"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Applicants & Specs Badges */}
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs pt-2 border-t border-slate-200/80">
+                            <div className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center space-x-2">
+                              <Users className="w-4 h-4 text-emerald-600 shrink-0" />
+                              <div>
+                                <span className="text-[10px] text-slate-400 uppercase font-bold block">Applicants</span>
+                                <span className="font-bold text-slate-900 font-mono">
+                                  {item.pax.adults} Adults{item.pax.children > 0 ? `, ${item.pax.children} Children` : ''}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center space-x-2">
+                              <FileCheck className="w-4 h-4 text-teal-600 shrink-0" />
+                              <div className="min-w-0">
+                                <span className="text-[10px] text-slate-400 uppercase font-bold block">Submission Scope</span>
+                                <span className="font-bold text-slate-900 truncate block">
+                                  {matchingVisaCatalog?.embassySubmissionType || 'Official Online eVisa'}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center space-x-2">
+                              <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
+                              <div className="min-w-0">
+                                <span className="text-[10px] text-slate-400 uppercase font-bold block">Wholesale Net</span>
+                                <span className="font-bold text-slate-700 font-mono">
+                                  {formatCurrency(item.calculation?.totalNetCost || 0, currency)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {item.notes && (
+                            <div className="bg-amber-50/80 text-amber-900 p-2.5 rounded-xl border border-amber-200 text-xs">
+                              <span className="font-bold">Applicant / Passport Note:</span> {item.notes}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* --------------------------------------------------------------------- */}
           {/* SECTION 4: DAY-WISE ITINERARY CANVAS (THE CORE WORKSPACE) */}
           {/* --------------------------------------------------------------------- */}
           <section className="space-y-4">
@@ -2656,7 +2875,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             </div>
 
             {/* Pricing Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className={`grid ${visaItems.length > 0 ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'} gap-4`}>
               <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
                 <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider block">Accommodations</span>
                 <span className="text-sm font-bold text-slate-900 font-mono mt-1 block">
@@ -2672,6 +2891,16 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                 </span>
                 <span className="text-[10px] text-slate-500">{experienceItems.length} activities</span>
               </div>
+
+              {visaItems.length > 0 && (
+                <div className="bg-emerald-50/60 p-3.5 rounded-2xl border border-emerald-200">
+                  <span className="text-[11px] text-emerald-800 font-bold uppercase tracking-wider block">Visa Services</span>
+                  <span className="text-sm font-bold text-emerald-950 font-mono mt-1 block">
+                    {formatCurrency(visaTotalSelling, currency)}
+                  </span>
+                  <span className="text-[10px] text-emerald-700">{visaItems.length} facilitation</span>
+                </div>
+              )}
 
               <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
                 <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider block">Wholesale Nett</span>
@@ -3384,6 +3613,182 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             <p className="text-[10px] text-slate-400">Available across Destination pages, B2B Agent Portal, and CMS.</p>
           </div>
         </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: VISA CATALOG PICKER MODAL */}
+      {/* ========================================================================= */}
+      {showVisaPickerModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-3xl w-full border border-slate-200 shadow-2xl overflow-hidden animate-scaleUp my-auto flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="p-4 sm:p-6 bg-slate-900 text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center">
+                  <Globe className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Select Visa & Travel Facilitation</h3>
+                  <p className="text-xs text-slate-400">Browse verified B2B eVisas and consular facilitation packages.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowVisaPickerModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Filter Bar */}
+            <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center gap-3 shrink-0">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={visaPickerSearch}
+                  onChange={(e) => setVisaPickerSearch(e.target.value)}
+                  placeholder="Search by country, visa type, or code (e.g. Japan, Schengen, eVisa)..."
+                  className="w-full pl-9 pr-3 py-2 rounded-xl bg-white border border-slate-200 text-xs text-slate-900 font-medium outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 sm:pb-0">
+                {['ALL', 'TOURIST', 'BUSINESS', 'TRANSIT', 'LONG_STAY'].map(cat => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setVisaPickerCategory(cat)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                      visaPickerCategory === cat
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* List of Visas */}
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-3 flex-1">
+              {VISA_CATALOG
+                .filter(visa => {
+                  const matchesSearch = !visaPickerSearch.trim() || 
+                    visa.country.toLowerCase().includes(visaPickerSearch.toLowerCase()) ||
+                    visa.visaType.toLowerCase().includes(visaPickerSearch.toLowerCase()) ||
+                    visa.category.toLowerCase().includes(visaPickerSearch.toLowerCase());
+                  const matchesCat = visaPickerCategory === 'ALL' || visa.category === visaPickerCategory;
+                  return matchesSearch && matchesCat;
+                })
+                .map(visa => {
+                  const isCurrentDest = visa.country.toLowerCase() === currentDestination.name.toLowerCase();
+                  const alreadyInQuote = isVisaInQuote(visa.id);
+
+                  return (
+                    <div
+                      key={visa.id}
+                      className={`p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                        isCurrentDest 
+                          ? 'bg-emerald-50/40 border-emerald-300 hover:border-emerald-500' 
+                          : 'bg-slate-50 hover:bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="space-y-1.5 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-black text-slate-900 flex items-center space-x-1.5">
+                            <span>{visa.country}</span>
+                            <span className="text-slate-400">•</span>
+                            <span className="text-emerald-700">{visa.visaType}</span>
+                          </span>
+                          {isCurrentDest && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600 text-white">
+                              Current Destination
+                            </span>
+                          )}
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-white text-slate-600 border border-slate-200">
+                            {visa.category}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                          <span className="flex items-center space-x-1">
+                            <Clock className="w-3.5 h-3.5 text-slate-400" />
+                            <span>{visa.processingTimeDays}</span>
+                          </span>
+                          <span>•</span>
+                          <span>{visa.entryType}</span>
+                          <span>•</span>
+                          <span>Validity: {visa.validity}</span>
+                          <span>•</span>
+                          <span className="text-teal-700 font-medium">{visa.embassySubmissionType}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200">
+                        <div className="text-left sm:text-right">
+                          <span className="text-[10px] text-slate-400 uppercase font-bold block">Selling Price</span>
+                          <span className="text-sm font-black text-slate-900 font-mono">
+                            {formatCurrency(convertCurrency(visa.suggestedSellingUSD, 'USD', currency), currency)}
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowVisaPickerModal(false);
+                            setSelectedVisaForQuoteModal(visa);
+                          }}
+                          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs ${
+                            alreadyInQuote
+                              ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-300'
+                              : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          }`}
+                        >
+                          {alreadyInQuote ? 'Configure Additional' : 'Configure & Add'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
+              <span className="text-[11px] text-slate-500 font-medium">
+                Showing {VISA_CATALOG.length} verified visa facilitation pathways.
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowVisaPickerModal(false)}
+                className="px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: ADD VISA TO QUOTE DETAILED CONFIGURATION MODAL */}
+      {/* ========================================================================= */}
+      {selectedVisaForQuoteModal && (
+        <AddVisaToQuoteModal
+          visa={selectedVisaForQuoteModal}
+          isOpen={Boolean(selectedVisaForQuoteModal)}
+          onClose={() => setSelectedVisaForQuoteModal(null)}
+          initialTravelDate={startDate}
+          initialApplicants={adultsCount + childrenCount}
+          onSuccess={(visa, details) => {
+            setSelectedVisaForQuoteModal(null);
+            // Open toast or update status
+            setAutoSaveStatus('SAVED');
+            setLastSavedTimestamp(new Date().toLocaleTimeString());
+          }}
+        />
       )}
     </div>
   );

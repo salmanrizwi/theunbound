@@ -684,7 +684,7 @@ CMS Link: ${window.location.origin}/#admin-quotes`;
     const dueAt = dueAtDate.toISOString();
 
     const bookingRef = booking.bookingReference || `BK-${booking.id.substring(0, 6).toUpperCase()}`;
-    const readableTypeName = taskType.replace(/_/g, ' ');
+    const readableTypeName = (taskType || 'OPERATIONAL').replace(/_/g, ' ');
     const title = `[SLA] Ground: ${readableTypeName} — ${bookingRef}`;
 
     const description = `Booking ID: ${bookingRef}
@@ -796,7 +796,7 @@ CMS Link: ${window.location.origin}/#admin-bookings`;
     const dest = params.destination || 'Japan & Europe';
     const assignee = rule?.defaultAssignee || { name: 'Operations Team', email: 'business@theunbound.in' };
 
-    let title = rule?.titleTemplate || `[SLA] ${params.taskType.replace(/_/g, ' ')} — {{bookingReference}}`;
+    let title = rule?.titleTemplate || `[SLA] ${(params.taskType || 'SLA_TASK').replace(/_/g, ' ')} — {{bookingReference}}`;
     title = title
       .replace(/{{bookingReference}}/g, ref)
       .replace(/{{quoteNumber}}/g, ref)

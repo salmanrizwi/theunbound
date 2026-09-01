@@ -140,9 +140,31 @@ const MainAppContent: React.FC = () => {
     );
   }
 
+  // Render dedicated Admin CMS if authenticated as Admin / Team Member / DMC Staff and not previewing Buyer mode
+  const isAdminUser = isAuthenticated && (role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF');
+  if (isAdminUser && !isAgentPreviewingBuyerMode) {
+    return (
+      <AdminCMSHub
+        destinations={destinations}
+        products={products}
+        onViewProduct={(p) => {
+          setInspectingProductHidePrice(false);
+          setInspectingProduct(p);
+        }}
+        onLoadQuote={(q) => {
+          loadSavedQuote(q);
+          setIsAgentPreviewingBuyerMode(true);
+          setActiveTab('B2B_BUILDER');
+        }}
+        onCustomizePackage={handleCustomizePackage}
+        onSwitchToBuyerMode={() => setIsAgentPreviewingBuyerMode(true)}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex flex-col font-sans selection:bg-[#00C6A6] selection:text-white">
-      {/* Agent Preview Mode Banner */}
+      {/* Agent & Admin Preview Mode Banners */}
       {isAuthenticated && role === 'B2B_AGENT' && isAgentPreviewingBuyerMode && (
         <div className="bg-slate-950 text-white px-4 py-2 text-xs flex items-center justify-between border-b border-[#00C6A6]/40 sticky top-0 z-50 shadow-md">
           <div className="flex items-center space-x-2">
@@ -159,6 +181,25 @@ const MainAppContent: React.FC = () => {
         </div>
       )}
 
+      {isAdminUser && isAgentPreviewingBuyerMode && (
+        <div className="bg-slate-950 text-white px-4 py-2 text-xs flex items-center justify-between border-b border-[#00C6A6]/40 sticky top-0 z-50 shadow-md">
+          <div className="flex items-center space-x-2">
+            <span className="w-2 h-2 rounded-full bg-[#00E5C0] animate-ping" />
+            <span className="font-bold text-[#00E5C0]">Admin Preview Mode:</span>
+            <span className="text-slate-300">You are browsing the public Buyer Experience. Live changes made in CMS reflect here.</span>
+          </div>
+          <button
+            onClick={() => {
+              setIsAgentPreviewingBuyerMode(false);
+              setActiveTab('ADMIN');
+            }}
+            className="px-3 py-1 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 rounded-lg text-xs font-black transition-colors cursor-pointer"
+          >
+            Return to Operations CMS →
+          </button>
+        </div>
+      )}
+
       {/* Dynamic Promotions Banner & Modals */}
       <PublicPromotionsBanner onNavigateDestination={handleSelectDestination} />
 
@@ -168,7 +209,12 @@ const MainAppContent: React.FC = () => {
         selectedDestinationSlug={selectedDestinationSlug}
         onSelectDestination={handleSelectDestination}
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        onSelectTab={(tab) => {
+          if (tab === 'ADMIN') {
+            setIsAgentPreviewingBuyerMode(false);
+          }
+          setActiveTab(tab);
+        }}
         onSelectCustomPage={handleSelectCustomPage}
         activeCustomPageSlug={activeCustomPageSlug}
         onOpenSpecs={() => setIsSpecsModalOpen(true)}
@@ -243,21 +289,21 @@ const MainAppContent: React.FC = () => {
         )}
 
         {activeTab === 'ADMIN' && (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <AdminCMSHub
-              destinations={destinations}
-              products={products}
-              onViewProduct={(p) => {
-                setInspectingProductHidePrice(false);
-                setInspectingProduct(p);
-              }}
-              onLoadQuote={(q) => {
-                loadSavedQuote(q);
-                setActiveTab('B2B_BUILDER');
-              }}
-              onCustomizePackage={handleCustomizePackage}
-            />
-          </div>
+          <AdminCMSHub
+            destinations={destinations}
+            products={products}
+            onViewProduct={(p) => {
+              setInspectingProductHidePrice(false);
+              setInspectingProduct(p);
+            }}
+            onLoadQuote={(q) => {
+              loadSavedQuote(q);
+              setIsAgentPreviewingBuyerMode(true);
+              setActiveTab('B2B_BUILDER');
+            }}
+            onCustomizePackage={handleCustomizePackage}
+            onSwitchToBuyerMode={() => setIsAgentPreviewingBuyerMode(true)}
+          />
         )}
 
         {activeTab === 'VISAS' && <VisaPage />}

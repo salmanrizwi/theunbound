@@ -64,6 +64,10 @@ import {
   UserTelemetrySummary,
   BookingPassenger,
   BookingPaymentProof,
+  BookingItem,
+  BookingTimelineEvent,
+  BookingInternalNote,
+  BookingCustomerUpdate,
   B2BPackage,
   B2BCustomer,
   B2BTask,
@@ -87,6 +91,7 @@ import { INITIAL_FAQS } from '../data/initialFAQs';
 import { INITIAL_GALLERY } from '../data/initialGallery';
 import { INITIAL_HOMEPAGE_CONFIG } from '../data/initialHomepage';
 import { INITIAL_LEADS } from '../data/initialLeads';
+import { INITIAL_BOOKINGS } from '../data/initialBookings';
 import { INITIAL_CAMPAIGNS } from '../data/initialCampaigns';
 import { INITIAL_ROSTER_RESOURCES } from '../data/initialRoster';
 import { INITIAL_VISAS } from '../data/initialVisas';
@@ -516,10 +521,12 @@ export class AppDatabase {
     }
   }
 
-  private setItem<T>(key: string, value: T, syncToFirestore: boolean = true): void {
+  private setItem<T>(key: string, value: T, shouldNotify: boolean = true): void {
     try {
       localStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(value));
-      this.notify();
+      if (shouldNotify) {
+        this.notify();
+      }
     } catch (e) {
       console.error(`Error saving ${key} to storage:`, e);
     }
@@ -783,6 +790,96 @@ export class AppDatabase {
         }
       }, (err) => console.debug('Firestore campaign_events sync note:', err));
 
+      // 21. Sync B2B Packages & Circuits
+      onSnapshot(collection(firestoreDb, 'b2b_packages'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: B2BPackage[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as B2BPackage));
+          this.setItem('b2b_packages', list, false);
+        } else {
+          const initial = this.getPackages();
+          initial.forEach(pkg => {
+            this.syncFirestoreDoc('b2b_packages', pkg.id, pkg);
+          });
+        }
+      }, (err) => console.debug('Firestore b2b_packages sync note:', err));
+
+      // 22. Sync Visas & Requirements
+      onSnapshot(collection(firestoreDb, 'visas'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: VisaProduct[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as VisaProduct));
+          this.setItem('visas', list, false);
+        } else {
+          const initial = this.getVisas();
+          initial.forEach(v => {
+            this.syncFirestoreDoc('visas', v.id, v);
+          });
+        }
+      }, (err) => console.debug('Firestore visas sync note:', err));
+
+      // 23. Sync B2B Customers CRM
+      onSnapshot(collection(firestoreDb, 'b2b_customers'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: B2BCustomer[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as B2BCustomer));
+          this.setItem('b2b_customers', list, false);
+        } else {
+          const initial = this.getB2BCustomers();
+          initial.forEach(c => {
+            this.syncFirestoreDoc('b2b_customers', c.id, c);
+          });
+        }
+      }, (err) => console.debug('Firestore b2b_customers sync note:', err));
+
+      // 24. Sync B2B Tasks & Follow-ups
+      onSnapshot(collection(firestoreDb, 'b2b_tasks'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: B2BTask[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as B2BTask));
+          this.setItem('b2b_tasks', list, false);
+        } else {
+          const initial = this.getB2BTasks();
+          initial.forEach(t => {
+            this.syncFirestoreDoc('b2b_tasks', t.id, t);
+          });
+        }
+      }, (err) => console.debug('Firestore b2b_tasks sync note:', err));
+
+      // 25. Sync Calendar Tasks
+      onSnapshot(collection(firestoreDb, 'calendar_tasks'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: CalendarTask[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as CalendarTask));
+          this.setItem('calendar_tasks', list, false);
+        }
+      }, (err) => console.debug('Firestore calendar_tasks sync note:', err));
+
+      // 26. Sync SLA Automation Rules
+      onSnapshot(collection(firestoreDb, 'sla_automation_rules'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: SLAAutomationRule[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as SLAAutomationRule));
+          this.setItem('sla_automation_rules', list, false);
+        } else {
+          const initial = this.getSLAAutomationRules();
+          initial.forEach(r => {
+            this.syncFirestoreDoc('sla_automation_rules', r.id, r);
+          });
+        }
+      }, (err) => console.debug('Firestore sla_automation_rules sync note:', err));
+
+      // 27. Sync Footer Navigation Configuration
+      onSnapshot(collection(firestoreDb, 'footer_config'), (snapshot) => {
+        if (!snapshot.empty) {
+          snapshot.forEach(docSnap => {
+            if (docSnap.id === 'main_footer') {
+              this.setItem('footer_config', docSnap.data() as FooterConfig, false);
+            }
+          });
+        }
+      }, (err) => console.debug('Firestore footer_config sync note:', err));
+
     } catch (error) {
       console.warn('Firestore real-time listeners initialized with local fallback:', error);
     }
@@ -878,6 +975,9 @@ export class AppDatabase {
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'leads')) {
       this.setItem('leads', INITIAL_LEADS);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'bookings')) {
+      this.setItem('bookings', INITIAL_BOOKINGS);
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'roster_resources')) {
       this.setItem('roster_resources', INITIAL_ROSTER_RESOURCES);
@@ -1471,6 +1571,27 @@ export class AppDatabase {
         break;
       }
 
+      case 'Visa':
+      case 'VisaRequirement': {
+        const visaList = this.getVisas();
+        const targetVisa = visaList.find(v => v.id === recordId);
+        const vCountry = (targetVisa?.country || '').toLowerCase();
+
+        // Check Quotes
+        const linkedQuotes = quotes.filter(q => 
+          q.items && q.items.some(it => it.product?.id === recordId || (vCountry && it.product?.country?.toLowerCase() === vCountry && (it.product?.productType === 'Visa Service' || it.product?.subcategory === 'Visa Facilitation')))
+        );
+        if (linkedQuotes.length > 0) {
+          groups.push({
+            entityType: 'Quote',
+            count: linkedQuotes.length,
+            label: `${linkedQuotes.length} Linked Proposal${linkedQuotes.length > 1 ? 's' : ''}`,
+            items: linkedQuotes.slice(0, 10).map(q => ({ id: q.id, name: `Quote #${q.quoteNumber || q.id}`, type: 'Quote', details: `Client: ${q.clientName || 'Agent'}` }))
+          });
+        }
+        break;
+      }
+
       case 'CustomPage': {
         const customPages = this.getCustomPages();
         const page = customPages.find(p => p.id === recordId || p.slug === recordId);
@@ -1706,6 +1827,7 @@ export class AppDatabase {
         break;
       }
 
+      case 'Visa':
       case 'VisaRequirement': {
         const visas = this.getVisas();
         const target = visas.find(v => v.id === recordId);
@@ -1905,6 +2027,7 @@ export class AppDatabase {
         break;
       }
 
+      case 'Visa':
       case 'VisaRequirement': {
         const visas = this.getVisas();
         const v = visas.find(item => item.id === recordId);
@@ -2914,7 +3037,7 @@ export class AppDatabase {
 
       this.captureLeadFromSource({
         contactName: updatedQuote.clientName,
-        email: updatedQuote.clientEmail || `${updatedQuote.clientName.toLowerCase().replace(/[^a-z0-9]/g, '')}@client.local`,
+        email: updatedQuote.clientEmail || `${(updatedQuote.clientName || 'client').toLowerCase().replace(/[^a-z0-9]/g, '')}@client.local`,
         phone: updatedQuote.clientPhone,
         agencyName: updatedQuote.clientCompany,
         companyName: updatedQuote.clientCompany,
@@ -3340,7 +3463,7 @@ export class AppDatabase {
     const timestamp = new Date().toISOString();
     const newId = `pkg-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
     const newTitle = `${source.title} (Copy)`;
-    const newSlug = `${source.slug || source.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-copy-${Date.now().toString().slice(-4)}`;
+    const newSlug = `${source.slug || (source.title || 'package').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-copy-${Date.now().toString().slice(-4)}`;
 
     const duplicated: B2BPackage = {
       ...source,
@@ -3458,30 +3581,159 @@ export class AppDatabase {
   // BOOKINGS & RESERVATIONS SYSTEM
   // ==========================================
   public getAllBookings(): Booking[] {
-    return this.getItem<Booking[]>('bookings', []);
+    const list = this.getItem<Booking[]>('bookings', INITIAL_BOOKINGS);
+    if (!list || list.length === 0) {
+      this.setItem('bookings', INITIAL_BOOKINGS);
+      return INITIAL_BOOKINGS;
+    }
+    return list;
   }
 
   /**
    * Enforces role authorization:
-   * - ADMIN / TEAM_MEMBER: can view all bookings across the company
-   * - BUYER / B2B_AGENT: can view bookings associated with their userId or email
+   * - ADMIN / TEAM_MEMBER / DMC_STAFF: can view all bookings across the company
+   * - BUYER / B2B_AGENT: can only view bookings associated with their userId or email/agency
    */
   public getBookingsForUser(user: User | null): Booking[] {
     const all = this.getAllBookings();
-    if (!user) return all; // In demo/guest mode, returns active session bookings
+    if (!user) return all;
     if (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
       return all;
     }
     return all.filter(b => 
       b.userId === user.id || 
-      (user.email && b.customer.email.toLowerCase() === user.email.toLowerCase()) ||
-      (user.name && b.customer.bookerName?.toLowerCase() === user.name.toLowerCase())
+      (b.agentId && b.agentId === user.id) ||
+      (user.email && b.customer?.email && b.customer.email.toLowerCase() === user.email.toLowerCase()) ||
+      (user.name && b.customer?.bookerName && b.customer.bookerName.toLowerCase().includes(user.name.toLowerCase()))
     );
   }
 
   public getBookingById(bookingId: string): Booking | null {
     const all = this.getAllBookings();
     return all.find(b => b.id === bookingId || b.bookingReference === bookingId) || null;
+  }
+
+  public calculateBookingDocumentStatus(booking: Booking): { 
+    status: 'DOCUMENTS_COMPLETE' | 'DOCUMENTS_PENDING'; 
+    missingList: string[];
+    isComplete: boolean;
+  } {
+    const missingList: string[] = [];
+    const maxPax = (booking.customer?.totalAdults || 0) + (booking.customer?.totalChildren || 0) || 
+      booking.items?.reduce((max, it) => Math.max(max, it.totalPax), 0) || 1;
+    const passengers = booking.passengers || [];
+
+    if (passengers.length < maxPax) {
+      for (let i = passengers.length + 1; i <= maxPax; i++) {
+        missingList.push(`Passenger ${i} — Profile Details Missing`);
+        missingList.push(`Passenger ${i} — Passport Front Missing`);
+        missingList.push(`Passenger ${i} — Passport Back Missing`);
+      }
+    }
+
+    passengers.forEach((p, idx) => {
+      const pLabel = `Passenger ${p.passengerNumber || idx + 1} (${p.firstName || 'Guest'} ${p.lastName || ''})`.trim();
+      if (!p.passportFrontUrl) {
+        missingList.push(`${pLabel} — Passport Front Missing`);
+      }
+      if (!p.passportBackUrl) {
+        missingList.push(`${pLabel} — Passport Back Missing`);
+      }
+      if (p.isLeadPax && !p.panCardUrl && (booking.customer?.nationality === 'Indian' || !booking.customer?.nationality)) {
+        missingList.push(`${pLabel} (Lead) — PAN Card Missing`);
+      }
+    });
+
+    const isComplete = missingList.length === 0;
+    return {
+      status: isComplete ? 'DOCUMENTS_COMPLETE' : 'DOCUMENTS_PENDING',
+      missingList,
+      isComplete
+    };
+  }
+
+  public calculateBookingPaymentSummary(booking: Booking): {
+    totalAmount: number;
+    paidAmount: number;
+    verifiedPaidAmount: number;
+    pendingAmount: number;
+    paymentStatus: Booking['paymentStatus'];
+    tranchesCount: number;
+  } {
+    const totalAmount = booking.totalAmount || 0;
+    const proofs = booking.paymentProofs || [];
+    
+    const verifiedPaidAmount = proofs
+      .filter(p => p.verificationStatus === 'VERIFIED')
+      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+    const totalUploadedAmount = proofs
+      .filter(p => p.verificationStatus !== 'REJECTED')
+      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+    const pendingAmount = Math.max(0, totalAmount - verifiedPaidAmount);
+
+    let paymentStatus: Booking['paymentStatus'] = 'PENDING_PAYMENT';
+    if (verifiedPaidAmount >= totalAmount && totalAmount > 0) {
+      paymentStatus = 'PAID';
+    } else if (verifiedPaidAmount > 0 || totalUploadedAmount > 0) {
+      paymentStatus = 'PARTIALLY_PAID';
+    } else {
+      paymentStatus = 'PENDING_PAYMENT';
+    }
+
+    return {
+      totalAmount,
+      paidAmount: totalUploadedAmount,
+      verifiedPaidAmount,
+      pendingAmount,
+      paymentStatus,
+      tranchesCount: proofs.length
+    };
+  }
+
+  public checkBookingConfirmationReadiness(booking: Booking): {
+    canConfirm: boolean;
+    blockingReasons: string[];
+    missingDocs: string[];
+    unconfirmedSuppliersCount: number;
+    paymentVerified: boolean;
+  } {
+    const blockingReasons: string[] = [];
+    const maxPax = (booking.customer?.totalAdults || 0) + (booking.customer?.totalChildren || 0) || 
+      booking.items?.reduce((max, it) => Math.max(max, it.totalPax), 0) || 1;
+    const passengers = booking.passengers || [];
+
+    if (passengers.length < maxPax) {
+      blockingReasons.push(`Passenger manifest incomplete: Expected ${maxPax} passengers, but only ${passengers.length} profiles created.`);
+    }
+
+    const docStatus = this.calculateBookingDocumentStatus(booking);
+    if (!docStatus.isComplete) {
+      docStatus.missingList.forEach(m => blockingReasons.push(m));
+    }
+
+    const paymentSummary = this.calculateBookingPaymentSummary(booking);
+    const paymentVerified = paymentSummary.verifiedPaidAmount > 0;
+    if (!paymentVerified) {
+      blockingReasons.push('Payment verification pending: No verified payment tranche or advance deposit approved.');
+    }
+
+    let unconfirmedSuppliersCount = 0;
+    (booking.items || []).forEach(item => {
+      if (item.supplierStatus !== 'CONFIRMED_BY_SUPPLIER') {
+        unconfirmedSuppliersCount++;
+        blockingReasons.push(`Supplier confirmation pending for "${item.productName}" (Status: ${item.supplierStatus || 'PENDING_DISPATCH'})`);
+      }
+    });
+
+    return {
+      canConfirm: blockingReasons.length === 0,
+      blockingReasons,
+      missingDocs: docStatus.missingList,
+      unconfirmedSuppliersCount,
+      paymentVerified
+    };
   }
 
   public createBooking(
@@ -3506,6 +3758,18 @@ export class AppDatabase {
     const id = `booking-${Date.now()}-${randomRef}`;
     const timestamp = new Date().toISOString();
 
+    const initialTimeline: BookingTimelineEvent[] = [
+      {
+        id: `tl-${Date.now()}-01`,
+        title: 'Booking Submitted',
+        description: `Booking ${bookingReference} initiated for ${data.customer.leadTravelerName}.`,
+        timestamp,
+        type: 'CREATION',
+        actorName: user?.name || data.customer.leadTravelerName,
+        actorRole: user?.role || 'BUYER'
+      }
+    ];
+
     const newBookingDraft: Booking = {
       id,
       bookingReference,
@@ -3522,20 +3786,44 @@ export class AppDatabase {
       totalNetCost: data.totalNetCost,
       travelStartDate: data.travelStartDate,
       travelEndDate: data.travelEndDate,
-      status: 'PENDING_CONFIRMATION',
+      status: 'NEW',
+      customerFacingStatus: 'Booking Received',
+      paymentStatus: 'PENDING_PAYMENT',
+      documentStatus: 'DOCUMENTS_PENDING',
+      missingDocuments: [],
+      supplierAllocationStatus: 'UNALLOCATED',
+      passengers: [],
+      paymentProofs: [],
+      internalNotesList: [],
+      customerUpdates: [],
+      timeline: initialTimeline,
+      statusHistory: [
+        {
+          id: `sh-${Date.now()}-01`,
+          previousStatus: 'NONE',
+          newStatus: 'NEW',
+          changedBy: user?.id || 'system',
+          changedByName: user?.name || 'Customer Booking Form',
+          timestamp,
+          reason: 'Initial booking request submitted'
+        }
+      ],
       createdAt: timestamp,
       updatedAt: timestamp,
       confirmationNotice: 'Your booking has been submitted and will be updated in 24-48 Hrs.',
       notificationEmailsSent: []
     };
 
+    const docStatus = this.calculateBookingDocumentStatus(newBookingDraft);
+    newBookingDraft.documentStatus = docStatus.status;
+    newBookingDraft.missingDocuments = docStatus.missingList;
+
     // Generate automated confirmation & ops notification emails
     const emailService = EmailNotificationService.getInstance();
     const emails = emailService.generateBookingEmails(newBookingDraft);
     newBookingDraft.notificationEmailsSent = emails;
 
-    // Asynchronously dispatch real Gmail API calls if authorized
-    emails.forEach(async (em, idx) => {
+    emails.forEach(async (em) => {
       try {
         const result = await emailService.sendViaGmailApi(em.recipient, em.subject, em.fullHtml);
         if (result.success && result.messageId) {
@@ -3552,30 +3840,6 @@ export class AppDatabase {
     existing.unshift(newBookingDraft);
     this.setItem('bookings', existing);
     this.syncFirestoreDoc('bookings', newBookingDraft.id, newBookingDraft);
-
-    // Track Campaign Booking Attribution if active in session
-    try {
-      if (typeof window !== 'undefined') {
-        const rawAttr = sessionStorage.getItem('theunbound_active_campaign_attribution');
-        if (rawAttr) {
-          const parsedAttr = JSON.parse(rawAttr);
-          if (parsedAttr.campaignId) {
-            this.recordCampaignEvent({
-              campaignId: parsedAttr.campaignId,
-              eventType: 'BOOKING_CREATED',
-              placement: parsedAttr.placement || 'BANNER',
-              bookingId: newBookingDraft.id,
-              bookingValue: Number(data.totalAmount) || 0,
-              currency: data.currency || 'USD',
-              sessionId: sessionStorage.getItem('theunbound_campaign_sess_id') || `sess_${Date.now().toString(36)}`,
-              userId: user?.id
-            });
-          }
-        }
-      }
-    } catch (e) {
-      console.debug('Attribution note:', e);
-    }
 
     // If booking was created from a quote, update quote status
     if (data.quoteId) {
@@ -3597,92 +3861,99 @@ export class AppDatabase {
       `Submitted new booking ${bookingReference} for ${data.customer.leadTravelerName} (${data.items?.length || 0} services, ${data.currency} ${data.totalAmount}). Confirmation email dispatched.`
     );
 
-    // Auto-capture / link CRM Lead for this booking
-    try {
-      const bookingProducts: LeadProductItem[] = (data.items || []).map((item, idx) => ({
-        id: `lp-bk-${id}-${idx}`,
-        productId: item.productId || `prod-${idx}`,
-        productName: item.productName || 'Booked Travel Service',
-        category: (item.category as any) || 'SERVICE',
-        destinationName: item.destinationName || data.destinationName || 'Japan',
-        city: item.city,
-        travelDate: item.travelDate || data.travelStartDate,
-        quantity: 1,
-        adults: item.adults || data.customer?.totalAdults || 2,
-        children: item.children || data.customer?.totalChildren || 0,
-        infants: item.infants || 0,
-        unitNetCost: item.unitNetPrice || 0,
-        unitSellingPrice: item.unitSellingPrice || 0,
-        totalNetCost: (item.unitNetPrice || 0) * (item.totalPax || 1),
-        totalSellingPrice: item.totalPrice || 0,
-        marginPercent: 15,
-        currency: item.currency || data.currency || 'USD',
-        status: 'CONFIRMED'
-      }));
-
-      this.captureLeadFromSource({
-        contactName: data.customer?.leadTravelerName || 'Guest Traveler',
-        email: data.customer?.email || 'booking@client.local',
-        phone: data.customer?.phone,
-        country: data.customer?.nationality || 'Global',
-        agencyName: data.customer?.agencyName,
-        companyName: data.customer?.agencyName,
-        userId: user?.id,
-        userType: user?.role === 'B2B_AGENT' ? 'B2B_AGENT' : 'BUYER',
-        b2bAgentId: user?.role === 'B2B_AGENT' ? user.id : undefined,
-        source: 'BOOKING_SUBMISSION',
-        destinationName: data.destinationName || 'Japan',
-        travelDates: data.travelStartDate && data.travelEndDate ? `${data.travelStartDate} to ${data.travelEndDate}` : 'Upcoming 2026',
-        travelStartDate: data.travelStartDate,
-        travelEndDate: data.travelEndDate,
-        paxAdults: data.customer?.totalAdults || 2,
-        paxChildren: data.customer?.totalChildren || 0,
-        travelRequirements: data.customer?.specialRequests || `Direct booking submitted for ${data.destinationName || 'Selected Destination'}`,
-        specialRequests: data.customer?.specialRequests,
-        estimatedBudget: data.totalAmount,
-        currency: data.currency,
-        quoteId: data.quoteId,
-        quoteNumber: data.quoteNumber,
-        bookingId: newBookingDraft.id,
-        bookingReference: newBookingDraft.bookingReference,
-        bookingValue: data.totalAmount,
-        requestedProducts: bookingProducts
-      }, user);
-    } catch (err) {
-      console.warn('CRM Lead auto-capture on booking non-critical error:', err);
-    }
-
     return newBookingDraft;
   }
 
-  public updateBookingStatus(bookingId: string, status: BookingStatus, user: User | null): Booking | null {
+  public updateBookingStatus(bookingId: string, status: BookingStatus, user: User | null, reason?: string): Booking | null {
     const all = this.getAllBookings();
     const index = all.findIndex(b => b.id === bookingId || b.bookingReference === bookingId);
     if (index === -1) return null;
 
-    all[index].status = status;
-    all[index].updatedAt = new Date().toISOString();
+    const b = all[index];
+    const previousStatus = b.status;
+    const timestamp = new Date().toISOString();
+
+    b.status = status;
+    b.updatedAt = timestamp;
+
+    // Map customer facing status
+    switch (status) {
+      case 'NEW':
+      case 'PENDING_CONFIRMATION':
+        b.customerFacingStatus = 'Booking Received';
+        break;
+      case 'TO_BE_PROCESSED':
+      case 'PROCESSING':
+      case 'IN_PROGRESS':
+        b.customerFacingStatus = 'Processing';
+        break;
+      case 'WAITING_FOR_UPDATE':
+        b.customerFacingStatus = 'Awaiting Confirmation';
+        break;
+      case 'CONFIRMED':
+        b.customerFacingStatus = 'Confirmed';
+        break;
+      case 'COMPLETED':
+        b.customerFacingStatus = 'Completed';
+        break;
+      case 'CANCELLED':
+        b.customerFacingStatus = 'Cancelled';
+        break;
+    }
+
+    if (!b.statusHistory) b.statusHistory = [];
+    b.statusHistory.unshift({
+      id: `sh-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      previousStatus,
+      newStatus: status,
+      changedBy: user?.id || 'system',
+      changedByName: user?.name || 'Operations Lead',
+      timestamp,
+      reason: reason || `Status transitioned from ${previousStatus} to ${status}`
+    });
+
+    if (!b.timeline) b.timeline = [];
+    b.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      title: `Booking Status → ${status}`,
+      description: reason || `Booking status changed to ${status}.`,
+      timestamp,
+      type: 'STATUS_CHANGE',
+      actorName: user?.name || 'Operations Team',
+      actorRole: user?.role || 'TEAM_MEMBER'
+    });
+
     this.setItem('bookings', all);
-    this.syncFirestoreDoc('bookings', all[index].id, { status, updatedAt: all[index].updatedAt });
+    this.syncFirestoreDoc('bookings', b.id, b);
 
     this.logAudit(
       user,
       'BOOKING_UPDATED',
       'Booking',
-      all[index].id,
-      `Updated booking ${all[index].bookingReference} status to ${status}`
+      b.id,
+      `Updated booking ${b.bookingReference} status: ${previousStatus} → ${status}. Reason: ${reason || 'Operational update'}`
     );
 
-    return all[index];
+    return b;
   }
 
   public saveBooking(booking: Booking, user: User | null): void {
     const all = this.getAllBookings();
     const index = all.findIndex(b => b.id === booking.id || b.bookingReference === booking.bookingReference);
+    
+    // Auto-update document and payment summaries
+    const docStatus = this.calculateBookingDocumentStatus(booking);
+    booking.documentStatus = docStatus.status;
+    booking.missingDocuments = docStatus.missingList;
+    
+    const paySummary = this.calculateBookingPaymentSummary(booking);
+    booking.paymentStatus = paySummary.paymentStatus;
+
     const updatedBooking: Booking = {
       ...booking,
       updatedAt: new Date().toISOString()
     };
+
     if (index >= 0) {
       all[index] = updatedBooking;
       this.logAudit(
@@ -3690,7 +3961,7 @@ export class AppDatabase {
         'BOOKING_UPDATED',
         'Booking',
         booking.id,
-        `Updated booking ${booking.bookingReference} (Supplier status & details updated)`
+        `Updated booking ${booking.bookingReference} details and operations records`
       );
     } else {
       all.unshift(updatedBooking);
@@ -3714,6 +3985,338 @@ export class AppDatabase {
         console.error('Error in bookingSaveListener:', err);
       }
     });
+  }
+
+  // ----------------------------------------------------
+  // PASSENGER MANAGEMENT (STRICT CAPACITY ENFORCEMENT)
+  // ----------------------------------------------------
+  public addBookingPassenger(bookingId: string, passengerData: Omit<BookingPassenger, 'id' | 'passengerNumber'>, user: User | null): BookingPassenger {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b) throw new Error(`Booking ${bookingId} not found`);
+
+    const maxPax = (b.customer?.totalAdults || 0) + (b.customer?.totalChildren || 0) || 
+      b.items?.reduce((max, it) => Math.max(max, it.totalPax), 0) || 1;
+
+    const currentPassengers = b.passengers ? [...b.passengers] : [];
+    if (currentPassengers.length >= maxPax) {
+      throw new Error(`Maximum capacity reached: This booking allows a maximum of ${maxPax} passenger profiles.`);
+    }
+
+    const passengerNumber = currentPassengers.length + 1;
+    const isFirstPax = currentPassengers.length === 0;
+    const isLeadPax = passengerData.isLeadPax !== undefined ? passengerData.isLeadPax : isFirstPax;
+
+    const newPassenger: BookingPassenger = {
+      ...passengerData,
+      id: `pax-${b.id}-${Date.now()}-${passengerNumber}`,
+      passengerNumber,
+      isLeadPax,
+      fullName: `${passengerData.firstName || ''} ${passengerData.middleName || ''} ${passengerData.lastName || ''}`.replace(/\s+/g, ' ').trim()
+    };
+
+    // If this passenger is marked as lead, and we enforce single lead or multiple lead, preserve
+    if (!isLeadPax) {
+      // Regular passenger MUST NOT have PAN card
+      delete newPassenger.panCardUrl;
+      delete newPassenger.panCardName;
+      delete newPassenger.panCardUploadedAt;
+      delete newPassenger.panNumber;
+    }
+
+    currentPassengers.push(newPassenger);
+    b.passengers = currentPassengers;
+    b.updatedAt = new Date().toISOString();
+
+    if (!b.timeline) b.timeline = [];
+    b.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      title: `Passenger ${passengerNumber} Added`,
+      description: `Added passenger ${newPassenger.fullName} (${newPassenger.isLeadPax ? 'Lead Passenger' : 'Regular Passenger'}).`,
+      timestamp: new Date().toISOString(),
+      type: 'PASSENGER',
+      actorName: user?.name || 'Guest / Agent'
+    });
+
+    this.saveBooking(b, user);
+    return newPassenger;
+  }
+
+  public updateBookingPassenger(bookingId: string, passengerId: string, updates: Partial<BookingPassenger>, user: User | null): void {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.passengers) return;
+
+    const pIdx = b.passengers.findIndex(p => p.id === passengerId);
+    if (pIdx === -1) return;
+
+    const existing = b.passengers[pIdx];
+    const isLeadPax = updates.isLeadPax !== undefined ? updates.isLeadPax : existing.isLeadPax;
+
+    const updatedPax: BookingPassenger = {
+      ...existing,
+      ...updates,
+      isLeadPax,
+      fullName: `${updates.firstName || existing.firstName || ''} ${updates.middleName !== undefined ? updates.middleName : existing.middleName || ''} ${updates.lastName || existing.lastName || ''}`.replace(/\s+/g, ' ').trim()
+    };
+
+    // Enforce Rule 9: PAN Card ONLY for Lead Passenger!
+    if (!isLeadPax) {
+      delete updatedPax.panCardUrl;
+      delete updatedPax.panCardName;
+      delete updatedPax.panCardUploadedAt;
+      delete updatedPax.panNumber;
+    }
+
+    b.passengers[pIdx] = updatedPax;
+    b.updatedAt = new Date().toISOString();
+
+    if (!b.timeline) b.timeline = [];
+    b.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      title: `Passenger ${updatedPax.passengerNumber} Updated`,
+      description: `Updated details / documents for ${updatedPax.fullName}.`,
+      timestamp: new Date().toISOString(),
+      type: 'PASSENGER',
+      actorName: user?.name || 'Operations Lead'
+    });
+
+    this.saveBooking(b, user);
+  }
+
+  public deleteBookingPassenger(bookingId: string, passengerId: string, user: User | null): void {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.passengers) return;
+
+    const removedPax = b.passengers.find(p => p.id === passengerId);
+    b.passengers = b.passengers.filter(p => p.id !== passengerId);
+    
+    // Re-index passenger numbers
+    b.passengers.forEach((p, idx) => {
+      p.passengerNumber = idx + 1;
+    });
+
+    b.updatedAt = new Date().toISOString();
+
+    if (!b.timeline) b.timeline = [];
+    b.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      title: 'Passenger Removed',
+      description: `Removed passenger ${removedPax?.fullName || passengerId}.`,
+      timestamp: new Date().toISOString(),
+      type: 'PASSENGER',
+      actorName: user?.name || 'Operations Lead'
+    });
+
+    this.saveBooking(b, user);
+  }
+
+  // ----------------------------------------------------
+  // MULTI-TRANCHE PAYMENT MANAGEMENT & VERIFICATION
+  // ----------------------------------------------------
+  public addBookingPaymentTranche(bookingId: string, proofData: Omit<BookingPaymentProof, 'id' | 'uploadedAt' | 'verificationStatus'>, user: User | null): BookingPaymentProof {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b) throw new Error(`Booking ${bookingId} not found`);
+
+    const proofs = b.paymentProofs ? [...b.paymentProofs] : [];
+    const trancheIndex = proofs.length + 1;
+    const timestamp = new Date().toISOString();
+
+    const newProof: BookingPaymentProof = {
+      ...proofData,
+      id: `pay-${b.id}-${Date.now()}-${trancheIndex}`,
+      trancheLabel: proofData.trancheLabel || `Tranche ${trancheIndex}`,
+      uploadedBy: user?.id,
+      uploadedByName: user?.name || b.customer.leadTravelerName,
+      uploadedAt: timestamp,
+      verificationStatus: 'PENDING_VERIFICATION'
+    };
+
+    proofs.push(newProof);
+    b.paymentProofs = proofs;
+    b.updatedAt = timestamp;
+
+    if (!b.timeline) b.timeline = [];
+    b.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      title: `Payment Proof Uploaded (${newProof.trancheLabel})`,
+      description: `Uploaded payment proof for ${newProof.currency} ${newProof.amount} (Ref: ${newProof.transactionRef}). Pending verification.`,
+      timestamp,
+      type: 'PAYMENT',
+      actorName: user?.name || 'Guest / Agent'
+    });
+
+    this.saveBooking(b, user);
+    return newProof;
+  }
+
+  public verifyBookingPayment(
+    bookingId: string, 
+    paymentId: string, 
+    status: 'VERIFIED' | 'REJECTED' | 'REPLACEMENT_REQUIRED', 
+    notes: string, 
+    user: User | null
+  ): void {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.paymentProofs) return;
+
+    const pIdx = b.paymentProofs.findIndex(p => p.id === paymentId);
+    if (pIdx === -1) return;
+
+    const timestamp = new Date().toISOString();
+    b.paymentProofs[pIdx].verificationStatus = status;
+    b.paymentProofs[pIdx].verifiedBy = user?.id;
+    b.paymentProofs[pIdx].verifiedByName = user?.name || 'Finance Lead';
+    b.paymentProofs[pIdx].verifiedAt = timestamp;
+    b.paymentProofs[pIdx].verificationNotes = notes;
+
+    b.updatedAt = timestamp;
+
+    if (!b.timeline) b.timeline = [];
+    b.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      title: `Payment ${(status || 'RECORD').replace(/_/g, ' ')} (${b.paymentProofs[pIdx].trancheLabel})`,
+      description: `${b.paymentProofs[pIdx].currency} ${b.paymentProofs[pIdx].amount} verification marked as ${status}. ${notes ? 'Notes: ' + notes : ''}`,
+      timestamp,
+      type: 'PAYMENT',
+      actorName: user?.name || 'Finance / Operations Lead'
+    });
+
+    this.saveBooking(b, user);
+  }
+
+  // ----------------------------------------------------
+  // SUPPLIER & SERVICE-LEVEL OPERATIONS
+  // ----------------------------------------------------
+  public updateBookingSupplierService(
+    bookingId: string,
+    serviceItemId: string,
+    updates: {
+      supplierId?: string;
+      supplierName?: string;
+      supplierType?: BookingItem['supplierType'];
+      supplierContact?: string;
+      supplierPhone?: string;
+      supplierEmail?: string;
+      supplierStatus?: BookingItem['supplierStatus'];
+      supplierConfirmationRef?: string;
+      paymentCutoffDate?: string;
+      serviceDate?: string;
+      serviceTime?: string;
+      serviceTimezone?: string;
+      supplierNotes?: string;
+      internalOpsNotes?: string;
+    },
+    user: User | null
+  ): void {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.items) return;
+
+    const itemIdx = b.items.findIndex(it => it.id === serviceItemId);
+    if (itemIdx === -1) return;
+
+    const currentItem = b.items[itemIdx];
+    const updatedItem: BookingItem = {
+      ...currentItem,
+      ...updates
+    };
+
+    b.items[itemIdx] = updatedItem;
+    b.updatedAt = new Date().toISOString();
+
+    // Check overall supplier allocation status
+    const allItems = b.items;
+    const confirmedCount = allItems.filter(it => it.supplierStatus === 'CONFIRMED_BY_SUPPLIER').length;
+    if (confirmedCount === allItems.length) {
+      b.supplierAllocationStatus = 'FULLY_CONFIRMED_BY_SUPPLIERS';
+    } else if (confirmedCount > 0) {
+      b.supplierAllocationStatus = 'PARTIALLY_CONFIRMED';
+    } else if (allItems.some(it => it.supplierStatus === 'SENT_TO_SUPPLIER' || it.supplierStatus === 'WAITING_FOR_SUPPLIER')) {
+      b.supplierAllocationStatus = 'DISPATCHED_TO_SUPPLIERS';
+    } else {
+      b.supplierAllocationStatus = 'UNALLOCATED';
+    }
+
+    if (!b.timeline) b.timeline = [];
+    b.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      title: `Supplier Updated: ${updatedItem.productName}`,
+      description: `Supplier: ${updatedItem.supplierName || 'Assigned'} | Status: ${updatedItem.supplierStatus || 'Updated'} | Cut-off: ${updatedItem.paymentCutoffDate || 'N/A'}.`,
+      timestamp: new Date().toISOString(),
+      type: 'SUPPLIER',
+      actorName: user?.name || 'Operations Lead'
+    });
+
+    this.saveBooking(b, user);
+  }
+
+  // ----------------------------------------------------
+  // INTERNAL NOTES & CUSTOMER-FACING COMMUNICATIONS
+  // ----------------------------------------------------
+  public addBookingInternalNote(bookingId: string, text: string, relatedServiceName: string | undefined, user: User | null): void {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b) return;
+
+    const timestamp = new Date().toISOString();
+    const newNote: BookingInternalNote = {
+      id: `inote-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      authorId: user?.id,
+      authorName: user?.name || 'Operations Staff',
+      authorRole: user?.role || 'TEAM_MEMBER',
+      text,
+      timestamp,
+      relatedServiceName
+    };
+
+    if (!b.internalNotesList) b.internalNotesList = [];
+    b.internalNotesList.unshift(newNote);
+    b.updatedAt = timestamp;
+
+    this.saveBooking(b, user);
+  }
+
+  public publishBookingCustomerUpdate(
+    bookingId: string, 
+    update: { title: string; message: string; relatedServiceId?: string }, 
+    user: User | null
+  ): void {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b) return;
+
+    const timestamp = new Date().toISOString();
+    const newUpdate: BookingCustomerUpdate = {
+      id: `cupd-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      authorId: user?.id,
+      authorName: user?.name || 'TheUnbound Operations Team',
+      title: update.title,
+      message: update.message,
+      timestamp,
+      isPublished: true,
+      relatedServiceId: update.relatedServiceId,
+      notificationSent: true
+    };
+
+    if (!b.customerUpdates) b.customerUpdates = [];
+    b.customerUpdates.unshift(newUpdate);
+    b.updatedAt = timestamp;
+
+    if (!b.timeline) b.timeline = [];
+    b.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      title: `Customer Update Published: "${update.title}"`,
+      description: update.message,
+      timestamp,
+      type: 'COMMUNICATION',
+      actorName: user?.name || 'Operations Team'
+    });
+
+    this.saveBooking(b, user);
   }
 
   // ==========================================
@@ -6017,7 +6620,7 @@ export class AppDatabase {
     if (events.length > 5000) {
       events.length = 5000;
     }
-    this.setItem('campaign_events', events);
+    this.setItem('campaign_events', events, false);
     this.syncFirestoreDoc('campaign_events', newEvent.id, newEvent);
 
     // Update the live aggregate counters on the promotion record
@@ -6032,7 +6635,7 @@ export class AppDatabase {
         promo.clicks = promo.clickCount;
       }
       promo.updatedAt = new Date().toISOString();
-      this.setItem('promotions', promos);
+      this.setItem('promotions', promos, false);
       this.syncFirestoreDoc('promotions', promo.id, promo);
     }
 

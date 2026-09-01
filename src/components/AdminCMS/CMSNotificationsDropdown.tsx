@@ -94,7 +94,7 @@ export const CMSNotificationsDropdown: React.FC<CMSNotificationsDropdownProps> =
 
     // 3. Payment proofs pending verification
     const bookingsWithProofs = db.getAllBookings().filter(b => 
-      b.paymentProofs?.some(p => p.verifiedStatus === 'PENDING_VERIFICATION')
+      b.paymentProofs?.some(p => p.verificationStatus === 'PENDING_VERIFICATION')
     );
     bookingsWithProofs.slice(0, 3).forEach(b => {
       items.push({

@@ -144,8 +144,14 @@ export const PromotionManager: React.FC<PromotionManagerProps> = ({ destinations
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('Are you sure you want to delete this promotional campaign?')) {
+    const target = promotions.find(p => p.id === id);
+    const title = target?.title || 'this promotional campaign';
+    if (confirm(`Are you sure you want to permanently delete the campaign "${title}"? This action cannot be undone.`)) {
       db.deletePromotion(id, user);
+      if (editingPromo?.id === id) {
+        setIsModalOpen(false);
+        setEditingPromo(null);
+      }
       refreshPromos();
     }
   };
@@ -552,20 +558,34 @@ export const PromotionManager: React.FC<PromotionManagerProps> = ({ destinations
               </div>
 
               {/* Submit Buttons */}
-              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-slate-600 hover:text-slate-800 font-semibold cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2.5 bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold rounded-xl shadow-md cursor-pointer transition-colors"
-                >
-                  {editingPromo ? 'Update Campaign' : 'Save & Publish Campaign'}
-                </button>
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                <div>
+                  {editingPromo && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(editingPromo.id)}
+                      className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer border border-rose-200"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Campaign</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsModalOpen(false)}
+                    className="px-4 py-2 text-slate-600 hover:text-slate-800 font-semibold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-6 py-2.5 bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold rounded-xl shadow-md cursor-pointer transition-colors"
+                  >
+                    {editingPromo ? 'Update Campaign' : 'Save & Publish Campaign'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>

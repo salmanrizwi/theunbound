@@ -142,7 +142,7 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
             <div>
               <div className="flex items-center space-x-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-teal-600 bg-teal-50 px-2 py-0.5 rounded-full">
-                  {hotel.propertyType.replace('_', ' ')}
+                  {hotel.propertyType ? hotel.propertyType.replace('_', ' ') : 'Hotel'}
                 </span>
                 <div className="flex items-center text-amber-400">
                   {Array.from({ length: hotel.starRating }).map((_, i) => (

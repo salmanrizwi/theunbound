@@ -55,11 +55,25 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
     }
   };
 
+  // Helper predicate for Visa quotation items
+  const isVisaQuoteItem = (it: QuoteItem): boolean => {
+    return it.product.productType === 'Visa Service' || 
+           it.product.subcategory === 'Visa Facilitation' || 
+           it.product.sku?.startsWith('VSA-') ||
+           (it.product.category === 'Travel Services' && it.product.name?.toLowerCase().includes('visa')) ||
+           Boolean(it.product.name?.toLowerCase().includes('visa') && it.product.name?.toLowerCase().includes('entry'));
+  };
+
+  // Extract all visa items
+  const visaItems = useMemo(() => {
+    return (quote.items || []).filter(isVisaQuoteItem);
+  }, [quote.items]);
+
   // ----------------------------------------------------
   // DAY-WISE CHRONOLOGICAL ITINERARY COMPUTATION
   // ----------------------------------------------------
   const itineraryDays = useMemo(() => {
-    const items = quote.items || [];
+    const items = (quote.items || []).filter(it => !isVisaQuoteItem(it));
     const hubs = quote.routeHubs || [];
     const sortedHubs = [...hubs].sort((a, b) => a.order - b.order);
 
@@ -400,6 +414,97 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* ---------------------------------------------------- */}
+      {/* 3.5. VISA & TRAVEL DOCUMENTATION SERVICES */}
+      {/* ---------------------------------------------------- */}
+      {visaItems.length > 0 && (
+        <div className="space-y-4 pt-2">
+          <div className="flex items-center justify-between border-b-2 border-emerald-800 pb-3">
+            <div className="flex items-center space-x-2">
+              <Globe className="w-5 h-5 text-emerald-600" />
+              <h2 className="text-base font-black text-slate-950 uppercase tracking-wide">
+                Visa & Entry Documentation Facilitation
+              </h2>
+            </div>
+            <span className="text-xs text-emerald-800 font-mono font-bold">
+              {visaItems.length} {visaItems.length === 1 ? 'Visa Service' : 'Visa Services'} Included
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3">
+            {visaItems.map((item, idx) => (
+              <div
+                key={item.id || idx}
+                className="p-4 sm:p-5 rounded-2xl bg-emerald-50/50 border border-emerald-200/90 flex flex-col sm:flex-row sm:items-start justify-between gap-4"
+              >
+                <div className="flex items-start space-x-3.5 max-w-2xl">
+                  <div className="p-2.5 rounded-xl bg-emerald-100 text-emerald-800 shrink-0 mt-0.5 border border-emerald-200">
+                    <Globe className="w-5 h-5" />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-200 text-emerald-950 border border-emerald-300">
+                        {item.product.destinationName || item.product.country || 'Destination Visa'}
+                      </span>
+                      <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded bg-white text-slate-700 border border-slate-200">
+                        {item.product.sku || 'VSA-EXP'}
+                      </span>
+                      {item.product.duration && (
+                        <span className="text-[11px] font-medium text-slate-600 flex items-center space-x-1">
+                          <Clock className="w-3 h-3 text-slate-400" />
+                          <span>{item.product.duration}</span>
+                        </span>
+                      )}
+                    </div>
+
+                    <h4 className="text-sm sm:text-base font-bold text-slate-900">
+                      {item.product.name}
+                    </h4>
+
+                    {item.product.shortDescription && (
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        {item.product.shortDescription}
+                      </p>
+                    )}
+
+                    {item.product.inclusions && item.product.inclusions.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {item.product.inclusions.map((inc, iIdx) => (
+                          <span key={iIdx} className="text-[10px] bg-white text-emerald-900 px-2 py-0.5 rounded border border-emerald-200 flex items-center space-x-1">
+                            <Check className="w-2.5 h-2.5 text-emerald-600" />
+                            <span>{inc}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {item.notes && (
+                      <div className="text-[11px] text-emerald-950 bg-white p-2.5 rounded-xl border border-emerald-200 mt-1">
+                        <span className="font-semibold text-emerald-900">Special Notes: </span>
+                        {item.notes}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="text-left sm:text-right shrink-0 font-mono self-end sm:self-start pt-2 sm:pt-0">
+                  <div className="text-sm sm:text-base font-black text-slate-900">
+                    {formatCurrency(item.calculation?.finalTotalSellingPrice || 0, quote.currency)}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-sans mt-0.5">
+                    {item.pax?.adults || 2} Adults{item.pax?.children ? `, ${item.pax.children} Ch` : ''}
+                  </div>
+                  <span className="inline-block mt-1 text-[9px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300">
+                    Facilitation Handled
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ---------------------------------------------------- */}
       {/* 4. THE DAY-BY-DAY ITINERARY FLOW */}

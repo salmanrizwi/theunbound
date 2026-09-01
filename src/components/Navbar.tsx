@@ -129,7 +129,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>24–48h Ground Confirmation SLA • Contracted B2B Wholesale Inventory</span>
           </span>
         </div>
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-3">
           <button 
             id="nav-btn-specs"
             onClick={onOpenSpecs}
@@ -139,9 +139,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>Platform Specs</span>
           </button>
           <span className="text-slate-700 hidden md:inline">|</span>
-          <div className="hidden md:flex items-center space-x-2 text-slate-400 text-xs">
+          <div className="flex items-center space-x-2 text-slate-400 text-xs">
             <Globe2 className="w-3.5 h-3.5 text-[#00C6A6]" />
-            <span>Currency:</span>
+            <span className="hidden sm:inline">Currency:</span>
             <select
               id="currency-selector"
               value={currency}
@@ -150,11 +150,29 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               {SUPPORTED_CURRENCIES.map(c => (
                 <option key={c.code} value={c.code}>
-                  {c.code} ({c.symbol}) - {c.name}
+                  {c.code} ({c.symbol})
                 </option>
               ))}
             </select>
           </div>
+
+          {/* Quotation Cart in Upper Section */}
+          {(isB2BAgentOrAdmin || items.length > 0) && (
+            <button
+              id="quote-cart-btn"
+              onClick={() => setIsQuoteDrawerOpen(true)}
+              className="relative flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-750 border border-slate-700 text-white px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer shadow-xs"
+              title="Open Quotation Cart"
+            >
+              <FileText className="w-3.5 h-3.5 text-[#00C6A6]" />
+              <span className="hidden sm:inline">Cart</span>
+              {items.length > 0 && (
+                <span className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold bg-[#00C6A6] text-slate-950 rounded-full">
+                  {items.length}
+                </span>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
@@ -227,23 +245,6 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <Search className="w-4 h-4 text-slate-400" />
                 <span className="hidden xl:inline text-xs text-slate-500 font-medium">Quick Search...</span>
-              </button>
-            )}
-
-            {/* Quotation Cart Button - Restricted to B2B Agents & Admins or active quote cart */}
-            {(isB2BAgentOrAdmin || items.length > 0) && (
-              <button
-                id="quote-cart-btn"
-                onClick={() => setIsQuoteDrawerOpen(true)}
-                className="relative flex items-center space-x-2 bg-slate-900 hover:bg-slate-800 text-white px-3.5 py-1.5 rounded-lg text-sm font-medium transition-all shadow-xs cursor-pointer"
-              >
-                <FileText className="w-4 h-4 text-[#00C6A6]" />
-                <span className="hidden sm:inline">Quotation</span>
-                {items.length > 0 && (
-                  <span className="inline-flex items-center justify-center w-5 h-5 text-xs font-bold bg-[#00C6A6] text-slate-950 rounded-full">
-                    {items.length}
-                  </span>
-                )}
               </button>
             )}
 

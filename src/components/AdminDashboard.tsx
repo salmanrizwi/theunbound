@@ -144,7 +144,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <td className="p-3.5">{product.duration}</td>
                       <td className="p-3.5">
                         <span className="font-mono text-[11px] text-slate-600">
-                          {product.pricingModel.replace('_', ' ')}
+                          {product.pricingModel ? product.pricingModel.replace('_', ' ') : 'Standard'}
                         </span>
                       </td>
                       <td className="p-3.5 font-mono">{product.minPax || 1}</td>

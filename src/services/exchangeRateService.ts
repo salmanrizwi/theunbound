@@ -47,13 +47,15 @@ export class ExchangeRateService {
 
   private loadCachedRates() {
     try {
-      const cached = localStorage.getItem(STORAGE_KEY_RATES);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (parsed.rates && parsed.lastUpdated) {
-          this.currentRates = { ...DEFAULT_EXCHANGE_RATES, ...parsed.rates };
-          this.lastUpdated = parsed.lastUpdated;
-          this.isLive = true;
+      if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+        const cached = window.localStorage.getItem(STORAGE_KEY_RATES);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed.rates && parsed.lastUpdated) {
+            this.currentRates = { ...DEFAULT_EXCHANGE_RATES, ...parsed.rates };
+            this.lastUpdated = parsed.lastUpdated;
+            this.isLive = true;
+          }
         }
       }
     } catch (e) {
@@ -118,10 +120,12 @@ export class ExchangeRateService {
           this.lastUpdated = new Date().toISOString();
           this.isLive = true;
 
-          localStorage.setItem(STORAGE_KEY_RATES, JSON.stringify({
-            rates: this.currentRates,
-            lastUpdated: this.lastUpdated
-          }));
+          if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+            window.localStorage.setItem(STORAGE_KEY_RATES, JSON.stringify({
+              rates: this.currentRates,
+              lastUpdated: this.lastUpdated
+            }));
+          }
 
           this.notify();
           this.isFetching = false;
@@ -151,10 +155,12 @@ export class ExchangeRateService {
           this.lastUpdated = new Date().toISOString();
           this.isLive = true;
 
-          localStorage.setItem(STORAGE_KEY_RATES, JSON.stringify({
-            rates: this.currentRates,
-            lastUpdated: this.lastUpdated
-          }));
+          if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+            window.localStorage.setItem(STORAGE_KEY_RATES, JSON.stringify({
+              rates: this.currentRates,
+              lastUpdated: this.lastUpdated
+            }));
+          }
 
           this.notify();
           this.isFetching = false;

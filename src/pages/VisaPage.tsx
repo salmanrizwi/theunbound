@@ -85,7 +85,7 @@ Support Desk: business@theunbound.in | Operations Team
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `TheUnbound_Visa_Checklist_${visa.country.replace(/\s+/g, '_')}_${visa.visaType.replace(/\s+/g, '_')}.txt`;
+    link.download = `TheUnbound_Visa_Checklist_${(visa.country || 'Destination').replace(/\s+/g, '_')}_${(visa.visaType || 'Visa').replace(/\s+/g, '_')}.txt`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -202,7 +202,7 @@ Support Desk: business@theunbound.in | Operations Team
 
                   <div className="absolute bottom-3 left-3 right-3 text-white">
                     <span className="text-[10px] uppercase font-bold tracking-wider text-[#00C6A6] block mb-0.5">
-                      {visa.entryType.replace('_', ' ')}
+                      {visa.entryType ? visa.entryType.replace('_', ' ') : 'Standard'}
                     </span>
                     <h3 className="text-base font-bold leading-tight">
                       {visa.visaType}

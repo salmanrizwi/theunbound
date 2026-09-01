@@ -3,6 +3,7 @@ import { AppDatabase } from '../../services/db';
 import { Hotel, HotelRoomType, HotelRate, HotelDailyPriceOverride, Destination, MealPlanCode, DestinationRegionItem, CityHub, MasterRegion } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { ImageUploadOrUrlInput } from '../ImageUploadOrUrlInput';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { 
   Hotel as HotelIcon, 
   Plus, 
@@ -62,6 +63,7 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [editingHotel, setEditingHotel] = useState<Partial<Hotel> | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [activeSubTab, setActiveSubTab] = useState<'DETAILS' | 'ROOMS' | 'LOCATION' | 'CALENDAR_PRICING'>('DETAILS');
 
   // Calendar View State
@@ -321,10 +323,9 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
   };
 
   const handleDelete = (id: string) => {
-    if (window.confirm('Are you sure you want to remove this hotel property?')) {
-      db.deleteHotel(id, user);
-      showNotification('Hotel property removed.');
-    }
+    const target = (hotels || []).find(h => h.id === id) || (editingHotel?.id === id ? editingHotel : null);
+    const hotelName = target?.name || 'Hotel Property';
+    setDeleteTarget({ id, name: hotelName });
   };
 
   // Add room type
@@ -2226,25 +2227,60 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
             </div>
 
             {/* Modal Bottom Save Bar */}
-            <div className="flex justify-end space-x-3 pt-6 border-t border-slate-100 mt-6">
-              <button
-                type="button"
-                onClick={() => setIsEditing(false)}
-                className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSave}
-                className="px-8 py-2.5 rounded-xl bg-[#008972] hover:bg-[#00C6A6] text-white font-bold text-xs shadow-xs cursor-pointer flex items-center space-x-2"
-              >
-                <Save className="w-4 h-4" />
-                <span>Save Hotel Property</span>
-              </button>
+            <div className="flex items-center justify-between pt-6 border-t border-slate-100 mt-6">
+              <div>
+                {editingHotel?.id && (
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(editingHotel.id)}
+                    className="px-4 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs border border-rose-200 cursor-pointer flex items-center space-x-1.5 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Hotel</span>
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(false)}
+                  className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  className="px-8 py-2.5 rounded-xl bg-[#008972] hover:bg-[#00C6A6] text-white font-bold text-xs shadow-xs cursor-pointer flex items-center space-x-2"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>Save Hotel Property</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          isOpen={Boolean(deleteTarget)}
+          onClose={() => setDeleteTarget(null)}
+          onSuccess={() => {
+            if (editingHotel?.id === deleteTarget.id) {
+              setIsEditing(false);
+              setEditingHotel(null);
+            }
+            setDeleteTarget(null);
+            setHotels(db.getHotels());
+            showNotification(`Hotel deleted successfully.`);
+          }}
+          entityType="Hotel"
+          recordId={deleteTarget.id}
+          recordTitle={deleteTarget.name}
+          user={user}
+        />
       )}
     </div>
   );

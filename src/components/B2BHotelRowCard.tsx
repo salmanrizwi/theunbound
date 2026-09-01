@@ -165,7 +165,7 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
                 <span>HOTEL / STAY</span>
               </span>
               <span className="bg-slate-100 text-slate-700 text-[10px] font-semibold px-2 py-0.5 rounded-md">
-                {hotel.propertyType.replace('_', ' ')}
+                {hotel.propertyType ? hotel.propertyType.replace('_', ' ') : 'Hotel'}
               </span>
               <span className="text-[10px] font-mono text-slate-400">
                 Code: {hotel.code}
@@ -390,7 +390,7 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
                 ) : (
                   <>
                     <Plus className="w-4 h-4" />
-                    <span>Add Hotel Stay to Quote</span>
+                    <span>Configure & Add to Quote</span>
                   </>
                 )}
               </button>

@@ -292,18 +292,20 @@ export interface Product {
   inclusions: string[];
   exclusions: string[];
   importantInformation: string[];
-  meetingPoint: string;
-  pickupInformation: string;
+  meetingPoint?: string;
+  pickupInformation?: string;
   
-  images: string[];
+  images?: string[];
+  heroImage?: string;
+  galleryImages?: string[];
   videoUrl?: string;
-  location: string;
-  latitude: number;
-  longitude: number;
-  rating: number;
-  reviewCount: number;
-  status: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
-  lastUpdated: string;
+  location?: string;
+  latitude?: number;
+  longitude?: number;
+  rating?: number;
+  reviewCount?: number;
+  status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
+  lastUpdated?: string;
   addons?: ProductAddon[];
   
   // Advanced Pricing & Operational Enhancements
@@ -620,8 +622,38 @@ export interface Quotation {
 // ----------------------------------------------------
 // BOOKINGS & RESERVATIONS SYSTEM
 // ----------------------------------------------------
-export type BookingStatus = 'PENDING_CONFIRMATION' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
-export type BookingSourceType = 'QUOTATION' | 'PRODUCT_DIRECT' | 'PACKAGE';
+export type BookingStatus = 
+  | 'NEW' 
+  | 'TO_BE_PROCESSED' 
+  | 'PROCESSING' 
+  | 'WAITING_FOR_UPDATE' 
+  | 'CONFIRMED' 
+  | 'COMPLETED' 
+  | 'CANCELLED' 
+  | 'PENDING_CONFIRMATION' 
+  | 'IN_PROGRESS';
+
+export type BookingPaymentStatus = 
+  | 'PENDING_PAYMENT' 
+  | 'PARTIALLY_PAID' 
+  | 'PAID' 
+  | 'OVERDUE' 
+  | 'REFUND_PENDING' 
+  | 'REFUNDED' 
+  | 'FAILED';
+
+export type BookingDocumentStatus = 'DOCUMENTS_COMPLETE' | 'DOCUMENTS_PENDING';
+
+export type BookingSupplierStatus = 
+  | 'PENDING' 
+  | 'REQUESTED' 
+  | 'PARTIALLY_CONFIRMED' 
+  | 'CONFIRMED' 
+  | 'REJECTED' 
+  | 'ALTERNATIVE_REQUIRED' 
+  | 'CANCELLED';
+
+export type BookingSourceType = 'QUOTATION' | 'PRODUCT_DIRECT' | 'PACKAGE' | 'B2B_PORTAL' | 'MANUAL';
 
 export interface BookingCustomerInfo {
   leadTravelerName: string;
@@ -634,6 +666,7 @@ export interface BookingCustomerInfo {
   flightDetails?: string;
   pickupLocation?: string;
   emergencyContact?: string;
+  emergencyPhone?: string;
   nationality?: string;
   totalAdults?: number;
   totalChildren?: number;
@@ -643,16 +676,22 @@ export interface BookingCustomerInfo {
 export interface BookingSupplierAllocation {
   supplierId: string;
   supplierName: string;
-  supplierType: 'HOTEL' | 'TRANSPORT' | 'GUIDE' | 'ACTIVITY' | 'DMC_PARTNER';
+  supplierType: 'HOTEL' | 'TRANSPORT' | 'GUIDE' | 'ACTIVITY' | 'DMC_PARTNER' | 'RESTAURANT' | 'TICKET_PARTNER' | 'GROUND_RESOURCE';
   serviceName: string;
-  status: 'PENDING_DISPATCH' | 'SENT_TO_SUPPLIER' | 'CONFIRMED_BY_SUPPLIER' | 'REJECTED_BY_SUPPLIER' | 'AMENDMENT_REQUESTED';
+  serviceId?: string;
+  status: 'PENDING_DISPATCH' | 'SENT_TO_SUPPLIER' | 'WAITING_FOR_SUPPLIER' | 'CONFIRMED_BY_SUPPLIER' | 'REJECTED_BY_SUPPLIER' | 'ALTERNATIVE_REQUIRED' | 'AMENDMENT_REQUESTED' | 'CANCELLED';
   supplierConfirmationRef?: string;
   dispatchedAt?: string;
   confirmedAt?: string;
   assignedContact?: string;
   contactPhone?: string;
   contactEmail?: string;
+  paymentCutoffDate?: string;
+  serviceDate?: string;
+  serviceTime?: string;
+  serviceTimezone?: string;
   notes?: string;
+  internalOpsNotes?: string;
   costRate?: number;
   costCurrency?: CurrencyCode;
 }
@@ -677,9 +716,18 @@ export interface BookingItem {
   currency: CurrencyCode;
   supplierId?: string;
   supplierName?: string;
-  supplierStatus?: 'PENDING_DISPATCH' | 'SENT_TO_SUPPLIER' | 'CONFIRMED_BY_SUPPLIER' | 'REJECTED_BY_SUPPLIER' | 'AMENDMENT_REQUESTED';
+  supplierType?: 'HOTEL' | 'TRANSPORT' | 'GUIDE' | 'ACTIVITY' | 'DMC_PARTNER' | 'RESTAURANT' | 'TICKET_PARTNER' | 'GROUND_RESOURCE';
+  supplierContact?: string;
+  supplierPhone?: string;
+  supplierEmail?: string;
+  supplierStatus?: 'PENDING_DISPATCH' | 'SENT_TO_SUPPLIER' | 'WAITING_FOR_SUPPLIER' | 'CONFIRMED_BY_SUPPLIER' | 'REJECTED_BY_SUPPLIER' | 'ALTERNATIVE_REQUIRED' | 'AMENDMENT_REQUESTED' | 'CANCELLED';
   supplierConfirmationRef?: string;
+  paymentCutoffDate?: string;
+  serviceDate?: string;
+  serviceTime?: string;
+  serviceTimezone?: string;
   supplierNotes?: string;
+  internalOpsNotes?: string;
   accommodationType?: AccommodationType;
   isManualHotel?: boolean;
   manualHotelDetails?: ManualHotelDetails;
@@ -697,16 +745,33 @@ export interface SentEmailRecord {
 
 export interface BookingPassenger {
   id: string;
-  fullName: string;
+  passengerNumber: number; // 1, 2, 3... up to totalPax
+  firstName: string;
+  middleName?: string;
+  lastName: string;
+  fullName?: string;
   dateOfBirth?: string;
-  passportNumber?: string;
-  passportExpiry?: string;
+  gender?: 'MALE' | 'FEMALE' | 'OTHER';
   nationality?: string;
+  passportNumber?: string;
+  passportIssueDate?: string;
+  passportExpiryDate?: string;
+  passportExpiry?: string; // backwards compatibility
   isLeadPax: boolean;
+  phone?: string;
+  email?: string;
   passportFrontUrl?: string;
+  passportFrontName?: string;
+  passportFrontUploadedAt?: string;
   passportBackUrl?: string;
-  panCardUrl?: string; // Only for lead passenger
+  passportBackName?: string;
+  passportBackUploadedAt?: string;
+  panCardUrl?: string; // Only for Lead Passenger
+  panCardName?: string;
+  panCardUploadedAt?: string;
   panNumber?: string;
+  mealPreference?: string;
+  specialRequests?: string;
 }
 
 export interface BookingPaymentProof {
@@ -715,16 +780,88 @@ export interface BookingPaymentProof {
   currency: CurrencyCode;
   trancheLabel: string; // e.g. "Tranche 1 (Deposit 30%)", "Tranche 2 (Final Balance)"
   paymentDate: string;
+  paymentMethod: string; // 'BANK_TRANSFER' | 'CREDIT_CARD' | 'UPI' | 'WIRE' | 'CASH' | 'CHEQUE' | 'OTHER'
   transactionRef: string;
   proofFileUrl: string;
-  verifiedStatus: 'PENDING_VERIFICATION' | 'VERIFIED' | 'REJECTED';
+  proofFileName?: string;
+  proofFileType?: 'PDF' | 'JPG' | 'JPEG' | 'PNG';
+  uploadedBy?: string;
+  uploadedByName?: string;
+  uploadedAt: string;
+  verificationStatus: 'PENDING_VERIFICATION' | 'VERIFIED' | 'REJECTED' | 'REPLACEMENT_REQUIRED';
+  verifiedBy?: string;
+  verifiedByName?: string;
+  verifiedAt?: string;
+  verificationNotes?: string;
   notes?: string;
+}
+
+export interface BookingInternalNote {
+  id: string;
+  authorId?: string;
+  authorName: string;
+  authorRole?: string;
+  text: string;
+  timestamp: string;
+  relatedServiceId?: string;
+  relatedServiceName?: string;
+}
+
+export interface BookingCustomerUpdate {
+  id: string;
+  authorId?: string;
+  authorName: string;
+  title: string;
+  message: string;
+  timestamp: string;
+  isPublished: boolean;
+  relatedServiceId?: string;
+  notificationSent?: boolean;
+}
+
+export interface BookingTimelineEvent {
+  id: string;
+  title: string;
+  description?: string;
+  timestamp: string;
+  type: 'CREATION' | 'PASSENGER' | 'DOCUMENT' | 'PAYMENT' | 'SUPPLIER' | 'STATUS_CHANGE' | 'COMMUNICATION' | 'SLA_REMINDER';
+  actorName?: string;
+  actorRole?: string;
+}
+
+export interface BookingStatusHistoryItem {
+  id: string;
+  previousStatus: string;
+  newStatus: string;
+  changedBy: string;
+  changedByName: string;
+  timestamp: string;
+  reason: string;
+}
+
+export interface BookingDocumentItem {
+  id: string;
+  category: 'PASSPORT_FRONT' | 'PASSPORT_BACK' | 'PAN_CARD' | 'PAYMENT_PROOF' | 'BOOKING_CONFIRMATION' | 'SUPPLIER_CONFIRMATION' | 'VOUCHER' | 'INVOICE' | 'OTHER';
+  title: string;
+  fileName: string;
+  fileUrl: string;
+  fileType?: string;
+  fileSize?: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  passengerId?: string;
+  passengerName?: string;
+  serviceId?: string;
+  paymentId?: string;
+  verificationStatus?: 'PENDING_VERIFICATION' | 'VERIFIED' | 'REJECTED';
 }
 
 export interface Booking {
   id: string;
   bookingReference: string; // e.g. TUB-BK-2026-8492
   sourceType: BookingSourceType;
+  leadId?: string;
+  leadNumber?: string;
   quoteId?: string;
   quoteNumber?: string;
   destination?: string;
@@ -734,6 +871,8 @@ export interface Booking {
   agentAgency?: string;
   userId?: string;
   userRole?: UserRole;
+  assignedTeamMemberId?: string;
+  assignedTeamMemberName?: string;
   customer: BookingCustomerInfo;
   items: BookingItem[];
   currency: CurrencyCode;
@@ -742,20 +881,32 @@ export interface Booking {
   travelStartDate: string;
   travelEndDate: string;
   status: BookingStatus;
-  paymentStatus?: 'PENDING_PAYMENT' | 'PARTIALLY_PAID' | 'PAID' | 'REFUNDED';
+  customerFacingStatus?: string;
+  paymentStatus?: BookingPaymentStatus;
+  documentStatus?: BookingDocumentStatus;
+  missingDocuments?: string[];
   supplierAllocationStatus?: 'UNALLOCATED' | 'DISPATCHED_TO_SUPPLIERS' | 'PARTIALLY_CONFIRMED' | 'FULLY_CONFIRMED_BY_SUPPLIERS';
   supplierAllocations?: BookingSupplierAllocation[];
   
-  // Passenger & Document Uploads (up to N pax)
+  // Passenger & Document Uploads (strictly up to totalPax)
   passengers?: BookingPassenger[];
   
   // Multi-tranche Payment Proofs
   paymentProofs?: BookingPaymentProof[];
   
-  // Supplier & Ground Operations Fields
+  // Internal Notes & Customer Updates
+  internalNotesList?: BookingInternalNote[];
+  customerUpdates?: BookingCustomerUpdate[];
+  
+  // Timeline & Status Audit History
+  timeline?: BookingTimelineEvent[];
+  statusHistory?: BookingStatusHistoryItem[];
+  
+  // Supplier & Ground Operations Fields (Overall / Fallback)
   paymentCutoffDate?: string;
   serviceDate?: string;
   serviceTime?: string;
+  serviceTimezone?: string;
   supplierConfirmationRef?: string;
   internalNotes?: string;
   
@@ -1312,6 +1463,7 @@ export type CMSDeletableEntityType =
   | 'Promotion'
   | 'GalleryImage'
   | 'VisaRequirement'
+  | 'Visa'
   | 'CustomPage'
   | 'MenuItem'
   | 'FooterColumn'
@@ -1696,6 +1848,7 @@ export interface Hotel {
   hubId?: string;
   cityId: string;
   cityName: string;
+  city?: string;
   country: string;
   area: string;
   starRating: number; // 3, 4, 5
@@ -1704,6 +1857,7 @@ export interface Hotel {
   description: string;
   heroImage: string;
   images: string[];
+  galleryImages?: string[];
   website?: string;
   googleMapsUrl?: string;
   address: string;
@@ -2899,11 +3053,13 @@ export interface B2BTask {
 }
 
 export type B2BTabType = 
+  | 'home'
   | 'dashboard' 
   | 'create-quote' 
   | 'packages' 
   | 'products' 
   | 'hotels' 
+  | 'visa'
   | 'my-quotes' 
   | 'bookings' 
   | 'customers' 

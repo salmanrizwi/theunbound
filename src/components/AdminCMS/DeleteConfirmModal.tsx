@@ -81,7 +81,8 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
       case 'product': return <Package className="w-4 h-4 text-blue-600" />;
       case 'package': return <Layers className="w-4 h-4 text-purple-600" />;
       case 'quote': case 'quotation': return <FileText className="w-4 h-4 text-emerald-600" />;
-      case 'cityhub': case 'destination': return <MapPin className="w-4 h-4 text-rose-600" />;
+      case 'visa': case 'visarequirement': return <FileText className="w-4 h-4 text-cyan-600" />;
+      case 'cityhub': case 'destination': case 'masterregion': return <MapPin className="w-4 h-4 text-rose-600" />;
       case 'task': case 'calendartask': return <Calendar className="w-4 h-4 text-indigo-600" />;
       default: return <Users className="w-4 h-4 text-slate-600" />;
     }

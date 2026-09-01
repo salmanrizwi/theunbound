@@ -152,6 +152,34 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /b2b_packages/{id} {
+      allow read, write: if true;
+    }
+
+    match /visas/{id} {
+      allow read, write: if true;
+    }
+
+    match /b2b_customers/{id} {
+      allow read, write: if true;
+    }
+
+    match /b2b_tasks/{id} {
+      allow read, write: if true;
+    }
+
+    match /master_regions/{id} {
+      allow read, write: if true;
+    }
+
+    match /campaign_events/{id} {
+      allow read, write: if true;
+    }
+
+    match /footer_config/{id} {
+      allow read, write: if true;
+    }
+
     match /test/{id} {
       allow read, write: if true;
     }

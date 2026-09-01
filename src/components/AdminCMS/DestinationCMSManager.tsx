@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Destination, DestinationRegion, CurrencyCode, MasterRegion, CityHub } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { 
   MapPin, 
   Plus, 
@@ -46,6 +47,7 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
   const [selectedRegionFilter, setSelectedRegionFilter] = useState<string>(initialRegionFilter);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDest, setEditingDest] = useState<Destination | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   // Form State
   const [formData, setFormData] = useState<Partial<Destination>>({
@@ -127,10 +129,11 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
 
     const matchedRegion = masterRegions.find(r => r.id === formData.regionId) || masterRegions[0];
 
+    const slug = (formData.slug || formData.name || 'destination').toLowerCase().replace(/\s+/g, '-');
     const destToSave: Destination = {
-      id: editingDest ? editingDest.id : `dest-${formData.slug.toLowerCase().replace(/\s+/g, '-')}`,
+      id: editingDest ? editingDest.id : `dest-${slug}`,
       name: formData.name || '',
-      slug: formData.slug.toLowerCase().replace(/\s+/g, '-'),
+      slug,
       country: formData.country || formData.name || '',
       regionId: formData.regionId || matchedRegion?.id || 'reg-east-asia',
       regionName: formData.regionName || matchedRegion?.name || 'East Asia',
@@ -155,16 +158,9 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
   };
 
   const handleDelete = (destId: string) => {
-    const linkedHubs = cityHubs.filter(h => h.destinationId === destId);
-    if (linkedHubs.length > 0) {
-      if (!confirm(`Warning: This destination has ${linkedHubs.length} linked City Hub(s). Deleting it will leave those hubs unlinked. Are you sure you want to remove this destination?`)) {
-        return;
-      }
-    } else if (!confirm('Are you sure you want to remove this destination?')) {
-      return;
-    }
-    db.deleteDestination(destId, user);
-    refresh();
+    const target = destinations.find(d => d.id === destId || d.slug === destId) || (editingDest?.id === destId ? editingDest : null);
+    const targetName = target ? target.name : 'Destination';
+    setDeleteTarget({ id: destId, name: targetName });
   };
 
   const handleToggleStatus = (dest: Destination) => {
@@ -618,24 +614,58 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
               </div>
 
               {/* Action Buttons */}
-              <div className="flex items-center justify-end space-x-3 pt-6 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 font-semibold hover:bg-slate-50 cursor-pointer text-xs"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl shadow-sm transition-all cursor-pointer text-xs"
-                >
-                  {editingDest ? 'Save Destination' : 'Create Destination'}
-                </button>
+              <div className="flex items-center justify-between pt-6 border-t border-slate-100">
+                <div>
+                  {editingDest?.id && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(editingDest.id)}
+                      className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer border border-red-200"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Destination</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsModalOpen(false)}
+                    className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 font-semibold hover:bg-slate-50 cursor-pointer text-xs"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl shadow-sm transition-all cursor-pointer text-xs"
+                  >
+                    {editingDest ? 'Save Destination' : 'Create Destination'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
         </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          isOpen={Boolean(deleteTarget)}
+          onClose={() => setDeleteTarget(null)}
+          onSuccess={() => {
+            if (editingDest?.id === deleteTarget.id) {
+              setIsModalOpen(false);
+              setEditingDest(null);
+            }
+            setDeleteTarget(null);
+            refresh();
+          }}
+          entityType="Destination"
+          recordId={deleteTarget.id}
+          recordTitle={deleteTarget.name}
+          user={user}
+        />
       )}
     </div>
   );

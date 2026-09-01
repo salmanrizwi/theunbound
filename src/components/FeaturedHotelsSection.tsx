@@ -115,7 +115,7 @@ export const FeaturedHotelsSection: React.FC<FeaturedHotelsSectionProps> = ({
                 <div className="absolute top-3 left-3 flex items-center space-x-2">
                   <span className="bg-slate-900/85 backdrop-blur-xs text-white text-[11px] font-bold px-2.5 py-1 rounded-lg border border-white/15 flex items-center space-x-1">
                     <Building className="w-3 h-3 text-[#00C6A6]" />
-                    <span>{hotel.propertyType.replace('_', ' ')}</span>
+                    <span>{hotel.propertyType ? hotel.propertyType.replace('_', ' ') : 'Hotel'}</span>
                   </span>
                   <div className="flex items-center bg-amber-500/90 text-white text-[11px] font-bold px-2 py-0.5 rounded-lg shadow-xs">
                     <Star className="w-3 h-3 fill-current mr-0.5" />

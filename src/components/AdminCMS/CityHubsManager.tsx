@@ -3,6 +3,7 @@ import { AppDatabase } from '../../services/db';
 import { countingEngine } from '../../services/countingEngine';
 import { CityHub, Destination, MasterRegion } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { 
   Building2, 
   Plus, 
@@ -35,6 +36,7 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
   const [searchQuery, setSearchQuery] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [editingHub, setEditingHub] = useState<Partial<CityHub> | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     return db.subscribe(() => {
@@ -116,9 +118,9 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
   };
 
   const handleDelete = (id: string) => {
-    if (window.confirm('Are you sure you want to remove this city hub?')) {
-      db.deleteCityHub(id, user);
-    }
+    const target = cityHubs.find(h => h.id === id) || (editingHub?.id === id ? editingHub : null);
+    const targetName = target ? target.name : 'City Hub';
+    setDeleteTarget({ id, name: targetName });
   };
 
   const modalAvailableDestinations = editingHub?.regionId
@@ -521,24 +523,58 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
                 </div>
               </div>
 
-              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(false)}
-                  className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-sm cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-sm cursor-pointer shadow-md shadow-[#00C6A6]/20"
-                >
-                  Save City Hub
-                </button>
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                <div>
+                  {editingHub?.id && cityHubs.some(h => h.id === editingHub.id) && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(editingHub.id!)}
+                      className="px-4 py-2.5 rounded-xl border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 font-bold text-sm cursor-pointer flex items-center space-x-1.5"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Delete City Hub</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditing(false)}
+                    className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-sm cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-sm cursor-pointer shadow-md shadow-[#00C6A6]/20"
+                  >
+                    Save City Hub
+                  </button>
+                </div>
               </div>
             </form>
           </div>
         </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          isOpen={Boolean(deleteTarget)}
+          onClose={() => setDeleteTarget(null)}
+          onSuccess={() => {
+            if (editingHub?.id === deleteTarget.id) {
+              setIsEditing(false);
+              setEditingHub(null);
+            }
+            setDeleteTarget(null);
+            setCityHubs(db.getCityHubs());
+          }}
+          entityType="CityHub"
+          recordId={deleteTarget.id}
+          recordTitle={deleteTarget.name}
+          user={user}
+        />
       )}
     </div>
   );

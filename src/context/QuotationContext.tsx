@@ -38,6 +38,19 @@ interface QuotationContextType {
       notes?: string 
     }
   ) => void;
+  updateQuoteItem: (
+    itemId: string,
+    updatedProduct: Product,
+    options: {
+      adults?: number;
+      children?: number;
+      infants?: number;
+      travelDate?: string;
+      serviceTime?: string;
+      notes?: string;
+      selectedAddonIds?: string[];
+    }
+  ) => void;
   toggleItemAddon: (itemId: string, addonId: string) => void;
   updateItemNotes: (itemId: string, notes: string) => void;
   clearQuote: () => void;
@@ -90,9 +103,28 @@ const QuotationContext = createContext<QuotationContextType | undefined>(undefin
 
 export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const [items, setItems] = useState<QuoteItem[]>([]);
+  const [items, setItems] = useState<QuoteItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('theunbound_cart_items');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error('Error loading cart items from storage:', e);
+    }
+    return [];
+  });
   const [currency, setCurrency] = useState<CurrencyCode>('USD');
   const [isQuoteDrawerOpen, setIsQuoteDrawerOpen] = useState(false);
+
+  // Sync items to localStorage for session and cross-page persistence
+  useEffect(() => {
+    try {
+      localStorage.setItem('theunbound_cart_items', JSON.stringify(items));
+    } catch (e) {
+      console.error('Error saving cart items to storage:', e);
+    }
+  }, [items]);
   
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
@@ -310,6 +342,55 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     );
   };
 
+  const updateQuoteItem = (
+    itemId: string,
+    updatedProduct: Product,
+    options: {
+      adults?: number;
+      children?: number;
+      infants?: number;
+      travelDate?: string;
+      serviceTime?: string;
+      notes?: string;
+      selectedAddonIds?: string[];
+    }
+  ) => {
+    setItems(prev =>
+      prev.map(item => {
+        if (item.id !== itemId) return item;
+        const adults = options.adults ?? item.pax.adults;
+        const children = options.children ?? item.pax.children;
+        const infants = options.infants ?? item.pax.infants;
+        const travelDate = options.travelDate ?? item.travelDate;
+        const serviceTime = options.serviceTime !== undefined ? options.serviceTime : item.serviceTime;
+        const notes = options.notes !== undefined ? options.notes : item.notes;
+        const selectedAddonIds = options.selectedAddonIds ?? item.selectedAddonIds;
+
+        const calculation = calculateProductPrice(updatedProduct, {
+          productId: updatedProduct.id,
+          pricingTier,
+          adults,
+          children,
+          infants,
+          travelDate,
+          targetCurrency: currency,
+          selectedAddonIds
+        });
+
+        return {
+          ...item,
+          product: updatedProduct,
+          pax: { adults, children, infants },
+          travelDate,
+          serviceTime,
+          notes,
+          selectedAddonIds,
+          calculation
+        };
+      })
+    );
+  };
+
   const toggleItemAddon = (itemId: string, addonId: string) => {
     setItems(prev =>
       prev.map(item => {
@@ -456,7 +537,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const leadIdStr = leadId || `lead-quote-${newQuote.id}`;
       const newLead: TravelLead = {
         id: leadIdStr,
-        leadNumber: leadId || `LED-${newQuote.quoteNumber.replace('UBQ-', '')}`,
+        leadNumber: leadId || `LED-${(newQuote.quoteNumber || newQuote.id || Date.now().toString()).replace('UBQ-', '')}`,
         contactName: clientName || user?.name || 'Inquiring Traveler / Agency',
         email: clientEmail || user?.email || 'sales@theunbound.in',
         phone: '',
@@ -618,6 +699,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateItemTravelDate,
         updateItemServiceTime,
         updateItemFull,
+        updateQuoteItem,
         toggleItemAddon,
         updateItemNotes,
         clearQuote,

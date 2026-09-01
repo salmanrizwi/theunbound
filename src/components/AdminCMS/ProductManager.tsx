@@ -41,6 +41,7 @@ import {
   Gauge
 } from 'lucide-react';
 import { fileToDataUrl, convertUnsplashUrl, fetchUnsplashImagesByQuery } from '../../utils/imageUtils';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface ProductManagerProps {
   destinations: Destination[];
@@ -84,6 +85,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   // Form State
   const [formData, setFormData] = useState<Partial<Product>>({
@@ -303,10 +305,9 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   };
 
   const handleDelete = (productId: string) => {
-    if (confirm('Are you sure you want to archive/delete this product?')) {
-      db.deleteProduct(productId, user);
-      refreshProducts();
-    }
+    const target = products.find(p => p.id === productId) || (editingProduct?.id === productId ? editingProduct : null);
+    const targetName = target ? `${target.name || 'Product'} (SKU: ${target.sku || 'N/A'})` : productId;
+    setDeleteTarget({ id: productId, name: targetName });
   };
 
   const handleToggleStatus = (product: Product) => {
@@ -2003,24 +2004,57 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
               </div>
 
               {/* Actions */}
-              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-slate-600 hover:text-slate-800 font-semibold cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2.5 bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold rounded-xl shadow-md cursor-pointer transition-colors"
-                >
-                  {editingProduct ? 'Update Product' : 'Save & Publish Product'}
-                </button>
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                <div>
+                  {editingProduct && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(editingProduct.id)}
+                      className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer border border-rose-200"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Product</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsModalOpen(false)}
+                    className="px-4 py-2 text-slate-600 hover:text-slate-800 font-semibold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-6 py-2.5 bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold rounded-xl shadow-md cursor-pointer transition-colors"
+                  >
+                    {editingProduct ? 'Update Product' : 'Save & Publish Product'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
         </div>
+      )}
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          isOpen={Boolean(deleteTarget)}
+          onClose={() => setDeleteTarget(null)}
+          onSuccess={() => {
+            if (editingProduct?.id === deleteTarget.id) {
+              setIsModalOpen(false);
+              setEditingProduct(null);
+            }
+            setDeleteTarget(null);
+            refreshProducts();
+          }}
+          entityType="Product"
+          recordId={deleteTarget.id}
+          recordTitle={deleteTarget.name}
+          user={user}
+        />
       )}
     </div>
   );

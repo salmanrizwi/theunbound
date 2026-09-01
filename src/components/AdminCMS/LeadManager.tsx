@@ -366,7 +366,7 @@ export const LeadManager: React.FC = () => {
                             {lead.leadNumber}
                           </span>
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border w-fit ${getStatusColor(lead.status)}`}>
-                            {lead.status.replace(/_/g, ' ')}
+                            {lead.status ? lead.status.replace(/_/g, ' ') : 'NEW'}
                           </span>
                         </div>
                       </td>
@@ -502,7 +502,7 @@ export const LeadManager: React.FC = () => {
                   <div className="flex items-center gap-1.5">
                     {getPriorityBadge(lead.priority)}
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${getStatusColor(lead.status)}`}>
-                      {lead.status.replace(/_/g, ' ')}
+                      {lead.status ? lead.status.replace(/_/g, ' ') : 'NEW'}
                     </span>
                   </div>
                 </div>

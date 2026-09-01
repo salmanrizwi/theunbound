@@ -108,6 +108,18 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
     }
   }
 
+  // Helper predicate for Visa quotation items
+  const isVisaQuoteItem = (it: QuoteItem): boolean => {
+    return it.product.productType === 'Visa Service' || 
+           it.product.subcategory === 'Visa Facilitation' || 
+           it.product.sku?.startsWith('VSA-') ||
+           (it.product.category === 'Travel Services' && it.product.name?.toLowerCase().includes('visa')) ||
+           Boolean(it.product.name?.toLowerCase().includes('visa') && it.product.name?.toLowerCase().includes('entry'));
+  };
+
+  const visaItems = items.filter(isVisaQuoteItem);
+  const nonVisaItems = items.filter(it => !isVisaQuoteItem(it));
+
   // Map each day to active hub and items
   const itineraryDays: ItineraryDayData[] = calDays.map((calDay) => {
     let activeHub: TripRouteHub | null = null;
@@ -138,7 +150,7 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
       }
     }
 
-    const dayItems = items.filter(it => it.travelDate === calDay.dateString);
+    const dayItems = nonVisaItems.filter(it => it.travelDate === calDay.dateString);
     const customTheme = quote.dayThemes?.[calDay.dayNumber];
 
     return {
@@ -151,7 +163,7 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
     };
   });
 
-  const generalInclusionItems = items.filter(it => !it.travelDate || !calDays.some(d => d.dateString === it.travelDate));
+  const generalInclusionItems = nonVisaItems.filter(it => !it.travelDate || !calDays.some(d => d.dateString === it.travelDate));
   const totalNights = hubs.reduce((sum, h) => sum + (h.nights || 0), 0) || Math.max(1, itineraryDays.length - 1);
   const totalPax = quote.totalPax || (quote.adultsCount || 2) + (quote.childrenCount || 0);
 
@@ -373,6 +385,75 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
   doc.text(agentInfo, rightX, currentY + 15);
 
   currentY += 22;
+
+  // ----------------------------------------------------
+  // 4.5. VISA & TRAVEL DOCUMENTATION SERVICES (IF PRESENT)
+  // ----------------------------------------------------
+  if (visaItems.length > 0) {
+    checkPageBreak(18 + visaItems.length * 14);
+
+    doc.setFillColor(6, 78, 59); // emerald-900
+    doc.rect(margin, currentY, contentWidth, 7, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    doc.text('VISA & TRAVEL DOCUMENTATION FACILITATION', margin + 3, currentY + 5);
+    doc.setTextColor(110, 231, 183); // emerald-300
+    doc.text(`${visaItems.length} ${visaItems.length === 1 ? 'VISA SERVICE' : 'VISA SERVICES'} INCLUDED`, pageWidth - margin - 3, currentY + 5, { align: 'right' });
+
+    currentY += 9;
+
+    visaItems.forEach((vItem, vIdx) => {
+      checkPageBreak(14);
+      const isEven = vIdx % 2 === 0;
+      doc.setFillColor(isEven ? 240 : 255, isEven ? 253 : 255, isEven ? 244 : 255); // emerald-50 / white
+      doc.setDrawColor(167, 243, 208); // emerald-200
+      doc.roundedRect(margin + 2, currentY, contentWidth - 4, 12, 1, 1, 'FD');
+
+      // Badge
+      doc.setFillColor(209, 250, 229);
+      doc.roundedRect(margin + 4, currentY + 2, 22, 4.5, 0.5, 0.5, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(5.5);
+      doc.setTextColor(6, 78, 59);
+      doc.text('VISA FACILITATION', margin + 15, currentY + 5, { align: 'center' });
+
+      // Name
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(15, 23, 42);
+      const vName = vItem.product.name || 'Visa Application Package';
+      const truncatedVName = vName.length > 55 ? vName.substring(0, 52) + '...' : vName;
+      doc.text(truncatedVName, margin + 29, currentY + 5.5);
+
+      // Sub-details
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(51, 65, 85);
+      const vSub = [
+        `${(vItem.pax?.adults || 0) + (vItem.pax?.children || 0)} Applicant(s)`,
+        vItem.product.sku || 'VSA-EXP',
+        vItem.product.duration ? `Processing: ${vItem.product.duration}` : 'Official Consular Track'
+      ].join(' • ');
+      doc.text(vSub, margin + 29, currentY + 9.5);
+
+      // Price
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(15, 23, 42);
+      const vPriceStr = formatCurrency(vItem.calculation?.finalTotalSellingPrice || 0, quote.currency);
+      doc.text(vPriceStr, pageWidth - margin - 5, currentY + 5.5, { align: 'right' });
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(5.5);
+      doc.setTextColor(5, 150, 105);
+      doc.text('Complete Submission Included', pageWidth - margin - 5, currentY + 9.5, { align: 'right' });
+
+      currentY += 14;
+    });
+
+    currentY += 3;
+  }
 
   // ----------------------------------------------------
   // 5. DAY-BY-DAY CHRONOLOGICAL ITINERARY FLOW (MAIN)

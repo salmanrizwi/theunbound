@@ -165,7 +165,7 @@ export const ContactUsPage: React.FC = () => {
                     Operations Desk Phone
                   </span>
                   <a 
-                    href={`tel:${contactData.primaryPhone.replace(/\s+/g, '')}`} 
+                    href={`tel:${(contactData.primaryPhone || '').replace(/\s+/g, '')}`} 
                     className="text-xs sm:text-sm font-bold text-slate-900 hover:text-[#008972] transition-colors block font-mono"
                   >
                     {contactData.primaryPhone}

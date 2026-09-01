@@ -23,6 +23,7 @@ import {
 import { MasterRegion, Destination, CityHub, Product, Hotel, CurrencyCode, SUPPORTED_CURRENCIES } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface RegionCMSManagerProps {
   onNavigateToDestinations?: (regionId?: string) => void;
@@ -47,7 +48,7 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   // Form state
   const [formData, setFormData] = useState<Partial<MasterRegion>>({
@@ -181,19 +182,9 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
   };
 
   const handleDelete = (id: string) => {
-    const reg = regions.find(r => r.id === id);
+    const reg = regions.find(r => r.id === id) || (formData.id === id ? formData : null);
     if (!reg) return;
-    const stats = getRegionStats(reg);
-    if (stats.destinationsCount > 0) {
-      if (!confirm(`Warning: This region has ${stats.destinationsCount} linked Destination(s). Deleting it will leave those destinations unlinked. Do you still want to delete "${reg.name}"?`)) {
-        return;
-      }
-    }
-    db.deleteMasterRegion(id, user);
-    loadData();
-    setDeleteConfirmId(null);
-    setSaveSuccessMsg(`Region "${reg.name}" deleted.`);
-    setTimeout(() => setSaveSuccessMsg(null), 3000);
+    setDeleteTarget({ id, name: reg.name || 'Master Region' });
   };
 
   // Filtered list
@@ -680,25 +671,59 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
               </div>
 
               {/* Action Buttons */}
-              <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => { setIsCreating(false); setIsEditing(false); }}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow transition-colors cursor-pointer flex items-center gap-1.5"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  {isCreating ? 'Create Master Region' : 'Save Region Changes'}
-                </button>
+              <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-3">
+                <div>
+                  {isEditing && formData.id && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(formData.id!)}
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 border border-red-200 transition-colors cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Region</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { setIsCreating(false); setIsEditing(false); }}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    {isCreating ? 'Create Master Region' : 'Save Region Changes'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
         </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          isOpen={Boolean(deleteTarget)}
+          onClose={() => setDeleteTarget(null)}
+          onSuccess={() => {
+            if (formData.id === deleteTarget.id) {
+              setIsCreating(false);
+              setIsEditing(false);
+            }
+            setDeleteTarget(null);
+            loadData();
+          }}
+          entityType="MasterRegion"
+          recordId={deleteTarget.id}
+          recordTitle={deleteTarget.name}
+          user={user}
+        />
       )}
     </div>
   );
