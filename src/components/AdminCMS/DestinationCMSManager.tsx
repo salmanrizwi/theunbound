@@ -94,6 +94,15 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
       regionName: defaultRegion.name,
       region: 'JAPAN',
       heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1600&auto=format&fit=crop',
+      heroImageAlt: 'Destination Ground Operations',
+      heroOverlayOpacity: 0.65,
+      heroEyebrow: 'DMC PREMIER PORTFOLIO • DIRECT GROUND OPERATIONS',
+      heroTitle: '',
+      showPrimaryCta: true,
+      primaryCtaText: 'Explore Curated Inventory',
+      showSecondaryCta: true,
+      secondaryCtaText: 'Direct DMC Operations Desk',
+      trustBadgeText: 'Direct Ground Operator • Verified Local Network',
       tagline: '',
       description: '',
       bestTimeToVisit: 'Spring & Autumn',
@@ -139,6 +148,15 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
       regionName: formData.regionName || matchedRegion?.name || 'East Asia',
       region: (formData.region as DestinationRegion) || 'JAPAN',
       heroImage: formData.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1600&auto=format&fit=crop',
+      heroImageAlt: formData.heroImageAlt || `${formData.name || 'Destination'} Travel Ground Operations`,
+      heroOverlayOpacity: formData.heroOverlayOpacity ?? 0.65,
+      heroEyebrow: formData.heroEyebrow || '',
+      heroTitle: formData.heroTitle || '',
+      showPrimaryCta: formData.showPrimaryCta !== false,
+      primaryCtaText: formData.primaryCtaText || 'Explore Curated Inventory',
+      showSecondaryCta: formData.showSecondaryCta !== false,
+      secondaryCtaText: formData.secondaryCtaText || 'Direct DMC Operations Desk',
+      trustBadgeText: formData.trustBadgeText || 'Direct Ground Operator • Verified Local Network',
       tagline: formData.tagline || '',
       description: formData.description || '',
       keySellingPoints: formData.keySellingPoints || [],
@@ -516,15 +534,153 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="font-semibold text-slate-700">Hero Image URL</label>
-                <input
-                  type="url"
-                  value={formData.heroImage || ''}
-                  onChange={e => setFormData({ ...formData, heroImage: e.target.value })}
-                  placeholder="https://images.unsplash.com/..."
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl"
-                />
+              {/* Hero Banner CMS & DMC Positioning Suite */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-4">
+                <div className="flex items-center space-x-2 text-slate-800 font-bold border-b border-slate-200 pb-2">
+                  <ImageIcon className="w-4 h-4 text-amber-600" />
+                  <span>Destination Hero Banner & DMC Presentation</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="font-semibold text-slate-700">Hero Operational Eyebrow</label>
+                    <input
+                      type="text"
+                      value={formData.heroEyebrow || ''}
+                      onChange={e => setFormData({ ...formData, heroEyebrow: e.target.value })}
+                      placeholder="e.g. DMC PREMIER PORTFOLIO • DIRECT GROUND OPERATIONS"
+                      className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-semibold text-slate-700">Custom Hero Title (H1 Override)</label>
+                    <input
+                      type="text"
+                      value={formData.heroTitle || ''}
+                      onChange={e => setFormData({ ...formData, heroTitle: e.target.value })}
+                      placeholder={`Defaults to: Explore ${formData.name || 'Destination'}`}
+                      className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-semibold text-slate-700">Hero Image URL</label>
+                  <input
+                    type="url"
+                    value={formData.heroImage || ''}
+                    onChange={e => setFormData({ ...formData, heroImage: e.target.value })}
+                    placeholder="https://images.unsplash.com/..."
+                    className="w-full p-2 bg-white border border-slate-200 rounded-xl font-mono text-xs"
+                  />
+                  {formData.heroImage && (
+                    <div className="mt-2 h-24 rounded-xl overflow-hidden border border-slate-200 relative">
+                      <img src={formData.heroImage} alt="Preview" className="w-full h-full object-cover" />
+                      <div
+                        className="absolute inset-0 bg-slate-950 pointer-events-none"
+                        style={{ opacity: formData.heroOverlayOpacity ?? 0.65 }}
+                      />
+                      <span className="absolute bottom-2 left-2 text-[10px] font-bold text-white bg-slate-900/80 px-2 py-0.5 rounded backdrop-blur-sm">
+                        Overlay: {Math.round((formData.heroOverlayOpacity ?? 0.65) * 100)}%
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="font-semibold text-slate-700">Hero Image Alt Text (SEO & Alt)</label>
+                    <input
+                      type="text"
+                      value={formData.heroImageAlt || ''}
+                      onChange={e => setFormData({ ...formData, heroImageAlt: e.target.value })}
+                      placeholder={`e.g. ${formData.name || 'Destination'} Travel Ground Operations`}
+                      className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-semibold text-slate-700">Backdrop Overlay Density</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { label: 'Light (45%)', val: 0.45 },
+                        { label: 'Balanced (65%)', val: 0.65 },
+                        { label: 'Deep (80%)', val: 0.80 }
+                      ].map(opt => (
+                        <button
+                          key={opt.val}
+                          type="button"
+                          onClick={() => setFormData({ ...formData, heroOverlayOpacity: opt.val })}
+                          className={`py-1.5 px-2 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+                            (formData.heroOverlayOpacity ?? 0.65) === opt.val
+                              ? 'bg-slate-900 text-white border-slate-900'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-semibold text-slate-700">Operational Trust Badge Text</label>
+                  <input
+                    type="text"
+                    value={formData.trustBadgeText || ''}
+                    onChange={e => setFormData({ ...formData, trustBadgeText: e.target.value })}
+                    placeholder="e.g. Direct Ground Operator • Verified Local Network"
+                    className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-amber-700"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-200">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-slate-700">Primary CTA Button</label>
+                      <label className="flex items-center space-x-1 text-[11px] text-slate-500 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={formData.showPrimaryCta !== false}
+                          onChange={e => setFormData({ ...formData, showPrimaryCta: e.target.checked })}
+                          className="rounded text-amber-600 focus:ring-amber-500"
+                        />
+                        <span>Show</span>
+                      </label>
+                    </div>
+                    <input
+                      type="text"
+                      value={formData.primaryCtaText || ''}
+                      onChange={e => setFormData({ ...formData, primaryCtaText: e.target.value })}
+                      placeholder="e.g. Explore Curated Inventory"
+                      className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-slate-700">Secondary CTA Button</label>
+                      <label className="flex items-center space-x-1 text-[11px] text-slate-500 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={formData.showSecondaryCta !== false}
+                          onChange={e => setFormData({ ...formData, showSecondaryCta: e.target.checked })}
+                          className="rounded text-amber-600 focus:ring-amber-500"
+                        />
+                        <span>Show</span>
+                      </label>
+                    </div>
+                    <input
+                      type="text"
+                      value={formData.secondaryCtaText || ''}
+                      onChange={e => setFormData({ ...formData, secondaryCtaText: e.target.value })}
+                      placeholder="e.g. Direct DMC Operations Desk"
+                      className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-1">

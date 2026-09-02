@@ -24,14 +24,16 @@ import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
 import { AppDatabase } from '../../services/db';
 import { hotelToProduct } from '../../utils/hotelHelpers';
-import { CheckCircle2, ArrowRight, X } from 'lucide-react';
+import { canUserAccessQuoteBuilder } from '../../services/permissionEngine';
+import { CheckCircle2, ArrowRight, X, Lock } from 'lucide-react';
 
 interface B2BAgentPortalProps {
   destinations: Destination[];
   hotels: Hotel[];
   products: Product[];
   onOpenBookingModal?: (quote?: Quotation) => void;
-  onSwitchToBuyerMode?: () => void;
+  initialTab?: B2BTabType;
+  onTabChange?: (tab: B2BTabType) => void;
 }
 
 export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
@@ -39,12 +41,26 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
   hotels = [],
   products = [],
   onOpenBookingModal,
-  onSwitchToBuyerMode
+  initialTab = 'home',
+  onTabChange
 }) => {
-  const [activeTab, setActiveTab] = useState<B2BTabType>('home');
+  const [activeTab, setActiveTab] = useState<B2BTabType>(initialTab);
   const [initialDestinationSlug, setInitialDestinationSlug] = useState<string | undefined>(undefined);
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
+
+  useEffect(() => {
+    if (initialTab && initialTab !== activeTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
+
+  const handleTabSelect = (tab: B2BTabType) => {
+    setActiveTab(tab);
+    if (onTabChange) {
+      onTabChange(tab);
+    }
+  };
 
   // Global Modals State
   const [inspectingHotel, setInspectingHotel] = useState<Hotel | null>(null);
@@ -208,13 +224,14 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900 selection:bg-[#00C6A6] selection:text-slate-950">
-      {/* Dedicated B2B Navigation */}
-      <B2BPortalNavbar
-        activeTab={activeTab}
-        onSelectTab={setActiveTab}
-        quoteItemCount={items.length}
-        onSwitchToBuyerMode={onSwitchToBuyerMode}
-      />
+      {/* Dedicated B2B Navigation - Quote Builder has its own fixed application-level header */}
+      {activeTab !== 'create-quote' && (
+        <B2BPortalNavbar
+          activeTab={activeTab}
+          onSelectTab={handleTabSelect}
+          quoteItemCount={items.length}
+        />
+      )}
 
       {/* Floating Success Feedback Toast */}
       {toastMessage && (
@@ -234,19 +251,9 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
                 setToastMessage(null);
                 setIsQuoteDrawerOpen(true);
               }}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-colors flex items-center space-x-1 cursor-pointer border border-slate-700"
+              className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 text-xs font-black transition-colors flex items-center space-x-1 cursor-pointer"
             >
               <span>View Cart ({items.length})</span>
-            </button>
-            <button
-              onClick={() => {
-                setToastMessage(null);
-                setActiveTab('create-quote');
-              }}
-              className="px-3 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 text-xs font-black transition-colors flex items-center space-x-1 cursor-pointer"
-            >
-              <span>Build Quote</span>
-              <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
           <button
@@ -290,16 +297,34 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
         )}
 
         {activeTab === 'create-quote' && (
-          <UnifiedB2BQuotationBuilder
-            initialDestinationSlug={initialDestinationSlug}
-            destinations={destinations}
-            hotels={hotels}
-            products={products}
-            cityHubs={cityHubs}
-            onBackToDashboard={() => setActiveTab('dashboard')}
-            onViewMyQuotes={() => setActiveTab('my-quotes')}
-            onConvertToBooking={handleConvertToBooking}
-          />
+          !canUserAccessQuoteBuilder(user, 'B2B').allowed ? (
+            <div className="max-w-xl mx-auto my-12 p-8 bg-white border border-rose-200 rounded-3xl text-center space-y-4 shadow-lg">
+              <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto border border-rose-100">
+                <Lock className="w-6 h-6" />
+              </div>
+              <h2 className="text-xl font-black text-slate-900">B2B Quote Builder Access Restricted</h2>
+              <p className="text-xs text-slate-600 leading-relaxed max-w-md mx-auto">
+                {canUserAccessQuoteBuilder(user, 'B2B').reason || 'Your agency account is not authorized to access the B2B Quotation Builder. Please contact your TheUnbound account manager.'}
+              </p>
+              <button
+                onClick={() => handleTabSelect('dashboard')}
+                className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                Return to Dashboard
+              </button>
+            </div>
+          ) : (
+            <UnifiedB2BQuotationBuilder
+              initialDestinationSlug={initialDestinationSlug}
+              destinations={destinations}
+              hotels={hotels}
+              products={products}
+              cityHubs={cityHubs}
+              onBackToDashboard={() => handleTabSelect('dashboard')}
+              onViewMyQuotes={() => handleTabSelect('my-quotes')}
+              onConvertToBooking={handleConvertToBooking}
+            />
+          )
         )}
 
         {activeTab === 'packages' && (
@@ -438,7 +463,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
 
       {/* Global Left-Side B2B Cart Drawer */}
       <QuoteBuilderDrawer
-        onBookQuote={handleConvertToBooking}
+        onBookQuote={(booking: Booking) => setConfirmedBooking(booking)}
         onNavigateToQuoteBuilder={() => setActiveTab('create-quote')}
         onNavigateToCatalog={(tab) => setActiveTab(tab as B2BTabType)}
       />

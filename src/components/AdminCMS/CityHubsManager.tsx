@@ -403,8 +403,8 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
                           className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold bg-white"
                         >
                           <option value="">-- Custom or Top-Level Region --</option>
-                          {subRegs.map(sr => (
-                            <option key={sr.id} value={sr.name}>
+                          {subRegs.map((sr, srIdx) => (
+                            <option key={`subreg-opt-${sr.id || sr.name}-${srIdx}`} value={sr.name}>
                               {sr.name}
                             </option>
                           ))}

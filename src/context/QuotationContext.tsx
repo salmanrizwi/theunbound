@@ -7,6 +7,8 @@ import { useAuth } from './AuthContext';
 
 interface QuotationContextType {
   items: QuoteItem[];
+  setItems: React.Dispatch<React.SetStateAction<QuoteItem[]>>;
+  loadQuoteItems: (items: QuoteItem[]) => void;
   currency: CurrencyCode;
   setCurrency: (curr: CurrencyCode) => void;
   isQuoteDrawerOpen: boolean;
@@ -685,10 +687,16 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setSavedQuotes(prev => prev.filter(q => q.id !== quoteId));
   };
 
+  const loadQuoteItems = (newItems: QuoteItem[]) => {
+    setItems(newItems || []);
+  };
+
   return (
     <QuotationContext.Provider
       value={{
         items,
+        setItems,
+        loadQuoteItems,
         currency,
         setCurrency,
         isQuoteDrawerOpen,

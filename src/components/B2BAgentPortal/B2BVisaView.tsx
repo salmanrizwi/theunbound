@@ -380,15 +380,6 @@ Support: visa-operations@theunbound.in
               <FileText className="w-3.5 h-3.5" />
               <span>View Cart</span>
             </button>
-            {onOpenCreateQuote && (
-              <button
-                onClick={onOpenCreateQuote}
-                className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center space-x-1.5 border border-slate-700"
-              >
-                <span>Build Quote</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            )}
             <button
               onClick={() => setQuoteSuccessNotification(null)}
               className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
@@ -558,7 +549,7 @@ Support: visa-operations@theunbound.in
                         className="w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs bg-[#00C6A6] hover:bg-[#00b395] text-slate-950"
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span>Configure & Add to Quote</span>
+                        <span>Configure & Add to Cart</span>
                       </button>
                     )}
 
@@ -724,7 +715,7 @@ Support: visa-operations@theunbound.in
                   className="px-5 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 font-black text-xs transition-all shadow-xs flex items-center space-x-1.5 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Configure & Add to Quote</span>
+                  <span>Configure & Add to Cart</span>
                 </button>
               </div>
             </div>

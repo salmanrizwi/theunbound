@@ -47,19 +47,106 @@ export const SUPPORTED_CURRENCIES: CurrencyOption[] = [
   { code: 'CHF', name: 'Swiss Franc', symbol: 'CHF' }
 ];
 
+export type QuotationScope = 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY';
+
 export type UserApprovalStatus = 'APPROVED' | 'PENDING' | 'REJECTED';
 
+export interface CMSOperationsPermissions {
+  enabled: boolean;
+  productManagement?: boolean;
+  hotelManagement?: boolean;
+  packageManagement?: boolean;
+  bookingManagement?: boolean;
+  leadManagement?: boolean;
+  activityManagement?: boolean;
+  tourManagement?: boolean;
+  transferManagement?: boolean;
+  railManagement?: boolean;
+  guideManagement?: boolean;
+  rosterAndRoles?: boolean;
+}
+
+export interface CMSContentPermissions {
+  enabled: boolean;
+  destinationManagement?: boolean;
+  pageManagement?: boolean;
+  marketingManagement?: boolean;
+  destinationPages?: boolean;
+  hubsCities?: boolean;
+  faqs?: boolean;
+  homepageContent?: boolean;
+  menuManagement?: boolean;
+  footerManagement?: boolean;
+  legalPages?: boolean;
+  aboutUs?: boolean;
+  contactUs?: boolean;
+  blogEditorial?: boolean;
+  seoContent?: boolean;
+  customerGallery?: boolean;
+  googleReviews?: boolean;
+}
+
+export interface CMSFinancePermissions {
+  enabled: boolean;
+  accountManagement?: boolean;
+  userPermissionManagement?: boolean;
+  financials?: boolean;
+  invoicing?: boolean;
+  payments?: boolean;
+  paymentProof?: boolean;
+  ledger?: boolean;
+  generateInvoice?: boolean;
+  generateProforma?: boolean;
+  generateVoucher?: boolean;
+  pricingManagement?: boolean;
+  marginManagement?: boolean;
+  commercialConfiguration?: boolean;
+  userAccounts?: boolean;
+  agencyAccounts?: boolean;
+  customerAccounts?: boolean;
+}
+
+export interface CMSSystemPermissions {
+  enabled: boolean;
+  calendarSlas?: boolean;
+  integrationsHub?: boolean;
+  auditLogs?: boolean;
+  googleSheetsSync?: boolean;
+  firebaseSync?: boolean;
+  gmailIntegration?: boolean;
+  googleCalendar?: boolean;
+  dataSyncAudit?: boolean;
+  systemHealth?: boolean;
+  apiConfiguration?: boolean;
+  databaseDiagnostics?: boolean;
+  importLogs?: boolean;
+  syncLogs?: boolean;
+  securityLogs?: boolean;
+}
+
 export interface UserPermissionAccess {
-  canAccessPricingCalculator?: boolean;
+  // Quote Builder Access
+  b2bQuoteBuilderAccess?: boolean;
+  buyerQuoteBuilderAccess?: boolean;
+  canAccessPricingCalculator?: boolean; // backwards-compatible alias
   canCreateBookings?: boolean;
   canExportPDF?: boolean;
   canViewWholesaleNetRates?: boolean;
+  canAddManualHotelRates?: boolean;
+  canManagePackages?: boolean;
+
+  // CMS Access & Hierarchical Modules
   canAccessCMS?: boolean;
+  cmsOperations?: CMSOperationsPermissions;
+  cmsContent?: CMSContentPermissions;
+  cmsFinance?: CMSFinancePermissions;
+  cmsSystem?: CMSSystemPermissions;
+
+  // Flattened convenience & backward-compatibility flags
   canAccessRoster?: boolean;
   canAccessFinancials?: boolean;
   canManageUsers?: boolean;
-  canAddManualHotelRates?: boolean;
-  canManagePackages?: boolean;
+  canManagePermissions?: boolean;
   canDeleteRecords?: boolean;
   canDeleteProducts?: boolean;
   canDeleteHotels?: boolean;
@@ -103,6 +190,8 @@ export interface ManualHotelDetails {
 export interface User {
   id: string;
   name: string;
+  firstName?: string;
+  lastName?: string;
   email: string;
   password?: string;
   role: UserRole;
@@ -195,6 +284,10 @@ export interface Destination {
   region?: DestinationRegion | string;
   regions?: DestinationRegionItem[];
   heroImage: string;
+  heroImageAlt?: string;
+  heroOverlayOpacity?: number; // 0.3 to 0.85
+  heroEyebrow?: string; // e.g. "DMC PREMIER PORTFOLIO • JAPAN GROUND OPERATIONS"
+  heroTitle?: string; // Custom H1 override, defaults to "Explore {name}"
   tagline: string;
   description: string;
   keySellingPoints: string[];
@@ -206,6 +299,11 @@ export interface Destination {
   highlights: string[];
   featuredProductIds: string[];
   status: 'ACTIVE' | 'COMING_SOON';
+  primaryCtaText?: string;
+  showPrimaryCta?: boolean;
+  secondaryCtaText?: string;
+  showSecondaryCta?: boolean;
+  trustBadgeText?: string;
 }
 
 export interface Supplier {
@@ -604,6 +702,35 @@ export interface Quotation {
   adultsCount?: number;
   childrenCount?: number;
   infantsCount?: number;
+  childAges?: number[];
+  passengerBreakdown?: {
+    adults: number;
+    cwb: number;
+    cnb: number;
+    infants: number;
+    cwbAges: number[];
+    cnbAges: number[];
+    infAges: number[];
+  };
+  roomingConfig?: {
+    roomsCount: number;
+    adultsPerRoom: number;
+    cwbPerRoom: number;
+    cnbPerRoom: number;
+    infPerRoom: number;
+    extraBed: boolean;
+  };
+  nationality?: string;
+  travelStyle?: string;
+  mealPlanPreference?: string;
+  operationalRemarks?: string[];
+  customOperationalRemarks?: string;
+  feasibilityScore?: number;
+  feasibilityStatus?: 'EXCELLENT' | 'GOOD' | 'NEEDS_ATTENTION' | 'HIGH_RISK';
+  feasibilityWarnings?: { type: string; message: string; actionType?: string }[];
+  options?: QuotationOption[];
+  activeOptionId?: string;
+  visaAssistanceChoice?: 'YES' | 'NO' | 'NOT_REQUIRED' | 'LATER';
   scope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY';
   routeHubs?: TripRouteHub[];
   dayThemes?: Record<number, string>;
@@ -1701,8 +1828,103 @@ export interface DynamicPricingRecord {
 }
 
 // ----------------------------------------------------
-// EXTENDED GOOGLE SHEETS SYNC REPORT
+// EXTENDED GOOGLE SHEETS SYNC REPORT & MULTI-TAB ARCHITECTURE
 // ----------------------------------------------------
+export type MasterSheetTabName =
+  | 'REGIONS'
+  | 'DESTINATIONS'
+  | 'HUBS'
+  | 'PRODUCTS'
+  | 'PRODUCT_PRICING'
+  | 'PRODUCT_CAPACITY'
+  | 'HOTELS'
+  | 'HOTEL_ROOMS'
+  | 'HOTEL_MEAL_PLANS'
+  | 'HOTEL_RATES'
+  | 'VISA'
+  | 'VISA_RATES'
+  | 'TRANSFER_ROUTES'
+  | 'TRANSFER_RATES'
+  | 'PACKAGES'
+  | 'PACKAGE_ITEMS';
+
+export interface SheetValidationError {
+  tabName: MasterSheetTabName | string;
+  rowNumber: number;
+  recordId: string;
+  field: string;
+  value: string;
+  error: string;
+  severity: 'CRITICAL' | 'WARNING' | 'INFO';
+  suggestedFix: string;
+}
+
+export interface SheetTabValidationSummary {
+  tabName: MasterSheetTabName | string;
+  totalRows: number;
+  validRows: number;
+  errorRows: number;
+  warningRows: number;
+  status: 'VALID' | 'WARNING' | 'ERROR';
+}
+
+export interface HierarchicalValidationReport {
+  isValid: boolean;
+  totalRows: number;
+  validRows: number;
+  errorRows: number;
+  tabSummaries: Record<string, SheetTabValidationSummary>;
+  errors: SheetValidationError[];
+  hierarchyHealth: {
+    orphanDestinations: number;
+    orphanHubs: number;
+    orphanProducts: number;
+    orphanHotels: number;
+    orphanTransfers: number;
+    orphanPackages: number;
+    rateMismatches: number;
+  };
+}
+
+export interface SyncPreviewDiffItem {
+  id: string;
+  tabName: MasterSheetTabName | string;
+  title: string;
+  action: 'CREATE' | 'UPDATE' | 'UNCHANGED' | 'BLOCKED';
+  changedFields?: string[];
+  details?: string;
+  rawData?: Record<string, any>;
+}
+
+export interface SyncPreviewTabDiff {
+  tabName: MasterSheetTabName | string;
+  createdCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+  errorCount: number;
+  items: SyncPreviewDiffItem[];
+}
+
+export interface MultiTabSyncReport {
+  id: string;
+  timestamp: string;
+  userEmail: string;
+  sheetId: string;
+  sheetName?: string;
+  syncMode: 'FULL_SYNC' | 'SELECTED_TABS' | 'INCREMENTAL';
+  tabsProcessed: string[];
+  durationMs: number;
+  status: 'SUCCESS' | 'COMPLETED_WITH_ERRORS' | 'FAILED';
+  totalRecords: number;
+  createdTotal: number;
+  updatedTotal: number;
+  unchangedTotal: number;
+  errorsTotal: number;
+  tabDiffs: Record<string, SyncPreviewTabDiff>;
+  validationErrors: SheetValidationError[];
+  logs: string[];
+}
+
 export interface SyncDetailedReport {
   id: string;
   timestamp: string;
@@ -1731,6 +1953,127 @@ export interface SyncDetailedReport {
     error: string;
   }[];
   logs: string[];
+  multiTabReport?: MultiTabSyncReport;
+}
+
+// ----------------------------------------------------
+// TRANSFER ROUTES & TRANSFER RATES ARCHITECTURE
+// ----------------------------------------------------
+export type TransferRouteType = 'AIRPORT_ARRIVAL' | 'AIRPORT_DEPARTURE' | 'INTERCITY' | 'POINT_TO_POINT' | 'PORT_TRANSFER';
+export type TransferRateType = 'PRIVATE' | 'SIC' | 'VIP';
+
+export interface TransferRoute {
+  id: string; // e.g. TRF-TYO-HND-001
+  destinationId: string; // FK to Destination
+  destinationName?: string;
+  fromHubId: string; // FK to CityHub
+  fromHubName?: string;
+  toHubId: string; // FK to CityHub
+  toHubName?: string;
+  routeName: string; // e.g. "Tokyo Haneda Airport -> Tokyo City Hotels"
+  transferType: TransferRouteType;
+  vehicleType: string; // e.g. "Executive MPV (Toyota Alphard)", "Toyota HiAce (9 Pax)"
+  maxCapacity: number;
+  duration?: string;
+  meetingPoint?: string;
+  inclusions?: string[];
+  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  displayOrder?: number;
+  rates?: TransferRate[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface TransferRate {
+  id: string; // e.g. TRATE-TYO-001
+  routeId: string; // FK to TransferRoute
+  rateType: TransferRateType;
+  vehicle: string;
+  capacity: number;
+  currency: CurrencyCode;
+  nettCost: number;
+  markupBuyer?: number;
+  markupAgent?: number;
+  status: 'ACTIVE' | 'INACTIVE';
+  validityFrom?: string;
+  validityTo?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+// ----------------------------------------------------
+// PRODUCT PRICING & CAPACITY ARCHITECTURE (SEPARATE TABS)
+// ----------------------------------------------------
+export interface ProductPricingRate {
+  id: string; // pricing_id e.g. PRC-TYO-001-STD
+  productId: string; // FK to Product
+  rateType: 'Standard' | 'Peak' | 'Off-Peak' | 'Weekend' | 'Festive' | string;
+  currency: CurrencyCode;
+  validityFrom: string; // YYYY-MM-DD
+  validityTo: string; // YYYY-MM-DD
+  adultNett: number;
+  childNett: number;
+  cwbNett: number; // Child with bed
+  cnbNett: number; // Child no bed
+  infantNett: number;
+  fixedCost: number;
+  perPersonCost: number;
+  markupBuyer: number;
+  markupAgent: number;
+  taxPercentage: number;
+  supplierName: string;
+  supplierRateReference?: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ProductCapacityItem {
+  id: string; // capacity_id
+  productId: string; // FK to Product
+  capacity: number;
+  vehicleModel: string;
+  fixedNettCost: number;
+  currency?: CurrencyCode;
+  status?: 'ACTIVE' | 'INACTIVE';
+}
+
+// ----------------------------------------------------
+// HOTEL MEAL PLANS & VISA RATES ARCHITECTURE
+// ----------------------------------------------------
+export interface HotelMealPlanItem {
+  id: string; // meal_plan_id e.g. MP-TYO-001-BB
+  hotelId: string; // FK to Hotel
+  mealCode: MealPlanCode | 'CP' | 'MAP' | 'AP';
+  mealName: string;
+  description: string;
+  status: 'ACTIVE' | 'INACTIVE';
+}
+
+export interface VisaRateItem {
+  id: string; // visa_rate_id e.g. VRATE-JPN-001
+  visaId: string; // FK to VisaProduct
+  currency: CurrencyCode;
+  validityFrom: string;
+  validityTo: string;
+  adultNett: number;
+  childNett: number;
+  infantNett: number;
+  serviceFee: number;
+  markupBuyer: number;
+  markupAgent: number;
+  status: 'ACTIVE' | 'INACTIVE';
+}
+
+export interface PackageItemRef {
+  id: string; // package_item_id e.g. PKGITEM-001
+  packageId: string; // FK to B2BPackage
+  dayNumber: number;
+  hubId: string; // FK to CityHub
+  itemType: 'product' | 'hotel' | 'transfer' | 'rail' | 'activity' | 'guide';
+  itemId: string; // FK to Master Entity
+  quantity: number;
+  remarks?: string;
 }
 
 // ----------------------------------------------------
@@ -1920,11 +2263,27 @@ export interface HomepageFAQItem {
   isPublished: boolean;
 }
 
+export interface HeroTrustBadge {
+  label: string;
+  subtext: string;
+  icon?: string;
+}
+
 export interface HomepageConfig {
   heroHeading: string;
   heroSubheading: string;
   heroBadgeText: string;
   heroImage: string;
+  heroImageAlt?: string;
+  heroOverlayOpacity?: number; // 0.3 to 0.85, default 0.65
+  primaryCtaText?: string;
+  primaryCtaAction?: string;
+  showPrimaryCta?: boolean;
+  secondaryCtaText?: string;
+  secondaryCtaAction?: string;
+  showSecondaryCta?: boolean;
+  heroTrustBadges?: HeroTrustBadge[];
+  heroSellingPoints?: string[];
   featuredDestinationIds: string[];
   destinationOrdering: string[];
   
@@ -2001,6 +2360,7 @@ export type LeadSource =
   | 'MARKETING_CAMPAIGN'
   | 'MARKETING'
   | 'CONTACT_FORM' 
+  | 'ABOUT_US_PAGE'
   | 'MANUAL_ENTRY' 
   | 'REFERRAL' 
   | 'B2B_PARTNER' 
@@ -2156,6 +2516,8 @@ export interface LeadAssignmentRecord {
   assignedAt: string;
   notes?: string;
 }
+
+export type CRMLead = TravelLead;
 
 export interface TravelLead {
   id: string;
@@ -3067,5 +3429,84 @@ export type B2BTabType =
   | 'account';
 
 export type B2BNavTab = B2BTabType;
+
+// ----------------------------------------------------
+// B2B TRAVEL QUOTATION & PACKAGE ENGINE UPGRADE TYPES
+// ----------------------------------------------------
+
+export interface PassengerClassification {
+  adults: number; // Age 11+
+  cwb: number; // Child with bed (Age 5 to < 11)
+  cnb: number; // Child no bed (Age 2 to < 5)
+  infants: number; // Infant (Age < 2, default cost 0)
+  cwbAges: number[];
+  cnbAges: number[];
+  infAges: number[];
+  totalPax: number;
+  displayText: string; // e.g., "ADT: 2 | CWB: 1 (Age 8) | CNB: 1 (Age 4) | INF: 1 (Age 1)"
+}
+
+export interface QuotationOption {
+  id: string;
+  optionNumber: number;
+  title: string; // e.g., "Option 1: 4-Star Premium", "Option 2: 5-Star Luxury", "Option 3: Ultra Luxury / Villa"
+  badge?: string;
+  hotelTier?: string;
+  hotelSummary?: string;
+  items: QuoteItem[];
+  routeHubs: TripRouteHub[];
+  totalNetCost: number;
+  totalSellingPrice: number;
+  totalMargin: number;
+  totalTaxes: number;
+}
+
+export interface FeasibilityWarning {
+  id: string;
+  type: 'HOTEL' | 'TRANSFER' | 'ACTIVITY' | 'RAIL' | 'GUIDE' | 'VISA' | 'INSURANCE' | 'ESIM' | 'SERVICE' | 'LOGISTICS';
+  severity: 'CRITICAL' | 'WARNING' | 'INFO';
+  message: string;
+  actionLabel?: string;
+  actionType?: string;
+  dayNumber?: number;
+  hubId?: string;
+  hubName?: string;
+}
+
+export interface FeasibilityCheckResult {
+  score: number; // 0 to 10
+  status: 'EXCELLENT' | 'GOOD' | 'NEEDS_ATTENTION' | 'HIGH_RISK';
+  statusLabel: string;
+  statusColor: string;
+  warnings: FeasibilityWarning[];
+  recommendations: string[];
+}
+
+export interface B2BInsurancePlan {
+  id: string;
+  name: string;
+  provider: string;
+  coverageAmountUSD: number;
+  coverageSummary: string;
+  costPerDayAdultUSD: number;
+  costPerDayChildUSD: number;
+  sellingPricePerDayAdultUSD: number;
+  sellingPricePerDayChildUSD: number;
+  medicalEmergencyCoverage: string;
+  tripCancellationCoverage: string;
+  baggageLossCoverage: string;
+}
+
+export interface B2BEsimPlan {
+  id: string;
+  destination: string;
+  dataAllowance: string; // e.g. "5 GB", "10 GB", "Unlimited"
+  validityDays: number; // e.g. 7, 10, 15, 30
+  carrier: string;
+  netCostUSD: number;
+  sellingPriceUSD: number;
+  features: string[];
+}
+
 
 

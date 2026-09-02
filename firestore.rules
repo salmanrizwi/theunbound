@@ -1,188 +1,429 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Public catalog & content
-    match /products/{document=**} {
-      allow read, write: if true;
+
+    // =========================================================================
+    // HELPER FUNCTIONS FOR USER PERMISSION ENGINE ENFORCEMENT
+    // =========================================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
     }
 
-    match /destinations/{document=**} {
-      allow read, write: if true;
+    function getUserDoc(uid) {
+      return get(/databases/$(database)/documents/users/$(uid));
     }
 
-    match /regions/{document=**} {
-      allow read, write: if true;
+    function hasUserDoc(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid));
     }
 
-    match /city_hubs/{document=**} {
-      allow read, write: if true;
+    function currentUserData() {
+      return getUserDoc(request.auth.uid).data;
     }
 
-    match /hotels/{document=**} {
-      allow read, write: if true;
+    // Master admin email or designated admin role
+    function isMasterAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'admin@theunbound.com' ||
+        (hasUserDoc(request.auth.uid) && currentUserData().role == 'ADMIN')
+      );
     }
 
-    match /promotions/{document=**} {
-      allow read, write: if true;
+    // Active & approved user check
+    function isApprovedUser() {
+      return isAuthenticated() && (
+        isMasterAdmin() ||
+        (hasUserDoc(request.auth.uid) && (
+          currentUserData().approvalStatus == 'APPROVED' || 
+          !('approvalStatus' in currentUserData())
+        ))
+      );
     }
 
-    match /gallery_items/{document=**} {
-      allow read, write: if true;
+    function hasPerms() {
+      return hasUserDoc(request.auth.uid) && ('permissions' in currentUserData());
     }
 
-    match /google_reviews/{document=**} {
-      allow read, write: if true;
+    function userPerms() {
+      return currentUserData().permissions;
     }
 
-    match /blog_articles/{document=**} {
-      allow read, write: if true;
+    // 1. User & Account Management Access
+    function canManageUserAccounts() {
+      return isMasterAdmin() || (
+        isApprovedUser() && (
+          currentUserData().role == 'ADMIN' ||
+          (hasPerms() && (
+            userPerms().canManagePermissions == true ||
+            ('cmsFinance' in userPerms() && userPerms().cmsFinance.userAccounts == true)
+          ))
+        )
+      );
     }
 
-    match /homepage_config/{document=**} {
-      allow read, write: if true;
+    // 2. CMS Operations Access (Products, Hotels, Packages, Bookings, Leads, Roster)
+    function canAccessCMSOperations() {
+      return isMasterAdmin() || (
+        isApprovedUser() && (
+          currentUserData().role == 'ADMIN' ||
+          currentUserData().role == 'DMC_STAFF' ||
+          (hasPerms() && (
+            !('cmsOperations' in userPerms()) ||
+            userPerms().cmsOperations.enabled != false
+          ))
+        )
+      );
     }
 
-    match /faqs/{document=**} {
-      allow read, write: if true;
+    // 3. CMS Content Access (Pages, Marketing, FAQ, Destinations, Media)
+    function canAccessCMSContent() {
+      return isMasterAdmin() || (
+        isApprovedUser() && (
+          currentUserData().role == 'ADMIN' ||
+          currentUserData().role == 'TEAM_MEMBER' ||
+          (hasPerms() && (
+            !('cmsContent' in userPerms()) ||
+            userPerms().cmsContent.enabled != false
+          ))
+        )
+      );
     }
 
-    match /destination_faqs/{document=**} {
-      allow read, write: if true;
+    // 4. CMS Financial Access (Invoices, Ledgers, Vouchers, Financial Reporting)
+    function canAccessCMSFinance() {
+      return isMasterAdmin() || (
+        isApprovedUser() && (
+          currentUserData().role == 'ADMIN' ||
+          (hasPerms() && (
+            userPerms().canAccessFinancials == true ||
+            ('cmsFinance' in userPerms() && userPerms().cmsFinance.enabled == true)
+          ))
+        )
+      );
     }
 
-    match /custom_pages/{document=**} {
-      allow read, write: if true;
+    // 5. CMS System Access (SLAs, Integrations, Audit Logs, Diagnostics)
+    function canAccessCMSSystem() {
+      return isMasterAdmin() || (
+        isApprovedUser() && (
+          currentUserData().role == 'ADMIN' ||
+          (hasPerms() && (
+            !('cmsSystem' in userPerms()) ||
+            userPerms().cmsSystem.enabled != false
+          ))
+        )
+      );
     }
 
-    match /menu_items/{document=**} {
-      allow read, write: if true;
+    // 6. Quote Builder Access (B2B vs Buyer)
+    function canAccessB2BQuotes() {
+      return isMasterAdmin() || (
+        isApprovedUser() && (
+          currentUserData().role == 'B2B_AGENT' ||
+          currentUserData().role == 'ADMIN' ||
+          (hasPerms() && userPerms().b2bQuoteBuilderAccess == true)
+        )
+      );
     }
 
-    match /wishlist_folders/{document=**} {
-      allow read, write: if true;
-    }
+    // =========================================================================
+    // USER ACCOUNTS & PERMISSION PROFILES
+    // =========================================================================
 
-    match /wishlist_items/{document=**} {
-      allow read, write: if true;
-    }
-
-    // User data
     match /users/{userId} {
-      allow read, write: if true;
+      // User can read their own profile, or authorized administrators can read
+      allow read: if isAuthenticated() && (request.auth.uid == userId || canManageUserAccounts());
+
+      // New users can register their profile
+      allow create: if isAuthenticated() && (request.auth.uid == userId || canManageUserAccounts());
+
+      // Only authorized Admins can update roles, approvalStatus, or permissions
+      // Regular users may only update non-security profile info (name, phone, company)
+      allow update: if isAuthenticated() && (
+        canManageUserAccounts() ||
+        (request.auth.uid == userId && 
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'approvalStatus', 'permissions', 'category']))
+      );
+
+      // Only Master Admin can delete user accounts
+      allow delete: if isMasterAdmin();
     }
 
     match /system_users/{userId} {
-      allow read, write: if true;
+      allow read: if isAuthenticated() && (request.auth.uid == userId || canManageUserAccounts());
+      allow write: if canManageUserAccounts();
     }
 
-    // Quotations
+    // =========================================================================
+    // PUBLIC CATALOG & CONTENT (Read: Public | Write: Authorized CMS Content/Ops)
+    // =========================================================================
+
+    match /products/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSOperations();
+    }
+
+    match /destinations/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /regions/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /city_hubs/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /master_regions/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /hotels/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSOperations();
+    }
+
+    match /hotel_rates/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if canAccessCMSOperations();
+    }
+
+    match /hotel_meal_plans/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSOperations();
+    }
+
+    match /transfer_rates/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if canAccessCMSOperations();
+    }
+
+    match /product_pricing_rates/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if canAccessCMSOperations();
+    }
+
+    match /product_capacities/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSOperations();
+    }
+
+    match /b2b_packages/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if canAccessCMSOperations();
+    }
+
+    match /package_items/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if canAccessCMSOperations();
+    }
+
+    match /visas/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSOperations();
+    }
+
+    match /visa_rates/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSOperations();
+    }
+
+    match /promotions/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /gallery_items/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /google_reviews/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /blog_articles/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /homepage_config/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /faqs/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /destination_faqs/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /custom_pages/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /menu_items/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /footer_config/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /campaigns/{document=**} {
+      allow read, write: if canAccessCMSContent();
+    }
+
+    match /campaign_events/{document=**} {
+      allow read: if canAccessCMSContent();
+      allow create: if true; // Analytics telemetry collection
+      allow update, delete: if isMasterAdmin();
+    }
+
+    // =========================================================================
+    // QUOTATIONS, BOOKINGS & LEADS
+    // =========================================================================
+
     match /quotations/{quotationId} {
-      allow read, write: if true;
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || 
+        canAccessCMSOperations() || 
+        canAccessB2BQuotes()
+      );
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || 
+        canAccessCMSOperations()
+      );
+      allow delete: if canAccessCMSOperations();
     }
 
-    // Bookings
     match /bookings/{bookingId} {
-      allow read, write: if true;
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || 
+        canAccessCMSOperations()
+      );
+      allow create: if isAuthenticated();
+      allow update, delete: if canAccessCMSOperations();
     }
 
-    // Leads
     match /leads/{leadId} {
-      allow read, write: if true;
-    }
-
-    // Financials
-    match /financial_invoices/{id} {
-      allow read, write: if true;
-    }
-
-    match /financial_vouchers/{id} {
-      allow read, write: if true;
-    }
-
-    match /financial_ledgers/{id} {
-      allow read, write: if true;
-    }
-
-    match /invoices/{id} {
-      allow read, write: if true;
-    }
-
-    match /vouchers/{id} {
-      allow read, write: if true;
-    }
-
-    // Operations & Admin logs
-    match /job_sheets/{id} {
-      allow read, write: if true;
-    }
-
-    match /roster_resources/{id} {
-      allow read, write: if true;
-    }
-
-    match /tasks/{id} {
-      allow read, write: if true;
-    }
-
-    match /calendar_tasks/{id} {
-      allow read, write: if true;
-    }
-
-    match /sla_automation_rules/{id} {
-      allow read, write: if true;
-    }
-
-    match /sla_automation_audit_logs/{id} {
-      allow read, write: if true;
-    }
-
-    match /email_logs/{id} {
-      allow read, write: if true;
-    }
-
-    match /audit_logs/{id} {
-      allow read, write: if true;
-    }
-
-    match /sheets_sync_history/{id} {
-      allow read, write: if true;
-    }
-
-    match /campaigns/{id} {
-      allow read, write: if true;
-    }
-
-    match /b2b_packages/{id} {
-      allow read, write: if true;
-    }
-
-    match /visas/{id} {
-      allow read, write: if true;
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || 
+        canAccessCMSOperations()
+      );
+      allow create: if true; // Public lead capture forms
+      allow update, delete: if canAccessCMSOperations();
     }
 
     match /b2b_customers/{id} {
-      allow read, write: if true;
+      allow read, write: if canAccessCMSOperations() || canManageUserAccounts();
     }
 
     match /b2b_tasks/{id} {
-      allow read, write: if true;
+      allow read, write: if canAccessCMSOperations();
     }
 
-    match /master_regions/{id} {
-      allow read, write: if true;
+    match /tasks/{id} {
+      allow read, write: if canAccessCMSOperations() || canAccessCMSSystem();
     }
 
-    match /campaign_events/{id} {
-      allow read, write: if true;
+    match /calendar_tasks/{id} {
+      allow read, write: if canAccessCMSOperations() || canAccessCMSSystem();
     }
 
-    match /footer_config/{id} {
-      allow read, write: if true;
+    match /job_sheets/{id} {
+      allow read, write: if canAccessCMSOperations();
+    }
+
+    match /roster_resources/{id} {
+      allow read, write: if canAccessCMSOperations();
+    }
+
+    // =========================================================================
+    // FINANCIALS & ACCOUNTING (Protected by cmsFinance permissions)
+    // =========================================================================
+
+    match /financial_invoices/{id} {
+      allow read, write: if canAccessCMSFinance();
+    }
+
+    match /invoices/{id} {
+      allow read, write: if canAccessCMSFinance();
+    }
+
+    match /financial_vouchers/{id} {
+      allow read: if canAccessCMSFinance() || canAccessCMSOperations();
+      allow write: if canAccessCMSFinance();
+    }
+
+    match /vouchers/{id} {
+      allow read: if canAccessCMSFinance() || canAccessCMSOperations();
+      allow write: if canAccessCMSFinance();
+    }
+
+    match /financial_ledgers/{id} {
+      allow read, write: if canAccessCMSFinance();
+    }
+
+    // =========================================================================
+    // SYSTEM AUDITING & DIAGNOSTICS
+    // =========================================================================
+
+    match /audit_logs/{id} {
+      allow read: if canAccessCMSSystem();
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // Immutable audit log
+    }
+
+    match /sla_automation_rules/{id} {
+      allow read, write: if canAccessCMSSystem();
+    }
+
+    match /sla_automation_audit_logs/{id} {
+      allow read: if canAccessCMSSystem();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /email_logs/{id} {
+      allow read: if canAccessCMSSystem();
+      allow create: if isAuthenticated();
+      allow update, delete: if isMasterAdmin();
+    }
+
+    match /sheets_sync_history/{id} {
+      allow read, write: if canAccessCMSSystem();
     }
 
     match /test/{id} {
-      allow read, write: if true;
+      allow read, write: if isMasterAdmin();
+    }
+
+    // =========================================================================
+    // USER PERSONAL STORAGE (Wishlists)
+    // =========================================================================
+
+    match /wishlist_folders/{id} {
+      allow read, write: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    match /wishlist_items/{id} {
+      allow read, write: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
     }
   }
 }
-

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
+import { useAuth } from '../context/AuthContext';
 import { Hotel, HotelRoomType, HotelRate, MealPlanCode, CurrencyCode, Product } from '../types';
 import { formatCurrency, convertCurrency } from '../services/pricingEngine';
 import { calculateHotelStayPrice, getMealPlanLabel, hotelToProduct } from '../utils/hotelHelpers';
@@ -51,6 +52,7 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
   onViewHotelDetails,
   isJustAdded = false
 }) => {
+  const { user } = useAuth();
   // Inline Expansion State
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -128,7 +130,28 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
     setTimeout(() => setAddedLocal(false), 2000);
   };
 
-  const startingNightlyConverted = convertCurrency(hotel.startingNetPrice, hotel.currency, currency);
+  const startingSellingPrice = useMemo(() => {
+    const firstRoom = hotel.roomTypes?.[0];
+    const firstRate = firstRoom?.rates?.[0] || activeRate;
+    if (firstRoom) {
+      const calc = calculateHotelStayPrice({
+        hotel,
+        roomType: firstRoom,
+        rate: firstRate,
+        checkInDate,
+        nights: 1,
+        roomsCount: 1,
+        adults: 2,
+        children: 0,
+        extraBeds: 0,
+        targetCurrency: currency,
+        agentClientMarkupPercent: agentMarkupPercent
+      });
+      return calc.finalTotalSellingPrice;
+    }
+    const netConverted = convertCurrency(hotel.startingNetPrice || 400, hotel.currency, currency);
+    return Math.round(netConverted * (1 + (agentMarkupPercent || 15) / 100) * 1.1);
+  }, [hotel, activeRate, checkInDate, currency, agentMarkupPercent]);
 
   return (
     <div className={`bg-white rounded-2xl border transition-all duration-200 overflow-hidden shadow-2xs ${
@@ -201,16 +224,16 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
         <div className="flex items-center justify-between lg:justify-end gap-3 pt-3 lg:pt-0 border-t lg:border-t-0 border-slate-100">
           <div className="text-left lg:text-right">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-              Starting Rate
+              Starting Final Rate
             </span>
             <div className="flex items-baseline space-x-1">
               <span className="text-sm sm:text-base font-black text-slate-900">
-                {formatCurrency(startingNightlyConverted, currency)}
+                {formatCurrency(startingSellingPrice, currency)}
               </span>
               <span className="text-[10px] text-slate-400 font-normal">/ night</span>
             </div>
-            <span className="text-[9px] text-emerald-600 font-semibold bg-emerald-50 px-1.5 py-0.2 rounded inline-block">
-              Contracted DMC Net
+            <span className="text-[9px] text-teal-700 font-semibold bg-teal-50 px-1.5 py-0.5 rounded inline-block border border-teal-200/60">
+              Guaranteed Tariff
             </span>
           </div>
 
@@ -355,20 +378,28 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
           {stayCalc && (
             <div className="bg-white rounded-xl border border-slate-200 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                {(user?.role === 'ADMIN' || user?.role === 'DMC_STAFF') && (
+                  <>
+                    <div>
+                      <span className="text-slate-500">Nightly Net:</span>{' '}
+                      <strong className="text-slate-900">{formatCurrency(stayCalc.nightlyBaseNetRate, currency)}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Total Net Cost:</span>{' '}
+                      <strong className="text-slate-900">{formatCurrency(stayCalc.roomsTotalNetCost, currency)}</strong>
+                    </div>
+                  </>
+                )}
                 <div>
-                  <span className="text-slate-500">Nightly Net:</span>{' '}
-                  <strong className="text-slate-900">{formatCurrency(stayCalc.nightlyBaseNetRate, currency)}</strong>
+                  <span className="text-slate-500">Stay Duration:</span>{' '}
+                  <strong className="text-slate-900">{nights} {nights === 1 ? 'Night' : 'Nights'} • {roomsCount} {roomsCount === 1 ? 'Room' : 'Rooms'}</strong>
                 </div>
                 <div>
-                  <span className="text-slate-500">Total Stay ({nights} nts × {roomsCount} rm):</span>{' '}
-                  <strong className="text-slate-900">{formatCurrency(stayCalc.roomsTotalNetCost, currency)}</strong>
+                  <span className="text-slate-500">Meal Plan:</span>{' '}
+                  <span className="font-semibold text-slate-800">{activeRate.mealPlanName || activeRate.mealPlan}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500">DMC Wholesale:</span>{' '}
-                  <strong className="text-teal-700 font-bold">{formatCurrency(stayCalc.b2bWholesaleNetToAgent, currency)}</strong>
-                </div>
-                <div>
-                  <span className="text-slate-500">Selling Price:</span>{' '}
+                  <span className="text-slate-500">Final Selling Price:</span>{' '}
                   <strong className="text-emerald-600 font-black text-sm">{formatCurrency(stayCalc.finalTotalSellingPrice, currency)}</strong>
                 </div>
               </div>

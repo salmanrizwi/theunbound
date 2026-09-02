@@ -568,16 +568,7 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
             <div className="flex items-center space-x-4 text-xs w-full sm:w-auto justify-between sm:justify-start">
               <div>
                 <span className="text-[10px] text-slate-400 uppercase font-bold block">
-                  Wholesale Net to Agent:
-                </span>
-                <span className="text-sm font-extrabold font-mono text-slate-900">
-                  {formatCurrency(liveCalculation.b2bWholesaleNetToAgent, currency)}
-                </span>
-              </div>
-
-              <div className="pl-4 border-l border-slate-200">
-                <span className="text-[10px] text-slate-400 uppercase font-bold block">
-                  Est. Selling Rate ({agentClientMarkupPercent}% margin):
+                  Final Selling Price:
                 </span>
                 <span className="text-sm font-extrabold font-mono text-[#008972]">
                   {formatCurrency(liveCalculation.finalTotalSellingPrice, currency)}

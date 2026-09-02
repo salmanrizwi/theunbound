@@ -30,6 +30,10 @@ export const SearchAndFilter: React.FC<SearchAndFilterProps> = ({
     });
   };
 
+  const uniqueCities = React.useMemo(() => {
+    return Array.from(new Set((availableCities || []).filter(Boolean)));
+  }, [availableCities]);
+
   const hasActiveFilters = 
     filters.searchQuery || 
     filters.city || 
@@ -89,9 +93,9 @@ export const SearchAndFilter: React.FC<SearchAndFilterProps> = ({
             onChange={(e) => onFilterChange({ ...filters, city: e.target.value })}
             className="bg-slate-50 border border-slate-200 rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-700 focus:ring-1 focus:ring-[#00C6A6] cursor-pointer"
           >
-            <option value="">All Hubs ({availableCities.length})</option>
-            {availableCities.map((city) => (
-              <option key={city} value={city}>{city}</option>
+            <option value="">All Hubs ({uniqueCities.length})</option>
+            {uniqueCities.map((city, idx) => (
+              <option key={`city-opt-${city}-${idx}`} value={city}>{city}</option>
             ))}
           </select>
 

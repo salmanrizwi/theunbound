@@ -140,9 +140,17 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
   });
 
   const filteredHotels = hotels.filter(h => {
-    const matchesReg = selectedRegionFilter === 'all' || h.regionId === selectedRegionFilter;
-    const matchesDest = selectedDestinationFilter === 'all' || h.destinationId === selectedDestinationFilter;
-    const matchesHub = selectedCityHubFilter === 'all' || h.hubId === selectedCityHubFilter || h.cityName.toLowerCase() === selectedCityHubFilter.toLowerCase();
+    const targetDest = destinations.find(d => d.id === selectedDestinationFilter || d.slug === selectedDestinationFilter);
+    const matchesReg = selectedRegionFilter === 'all' || 
+                       h.regionId === selectedRegionFilter ||
+                       (targetDest && targetDest.regionId === selectedRegionFilter);
+    const matchesDest = selectedDestinationFilter === 'all' || 
+                        h.destinationId === selectedDestinationFilter ||
+                        (targetDest && (h.destinationId === targetDest.id || h.destinationId === targetDest.slug || h.country.toLowerCase() === targetDest.name.toLowerCase()));
+    const matchesHub = selectedCityHubFilter === 'all' || 
+                       h.hubId === selectedCityHubFilter || 
+                       h.cityId === selectedCityHubFilter ||
+                       h.cityName.toLowerCase() === selectedCityHubFilter.toLowerCase();
     const matchesSearch = h.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           h.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           h.cityName.toLowerCase().includes(searchQuery.toLowerCase()) ||

@@ -19,6 +19,7 @@ import {
   User,
   UserCategory,
   UserApprovalStatus,
+  UserPermissionAccess,
   Hotel,
   CityHub,
   DestinationFAQ,
@@ -77,7 +78,17 @@ import {
   DependencyDetailItem,
   DependencyGroup,
   DeletionCheckResult,
-  SecureDeleteResult
+  SecureDeleteResult,
+  TransferRoute,
+  TransferRate,
+  ProductPricingRate,
+  ProductCapacityItem,
+  HotelMealPlanItem,
+  VisaRateItem,
+  PackageItemRef,
+  MultiTabSyncReport,
+  HotelRoomType,
+  HotelRate
 } from '../types';
 import { INITIAL_PRODUCTS } from '../data/initialProducts';
 import { DESTINATIONS } from '../data/destinations';
@@ -112,6 +123,12 @@ import {
   getDocFromServer,
   writeBatch 
 } from 'firebase/firestore';
+import { 
+  getDefaultPermissionsForRole, 
+  syncSessionUserPermissions, 
+  canRevokeAdminPermissions, 
+  isMasterAdmin 
+} from './permissionEngine';
 
 function cleanForFirestore(data: any): any {
   if (data === undefined) {
@@ -138,13 +155,13 @@ export const INITIAL_SITE_PAGES_CONFIG: SitePagesConfig = {
   contactPage: {
     heroTitle: 'Get in Touch with Our Ground Operations',
     heroSubtitle: 'Connect directly with TheUnbound Destination Management Company for bespoke travel quotations, wholesale contracted tariffs, guide allocations, and operational support across Japan, United Kingdom, and Europe.',
-    officeAddress: 'A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi, India',
+    officeAddress: 'A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi 110076, India',
     salesEmail: 'sales@theunbound.in',
     opsEmail: 'business@theunbound.in',
-    phone: '+91 98710 24890',
-    whatsappNumber: '+91 98710 24890',
+    phone: '+91-9811654959',
+    whatsappNumber: '+91-9811654959',
     supportHours: 'Mon - Sat: 09:00 AM - 08:00 PM (IST) / 24x7 On-Tour Emergency Support',
-    emergencyHotline: '+91 98710 24890'
+    emergencyHotline: '+91-9811654959'
   },
   termsPage: {
     lastUpdated: '2026-01-15',
@@ -263,7 +280,7 @@ export const INITIAL_SLA_AUTOMATION_RULES: SLAAutomationRule[] = [
     slaHours: 12,
     defaultAssignee: {
       type: 'DEPARTMENT',
-      name: 'Operations Team (Marcus Vance)',
+      name: 'Operations Team',
       email: 'business@theunbound.in',
       department: 'OPERATIONS',
       role: 'Duty Operations Manager'
@@ -1093,6 +1110,62 @@ export class AppDatabase {
       }
     } catch (e) {
       console.warn('Migration note for products catalog:', e);
+    }
+
+    // AUTOMATIC MIGRATION: 
+    // 4. Normalize hotel destination IDs to canonical format ('dest-xxx') and populate missing regionId/hubId
+    try {
+      const storedHotels = this.getItem<Hotel[]>('hotels', INITIAL_HOTELS);
+      let hotelsModified = false;
+      const destinations = this.getItem<Destination[]>('destinations', DESTINATIONS);
+      const regions = this.getItem<MasterRegion[]>('master_regions', INITIAL_MASTER_REGIONS);
+      const hubs = this.getItem<CityHub[]>('city_hubs', INITIAL_CITY_HUBS);
+
+      const normalizedHotels = storedHotels.map(hotel => {
+        const h = { ...hotel };
+        // Check if destinationId is a slug like 'japan', 'united-kingdom', 'western-europe'
+        if (h.destinationId && !h.destinationId.startsWith('dest-')) {
+          const matchedDest = destinations.find(d => 
+            d.slug.toLowerCase() === h.destinationId.toLowerCase() || 
+            d.name.toLowerCase() === h.destinationId.toLowerCase() ||
+            (h.destinationId === 'western-europe' && d.id === 'dest-europe')
+          );
+          if (matchedDest) {
+            h.destinationId = matchedDest.id;
+            h.destinationName = matchedDest.name;
+            hotelsModified = true;
+          }
+        }
+        // Ensure regionId is populated
+        if (!h.regionId && h.destinationId) {
+          const matchedDest = destinations.find(d => d.id === h.destinationId || d.slug === h.destinationId);
+          if (matchedDest?.regionId) {
+            h.regionId = matchedDest.regionId;
+            const reg = regions.find(r => r.id === matchedDest.regionId);
+            if (reg) h.regionName = reg.name;
+            hotelsModified = true;
+          }
+        }
+        // Ensure hubId is populated if cityId matches a hub
+        if (!h.hubId && (h.cityId || h.cityName)) {
+          const matchedHub = hubs.find(hub => 
+            hub.id.toLowerCase() === `hub-${(h.cityId || '').toLowerCase()}` ||
+            hub.name.toLowerCase() === (h.cityName || '').toLowerCase() ||
+            hub.id.toLowerCase() === (h.cityId || '').toLowerCase()
+          );
+          if (matchedHub) {
+            h.hubId = matchedHub.id;
+            hotelsModified = true;
+          }
+        }
+        return h;
+      });
+
+      if (hotelsModified) {
+        this.setItem('hotels', normalizedHotels);
+      }
+    } catch (e) {
+      console.warn('Migration note for hotels catalog:', e);
     }
   }
 
@@ -5496,6 +5569,7 @@ export class AppDatabase {
         customAgentMarginPercent: 10,
         contactNumber: '+44 20 7946 0912',
         permissions: {
+          b2bQuoteBuilderAccess: true,
           canAccessPricingCalculator: true,
           canCreateBookings: true,
           canExportPDF: true,
@@ -5506,6 +5580,206 @@ export class AppDatabase {
           canManageUsers: false
         },
         createdAt: '2025-11-12'
+      },
+      {
+        id: 'usr-agent-02',
+        name: 'Aarav Sharma',
+        email: 'aarav.sharma@apexluxury.in',
+        role: 'B2B_AGENT',
+        category: 'EXTERNAL',
+        agencyName: 'Apex Luxury Travels India',
+        country: 'India',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 12,
+        contactNumber: '+91 98200 45678',
+        permissions: {
+          b2bQuoteBuilderAccess: true,
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: true,
+          canAccessCMS: false,
+          canAccessRoster: false,
+          canAccessFinancials: false,
+          canManageUsers: false
+        },
+        createdAt: '2026-01-10'
+      },
+      {
+        id: 'usr-agent-03',
+        name: 'Charlotte Dubois',
+        email: 'charlotte@monacoprestige.mc',
+        role: 'B2B_AGENT',
+        category: 'EXTERNAL',
+        agencyName: 'Monaco Prestige Voyages',
+        country: 'Monaco',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 10,
+        contactNumber: '+377 98 97 00 11',
+        permissions: {
+          b2bQuoteBuilderAccess: true,
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: true,
+          canAccessCMS: false,
+          canAccessRoster: false,
+          canAccessFinancials: false,
+          canManageUsers: false
+        },
+        createdAt: '2026-02-14'
+      },
+      {
+        id: 'usr-agent-04',
+        name: 'David Sterling',
+        email: 'david@sterlingbespoke.com',
+        role: 'B2B_AGENT',
+        category: 'EXTERNAL',
+        agencyName: 'Sterling Bespoke Journeys',
+        country: 'United States',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 10,
+        contactNumber: '+1 212 555 8934',
+        permissions: {
+          b2bQuoteBuilderAccess: true,
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: true,
+          canAccessCMS: false,
+          canAccessRoster: false,
+          canAccessFinancials: false,
+          canManageUsers: false
+        },
+        createdAt: '2026-03-05'
+      },
+      {
+        id: 'usr-agent-05',
+        name: 'Hiroshi Tanaka',
+        email: 'tanaka@nipponconcierge.jp',
+        role: 'B2B_AGENT',
+        category: 'EXTERNAL',
+        agencyName: 'Nippon Concierge Travel',
+        country: 'Japan',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 10,
+        contactNumber: '+81 3 5555 0192',
+        permissions: {
+          b2bQuoteBuilderAccess: true,
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: true,
+          canAccessCMS: false,
+          canAccessRoster: false,
+          canAccessFinancials: false,
+          canManageUsers: false
+        },
+        createdAt: '2026-04-18'
+      },
+      {
+        id: 'usr-buyer-02',
+        name: 'Rajesh Malhotra',
+        email: 'rajesh.malhotra@malhotragroup.in',
+        role: 'BUYER',
+        category: 'EXTERNAL',
+        agencyName: 'Malhotra Family Leisure',
+        country: 'India',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 10,
+        contactNumber: '+91 98200 12345',
+        permissions: {
+          buyerQuoteBuilderAccess: true,
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: false,
+          canAccessCMS: false,
+          canAccessRoster: false,
+          canAccessFinancials: false,
+          canManageUsers: false
+        },
+        createdAt: '2026-03-12'
+      },
+      {
+        id: 'usr-buyer-03',
+        name: 'Sarah Jenkins',
+        email: 'sarah.jenkins@sydneywealth.com.au',
+        role: 'BUYER',
+        category: 'EXTERNAL',
+        agencyName: 'Jenkins Family Voyages',
+        country: 'Australia',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 10,
+        contactNumber: '+61 2 9876 5432',
+        permissions: {
+          buyerQuoteBuilderAccess: true,
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: false,
+          canAccessCMS: false,
+          canAccessRoster: false,
+          canAccessFinancials: false,
+          canManageUsers: false
+        },
+        createdAt: '2026-04-02'
+      },
+      {
+        id: 'usr-buyer-04',
+        name: 'Matteo Rossi',
+        email: 'matteo.rossi@milanodesign.it',
+        role: 'BUYER',
+        category: 'EXTERNAL',
+        agencyName: 'Rossi Private Client',
+        country: 'Italy',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 10,
+        contactNumber: '+39 02 555 4321',
+        permissions: {
+          buyerQuoteBuilderAccess: true,
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: false,
+          canAccessCMS: false,
+          canAccessRoster: false,
+          canAccessFinancials: false,
+          canManageUsers: false
+        },
+        createdAt: '2026-05-19'
+      },
+      {
+        id: 'usr-buyer-05',
+        name: 'Emily Watson',
+        email: 'emily.watson@londonprivate.co.uk',
+        role: 'BUYER',
+        category: 'EXTERNAL',
+        agencyName: 'Watson Leisure Escapes',
+        country: 'United Kingdom',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 10,
+        contactNumber: '+44 20 8901 2345',
+        permissions: {
+          buyerQuoteBuilderAccess: true,
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: false,
+          canAccessCMS: false,
+          canAccessRoster: false,
+          canAccessFinancials: false,
+          canManageUsers: false
+        },
+        createdAt: '2026-06-25'
       },
       {
         id: 'usr-agent-pending-02',
@@ -5608,9 +5882,17 @@ export class AppDatabase {
     return this.getItem<User[]>('system_users', defaultUsers);
   }
 
-  public saveUser(updatedUser: User, actor: User | null): void {
+  public getUserByEmail(email: string): User | undefined {
+    if (!email) return undefined;
+    const cleanEmail = email.trim().toLowerCase();
+    return this.getUsers().find(u => u.email.toLowerCase() === cleanEmail);
+  }
+
+  public saveUser(updatedUser: User, actor: User | null, actionType: 'USER_ROLE_CHANGED' | 'USER_PERMISSIONS_CHANGED' = 'USER_ROLE_CHANGED', auditDetails?: string): void {
     const users = this.getUsers();
     const idx = users.findIndex(u => u.id === updatedUser.id);
+    const previous = idx >= 0 ? users[idx] : null;
+
     if (idx >= 0) {
       users[idx] = updatedUser;
     } else {
@@ -5619,13 +5901,57 @@ export class AppDatabase {
     this.setItem('system_users', users);
     this.syncFirestoreDoc('users', updatedUser.id, updatedUser);
 
+    // Immediately synchronize active session cache
+    syncSessionUserPermissions(updatedUser);
+
+    const detailText = auditDetails || (actionType === 'USER_PERMISSIONS_CHANGED'
+      ? `Updated granular access permissions profile for ${updatedUser.name} (${updatedUser.email})`
+      : `Updated user status for ${updatedUser.name} (${updatedUser.email}): Role=${updatedUser.role}, Status=${updatedUser.approvalStatus || 'APPROVED'}, Margin Buyer=${updatedUser.customBuyerMarginPercent}%, Agent=${updatedUser.customAgentMarginPercent}%`);
+
     this.logAudit(
       actor,
-      'USER_ROLE_CHANGED',
+      actionType,
       'UserAccessControl',
       updatedUser.id,
-      `Updated user status for ${updatedUser.name} (${updatedUser.email}): Role=${updatedUser.role}, Status=${updatedUser.approvalStatus || 'APPROVED'}, Margin Buyer=${updatedUser.customBuyerMarginPercent}%, Agent=${updatedUser.customAgentMarginPercent}%`
+      detailText,
+      previous ? JSON.stringify({ role: previous.role, permissions: previous.permissions }) : undefined,
+      JSON.stringify({ role: updatedUser.role, permissions: updatedUser.permissions })
     );
+  }
+
+  public updateUserPermissions(
+    userId: string, 
+    newPermissions: UserPermissionAccess, 
+    actor: User | null,
+    auditNotes?: string
+  ): { success: boolean; error?: string } {
+    const users = this.getUsers();
+    const user = users.find(u => u.id === userId);
+    if (!user) {
+      return { success: false, error: 'Target user record not found.' };
+    }
+
+    // Safeguard: Check if revoking account management from the last administrator
+    if (user.role === 'ADMIN' && (newPermissions.cmsFinance?.accountManagement === false || newPermissions.canManageUsers === false)) {
+      const safeguard = canRevokeAdminPermissions(user, users);
+      if (!safeguard.canRevoke) {
+        return { success: false, error: safeguard.error || 'Cannot revoke access from the last remaining active Administrator.' };
+      }
+    }
+
+    const updatedUser: User = {
+      ...user,
+      permissions: newPermissions
+    };
+
+    this.saveUser(
+      updatedUser, 
+      actor, 
+      'USER_PERMISSIONS_CHANGED', 
+      auditNotes || `Granular permissions updated for ${user.name} (${user.email}). Quote Builder: ${newPermissions.b2bQuoteBuilderAccess ? 'B2B Allowed' : 'B2B Blocked'}, CMS: ${newPermissions.canAccessCMS ? 'Allowed' : 'Blocked'}`
+    );
+
+    return { success: true };
   }
 
   public updateUserProfile(userId: string, updates: Partial<User>, actor: User | null): User | null {
@@ -5672,17 +5998,14 @@ export class AppDatabase {
     const user = users.find(u => u.id === userId);
     if (user) {
       user.approvalStatus = 'APPROVED';
-      user.permissions = {
-        canAccessPricingCalculator: true,
-        canCreateBookings: true,
-        canExportPDF: true,
-        canViewWholesaleNetRates: user.role === 'B2B_AGENT' || user.role === 'ADMIN' || user.role === 'TEAM_MEMBER',
-        canAccessCMS: user.role === 'ADMIN' || user.role === 'TEAM_MEMBER',
-        canAccessRoster: user.role === 'ADMIN' || user.role === 'TEAM_MEMBER',
-        canAccessFinancials: user.role === 'ADMIN',
-        canManageUsers: user.role === 'ADMIN'
-      };
-      this.saveUser(user, actor);
+      // Assign standard full role default permissions
+      user.permissions = getDefaultPermissionsForRole(user.role);
+      this.saveUser(
+        user, 
+        actor, 
+        'USER_ROLE_CHANGED', 
+        `Administrator approved user account: ${user.name} (${user.email}) as ${user.role} with standard permissions.`
+      );
     }
   }
 
@@ -5690,8 +6013,18 @@ export class AppDatabase {
     const users = this.getUsers();
     const user = users.find(u => u.id === userId);
     if (user) {
+      // Check safeguard if rejecting an admin
+      if (user.role === 'ADMIN') {
+        const safeguard = canRevokeAdminPermissions(user, users);
+        if (!safeguard.canRevoke) {
+          throw new Error(safeguard.error || 'Cannot revoke access from the last Administrator.');
+        }
+      }
+
       user.approvalStatus = 'REJECTED';
       user.permissions = {
+        b2bQuoteBuilderAccess: false,
+        buyerQuoteBuilderAccess: false,
         canAccessPricingCalculator: false,
         canCreateBookings: false,
         canExportPDF: false,
@@ -5699,14 +6032,27 @@ export class AppDatabase {
         canAccessCMS: false,
         canAccessRoster: false,
         canAccessFinancials: false,
-        canManageUsers: false
+        canManageUsers: false,
+        canManagePermissions: false,
+        canDeleteRecords: false,
+        cmsOperations: { enabled: false },
+        cmsContent: { enabled: false },
+        cmsFinance: { enabled: false },
+        cmsSystem: { enabled: false }
       };
-      this.saveUser(user, actor);
+      this.saveUser(
+        user, 
+        actor, 
+        'USER_ROLE_CHANGED', 
+        `Administrator rejected/revoked user access for ${user.name} (${user.email}). All access permissions disabled.`
+      );
     }
   }
 
   public registerUser(userData: {
     name: string;
+    firstName?: string;
+    lastName?: string;
     email: string;
     password?: string;
     role: UserRole;
@@ -5721,7 +6067,9 @@ export class AppDatabase {
     iataOrAbtaNumber?: string;
   }): { success: boolean; error?: string; user?: User; requiresApproval?: boolean } {
     const trimmedEmail = (userData.email || '').trim().toLowerCase();
-    const trimmedName = (userData.name || '').trim();
+    const trimmedFirst = (userData.firstName || '').trim();
+    const trimmedLast = (userData.lastName || '').trim();
+    const trimmedName = (userData.name || `${trimmedFirst} ${trimmedLast}` || '').trim();
 
     if (!trimmedName || trimmedName.length < 2) {
       return { success: false, error: 'Please enter your full legal name (minimum 2 characters).' };
@@ -5756,6 +6104,8 @@ export class AppDatabase {
     const newUser: User = {
       id: `usr-${isB2BAgent ? 'agent' : userData.role.toLowerCase()}-${Date.now()}`,
       name: trimmedName,
+      firstName: trimmedFirst || undefined,
+      lastName: trimmedLast || undefined,
       email: trimmedEmail,
       password: userData.password || '',
       role: userData.role,
@@ -5772,16 +6122,16 @@ export class AppDatabase {
       approvalStatus,
       customBuyerMarginPercent: 25,
       customAgentMarginPercent: 10,
-      permissions: {
-        canAccessPricingCalculator: approvalStatus === 'APPROVED',
-        canCreateBookings: approvalStatus === 'APPROVED',
-        canExportPDF: approvalStatus === 'APPROVED',
-        canViewWholesaleNetRates: approvalStatus === 'APPROVED' && (isB2BAgent || isInternal),
-        canAccessCMS: isInternal,
-        canAccessRoster: isInternal,
-        canAccessFinancials: userData.role === 'ADMIN',
-        canManageUsers: userData.role === 'ADMIN'
-      }
+      permissions: approvalStatus === 'APPROVED' 
+        ? getDefaultPermissionsForRole(userData.role)
+        : {
+            ...getDefaultPermissionsForRole(userData.role),
+            b2bQuoteBuilderAccess: false,
+            canAccessPricingCalculator: false,
+            canCreateBookings: false,
+            canExportPDF: false,
+            canViewWholesaleNetRates: false
+          }
     };
 
     users.push(newUser);
@@ -6725,6 +7075,402 @@ export class AppDatabase {
       this.saveBooking(b, user);
       this.logAudit(user || null, 'BOOKING_UPDATED', 'Booking', bookingId, `Updated supplier operations details for booking ${b.bookingReference}`);
     }
+  }
+
+  // ==========================================
+  // MASTER SHEET HIERARCHICAL ENTITIES & RATES
+  // ==========================================
+
+  // Transfer Routes
+  public getTransferRoutes(): TransferRoute[] {
+    return this.getItem<TransferRoute[]>('transfer_routes', [
+      {
+        id: 'TRF-TYO-HND-001',
+        destinationId: 'dest-japan',
+        fromHubId: 'hub-tyo',
+        toHubId: 'hub-tyo',
+        routeName: 'Tokyo Haneda Airport -> Tokyo City Hotels Arrival Transfer',
+        transferType: 'AIRPORT_ARRIVAL',
+        vehicleType: 'Toyota Alphard Executive MPV (6 Pax)',
+        maxCapacity: 6,
+        status: 'ACTIVE'
+      },
+      {
+        id: 'TRF-TYO-NRT-002',
+        destinationId: 'dest-japan',
+        fromHubId: 'hub-tyo',
+        toHubId: 'hub-tyo',
+        routeName: 'Tokyo Narita Airport -> Tokyo City Hotels Arrival Transfer',
+        transferType: 'AIRPORT_ARRIVAL',
+        vehicleType: 'Toyota HiAce Grand Cabin (9 Pax)',
+        maxCapacity: 9,
+        status: 'ACTIVE'
+      },
+      {
+        id: 'TRF-TYO-HAK-003',
+        destinationId: 'dest-japan',
+        fromHubId: 'hub-tyo',
+        toHubId: 'hub-hak',
+        routeName: 'Tokyo City Hotels -> Hakone Ryokan Intercity Chauffeur',
+        transferType: 'INTERCITY',
+        vehicleType: 'Toyota Alphard Executive MPV (6 Pax)',
+        maxCapacity: 6,
+        status: 'ACTIVE'
+      }
+    ]);
+  }
+
+  public saveTransferRoute(route: TransferRoute, user?: User | null): void {
+    const list = this.getTransferRoutes();
+    const idx = list.findIndex(r => r.id === route.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...route, updatedAt: new Date().toISOString() };
+    } else {
+      list.push({ ...route, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    }
+    this.setItem('transfer_routes', list, false);
+    this.syncFirestoreDoc('transfer_routes', route.id, route);
+    this.logAudit(user || null, idx >= 0 ? 'RECORD_ARCHIVED' : 'PRODUCT_CREATED', 'TransferRoute', route.id, `Saved transfer route ${route.routeName}`);
+  }
+
+  // Hotel Rooms
+  public getHotelRooms(): HotelRoomType[] {
+    return this.getItem<HotelRoomType[]>('hotel_rooms', []);
+  }
+
+  public saveHotelRoom(room: HotelRoomType, user?: User | null): void {
+    const list = this.getHotelRooms();
+    const idx = list.findIndex(r => r.id === room.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...room };
+    } else {
+      list.push(room);
+    }
+    this.setItem('hotel_rooms', list, false);
+    this.syncFirestoreDoc('hotel_rooms', room.id, room);
+  }
+
+  // Hotel Rates
+  public getHotelRates(): HotelRate[] {
+    return this.getItem<HotelRate[]>('hotel_rates', []);
+  }
+
+  public saveHotelRate(rate: HotelRate, user?: User | null): void {
+    const list = this.getHotelRates();
+    const idx = list.findIndex(r => r.id === rate.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...rate };
+    } else {
+      list.push(rate);
+    }
+    this.setItem('hotel_rates', list, false);
+    this.syncFirestoreDoc('hotel_rates', rate.id, rate);
+  }
+
+  // B2B Packages Alias
+  public getB2BPackages(): B2BPackage[] {
+    return this.getPackages();
+  }
+
+  // Transfer Rates
+  public getTransferRates(): TransferRate[] {
+    return this.getItem<TransferRate[]>('transfer_rates', [
+      {
+        id: 'TRATE-TYO-001',
+        routeId: 'TRF-TYO-HND-001',
+        rateType: 'PRIVATE',
+        vehicle: 'Toyota Alphard Executive MPV',
+        capacity: 6,
+        currency: 'JPY',
+        nettCost: 28000,
+        status: 'ACTIVE'
+      },
+      {
+        id: 'TRATE-TYO-002',
+        routeId: 'TRF-TYO-NRT-002',
+        rateType: 'PRIVATE',
+        vehicle: 'Toyota HiAce Grand Cabin',
+        capacity: 9,
+        currency: 'JPY',
+        nettCost: 42000,
+        status: 'ACTIVE'
+      }
+    ]);
+  }
+
+  public saveTransferRate(rate: TransferRate, user?: User | null): void {
+    const list = this.getTransferRates();
+    const idx = list.findIndex(r => r.id === rate.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...rate, updatedAt: new Date().toISOString() };
+    } else {
+      list.push({ ...rate, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    }
+    this.setItem('transfer_rates', list, false);
+    this.syncFirestoreDoc('transfer_rates', rate.id, rate);
+  }
+
+  // Product Pricing Rates
+  public getProductRates(): ProductPricingRate[] {
+    return this.getItem<ProductPricingRate[]>('product_pricing_rates', []);
+  }
+
+  public saveProductRate(rate: ProductPricingRate, user?: User | null): void {
+    const list = this.getProductRates();
+    const idx = list.findIndex(r => r.id === rate.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...rate, updatedAt: new Date().toISOString() };
+    } else {
+      list.push({ ...rate, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    }
+    this.setItem('product_pricing_rates', list, false);
+    this.syncFirestoreDoc('product_pricing_rates', rate.id, rate);
+  }
+
+  // Product Capacities
+  public getProductCapacities(): ProductCapacityItem[] {
+    return this.getItem<ProductCapacityItem[]>('product_capacities', []);
+  }
+
+  public saveProductCapacity(cap: ProductCapacityItem, user?: User | null): void {
+    const list = this.getProductCapacities();
+    const idx = list.findIndex(c => c.id === cap.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...cap };
+    } else {
+      list.push(cap);
+    }
+    this.setItem('product_capacities', list, false);
+    this.syncFirestoreDoc('product_capacities', cap.id, cap);
+  }
+
+  // Hotel Meal Plans
+  public getHotelMealPlans(): HotelMealPlanItem[] {
+    return this.getItem<HotelMealPlanItem[]>('hotel_meal_plans', [
+      {
+        id: 'MP-TYO-001-RO',
+        hotelId: 'htl-jp-01',
+        mealCode: 'RO',
+        mealName: 'Room Only',
+        description: 'Accommodation only without meals.',
+        status: 'ACTIVE'
+      },
+      {
+        id: 'MP-TYO-001-BB',
+        hotelId: 'htl-jp-01',
+        mealCode: 'BB',
+        mealName: 'Japanese Kaiseki Breakfast Included',
+        description: 'Full traditional seasonal kaiseki breakfast.',
+        status: 'ACTIVE'
+      }
+    ]);
+  }
+
+  public saveHotelMealPlan(mealPlan: HotelMealPlanItem, user?: User | null): void {
+    const list = this.getHotelMealPlans();
+    const idx = list.findIndex(m => m.id === mealPlan.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...mealPlan };
+    } else {
+      list.push(mealPlan);
+    }
+    this.setItem('hotel_meal_plans', list, false);
+    this.syncFirestoreDoc('hotel_meal_plans', mealPlan.id, mealPlan);
+  }
+
+  // Visa Rates
+  public getVisaRates(): VisaRateItem[] {
+    return this.getItem<VisaRateItem[]>('visa_rates', []);
+  }
+
+  public saveVisaRate(rate: VisaRateItem, user?: User | null): void {
+    const list = this.getVisaRates();
+    const idx = list.findIndex(v => v.id === rate.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...rate };
+    } else {
+      list.push(rate);
+    }
+    this.setItem('visa_rates', list, false);
+    this.syncFirestoreDoc('visa_rates', rate.id, rate);
+  }
+
+  // Package Items
+  public getPackageItems(): PackageItemRef[] {
+    return this.getItem<PackageItemRef[]>('package_items', []);
+  }
+
+  public savePackageItem(item: PackageItemRef, user?: User | null): void {
+    const list = this.getPackageItems();
+    const idx = list.findIndex(p => p.id === item.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...item };
+    } else {
+      list.push(item);
+    }
+    this.setItem('package_items', list, false);
+    this.syncFirestoreDoc('package_items', item.id, item);
+  }
+
+  // Multi-Tab Sync Reports History
+  public getMultiTabSyncReports(): MultiTabSyncReport[] {
+    return this.getItem<MultiTabSyncReport[]>('multi_tab_sync_reports', []);
+  }
+
+  public saveMultiTabSyncReport(report: MultiTabSyncReport): void {
+    const reports = this.getMultiTabSyncReports();
+    reports.unshift(report);
+    if (reports.length > 50) {
+      reports.length = 50;
+    }
+    this.setItem('multi_tab_sync_reports', reports, false);
+    this.syncFirestoreDoc('sheets_sync_history', report.id, report);
+  }
+
+  // Bulk Atomic Save for Synced Multi-Tab Sheets
+  public saveSyncedMultiTabData(syncedData: {
+    regions?: MasterRegion[];
+    destinations?: Destination[];
+    hubs?: CityHub[];
+    products?: Product[];
+    productRates?: ProductPricingRate[];
+    productCapacities?: ProductCapacityItem[];
+    hotels?: Hotel[];
+    hotelRooms?: HotelRoomType[];
+    hotelMealPlans?: HotelMealPlanItem[];
+    hotelRates?: HotelRate[];
+    visas?: VisaProduct[];
+    visaRates?: VisaRateItem[];
+    transferRoutes?: TransferRoute[];
+    transferRates?: TransferRate[];
+    packages?: B2BPackage[];
+    packageItems?: PackageItemRef[];
+  }, user?: User | null): void {
+    if (syncedData.regions && syncedData.regions.length > 0) {
+      const existing = this.getMasterRegions();
+      const merged = this.mergeEntitiesById(existing, syncedData.regions);
+      this.setItem('master_regions', merged, false);
+      for (const r of syncedData.regions) this.syncFirestoreDoc('master_regions', r.id, r);
+    }
+
+    if (syncedData.destinations && syncedData.destinations.length > 0) {
+      const existing = this.getDestinations();
+      const merged = this.mergeEntitiesById(existing, syncedData.destinations);
+      this.setItem('destinations', merged, false);
+      for (const d of syncedData.destinations) this.syncFirestoreDoc('destinations', d.id, d);
+    }
+
+    if (syncedData.hubs && syncedData.hubs.length > 0) {
+      const existing = this.getCityHubs();
+      const merged = this.mergeEntitiesById(existing, syncedData.hubs);
+      this.setItem('city_hubs', merged, false);
+      for (const h of syncedData.hubs) this.syncFirestoreDoc('city_hubs', h.id, h);
+    }
+
+    if (syncedData.products && syncedData.products.length > 0) {
+      const existing = this.getProducts();
+      const merged = this.mergeEntitiesById(existing, syncedData.products);
+      this.setItem('products', merged, false);
+      for (const p of syncedData.products) this.syncFirestoreDoc('products', p.id, p);
+    }
+
+    if (syncedData.productRates && syncedData.productRates.length > 0) {
+      const existing = this.getProductRates();
+      const merged = this.mergeEntitiesById(existing, syncedData.productRates);
+      this.setItem('product_pricing_rates', merged, false);
+      for (const pr of syncedData.productRates) this.syncFirestoreDoc('product_pricing_rates', pr.id, pr);
+    }
+
+    if (syncedData.productCapacities && syncedData.productCapacities.length > 0) {
+      const existing = this.getProductCapacities();
+      const merged = this.mergeEntitiesById(existing, syncedData.productCapacities);
+      this.setItem('product_capacities', merged, false);
+      for (const pc of syncedData.productCapacities) this.syncFirestoreDoc('product_capacities', pc.id, pc);
+    }
+
+    if (syncedData.hotels && syncedData.hotels.length > 0) {
+      const existing = this.getHotels();
+      const merged = this.mergeEntitiesById(existing, syncedData.hotels);
+      this.setItem('hotels', merged, false);
+      for (const h of syncedData.hotels) this.syncFirestoreDoc('hotels', h.id, h);
+    }
+
+    if (syncedData.hotelRooms && syncedData.hotelRooms.length > 0) {
+      const existing = this.getHotelRooms();
+      const merged = this.mergeEntitiesById(existing, syncedData.hotelRooms);
+      this.setItem('hotel_rooms', merged, false);
+      for (const hr of syncedData.hotelRooms) this.syncFirestoreDoc('hotel_rooms', hr.id, hr);
+    }
+
+    if (syncedData.hotelMealPlans && syncedData.hotelMealPlans.length > 0) {
+      const existing = this.getHotelMealPlans();
+      const merged = this.mergeEntitiesById(existing, syncedData.hotelMealPlans);
+      this.setItem('hotel_meal_plans', merged, false);
+      for (const mp of syncedData.hotelMealPlans) this.syncFirestoreDoc('hotel_meal_plans', mp.id, mp);
+    }
+
+    if (syncedData.hotelRates && syncedData.hotelRates.length > 0) {
+      const existing = this.getHotelRates();
+      const merged = this.mergeEntitiesById(existing, syncedData.hotelRates);
+      this.setItem('hotel_rates', merged, false);
+      for (const hr of syncedData.hotelRates) this.syncFirestoreDoc('hotel_rates', hr.id, hr);
+    }
+
+    if (syncedData.visas && syncedData.visas.length > 0) {
+      const existing = this.getVisas();
+      const merged = this.mergeEntitiesById(existing, syncedData.visas);
+      this.setItem('visas', merged, false);
+      for (const v of syncedData.visas) this.syncFirestoreDoc('visas', v.id, v);
+    }
+
+    if (syncedData.visaRates && syncedData.visaRates.length > 0) {
+      const existing = this.getVisaRates();
+      const merged = this.mergeEntitiesById(existing, syncedData.visaRates);
+      this.setItem('visa_rates', merged, false);
+      for (const vr of syncedData.visaRates) this.syncFirestoreDoc('visa_rates', vr.id, vr);
+    }
+
+    if (syncedData.transferRoutes && syncedData.transferRoutes.length > 0) {
+      const existing = this.getTransferRoutes();
+      const merged = this.mergeEntitiesById(existing, syncedData.transferRoutes);
+      this.setItem('transfer_routes', merged, false);
+      for (const tr of syncedData.transferRoutes) this.syncFirestoreDoc('transfer_routes', tr.id, tr);
+    }
+
+    if (syncedData.transferRates && syncedData.transferRates.length > 0) {
+      const existing = this.getTransferRates();
+      const merged = this.mergeEntitiesById(existing, syncedData.transferRates);
+      this.setItem('transfer_rates', merged, false);
+      for (const tr of syncedData.transferRates) this.syncFirestoreDoc('transfer_rates', tr.id, tr);
+    }
+
+    if (syncedData.packages && syncedData.packages.length > 0) {
+      const existing = this.getB2BPackages();
+      const merged = this.mergeEntitiesById(existing, syncedData.packages);
+      this.setItem('b2b_packages', merged, false);
+      for (const p of syncedData.packages) this.syncFirestoreDoc('b2b_packages', p.id, p);
+    }
+
+    if (syncedData.packageItems && syncedData.packageItems.length > 0) {
+      const existing = this.getPackageItems();
+      const merged = this.mergeEntitiesById(existing, syncedData.packageItems);
+      this.setItem('package_items', merged, false);
+      for (const pi of syncedData.packageItems) this.syncFirestoreDoc('package_items', pi.id, pi);
+    }
+  }
+
+  private mergeEntitiesById<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
+    const map = new Map<string, T>();
+    for (const item of existing) {
+      if (item && item.id) map.set(item.id, item);
+    }
+    for (const item of incoming) {
+      if (item && item.id) {
+        const prev = map.get(item.id);
+        map.set(item.id, prev ? { ...prev, ...item } : item);
+      }
+    }
+    return Array.from(map.values());
   }
 }
 

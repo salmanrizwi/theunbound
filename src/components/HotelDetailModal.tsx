@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Hotel, HotelRoomType, HotelRate, MealPlanCode, CurrencyCode, SUPPORTED_CURRENCIES } from '../types';
+import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { formatCurrency, convertCurrency } from '../services/pricingEngine';
 import { calculateHotelStayPrice, getMealPlanLabel, hotelToProduct } from '../utils/hotelHelpers';
@@ -40,6 +41,7 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
   onClose,
   onInstantBook
 }) => {
+  const { role } = useAuth();
   const { currency, setCurrency, addProductToQuote } = useQuotation();
 
   // Active Photo Index in Gallery
@@ -107,6 +109,29 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
     targetCurrency: currency,
     agentClientMarkupPercent: 12
   }) : null;
+
+  const startingSellingPrice = useMemo(() => {
+    const firstRoom = hotel.roomTypes?.[0];
+    const firstRate = firstRoom?.rates?.[0] || activeRate;
+    if (firstRoom && firstRate) {
+      const calc = calculateHotelStayPrice({
+        hotel,
+        roomType: firstRoom,
+        rate: firstRate,
+        checkInDate,
+        nights: 1,
+        roomsCount: 1,
+        adults: 2,
+        children: 0,
+        extraBeds: 0,
+        targetCurrency: currency,
+        agentClientMarkupPercent: 12
+      });
+      return calc.finalTotalSellingPrice;
+    }
+    const netConverted = convertCurrency(hotel.startingNetPrice || 400, hotel.currency, currency);
+    return Math.round(netConverted * 1.12 * 1.1);
+  }, [hotel, activeRate, checkInDate, currency]);
 
   const handleAddHotelStay = () => {
     if (!selectedRoom) return;
@@ -228,9 +253,9 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                   </h3>
                 </div>
                 <div className="bg-black/50 backdrop-blur-md px-3.5 py-2 rounded-xl border border-white/20 text-right">
-                  <span className="text-[11px] text-slate-300 block">DMC Partner Rate from</span>
+                  <span className="text-[11px] text-slate-300 block">Starting from</span>
                   <span className="text-lg font-black text-emerald-400">
-                    {formatCurrency(convertCurrency(hotel.startingNetPrice, hotel.currency, currency), currency)}
+                    {formatCurrency(startingSellingPrice, currency)}
                     <span className="text-xs font-normal text-slate-300"> / night</span>
                   </span>
                 </div>
@@ -407,7 +432,7 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                     >
                       {(selectedRoom.rates || []).map((r) => (
                         <option key={r.id} value={r.id}>
-                          {r.mealPlan} - {r.mealPlanName || getMealPlanLabel(r.mealPlan)} ({formatCurrency(convertCurrency(r.doubleNetRate, r.currency, currency), currency)}/nt)
+                          {r.mealPlan} - {r.mealPlanName || getMealPlanLabel(r.mealPlan)}
                         </option>
                       ))}
                     </select>
@@ -481,28 +506,35 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                 {/* Calculation Summary Box */}
                 {stayCalc && (
                   <div className="bg-slate-800/80 rounded-xl p-3.5 border border-slate-700/80 space-y-2 text-xs">
+                    {(role === 'ADMIN' || role === 'DMC_STAFF') && (
+                      <div className="space-y-1.5 pb-2 border-b border-slate-700/80 text-[11px] text-slate-400">
+                        <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">Admin Supplier Breakdown</span>
+                        <div className="flex justify-between">
+                          <span>Base Net Rate:</span>
+                          <span className="font-mono text-slate-300">{formatCurrency(stayCalc.nightlyBaseNetRate, currency)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Stay Net Cost:</span>
+                          <span className="font-mono text-slate-300">{formatCurrency(stayCalc.roomsTotalNetCost, currency)}</span>
+                        </div>
+                      </div>
+                    )}
                     <div className="flex justify-between text-slate-300">
-                      <span>Base Nightly Rate:</span>
+                      <span>Stay Duration:</span>
                       <span className="font-semibold text-white">
-                        {formatCurrency(stayCalc.nightlyBaseNetRate, currency)}
+                        {nights} {nights === 1 ? 'Night' : 'Nights'} • {roomsCount} {roomsCount === 1 ? 'Room' : 'Rooms'}
                       </span>
                     </div>
                     <div className="flex justify-between text-slate-300">
-                      <span>Stay Net ({nights} nights × {roomsCount} rm):</span>
+                      <span>Occupancy:</span>
                       <span className="font-semibold text-white">
-                        {formatCurrency(stayCalc.roomsTotalNetCost, currency)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-slate-300">
-                      <span>DMC Wholesale (+{Math.round(stayCalc.b2bWholesaleMarkupRate * 100)}%):</span>
-                      <span className="font-semibold text-teal-300">
-                        {formatCurrency(stayCalc.b2bWholesaleNetToAgent, currency)}
+                        {adults} Adults{children > 0 ? `, ${children} Children` : ''}
                       </span>
                     </div>
                     <div className="pt-2 border-t border-slate-700 flex justify-between items-baseline">
                       <div>
-                        <span className="text-xs font-bold text-white block">Quoted Package Total:</span>
-                        <span className="text-[10px] text-slate-400">Incl. taxes & agent margin</span>
+                        <span className="text-xs font-bold text-white block">Final Selling Price:</span>
+                        <span className="text-[10px] text-slate-400">All taxes, fees & breakfast included</span>
                       </div>
                       <span className="text-base sm:text-lg font-black text-emerald-400">
                         {formatCurrency(stayCalc.finalTotalSellingPrice, currency)}

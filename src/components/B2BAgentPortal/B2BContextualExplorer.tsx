@@ -354,7 +354,7 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
                         }`}
                       >
                         {inQuote ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-                        <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Quote'}</span>
+                        <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Cart'}</span>
                       </button>
 
                       <button
@@ -444,7 +444,7 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
                         }`}
                       >
                         {inQuote ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-                        <span>{inQuote ? 'In Cart (Edit Stay)' : 'Configure & Add to Quote'}</span>
+                        <span>{inQuote ? 'In Cart (Edit Stay)' : 'Configure & Add to Cart'}</span>
                       </button>
 
                       <button
@@ -831,7 +831,7 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
                           }`}
                         >
                           {inQuote ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-                          <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Quote'}</span>
+                          <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Cart'}</span>
                         </button>
 
                         <button
@@ -914,7 +914,7 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
                           }`}
                         >
                           {inQuote ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-                          <span>{inQuote ? 'In Cart (Edit Stay)' : 'Configure & Add to Quote'}</span>
+                          <span>{inQuote ? 'In Cart (Edit Stay)' : 'Configure & Add to Cart'}</span>
                         </button>
 
                         <button

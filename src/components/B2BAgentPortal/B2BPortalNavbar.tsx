@@ -41,8 +41,6 @@ interface B2BPortalNavbarProps {
   activeTab: B2BTabType;
   onSelectTab: (tab: B2BTabType) => void;
   quoteItemCount?: number;
-  onSwitchToBuyerMode?: () => void;
-  onSwitchToBuyerView?: () => void;
 }
 
 export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({

@@ -103,6 +103,8 @@ export const AccountPage: React.FC<AccountPageProps> = ({
   const [formData, setFormData] = useState({
     // Profile
     name: user?.name || '',
+    firstName: user?.firstName || (user?.name ? user.name.split(' ')[0] : ''),
+    lastName: user?.lastName || (user?.name ? user.name.split(' ').slice(1).join(' ') : ''),
     email: user?.email || '',
     jobTitle: user?.jobTitle || '',
     contactNumber: user?.contactNumber || '',
@@ -136,8 +138,12 @@ export const AccountPage: React.FC<AccountPageProps> = ({
   // Sync state when user changes
   useEffect(() => {
     if (user) {
+      const parsedFirst = user.firstName || (user.name ? user.name.split(' ')[0] : '');
+      const parsedLast = user.lastName || (user.name ? user.name.split(' ').slice(1).join(' ') : '');
       setFormData({
         name: user.name || '',
+        firstName: parsedFirst,
+        lastName: parsedLast,
         email: user.email || '',
         jobTitle: user.jobTitle || '',
         contactNumber: user.contactNumber || '',
@@ -210,8 +216,14 @@ export const AccountPage: React.FC<AccountPageProps> = ({
 
     setIsSaving(true);
     try {
+      const trimmedFirst = (formData.firstName || formData.name.split(' ')[0] || '').trim();
+      const trimmedLast = (formData.lastName || formData.name.split(' ').slice(1).join(' ') || '').trim();
+      const trimmedFullName = formData.name.trim() || `${trimmedFirst} ${trimmedLast}`.trim();
+
       const updates: Partial<User> = {
-        name: formData.name.trim(),
+        name: trimmedFullName,
+        firstName: trimmedFirst || undefined,
+        lastName: trimmedLast || undefined,
         jobTitle: formData.jobTitle.trim(),
         contactNumber: formData.contactNumber.trim(),
         avatarUrl: formData.avatarUrl,
@@ -651,18 +663,52 @@ export const AccountPage: React.FC<AccountPageProps> = ({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Full Name */}
+                {/* First Name */}
                 <div className="space-y-1.5">
                   <label className="block text-xs font-bold text-slate-700">
-                    Full Name <span className="text-rose-500">*</span>
+                    First Name <span className="text-rose-500">*</span>
                   </label>
                   <input
-                    id="account-input-name"
+                    id="account-input-firstname"
                     type="text"
                     required
-                    value={formData.name}
-                    onChange={(e) => handleInputChange('name', e.target.value)}
-                    placeholder="e.g. Elena Rostova"
+                    value={formData.firstName || ''}
+                    onChange={(e) => {
+                      const newFirst = e.target.value;
+                      const currentLast = formData.lastName || '';
+                      setFormData(prev => ({
+                        ...prev,
+                        firstName: newFirst,
+                        name: `${newFirst} ${currentLast}`.trim()
+                      }));
+                      setHasUnsavedChanges(true);
+                    }}
+                    placeholder="e.g. Elena"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-[#00C6A6]"
+                  />
+                </div>
+
+                {/* Last Name */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Last Name <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    id="account-input-lastname"
+                    type="text"
+                    required
+                    value={formData.lastName || ''}
+                    onChange={(e) => {
+                      const newLast = e.target.value;
+                      const currentFirst = formData.firstName || '';
+                      setFormData(prev => ({
+                        ...prev,
+                        lastName: newLast,
+                        name: `${currentFirst} ${newLast}`.trim()
+                      }));
+                      setHasUnsavedChanges(true);
+                    }}
+                    placeholder="e.g. Rostova"
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-[#00C6A6]"
                   />
                 </div>

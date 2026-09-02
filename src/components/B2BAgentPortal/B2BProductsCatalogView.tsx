@@ -137,13 +137,6 @@ export const B2BProductsCatalogView: React.FC<B2BProductsCatalogViewProps> = ({
               <span>View Cart</span>
             </button>
             <button
-              onClick={onOpenCreateQuote}
-              className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center space-x-1.5 border border-slate-700"
-            >
-              <span>Build Quote</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-            <button
               onClick={() => setQuoteSuccessNotification(null)}
               className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
             >
@@ -292,7 +285,7 @@ export const B2BProductsCatalogView: React.FC<B2BProductsCatalogViewProps> = ({
                           <button
                             onClick={() => handleRemoveFromQuote(prod.id)}
                             className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 transition-colors cursor-pointer"
-                            title="Remove from Quote"
+                            title="Remove from Cart"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -303,7 +296,7 @@ export const B2BProductsCatalogView: React.FC<B2BProductsCatalogViewProps> = ({
                           className="w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs bg-[#00C6A6] hover:bg-[#00b395] text-slate-950"
                         >
                           <Plus className="w-3.5 h-3.5" />
-                          <span>Configure & Add to Quote</span>
+                          <span>Configure & Add to Cart</span>
                         </button>
                       )}
 
@@ -398,7 +391,7 @@ export const B2BProductsCatalogView: React.FC<B2BProductsCatalogViewProps> = ({
                             <button
                               onClick={() => handleOpenAddProductModal(prod)}
                               className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 flex items-center space-x-1"
-                              title="Configure & Add to Quote"
+                              title="Configure & Add to Cart"
                             >
                               <Plus className="w-3 h-3" />
                               <span>Configure & Add</span>
@@ -512,7 +505,7 @@ export const B2BProductsCatalogView: React.FC<B2BProductsCatalogViewProps> = ({
                   className="px-5 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 font-black text-xs transition-all shadow-xs flex items-center space-x-1.5 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Configure & Add to Quote</span>
+                  <span>Configure & Add to Cart</span>
                 </button>
               </div>
             </div>

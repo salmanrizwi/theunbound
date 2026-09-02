@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Destination, Product, ProductFilterState, Hotel, CityHub } from '../types';
+import { Destination, Product, ProductFilterState, Hotel, CityHub, HomepageConfig } from '../types';
 import { DestinationHero } from '../components/DestinationHero';
 import { AllDestinationsHero } from '../components/AllDestinationsHero';
 import { CityHubs } from '../components/CityHubs';
@@ -17,7 +17,7 @@ import { countingEngine } from '../services/countingEngine';
 import { campaignAnalytics } from '../services/campaignAnalyticsService';
 import { PublicReviewsCarousel } from '../components/PublicReviewsCarousel';
 import { PublicHappyCustomerGallery } from '../components/PublicHappyCustomerGallery';
-import { Sparkles, MapPin, Compass, ShieldCheck, HelpCircle, ChevronDown, ChevronUp, Globe2, Layers, CheckCircle2 } from 'lucide-react';
+import { Sparkles, MapPin, Compass, ShieldCheck, HelpCircle, ChevronDown, ChevronUp, Globe2, Layers, CheckCircle2, Clock, Building2, FileText, Award } from 'lucide-react';
 
 interface DestinationPageProps {
   destination: Destination | null;
@@ -45,15 +45,17 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
 
   const isAllDestinations = !destination || destination.slug === 'all';
 
-  // Database state for Hubs & Hotels
+  // Database state for Hubs, Hotels, and Homepage Config
   const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());
   const [hotels, setHotels] = useState<Hotel[]>(() => db.getHotels());
+  const [homepageConfig, setHomepageConfig] = useState<HomepageConfig>(() => db.getHomepageConfig());
   const [inspectingHotel, setInspectingHotel] = useState<Hotel | null>(null);
 
   useEffect(() => {
     return db.subscribe(() => {
       setCityHubs(db.getCityHubs());
       setHotels(db.getHotels());
+      setHomepageConfig(db.getHomepageConfig());
     });
   }, [db]);
 
@@ -148,19 +150,29 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
 
   // Legacy active cities for dropdown filters
   const activeCities = useMemo(() => {
+    let rawList: { id: string; name: string; tagline?: string; image?: string; productCount?: number }[] = [];
     if (activeHubs.length > 0) {
-      return activeHubs.map(h => ({
+      rawList = activeHubs.map(h => ({
         id: h.id,
         name: h.name,
         tagline: h.tagline,
         image: h.heroImage,
         productCount: h.productCount
       }));
+    } else if (isAllDestinations) {
+      rawList = allDestinations.flatMap(d => (d.cities || []));
+    } else if (destination) {
+      rawList = destination.cities || [];
     }
-    if (isAllDestinations) {
-      return allDestinations.flatMap(d => (d.cities || []));
-    }
-    return destination ? (destination.cities || []) : [];
+    
+    // Deduplicate by city name to prevent duplicate entries/keys
+    const seen = new Set<string>();
+    return rawList.filter(c => {
+      const key = (c.name || c.id || '').trim().toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }, [activeHubs, isAllDestinations, allDestinations, destination]);
 
   // Unique categories & live category counts in this destination / all destinations
@@ -289,24 +301,80 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
   return (
     <div className="min-h-screen bg-[#F8FAFC] pb-20 space-y-8">
       {/* 1. Hero Banner: All Destinations vs Single Destination */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-        {isAllDestinations ? (
-          <AllDestinationsHero
-            destinations={allDestinations}
-            onSelectDestination={onSelectDestination}
-            onExploreProducts={scrollToProducts}
-          />
-        ) : (
-          <DestinationHero
-            destination={destination}
-            allDestinations={allDestinations}
-            onSelectDestination={onSelectDestination}
-            onExploreProducts={scrollToProducts}
-          />
-        )}
-      </div>
+      {homepageConfig.showHeroSection !== false && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+          {isAllDestinations ? (
+            <AllDestinationsHero
+              destinations={allDestinations}
+              config={homepageConfig}
+              onSelectDestination={onSelectDestination}
+              onExploreProducts={scrollToProducts}
+            />
+          ) : (
+            <DestinationHero
+              destination={destination}
+              allDestinations={allDestinations}
+              onSelectDestination={onSelectDestination}
+              onExploreProducts={scrollToProducts}
+            />
+          )}
+        </div>
+      )}
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+        {/* B2B DMC Operational Credibility Bar */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="flex items-start space-x-3">
+              <div className="p-2.5 rounded-xl bg-teal-50 text-[#008f77] shrink-0 border border-teal-100">
+                <ShieldCheck className="w-5 h-5 text-[#00C6A6]" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wide">Direct DMC Licensing</h4>
+                <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                  Contracted ground operations, verified bilingual guides & executive fleets.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-start space-x-3">
+              <div className="p-2.5 rounded-xl bg-teal-50 text-[#008f77] shrink-0 border border-teal-100">
+                <Clock className="w-5 h-5 text-[#00C6A6]" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wide">24–48h SLA Operations Desk</h4>
+                <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                  Guaranteed booking turnaround & dedicated on-trip operations support.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-start space-x-3">
+              <div className="p-2.5 rounded-xl bg-teal-50 text-[#008f77] shrink-0 border border-teal-100">
+                <Building2 className="w-5 h-5 text-[#00C6A6]" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wide">Curated Inventory</h4>
+                <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                  Directly negotiated luxury stays, private ryokans, and high-touch excursions.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-start space-x-3">
+              <div className="p-2.5 rounded-xl bg-teal-50 text-[#008f77] shrink-0 border border-teal-100">
+                <FileText className="w-5 h-5 text-[#00C6A6]" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wide">B2B Quotation Studio</h4>
+                <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                  Multi-currency agent proposals, customizable markups & instant client PDFs.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* 2. Destination / Region Quick Filter Selector for 'All Destinations' */}
         {isAllDestinations && (
           <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs">

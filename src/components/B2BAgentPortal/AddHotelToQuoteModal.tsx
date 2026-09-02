@@ -613,42 +613,31 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
               <div className="flex items-center justify-between text-xs border-b border-slate-800 pb-2">
                 <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px] flex items-center space-x-1">
                   <ShieldCheck className="w-3.5 h-3.5 text-[#00E5C0]" />
-                  <span>Wholesale Contracted Rate Calculation</span>
+                  <span>Hotel Stay Pricing Summary</span>
                 </span>
                 <span className="text-[11px] text-[#00E5C0] font-mono font-bold">
                   {nights} Nights • {roomsCount} {roomsCount === 1 ? 'Room' : 'Rooms'} • {totalGuests} Guests
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
-                  <span className="text-[10px] text-slate-400 block">Wholesale Net Total</span>
-                  <span className="text-xs font-bold text-slate-200 font-mono">
-                    {formatCurrency(stayCalculation.totalStayNetCost, currency)}
-                  </span>
-                  <span className="text-[9px] text-amber-400 flex items-center space-x-0.5 mt-0.5">
-                    <Lock className="w-2.5 h-2.5" />
-                    <span>Confidential B2B Rate</span>
-                  </span>
-                </div>
-
-                <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
-                  <span className="text-[10px] text-slate-400 block">Per Night Selling</span>
-                  <span className="text-xs font-bold text-slate-200 font-mono">
+                  <span className="text-[10px] text-slate-400 block">Per Night Selling Rate</span>
+                  <span className="text-sm font-bold text-slate-200 font-mono">
                     {formatCurrency(stayCalculation.pricePerNightSelling, currency)}
                   </span>
-                  <span className="text-[9px] text-slate-400">
-                    Incl. Taxes & Breakfast
+                  <span className="text-[9px] text-slate-400 block mt-0.5">
+                    {selectedRoom?.name || 'Standard Room'} • {activeRate.mealPlanName || 'Breakfast Included'}
                   </span>
                 </div>
 
-                <div className="bg-amber-950/60 p-2.5 rounded-xl border border-amber-600/40 col-span-2 sm:col-span-1">
-                  <span className="text-[10px] text-amber-300 font-bold block">Quotation Selling Price</span>
-                  <span className="text-base font-black text-amber-400 font-mono">
+                <div className="bg-amber-950/60 p-2.5 rounded-xl border border-amber-600/40">
+                  <span className="text-[10px] text-amber-300 font-bold block">Final Selling Price</span>
+                  <span className="text-lg font-black text-amber-400 font-mono">
                     {formatCurrency(stayCalculation.finalTotalSellingPrice, currency)}
                   </span>
                   <span className="text-[9px] text-amber-300/80 block">
-                    ✓ Total Accommodation Stay
+                    ✓ Total Stay • All Taxes & Surcharges Included
                   </span>
                 </div>
               </div>

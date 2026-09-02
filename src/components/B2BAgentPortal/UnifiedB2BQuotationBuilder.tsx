@@ -37,14 +37,25 @@ import {
   Info,
   Globe,
   FileCheck,
-  ShieldCheck
+  ShieldCheck,
+  LayoutGrid,
+  ListOrdered,
+  Copy,
+  Columns,
+  Split,
+  Check
 } from 'lucide-react';
+import { StepByStepQuotationWorkspace } from './StepByStepQuotationWorkspace';
+import { VisaServicesAndFacilitationSection } from './VisaServicesAndFacilitationSection';
+import { OptionComparisonMatrixModal } from './OptionComparisonMatrixModal';
+import { OptionDuplicateModal } from './OptionDuplicateModal';
 import { 
   Product, 
   Destination, 
   CurrencyCode, 
   QuoteItem, 
   Quotation, 
+  QuotationOption,
   Hotel, 
   CityHub, 
   TripRouteHub,
@@ -65,6 +76,14 @@ import { PricingCalculatorModal } from '../PricingCalculatorModal';
 import { ManualHotelFormModal } from './ManualHotelFormModal';
 import { VISA_CATALOG, VisaProduct } from './B2BVisaView';
 import { AddVisaToQuoteModal, visaProductToProduct } from './AddVisaToQuoteModal';
+import { AddAddonModal } from './AddAddonModal';
+import { 
+  classifyPassengers, 
+  STANDARD_OPERATIONAL_REMARKS, 
+  generateTransferSuggestions, 
+  checkItineraryFeasibility,
+  TransferSuggestion
+} from '../../utils/b2bQuotationHelpers';
 import { AppDatabase } from '../../services/db';
 import { hotelToProduct, manualHotelToProduct, calculateHotelStayPrice, validateRoomOccupancy, OccupancyValidationResult } from '../../utils/hotelHelpers';
 import { downloadQuotationPDF } from '../../services/pdfGenerator';
@@ -160,6 +179,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   // Master Quotation Context
   const { 
     items, 
+    setItems,
     addProductToQuote, 
     removeProductFromQuote, 
     updateItemPax, 
@@ -192,6 +212,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   // Top-Level View State (Itinerary Builder vs Official Proposal Preview)
   const [activeViewTab, setActiveViewTab] = useState<'BUILDER' | 'PROPOSAL_PREVIEW'>('BUILDER');
+  const [activeStepId, setActiveStepId] = useState<number>(1);
 
   // Destination & Specs State
   const defaultDest = useMemo(() => {
@@ -235,6 +256,129 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [adultsCount, setAdultsCount] = useState<number>(2);
   const [childrenCount, setChildrenCount] = useState<number>(0);
   const [infantsCount, setInfantsCount] = useState<number>(0);
+  const [childAges, setChildAges] = useState<number[]>([]);
+  const [nationality, setNationality] = useState<string>('Indian');
+  const [travelStyle, setTravelStyle] = useState<string>('FIT Luxury');
+  const [mealPlanPreference, setMealPlanPreference] = useState<string>('CP (Breakfast Included)');
+  const [roomingConfig, setRoomingConfig] = useState({
+    roomsCount: 1,
+    extraBedRequired: true
+  });
+  const [visaAssistanceChoice, setVisaAssistanceChoice] = useState<'YES' | 'NO' | 'NOT_REQUIRED' | 'LATER'>('NOT_REQUIRED');
+
+  // Quotation Multi-Options State (Option 1, Option 2, Option 3)
+  const [activeOptionTab, setActiveOptionTab] = useState<number>(1);
+  const [showComparisonMatrixModal, setShowComparisonMatrixModal] = useState<boolean>(false);
+  const [showDuplicateOptionModal, setShowDuplicateOptionModal] = useState<boolean>(false);
+
+  // In-Builder Toast Notification (Replaces Cart Drawer popping up)
+  const [builderToast, setBuilderToast] = useState<{ message: string; type: 'SUCCESS' | 'INFO' | 'WARNING' } | null>(null);
+
+  const showBuilderToast = (message: string, type: 'SUCCESS' | 'INFO' | 'WARNING' = 'SUCCESS') => {
+    setBuilderToast({ message, type });
+    setTimeout(() => {
+      setBuilderToast(prev => (prev?.message === message ? null : prev));
+    }, 3500);
+  };
+
+  // Independent Options Data Storage
+  interface OptionDataState {
+    optionNumber: number;
+    title: string;
+    badge: string;
+    hotelTier: string;
+    items: QuoteItem[];
+    routeHubs: TripRouteHub[];
+    dayThemes: Record<number, string>;
+    agentMarkupPercent: number;
+    overallDiscountPercent: number;
+  }
+
+  const [optionsData, setOptionsData] = useState<Record<number, OptionDataState>>({
+    1: {
+      optionNumber: 1,
+      title: 'Option 1: Standard 4-Star Premium',
+      badge: 'POPULAR CHOICE',
+      hotelTier: '4-Star Premium',
+      items: [],
+      routeHubs: [],
+      dayThemes: {},
+      agentMarkupPercent: 12,
+      overallDiscountPercent: 0
+    },
+    2: {
+      optionNumber: 2,
+      title: 'Option 2: 5-Star Luxury Upgrade',
+      badge: 'UPGRADED',
+      hotelTier: '5-Star Luxury',
+      items: [],
+      routeHubs: [],
+      dayThemes: {},
+      agentMarkupPercent: 15,
+      overallDiscountPercent: 0
+    },
+    3: {
+      optionNumber: 3,
+      title: 'Option 3: Signature / Private Villa',
+      badge: 'ULTRA-LUXE',
+      hotelTier: 'Signature / Private Villa',
+      items: [],
+      routeHubs: [],
+      dayThemes: {},
+      agentMarkupPercent: 18,
+      overallDiscountPercent: 0
+    }
+  });
+
+  const [quotationOptions, setQuotationOptions] = useState<QuotationOption[]>([
+    {
+      id: 'opt-1',
+      optionNumber: 1,
+      title: 'Option 1: Standard 4-Star Premium',
+      badge: 'POPULAR CHOICE',
+      hotelTier: '4-Star Premium',
+      items: [],
+      routeHubs: [],
+      totalNetCost: 0,
+      totalSellingPrice: 0,
+      totalMargin: 0,
+      totalTaxes: 0
+    }
+  ]);
+
+  // Addon Modal (Insurance, eSIM, VIP Services)
+  const [showAddonModal, setShowAddonModal] = useState<boolean>(false);
+  const [addonModalCategory, setAddonModalCategory] = useState<'ALL' | 'INSURANCE' | 'ESIM' | 'SERVICES'>('ALL');
+
+  // Dynamic Passenger Classification Engine
+  const passengerClassification = useMemo(() => {
+    return classifyPassengers(adultsCount, childAges, infantsCount);
+  }, [adultsCount, childAges, infantsCount]);
+
+  // Handle Changing Child Count
+  const handleSetChildrenCount = (newCount: number) => {
+    const safeCount = Math.max(0, newCount);
+    setChildrenCount(safeCount);
+    setChildAges(prev => {
+      const next = [...prev];
+      if (safeCount > next.length) {
+        for (let i = next.length; i < safeCount; i++) {
+          next.push(7); // Default child age 7 (CWB)
+        }
+      } else if (safeCount < next.length) {
+        next.splice(safeCount);
+      }
+      return next;
+    });
+  };
+
+  const handleUpdateChildAge = (index: number, age: number) => {
+    setChildAges(prev => {
+      const next = [...prev];
+      next[index] = age;
+      return next;
+    });
+  };
 
   // Calculate Nights from Dates
   const tripNights = useMemo(() => {
@@ -451,6 +595,106 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
   };
 
+  // Switch Active Option Tab (with automatic state preservation)
+  const handleSwitchOptionTab = (targetOptNum: number) => {
+    if (targetOptNum === activeOptionTab) return;
+
+    // 1. Save current option state
+    setOptionsData(prev => ({
+      ...prev,
+      [activeOptionTab]: {
+        ...prev[activeOptionTab],
+        items: [...items],
+        routeHubs: [...routeHubs],
+        dayThemes: { ...dayThemes },
+        agentMarkupPercent,
+        overallDiscountPercent
+      }
+    }));
+
+    // 2. Target option data
+    const targetOpt = optionsData[targetOptNum];
+    let targetItems = targetOpt?.items || [];
+    let targetHubs = targetOpt?.routeHubs || [];
+    let targetThemes = targetOpt?.dayThemes || {};
+    let targetMarkup = targetOpt?.agentMarkupPercent ?? agentMarkupPercent;
+    let targetDiscount = targetOpt?.overallDiscountPercent ?? 0;
+
+    // If target has no hubs, inherit routeHubs structure without hotels
+    if (targetHubs.length === 0 && routeHubs.length > 0) {
+      targetHubs = routeHubs.map(h => ({
+        ...h,
+        id: `rhub-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        hotelId: undefined,
+        roomTypeId: undefined,
+        manualHotel: undefined,
+        isManualHotel: false
+      }));
+    }
+
+    setItems(targetItems);
+    setRouteHubs(targetHubs);
+    setDayThemes(targetThemes);
+    setAgentMarkupPercent(targetMarkup);
+    setOverallDiscountPercent(targetDiscount);
+    setActiveOptionTab(targetOptNum);
+
+    showBuilderToast(`Switched to Option ${targetOptNum}: ${targetOpt?.title || `Option ${targetOptNum}`}`, 'INFO');
+  };
+
+  // Duplicate an option to another option slot
+  const handleDuplicateOption = (fromOptNum: number, toOptNum: number) => {
+    const sourceOpt = fromOptNum === activeOptionTab
+      ? {
+          items: [...items],
+          routeHubs: [...routeHubs],
+          dayThemes: { ...dayThemes },
+          agentMarkupPercent,
+          overallDiscountPercent
+        }
+      : optionsData[fromOptNum];
+
+    const clonedItems: QuoteItem[] = (sourceOpt?.items || []).map(it => ({
+      ...it,
+      id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`
+    }));
+
+    const clonedHubs: TripRouteHub[] = (sourceOpt?.routeHubs || []).map(h => ({
+      ...h,
+      id: `rhub-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`
+    }));
+
+    const clonedThemes: Record<number, string> = { ...(sourceOpt?.dayThemes || {}) };
+
+    setOptionsData(prev => ({
+      ...prev,
+      [toOptNum]: {
+        ...prev[toOptNum],
+        items: clonedItems,
+        routeHubs: clonedHubs,
+        dayThemes: clonedThemes,
+        agentMarkupPercent: sourceOpt?.agentMarkupPercent ?? 15,
+        overallDiscountPercent: sourceOpt?.overallDiscountPercent ?? 0
+      }
+    }));
+
+    // Switch to target option
+    setItems(clonedItems);
+    setRouteHubs(clonedHubs);
+    setDayThemes(clonedThemes);
+    setAgentMarkupPercent(sourceOpt?.agentMarkupPercent ?? 15);
+    setOverallDiscountPercent(sourceOpt?.overallDiscountPercent ?? 0);
+    setActiveOptionTab(toOptNum);
+
+    showBuilderToast(`Option ${fromOptNum} successfully cloned to Option ${toOptNum}!`, 'SUCCESS');
+  };
+
+  // Silent Product Add (Suppresses Cart Drawer popup in builder)
+  const handleAddProductToQuoteSilently = (product: Product, options?: any) => {
+    addProductToQuote(product, { ...options, openDrawer: false });
+    showBuilderToast(`✓ Added "${product.name}" to Option ${activeOptionTab}`, 'SUCCESS');
+  };
+
   // Generate Calendar Days
   const calendarDays = useMemo(() => {
     if (!startDate || !endDate) return [];
@@ -594,6 +838,90 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const visaItems = useMemo(() => items.filter(isVisaQuoteItem), [items]);
   const experienceItems = useMemo(() => items.filter(it => !isHotelQuoteItem(it) && !isVisaQuoteItem(it)), [items]);
 
+  const hasInsurance = useMemo(() => {
+    return items.some(it => 
+      it.product.subcategory === 'Travel Insurance' || 
+      it.product.name.toLowerCase().includes('insurance')
+    );
+  }, [items]);
+
+  const hasEsim = useMemo(() => {
+    return items.some(it => 
+      it.product.subcategory === 'eSIM Connectivity' || 
+      it.product.name.toLowerCase().includes('esim')
+    );
+  }, [items]);
+
+  // Dynamic Transfer Suggestions
+  const transferSuggestions = useMemo(() => {
+    return generateTransferSuggestions(routeHubs, calendarDays.length || (tripNights + 1));
+  }, [routeHubs, calendarDays.length, tripNights]);
+
+  // Feasibility Check Engine (Score & Diagnostics)
+  const feasibility = useMemo(() => {
+    return checkItineraryFeasibility(
+      routeHubs,
+      items,
+      calendarDays.length || (tripNights + 1),
+      visaAssistanceChoice,
+      hasInsurance,
+      hasEsim
+    );
+  }, [routeHubs, items, calendarDays.length, tripNights, visaAssistanceChoice, hasInsurance, hasEsim]);
+
+  // Add Suggested Transfer Helper
+  const handleAddSuggestedTransfer = (s: TransferSuggestion) => {
+    const targetDay = calendarDays.find(d => d.dayNumber === s.dayNumber);
+    const dateStr = targetDay?.dateString || startDate;
+
+    const prod = {
+      id: `prod-transfer-${s.id}-${Date.now()}`,
+      sku: `TRF-${s.type}`,
+      destinationId: currentDestination.id,
+      destinationName: currentDestination.name,
+      country: currentDestination.name,
+      city: s.fromCity || currentDestination.name,
+      productType: 'Private Vehicle Transfer',
+      name: `${s.title} (${s.vehicleType})`,
+      shortDescription: s.description,
+      longDescription: `Confirmed private ground transfer from ${s.fromCity || 'Pickup'} to ${s.toCity || 'Dropoff'}. Vehicle type: ${s.vehicleType}. Includes tolls, fuel, parking fees, and commercial driver insurance.`,
+      supplierId: 'sup-ground-logistics',
+      supplierName: `${currentDestination.name} Ground Logistics Network`,
+      category: 'Transfers',
+      subcategory: s.type === 'INTERCITY' ? 'Intercity Transfer' : 'Airport Transfer',
+      adultNetPrice: s.estimatedCostUSD || 65,
+      childNetPrice: 0,
+      infantNetPrice: 0,
+      currency: 'USD',
+      defaultMarkupPercent: 20,
+      taxPercent: 0,
+      commissionPercent: 10,
+      serviceFeeFixed: 0,
+      season: 'All Year',
+      validityFrom: '2026-01-01',
+      validityTo: '2026-12-31',
+      minPax: 1,
+      maxPax: 20,
+      availability: 'INSTANT',
+      inclusions: [
+        `Private Air-Conditioned ${s.vehicleType}`,
+        'Commercial Chauffeur with Name Board Signage',
+        'All Highway Tolls, Airport Parking & Fuel',
+        '60 Minutes Complimentary Flight Delay Waiting Time'
+      ],
+      exclusions: ['Driver tips and personal luggage handling extras'],
+      heroImage: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?q=80&w=800&auto=format&fit=crop',
+      galleryImages: ['https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?q=80&w=800&auto=format&fit=crop']
+    } as unknown as Product;
+
+    handleAddProductToQuoteSilently(prod, { 
+      travelDate: dateStr, 
+      adults: adultsCount, 
+      children: childrenCount, 
+      infants: infantsCount 
+    });
+  };
+
   const hotelTotalSelling = useMemo(() => hotelItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [hotelItems]);
   const visaTotalSelling = useMemo(() => visaItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [visaItems]);
   const experienceTotalSelling = useMemo(() => experienceItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [experienceItems]);
@@ -601,6 +929,50 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const finalClientPrice = useMemo(() => {
     return totalSellingPrice * (1 + (agentMarkupPercent || 0) / 100);
   }, [totalSellingPrice, agentMarkupPercent]);
+
+  // Dynamic 3-Option Calculations Engine
+  const computedQuotationOptions: QuotationOption[] = useMemo(() => {
+    return [1, 2, 3].map(optNum => {
+      const optState = optNum === activeOptionTab
+        ? {
+            items,
+            routeHubs,
+            agentMarkupPercent,
+            overallDiscountPercent,
+            title: optionsData[optNum]?.title || `Option ${optNum}`,
+            badge: optionsData[optNum]?.badge || '',
+            hotelTier: optionsData[optNum]?.hotelTier || ''
+          }
+        : {
+            items: optionsData[optNum]?.items || [],
+            routeHubs: optionsData[optNum]?.routeHubs || [],
+            agentMarkupPercent: optionsData[optNum]?.agentMarkupPercent ?? 12,
+            overallDiscountPercent: optionsData[optNum]?.overallDiscountPercent ?? 0,
+            title: optionsData[optNum]?.title || `Option ${optNum}`,
+            badge: optionsData[optNum]?.badge || '',
+            hotelTier: optionsData[optNum]?.hotelTier || ''
+          };
+
+      const optItems = optState.items;
+      const net = optItems.reduce((acc, it) => acc + (it.calculation?.totalNetCost || it.product.priceB2B * (it.pax.adults + it.pax.children)), 0);
+      const selling = optItems.reduce((acc, it) => acc + (it.calculation?.finalTotalSellingPrice || it.product.priceSelling * (it.pax.adults + it.pax.children)), 0);
+      const margin = selling - net;
+
+      return {
+        id: `opt-${optNum}`,
+        optionNumber: optNum,
+        title: optState.title,
+        badge: optState.badge,
+        hotelTier: optState.hotelTier,
+        items: optItems,
+        routeHubs: optState.routeHubs,
+        totalNetCost: net,
+        totalSellingPrice: selling,
+        totalMargin: margin,
+        totalTaxes: selling * 0.05
+      };
+    });
+  }, [items, routeHubs, agentMarkupPercent, overallDiscountPercent, optionsData, activeOptionTab]);
 
   // Sync / Auto-Save Quote to AppDatabase
   const handleSaveDraft = () => {
@@ -634,6 +1006,23 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         totalPax: (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0),
         adultsCount,
         childrenCount,
+        infantsCount,
+        childAges,
+        nationality,
+        travelStyle,
+        mealPlanPreference,
+        roomingConfig: {
+          roomsCount: roomingConfig.roomsCount || 1,
+          adultsPerRoom: Math.max(1, Math.ceil((adultsCount || 2) / (roomingConfig.roomsCount || 1))),
+          cwbPerRoom: 0,
+          cnbPerRoom: 0,
+          infPerRoom: 0,
+          extraBed: Boolean(roomingConfig.extraBedRequired)
+        },
+        passengerBreakdown: passengerClassification,
+        visaAssistanceChoice,
+        feasibilityScore: feasibility.score,
+        options: computedQuotationOptions,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         validUntil: new Date(Date.now() + 86400000 * 14).toISOString(),
@@ -1294,140 +1683,145 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const productCategories = ['ALL', 'Activity', 'Tour', 'Transfer', 'Transport', 'Rail', 'Guide', 'Restaurant', 'Private Yacht'];
 
   return (
-    <div className="w-full min-h-screen bg-slate-100/90 text-slate-900 flex flex-col font-sans pb-24 selection:bg-[#00C6A6] selection:text-slate-950">
+    <div 
+      id="quote-builder-shell"
+      className="fixed inset-0 z-30 bg-slate-100/95 text-slate-900 flex flex-col font-sans selection:bg-[#00C6A6] selection:text-slate-950 overflow-hidden"
+    >
       {/* ========================================================================= */}
-      {/* TOP WORKSPACE NAVIGATION & CONTROLS */}
+      {/* TOP WORKSPACE NAVIGATION & CONTROLS — FIXED AT TOP OF VIEWPORT */}
       {/* ========================================================================= */}
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 sm:px-6 py-3.5 shadow-xs">
+      <header 
+        id="quote-builder-fixed-header"
+        className="shrink-0 w-full z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 sm:px-6 py-2.5 shadow-xs"
+      >
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
-          {/* Left: Title & Live Indicators */}
-          <div className="flex items-center space-x-3">
-            {onBackToDashboard && (
-              <button
-                type="button"
-                onClick={onBackToDashboard}
-                className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer border border-slate-200"
-                title="Back to Dashboard"
-              >
-                <ArrowLeft className="w-4 h-4" />
-              </button>
-            )}
-            <div>
-              <div className="flex items-center space-x-2">
-                <h1 className="text-base sm:text-lg font-black tracking-tight text-slate-900 flex items-center space-x-2">
-                  <Compass className="w-5 h-5 text-[#00A88F]" />
-                  <span>Day-Wise Itinerary Builder</span>
-                </h1>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                  {quoteNumber}
-                </span>
-                <span className="hidden sm:inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                  <CheckCircle2 className="w-3 h-3 text-[#00A88F]" />
-                  <span>{autoSaveStatus === 'SAVING' ? 'Saving to Cloud...' : `Cloud Saved (${lastSavedTimestamp})`}</span>
-                </span>
-              </div>
-              <p className="text-xs text-slate-500">
-                {currentDestination.name} • {tripNights} Nights • {items.length} Included Services
-              </p>
-            </div>
-          </div>
-
-          {/* Center / Right: View Mode Toggle & Primary Actions */}
-          <div className="flex flex-wrap items-center gap-2">
-            {/* View Switcher: Builder vs Proposal Document */}
-            <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
-              <button
-                type="button"
-                onClick={() => setActiveViewTab('BUILDER')}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center space-x-1.5 ${
-                  activeViewTab === 'BUILDER'
-                    ? 'bg-[#00C6A6] text-slate-950 shadow-xs font-black'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>Itinerary Editor</span>
-              </button>
+          {/* Left: Back + Quote Info + Customer + Destination + Dates + Pax + Status */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {(onBackToDashboard || onViewMyQuotes) && (
               <button
                 type="button"
                 onClick={() => {
-                  handleSaveDraft();
-                  setActiveViewTab('PROPOSAL_PREVIEW');
+                  if (onBackToDashboard) onBackToDashboard();
+                  else if (onViewMyQuotes) onViewMyQuotes();
                 }}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center space-x-1.5 ${
-                  activeViewTab === 'PROPOSAL_PREVIEW'
-                    ? 'bg-[#00C6A6] text-slate-950 shadow-xs font-black'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
+                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer border border-slate-200 text-xs font-bold flex items-center space-x-1"
+                title="Back to Quotes"
               >
-                <FileText className="w-3.5 h-3.5" />
-                <span>Proposal Preview</span>
-              </button>
-            </div>
-
-            {/* Currency Selector */}
-            <div className="relative">
-              <select
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 border border-slate-200 outline-none cursor-pointer"
-              >
-                {SUPPORTED_CURRENCIES.map(curr => (
-                  <option key={curr.code} value={curr.code}>{curr.code} ({curr.symbol})</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Fast Action Buttons */}
-            <button
-              type="button"
-              onClick={handleOpenEmailModal}
-              className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
-              title="Email Itinerary Proposal to Client"
-            >
-              <Mail className="w-3.5 h-3.5" />
-              <span>Email</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleDownloadPDF}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold border border-slate-200 transition-colors cursor-pointer shadow-xs"
-              title="Download Branded PDF Proposal"
-            >
-              <Download className="w-3.5 h-3.5 text-[#00A88F]" />
-              <span className="hidden md:inline">Download PDF</span>
-            </button>
-
-            {canSaveAsPackage && (
-              <button
-                type="button"
-                onClick={handleOpenSavePackageModal}
-                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
-                title="Save & Publish as a Master Ready-Made Package"
-              >
-                <Layers className="w-3.5 h-3.5 text-[#00C6A6]" />
-                <span className="hidden sm:inline">Save as Package</span>
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Back to Quotes</span>
               </button>
             )}
 
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="px-2 py-0.5 rounded-lg text-xs font-mono font-black bg-slate-900 text-[#00E5C0]">
+                {quoteNumber}
+              </span>
+
+              <span className="text-xs font-black text-slate-900">
+                {clientName || 'New Client'}
+              </span>
+
+              <span className="text-slate-300">•</span>
+
+              <span className="text-xs font-bold text-slate-700 flex items-center space-x-1">
+                <MapPin className="w-3.5 h-3.5 text-teal-600" />
+                <span>{currentDestination.name}</span>
+              </span>
+
+              <span className="text-slate-300">•</span>
+
+              <span className="text-xs text-slate-600 font-medium">
+                {startDate ? new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''} – {endDate ? new Date(endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''} ({tripNights}N)
+              </span>
+
+              <span className="text-slate-300">•</span>
+
+              <span className="text-xs text-slate-600 font-semibold">
+                {adultsCount} Adults{childrenCount > 0 ? ` · ${childrenCount} Child${childrenCount > 1 ? 'ren' : ''}` : ''}{infantsCount > 0 ? ` · ${infantsCount} Infant${infantsCount > 1 ? 's' : ''}` : ''}
+              </span>
+
+              {/* Status Badge */}
+              {feasibility.warnings.length > 0 ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 flex items-center space-x-1">
+                  <AlertTriangle className="w-3 h-3 text-amber-700" />
+                  <span>{feasibility.warnings.length} Alerts</span>
+                </span>
+              ) : items.length > 0 ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center space-x-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                  <span>Ready</span>
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                  Draft
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Right: Currency + Save Draft + Preview + Generate Quotation */}
+          <div className="flex items-center space-x-2">
+            <select
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
+              className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 border border-slate-200 outline-none cursor-pointer"
+            >
+              {SUPPORTED_CURRENCIES.map(curr => (
+                <option key={curr.code} value={curr.code}>{curr.code} ({curr.symbol})</option>
+              ))}
+            </select>
+
             <button
               type="button"
-              onClick={handleConvertBooking}
-              className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer shadow-xs"
+              onClick={handleSaveDraft}
+              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-200 transition-all cursor-pointer shadow-2xs"
             >
-              <BookmarkCheck className="w-4 h-4" />
-              <span>Convert to Booking</span>
+              Save Draft
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                handleSaveDraft();
+                setActiveViewTab(activeViewTab === 'PROPOSAL_PREVIEW' ? 'BUILDER' : 'PROPOSAL_PREVIEW');
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs ${
+                activeViewTab === 'PROPOSAL_PREVIEW'
+                  ? 'bg-slate-900 text-[#00E5C0]'
+                  : 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-200'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5 text-teal-600" />
+              <span>{activeViewTab === 'PROPOSAL_PREVIEW' ? 'Return to Editor' : 'Preview'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                handleSaveDraft();
+                setActiveViewTab('PROPOSAL_PREVIEW');
+              }}
+              className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 shadow-xs"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Generate Quotation</span>
             </button>
           </div>
         </div>
       </header>
 
       {/* ========================================================================= */}
-      {/* VIEW: OFFICIAL PROPOSAL PRESENTATION PREVIEW */}
+      {/* SCROLLABLE QUOTE BUILDER WORKSPACE AREA (INDEPENDENT SCROLL) */}
       {/* ========================================================================= */}
-      {activeViewTab === 'PROPOSAL_PREVIEW' ? (
-        <main className="max-w-6xl mx-auto w-full px-4 sm:px-6 py-8 space-y-6">
+      <div 
+        id="quote-builder-workspace-scroll-area"
+        className="flex-1 overflow-y-auto overflow-x-hidden w-full min-h-0 relative bg-slate-100/90"
+      >
+        {/* ========================================================================= */}
+        {/* VIEW: OFFICIAL PROPOSAL PRESENTATION PREVIEW */}
+        {/* ========================================================================= */}
+        {activeViewTab === 'PROPOSAL_PREVIEW' ? (
+          <main className="max-w-6xl mx-auto w-full px-4 sm:px-6 py-8 space-y-6 pb-32">
           {/* Back to Editor Bar */}
           <div className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-between shadow-xs">
             <div className="flex items-center space-x-2 text-xs text-slate-600">
@@ -1507,1425 +1901,124 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         </main>
       ) : (
         /* ========================================================================= */
-        /* VIEW: PRIMARY ITINERARY BUILDER & DAY-WISE WORKSPACE */
+        /* VIEW: PRIMARY ITINERARY BUILDER & DAY-WISE WORKSPACE (GUIDED WORKSPACE) */
         /* ========================================================================= */
-        <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 space-y-6">
-          {/* --------------------------------------------------------------------- */}
-          {/* SECTION 1: QUOTE HEADER / TRIP & CLIENT SPECIFICATIONS */}
-          {/* --------------------------------------------------------------------- */}
-          <section className="bg-white rounded-3xl border border-slate-200/80 p-5 sm:p-6 shadow-xs space-y-4">
-            <div className="flex items-center justify-between cursor-pointer" onClick={() => setIsSpecsExpanded(!isSpecsExpanded)}>
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-[#00A88F] flex items-center justify-center">
-                  <Briefcase className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="text-sm sm:text-base font-bold text-slate-900 flex items-center space-x-2">
-                    <span>Trip & Client Specifications</span>
-                    <span className="text-[11px] font-normal text-slate-500">
-                      ({clientName || 'New Client'} • {tripNights} Nights • {adultsCount} Adults{childrenCount > 0 ? `, ${childrenCount} Ch` : ''})
-                    </span>
-                  </h2>
-                  <p className="text-xs text-slate-500">Specify traveler details, dates, passengers, and package scope.</p>
-                </div>
-              </div>
-              <button type="button" className="text-slate-400 hover:text-slate-600 p-1">
-                {isSpecsExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-              </button>
-            </div>
-
-            {isSpecsExpanded && (
-              <div className="pt-4 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-fadeIn">
-                {/* Client Lead Quick Select */}
-                <div className="space-y-1.5 sm:col-span-2 lg:col-span-1">
-                  <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                    <span>Select CRM Lead / Client</span>
-                    <UserCheck className="w-3.5 h-3.5 text-teal-600" />
-                  </label>
-                  <select
-                    value={selectedLeadId}
-                    onChange={(e) => handleSelectLead(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
-                  >
-                    <option value="">-- New / Custom Traveler --</option>
-                    {crmLeads.map(l => (
-                      <option key={l.id} value={l.id}>
-                        {l.contactName} {l.agencyName ? `(${l.agencyName})` : ''} - {l.destinationName || 'Tour'}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Client Name */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700">Client / Lead Traveler Name</label>
-                  <input
-                    type="text"
-                    value={clientName}
-                    onChange={(e) => setClientName(e.target.value)}
-                    placeholder="e.g. John & Sarah Sterling"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
-                  />
-                </div>
-
-                {/* Client Email */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700">Client Email</label>
-                  <input
-                    type="email"
-                    value={clientEmail}
-                    onChange={(e) => setClientEmail(e.target.value)}
-                    placeholder="traveler@luxury.com"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none font-mono"
-                  />
-                </div>
-
-                {/* Destination Selector */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700">Primary Destination</label>
-                  <select
-                    value={currentDestination.id}
-                    onChange={(e) => {
-                      const dest = destinations.find(d => d.id === e.target.value);
-                      if (dest) setCurrentDestination(dest);
-                    }}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 font-bold focus:bg-white focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
-                  >
-                    {destinations.map(d => (
-                      <option key={d.id} value={d.id}>{d.name} ({d.code || 'INTL'})</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Start Date */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700">Travel Start Date</label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none font-mono"
-                  />
-                </div>
-
-                {/* End Date */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700">
-                    Travel End Date <span className="text-[#00A88F]">({tripNights} Nights)</span>
-                  </label>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none font-mono"
-                  />
-                </div>
-
-                {/* Passenger Breakdown */}
-                <div className="space-y-1.5 sm:col-span-2">
-                  <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                    <span>Passengers / Participants</span>
-                    <span className="text-teal-700 font-bold">Total: {adultsCount + childrenCount + infantsCount} Guests</span>
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {/* Adults */}
-                    <div className="bg-slate-50 p-2 rounded-xl border border-slate-200 flex items-center justify-between">
-                      <span className="text-[11px] text-slate-600 font-bold">Adults</span>
-                      <div className="flex items-center space-x-1.5">
-                        <button
-                          type="button"
-                          disabled={adultsCount <= 1}
-                          onClick={() => setAdultsCount(Math.max(1, adultsCount - 1))}
-                          className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold text-xs disabled:opacity-30 cursor-pointer"
-                        >
-                          -
-                        </button>
-                        <span className="text-xs font-bold text-slate-900 w-4 text-center">{adultsCount}</span>
-                        <button
-                          type="button"
-                          onClick={() => setAdultsCount(adultsCount + 1)}
-                          className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold text-xs cursor-pointer"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Children */}
-                    <div className="bg-slate-50 p-2 rounded-xl border border-slate-200 flex items-center justify-between">
-                      <span className="text-[11px] text-slate-600 font-bold">Children</span>
-                      <div className="flex items-center space-x-1.5">
-                        <button
-                          type="button"
-                          disabled={childrenCount <= 0}
-                          onClick={() => setChildrenCount(Math.max(0, childrenCount - 1))}
-                          className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold text-xs disabled:opacity-30 cursor-pointer"
-                        >
-                          -
-                        </button>
-                        <span className="text-xs font-bold text-slate-900 w-4 text-center">{childrenCount}</span>
-                        <button
-                          type="button"
-                          onClick={() => setChildrenCount(childrenCount + 1)}
-                          className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold text-xs cursor-pointer"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Infants */}
-                    <div className="bg-slate-50 p-2 rounded-xl border border-slate-200 flex items-center justify-between">
-                      <span className="text-[11px] text-slate-600 font-bold">Infants</span>
-                      <div className="flex items-center space-x-1.5">
-                        <button
-                          type="button"
-                          disabled={infantsCount <= 0}
-                          onClick={() => setInfantsCount(Math.max(0, infantsCount - 1))}
-                          className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold text-xs disabled:opacity-30 cursor-pointer"
-                        >
-                          -
-                        </button>
-                        <span className="text-xs font-bold text-slate-900 w-4 text-center">{infantsCount}</span>
-                        <button
-                          type="button"
-                          onClick={() => setInfantsCount(infantsCount + 1)}
-                          className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold text-xs cursor-pointer"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Quotation Scope Selector */}
-                <div className="space-y-1.5 sm:col-span-2">
-                  <label className="text-xs font-bold text-slate-700">Quotation Scope & Service Inclusions</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setQuotationScope('HOTEL_LAND')}
-                      className={`p-2 rounded-xl text-xs font-bold border transition-all text-center cursor-pointer ${
-                        quotationScope === 'HOTEL_LAND'
-                          ? 'bg-teal-50 border-[#00C6A6] text-teal-800 shadow-xs'
-                          : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                      }`}
-                    >
-                      🏨 Full Package (Hotel + Land)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setQuotationScope('LAND_ONLY')}
-                      className={`p-2 rounded-xl text-xs font-bold border transition-all text-center cursor-pointer ${
-                        quotationScope === 'LAND_ONLY'
-                          ? 'bg-teal-50 border-[#00C6A6] text-teal-800 shadow-xs'
-                          : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                      }`}
-                    >
-                      🗺️ Land Experiences Only
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setQuotationScope('HOTEL_ONLY')}
-                      className={`p-2 rounded-xl text-xs font-bold border transition-all text-center cursor-pointer ${
-                        quotationScope === 'HOTEL_ONLY'
-                          ? 'bg-teal-50 border-[#00C6A6] text-teal-800 shadow-xs'
-                          : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                      }`}
-                    >
-                      🛏️ Hotel Stays Only
-                    </button>
-                  </div>
-                </div>
-
-                {/* Special Instructions */}
-                <div className="space-y-1.5 sm:col-span-2">
-                  <label className="text-xs font-bold text-slate-700">Special Logistics & Client Instructions</label>
-                  <input
-                    type="text"
-                    value={agentNotes}
-                    onChange={(e) => setAgentNotes(e.target.value)}
-                    placeholder="e.g. VIP clients celebrating 10th anniversary; private luxury transfer required on arrival..."
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
-                  />
-                </div>
-              </div>
-            )}
-          </section>
-
-          {/* --------------------------------------------------------------------- */}
-          {/* SECTION 2: MULTI-CITY ROUTE & HUB SEQUENCER */}
-          {/* --------------------------------------------------------------------- */}
-          <section className="bg-white rounded-3xl border border-slate-200/80 p-5 sm:p-6 shadow-xs space-y-4">
-            <div className="flex items-center justify-between cursor-pointer" onClick={() => setIsRouteExpanded(!isRouteExpanded)}>
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center">
-                  <Compass className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="text-sm sm:text-base font-bold text-slate-900 flex items-center space-x-2">
-                    <span>Itinerary Route & City Hubs</span>
-                    <span className="text-xs font-mono font-bold text-[#00A88F]">
-                      ({routeTotalNights} / {tripNights} Nights Allocated)
-                    </span>
-                  </h2>
-                  <p className="text-xs text-slate-500">Sequence city stays across {currentDestination.name}. Day slots update automatically.</p>
-                </div>
-              </div>
-              <div className="flex items-center space-x-2">
-                {routeTotalNights !== tripNights && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleAutoBalanceNights();
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold hover:bg-amber-100 transition-colors cursor-pointer"
-                  >
-                    Auto-Balance Nights
-                  </button>
-                )}
-                <button type="button" className="text-slate-400 hover:text-slate-600 p-1">
-                  {isRouteExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                </button>
-              </div>
-            </div>
-
-            {isRouteExpanded && (
-              <div className="pt-4 border-t border-slate-200 space-y-4 animate-fadeIn">
-                {/* Route Flow Visualizer */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                  {routeHubs.map((hub, idx) => (
-                    <div 
-                      key={hub.id}
-                      className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200 space-y-2 relative group hover:border-slate-300 hover:bg-white transition-all shadow-xs"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="px-2 py-0.5 rounded-md bg-white border border-slate-200 text-[10px] font-mono font-bold text-slate-600">
-                          Hub #{idx + 1}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveHubFromRoute(hub.id)}
-                          className="text-slate-400 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                          title="Remove Hub"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-
-                      <div className="flex items-center space-x-2">
-                        <MapPin className="w-4 h-4 text-[#00A88F] shrink-0" />
-                        <h4 className="text-sm font-bold text-slate-900 truncate">{hub.hubName}</h4>
-                      </div>
-
-                      {/* Nights Control */}
-                      <div className="flex items-center justify-between pt-1 border-t border-slate-200">
-                        <span className="text-[11px] text-slate-500 font-medium">Duration:</span>
-                        <div className="flex items-center space-x-2">
-                          <button
-                            type="button"
-                            disabled={hub.nights <= 1}
-                            onClick={() => handleAdjustHubNights(hub.id, -1)}
-                            className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 disabled:opacity-30 text-slate-700 font-bold text-xs cursor-pointer"
-                          >
-                            -
-                          </button>
-                          <span className="text-xs font-bold text-teal-700 font-mono">{hub.nights} Nights</span>
-                          <button
-                            type="button"
-                            onClick={() => handleAdjustHubNights(hub.id, 1)}
-                            className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold text-xs cursor-pointer"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-
-                  {/* Add Hub Card */}
-                  <div className="bg-slate-50/60 rounded-2xl p-3.5 border border-dashed border-slate-300 flex flex-col items-center justify-center space-y-2 text-center">
-                    <span className="text-xs font-bold text-slate-600">+ Add Destination Hub</span>
-                    <select
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          handleAddHubToRoute(e.target.value);
-                          e.target.value = '';
-                        }
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 text-xs text-slate-800 outline-none cursor-pointer focus:border-[#00C6A6]"
-                    >
-                      <option value="">Select City Hub...</option>
-                      {destinationHubs.map(h => (
-                        <option key={h.id} value={h.id}>{h.hubName || h.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              </div>
-            )}
-          </section>
-
-          {/* --------------------------------------------------------------------- */}
-          {/* SECTION 3: ACCOMMODATION / HOTEL SELECTION SECTION */}
-          {/* --------------------------------------------------------------------- */}
-          {quotationScope !== 'LAND_ONLY' && (
-            <section className="bg-white rounded-3xl border border-slate-200/80 p-5 sm:p-6 shadow-xs space-y-4">
-              <div className="flex items-center justify-between cursor-pointer" onClick={() => setIsHotelSectionExpanded(!isHotelSectionExpanded)}>
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center">
-                    <Building2 className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h2 className="text-sm sm:text-base font-bold text-slate-900 flex items-center space-x-2">
-                      <span>Accommodations & Hotel Stays</span>
-                      <span className="text-xs font-mono font-bold text-indigo-600">
-                        ({hotelItems.length} Hotels Booked • {formatCurrency(hotelTotalSelling, currency)})
-                      </span>
-                    </h2>
-                    <p className="text-xs text-slate-500">Select contracted luxury properties per hub or enter manual quotation rates.</p>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2.5">
-                  {canAddManualHotel && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenAddManualHotel();
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs"
-                    >
-                      <Plus className="w-3.5 h-3.5 text-amber-600" />
-                      <span>+ Add Manual Hotel / Rate</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setQuotationScope('LAND_ONLY');
-                    }}
-                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-xs font-bold transition-colors cursor-pointer"
-                  >
-                    Skip Accommodation (Land Only)
-                  </button>
-                  <button type="button" className="text-slate-400 hover:text-slate-600 p-1">
-                    {isHotelSectionExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                  </button>
-                </div>
-              </div>
-
-              {isHotelSectionExpanded && (
-                <div className="pt-4 border-t border-slate-200 space-y-4 animate-fadeIn">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {routeHubs.map(hub => {
-                      const { checkInFormatted, checkOutFormatted } = getHubDates(hub.order, hub.nights || 1);
-
-                      // Available hotels for this hub
-                      const currentHubHotels = availableHotels.filter(h => 
-                        h.cityName?.toLowerCase() === hub.hubName.toLowerCase() ||
-                        h.destinationId === currentDestination.id ||
-                        h.country?.toLowerCase() === currentDestination.name.toLowerCase()
-                      );
-                      const hotelsToDisplay = currentHubHotels.length > 0 ? currentHubHotels : availableHotels;
-
-                      // Assigned item
-                      const assignedItem = hotelItems.find(it => 
-                        it.notes?.includes(hub.hubName) || 
-                        (hub.hotelId && it.product.id.includes(hub.hotelId)) ||
-                        (it.manualHotelDetails?.hubId === hub.id) ||
-                        it.product.name.toLowerCase().includes(hub.hubName.toLowerCase())
-                      );
-
-                      // Check if manual hotel
-                      const isManualStay = Boolean(
-                        hub.isManualHotel || 
-                        hub.manualHotel || 
-                        assignedItem?.isManualHotel || 
-                        assignedItem?.product?.accommodationType === 'manual' ||
-                        assignedItem?.accommodationType === 'manual'
-                      );
-                      const manualDetails = hub.manualHotel || assignedItem?.manualHotelDetails;
-                      
-                      const selectedHotel = !isManualStay ? (
-                        availableHotels.find(h => h.id === hub.hotelId) || 
-                        (assignedItem ? availableHotels.find(h => assignedItem.product.id.includes(h.id)) : undefined)
-                      ) : undefined;
-
-                      // Selected room and rate calculations for Master Hotel
-                      const selectedRoom = selectedHotel?.roomTypes?.find(r => r.id === hub.roomTypeId) || selectedHotel?.roomTypes?.[0];
-                      const selectedRate = selectedRoom?.rates?.[0];
-                      const baseNightly = selectedRate?.doubleNetRate || selectedRate?.singleNetRate || selectedHotel?.startingNetPrice || 200;
-                      const hotelCurr = selectedRate?.currency || selectedHotel?.currency || 'USD';
-                      const nightlyInQuoteCurrency = convertCurrency(baseNightly, hotelCurr, currency);
-                      const currentRoomsCount = hub.roomsCount || 1;
-                      const currentNights = hub.nights || 1;
-                      const totalStayNet = nightlyInQuoteCurrency * currentNights * currentRoomsCount;
-                      const finalSellingStayPrice = totalStayNet * (1 + (agentMarkupPercent || 0) / 100);
-
-                      // Occupancy validation cross-check
-                      const occupancy = validateRoomOccupancy(
-                        selectedRoom,
-                        currentRoomsCount,
-                        adultsCount,
-                        childrenCount,
-                        infantsCount
-                      );
-
-                      // Manual Hotel Calculated Selling Price
-                      const manualSellingPrice = assignedItem?.calculation?.finalTotalSellingPrice || assignedItem?.calculation?.totalSellingPrice || (
-                        manualDetails ? (
-                          convertCurrency(
-                            (manualDetails.rateType === 'TOTAL' 
-                              ? manualDetails.ratePerNight 
-                              : manualDetails.rateType === 'PER_PERSON' 
-                                ? manualDetails.ratePerNight * (adultsCount + childrenCount) * (manualDetails.numberOfNights || hub.nights || 1)
-                                : manualDetails.ratePerNight * (manualDetails.numberOfRooms || hub.roomsCount || 1) * (manualDetails.numberOfNights || hub.nights || 1)
-                            ),
-                            manualDetails.rateCurrency,
-                            currency
-                          ) * (1 + (agentMarkupPercent || 0) / 100)
-                        ) : 0
-                      );
-
-                      return (
-                        <div key={hub.id} className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-3.5 shadow-xs">
-                          {/* Hub Card Header */}
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-1.5 min-w-0">
-                              <MapPin className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                              <span className="text-xs font-bold text-slate-900 truncate">
-                                {hub.hubName} Hub
-                              </span>
-                              <span className="text-[11px] font-mono font-bold text-teal-700">
-                                • {hub.nights} {hub.nights === 1 ? 'Night' : 'Nights'}
-                              </span>
-                            </div>
-                            {isManualStay ? (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shrink-0 flex items-center space-x-1">
-                                <Sparkles className="w-2.5 h-2.5 text-amber-600" />
-                                <span>Manual Stay</span>
-                              </span>
-                            ) : selectedHotel ? (
-                              occupancy.isValid ? (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200 shrink-0">
-                                  Stay Configured
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 shrink-0 flex items-center space-x-1">
-                                  <AlertTriangle className="w-2.5 h-2.5" />
-                                  <span>Occupancy Exceeded</span>
-                                </span>
-                              )
-                            ) : (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-600 border border-slate-300 shrink-0">
-                                Not Assigned
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Dates Indicator */}
-                          <div className="flex items-center space-x-1.5 text-[11px] text-slate-600 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
-                            <Calendar className="w-3 h-3 text-slate-500 shrink-0" />
-                            <span>{checkInFormatted} → {checkOutFormatted}</span>
-                          </div>
-
-                          {/* CASE 1: MANUALLY ADDED HOTEL STAY */}
-                          {isManualStay && manualDetails ? (
-                            <div className="bg-amber-50/60 rounded-xl p-3.5 border border-amber-300 space-y-3 shadow-xs animate-fadeIn">
-                              <div className="flex items-start justify-between gap-2">
-                                <div>
-                                  <div className="flex items-center space-x-1.5">
-                                    <span className="px-1.5 py-0.5 rounded bg-amber-200/80 text-amber-900 text-[9px] font-extrabold uppercase tracking-wider">
-                                      Quotation-Only Rate
-                                    </span>
-                                    <span className="text-[10px] font-bold text-amber-800">
-                                      {manualDetails.starRating}
-                                    </span>
-                                  </div>
-                                  <h5 className="text-xs font-bold text-slate-900 mt-1">
-                                    {manualDetails.hotelName}
-                                  </h5>
-                                  <p className="text-[10px] text-slate-600">
-                                    {manualDetails.city} {manualDetails.address ? `• ${manualDetails.address}` : ''}
-                                  </p>
-                                </div>
-                                <div className="flex items-center space-x-1 shrink-0">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenEditManualHotel(hub.id)}
-                                    className="p-1 rounded-md bg-white hover:bg-amber-100 border border-amber-200 text-amber-800 text-[10px] font-bold transition-colors cursor-pointer"
-                                    title="Edit Manual Hotel & Rate"
-                                  >
-                                    <Sliders className="w-3 h-3 text-amber-800" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRemoveManualHotel(hub.id)}
-                                    className="p-1 rounded-md bg-white hover:bg-rose-100 border border-rose-200 text-rose-600 text-[10px] font-bold transition-colors cursor-pointer"
-                                    title="Remove Manual Stay"
-                                  >
-                                    <Trash2 className="w-3 h-3 text-rose-600" />
-                                  </button>
-                                </div>
-                              </div>
-
-                              {/* Room & Stay Specs */}
-                              <div className="bg-white/90 rounded-lg p-2.5 border border-amber-200 space-y-1.5 text-[11px]">
-                                <div className="flex items-center justify-between text-slate-900 font-semibold">
-                                  <span>Room: {manualDetails.roomType}</span>
-                                  <span className="text-[10px] font-mono text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
-                                    {manualDetails.mealPlanName || manualDetails.mealPlan}
-                                  </span>
-                                </div>
-                                <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono">
-                                  <span>Units: {manualDetails.numberOfRooms} {manualDetails.numberOfRooms > 1 ? 'Rooms' : 'Room'} × {manualDetails.numberOfNights} Nights</span>
-                                  <span>Net: {formatCurrency(manualDetails.ratePerNight, manualDetails.rateCurrency)}/{manualDetails.rateType === 'TOTAL' ? 'stay' : manualDetails.rateType === 'PER_PERSON' ? 'pax' : 'nt'}</span>
-                                </div>
-                              </div>
-
-                              {/* Price Display */}
-                              <div className="bg-white p-2.5 rounded-lg border border-slate-200 space-y-1">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xs font-bold text-slate-900">Final Selling Price:</span>
-                                  <span className="text-sm font-extrabold font-mono text-emerald-600">
-                                    {formatCurrency(manualSellingPrice, currency)}
-                                  </span>
-                                </div>
-                                <p className="text-[10px] text-emerald-700 font-medium">
-                                  ✓ Clean fixed-stay price • Includes agent markup
-                                </p>
-                              </div>
-
-                              <div className="flex items-center justify-between pt-1 border-t border-amber-200/80 text-[10px]">
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenEditManualHotel(hub.id)}
-                                  className="text-amber-800 hover:text-amber-900 font-bold underline cursor-pointer"
-                                >
-                                  Modify Rate or Room Specs
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveManualHotel(hub.id)}
-                                  className="text-rose-600 hover:text-rose-700 font-bold cursor-pointer"
-                                >
-                                  Switch to Database Property
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            /* CASE 2: MASTER HOTEL SELECTOR & OPTION TO ADD MANUAL */
-                            <div className="space-y-3">
-                              {/* Hotel Selector */}
-                              <div className="space-y-1">
-                                <label className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
-                                  <span>Select Contracted Hotel</span>
-                                  {canAddManualHotel && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenAddManualHotel(hub.id)}
-                                      className="text-[10px] text-amber-800 hover:text-amber-900 font-bold hover:underline cursor-pointer"
-                                    >
-                                      + Custom Rate
-                                    </button>
-                                  )}
-                                </label>
-                                <select
-                                  value={selectedHotel?.id || ''}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    if (val === 'ADD_MANUAL_HOTEL_ACTION') {
-                                      handleOpenAddManualHotel(hub.id);
-                                    } else if (val && val !== 'LAND_ONLY_HUB') {
-                                      const h = availableHotels.find(x => x.id === val);
-                                      if (h) {
-                                        handleSelectHotelForHub(hub.order, h, h.roomTypes?.[0]?.id, currentRoomsCount);
-                                      }
-                                    } else {
-                                      handleRemoveHotelForHub(hub.id);
-                                    }
-                                  }}
-                                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-xs text-slate-900 outline-none cursor-pointer focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20"
-                                >
-                                  <option value="">-- Choose Hotel for {hub.hubName} --</option>
-                                  <option value="LAND_ONLY_HUB">No Accommodation (Arranged by Client)</option>
-                                  {canAddManualHotel && (
-                                    <option value="ADD_MANUAL_HOTEL_ACTION">
-                                      ✨ + Add Manual Hotel / Custom Rate...
-                                    </option>
-                                  )}
-                                  {hotelsToDisplay.map(h => (
-                                    <option key={h.id} value={h.id}>
-                                      {h.name} ({h.starRating || 5}★) - from {h.currency || 'USD'} {h.startingNetPrice || 250}/nt
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-
-                              {/* If Master Hotel Selected */}
-                              {selectedHotel ? (
-                                <div className="bg-white rounded-xl p-3.5 border border-slate-200 space-y-3 shadow-xs">
-                                  {/* Hotel Property Pill */}
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div>
-                                      <h5 className="text-xs font-bold text-slate-900">{selectedHotel.name}</h5>
-                                      <p className="text-[10px] text-slate-500">
-                                        {selectedHotel.starRating}★ {selectedHotel.propertyType?.replace('_', ' ') || 'Luxury Hotel'} • {selectedHotel.area || selectedHotel.cityName}
-                                      </p>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleRemoveHotelForHub(hub.id)}
-                                      className="text-[11px] text-red-500 hover:text-red-600 font-bold cursor-pointer shrink-0"
-                                    >
-                                      Remove
-                                    </button>
-                                  </div>
-
-                                  {/* Room Type Dropdown */}
-                                  <div className="space-y-1.5">
-                                    <label className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
-                                      <span>Room Type & Meal Plan</span>
-                                      <span className="text-[10px] text-teal-700 font-medium">
-                                        {selectedHotel.roomTypes?.length || 1} available
-                                      </span>
-                                    </label>
-                                    <select
-                                      value={selectedRoom?.id || ''}
-                                      onChange={(e) => {
-                                        handleSelectHotelForHub(hub.order, selectedHotel, e.target.value, currentRoomsCount);
-                                      }}
-                                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none cursor-pointer focus:bg-white focus:border-[#00C6A6]"
-                                    >
-                                      {(selectedHotel.roomTypes || []).map(r => {
-                                        const rRate = r.rates?.[0];
-                                        const rPrice = rRate?.doubleNetRate || selectedHotel.startingNetPrice || 200;
-                                        const rCurr = rRate?.currency || selectedHotel.currency || 'USD';
-                                        const rConverted = convertCurrency(rPrice, rCurr, currency);
-                                        const mealName = rRate?.mealPlanName || 'Bed & Breakfast';
-
-                                        return (
-                                          <option key={r.id} value={r.id}>
-                                            {r.roomName} • {mealName} ({formatCurrency(rConverted, currency)}/nt)
-                                          </option>
-                                        );
-                                      })}
-                                    </select>
-
-                                    {/* Room Capacity Breakdown Badge */}
-                                    <div className="flex items-center flex-wrap gap-1 text-[10px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-200">
-                                      <span className="font-semibold text-slate-700">Room Limit:</span>
-                                      <span className="bg-white text-teal-800 px-1.5 py-0.5 rounded font-mono border border-slate-200">
-                                        Max {occupancy.perRoomAdults} Adults
-                                      </span>
-                                      <span className="bg-white text-teal-800 px-1.5 py-0.5 rounded font-mono border border-slate-200">
-                                        Max {occupancy.perRoomChildren} Child
-                                      </span>
-                                      <span className="bg-white text-teal-800 px-1.5 py-0.5 rounded font-mono border border-slate-200">
-                                        Max {occupancy.perRoomInfants} Inf
-                                      </span>
-                                      <span className="text-slate-500">
-                                        (Max {occupancy.perRoomTotalPax} Total)
-                                      </span>
-                                    </div>
-                                  </div>
-
-                                  {/* Number of Rooms Dropdown */}
-                                  <div className="space-y-1">
-                                    <label className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
-                                      <span>Number of Rooms</span>
-                                      <span className="text-[10px] text-slate-500 font-mono">
-                                        Cap: {occupancy.maxAllowedAdults} Adults / {occupancy.maxAllowedTotalPax} Total
-                                      </span>
-                                    </label>
-                                    <select
-                                      value={currentRoomsCount}
-                                      onChange={(e) => {
-                                        const newRooms = parseInt(e.target.value, 10) || 1;
-                                        handleSelectHotelForHub(hub.order, selectedHotel, selectedRoom?.id, newRooms);
-                                      }}
-                                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none cursor-pointer focus:bg-white focus:border-[#00C6A6]"
-                                    >
-                                      <option value="1">1 Room (Max {occupancy.perRoomAdults} Adults, {occupancy.perRoomTotalPax} Guests)</option>
-                                      <option value="2">2 Rooms (Max {occupancy.perRoomAdults * 2} Adults, {occupancy.perRoomTotalPax * 2} Guests)</option>
-                                      <option value="3">3 Rooms (Max {occupancy.perRoomAdults * 3} Adults, {occupancy.perRoomTotalPax * 3} Guests)</option>
-                                      <option value="4">4 Rooms (Max {occupancy.perRoomAdults * 4} Adults, {occupancy.perRoomTotalPax * 4} Guests)</option>
-                                      <option value="5">5 Rooms (Max {occupancy.perRoomAdults * 5} Adults, {occupancy.perRoomTotalPax * 5} Guests)</option>
-                                      <option value="6">6 Rooms (Max {occupancy.perRoomAdults * 6} Adults)</option>
-                                      <option value="7">7 Rooms (Max {occupancy.perRoomAdults * 7} Adults)</option>
-                                      <option value="8">8 Rooms (Max {occupancy.perRoomAdults * 8} Adults)</option>
-                                    </select>
-                                  </div>
-
-                                  {/* OCCUPANCY VALIDATION & PRICE DISPLAY */}
-                                  {!occupancy.isValid ? (
-                                    <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-2.5 text-rose-900 animate-fadeIn shadow-xs">
-                                      <div className="flex items-start space-x-2">
-                                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                                        <div>
-                                          <h6 className="text-xs font-bold text-rose-900">
-                                            Passenger Exceeding Maximum Occupancy
-                                          </h6>
-                                          <p className="text-[11px] text-rose-700 mt-0.5">
-                                            Your party exceeds the maximum guest occupancy for {currentRoomsCount} {currentRoomsCount > 1 ? 'rooms' : 'room'} of this type.
-                                          </p>
-                                        </div>
-                                      </div>
-
-                                      {/* Error Breakdown */}
-                                      <div className="bg-white rounded-lg p-2.5 border border-rose-200 space-y-1.5 text-[11px]">
-                                        {occupancy.errors.map((err, idx) => (
-                                          <div key={idx} className="flex items-start space-x-1.5 text-rose-800 font-medium">
-                                            <span className="text-rose-600 font-bold">•</span>
-                                            <span>{err}</span>
-                                          </div>
-                                        ))}
-                                        <div className="pt-1.5 border-t border-rose-100 flex flex-wrap items-center justify-between text-[10px] text-rose-700">
-                                          <span>Current Party: <strong>{adultsCount} Adults{childrenCount > 0 ? `, ${childrenCount} Ch` : ''}{infantsCount > 0 ? `, ${infantsCount} Inf` : ''}</strong></span>
-                                          <span>Room Limit ({currentRoomsCount}x): <strong>Max {occupancy.maxAllowedAdults} Adults ({occupancy.maxAllowedTotalPax} Total)</strong></span>
-                                        </div>
-                                      </div>
-
-                                      {/* 1-Click Action to Adjust Rooms */}
-                                      <button
-                                        type="button"
-                                        onClick={() => handleSelectHotelForHub(hub.order, selectedHotel, selectedRoom?.id, occupancy.recommendedRoomsCount)}
-                                        className="w-full py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center space-x-1.5 shadow-xs cursor-pointer"
-                                      >
-                                        <Plus className="w-3.5 h-3.5" />
-                                        <span>Auto-Adjust to {occupancy.recommendedRoomsCount} Rooms</span>
-                                      </button>
-                                      <p className="text-[10px] text-rose-600 text-center italic">
-                                        Price is withheld until passenger occupancy complies with hotel policy.
-                                      </p>
-                                    </div>
-                                  ) : (
-                                    <div className="space-y-2.5 animate-fadeIn">
-                                      {/* Occupancy Verified Pill */}
-                                      <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 flex items-center justify-between text-[11px] text-emerald-800 font-medium">
-                                        <div className="flex items-center space-x-1.5">
-                                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                          <span>Occupancy Verified ({adultsCount} Ad{childrenCount > 0 ? `, ${childrenCount} Ch` : ''}{infantsCount > 0 ? `, ${infantsCount} Inf` : ''})</span>
-                                        </div>
-                                        <span className="text-[10px] text-emerald-700 font-mono">
-                                          {currentRoomsCount} {currentRoomsCount > 1 ? 'Rooms' : 'Room'} (Max {occupancy.maxAllowedTotalPax} Pax)
-                                        </span>
-                                      </div>
-
-                                      {/* Final Selling Price Calculation Box */}
-                                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1.5">
-                                        <div className="flex items-center justify-between text-[11px] text-slate-500">
-                                          <span>Nightly Rate:</span>
-                                          <span className="font-mono text-slate-700">{formatCurrency(nightlyInQuoteCurrency, currency)} / night</span>
-                                        </div>
-                                        <div className="flex items-center justify-between text-[11px] text-slate-500">
-                                          <span>Stay Calculation:</span>
-                                          <span className="font-mono text-slate-700">{currentNights} Nights × {currentRoomsCount} {currentRoomsCount > 1 ? 'Rooms' : 'Room'}</span>
-                                        </div>
-                                        <div className="pt-1.5 border-t border-slate-200 flex items-center justify-between">
-                                          <span className="text-xs font-bold text-slate-900">Final Selling Price:</span>
-                                          <span className="text-sm font-extrabold font-mono text-emerald-600">
-                                            {formatCurrency(finalSellingStayPrice, currency)}
-                                          </span>
-                                        </div>
-                                        <p className="text-[10px] text-emerald-700 font-medium">
-                                          ✓ Clean final selling price • No additional taxes or fees
-                                        </p>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="space-y-2">
-                                  <p className="text-[10px] text-slate-400 italic">
-                                    Leave unassigned if accommodation is booked separately by client.
-                                  </p>
-                                  {canAddManualHotel && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenAddManualHotel(hub.id)}
-                                      className="w-full py-2 px-3 rounded-xl border border-dashed border-amber-300 hover:border-amber-400 bg-amber-50/40 hover:bg-amber-50 text-amber-900 text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-2xs"
-                                    >
-                                      <Plus className="w-3.5 h-3.5 text-amber-600" />
-                                      <span>+ Add Manual Hotel / Custom Rate</span>
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </section>
-          )}
-
-          {/* --------------------------------------------------------------------- */}
-          {/* SECTION 3.5: VISA & TRAVEL DOCUMENTATION SERVICES (DEDICATED VISA SECTION) */}
-          {/* --------------------------------------------------------------------- */}
-          <section className="bg-white rounded-3xl border border-slate-200/80 p-5 sm:p-6 shadow-xs space-y-4">
-            <div className="flex items-center justify-between cursor-pointer" onClick={() => setIsVisaSectionExpanded(!isVisaSectionExpanded)}>
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center">
-                  <Globe className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="text-sm sm:text-base font-bold text-slate-900 flex items-center space-x-2">
-                    <span>Visa Services & Facilitation</span>
-                    <span className="text-xs font-mono font-bold text-emerald-700">
-                      ({visaItems.length} {visaItems.length === 1 ? 'Visa' : 'Visas'} • {formatCurrency(visaTotalSelling, currency)})
-                    </span>
-                  </h2>
-                  <p className="text-xs text-slate-500">Dedicated tourist, business & transit visa documentation facilitation.</p>
-                </div>
-              </div>
-              <div className="flex items-center space-x-2.5">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowVisaPickerModal(true);
-                  }}
-                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ Add Visa to Quote</span>
-                </button>
-                <button type="button" className="text-slate-400 hover:text-slate-600 p-1">
-                  {isVisaSectionExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                </button>
-              </div>
-            </div>
-
-            {isVisaSectionExpanded && (
-              <div className="pt-4 border-t border-slate-200 space-y-3 animate-fadeIn">
-                {visaItems.length === 0 ? (
-                  <div className="bg-emerald-50/40 rounded-2xl p-5 border border-dashed border-emerald-200 text-center space-y-2">
-                    <Globe className="w-6 h-6 text-emerald-500 mx-auto" />
-                    <p className="text-xs text-emerald-950 font-semibold">
-                      No Visa services added to this quotation yet.
-                    </p>
-                    <p className="text-[11px] text-slate-500 max-w-md mx-auto">
-                      Add official tourist eVisas, embassy submission packages, or express entry facilitation directly with wholesale B2B pricing.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setShowVisaPickerModal(true)}
-                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors inline-flex items-center space-x-1.5 cursor-pointer shadow-xs mt-1"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Browse Available Visa Catalog</span>
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {visaItems.map((item) => {
-                      const totalApplicants = (item.pax?.adults || 0) + (item.pax?.children || 0) + (item.pax?.infants || 0);
-                      const matchingVisaCatalog = VISA_CATALOG.find(v => v.id === item.product.id || v.countryCode === item.product.sku?.split('-')?.[1]);
-
-                      return (
-                        <div
-                          key={item.id}
-                          className="bg-slate-50 hover:bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 hover:border-emerald-300 transition-all shadow-xs space-y-3"
-                        >
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div className="flex items-start space-x-3 min-w-0">
-                              <div className="w-10 h-10 rounded-xl bg-emerald-100/70 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
-                                <Globe className="w-5 h-5" />
-                              </div>
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-900 border border-emerald-200">
-                                    {item.product.destinationName || item.product.country || 'Destination Visa'}
-                                  </span>
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-white text-slate-700 border border-slate-200 font-mono">
-                                    SKU: {item.product.sku || 'VSA-EXP'}
-                                  </span>
-                                  {item.product.duration && (
-                                    <span className="text-[11px] font-medium text-slate-500 flex items-center space-x-1">
-                                      <Clock className="w-3 h-3 text-slate-400" />
-                                      <span>{item.product.duration}</span>
-                                    </span>
-                                  )}
-                                </div>
-
-                                <h4 className="text-sm sm:text-base font-bold text-slate-900 mt-1">
-                                  {item.product.name}
-                                </h4>
-                                <p className="text-xs text-slate-500 line-clamp-2 mt-0.5">
-                                  {item.product.shortDescription || item.product.longDescription}
-                                </p>
-                              </div>
-                            </div>
-
-                            {/* Price & Actions */}
-                            <div className="flex items-center space-x-2 shrink-0">
-                              <div className="text-right mr-2">
-                                <span className="text-[10px] text-slate-400 block font-medium">Selling Price</span>
-                                <span className="text-sm sm:text-base font-black text-slate-900 font-mono">
-                                  {formatCurrency(item.calculation?.finalTotalSellingPrice || 0, currency)}
-                                </span>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() => handleOpenProductDetails(item.product)}
-                                className="p-2 rounded-xl bg-white hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200 transition-colors cursor-pointer"
-                                title="View Requirements & Checklist"
-                              >
-                                <Eye className="w-4 h-4" />
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => handleOpenEditItem(item)}
-                                className="p-2 rounded-xl bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 transition-colors cursor-pointer"
-                                title="Edit Applicants or Notes"
-                              >
-                                <Sliders className="w-4 h-4" />
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => removeProductFromQuote(item.id)}
-                                className="p-2 rounded-xl bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 transition-colors cursor-pointer"
-                                title="Remove Visa from Quote"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Applicants & Specs Badges */}
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs pt-2 border-t border-slate-200/80">
-                            <div className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center space-x-2">
-                              <Users className="w-4 h-4 text-emerald-600 shrink-0" />
-                              <div>
-                                <span className="text-[10px] text-slate-400 uppercase font-bold block">Applicants</span>
-                                <span className="font-bold text-slate-900 font-mono">
-                                  {item.pax.adults} Adults{item.pax.children > 0 ? `, ${item.pax.children} Children` : ''}
-                                </span>
-                              </div>
-                            </div>
-
-                            <div className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center space-x-2">
-                              <FileCheck className="w-4 h-4 text-teal-600 shrink-0" />
-                              <div className="min-w-0">
-                                <span className="text-[10px] text-slate-400 uppercase font-bold block">Submission Scope</span>
-                                <span className="font-bold text-slate-900 truncate block">
-                                  {matchingVisaCatalog?.embassySubmissionType || 'Official Online eVisa'}
-                                </span>
-                              </div>
-                            </div>
-
-                            <div className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center space-x-2">
-                              <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
-                              <div className="min-w-0">
-                                <span className="text-[10px] text-slate-400 uppercase font-bold block">Wholesale Net</span>
-                                <span className="font-bold text-slate-700 font-mono">
-                                  {formatCurrency(item.calculation?.totalNetCost || 0, currency)}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {item.notes && (
-                            <div className="bg-amber-50/80 text-amber-900 p-2.5 rounded-xl border border-amber-200 text-xs">
-                              <span className="font-bold">Applicant / Passport Note:</span> {item.notes}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
-
-          {/* --------------------------------------------------------------------- */}
-          {/* SECTION 4: DAY-WISE ITINERARY CANVAS (THE CORE WORKSPACE) */}
-          {/* --------------------------------------------------------------------- */}
-          <section className="space-y-4">
-            {/* Filter Tabs by Hub */}
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs font-bold text-slate-500 mr-2">Filter Days:</span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedHubFilter('ALL')}
-                  className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                    selectedHubFilter === 'ALL'
-                      ? 'bg-[#00C6A6] text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
-                >
-                  All Days ({daySlots.length})
-                </button>
-                {routeHubs.map(h => (
-                  <button
-                    key={h.id}
-                    type="button"
-                    onClick={() => setSelectedHubFilter(h.hubName)}
-                    className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                      selectedHubFilter === h.hubName
-                        ? 'bg-[#00C6A6] text-white shadow-xs'
-                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                    }`}
-                  >
-                    {h.hubName}
-                  </button>
-                ))}
-              </div>
-
-              <div className="text-xs text-slate-500 font-mono">
-                {experienceItems.length} Experiences • {hotelItems.length} Hotels
-              </div>
-            </div>
-
-            {/* Timeline of Days */}
-            <div className="space-y-5">
-              {daySlots
-                .filter(slot => selectedHubFilter === 'ALL' || slot.hub?.hubName === selectedHubFilter)
-                .map((slot) => (
-                  <div
-                    key={slot.dateString}
-                    className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs hover:border-slate-300 transition-colors"
-                  >
-                    {/* Day Header */}
-                    <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-50 to-slate-100/60 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-[#00A88F] flex flex-col items-center justify-center font-bold">
-                          <span className="text-[9px] uppercase tracking-wider text-slate-500 font-mono">Day</span>
-                          <span className="text-sm font-black leading-none">{slot.dayNumber}</span>
-                        </div>
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <h3 className="text-sm sm:text-base font-bold text-slate-900">
-                              {slot.dayOfWeek}, {slot.formattedDate}
-                            </h3>
-                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-white text-teal-800 border border-slate-200 shadow-2xs">
-                              📍 {slot.hub?.hubName || currentDestination.name}
-                            </span>
-                            {slot.isTransitionDay && (
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                                🚅 Transit from {slot.prevHub?.hubName}
-                              </span>
-                            )}
-                          </div>
-                          {/* Editable Day Theme */}
-                          <input
-                            type="text"
-                            placeholder="Add day theme (e.g. Arrival in Tokyo, Imperial Palace & Shinjuku Night Tour)..."
-                            value={dayThemes[slot.dayNumber] || ''}
-                            onChange={(e) => setDayThemes(prev => ({ ...prev, [slot.dayNumber]: e.target.value }))}
-                            className="text-xs text-slate-800 placeholder:text-slate-400 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-[#00C6A6] outline-none w-full max-w-md py-0.5 mt-0.5"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Header Actions */}
-                      <div className="flex items-center space-x-2">
-                        <span className="text-xs font-bold text-slate-900 font-mono bg-white px-2.5 py-1 rounded-xl border border-slate-200 shadow-2xs">
-                          {formatCurrency(slot.daySellingPrice, currency)}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenQuickAddModal(slot)}
-                          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00A88F] text-white text-xs font-bold transition-all cursor-pointer shadow-xs"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Add Product</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Day Body Content */}
-                    <div className="p-4 sm:p-6 space-y-4">
-                      {/* Night Accommodation Badge for this Day */}
-                      {quotationScope !== 'LAND_ONLY' && (
-                        <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200 flex items-center justify-between">
-                          <div className="flex items-center space-x-3">
-                            <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center">
-                              <BedDouble className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                                Night {slot.dayNumber} Stay • {slot.hub?.hubName}
-                              </span>
-                              {slot.hotelItems.length > 0 ? (
-                                <span className="text-xs font-bold text-slate-900">
-                                  {slot.hotelItems[0].product.name}
-                                </span>
-                              ) : (
-                                <span className="text-xs text-slate-400 italic">
-                                  No hotel specified for this night (Self-arranged or covered by multi-night stay)
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Scheduled Day Experiences & Products */}
-                      {slot.productItems.length === 0 ? (
-                        <div className="bg-slate-50/60 rounded-2xl p-6 border border-dashed border-slate-300 text-center space-y-2">
-                          <Compass className="w-6 h-6 text-slate-400 mx-auto" />
-                          <p className="text-xs text-slate-500 font-medium">
-                            No activities or transfers added for Day {slot.dayNumber} ({slot.hub?.hubName || currentDestination.name}) yet.
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenQuickAddModal(slot)}
-                            className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold border border-slate-300 transition-colors inline-flex items-center space-x-1.5 cursor-pointer shadow-2xs"
-                          >
-                            <Plus className="w-3.5 h-3.5 text-[#00A88F]" />
-                            <span>Browse Experiences for {slot.hub?.hubName || 'this day'}</span>
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="space-y-2.5">
-                          {slot.productItems.map((item) => (
-                            <div
-                              key={item.id}
-                              className="bg-slate-50 rounded-2xl p-3.5 sm:p-4 border border-slate-200 hover:border-slate-300 hover:bg-white transition-all flex flex-wrap items-center justify-between gap-3 shadow-xs"
-                            >
-                              <div className="flex items-center space-x-3 min-w-0 flex-1">
-                                <div className="w-9 h-9 rounded-xl bg-teal-50 border border-teal-200 text-[#00A88F] flex items-center justify-center shrink-0">
-                                  {item.product.category === 'Transfer' || item.product.category === 'Transport' ? (
-                                    <Car className="w-4 h-4" />
-                                  ) : (
-                                    <Compass className="w-4 h-4" />
-                                  )}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="flex items-center space-x-2">
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200">
-                                      {item.serviceTime || '09:30 AM'}
-                                    </span>
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-white text-slate-600 border border-slate-200">
-                                      {item.product.category}
-                                    </span>
-                                    {item.product.city && (
-                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
-                                        📍 {item.product.city}
-                                      </span>
-                                    )}
-                                    <h4 className="text-xs sm:text-sm font-bold text-slate-900 truncate">
-                                      {item.product.name}
-                                    </h4>
-                                  </div>
-                                  <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 mt-1">
-                                    <span>Duration: {item.product.duration || 'Half Day'}</span>
-                                    <span>Pax: {item.pax.adults} Adults{item.pax.children > 0 ? `, ${item.pax.children} Ch` : ''}</span>
-                                    {item.notes && (
-                                      <span className="text-amber-700 font-mono">Note: {item.notes}</span>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Price & Actions */}
-                              <div className="flex items-center space-x-2 shrink-0">
-                                <span className="text-xs sm:text-sm font-bold text-slate-900 font-mono mr-1">
-                                  {formatCurrency(item.calculation?.finalTotalSellingPrice || 0, currency)}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenProductDetails(item.product)}
-                                  className="p-1.5 rounded-lg bg-white hover:bg-teal-50 text-slate-600 hover:text-teal-700 border border-slate-200 transition-colors cursor-pointer"
-                                  title="View Product Details"
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenEditItem(item)}
-                                  className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 transition-colors cursor-pointer"
-                                  title="Edit Service Time / Pax / Notes"
-                                >
-                                  <Sliders className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => removeProductFromQuote(item.id)}
-                                  className="p-1.5 rounded-lg bg-white hover:bg-red-50 text-slate-400 hover:text-red-600 border border-slate-200 transition-colors cursor-pointer"
-                                  title="Remove Service"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Recommended Highlights for this Day / Hub */}
-                      {availableProducts.length > 0 && (
-                        <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200 space-y-2.5">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider flex items-center space-x-1.5">
-                              <Sparkles className="w-3.5 h-3.5 text-[#00A88F]" />
-                              <span>Recommended for {slot.hub?.hubName || currentDestination.name}</span>
-                            </span>
-                            <span className="text-[10px] text-slate-400 font-medium">City-Matched Experiences</span>
-                          </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                            {availableProducts
-                              .filter(p => {
-                                const matchDest = p.destinationId === currentDestination.id || 
-                                  p.country?.toLowerCase() === currentDestination.name.toLowerCase();
-                                if (!matchDest) return false;
-                                const dayCity = slot.hub?.hubName || currentDestination.name;
-                                const matchCity = isProductMatchingCity(p, dayCity, slot.hub?.hubId || slot.hub?.id);
-                                if (!matchCity) return false;
-                                const alreadyAdded = slot.productItems.some(it => it.product.id === p.id);
-                                if (alreadyAdded) return false;
-                                return true;
-                              })
-                              .slice(0, 3)
-                              .map(recProd => (
-                                <div
-                                  key={recProd.id}
-                                  className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between gap-2 text-xs"
-                                >
-                                  <div className="min-w-0">
-                                    <span className="font-bold text-slate-900 block truncate">{recProd.name}</span>
-                                    <span className="text-[10px] text-slate-500">{recProd.city || slot.hub?.hubName} • {recProd.category}</span>
-                                  </div>
-                                  <div className="flex items-center space-x-1.5 shrink-0">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenProductDetails(recProd)}
-                                      className="p-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold transition-colors cursor-pointer"
-                                      title="View Details"
-                                    >
-                                      <Eye className="w-3 h-3" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        addProductToQuote(recProd, {
-                                          adults: adultsCount,
-                                          children: childrenCount,
-                                          infants: infantsCount,
-                                          travelDate: slot.dateString
-                                        });
-                                      }}
-                                      className="px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-[#00C6A6] text-teal-800 hover:text-white border border-teal-200 font-bold text-[11px] transition-colors cursor-pointer"
-                                    >
-                                      + Add
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-            </div>
-          </section>
-
-          {/* --------------------------------------------------------------------- */}
-          {/* SECTION 5: PERSISTENT LIVE PRICING & COMMERCIAL SUMMARY */}
-          {/* --------------------------------------------------------------------- */}
-          <section className="bg-white rounded-3xl border border-slate-200/80 p-5 sm:p-6 shadow-xs space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-200">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-[#00A88F] flex items-center justify-center">
-                  <DollarSign className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">Live Commercial Pricing Engine</h3>
-                  <p className="text-xs text-slate-500">
-                    Real-time contract tariff calculation, custom agent margin, and confidential nett costs.
-                  </p>
-                </div>
-              </div>
-
-              {/* Agent Margin Slider & Input */}
-              <div className="flex items-center space-x-3 bg-slate-50 p-2 rounded-2xl border border-slate-200">
-                <span className="text-xs font-bold text-slate-700 flex items-center space-x-1">
-                  <Percent className="w-3.5 h-3.5 text-teal-600" />
-                  <span>Agent Markup:</span>
-                </span>
-                <input
-                  type="range"
-                  min="0"
-                  max="40"
-                  step="1"
-                  value={agentMarkupPercent}
-                  onChange={(e) => setAgentMarkupPercent(Number(e.target.value))}
-                  className="w-24 accent-[#00C6A6] cursor-pointer"
-                />
-                <span className="text-xs font-mono font-bold text-teal-800 w-10 text-right">
-                  {agentMarkupPercent}%
-                </span>
-              </div>
-            </div>
-
-            {/* Pricing Grid */}
-            <div className={`grid ${visaItems.length > 0 ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'} gap-4`}>
-              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
-                <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider block">Accommodations</span>
-                <span className="text-sm font-bold text-slate-900 font-mono mt-1 block">
-                  {formatCurrency(hotelTotalSelling, currency)}
-                </span>
-                <span className="text-[10px] text-slate-500">{hotelItems.length} properties</span>
-              </div>
-
-              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
-                <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider block">Land Experiences</span>
-                <span className="text-sm font-bold text-slate-900 font-mono mt-1 block">
-                  {formatCurrency(experienceTotalSelling, currency)}
-                </span>
-                <span className="text-[10px] text-slate-500">{experienceItems.length} activities</span>
-              </div>
-
-              {visaItems.length > 0 && (
-                <div className="bg-emerald-50/60 p-3.5 rounded-2xl border border-emerald-200">
-                  <span className="text-[11px] text-emerald-800 font-bold uppercase tracking-wider block">Visa Services</span>
-                  <span className="text-sm font-bold text-emerald-950 font-mono mt-1 block">
-                    {formatCurrency(visaTotalSelling, currency)}
-                  </span>
-                  <span className="text-[10px] text-emerald-700">{visaItems.length} facilitation</span>
-                </div>
-              )}
-
-              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
-                <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider block">Wholesale Nett</span>
-                <span className="text-sm font-bold text-slate-700 font-mono mt-1 block">
-                  {formatCurrency(totalNetCost, currency)}
-                </span>
-                <span className="text-[10px] text-amber-700 flex items-center space-x-1">
-                  <Lock className="w-2.5 h-2.5" />
-                  <span>Confidential</span>
-                </span>
-              </div>
-
-              <div className="bg-teal-50/80 p-3.5 rounded-2xl border border-teal-200">
-                <span className="text-[11px] text-teal-800 font-bold uppercase tracking-wider block">Final Client Price</span>
-                <span className="text-lg font-black text-teal-950 font-mono mt-0.5 block">
-                  {formatCurrency(finalClientPrice, currency)}
-                </span>
-                <span className="text-[10px] text-teal-700">
-                  {tripNights} Nights • {adultsCount + childrenCount} Pax
-                </span>
-              </div>
-            </div>
-          </section>
+        <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 pb-36">
+          <StepByStepQuotationWorkspace
+              activeStepId={activeStepId}
+              setActiveStepId={setActiveStepId}
+              currentDestination={currentDestination}
+              destinations={destinations}
+              onSelectDestination={(dest) => setCurrentDestination(dest)}
+              destinationHubs={destinationHubs}
+              availableHotels={availableHotels}
+              products={products}
+              crmLeads={crmLeads}
+              currency={currency}
+              setCurrency={setCurrency}
+              selectedLeadId={selectedLeadId}
+              onSelectLead={handleSelectLead}
+              clientName={clientName}
+              setClientName={setClientName}
+              clientEmail={clientEmail}
+              setClientEmail={setClientEmail}
+              clientCompany={clientCompany}
+              setClientCompany={setClientCompany}
+              clientPhone={clientPhone}
+              setClientPhone={setClientPhone}
+              agentNotes={agentNotes}
+              setAgentNotes={setAgentNotes}
+              tripType={tripType}
+              setTripType={setTripType}
+              quotationScope={quotationScope}
+              setQuotationScope={setQuotationScope}
+              startDate={startDate}
+              setStartDate={setStartDate}
+              endDate={endDate}
+              setEndDate={setEndDate}
+              tripNights={tripNights}
+              adultsCount={adultsCount}
+              setAdultsCount={setAdultsCount}
+              childrenCount={childrenCount}
+              onSetChildrenCount={handleSetChildrenCount}
+              infantsCount={infantsCount}
+              setInfantsCount={setInfantsCount}
+              childAges={childAges}
+              onUpdateChildAge={handleUpdateChildAge}
+              passengerClassification={passengerClassification}
+              nationality={nationality}
+              setNationality={setNationality}
+              travelStyle={travelStyle}
+              setTravelStyle={setTravelStyle}
+              mealPlanPreference={mealPlanPreference}
+              setMealPlanPreference={setMealPlanPreference}
+              roomingConfig={roomingConfig}
+              setRoomingConfig={setRoomingConfig}
+              visaAssistanceChoice={visaAssistanceChoice}
+              setVisaAssistanceChoice={setVisaAssistanceChoice}
+              routeHubs={routeHubs}
+              setRouteHubs={setRouteHubs}
+              routeTotalNights={routeTotalNights}
+              getHubDates={getHubDates}
+              calendarDays={calendarDays}
+              items={items}
+              addProductToQuote={handleAddProductToQuoteSilently}
+              removeProductFromQuote={removeProductFromQuote}
+              updateItemPax={updateItemPax}
+              updateItemTravelDate={updateItemTravelDate}
+              updateItemServiceTime={updateItemServiceTime}
+              updateItemNotes={updateItemNotes}
+              agentMarkupPercent={agentMarkupPercent}
+              setAgentMarkupPercent={setAgentMarkupPercent}
+              overallDiscountPercent={overallDiscountPercent}
+              setOverallDiscountPercent={setOverallDiscountPercent}
+              totalNetCost={totalNetCost}
+              totalSellingPrice={totalSellingPrice}
+              finalClientPrice={finalClientPrice}
+              totalMarginAmount={totalMarginAmount}
+              quotationOptions={computedQuotationOptions}
+              activeOptionTab={activeOptionTab}
+              onSelectOptionTab={handleSwitchOptionTab}
+              transferSuggestions={transferSuggestions}
+              onAddSuggestedTransfer={handleAddSuggestedTransfer}
+              feasibility={feasibility}
+              onOpenManualHotelModal={(hubId) => {
+                setManualHotelModalHubId(hubId);
+                setManualHotelModalInitialData(null);
+                setIsManualHotelModalOpen(true);
+              }}
+              onOpenVisaPickerModal={() => setShowVisaPickerModal(true)}
+              onOpenAddonModal={(cat) => {
+                if (cat) setAddonModalCategory(cat);
+                setShowAddonModal(true);
+              }}
+              onOpenQuickAddProductModal={handleOpenQuickAddModal}
+              onOpenProductDetails={handleOpenProductDetails}
+              onOpenCalculator={(prod) => setCalculatorProduct(prod)}
+              onSaveDraft={handleSaveDraft}
+              onPreviewQuotation={() => {
+                handleSaveDraft();
+                setActiveViewTab('PROPOSAL_PREVIEW');
+              }}
+              onDownloadPDF={handleDownloadPDF}
+              onOpenEmailModal={handleOpenEmailModal}
+              onConvertBooking={handleConvertBooking}
+              onOpenSavePackageModal={handleOpenSavePackageModal}
+              canSaveAsPackage={canSaveAsPackage}
+              canAddManualHotel={canAddManualHotel}
+              autoSaveStatus={autoSaveStatus}
+              lastSavedTimestamp={lastSavedTimestamp}
+              onSelectHotelForHub={handleSelectHotelForHub}
+              onRemoveHotelForHub={handleRemoveHotelForHub}
+              onOpenEditManualHotel={handleOpenEditManualHotel}
+              onRemoveManualHotel={handleRemoveManualHotel}
+              onOpenEditItem={handleOpenEditItem}
+              dayThemes={dayThemes}
+              setDayThemes={setDayThemes}
+            />
         </main>
       )}
+      </div>
 
       {/* ========================================================================= */}
       {/* MODAL: QUICK ADD PRODUCT MODAL (CITY-FILTERED BY DAY) */}
@@ -3134,7 +2227,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                       <button
                         type="button"
                         onClick={() => {
-                          addProductToQuote(prod, {
+                          handleAddProductToQuoteSilently(prod, {
                             adults: adultsCount,
                             children: childrenCount,
                             infants: infantsCount,
@@ -3789,6 +2882,94 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             setLastSavedTimestamp(new Date().toLocaleTimeString());
           }}
         />
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: COMPREHENSIVE ADDONS (INSURANCE, ESIM, VIP SERVICES) */}
+      {/* ========================================================================= */}
+      {showAddonModal && (
+        <AddAddonModal
+          isOpen={showAddonModal}
+          category={addonModalCategory}
+          onClose={() => setShowAddonModal(false)}
+          onAddAddon={(prod) => {
+            handleAddProductToQuoteSilently(prod, {
+              adults: adultsCount,
+              children: childrenCount,
+              infants: infantsCount,
+              travelDate: startDate
+            });
+            setShowAddonModal(false);
+          }}
+          destinationName={currentDestination.name}
+          durationNights={tripNights}
+          adultsCount={adultsCount}
+          childrenCount={childrenCount}
+          currency={currency}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: OPTION COMPARISON MATRIX (OPTION 1, OPTION 2, OPTION 3) */}
+      {/* ========================================================================= */}
+      {showComparisonMatrixModal && (
+        <OptionComparisonMatrixModal
+          isOpen={showComparisonMatrixModal}
+          onClose={() => setShowComparisonMatrixModal(false)}
+          options={computedQuotationOptions}
+          activeOptionNumber={activeOptionTab}
+          currency={currency}
+          onSelectOption={(optNum) => {
+            handleSwitchOptionTab(optNum);
+            setShowComparisonMatrixModal(false);
+          }}
+          onDuplicateOption={(fromNum, toNum) => {
+            handleDuplicateOption(fromNum, toNum);
+          }}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: DUPLICATE OPTION MODAL */}
+      {/* ========================================================================= */}
+      {showDuplicateOptionModal && (
+        <OptionDuplicateModal
+          isOpen={showDuplicateOptionModal}
+          onClose={() => setShowDuplicateOptionModal(false)}
+          sourceOptionNumber={activeOptionTab}
+          options={computedQuotationOptions}
+          onConfirmDuplicate={(fromNum, toNum) => {
+            handleDuplicateOption(fromNum, toNum);
+            setShowDuplicateOptionModal(false);
+          }}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* FLOATING IN-BUILDER TOAST NOTIFICATION */}
+      {/* ========================================================================= */}
+      {builderToast && (
+        <div className="fixed bottom-6 right-6 z-50 animate-bounce-short shadow-2xl">
+          <div className={`px-4 py-3 rounded-2xl flex items-center space-x-3 text-xs font-bold border backdrop-blur-md ${
+            builderToast.type === 'SUCCESS'
+              ? 'bg-slate-900/95 text-[#00E5C0] border-teal-500/40 shadow-teal-500/10'
+              : builderToast.type === 'WARNING'
+              ? 'bg-amber-900/95 text-amber-200 border-amber-500/40 shadow-amber-500/10'
+              : 'bg-slate-900/95 text-white border-slate-700 shadow-black/20'
+          }`}>
+            <div className="w-6 h-6 rounded-full bg-[#00E5C0]/20 text-[#00E5C0] flex items-center justify-center shrink-0">
+              <Check className="w-3.5 h-3.5" />
+            </div>
+            <span>{builderToast.message}</span>
+            <button
+              type="button"
+              onClick={() => setBuilderToast(null)}
+              className="text-slate-400 hover:text-white p-1 ml-2 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

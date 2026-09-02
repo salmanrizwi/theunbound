@@ -41,6 +41,8 @@ export const AuthModal: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [agencyName, setAgencyName] = useState('');
   const [contactNumber, setContactNumber] = useState('');
   const [country, setCountry] = useState('');
@@ -54,6 +56,16 @@ export const AuthModal: React.FC = () => {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [pendingApprovalUser, setPendingApprovalUser] = useState<User | null>(null);
 
+  React.useEffect(() => {
+    if (isAuthModalOpen) {
+      if (authModalReason && (authModalReason.toLowerCase().includes('register') || authModalReason.toLowerCase().includes('create an account'))) {
+        setAuthMode('REGISTER');
+      } else {
+        setAuthMode('LOGIN');
+      }
+    }
+  }, [isAuthModalOpen, authModalReason]);
+
   if (!isAuthModalOpen) return null;
 
   const activeRole: UserRole = userCategory === 'EXTERNAL' ? selectedExternalRole : selectedInternalRole;
@@ -62,6 +74,8 @@ export const AuthModal: React.FC = () => {
     setEmail('');
     setPassword('');
     setName('');
+    setFirstName('');
+    setLastName('');
     setAgencyName('');
     setContactNumber('');
     setCountry('');
@@ -102,13 +116,15 @@ export const AuthModal: React.FC = () => {
 
     // 2. REGISTER / CREATE PROFILE
     if (authMode === 'REGISTER') {
-      const trimmedName = name.trim();
+      const trimmedFirst = firstName.trim();
+      const trimmedLast = lastName.trim();
+      const trimmedName = (name.trim() || `${trimmedFirst} ${trimmedLast}`.trim());
       const trimmedEmail = email.trim();
       const trimmedAgency = agencyName.trim();
 
       // Strict validation - no demo / empty / garbage
       if (!trimmedName || trimmedName.length < 2) {
-        setErrorMessage('Please enter your full legal name (minimum 2 characters).');
+        setErrorMessage('Please enter your first and last name (minimum 2 characters).');
         return;
       }
 
@@ -132,6 +148,8 @@ export const AuthModal: React.FC = () => {
 
       const result = register({
         name: trimmedName,
+        firstName: trimmedFirst || undefined,
+        lastName: trimmedLast || undefined,
         email: trimmedEmail,
         password,
         role: activeRole,
@@ -531,22 +549,46 @@ export const AuthModal: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Full Legal Name */}
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                        {userCategory === 'EXTERNAL' ? 'Full Legal Name' : 'Staff Officer Name'} <span className="text-rose-500">*</span>
-                      </label>
-                      <div className="relative">
-                        <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                        <input
-                          type="text"
-                          required
-                          id="register-input-name"
-                          placeholder="e.g. Alexander Wright"
-                          value={name}
-                          onChange={(e) => setName(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
-                        />
+                    {/* First & Last Name Inputs */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          First Name <span className="text-rose-500">*</span>
+                        </label>
+                        <div className="relative">
+                          <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                          <input
+                            type="text"
+                            required
+                            id="register-input-firstname"
+                            placeholder="e.g. Alexander"
+                            value={firstName}
+                            onChange={(e) => {
+                              setFirstName(e.target.value);
+                              setName(`${e.target.value} ${lastName}`.trim());
+                            }}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Last Name <span className="text-rose-500">*</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            required
+                            id="register-input-lastname"
+                            placeholder="e.g. Wright"
+                            value={lastName}
+                            onChange={(e) => {
+                              setLastName(e.target.value);
+                              setName(`${firstName} ${e.target.value}`.trim());
+                            }}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
+                          />
+                        </div>
                       </div>
                     </div>
 

@@ -346,7 +346,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                       <div className="text-[11px] text-slate-400 flex items-center justify-between px-2.5 py-1.5 mb-3 rounded-xl bg-slate-800/60 border border-slate-700/60">
                         <span className="flex items-center space-x-1.5 text-slate-400">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block"></span>
-                          <span>Base Supplier Rate:</span>
+                          <span>Original Currency Equivalent:</span>
                         </span>
                         <span className="font-mono font-bold text-slate-200">
                           {formatCurrency(product.sellingPriceStartingFrom, product.currency)}
@@ -509,7 +509,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     {availability.isAvailable ? (
                       <>
                         <Plus className="w-4 h-4" />
-                        <span>Add to Quotation Builder</span>
+                        <span>Add to Cart</span>
                       </>
                     ) : (
                       <>
@@ -569,7 +569,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                         }`}
                       >
                         {availability.isAvailable ? (
-                          <span>Add Verified Date to Quote</span>
+                          <span>Add Verified Date to Cart</span>
                         ) : (
                           <span>Locked: Date Unavailable</span>
                         )}

@@ -175,7 +175,7 @@ export const FeaturedHotelsSection: React.FC<FeaturedHotelsSectionProps> = ({
                 <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
                   <div>
                     <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">
-                      Wholesale Rate from
+                      Direct Contracted Rate from
                     </span>
                     <div className="flex items-baseline space-x-1">
                       <span className="text-base sm:text-lg font-black text-slate-900 group-hover:text-[#008972] transition-colors">

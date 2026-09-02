@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Product, Destination, Quotation, BlogArticle, User } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { countingEngine } from '../../services/countingEngine';
+import { useAuth } from '../../context/AuthContext';
 
 // Import Sub-Module Managers
 import { CMSDashboardHome } from './CMSDashboardHome';
@@ -35,11 +36,20 @@ import { VisaCMSManager } from './VisaCMSManager';
 import { PackageManager } from './PackageManager';
 import { RosterAdminManager } from '../RosterAdminManager';
 import { IntegrationsManager } from './IntegrationsManager';
+import { DataSyncAuditViewer } from './DataSyncAuditViewer';
 import { GlobalRemindersBar } from '../GlobalRemindersBar';
+import { 
+  canUserAccessCMS, 
+  canUserAccessTopSection, 
+  canUserAccessCMSModule, 
+  canUserAccessCMSSubTab 
+} from '../../services/permissionEngine';
 
 // Lucide Icons
 import { 
   ShieldCheck, 
+  Shield,
+  Lock,
   Package, 
   Hotel, 
   CalendarCheck, 
@@ -114,6 +124,7 @@ interface ModuleConfig {
 interface TopSectionConfig {
   id: TopSectionId;
   label: string;
+  fullLabel?: string;
   icon: LucideIcon;
   description: string;
   defaultModule: CMSSection;
@@ -156,9 +167,9 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       if (initialTab === 'BOOKINGS') return 'BOOKING_MANAGEMENT';
       if (initialTab === 'LEADS') return 'LEAD_MANAGEMENT';
       if (initialTab === 'DESTINATIONS') return 'DESTINATION_MANAGEMENT';
-      if (initialTab === 'PAGES') return 'PAGE_MANAGEMENT';
+      if (initialTab === 'PAGES' || initialTab === 'PAGE_MANAGEMENT' || initialTab === 'MENU' || initialTab === 'NAVIGATION') return 'PAGE_MANAGEMENT';
       if (initialTab === 'MARKETING') return 'MARKETING_MANAGEMENT';
-      if (initialTab === 'ACCOUNTS') return 'ACCOUNT_MANAGEMENT';
+      if (initialTab === 'ACCOUNTS' || initialTab === 'USERS') return 'ACCOUNT_MANAGEMENT';
       if (initialTab === 'ANALYTICS') return 'ANALYTICS_MANAGEMENT';
       if (initialTab === 'TASKS' || initialTab === 'SLAS') return 'NOTIFICATIONS_MANAGEMENT';
       if (initialTab === 'INTEGRATIONS' || initialTab === 'DATABASE') return 'DATABASE_MANAGEMENT';
@@ -168,6 +179,37 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   });
 
   const [activeSubTab, setActiveSubTab] = useState<string>(() => initialSubTab || 'OVERVIEW');
+
+  // React to prop changes (e.g. route transitions or direct jump links)
+  useEffect(() => {
+    if (initialTab) {
+      let targetSec: CMSSection = 'DASHBOARD';
+      if (initialTab === 'PRODUCTS') targetSec = 'PRODUCT_MANAGEMENT';
+      else if (initialTab === 'HOTELS') targetSec = 'HOTEL_MANAGEMENT';
+      else if (initialTab === 'PACKAGES') targetSec = 'PACKAGE_MANAGEMENT';
+      else if (initialTab === 'BOOKINGS') targetSec = 'BOOKING_MANAGEMENT';
+      else if (initialTab === 'LEADS') targetSec = 'LEAD_MANAGEMENT';
+      else if (initialTab === 'DESTINATIONS') targetSec = 'DESTINATION_MANAGEMENT';
+      else if (initialTab === 'PAGES' || initialTab === 'PAGE_MANAGEMENT' || initialTab === 'MENU' || initialTab === 'NAVIGATION') targetSec = 'PAGE_MANAGEMENT';
+      else if (initialTab === 'MARKETING') targetSec = 'MARKETING_MANAGEMENT';
+      else if (initialTab === 'ACCOUNTS' || initialTab === 'USERS') targetSec = 'ACCOUNT_MANAGEMENT';
+      else if (initialTab === 'ANALYTICS') targetSec = 'ANALYTICS_MANAGEMENT';
+      else if (initialTab === 'TASKS' || initialTab === 'SLAS') targetSec = 'NOTIFICATIONS_MANAGEMENT';
+      else if (initialTab === 'INTEGRATIONS' || initialTab === 'DATABASE') targetSec = 'DATABASE_MANAGEMENT';
+      else targetSec = initialTab as CMSSection;
+
+      setActiveSection(targetSec);
+    }
+    if (initialSubTab) {
+      if (initialSubTab === 'MENU' || initialSubTab === 'NAVIGATION') {
+        setActiveSubTab('NAVIGATION_MENU');
+      } else if (initialSubTab === 'CUSTOM_PAGES' || initialSubTab === 'PAGES') {
+        setActiveSubTab('CUSTOM_PAGES');
+      } else {
+        setActiveSubTab(initialSubTab);
+      }
+    }
+  }, [initialTab, initialSubTab]);
   const [openDropdown, setOpenDropdown] = useState<TopSectionId | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -177,15 +219,18 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  // Get current active admin user
-  const currentUser: User = {
-    id: 'usr-admin-01',
-    name: 'Marcus Vance',
+  const { user: authUser, logout: authLogout } = useAuth();
+
+  // Get current active admin user from AuthContext, DB, or fallback
+  const dbUser = authUser?.email ? db.getUsers().find(u => u.email.toLowerCase() === authUser.email.toLowerCase()) : null;
+  const currentUser: User = authUser || dbUser || db.getUsers().find(u => u.email.toLowerCase() === 'business@theunbound.in') || db.getUsers().find(u => u.role === 'ADMIN') || {
+    id: 'usr-admin-business',
+    name: 'TheUnbound Executive Admin',
     email: 'business@theunbound.in',
     role: 'ADMIN',
     approvalStatus: 'APPROVED',
-    createdAt: '2026-01-01T00:00:00Z',
-    agencyName: 'TheUnbound HQ'
+    createdAt: '2025-01-01T00:00:00Z',
+    agencyName: 'TheUnbound DMC Global Headquarters'
   };
 
   const counts = countingEngine.getCountsBreakdown({ onlyPublished: false });
@@ -194,12 +239,59 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   const pendingUsers = db.getUsers().filter(u => u.approvalStatus === 'PENDING').length;
   const pendingTasks = db.getCalendarTasks().filter(t => t.status === 'PENDING').length;
 
-  // Keyboard shortcut for search (Cmd+K or Ctrl+K)
+  // Active users count (total count of active users using B2B + Buyer portal)
+  const [activePortalStats, setActivePortalStats] = useState(() => {
+    const users = db.getUsers();
+    const b2b = users.filter(u => 
+      (u.role === 'B2B_AGENT' || u.role === 'AGENT' || u.permissions?.b2bQuoteBuilderAccess) && 
+      (u.approvalStatus === 'APPROVED' || !u.approvalStatus) &&
+      u.role !== 'ADMIN' && u.role !== 'TEAM_MEMBER'
+    ).length;
+    const buyer = users.filter(u => 
+      (u.role === 'BUYER' || u.permissions?.buyerQuoteBuilderAccess) && 
+      (u.approvalStatus === 'APPROVED' || !u.approvalStatus) &&
+      u.role !== 'ADMIN' && u.role !== 'TEAM_MEMBER'
+    ).length;
+    return { b2b, buyer, total: b2b + buyer };
+  });
+
+  useEffect(() => {
+    const updateStats = () => {
+      const users = db.getUsers();
+      const b2b = users.filter(u => 
+        (u.role === 'B2B_AGENT' || u.role === 'AGENT' || u.permissions?.b2bQuoteBuilderAccess) && 
+        (u.approvalStatus === 'APPROVED' || !u.approvalStatus) &&
+        u.role !== 'ADMIN' && u.role !== 'TEAM_MEMBER'
+      ).length;
+      const buyer = users.filter(u => 
+        (u.role === 'BUYER' || u.permissions?.buyerQuoteBuilderAccess) && 
+        (u.approvalStatus === 'APPROVED' || !u.approvalStatus) &&
+        u.role !== 'ADMIN' && u.role !== 'TEAM_MEMBER'
+      ).length;
+      setActivePortalStats({ b2b, buyer, total: b2b + buyer });
+    };
+
+    window.addEventListener('storage', updateStats);
+    window.addEventListener('focus', updateStats);
+    const interval = setInterval(updateStats, 4000);
+    return () => {
+      window.removeEventListener('storage', updateStats);
+      window.removeEventListener('focus', updateStats);
+      clearInterval(interval);
+    };
+  }, [db]);
+
+  // Keyboard shortcut for search (Cmd+K or Ctrl+K) and Escape to close modals/menus
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         setIsSearchOpen(true);
+      }
+      if (e.key === 'Escape') {
+        setOpenDropdown(null);
+        setIsUserMenuOpen(false);
+        setIsMobileMenuOpen(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -238,6 +330,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     {
       id: 'OVERVIEW',
       label: 'Overview',
+      fullLabel: 'Command Overview',
       icon: LayoutDashboard,
       description: 'Command Operations Center, SLA alerts, real-time KPI engines, and quick actions.',
       defaultModule: 'DASHBOARD',
@@ -256,7 +349,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     },
     {
       id: 'OPERATIONS',
-      label: 'Operations & Inventory',
+      label: 'Operations',
+      fullLabel: 'Operations & Inventory',
       icon: Package,
       description: 'Master ground tour inventory, contracted luxury hotels, packages, reservations, and CRM pipeline.',
       defaultModule: 'PRODUCT_MANAGEMENT',
@@ -325,7 +419,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     },
     {
       id: 'CONTENT',
-      label: 'Content & Destinations',
+      label: 'Content',
+      fullLabel: 'Content & Destinations',
       icon: Compass,
       description: 'Multi-tier geographic taxonomy, CMS pages, legal policies, promotional campaigns, and editorial guides.',
       defaultModule: 'DESTINATION_MANAGEMENT',
@@ -377,7 +472,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     },
     {
       id: 'FINANCE',
-      label: 'Finance & Administration',
+      label: 'Finance',
+      fullLabel: 'Finance & Administration',
       icon: Receipt,
       description: 'Enterprise user approvals, B2B Agent RBAC, staff operational allocation, margin realization, and GST invoices.',
       defaultModule: 'ACCOUNT_MANAGEMENT',
@@ -391,6 +487,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           alertCount: pendingUsers,
           description: 'Admin user approval panel, Direct Buyer vs. B2B Agent segregation, custom margin settings, and staff operations roster.',
           subTabs: [
+            { id: 'PERMISSIONS', label: 'Access & Permissions', icon: Shield },
             { id: 'USERS_ACCESS', label: 'User Approval & Segregation', icon: UserCheck },
             { id: 'ROSTER', label: 'Staff Roster & Ops Allocation', icon: Users }
           ]
@@ -410,7 +507,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     },
     {
       id: 'SYSTEM',
-      label: 'System & Audit',
+      label: 'System',
+      fullLabel: 'System & Audit',
       icon: Database,
       description: 'Google Calendar Task SLA automation, production Integrations Hub, Firestore diagnostics, and audit governance ledger.',
       defaultModule: 'CALENDAR_SLAS',
@@ -435,6 +533,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           badge: 'Live',
           description: 'Production Integrations Hub for Firestore, Gmail, Calendar, and Sheets, along with database verification & audit trail.',
           subTabs: [
+            { id: 'DATA_SYNC_AUDIT', label: 'Data Sync & Consistency Audit', icon: ShieldCheck },
             { id: 'INTEGRATIONS_HUB', label: 'Integrations & Database Hub', icon: Sparkles },
             { id: 'FIRESTORE_DIAGNOSTICS', label: 'Firestore Diagnostics', icon: Activity },
             { id: 'AUDIT_TRAIL', label: 'Audit & Governance Ledger', icon: ShieldCheck },
@@ -456,6 +555,19 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   const normalizedActiveSection = normalizeSectionId(activeSection);
   const currentModuleConfig = allModules.find(m => m.id === normalizedActiveSection || m.id === activeSection) || allModules[0];
   const currentTopSection = topSections.find(ts => ts.modules.some(m => m.id === currentModuleConfig.id)) || topSections[0];
+
+  // Filter top-level navigation by current user permissions
+  const accessibleTopSections = topSections
+    .filter(ts => canUserAccessTopSection(currentUser, ts.id))
+    .map(ts => ({
+      ...ts,
+      modules: ts.modules.filter(m => canUserAccessCMSModule(currentUser, m.id))
+    }))
+    .filter(ts => ts.modules.length > 0);
+
+  const isCMSAllowed = canUserAccessCMS(currentUser);
+  const isModuleAllowed = isCMSAllowed && canUserAccessCMSModule(currentUser, currentModuleConfig.id);
+  const isSubTabAllowed = isModuleAllowed && (activeSubTab ? canUserAccessCMSSubTab(currentUser, currentModuleConfig.id, activeSubTab) : true);
 
   const handleNavigate = (section: string, subTab?: string, recordId?: string) => {
     const normalized = normalizeSectionId(section);
@@ -504,52 +616,49 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       />
 
       {/* ========================================================================= */}
-      {/* DEDICATED FULL-SCREEN CMS TOP HEADER */}
+      {/* UNIFIED FULL-SCREEN CMS HEADER (ROW 1: GLOBAL NAV + ROW 2: MODULE CONTEXT) */}
       {/* ========================================================================= */}
-      <header className="sticky top-0 z-50 bg-slate-950/95 backdrop-blur-md border-b border-slate-800 text-white shadow-xl shrink-0">
-        <div className="w-full px-3 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16 gap-3">
+      <header className="sticky top-0 z-40 bg-slate-950/98 backdrop-blur-md border-b border-slate-800 text-white shadow-xl shrink-0 w-full">
+        {/* ROW 1: BRAND, PRIMARY TOP-LEVEL SECTIONS, SEARCH & ACCOUNT TOOLS */}
+        <div className="w-full px-2.5 sm:px-4 lg:px-6">
+          <div className="flex items-center justify-between h-14 sm:h-15 gap-1.5 sm:gap-2">
             
             {/* LEFT: CMS BRAND & IDENTITY */}
-            <div className="flex items-center space-x-4 shrink-0">
+            <div className="flex items-center space-x-2 sm:space-x-2.5 shrink-0">
               <button
                 onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                className="xl:hidden p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 transition-colors cursor-pointer"
+                className="lg:hidden p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 transition-colors cursor-pointer"
                 title="Toggle CMS Navigation"
+                aria-label="Toggle CMS Navigation"
               >
-                {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+                {isMobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
               </button>
 
               <div 
                 onClick={() => handleNavigate('DASHBOARD', 'OVERVIEW')}
-                className="flex items-center space-x-3 cursor-pointer group"
+                className="flex items-center space-x-2 cursor-pointer group select-none"
               >
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#00C6A6] to-[#008972] flex items-center justify-center text-slate-950 font-black shadow-md shadow-[#00C6A6]/20 shrink-0 group-hover:scale-105 transition-transform">
-                  <ShieldCheck className="w-5 h-5 text-slate-950" />
+                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-[#00C6A6] to-[#008972] flex items-center justify-center text-slate-950 font-black shadow-md shadow-[#00C6A6]/20 shrink-0 group-hover:scale-105 transition-transform">
+                  <ShieldCheck className="w-4 h-4 text-slate-950" />
                 </div>
-                <div className="min-w-0">
-                  <div className="flex items-center space-x-2">
-                    <span className="text-base sm:text-lg font-black tracking-tight text-white font-sans lowercase">
-                      theunbound
-                    </span>
-                    <span className="px-1.5 py-0.5 rounded-md bg-[#00C6A6]/20 border border-[#00C6A6]/40 text-[#00E5C0] text-[10px] font-extrabold uppercase tracking-wider">
-                      CMS OS
-                    </span>
-                  </div>
-                  <div className="hidden sm:flex items-center space-x-1.5 text-[10px] text-slate-400 font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>Travel Operations Engine</span>
-                  </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-sm sm:text-base font-black tracking-tight text-white font-sans lowercase">
+                    theunbound
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-[#00C6A6]/20 border border-[#00C6A6]/40 text-[#00E5C0] text-[9px] font-extrabold uppercase tracking-wider">
+                    CMS
+                  </span>
                 </div>
               </div>
             </div>
 
             {/* CENTER: 5 TOP-LEVEL NAVIGATION DROPDOWNS (Desktop) */}
-            <nav className="hidden xl:flex items-center space-x-1" ref={dropdownRef}>
-              {topSections.map((sec) => {
+            <nav className="hidden lg:flex items-center space-x-1 shrink-0" ref={dropdownRef}>
+              {accessibleTopSections.map((sec) => {
                 const isCurrentActiveSection = currentTopSection.id === sec.id;
                 const isDropdownOpen = openDropdown === sec.id;
                 const TopIcon = sec.icon;
+                const isRightAligned = sec.id === 'FINANCE' || sec.id === 'SYSTEM';
 
                 if (sec.modules.length === 1) {
                   const singleModule = sec.modules[0];
@@ -559,14 +668,18 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                       key={sec.id}
                       id={`top-nav-${sec.id}`}
                       onClick={() => handleSelectModule(singleModule.id)}
-                      className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                         isActive
-                          ? 'bg-[#008972] text-white shadow-sm ring-1 ring-[#00C6A6]/40'
+                          ? 'bg-[#008972] text-white shadow-xs ring-1 ring-[#00C6A6]/40'
                           : 'text-slate-300 hover:text-white hover:bg-slate-900'
                       }`}
                     >
-                      <TopIcon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                       <span>{sec.label}</span>
+                      {sec.fullLabel && sec.fullLabel !== sec.label && (
+                        <span className="hidden 2xl:inline">
+                          {sec.fullLabel.replace(sec.label, '')}
+                        </span>
+                      )}
                     </button>
                   );
                 }
@@ -577,82 +690,89 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                       id={`top-nav-${sec.id}`}
                       onClick={() => handleSelectTopSection(sec)}
                       onMouseEnter={() => setOpenDropdown(sec.id)}
-                      className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none ${
                         isCurrentActiveSection
-                          ? 'bg-[#008972]/80 text-white ring-1 ring-[#00C6A6]/40'
+                          ? 'bg-[#008972] text-white shadow-xs ring-1 ring-[#00C6A6]/40'
                           : 'text-slate-300 hover:text-white hover:bg-slate-900'
                       }`}
                     >
-                      <TopIcon className={`w-4 h-4 ${isCurrentActiveSection ? 'text-white' : 'text-slate-400'}`} />
                       <span>{sec.label}</span>
+                      {sec.fullLabel && sec.fullLabel !== sec.label && (
+                        <span className="hidden 2xl:inline">
+                          {sec.fullLabel.replace(sec.label, '')}
+                        </span>
+                      )}
                       <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${isDropdownOpen ? 'rotate-180 text-white' : ''}`} />
                     </button>
 
-                    {/* Mega Dropdown Menu */}
+                    {/* Mega Dropdown Menu - Anchored & Clamped */}
                     {isDropdownOpen && (
                       <div 
+                        className={`absolute ${isRightAligned ? 'right-0' : 'left-0'} top-full pt-1.5 z-50`}
+                        onMouseEnter={() => setOpenDropdown(sec.id)}
                         onMouseLeave={() => setOpenDropdown(null)}
-                        className="absolute left-0 mt-2 w-80 bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl p-2.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150"
                       >
-                        <div className="px-3 py-2 border-b border-slate-800/80 mb-1.5">
-                          <p className="text-[11px] font-extrabold uppercase tracking-wider text-[#00E5C0] flex items-center space-x-1.5">
-                            <TopIcon className="w-3.5 h-3.5" />
-                            <span>{sec.label}</span>
-                          </p>
-                          <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
-                            {sec.description}
-                          </p>
-                        </div>
+                        <div className="w-80 sm:w-84 max-w-[90vw] bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl p-2.5 animate-in fade-in slide-in-from-top-2 duration-150 ring-1 ring-slate-800">
+                          <div className="px-3 py-2 border-b border-slate-800/80 mb-1.5">
+                            <p className="text-[11px] font-extrabold uppercase tracking-wider text-[#00E5C0] flex items-center space-x-1.5">
+                              <TopIcon className="w-3.5 h-3.5" />
+                              <span>{sec.fullLabel || sec.label}</span>
+                            </p>
+                            <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
+                              {sec.description}
+                            </p>
+                          </div>
 
-                        <div className="space-y-1">
-                          {sec.modules.map((mod) => {
-                            const ModIcon = mod.icon;
-                            const isModActive = currentModuleConfig.id === mod.id;
+                          <div className="space-y-1 max-h-[65vh] overflow-y-auto scrollbar-thin">
+                            {sec.modules.map((mod) => {
+                              const ModIcon = mod.icon;
+                              const isModActive = currentModuleConfig.id === mod.id;
 
-                            return (
-                              <button
-                                key={mod.id}
-                                id={`dropdown-mod-${mod.id}`}
-                                onClick={() => handleSelectModule(mod.id)}
-                                className={`w-full text-left p-2.5 rounded-xl transition-all flex items-start space-x-3 cursor-pointer group ${
-                                  isModActive
-                                    ? 'bg-[#008972] text-white shadow-sm'
-                                    : 'hover:bg-slate-900 text-slate-300 hover:text-white'
-                                }`}
-                              >
-                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                                  isModActive
-                                    ? 'bg-white/20 text-white'
-                                    : 'bg-slate-900 text-slate-400 group-hover:text-[#00E5C0] group-hover:bg-slate-800'
-                                }`}>
-                                  <ModIcon className="w-4 h-4" />
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-xs font-bold truncate">
-                                      {mod.label}
-                                    </span>
-                                    {mod.alertCount && mod.alertCount > 0 ? (
-                                      <span className="text-[10px] font-extrabold px-1.5 py-0.2 bg-rose-500 text-white rounded-full shrink-0">
-                                        {mod.alertCount}
-                                      </span>
-                                    ) : mod.badge ? (
-                                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium shrink-0 ${
-                                        isModActive ? 'bg-white/20 text-white' : 'bg-slate-900 text-slate-400'
-                                      }`}>
-                                        {mod.badge}
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                  <p className={`text-[10px] line-clamp-1 mt-0.5 ${
-                                    isModActive ? 'text-emerald-100' : 'text-slate-500 group-hover:text-slate-400'
+                              return (
+                                <button
+                                  key={mod.id}
+                                  id={`dropdown-mod-${mod.id}`}
+                                  onClick={() => handleSelectModule(mod.id)}
+                                  className={`w-full text-left p-2.5 rounded-xl transition-all flex items-start space-x-3 cursor-pointer group ${
+                                    isModActive
+                                      ? 'bg-[#008972] text-white shadow-sm'
+                                      : 'hover:bg-slate-900 text-slate-300 hover:text-white'
+                                  }`}
+                                >
+                                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                                    isModActive
+                                      ? 'bg-white/20 text-white'
+                                      : 'bg-slate-900 text-slate-400 group-hover:text-[#00E5C0] group-hover:bg-slate-800'
                                   }`}>
-                                    {mod.shortLabel}
-                                  </p>
-                                </div>
-                              </button>
-                            );
-                          })}
+                                    <ModIcon className="w-4 h-4" />
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-xs font-bold truncate">
+                                        {mod.label}
+                                      </span>
+                                      {mod.alertCount && mod.alertCount > 0 ? (
+                                        <span className="text-[10px] font-extrabold px-1.5 py-0.2 bg-rose-500 text-white rounded-full shrink-0">
+                                          {mod.alertCount}
+                                        </span>
+                                      ) : mod.badge ? (
+                                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium shrink-0 ${
+                                          isModActive ? 'bg-white/20 text-white' : 'bg-slate-900 text-slate-400'
+                                        }`}>
+                                          {mod.badge}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    <p className={`text-[10px] line-clamp-1 mt-0.5 ${
+                                      isModActive ? 'text-emerald-100' : 'text-slate-500 group-hover:text-slate-400'
+                                    }`}>
+                                      {mod.shortLabel}
+                                    </p>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -662,64 +782,73 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             </nav>
 
             {/* RIGHT: GLOBAL TOOLS & UTILITIES */}
-            <div className="flex items-center space-x-2.5 shrink-0">
+            <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
               
+              {/* Active Users Count (B2B + Buyer Portal) */}
+              <div
+                id="cms-active-users-count"
+                onClick={() => handleNavigate('ACCOUNT_MANAGEMENT', 'USERS_ACCESS')}
+                className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-[#00C6A6]/40 rounded-xl text-xs font-semibold transition-all cursor-pointer select-none shrink-0"
+                title={`Active Users: B2B: ${activePortalStats.b2b} · Buyer: ${activePortalStats.buyer} (Total: ${activePortalStats.total}). Click to manage.`}
+              >
+                {/* Live pulsing indicator */}
+                <span className="relative flex h-2 w-2 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+
+                <span className="text-emerald-400 font-bold whitespace-nowrap text-xs">
+                  B2B:{activePortalStats.b2b}
+                </span>
+                <span className="text-slate-600 text-xs">·</span>
+                <span className="text-slate-300 font-bold whitespace-nowrap text-xs">
+                  Buyer:{activePortalStats.buyer}
+                </span>
+              </div>
+
               {/* Quick Search Button */}
               <button
                 onClick={() => setIsSearchOpen(true)}
-                className="flex items-center space-x-2 px-3 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer group"
+                className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition-all cursor-pointer group shrink-0"
                 title="Search Operations Engine (⌘K)"
               >
                 <Search className="w-3.5 h-3.5 text-slate-400 group-hover:text-[#00C6A6]" />
-                <span className="hidden md:inline">Search...</span>
-                <kbd className="hidden lg:inline px-1.5 py-0.5 bg-slate-950 border border-slate-800 rounded text-[10px] text-slate-400 font-mono">
-                  ⌘K
-                </kbd>
+                <span className="hidden xl:inline text-xs font-semibold">Search</span>
+                <kbd className="hidden 2xl:inline-block text-[10px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800 font-mono">⌘K</kbd>
               </button>
 
               {/* Real-time Notifications & SLA Dropdown */}
-              <CMSNotificationsDropdown onNavigate={handleNavigate} />
-
-              {/* View/Preview Buyer Site Button */}
-              {onSwitchToBuyerMode && (
-                <button
-                  onClick={onSwitchToBuyerMode}
-                  className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
-                  title="Preview Customer Buyer Experience"
-                >
-                  <Eye className="w-3.5 h-3.5 text-[#00C6A6]" />
-                  <span className="hidden md:inline">Buyer View</span>
-                </button>
-              )}
+              <div className="shrink-0">
+                <CMSNotificationsDropdown onNavigate={handleNavigate} />
+              </div>
 
               {/* Fullscreen Toggle */}
               <button
                 onClick={toggleFullscreen}
-                className="hidden lg:flex p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                className="hidden lg:flex p-1.5 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
                 title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen Workspace'}
               >
-                {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
               </button>
 
               {/* User Account Menu */}
-              <div className="relative" ref={userMenuRef}>
+              <div className="relative shrink-0" ref={userMenuRef}>
                 <button
                   onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                  className="flex items-center space-x-2 p-1 pl-1.5 pr-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 transition-colors cursor-pointer"
+                  className="flex items-center space-x-1.5 p-1 sm:px-2 sm:py-1 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 transition-colors cursor-pointer"
                 >
-                  <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-[#00C6A6] to-[#00E5C0] text-slate-950 font-black text-xs flex items-center justify-center shrink-0">
+                  <div className="w-6 h-6 rounded-lg bg-gradient-to-tr from-[#00C6A6] to-[#00E5C0] text-slate-950 font-black text-xs flex items-center justify-center shrink-0">
                     {currentUser.name.charAt(0)}
                   </div>
-                  <div className="text-left hidden lg:block">
-                    <p className="text-xs font-bold text-white leading-tight truncate max-w-[100px]">{currentUser.name}</p>
-                    <p className="text-[10px] font-semibold text-[#00E5C0] uppercase tracking-wider">{currentUser.role}</p>
-                  </div>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="text-xs font-semibold text-white leading-none hidden 2xl:inline truncate max-w-[90px]">
+                    {currentUser.name.split(' ')[0]}
+                  </span>
+                  <ChevronDown className="w-3 h-3 text-slate-400" />
                 </button>
 
                 {/* User Dropdown */}
                 {isUserMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-64 bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl p-2 z-50 animate-in fade-in duration-150">
+                  <div className="absolute right-0 mt-2 w-64 bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl p-2 z-50 animate-in fade-in duration-150 ring-1 ring-slate-800">
                     <div className="p-3 border-b border-slate-800">
                       <p className="text-xs font-bold text-white">{currentUser.name}</p>
                       <p className="text-xs text-slate-400 truncate">{currentUser.email}</p>
@@ -734,6 +863,17 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                     </div>
 
                     <div className="py-1 space-y-0.5">
+                      <button
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          handleNavigate('PAGE_MANAGEMENT', 'NAVIGATION_MENU');
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-900 rounded-lg flex items-center space-x-2 cursor-pointer"
+                      >
+                        <Menu className="w-3.5 h-3.5 text-[#00C6A6]" />
+                        <span>Menu & Custom Pages</span>
+                      </button>
+
                       <button
                         onClick={() => {
                           setIsUserMenuOpen(false);
@@ -756,18 +896,33 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                         <span>Firestore Diagnostics</span>
                       </button>
 
-                      {onSwitchToBuyerMode && (
+                      <button
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          if (onSwitchToBuyerMode) {
+                            onSwitchToBuyerMode();
+                          } else {
+                            window.location.href = '/';
+                          }
+                        }}
+                        className="w-full text-left px-3 py-2 text-xs font-semibold text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/30 rounded-lg flex items-center space-x-2 cursor-pointer"
+                      >
+                        <Globe2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>View Live Website (Buyer Mode)</span>
+                      </button>
+
+                      <div className="pt-1 border-t border-slate-800/80 mt-1">
                         <button
                           onClick={() => {
                             setIsUserMenuOpen(false);
-                            onSwitchToBuyerMode();
+                            authLogout();
                           }}
-                          className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-900 rounded-lg flex items-center space-x-2 cursor-pointer"
+                          className="w-full text-left px-3 py-2 text-xs font-semibold text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 rounded-lg flex items-center space-x-2 cursor-pointer transition-colors"
                         >
-                          <Eye className="w-3.5 h-3.5 text-[#00C6A6]" />
-                          <span>Switch to Buyer Portal</span>
+                          <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                          <span>Sign Out</span>
                         </button>
-                      )}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -777,14 +932,76 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           </div>
         </div>
 
+        {/* ROW 2: MODULE CONTEXT, BREADCRUMBS & SUB-TABS SELECTOR */}
+        <div className="bg-slate-950/95 border-t border-slate-800/80 py-2 sm:py-2.5 px-2.5 sm:px-4 lg:px-6 text-white shrink-0">
+          <div className="w-full flex flex-col md:flex-row md:items-center justify-between gap-2.5 sm:gap-3">
+            
+            {/* Breadcrumbs & Active Module Title */}
+            <div className="flex items-center space-x-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center text-[#00E5C0] shrink-0">
+                <currentModuleConfig.icon className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center space-x-1.5 text-[11px] text-slate-400 font-medium leading-none mb-0.5">
+                  <button
+                    onClick={() => handleNavigate('DASHBOARD', 'OVERVIEW')}
+                    className="hover:text-white transition-colors cursor-pointer"
+                  >
+                    Overview
+                  </button>
+                  <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+                  <span className="text-slate-300 font-medium truncate max-w-[140px]">{currentTopSection.label}</span>
+                  <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+                  <span className="text-[#00E5C0] font-semibold truncate max-w-[180px]">{currentModuleConfig.label}</span>
+                </div>
+                <h1 className="text-sm sm:text-base font-bold text-white truncate leading-tight">
+                  {currentModuleConfig.label}
+                </h1>
+              </div>
+            </div>
+
+            {/* Sub-Tabs Selector */}
+            {(() => {
+              const permittedSubTabs = (currentModuleConfig.subTabs || []).filter(st => 
+                canUserAccessCMSSubTab(currentUser, currentModuleConfig.id, st.id)
+              );
+              if (permittedSubTabs.length === 0) return null;
+
+              return (
+                <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none shrink-0 max-w-full">
+                  {permittedSubTabs.map((st) => {
+                    const SubIcon = st.icon || Layers;
+                    const isTabActive = activeSubTab === st.id;
+                    return (
+                      <button
+                        key={st.id}
+                        id={`cms-subtab-${st.id}`}
+                        onClick={() => setActiveSubTab(st.id)}
+                        className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                          isTabActive
+                            ? 'bg-[#008972] text-white shadow-xs ring-1 ring-[#00C6A6]/40'
+                            : 'bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 hover:text-white'
+                        }`}
+                      >
+                        <SubIcon className={`w-3.5 h-3.5 ${isTabActive ? 'text-white' : 'text-slate-400'}`} />
+                        <span>{st.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+
         {/* MOBILE NAVIGATION DRAWER */}
         {isMobileMenuOpen && (
-          <div className="xl:hidden bg-slate-950 border-t border-slate-800 p-4 max-h-[80vh] overflow-y-auto space-y-4">
+          <div className="lg:hidden bg-slate-950 border-t border-slate-800 p-4 max-h-[80vh] overflow-y-auto space-y-4">
             <div className="space-y-4">
-              {topSections.map((sec) => (
+              {accessibleTopSections.map((sec) => (
                 <div key={sec.id} className="space-y-1.5">
                   <div className="text-[10px] font-extrabold uppercase tracking-wider text-[#00E5C0] px-2">
-                    {sec.label}
+                    {sec.fullLabel || sec.label}
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                     {sec.modules.map((mod) => {
@@ -825,63 +1042,6 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       </header>
 
       {/* ========================================================================= */}
-      {/* SECONDARY CONTEXT & SUB-NAVIGATION BAR (For Module Drilldown) */}
-      {/* ========================================================================= */}
-      <section className="bg-slate-950 border-b border-slate-800/90 py-3.5 px-3 sm:px-6 lg:px-8 text-white shrink-0">
-        <div className="w-full flex flex-col md:flex-row md:items-center justify-between gap-3">
-          
-          {/* Breadcrumbs & Active Module Title */}
-          <div className="flex items-center space-x-3 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center text-[#00E5C0] shrink-0">
-              <currentModuleConfig.icon className="w-4 h-4" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center space-x-2 text-[11px] text-slate-400 font-medium">
-                <button
-                  onClick={() => handleNavigate('DASHBOARD', 'OVERVIEW')}
-                  className="hover:text-white transition-colors"
-                >
-                  Overview
-                </button>
-                <ChevronRight className="w-3 h-3 text-slate-600" />
-                <span className="text-slate-300 font-semibold">{currentTopSection.label}</span>
-                <ChevronRight className="w-3 h-3 text-slate-600" />
-                <span className="text-[#00E5C0] font-bold">{currentModuleConfig.label}</span>
-              </div>
-              <h1 className="text-base sm:text-lg font-black text-white truncate">
-                {currentModuleConfig.label}
-              </h1>
-            </div>
-          </div>
-
-          {/* Sub-Tabs Selector */}
-          {currentModuleConfig.subTabs && currentModuleConfig.subTabs.length > 0 && (
-            <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none shrink-0">
-              {currentModuleConfig.subTabs.map((st) => {
-                const SubIcon = st.icon || Layers;
-                const isTabActive = activeSubTab === st.id;
-                return (
-                  <button
-                    key={st.id}
-                    id={`cms-subtab-${st.id}`}
-                    onClick={() => setActiveSubTab(st.id)}
-                    className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                      isTabActive
-                        ? 'bg-[#008972] text-white shadow-sm ring-1 ring-[#00C6A6]/40'
-                        : 'bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 hover:text-white'
-                    }`}
-                  >
-                    <SubIcon className={`w-3.5 h-3.5 ${isTabActive ? 'text-white' : 'text-slate-400'}`} />
-                    <span>{st.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* ========================================================================= */}
       {/* MAIN FULL-SCREEN WORKSPACE CONTENT */}
       {/* ========================================================================= */}
       <main className="flex-1 w-full bg-slate-100 text-slate-900 p-3 sm:p-6 lg:p-8 space-y-6">
@@ -894,7 +1054,26 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           />
         </div>
 
-        {/* Dynamic Module Content */}
+        {/* Dynamic Module Content or Access Restricted Gate */}
+        {!isCMSAllowed || !isModuleAllowed || !isSubTabAllowed ? (
+          <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center max-w-lg mx-auto my-12 space-y-4 shadow-sm animate-in fade-in">
+            <div className="w-14 h-14 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mx-auto">
+              <Lock className="w-7 h-7" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-900">Access Restricted</h3>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+              You do not have administrative clearance to access this module ({currentModuleConfig.label}). Please contact your system administrator if you require access.
+            </p>
+            <div className="pt-2">
+              <button
+                onClick={() => handleNavigate('DASHBOARD', 'OVERVIEW')}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+              >
+                Return to Dashboard Overview
+              </button>
+            </div>
+          </div>
+        ) : (
         <div className="animate-in fade-in duration-200">
           
           {/* SECTION 1: OVERVIEW -> COMMAND DASHBOARD */}
@@ -979,7 +1158,9 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           {currentModuleConfig.id === 'PAGE_MANAGEMENT' && (
             <>
               {activeSubTab === 'HOMEPAGE' && <HomepageManager destinations={destinations} />}
-              {activeSubTab === 'NAVIGATION_MENU' && <MenuAndPagesManager />}
+              {(!activeSubTab || activeSubTab === 'NAVIGATION_MENU' || activeSubTab === 'MENU' || activeSubTab === 'CUSTOM_PAGES' || activeSubTab === 'PAGES') && (
+                <MenuAndPagesManager defaultTab={activeSubTab === 'CUSTOM_PAGES' || activeSubTab === 'PAGES' ? 'CUSTOM_PAGES' : 'MENU'} />
+              )}
               {activeSubTab === 'PAGES_LEGAL' && <InstitutionalPagesManager />}
               {activeSubTab === 'FOOTER_NAV' && <FooterNavigationBuilder />}
             </>
@@ -1000,7 +1181,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           {/* 4.1 ACCOUNT MANAGEMENT */}
           {currentModuleConfig.id === 'ACCOUNT_MANAGEMENT' && (
             <>
-              {activeSubTab === 'USERS_ACCESS' && <UserApprovalAccessManager />}
+              {(!activeSubTab || activeSubTab === 'PERMISSIONS') && <UserApprovalAccessManager initialTab="PERMISSIONS" />}
+              {activeSubTab === 'USERS_ACCESS' && <UserApprovalAccessManager initialTab="USERS_ACCESS" />}
               {activeSubTab === 'ROSTER' && <RosterAdminManager products={products} />}
             </>
           )}
@@ -1023,6 +1205,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           {/* 5.2 INTEGRATIONS & DATABASE */}
           {(currentModuleConfig.id === 'INTEGRATIONS_DB' || currentModuleConfig.id === 'DATABASE_MANAGEMENT') && (
             <>
+              {activeSubTab === 'DATA_SYNC_AUDIT' && <DataSyncAuditViewer currentUser={currentUser} />}
               {(activeSubTab === 'INTEGRATIONS_HUB' || activeSubTab === 'OVERVIEW' || !activeSubTab) && (
                 <IntegrationsManager currentUser={currentUser} />
               )}
@@ -1032,6 +1215,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             </>
           )}
         </div>
+        )}
       </main>
     </div>
   );

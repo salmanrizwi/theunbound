@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { useRoster } from '../context/RosterContext';
 import { calculateProductPrice, formatCurrency, convertCurrency } from '../services/pricingEngine';
+import { canUserViewWholesaleRates } from '../services/permissionEngine';
 import { RosterCalendarPicker } from './RosterCalendarPicker';
 import { 
   X, 
@@ -94,7 +95,7 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
     onClose();
   };
 
-  const isInternalUser = role === 'ADMIN' || role === 'DMC_STAFF';
+  const canViewWholesale = canUserViewWholesaleRates(user);
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 sm:p-6 animate-in fade-in duration-200">
@@ -391,7 +392,7 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
                     </div>
                     <div className="flex justify-between text-slate-400 text-[10px]">
                       <span>Max Capacity per unit: {calculation.maxSeatsPerVehicle || product.vehicleConfig?.maxSeats || product.maxPax || 7} Pax</span>
-                      <span>Total Unit Net: {formatCurrency(convertCurrency(product.vehicleConfig?.unitVehicleNetCost || product.adultNetPrice, product.currency, targetCurrency), targetCurrency)}</span>
+                      <span>Total Allocation: {calculation.vehicleCount} Unit(s)</span>
                     </div>
                   </div>
                 )}
@@ -426,8 +427,8 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
                   </div>
                 )}
 
-                {/* Internal DMC Profit & Margin (Visible ONLY to Admin / Staff) */}
-                {isInternalUser && (
+                {/* Internal DMC Profit & Margin (Visible ONLY to Authorized Users with Wholesale Net Rate permission) */}
+                {canViewWholesale && (
                   <div className="mt-3 pt-3 border-t border-slate-800 space-y-1.5 text-[11px]">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Internal DMC Management Data</p>
                     <div className="flex justify-between text-slate-400">

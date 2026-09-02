@@ -323,6 +323,179 @@ export const DESTINATIONS: Destination[] = [
     ],
     featuredProductIds: ['th-bkk-01', 'th-phu-01'],
     status: 'ACTIVE'
+  },
+  {
+    id: 'dest-malaysia',
+    name: 'Malaysia',
+    slug: 'malaysia',
+    country: 'Malaysia',
+    regionId: 'reg-southeast-asia',
+    regionName: 'Southeast Asia',
+    region: 'SOUTHEAST_ASIA',
+    regions: [
+      { id: 'region-my-kl', destinationId: 'dest-malaysia', destinationName: 'Malaysia', name: 'Kuala Lumpur & Selangor', slug: 'kl-selangor', description: 'Petronas Towers, Batu Caves, and vibrant metropolitan lifestyle.' },
+      { id: 'region-my-genting', destinationId: 'dest-malaysia', destinationName: 'Malaysia', name: 'Genting Highlands & Pahang', slug: 'genting-pahang', description: 'Highland theme parks, cable cars, and cool mountain retreats.' },
+      { id: 'region-my-langkawi', destinationId: 'dest-malaysia', destinationName: 'Malaysia', name: 'Langkawi & Kedah', slug: 'langkawi', description: 'UNESCO Global Geopark, duty-free island beaches, and luxury yacht charters.' },
+      { id: 'region-my-penang', destinationId: 'dest-malaysia', destinationName: 'Malaysia', name: 'Penang & George Town', slug: 'penang', description: 'UNESCO heritage street art, colonial mansions, and world-renowned street food.' },
+      { id: 'region-my-johor', destinationId: 'dest-malaysia', destinationName: 'Malaysia', name: 'Johor & Desaru Coast', slug: 'johor', description: 'Desaru Coast luxury resorts, golf courses, and Legoland Malaysia.' }
+    ],
+    heroImage: 'https://images.unsplash.com/photo-1596422846543-75c6fc197f07?q=80&w=1600&auto=format&fit=crop',
+    tagline: 'Futuristic skylines, lush tropical rainforests, and diverse cultural gastronomy.',
+    description: 'Comprehensive Malaysia DMC ground handling across Kuala Lumpur, Genting Highlands, Langkawi, Penang, and Desaru Coast. Private transfers, theme park ticketing, and 5-star allotments.',
+    keySellingPoints: [
+      'Seamless intercity private transfers (KL - Genting - Penang)',
+      'Direct partnerships with Sunway, Genting Resorts World & luxury hotel chains',
+      'Certified multilingual tour guides and private airport fast-track',
+      'Exclusive Langkawi private catamaran & island hopping charters'
+    ],
+    bestTimeToVisit: 'Year-Round (Tropical Sunshine)',
+    idealTripDuration: '5–9 Days',
+    travelStyle: 'Family Fun, Urban Luxury, Island Escapes & Culinary Heritage',
+    currency: 'USD',
+    highlights: [
+      'Petronas Twin Towers Observation Deck & Private City Tour',
+      'Genting Highlands Awana SkyWay Cable Car & SkyWorlds Theme Park',
+      'Langkawi UNESCO Geopark Mangrove & Sunset Dinner Cruise',
+      'Penang George Town Heritage Walking & Street Food Trail'
+    ],
+    cities: [
+      { id: 'kuala-lumpur', name: 'Kuala Lumpur', tagline: 'Petronas Towers, Batu Caves and culinary nightlife', image: 'https://images.unsplash.com/photo-1596422846543-75c6fc197f07?q=80&w=800&auto=format&fit=crop', productCount: 16 },
+      { id: 'genting-highlands', name: 'Genting Highlands', tagline: 'Cool mountain climate, theme parks and cable cars', image: 'https://images.unsplash.com/photo-1584646098378-0874589d76b1?q=80&w=800&auto=format&fit=crop', productCount: 10 },
+      { id: 'langkawi', name: 'Langkawi', tagline: 'Duty-free archipelago of emerald bays and limestone karsts', image: 'https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=800&auto=format&fit=crop', productCount: 12 },
+      { id: 'penang', name: 'Penang', tagline: 'UNESCO George Town heritage, street art and food capital', image: 'https://images.unsplash.com/photo-1582268611958-ebfd161ef9cf?q=80&w=800&auto=format&fit=crop', productCount: 8 },
+      { id: 'johor-bahru', name: 'Johor Bahru', tagline: 'Family theme parks, Desaru Coast and Johor Straits', image: 'https://images.unsplash.com/photo-1570789210967-2cac24afeb00?q=80&w=800&auto=format&fit=crop', productCount: 6 }
+    ],
+    featuredProductIds: ['my-kl-01', 'my-gent-01', 'my-lang-01'],
+    status: 'ACTIVE'
+  },
+  {
+    id: 'dest-singapore',
+    name: 'Singapore',
+    slug: 'singapore',
+    country: 'Singapore',
+    regionId: 'reg-southeast-asia',
+    regionName: 'Southeast Asia',
+    region: 'SOUTHEAST_ASIA',
+    regions: [
+      { id: 'region-sg-downtown', destinationId: 'dest-singapore', destinationName: 'Singapore', name: 'Downtown & Marina Bay', slug: 'marina-bay', description: 'Marina Bay Sands, Gardens by the Bay, and Singapore Flyer.' },
+      { id: 'region-sg-sentosa', destinationId: 'dest-singapore', destinationName: 'Singapore', name: 'Sentosa Island & HarbourFront', slug: 'sentosa', description: 'Universal Studios Singapore, S.E.A. Aquarium, and luxury beach resorts.' },
+      { id: 'region-sg-orchard', destinationId: 'dest-singapore', destinationName: 'Singapore', name: 'Orchard Road & Civic District', slug: 'orchard', description: 'Premier shopping avenues, heritage museums, and Michelin dining.' }
+    ],
+    heroImage: 'https://images.unsplash.com/photo-1525625293386-3f8f99389edd?q=80&w=1600&auto=format&fit=crop',
+    tagline: 'Futuristic Garden City, luxury retail, and iconic Marina Bay attractions.',
+    description: 'Premier Singapore DMC operations offering VIP meet-and-greet, Gardens by the Bay private access, Sentosa island luxury passes, and bespoke city discovery.',
+    keySellingPoints: [
+      'Official B2B ticketing partner for Universal Studios & Gardens by the Bay',
+      'Guaranteed fast-track chauffeur airport arrival services',
+      'Exclusive Singapore River private charter & Marina Bay Sands VIP viewings',
+      'Preferred room allotments at Marina Bay Sands and Sentosa resorts'
+    ],
+    bestTimeToVisit: 'Year-Round (High Energy & Events)',
+    idealTripDuration: '3–6 Days',
+    travelStyle: 'Urban Luxury, Family Entertainment & MICE',
+    currency: 'SGD',
+    highlights: [
+      'Gardens by the Bay Flower Dome, Cloud Forest & Supertree Observatory',
+      'Sentosa Universal Studios Singapore VIP Experience',
+      'Marina Bay Sands Skypark Observation Deck & Night River Cruise',
+      'Singapore Night Safari Tram & Wildlife Reserve'
+    ],
+    cities: [
+      { id: 'singapore-city', name: 'Singapore', tagline: 'Marina Bay skyline, Hawker centres and modern metropolis', image: 'https://images.unsplash.com/photo-1525625293386-3f8f99389edd?q=80&w=800&auto=format&fit=crop', productCount: 20 },
+      { id: 'downtown-core', name: 'Downtown', tagline: 'Iconic architecture, luxury shopping and waterfront dining', image: 'https://images.unsplash.com/photo-1565967511849-76a60a516170?q=80&w=800&auto=format&fit=crop', productCount: 14 },
+      { id: 'sentosa', name: 'Sentosa', tagline: 'Tropical theme parks, beaches and luxury island resorts', image: 'https://images.unsplash.com/photo-1506351421178-63b52a2d15c2?q=80&w=800&auto=format&fit=crop', productCount: 12 }
+    ],
+    featuredProductIds: ['sg-mbs-01', 'sg-uss-01', 'sg-gard-01'],
+    status: 'ACTIVE'
+  },
+  {
+    id: 'dest-indonesia',
+    name: 'Bali / Indonesia',
+    slug: 'bali-indonesia',
+    country: 'Indonesia',
+    regionId: 'reg-southeast-asia',
+    regionName: 'Southeast Asia',
+    region: 'SOUTHEAST_ASIA',
+    regions: [
+      { id: 'region-id-south-bali', destinationId: 'dest-indonesia', destinationName: 'Bali / Indonesia', name: 'South Bali (Kuta, Seminyak, Nusa Dua, Canggu & Uluwatu)', slug: 'south-bali', description: 'Surfing beaches, beach clubs, cliffside temples, and 5-star resorts.' },
+      { id: 'region-id-ubud', destinationId: 'dest-indonesia', destinationName: 'Bali / Indonesia', name: 'Ubud & Central Bali', slug: 'ubud-central', description: 'Lush jungles, Tegallalang rice terraces, sacred monkey forest, and wellness retreats.' },
+      { id: 'region-id-islands', destinationId: 'dest-indonesia', destinationName: 'Bali / Indonesia', name: 'Nusa Islands & Gili (Nusa Penida & Gili)', slug: 'nusa-islands', description: 'Kelingking cliff, crystal bay manta rays, and turquoise island waters.' }
+    ],
+    heroImage: 'https://images.unsplash.com/photo-1537996194471-e657df975ab4?q=80&w=1600&auto=format&fit=crop',
+    tagline: 'Island of the Gods, cliffside ocean temples, and bespoke private pool villas.',
+    description: 'Expert Bali DMC solutions with private chauffeur vehicles, Nusa Penida fastboat charters, Uluwatu sunset Kecak fire dances, and bespoke Ubud wellness packages.',
+    keySellingPoints: [
+      'Private air-conditioned Toyota Innova & Alphard chauffeured tours',
+      'Exclusive Nusa Penida private speedboat & VIP island transport',
+      'Handpicked private luxury pool villas in Seminyak, Canggu & Ubud',
+      'Direct contracts with Ayana, Bulgari, Mandapa, and Four Seasons Bali'
+    ],
+    bestTimeToVisit: 'April–October (Dry Season)',
+    idealTripDuration: '6–10 Days',
+    travelStyle: 'Tropical Luxury, Romantic Honeymoon & Spiritual Wellness',
+    currency: 'USD',
+    highlights: [
+      'Ubud Sacred Monkey Forest & Tegallalang Rice Terrace Swing',
+      'Uluwatu Sunset Cliff Temple & Kecak Fire Dance Show',
+      'Nusa Penida Kelingking Cliff & Broken Beach Island Charter',
+      'Mount Batur Sunrise Jeep 4WD & Natural Hot Springs'
+    ],
+    cities: [
+      { id: 'kuta', name: 'Kuta', tagline: 'Bustling sunset beaches, shopping and surf culture', image: 'https://images.unsplash.com/photo-1537996194471-e657df975ab4?q=80&w=800&auto=format&fit=crop', productCount: 8 },
+      { id: 'seminyak', name: 'Seminyak', tagline: 'Chic beach clubs, designer boutiques and luxury pool villas', image: 'https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?q=80&w=800&auto=format&fit=crop', productCount: 12 },
+      { id: 'ubud', name: 'Ubud', tagline: 'Cultural heartland, misty river valleys and jungle sanctuaries', image: 'https://images.unsplash.com/photo-1544644181-1484b3fdfc62?q=80&w=800&auto=format&fit=crop', productCount: 14 },
+      { id: 'nusa-dua', name: 'Nusa Dua', tagline: 'Gated enclave of 5-star beachfront resorts and calm waters', image: 'https://images.unsplash.com/photo-1573790387438-4da905039392?q=80&w=800&auto=format&fit=crop', productCount: 10 },
+      { id: 'sanur', name: 'Sanur', tagline: 'Tranquil coastal promenade, sunrise views and island boats', image: 'https://images.unsplash.com/photo-1555400038-63f5ba517a47?q=80&w=800&auto=format&fit=crop', productCount: 6 },
+      { id: 'gili-islands', name: 'Gili Islands', tagline: 'Motor-free tropical islands, coral reefs and turtle diving', image: 'https://images.unsplash.com/photo-1516690561799-46d8f74f9abf?q=80&w=800&auto=format&fit=crop', productCount: 6 },
+      { id: 'nusa-penida', name: 'Nusa Penida', tagline: 'Dramatic Kelingking cliffs, manta rays and secret bays', image: 'https://images.unsplash.com/photo-1588668214407-6ea9a6d8c272?q=80&w=800&auto=format&fit=crop', productCount: 7 },
+      { id: 'canggu', name: 'Canggu', tagline: 'Trendy cafes, surf breaks and sunset vibes', image: 'https://images.unsplash.com/photo-1577717903315-1691ae25ab3f?q=80&w=800&auto=format&fit=crop', productCount: 8 },
+      { id: 'uluwatu', name: 'Uluwatu', tagline: 'Limestone sea cliffs, world-class surf and ocean clubs', image: 'https://images.unsplash.com/photo-1539367628448-4bc5c9d171c8?q=80&w=800&auto=format&fit=crop', productCount: 9 }
+    ],
+    featuredProductIds: ['id-ubud-01', 'id-ulu-01', 'id-penida-01'],
+    status: 'ACTIVE'
+  },
+  {
+    id: 'dest-vietnam',
+    name: 'Vietnam',
+    slug: 'vietnam',
+    country: 'Vietnam',
+    regionId: 'reg-southeast-asia',
+    regionName: 'Southeast Asia',
+    region: 'SOUTHEAST_ASIA',
+    regions: [
+      { id: 'region-vn-north', destinationId: 'dest-vietnam', destinationName: 'Vietnam', name: 'Northern Vietnam (Hanoi & Halong Bay)', slug: 'north-vietnam', description: 'French colonial Old Quarter, misty limestone karst bays, and overnight luxury cruises.' },
+      { id: 'region-vn-central', destinationId: 'dest-vietnam', destinationName: 'Vietnam', name: 'Central Vietnam (Da Nang & Hoi An)', slug: 'central-vietnam', description: 'Golden Bridge in Ba Na Hills, lantern-lit ancient trading port, and sandy beaches.' },
+      { id: 'region-vn-south', destinationId: 'dest-vietnam', destinationName: 'Vietnam', name: 'Southern Vietnam (Ho Chi Minh City & Phu Quoc)', slug: 'south-vietnam', description: 'Dynamic metropolis, Cu Chi tunnels, Mekong Delta, and tropical island resorts.' }
+    ],
+    heroImage: 'https://images.unsplash.com/photo-1528127269322-539801943592?q=80&w=1600&auto=format&fit=crop',
+    tagline: 'Emerald karst bays, lantern-lit heritage towns, and world-acclaimed culinary art.',
+    description: 'Specialized Vietnam DMC ground services covering Hanoi, Halong Bay overnight luxury cruises, Da Nang Golden Bridge, Hoi An ancient town, and Ho Chi Minh City.',
+    keySellingPoints: [
+      'Preferred allotments on 5-star Halong & Lan Ha Bay luxury cruise vessels',
+      'Private chauffeured limousine vans and licensed English-speaking guides',
+      'Exclusive Ba Na Hills Golden Bridge early VIP cable car passes',
+      'Authentic Vietnamese street gastronomy and cooking masterclasses'
+    ],
+    bestTimeToVisit: 'October–April (Comfortable & Dry)',
+    idealTripDuration: '7–12 Days',
+    travelStyle: 'Scenic Cruising, Heritage Culture & Coastal Retreats',
+    currency: 'USD',
+    highlights: [
+      'Halong Bay 5-Star Luxury Overnight Cruise & Kayaking',
+      'Da Nang Ba Na Hills Golden Giant Hands Bridge & Cable Car',
+      'Hoi An Ancient Town Lantern Evening & Basket Boat River Tour',
+      'Hanoi French Old Quarter Street Food & Cyclo Tour'
+    ],
+    cities: [
+      { id: 'hanoi', name: 'Hanoi', tagline: 'Centuries-old Old Quarter, lakes and French colonial charm', image: 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?q=80&w=800&auto=format&fit=crop', productCount: 14 },
+      { id: 'halong-bay', name: 'Halong Bay', tagline: 'UNESCO limestone karst wonderland and luxury cruise waters', image: 'https://images.unsplash.com/photo-1528127269322-539801943592?q=80&w=800&auto=format&fit=crop', productCount: 10 },
+      { id: 'da-nang', name: 'Da Nang', tagline: 'Dragon Bridge, Marble Mountains and Golden Bridge in Ba Na Hills', image: 'https://images.unsplash.com/photo-1559592413-7cec4d0cae2b?q=80&w=800&auto=format&fit=crop', productCount: 9 },
+      { id: 'hoi-an', name: 'Hoi An', tagline: 'Timeless UNESCO trading port with glowing silk lanterns', image: 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?q=80&w=800&auto=format&fit=crop', productCount: 11 },
+      { id: 'ho-chi-minh-city', name: 'Ho Chi Minh City', tagline: 'Vibrant southern metropolis, rooftop bars and French architecture', image: 'https://images.unsplash.com/photo-1583417319070-4a69db38a482?q=80&w=800&auto=format&fit=crop', productCount: 12 },
+      { id: 'phu-quoc', name: 'Phu Quoc', tagline: 'Tropical white sand island with luxury beachfront resorts', image: 'https://images.unsplash.com/photo-1540555700478-4be289fbecef?q=80&w=800&auto=format&fit=crop', productCount: 7 }
+    ],
+    featuredProductIds: ['vn-han-01', 'vn-hal-01', 'vn-dan-01'],
+    status: 'ACTIVE'
   }
 ];
 

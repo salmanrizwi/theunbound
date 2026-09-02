@@ -336,10 +336,26 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
             <h1 className="text-xl sm:text-2xl font-black text-white mt-0.5">
               {quote.destination || 'Japan'} Bespoke Travel Itinerary
             </h1>
-            <p className="text-xs text-slate-300 mt-1 flex items-center space-x-2">
+            <p className="text-xs text-slate-300 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
               <span>{itineraryDays.length} Days / {totalNights} Nights</span>
               <span>•</span>
-              <span>{effectivePax} Guests ({quote.adultsCount || 2} Adults{quote.childrenCount ? `, ${quote.childrenCount} Children` : ''})</span>
+              <span className="font-semibold text-[#00E5C0]">
+                {quote.passengerBreakdown 
+                  ? `ADT: ${quote.passengerBreakdown.adults}${quote.passengerBreakdown.cwb > 0 ? ` | CWB: ${quote.passengerBreakdown.cwb}` : ''}${quote.passengerBreakdown.cnb > 0 ? ` | CNB: ${quote.passengerBreakdown.cnb}` : ''}${quote.passengerBreakdown.infants > 0 ? ` | INF: ${quote.passengerBreakdown.infants}` : ''}`
+                  : `${effectivePax} Guests (${quote.adultsCount || 2} Adults${quote.childrenCount ? `, ${quote.childrenCount} Children` : ''}${quote.infantsCount ? `, ${quote.infantsCount} Infants` : ''})`}
+              </span>
+              {quote.nationality && (
+                <>
+                  <span>•</span>
+                  <span>Nationality: <strong className="text-white">{quote.nationality}</strong></span>
+                </>
+              )}
+              {quote.travelStyle && (
+                <>
+                  <span>•</span>
+                  <span>Style: <strong className="text-white">{quote.travelStyle}</strong></span>
+                </>
+              )}
               {quote.travelStartDate && (
                 <>
                   <span>•</span>
@@ -762,6 +778,23 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
       </div>
 
       {/* ---------------------------------------------------- */}
+      {/* 6.5. OPERATIONAL & ATTRACTION GUIDELINES */}
+      {/* ---------------------------------------------------- */}
+      <div className="bg-amber-50/60 border border-amber-200/90 rounded-2xl p-5 space-y-2 text-xs">
+        <h4 className="font-extrabold text-amber-950 uppercase tracking-wider text-[11px] flex items-center space-x-1.5">
+          <Info className="w-4 h-4 text-amber-700" />
+          <span>Operational Guidelines & Child / Attraction Policy</span>
+        </h4>
+        <ul className="space-y-1 text-amber-900/90 text-[11px] list-disc list-inside">
+          <li>Infant below 2 years is considered free of charge unless specifically charged by ground supplier or airline.</li>
+          <li>Children aged 2 to below 5 years are classified as CNB (Child No Bed). Hotel breakfast & service surcharges apply as per tariff.</li>
+          <li>Children aged 5 to below 11 years are classified as CWB (Child With Bed). Extra bed is included in the room allotment.</li>
+          <li>Guests aged 11 years and above are classified as Adults.</li>
+          <li>Important: If a guest is required to purchase an attraction ticket directly due to age, height, or attraction-specific eligibility rules, the ticket cost will be borne directly by the guest at the gate.</li>
+        </ul>
+      </div>
+
+      {/* ---------------------------------------------------- */}
       {/* 7. TERMS, CONDITIONS & SIGNATURE FOOTER */}
       {/* ---------------------------------------------------- */}
       <div className="pt-4 border-t border-slate-200 text-[11px] text-slate-500 space-y-3">
@@ -774,7 +807,7 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
 
         <div className="flex flex-col sm:flex-row justify-between items-center gap-2 text-[10px] text-slate-400 pt-3 border-t border-slate-100 font-mono">
           <span>TheUnbound DMC Global Ground Logistics • sales@theunbound.in</span>
-          <span>Official Contracted Wholesale Quotation Document</span>
+          <span>Official Contracted Quotation Document</span>
         </div>
       </div>
     </div>

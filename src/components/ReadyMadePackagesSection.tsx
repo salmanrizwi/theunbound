@@ -205,7 +205,7 @@ export const ReadyMadePackagesSection: React.FC<ReadyMadePackagesSectionProps> =
               <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
                 <div>
                   <span className="text-[10px] uppercase text-slate-400 font-bold block">
-                    {isB2BAgent ? 'B2B Wholesale' : 'Starting From'}
+                    {isB2BAgent ? 'Package Price' : 'Starting From'}
                   </span>
                   <span className="text-base font-black text-slate-900 font-mono">
                     {formatCurrency(displayPrice, currency)} <span className="text-[10px] text-slate-400 font-sans font-normal">/ pax</span>

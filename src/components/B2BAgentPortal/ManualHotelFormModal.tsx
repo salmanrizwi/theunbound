@@ -627,9 +627,9 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-800 flex items-center justify-between">
                   <span>
-                    Manual Rate ({rateCurrency}) <span className="text-rose-500">*</span>
+                    Room Rate ({rateCurrency}) <span className="text-rose-500">*</span>
                   </span>
-                  <span className="text-[10px] text-slate-400 font-mono">Net Supplier Rate</span>
+                  <span className="text-[10px] text-slate-400 font-mono">Base Rate</span>
                 </label>
                 <div className="relative">
                   <input
@@ -664,35 +664,23 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
                 <div className="flex items-center space-x-2">
                   <Calculator className="w-4 h-4 text-[#00E5C0]" />
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                    Live Commercial Price Engine
+                    Calculated Stay Pricing
                   </span>
                 </div>
                 <span className="px-2 py-0.5 rounded bg-white/10 text-[11px] font-mono text-[#00E5C0]">
-                  Markup: +{agentMarkupPercent}%
+                  {calculations.safeNights} Nights • {calculations.safeRooms} Room(s)
                 </span>
               </div>
 
               {/* Math breakdown */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                 <div className="space-y-0.5 bg-white/5 p-2.5 rounded-xl border border-white/5">
-                  <span className="text-[10px] text-slate-400 uppercase font-medium">Entered Net Cost</span>
+                  <span className="text-[10px] text-slate-400 uppercase font-medium">Per Night Rate</span>
                   <p className="font-mono font-bold text-sm text-slate-100">
-                    {formatCurrency(calculations.baseNetTotalInRateCurrency, rateCurrency)}
+                    {formatCurrency(calculations.sellingPricePerNight, quoteCurrency)} / night
                   </p>
                   <p className="text-[10px] text-slate-400">
-                    {rateType === 'TOTAL_STAY' 
-                      ? 'Fixed Stay Cost' 
-                      : `${formatCurrency(typeof ratePerNight === 'number' ? ratePerNight : 0, rateCurrency)} × ${calculations.safeRooms}R × ${calculations.safeNights}N`}
-                  </p>
-                </div>
-
-                <div className="space-y-0.5 bg-white/5 p-2.5 rounded-xl border border-white/5">
-                  <span className="text-[10px] text-slate-400 uppercase font-medium">Quotation Currency Net</span>
-                  <p className="font-mono font-bold text-sm text-slate-100">
-                    {formatCurrency(calculations.netTotalInQuoteCurrency, quoteCurrency)}
-                  </p>
-                  <p className="text-[10px] text-slate-400">
-                    Converted to Quote ({quoteCurrency})
+                    All Taxes & Surcharges Included
                   </p>
                 </div>
 
@@ -702,7 +690,7 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
                     {formatCurrency(calculations.finalSellingPrice, quoteCurrency)}
                   </p>
                   <p className="text-[10px] text-emerald-300 font-medium">
-                    {formatCurrency(calculations.sellingPricePerNight, quoteCurrency)} / night
+                    ✓ Total Accommodation Stay ({quoteCurrency})
                   </p>
                 </div>
               </div>

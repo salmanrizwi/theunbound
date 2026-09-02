@@ -318,7 +318,7 @@ export class GoogleCalendarSLAAutomationService {
       slaHours: 12,
       defaultAssignee: {
         type: 'DEPARTMENT' as const,
-        name: 'Operations Team (Marcus Vance)',
+        name: 'Operations Team',
         email: 'business@theunbound.in',
         department: 'OPERATIONS' as const,
         role: 'Duty Operations Manager'

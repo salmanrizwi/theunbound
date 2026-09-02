@@ -140,15 +140,8 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
               <span>View Cart</span>
             </button>
             <button
-              onClick={onOpenCreateQuote}
-              className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center space-x-1.5 border border-slate-700"
-            >
-              <span>Build Quote</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-            <button
               onClick={() => setQuoteSuccessNotification(null)}
-              className="text-slate-400 hover:text-white p-1 rounded-lg"
+              className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -288,7 +281,7 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
                       className="w-full py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs bg-amber-500 hover:bg-amber-600 text-slate-950"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>Configure & Add to Quote</span>
+                      <span>Configure & Add to Cart</span>
                     </button>
                   )}
 

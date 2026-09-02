@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole, UserCategory, UserApprovalStatus } from '../types';
 import { AppDatabase } from '../services/db';
+import { resolvePostLoginDestination, navigateTo, clearIntendedPath } from '../services/portalRouter';
 
 export interface AuthResult {
   success: boolean;
@@ -12,6 +13,8 @@ export interface AuthResult {
 
 export interface RegisterProfileData {
   name: string;
+  firstName?: string;
+  lastName?: string;
   email: string;
   password?: string;
   role: UserRole;
@@ -144,7 +147,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const saved = localStorage.getItem(STORAGE_KEY_AUTH);
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed: User = JSON.parse(saved);
+        const db = AppDatabase.getInstance();
+        const latest = db.getUsers().find(u => u.id === parsed.id || (u.email && u.email.toLowerCase() === parsed.email?.toLowerCase()));
+        if (latest) {
+          return { ...parsed, ...latest };
+        }
+        return parsed;
       } catch (e) {
         console.error('Error parsing auth state', e);
       }
@@ -156,6 +165,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalReason, setAuthModalReason] = useState<string>('Access Protected Pricing Calculator');
   const [pendingCallback, setPendingCallback] = useState<(() => void) | null>(null);
+
+  useEffect(() => {
+    const handleAuthChanged = (e: any) => {
+      if (e.detail) {
+        setUser(e.detail);
+      }
+    };
+    window.addEventListener('theunbound_auth_changed', handleAuthChanged as EventListener);
+    return () => window.removeEventListener('theunbound_auth_changed', handleAuthChanged as EventListener);
+  }, []);
 
   useEffect(() => {
     if (user) {
@@ -222,6 +241,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setPendingCallback(null);
       }
 
+      // Strict role-based portal routing after login
+      const targetRoute = resolvePostLoginDestination(authenticatedUser);
+      navigateTo(targetRoute);
+
       return { success: true, user: authenticatedUser, status: 'APPROVED' };
     }
 
@@ -242,6 +265,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         pendingCallback();
         setPendingCallback(null);
       }
+
+      // Strict role-based portal routing after login
+      const targetRoute = resolvePostLoginDestination(demoFound);
+      navigateTo(targetRoute);
+
       return { success: true, user: demoFound, status: 'APPROVED' };
     }
 
@@ -281,6 +309,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setPendingCallback(null);
     }
 
+    const targetRoute = resolvePostLoginDestination(result.user);
+    navigateTo(targetRoute);
+
     return {
       success: true,
       user: result.user,
@@ -291,6 +322,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = () => {
     setUser(null);
+    localStorage.removeItem(STORAGE_KEY_AUTH);
+    clearIntendedPath();
+    try {
+      sessionStorage.removeItem('theunbound_b2b_session');
+      sessionStorage.removeItem('theunbound_cms_session');
+    } catch (e) {
+      // Ignore
+    }
+    navigateTo('/');
   };
 
   const updateUserProfile = async (updates: Partial<User>): Promise<User | null> => {

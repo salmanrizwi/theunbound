@@ -303,7 +303,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
           name: 'Phuket Island Sunset Catamaran Cruise',
           destination: 'Thailand',
           city: 'Phuket',
-          category: 'Cruises & Boat Charters',
+          category: 'Private Yacht',
           netCost: 0,
           status: 'INVALID',
           issues: ['Missing mandatory SKU Code', 'Adult Net Cost is $0.00']

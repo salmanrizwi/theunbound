@@ -1,16 +1,18 @@
 import React from 'react';
-import { Destination } from '../types';
-import { Compass, ArrowRight, ShieldCheck, CheckCircle2, Globe2, Building2 } from 'lucide-react';
+import { Destination, HomepageConfig } from '../types';
+import { Compass, ArrowRight, ShieldCheck, CheckCircle2, Globe2, Building2, Clock, Sparkles, MapPin, Award, Layers } from 'lucide-react';
 import { countingEngine } from '../services/countingEngine';
 
 interface AllDestinationsHeroProps {
   destinations: Destination[];
+  config?: HomepageConfig;
   onSelectDestination: (slug: string) => void;
   onExploreProducts: () => void;
 }
 
 export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
   destinations,
+  config,
   onSelectDestination,
   onExploreProducts
 }) => {
@@ -23,93 +25,133 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
   const destinationNamesList = destList.map(d => d.name).join(', ');
   const sampleHubNames = destList.flatMap(d => (d.cities ? d.cities.map(c => c.name) : [])).slice(0, 3).join(', ');
 
+  // CMS Driven Values with Professional B2B DMC Fallbacks
+  const heroImage = config?.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=2000&auto=format&fit=crop';
+  const heroImageAlt = config?.heroImageAlt || 'TheUnbound Premier Ground Operations & Wholesale DMC Network';
+  const overlayOpacity = config?.heroOverlayOpacity !== undefined ? config.heroOverlayOpacity : 0.65;
+  const heroBadge = config?.heroBadgeText || 'UNBOUND EXPERIENCES INDIA PVT LTD • OPERATIONS DESK';
+  const heroTitle = config?.heroHeading || 'Premier Ground Operations & Wholesale DMC Network';
+  const heroSubtitle = config?.heroSubheading || 'Contracted wholesale rates, verified licensed bilingual guides, executive transfers, and 24–48h SLA booking operations across Japan, the UK, Europe, Southeast Asia, and the Middle East.';
+  
+  const showPrimaryCta = config?.showPrimaryCta !== false;
+  const primaryCtaText = config?.primaryCtaText || 'Explore Contracted Inventory';
+  const showSecondaryCta = config?.showSecondaryCta !== false;
+  const secondaryCtaText = config?.secondaryCtaText || 'View Destination Gateways';
+
+  const trustBadges = (config?.heroTrustBadges && config.heroTrustBadges.length > 0)
+    ? config.heroTrustBadges
+    : [
+        { label: 'Destinations', subtext: `${totalDestinations} Core Regions`, icon: 'Globe2' },
+        { label: 'City Hubs', subtext: `${totalHubs} Direct Gateways`, icon: 'Building2' },
+        { label: 'Ground Logistics', subtext: '100% Direct Contracts', icon: 'ShieldCheck' },
+        { label: 'Operations SLA', subtext: '24–48h Booking Desk', icon: 'Clock' }
+      ];
+
+  const sellingPoints = (config?.heroSellingPoints && config.heroSellingPoints.length > 0)
+    ? config.heroSellingPoints
+    : [
+        'Direct B2B net contracted rates with verified ground suppliers',
+        'Dedicated on-ground operations desks in Tokyo, London, Paris & Bangkok',
+        'Verified licensed bilingual private guides & executive chauffeur fleets',
+        'Instant B2B white-label client quotation generation in multi-currency'
+      ];
+
+  const handleSecondaryCtaClick = () => {
+    const el = document.getElementById('destinations-grid-heading');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      window.scrollBy({ top: 500, behavior: 'smooth' });
+    }
+  };
+
   return (
     <div className="space-y-8 mb-10">
       {/* Main Global Portfolio Banner */}
-      <div className="relative rounded-2xl sm:rounded-3xl overflow-hidden bg-slate-950 text-white shadow-xl">
+      <div className="relative rounded-2xl sm:rounded-3xl overflow-hidden bg-slate-950 text-white shadow-xl border border-slate-800">
+        {/* Background Hero Image with Configurable Overlay */}
         <div className="absolute inset-0 z-0">
           <img
-            src="https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=1600&auto=format&fit=crop"
-            alt="All Destinations - Global DMC Portfolio"
-            className="w-full h-full object-cover object-center opacity-35 scale-105 transition-transform duration-1000 ease-out"
+            src={heroImage}
+            alt={heroImageAlt}
+            className="w-full h-full object-cover object-center scale-105 transition-transform duration-1000 ease-out"
+            referrerPolicy="no-referrer"
           />
-          <div className="absolute inset-0 bg-gradient-to-r from-slate-950/90 via-slate-950/65 to-transparent" />
+          {/* Configurable overlay opacity layer */}
+          <div 
+            className="absolute inset-0 bg-slate-950 transition-opacity duration-300"
+            style={{ opacity: overlayOpacity }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/70 to-transparent" />
         </div>
 
         <div className="relative z-10 max-w-5xl mx-auto px-6 py-12 sm:py-16 lg:px-8">
+          {/* Operational Eyebrow Badge */}
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-semibold bg-[#00C6A6]/20 text-[#00E5C0] border border-[#00C6A6]/40 backdrop-blur-md mb-4">
-            <Globe2 className="w-3.5 h-3.5" />
-            <span>Global DMC Destination Portfolio • {totalDestinations} Active Regions</span>
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>{heroBadge}</span>
           </div>
 
-          <h1 className="text-3xl sm:text-5xl font-bold tracking-tight text-white mb-3">
-            Explore All {totalDestinations} Destinations
+          <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white mb-4 leading-tight">
+            {heroTitle}
           </h1>
 
-          <p className="text-sm sm:text-base text-slate-200 max-w-2xl leading-relaxed mb-6">
-            Access our complete multi-destination DMC portfolio covering {destinationNamesList || 'our global partner regions'}. Direct contracted rates, expert local guides, and bespoke luxury logistics.
+          <p className="text-sm sm:text-base text-slate-200 max-w-3xl leading-relaxed mb-8">
+            {heroSubtitle}
           </p>
 
           {/* Key Global DMC Statistics */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-3xl mb-8">
-            <div className="bg-white/10 backdrop-blur-md border border-white/15 rounded-xl p-3">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#00E5C0] block">
-                Destinations
-              </span>
-              <span className="text-xl font-bold text-white">{totalDestinations} Regions</span>
-              <p className="text-[11px] text-slate-300 truncate">{destinationNamesList}</p>
-            </div>
-
-            <div className="bg-white/10 backdrop-blur-md border border-white/15 rounded-xl p-3">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#00E5C0] block">
-                City Hubs
-              </span>
-              <span className="text-xl font-bold text-white">
-                {totalHubs} Hubs
-              </span>
-              <p className="text-[11px] text-slate-300 truncate">{sampleHubNames ? `${sampleHubNames}...` : 'Direct Gateways'}</p>
-            </div>
-
-            <div className="bg-white/10 backdrop-blur-md border border-white/15 rounded-xl p-3">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#00E5C0] block">
-                Logistics
-              </span>
-              <span className="text-xl font-bold text-white">100% Direct</span>
-              <p className="text-[11px] text-slate-300">Net B2B Contracts</p>
-            </div>
-
-            <div className="bg-white/10 backdrop-blur-md border border-white/15 rounded-xl p-3">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#00E5C0] block">
-                Operations
-              </span>
-              <span className="text-xl font-bold text-white">24/7 Support</span>
-              <p className="text-[11px] text-slate-300">Ground Assistance</p>
-            </div>
+            {trustBadges.map((badge, idx) => (
+              <div key={idx} className="bg-white/10 backdrop-blur-md border border-white/15 rounded-xl p-3.5 hover:bg-white/15 transition-colors">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#00E5C0] block mb-0.5">
+                  {badge.label}
+                </span>
+                <span className="text-lg sm:text-xl font-bold text-white block">
+                  {badge.subtext}
+                </span>
+              </div>
+            ))}
           </div>
 
+          {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              id="hero-explore-all-products-btn"
-              onClick={onExploreProducts}
-              className="bg-[#00C6A6] text-slate-950 px-6 py-2.5 rounded-lg font-bold hover:bg-[#00b296] transition-colors shadow-sm cursor-pointer text-sm flex items-center space-x-2"
-            >
-              <Compass className="w-4 h-4" />
-              <span>Browse All Travel Products</span>
-            </button>
-            <div className="flex items-center space-x-2 text-xs text-slate-300 ml-2">
+            {showPrimaryCta && (
+              <button
+                id="hero-explore-all-products-btn"
+                onClick={onExploreProducts}
+                className="bg-[#00C6A6] text-slate-950 px-6 py-2.5 rounded-xl font-bold hover:bg-[#00b296] transition-all shadow-md cursor-pointer text-xs sm:text-sm flex items-center space-x-2"
+              >
+                <Compass className="w-4 h-4" />
+                <span>{primaryCtaText}</span>
+              </button>
+            )}
+
+            {showSecondaryCta && (
+              <button
+                id="hero-view-gateways-btn"
+                onClick={handleSecondaryCtaClick}
+                className="bg-white/15 hover:bg-white/25 text-white border border-white/20 px-5 py-2.5 rounded-xl font-bold transition-all cursor-pointer text-xs sm:text-sm backdrop-blur-md flex items-center space-x-2"
+              >
+                <Globe2 className="w-4 h-4 text-[#00E5C0]" />
+                <span>{secondaryCtaText}</span>
+              </button>
+            )}
+
+            <div className="flex items-center space-x-2 text-xs text-slate-300 ml-1">
               <ShieldCheck className="w-4 h-4 text-[#00C6A6]" />
-              <span>Live Verified Ground Contracts</span>
+              <span>Direct Inbound DMC Licensing & Wholesale Tariffs</span>
             </div>
           </div>
         </div>
 
         {/* Value Highlights Bar */}
-        <div className="relative z-10 bg-slate-900/90 backdrop-blur-md border-t border-white/10 px-6 py-3.5">
-          <div className="max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs text-slate-300">
-            {destinations.slice(0, 6).map((dest, idx) => (
-              <div key={`dest-hero-highlight-${dest.id || dest.slug}-${idx}`} className="flex items-center space-x-2">
+        <div className="relative z-10 bg-slate-900/95 backdrop-blur-md border-t border-white/10 px-6 py-3.5">
+          <div className="max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs text-slate-300">
+            {sellingPoints.map((point, idx) => (
+              <div key={idx} className="flex items-center space-x-2">
                 <CheckCircle2 className="w-4 h-4 text-[#00C6A6] shrink-0" />
-                <span className="truncate"><strong>{dest.name}:</strong> {dest.tagline || (dest.highlights && dest.highlights[0]) || `${dest.cities?.length || 0} Gateways`}</span>
+                <span className="truncate">{point}</span>
               </div>
             ))}
           </div>
@@ -118,11 +160,11 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
 
       {/* Interactive Destination Feature Showcase Cards */}
       <div>
-        <div className="flex items-center justify-between mb-4">
+        <div id="destinations-grid-heading" className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center space-x-2">
               <Globe2 className="w-5 h-5 text-[#00C6A6]" />
-              <span>Explore Our {totalDestinations} Core Destinations</span>
+              <span>Explore Our {totalDestinations} Core Destination Operations</span>
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               Select any destination to filter tours, regional hubs, and local DMC ground operations
@@ -206,9 +248,9 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
                   {/* Hub Preview */}
                   {dest.cities && (dest.cities || []).length > 0 && (
                     <div className="flex flex-wrap gap-1.5 pt-2">
-                      {(dest.cities || []).slice(0, 4).map((c) => (
+                      {(dest.cities || []).slice(0, 4).map((c, cIdx) => (
                         <span
-                          key={c.id}
+                          key={`dest-city-${dest.id || dest.slug}-${c.id || c.name}-${cIdx}`}
                           className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-medium"
                         >
                           {c.name}

@@ -14,6 +14,7 @@ import { RefundPolicyPage } from './pages/RefundPolicyPage';
 import { AccountPage } from './pages/AccountPage';
 import { VisaPage } from './pages/VisaPage';
 import { CustomPageView } from './pages/CustomPageView';
+import { AboutUsPage } from './pages/AboutUsPage';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { PricingCalculatorModal } from './components/PricingCalculatorModal';
 import { QuoteBuilderDrawer } from './components/QuoteBuilderDrawer';
@@ -29,6 +30,18 @@ import { BookingModal } from './components/BookingModal';
 import { BookingConfirmationModal } from './components/BookingConfirmationModal';
 import { BookingsManagementModal } from './components/BookingsManagementModal';
 import { B2BAgentPortal } from './components/B2BAgentPortal/B2BAgentPortal';
+import { BuyerFooter } from './components/BuyerPortal/BuyerFooter';
+import { QuoteBuilderAuthRequiredModal } from './components/QuoteBuilderAuthRequiredModal';
+import { PortalAccessRestrictedView } from './components/PortalAccessRestrictedView';
+import { 
+  parseRoute, 
+  getCurrentPath, 
+  validateRouteAccess, 
+  navigateTo, 
+  setIntendedPath, 
+  ParsedRoute 
+} from './services/portalRouter';
+import { canUserAccessCMS, canUserAccessQuoteBuilder } from './services/permissionEngine';
 import { 
   Globe2, 
   ShieldCheck, 
@@ -46,9 +59,13 @@ import {
 } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
-  const { isAuthenticated, role, openAuthModal } = useAuth();
+  const { isAuthenticated, role, user, openAuthModal } = useAuth();
   const { setIsQuoteDrawerOpen, loadSavedQuote, loadPackageIntoQuote } = useQuotation();
   const db = AppDatabase.getInstance();
+
+  // URL and Routing State
+  const [currentRoute, setCurrentRoute] = useState<ParsedRoute>(() => parseRoute(getCurrentPath()));
+  const [isQuoteAuthModalOpen, setIsQuoteAuthModalOpen] = useState(false);
 
   // Navigation State - Defaults to 'all' (All Destinations as Homepage)
   const [activeTab, setActiveTab] = useState<MainNavTab>('DESTINATIONS');
@@ -60,15 +77,75 @@ const MainAppContent: React.FC = () => {
   const [products, setProducts] = useState<Product[]>(() => db.getProducts());
   const [hotels, setHotels] = useState<Hotel[]>(() => db.getHotels());
   const [footerConfig, setFooterConfig] = useState<FooterConfig>(() => db.getFooterConfig());
-  const [isAgentPreviewingBuyerMode, setIsAgentPreviewingBuyerMode] = useState(false);
 
-  const isB2BAgent = isAuthenticated && (role === 'B2B_AGENT' || role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF');
+  // Synchronize route changes from browser navigation or programmatic navigateTo()
+  useEffect(() => {
+    const handleLocationChange = () => {
+      const parsed = parseRoute(getCurrentPath());
+      setCurrentRoute(parsed);
+
+      if (parsed.namespace === 'BUYER') {
+        if (parsed.subTab === 'destinations') {
+          setActiveTab('DESTINATIONS');
+          if (parsed.param) setSelectedDestinationSlug(parsed.param);
+        } else if (parsed.subTab === 'visas') {
+          setActiveTab('VISAS');
+        } else if (parsed.subTab === 'contact') {
+          setActiveTab('CONTACT');
+        } else if (parsed.subTab === 'about') {
+          setActiveTab('ABOUT');
+        } else if (parsed.subTab === 'blogs') {
+          setActiveTab('BLOGS');
+        } else if (parsed.subTab === 'dashboard') {
+          setActiveTab('DASHBOARD');
+        } else if (parsed.subTab === 'account') {
+          setActiveTab('ACCOUNT');
+        } else if (parsed.subTab === 'page' && parsed.param) {
+          setActiveTab('CUSTOM_PAGE');
+          setActiveCustomPageSlug(parsed.param);
+        } else if (parsed.subTab === 'terms') {
+          setActiveTab('TERMS');
+        } else if (parsed.subTab === 'privacy') {
+          setActiveTab('PRIVACY');
+        } else if (parsed.subTab === 'refund') {
+          setActiveTab('REFUND');
+        }
+      }
+    };
+
+    window.addEventListener('popstate', handleLocationChange);
+    window.addEventListener('hashchange', handleLocationChange);
+    window.addEventListener('theunbound_route_changed', handleLocationChange);
+
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('hashchange', handleLocationChange);
+      window.removeEventListener('theunbound_route_changed', handleLocationChange);
+    };
+  }, []);
+
+  // Show auth modal if unauthenticated user attempts to visit /b2b/quote-builder
+  useEffect(() => {
+    if (!isAuthenticated && currentRoute.pathname === '/b2b/quote-builder') {
+      setIsQuoteAuthModalOpen(true);
+    }
+  }, [isAuthenticated, currentRoute.pathname]);
+
+  const canAccessB2B = isAuthenticated && canUserAccessQuoteBuilder(user, 'B2B').allowed;
 
   const handleCustomizePackage = (pkg: any) => {
-    if (!isB2BAgent) return;
+    if (!isAuthenticated) {
+      setIntendedPath('/b2b/quote-builder');
+      setIsQuoteAuthModalOpen(true);
+      return;
+    }
+    const quoteAccess = canUserAccessQuoteBuilder(user, 'B2B');
+    if (!quoteAccess.allowed) {
+      setIsQuoteAuthModalOpen(true);
+      return;
+    }
     loadPackageIntoQuote(pkg);
-    setActiveTab('B2B_BUILDER');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    navigateTo('/b2b/quote-builder');
   };
 
   useEffect(() => {
@@ -101,12 +178,14 @@ const MainAppContent: React.FC = () => {
   const handleSelectDestination = (slug: string) => {
     setSelectedDestinationSlug(slug);
     setActiveTab('DESTINATIONS');
+    navigateTo(slug === 'all' ? '/' : `/destinations/${slug}`);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleSelectCustomPage = (slug: string) => {
     setActiveCustomPageSlug(slug);
     setActiveTab('CUSTOM_PAGE');
+    navigateTo(`/pages/${slug}`);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -127,22 +206,56 @@ const MainAppContent: React.FC = () => {
     setConfirmedBooking(booking);
   };
 
-  // Render dedicated B2B Agent Portal if authenticated as B2B Agent and not previewing Buyer mode
-  if (isAuthenticated && role === 'B2B_AGENT' && !isAgentPreviewingBuyerMode) {
+  // Route Access Validation
+  const accessCheck = validateRouteAccess(user, currentRoute.pathname);
+
+  // STRICT ROLE-BASED PORTAL SEGREGATION:
+  // 1. Authenticated B2B Travel Agent
+  if (isAuthenticated && (role === 'B2B_AGENT' || role === 'AGENT')) {
+    if (!accessCheck.allowed) {
+      return (
+        <PortalAccessRestrictedView
+          targetNamespace={currentRoute.namespace}
+          reason={accessCheck.reason || 'ACCESS_RESTRICTED'}
+          message={accessCheck.message}
+          onRedirect={() => navigateTo('/b2b')}
+        />
+      );
+    }
+
+    const b2bTab = (currentRoute.subTab === 'quote-builder' || currentRoute.subTab === 'create-quote')
+      ? 'create-quote'
+      : (currentRoute.subTab as any) || 'home';
+
     return (
       <B2BAgentPortal
         destinations={destinations}
         hotels={hotels}
         products={products}
         onOpenBookingModal={handleOpenQuotationBooking}
-        onSwitchToBuyerMode={() => setIsAgentPreviewingBuyerMode(true)}
+        initialTab={b2bTab}
+        onTabChange={(tab) => {
+          const path = tab === 'create-quote' ? '/b2b/quote-builder' : tab === 'home' ? '/b2b' : `/b2b/${tab}`;
+          navigateTo(path);
+        }}
       />
     );
   }
 
-  // Render dedicated Admin CMS if authenticated as Admin / Team Member / DMC Staff and not previewing Buyer mode
-  const isAdminUser = isAuthenticated && (role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF');
-  if (isAdminUser && !isAgentPreviewingBuyerMode) {
+  // 2. Authenticated Admin & Operations Staff
+  const hasCMSAccess = isAuthenticated && canUserAccessCMS(user);
+  if (isAuthenticated && hasCMSAccess) {
+    if (!accessCheck.allowed) {
+      return (
+        <PortalAccessRestrictedView
+          targetNamespace={currentRoute.namespace}
+          reason={accessCheck.reason || 'ACCESS_RESTRICTED'}
+          message={accessCheck.message}
+          onRedirect={() => navigateTo('/admin')}
+        />
+      );
+    }
+
     return (
       <AdminCMSHub
         destinations={destinations}
@@ -153,53 +266,30 @@ const MainAppContent: React.FC = () => {
         }}
         onLoadQuote={(q) => {
           loadSavedQuote(q);
-          setIsAgentPreviewingBuyerMode(true);
-          setActiveTab('B2B_BUILDER');
         }}
         onCustomizePackage={handleCustomizePackage}
-        onSwitchToBuyerMode={() => setIsAgentPreviewingBuyerMode(true)}
       />
     );
   }
 
+  // 3. Unauthenticated visitor or Buyer visiting restricted internal route (e.g. /admin or /b2b)
+  if (!accessCheck.allowed) {
+    if (accessCheck.reason === 'AUTH_REQUIRED' && currentRoute.pathname === '/b2b/quote-builder') {
+      // Keep Buyer layout in background and show QuoteBuilderAuthRequiredModal
+    } else {
+      return (
+        <PortalAccessRestrictedView
+          targetNamespace={currentRoute.namespace}
+          reason={accessCheck.reason || 'ACCESS_RESTRICTED'}
+          message={accessCheck.message}
+          onRedirect={() => navigateTo('/')}
+        />
+      );
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex flex-col font-sans selection:bg-[#00C6A6] selection:text-white">
-      {/* Agent & Admin Preview Mode Banners */}
-      {isAuthenticated && role === 'B2B_AGENT' && isAgentPreviewingBuyerMode && (
-        <div className="bg-slate-950 text-white px-4 py-2 text-xs flex items-center justify-between border-b border-[#00C6A6]/40 sticky top-0 z-50 shadow-md">
-          <div className="flex items-center space-x-2">
-            <span className="w-2 h-2 rounded-full bg-[#00E5C0] animate-ping" />
-            <span className="font-bold text-[#00E5C0]">Agent Preview Mode:</span>
-            <span className="text-slate-300">You are browsing the public Buyer Experience to inspect consumer pricing and itineraries.</span>
-          </div>
-          <button
-            onClick={() => setIsAgentPreviewingBuyerMode(false)}
-            className="px-3 py-1 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 rounded-lg text-xs font-black transition-colors cursor-pointer"
-          >
-            Return to Travel Agent Portal →
-          </button>
-        </div>
-      )}
-
-      {isAdminUser && isAgentPreviewingBuyerMode && (
-        <div className="bg-slate-950 text-white px-4 py-2 text-xs flex items-center justify-between border-b border-[#00C6A6]/40 sticky top-0 z-50 shadow-md">
-          <div className="flex items-center space-x-2">
-            <span className="w-2 h-2 rounded-full bg-[#00E5C0] animate-ping" />
-            <span className="font-bold text-[#00E5C0]">Admin Preview Mode:</span>
-            <span className="text-slate-300">You are browsing the public Buyer Experience. Live changes made in CMS reflect here.</span>
-          </div>
-          <button
-            onClick={() => {
-              setIsAgentPreviewingBuyerMode(false);
-              setActiveTab('ADMIN');
-            }}
-            className="px-3 py-1 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 rounded-lg text-xs font-black transition-colors cursor-pointer"
-          >
-            Return to Operations CMS →
-          </button>
-        </div>
-      )}
-
       {/* Dynamic Promotions Banner & Modals */}
       <PublicPromotionsBanner onNavigateDestination={handleSelectDestination} />
 
@@ -210,10 +300,22 @@ const MainAppContent: React.FC = () => {
         onSelectDestination={handleSelectDestination}
         activeTab={activeTab}
         onSelectTab={(tab) => {
-          if (tab === 'ADMIN') {
-            setIsAgentPreviewingBuyerMode(false);
-          }
           setActiveTab(tab);
+          const pathMap: Record<string, string> = {
+            DESTINATIONS: '/destinations',
+            VISAS: '/visas',
+            CONTACT: '/contact',
+            ABOUT: '/about',
+            BLOGS: '/blogs',
+            TERMS: '/terms',
+            PRIVACY: '/privacy',
+            REFUND: '/refund',
+            DASHBOARD: '/dashboard',
+            ACCOUNT: '/account',
+          };
+          if (pathMap[tab]) {
+            navigateTo(pathMap[tab]);
+          }
         }}
         onSelectCustomPage={handleSelectCustomPage}
         activeCustomPageSlug={activeCustomPageSlug}
@@ -235,21 +337,40 @@ const MainAppContent: React.FC = () => {
             }}
             onOpenCalculator={(p) => setCalculatorProduct(p)}
             onInstantBook={(p) => handleOpenProductBooking(p)}
-            onCustomizePackage={isB2BAgent ? handleCustomizePackage : undefined}
+            onCustomizePackage={handleCustomizePackage}
           />
         )}
 
         {activeTab === 'B2B_BUILDER' && (
-          <B2BQuotationBuilderPage
-            destinations={destinations}
-            products={products}
-            onViewProductDetails={(p) => {
-              setInspectingProductHidePrice(true);
-              setInspectingProduct(p);
-            }}
-            onOpenSpecs={() => setIsSpecsModalOpen(true)}
-            onBookQuotation={handleOpenQuotationBooking}
-          />
+          canAccessB2B ? (
+            <B2BQuotationBuilderPage
+              destinations={destinations}
+              products={products}
+              onViewProductDetails={(p) => {
+                setInspectingProductHidePrice(true);
+                setInspectingProduct(p);
+              }}
+              onOpenSpecs={() => setIsSpecsModalOpen(true)}
+              onBookQuotation={handleOpenQuotationBooking}
+              onBack={() => setActiveTab('DESTINATIONS')}
+            />
+          ) : (
+            <div className="max-w-xl mx-auto my-20 p-10 bg-white rounded-3xl border border-slate-200 shadow-sm text-center space-y-4">
+              <div className="w-14 h-14 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mx-auto">
+                <Lock className="w-7 h-7" />
+              </div>
+              <h2 className="text-xl font-bold text-slate-900">B2B Quote Builder Access Restricted</h2>
+              <p className="text-sm text-slate-500 leading-relaxed max-w-md mx-auto">
+                Your account does not have permission to access the B2B Wholesale Quotation Builder. If you need access, please contact your administrator.
+              </p>
+              <button 
+                onClick={() => setActiveTab('DESTINATIONS')} 
+                className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+              >
+                Return to Destinations
+              </button>
+            </div>
+          )
         )}
 
         {activeTab === 'DASHBOARD' && (
@@ -268,7 +389,19 @@ const MainAppContent: React.FC = () => {
         {activeTab === 'ACCOUNT' && (
           <AccountPage
             onBackToExplore={() => setActiveTab('DESTINATIONS')}
-            onNavigateToBuilder={() => setActiveTab('B2B_BUILDER')}
+            onNavigateToBuilder={() => {
+              if (!isAuthenticated) {
+                setIntendedPath('/b2b/quote-builder');
+                setIsQuoteAuthModalOpen(true);
+                return;
+              }
+              const quoteAccess = canUserAccessQuoteBuilder(user, 'B2B');
+              if (!quoteAccess.allowed) {
+                setIsQuoteAuthModalOpen(true);
+                return;
+              }
+              navigateTo('/b2b/quote-builder');
+            }}
           />
         )}
 
@@ -276,6 +409,42 @@ const MainAppContent: React.FC = () => {
           <CustomPageView
             pageSlug={activeCustomPageSlug}
             onBackToExplore={() => setActiveTab('DESTINATIONS')}
+            onNavigateToBuilder={() => {
+              if (!isAuthenticated) {
+                setIntendedPath('/b2b/quote-builder');
+                setIsQuoteAuthModalOpen(true);
+                return;
+              }
+              const quoteAccess = canUserAccessQuoteBuilder(user, 'B2B');
+              if (!quoteAccess.allowed) {
+                setIsQuoteAuthModalOpen(true);
+                return;
+              }
+              navigateTo('/b2b/quote-builder');
+            }}
+            onSelectDestination={handleSelectDestination}
+            onNavigateToContact={() => setActiveTab('CONTACT')}
+          />
+        )}
+
+        {activeTab === 'ABOUT' && (
+          <AboutUsPage
+            onBackToExplore={() => setActiveTab('DESTINATIONS')}
+            onNavigateToBuilder={() => {
+              if (!isAuthenticated) {
+                setIntendedPath('/b2b/quote-builder');
+                setIsQuoteAuthModalOpen(true);
+                return;
+              }
+              const quoteAccess = canUserAccessQuoteBuilder(user, 'B2B');
+              if (!quoteAccess.allowed) {
+                setIsQuoteAuthModalOpen(true);
+                return;
+              }
+              navigateTo('/b2b/quote-builder');
+            }}
+            onSelectDestination={handleSelectDestination}
+            onNavigateToContact={() => setActiveTab('CONTACT')}
           />
         )}
 
@@ -288,24 +457,6 @@ const MainAppContent: React.FC = () => {
           </div>
         )}
 
-        {activeTab === 'ADMIN' && (
-          <AdminCMSHub
-            destinations={destinations}
-            products={products}
-            onViewProduct={(p) => {
-              setInspectingProductHidePrice(false);
-              setInspectingProduct(p);
-            }}
-            onLoadQuote={(q) => {
-              loadSavedQuote(q);
-              setIsAgentPreviewingBuyerMode(true);
-              setActiveTab('B2B_BUILDER');
-            }}
-            onCustomizePackage={handleCustomizePackage}
-            onSwitchToBuyerMode={() => setIsAgentPreviewingBuyerMode(true)}
-          />
-        )}
-
         {activeTab === 'VISAS' && <VisaPage />}
         {activeTab === 'CONTACT' && <ContactUsPage />}
         {activeTab === 'TERMS' && <TermsOfPolicyPage />}
@@ -313,343 +464,29 @@ const MainAppContent: React.FC = () => {
         {activeTab === 'REFUND' && <RefundPolicyPage />}
       </main>
 
-      {/* Global Comprehensive DMC Footer */}
-      <footer className="bg-slate-950 text-white border-t border-slate-800/80 pt-14 pb-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
-          {/* Top Row: Brand & Dynamic Footer Columns */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-8 pb-10 border-b border-slate-800">
-            <div className="md:col-span-4 lg:col-span-3 space-y-3.5">
-              <div className="space-y-1">
-                <span className="text-2xl font-black tracking-tight text-white font-sans block lowercase">
-                  theunbound
-                </span>
-                <span className="text-[11px] tracking-wider text-[#00C6A6] font-bold block">
-                  Unbound Experiences India Pvt Ltd
-                </span>
-              </div>
-
-              <p className="text-xs text-slate-400 leading-relaxed max-w-sm">
-                Professional Destination Management Company and wholesale technology operator providing contracted B2B wholesale rates, instant booking SLAs, and bespoke ground operations across Japan, United Kingdom, and Europe.
-              </p>
-
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <button
-                  onClick={() => setIsSpecsModalOpen(true)}
-                  className="inline-flex items-center space-x-1.5 bg-slate-900 hover:bg-slate-800 text-[#00C6A6] border border-[#00C6A6]/30 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                >
-                  <BookOpen className="w-3.5 h-3.5" />
-                  <span>32-Point Architecture Spec</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Dynamic CMS-Managed Columns or Fallbacks */}
-            {(() => {
-              const liveColumns = (footerConfig?.columns || db.getFooterColumns() || [])
-                .filter(col => col.isVisible !== false && col.status !== 'INACTIVE')
-                .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
-
-              if (liveColumns.length > 0) {
-                return (
-                  <div className={`md:col-span-5 lg:col-span-6 grid grid-cols-2 ${liveColumns.length >= 3 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-6`}>
-                    {liveColumns.map((col) => {
-                      const activeLinks = (col.links || [])
-                        .filter(link => link.status !== 'INACTIVE')
-                        .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
-
-                      return (
-                        <div key={col.id} className="space-y-3">
-                          <div>
-                            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                              {col.title}
-                            </h4>
-                            {col.description && (
-                              <p className="text-[11px] text-slate-500 mt-0.5">{col.description}</p>
-                            )}
-                          </div>
-                          <ul className="space-y-2 text-xs text-slate-400">
-                            {activeLinks.map((link) => (
-                              <li key={link.id}>
-                                <button
-                                  onClick={() => {
-                                    if (link.openIn === '_blank') {
-                                      if (link.url.startsWith('http://') || link.url.startsWith('https://')) {
-                                        window.open(link.url, '_blank', 'noopener,noreferrer');
-                                      } else if (link.type === 'DESTINATION') {
-                                        window.open(`/#/destination/${link.targetId || 'all'}`, '_blank');
-                                      } else if (link.type === 'CUSTOM_PAGE') {
-                                        window.open(`/#/page/${link.targetId || ''}`, '_blank');
-                                      } else {
-                                        window.open(link.url, '_blank');
-                                      }
-                                      return;
-                                    }
-
-                                    if (link.type === 'DESTINATION') {
-                                      handleSelectDestination(link.targetId || 'all');
-                                    } else if (link.type === 'CUSTOM_PAGE') {
-                                      setActiveCustomPageSlug(link.targetId || 'about-theunbound');
-                                      setActiveTab('CUSTOM_PAGE');
-                                    } else if (link.type === 'SYSTEM_VIEW') {
-                                      if (link.targetId === 'visas') setActiveTab('VISAS');
-                                      else if (link.targetId === 'contact') setActiveTab('CONTACT');
-                                      else if (link.targetId === 'blogs') setActiveTab('BLOGS');
-                                      else if (link.targetId === 'terms') setActiveTab('TERMS');
-                                      else if (link.targetId === 'privacy') setActiveTab('PRIVACY');
-                                      else if (link.targetId === 'refund') setActiveTab('REFUND');
-                                      else if (link.targetId === 'b2b') setActiveTab('B2B_BUILDER');
-                                      else setActiveTab('DESTINATIONS');
-                                    } else if (link.url && (link.url.startsWith('mailto:') || link.url.startsWith('tel:'))) {
-                                      window.location.href = link.url;
-                                    } else if (link.url && (link.url.startsWith('http://') || link.url.startsWith('https://'))) {
-                                      window.open(link.url, '_blank', 'noopener,noreferrer');
-                                    } else if (link.url && link.url.startsWith('/')) {
-                                      const rawSlug = link.url.replace(/^\//, '');
-                                      const customPages = db.getCustomPages();
-                                      if (customPages.some(p => p.slug === rawSlug)) {
-                                        setActiveCustomPageSlug(rawSlug);
-                                        setActiveTab('CUSTOM_PAGE');
-                                      } else {
-                                        handleSelectDestination(rawSlug);
-                                      }
-                                    }
-                                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                                  }}
-                                  className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5 text-left group"
-                                >
-                                  <span>{link.label}</span>
-                                  {link.openIn === '_blank' && (
-                                    <ExternalLink className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity text-slate-500" />
-                                  )}
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              }
-
-              // Default standard columns fallback
-              return (
-                <div className="md:col-span-5 lg:col-span-6 grid grid-cols-2 sm:grid-cols-3 gap-6">
-                  <div className="space-y-3">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                      Core Destinations
-                    </h4>
-                    <ul className="space-y-2 text-xs text-slate-400">
-                      <li>
-                        <button 
-                          onClick={() => handleSelectDestination('all')}
-                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                        >
-                          <span>All Destinations (Global Overview)</span>
-                        </button>
-                      </li>
-                      <li>
-                        <button 
-                          onClick={() => handleSelectDestination('japan')}
-                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                        >
-                          <span>Japan (Tokyo, Kyoto, Osaka, Mt. Fuji)</span>
-                        </button>
-                      </li>
-                      <li>
-                        <button 
-                          onClick={() => handleSelectDestination('uk')}
-                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                        >
-                          <span>United Kingdom (London, Edinburgh, Highlands)</span>
-                        </button>
-                      </li>
-                      <li>
-                        <button 
-                          onClick={() => handleSelectDestination('europe')}
-                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                        >
-                          <span>Europe (Paris, Rome, Amalfi, Swiss Alps)</span>
-                        </button>
-                      </li>
-                    </ul>
-                  </div>
-
-                  <div className="space-y-3">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                      Consular & Visas
-                    </h4>
-                    <ul className="space-y-2 text-xs text-slate-400">
-                      <li>
-                        <button 
-                          onClick={() => {
-                            setActiveTab('VISAS');
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                          }}
-                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                        >
-                          <span>Japan Tourist E-Visa Checklist</span>
-                        </button>
-                      </li>
-                      <li>
-                        <button 
-                          onClick={() => {
-                            setActiveTab('VISAS');
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                          }}
-                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                        >
-                          <span>UK Standard Visitor Visa Checklist</span>
-                        </button>
-                      </li>
-                      <li>
-                        <button 
-                          onClick={() => {
-                            setActiveTab('VISAS');
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                          }}
-                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                        >
-                          <span>Schengen Short-Stay Visa Requirements</span>
-                        </button>
-                      </li>
-                    </ul>
-                  </div>
-
-                  <div className="space-y-3">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                      Trust & Operations
-                    </h4>
-                    <ul className="space-y-2 text-xs text-slate-400">
-                      <li>
-                        <button
-                          onClick={() => {
-                            setActiveTab('CONTACT');
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                          }}
-                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                        >
-                          <Mail className="w-3 h-3 text-[#00C6A6]" />
-                          <span>Contact Operations</span>
-                        </button>
-                      </li>
-                      <li>
-                        <button
-                          onClick={() => {
-                            setActiveTab('BLOGS');
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                          }}
-                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                        >
-                          <BookOpen className="w-3 h-3 text-[#00C6A6]" />
-                          <span>Editorial & Insights</span>
-                        </button>
-                      </li>
-                      <li>
-                        <button
-                          onClick={() => {
-                            setActiveTab('TERMS');
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                          }}
-                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                        >
-                          <FileText className="w-3 h-3 text-[#00C6A6]" />
-                          <span>Terms & Conditions</span>
-                        </button>
-                      </li>
-                      <li>
-                        <button
-                          onClick={() => {
-                            setActiveTab('PRIVACY');
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                          }}
-                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                        >
-                          <Lock className="w-3 h-3 text-[#00C6A6]" />
-                          <span>Privacy Policy</span>
-                        </button>
-                      </li>
-                      <li>
-                        <button
-                          onClick={() => {
-                            setActiveTab('REFUND');
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                          }}
-                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                        >
-                          <RotateCcw className="w-3 h-3 text-[#00C6A6]" />
-                          <span>Refund Policy</span>
-                        </button>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Ground Operations Contact Details */}
-            <div className="md:col-span-3 space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                Official Head Office
-              </h4>
-              <div className="space-y-2 text-xs text-slate-400">
-                <p className="flex items-start space-x-2">
-                  <MapPin className="w-4 h-4 text-[#00C6A6] shrink-0 mt-0.5" />
-                  <span className="leading-snug">
-                    A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi
-                  </span>
-                </p>
-                <p className="flex items-center space-x-2">
-                  <Mail className="w-4 h-4 text-[#00C6A6] shrink-0" />
-                  <a href="mailto:sales@theunbound.in" className="font-mono text-slate-300 hover:text-[#00C6A6] transition-colors">
-                    sales@theunbound.in
-                  </a>
-                </p>
-                <div className="flex flex-col space-y-1.5 pt-0.5">
-                  <p className="flex items-center space-x-2">
-                    <PhoneCall className="w-4 h-4 text-[#00C6A6] shrink-0" />
-                    <span className="text-slate-400">Landline:</span>
-                    <a href="tel:01141185542" className="font-mono font-semibold text-white hover:text-[#00C6A6] transition-colors">
-                      011-41185542
-                    </a>
-                  </p>
-                  <p className="flex items-center space-x-2">
-                    <Phone className="w-4 h-4 text-[#00C6A6] shrink-0" />
-                    <span className="text-slate-400">Mobile:</span>
-                    <a href="tel:+919811654959" className="font-mono text-slate-300 hover:text-[#00C6A6] transition-colors">
-                      +91-9811654959
-                    </a>
-                  </p>
-                  <p className="flex items-center space-x-2 pl-6">
-                    <a href="tel:+919718894959" className="font-mono text-slate-300 hover:text-[#00C6A6] transition-colors">
-                      +91-9718894959
-                    </a>
-                  </p>
-                </div>
-                <p className="text-[11px] text-slate-500 pt-1">
-                  24/7 Agent Emergency Dispatch
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Bottom Copyright & Status Bar */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
-            <div className="flex items-center space-x-2">
-              <span>© 2026 Unbound Experiences India Pvt Ltd. All rights reserved.</span>
-            </div>
-
-            <div className="flex items-center space-x-4">
-              <span className="flex items-center space-x-1.5 text-emerald-400">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>Ground Operations Network: Operational (24-48h SLA)</span>
-              </span>
-              <span>•</span>
-              <span>IATA / ASTA / PATA Verified</span>
-            </div>
-          </div>
-        </div>
-      </footer>
+      {/* Buyer Experience Footer */}
+      <BuyerFooter
+        onSelectDestination={handleSelectDestination}
+        onSelectTab={(tab) => {
+          setActiveTab(tab as any);
+          const pathMap: Record<string, string> = {
+            DESTINATIONS: '/destinations',
+            VISAS: '/visas',
+            CONTACT: '/contact',
+            ABOUT: '/about',
+            BLOGS: '/blogs',
+            TERMS: '/terms',
+            PRIVACY: '/privacy',
+            REFUND: '/refund',
+            DASHBOARD: '/dashboard',
+            ACCOUNT: '/account',
+          };
+          if (pathMap[tab]) {
+            navigateTo(pathMap[tab]);
+          }
+        }}
+        onSelectCustomPage={handleSelectCustomPage}
+      />
 
       {/* Global Overlays & Modals */}
       {inspectingProduct && (
@@ -706,8 +543,29 @@ const MainAppContent: React.FC = () => {
         onClose={() => setIsBookingsHistoryOpen(false)}
       />
 
-      <QuoteBuilderDrawer onBookQuote={handleOpenQuotationBooking} />
+      <QuoteBuilderDrawer onBookQuote={(booking: Booking) => setConfirmedBooking(booking)} />
       <AuthModal />
+
+      {/* Quote Builder Authentication Required Modal */}
+      <QuoteBuilderAuthRequiredModal
+        isOpen={isQuoteAuthModalOpen}
+        onClose={() => {
+          setIsQuoteAuthModalOpen(false);
+          if (currentRoute.pathname.startsWith('/b2b')) {
+            navigateTo('/');
+          }
+        }}
+        onOpenLogin={() => {
+          setIsQuoteAuthModalOpen(false);
+          setIntendedPath('/b2b/quote-builder');
+          openAuthModal('Please log in to access the B2B Wholesale Quotation Builder.');
+        }}
+        onOpenRegister={() => {
+          setIsQuoteAuthModalOpen(false);
+          setIntendedPath('/b2b/quote-builder');
+          openAuthModal('Create an account to apply for B2B Wholesale Quotation Builder access.');
+        }}
+      />
 
       {isSpecsModalOpen && (
         <SpecificationModal onClose={() => setIsSpecsModalOpen(false)} />

@@ -635,35 +635,24 @@ export const AddProductToQuoteModal: React.FC<AddProductToQuoteModalProps> = ({
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
-                  <span className="text-[10px] text-slate-400 block">Wholesale Net Tariff</span>
-                  <span className="text-xs font-bold text-slate-200 font-mono">
-                    {formatCurrency(calculation.totalNetCost, currency)}
-                  </span>
-                  <span className="text-[9px] text-amber-400 flex items-center space-x-0.5 mt-0.5">
-                    <Lock className="w-2.5 h-2.5" />
-                    <span>Confidential B2B</span>
-                  </span>
-                </div>
-
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
                   <span className="text-[10px] text-slate-400 block">Per Person Rate</span>
-                  <span className="text-xs font-bold text-slate-200 font-mono">
+                  <span className="text-sm font-bold text-slate-200 font-mono">
                     {formatCurrency(calculation.pricePerPerson, currency)}
                   </span>
                   <span className="text-[9px] text-slate-400">
-                    Based on {totalPax} Pax
+                    Based on {totalPax} Pax • Taxes included
                   </span>
                 </div>
 
-                <div className="bg-teal-950/60 p-2.5 rounded-xl border border-teal-600/40 col-span-2 sm:col-span-1">
-                  <span className="text-[10px] text-teal-300 font-bold block">Quotation Selling Price</span>
-                  <span className="text-base font-black text-[#00E5C0] font-mono">
+                <div className="bg-teal-950/60 p-2.5 rounded-xl border border-teal-600/40">
+                  <span className="text-[10px] text-teal-300 font-bold block">Final Selling Price</span>
+                  <span className="text-lg font-black text-[#00E5C0] font-mono">
                     {formatCurrency(calculation.finalTotalSellingPrice, currency)}
                   </span>
                   <span className="text-[9px] text-teal-400 block">
-                    ✓ Clean Final Price
+                    ✓ Clean Final Price • All Inclusive
                   </span>
                 </div>
               </div>

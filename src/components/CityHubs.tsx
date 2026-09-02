@@ -64,7 +64,16 @@ export const CityHubs: React.FC<CityHubsProps> = ({
           status: 'ACTIVE'
         }));
 
-    return rawList
+    // Deduplicate by hub id / name
+    const seenIds = new Set<string>();
+    const uniqueRawList = rawList.filter(h => {
+      const key = (h.id || h.name || '').trim().toLowerCase();
+      if (!key || seenIds.has(key)) return false;
+      seenIds.add(key);
+      return true;
+    });
+
+    return uniqueRawList
       .map(hub => {
         const metrics = countingEngine.getHubMetrics(hub.id || hub.name);
         return {
@@ -79,9 +88,9 @@ export const CityHubs: React.FC<CityHubsProps> = ({
   // Extract unique sub-regions
   const subRegions = useMemo(() => {
     const map = new Map<string, { id: string; name: string; count: number }>();
-    normalizedHubs.forEach(h => {
+    normalizedHubs.forEach((h, idx) => {
       const regName = h.regionName || 'General Region';
-      const regId = h.regionId || regName;
+      const regId = h.regionId || `subreg-${regName.toLowerCase().replace(/\s+/g, '-')}-${idx}`;
       if (!map.has(regName)) {
         map.set(regName, { id: regId, name: regName, count: 0 });
       }
@@ -211,9 +220,9 @@ export const CityHubs: React.FC<CityHubsProps> = ({
           >
             All Hubs ({normalizedHubs.length})
           </button>
-          {subRegions.map(sr => (
+          {subRegions.map((sr, srIdx) => (
             <button
-              key={sr.id}
+              key={`subreg-btn-${sr.id || sr.name}-${srIdx}`}
               type="button"
               onClick={() => setSelectedSubRegion(sr.name)}
               className={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
@@ -231,14 +240,14 @@ export const CityHubs: React.FC<CityHubsProps> = ({
       {/* 3. Hubs Grid: Sequence Mode */}
       {viewMode === 'sequence' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 pt-3">
-          {displayedHubs.map((hub) => {
+          {displayedHubs.map((hub, hubIdx) => {
             const isSelected = selectedCity.toLowerCase() === hub.name.toLowerCase() || 
                                selectedCity.toLowerCase() === hub.id.toLowerCase() ||
                                (hub.name.includes(selectedCity) && selectedCity !== '');
 
             return (
               <div
-                key={hub.id}
+                key={`hub-seq-${hub.id || hub.name}-${hubIdx}`}
                 id={`hub-card-${hub.id}`}
                 className={`group relative rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 border bg-white flex flex-col ${
                   isSelected
@@ -341,7 +350,7 @@ export const CityHubs: React.FC<CityHubsProps> = ({
         /* 4. Hubs Grid: Grouped by Sub-Region Mode */
         <div className="space-y-6 pt-3">
           {groupedHubs.map((group, gIdx) => (
-            <div key={gIdx} className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200">
+            <div key={`group-sec-${group.regionId || group.regionName}-${gIdx}`} className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center space-x-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#00C6A6]" />
@@ -355,12 +364,12 @@ export const CityHubs: React.FC<CityHubsProps> = ({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5">
-                {(group.hubs || []).map(hub => {
+                {(group.hubs || []).map((hub, hIdx) => {
                   const isSelected = selectedCity.toLowerCase() === hub.name.toLowerCase() || 
                                      selectedCity.toLowerCase() === hub.id.toLowerCase();
                   return (
                     <div
-                      key={hub.id}
+                      key={`grouped-hub-${hub.id || hub.name}-${hIdx}`}
                       onClick={() => onSelectCity(isSelected ? '' : hub.name)}
                       className={`p-3 rounded-xl border bg-white cursor-pointer transition-all ${
                         isSelected 

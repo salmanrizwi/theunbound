@@ -2,13 +2,35 @@ import React from 'react';
 import { CustomPage } from '../types';
 import { AppDatabase } from '../services/db';
 import { Compass, Calendar, ArrowLeft, Share2, Check } from 'lucide-react';
+import { AboutUsPage } from './AboutUsPage';
 
 interface CustomPageViewProps {
   pageSlug: string;
   onBackToExplore: () => void;
+  onNavigateToBuilder?: () => void;
+  onSelectDestination?: (slug: string) => void;
+  onNavigateToContact?: () => void;
 }
 
-export const CustomPageView: React.FC<CustomPageViewProps> = ({ pageSlug, onBackToExplore }) => {
+export const CustomPageView: React.FC<CustomPageViewProps> = ({ 
+  pageSlug, 
+  onBackToExplore,
+  onNavigateToBuilder,
+  onSelectDestination,
+  onNavigateToContact
+}) => {
+  // If viewing about theunbound, show the dedicated rich About Us page
+  if (pageSlug === 'about-theunbound' || pageSlug === 'about' || pageSlug === 'about-us') {
+    return (
+      <AboutUsPage
+        onBackToExplore={onBackToExplore}
+        onNavigateToBuilder={onNavigateToBuilder}
+        onSelectDestination={onSelectDestination}
+        onNavigateToContact={onNavigateToContact}
+      />
+    );
+  }
+
   const db = AppDatabase.getInstance();
   const page = db.getCustomPageBySlug(pageSlug);
   const [copied, setCopied] = React.useState(false);

@@ -163,11 +163,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             <div>
               <div className="flex items-center space-x-1.5 mb-0.5">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  {deliveredInfo.userTier === 'B2B_AGENT' ? 'Delivered B2B Rate' : 'Delivered Selling Rate'}
+                  Final Selling Price
                 </span>
-                {deliveredInfo.isCustomMargin && (
+                {(role === 'ADMIN' || role === 'DMC_STAFF') && deliveredInfo.isCustomMargin && (
                   <span className="bg-[#00C6A6]/15 text-[#008f77] text-[9px] font-bold px-1.5 py-0.5 rounded">
-                    Custom {deliveredInfo.appliedMarkupPercent}%
+                    Admin {deliveredInfo.appliedMarkupPercent}%
                   </span>
                 )}
               </div>

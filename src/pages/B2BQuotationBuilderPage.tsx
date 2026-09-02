@@ -8,6 +8,7 @@ export interface B2BQuotationBuilderPageProps {
   onViewProductDetails: (product: Product) => void;
   onOpenSpecs?: () => void;
   onBookQuotation?: (quotation: Quotation) => void;
+  onBack?: () => void;
 }
 
 export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = ({
@@ -15,7 +16,8 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
   products,
   onViewProductDetails,
   onOpenSpecs,
-  onBookQuotation
+  onBookQuotation,
+  onBack
 }) => {
   return (
     <UnifiedB2BQuotationBuilder
@@ -25,6 +27,7 @@ export const B2BQuotationBuilderPage: React.FC<B2BQuotationBuilderPageProps> = (
       onOpenSpecs={onOpenSpecs}
       onBookQuotation={onBookQuotation}
       onConvertToBooking={onBookQuotation}
+      onBackToDashboard={onBack}
     />
   );
 };

@@ -21,8 +21,9 @@ import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { CurrencyCode, DestinationRegion, Destination, SUPPORTED_CURRENCIES, MenuItemConfig } from '../types';
 import { AppDatabase } from '../services/db';
+import { canUserAccessCMS, canUserAccessQuoteBuilder } from '../services/permissionEngine';
 
-export type MainNavTab = 'DESTINATIONS' | 'VISAS' | 'B2B_BUILDER' | 'DASHBOARD' | 'ADMIN' | 'ACCOUNT' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND' | 'CUSTOM_PAGE';
+export type MainNavTab = 'DESTINATIONS' | 'VISAS' | 'B2B_BUILDER' | 'DASHBOARD' | 'ADMIN' | 'ACCOUNT' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND' | 'CUSTOM_PAGE' | 'ABOUT';
 
 interface NavbarProps {
   destinations?: Destination[];
@@ -71,6 +72,9 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const currentActiveDest = selectedDestinationSlug || activeDestination || 'japan';
 
+  const canAccessB2BQuotes = canUserAccessQuoteBuilder(user, 'B2B').allowed;
+  const canAccessAdminCMS = canUserAccessCMS(user);
+
   // Visible menu items ordered by displayOrder
   const visibleMenuItems = useMemo(() => {
     return cmsMenuItems.filter(m => m.isVisible !== false).sort((a, b) => a.displayOrder - b.displayOrder);
@@ -109,6 +113,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       } else if (target === 'contact') {
         if (onSelectTab) onSelectTab('CONTACT');
       } else if (target === 'about') {
+        if (onSelectTab) onSelectTab('ABOUT');
         if (onSelectCustomPage) onSelectCustomPage('about-theunbound');
       }
     }
@@ -139,6 +144,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>Platform Specs</span>
           </button>
           <span className="text-slate-700 hidden md:inline">|</span>
+          {canAccessAdminCMS && onOpenAdmin && (
+            <button
+              id="top-nav-admin-cms"
+              onClick={onOpenAdmin}
+              className="flex items-center space-x-1 px-2.5 py-0.5 rounded bg-[#00C6A6]/20 hover:bg-[#00C6A6]/30 border border-[#00C6A6]/40 text-[#00E5C0] text-xs font-bold transition-colors cursor-pointer"
+              title="Open Admin CMS Operations Engine"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-[#00E5C0]" />
+              <span>Admin CMS</span>
+            </button>
+          )}
           <div className="flex items-center space-x-2 text-slate-400 text-xs">
             <Globe2 className="w-3.5 h-3.5 text-[#00C6A6]" />
             <span className="hidden sm:inline">Currency:</span>
@@ -209,6 +225,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                     isActive = activeTab === 'B2B_BUILDER';
                   } else if (item.targetId === 'contact') {
                     isActive = activeTab === 'CONTACT';
+                  } else if (item.targetId === 'about') {
+                    isActive = activeTab === 'ABOUT' || (activeTab === 'CUSTOM_PAGE' && activeCustomPageSlug === 'about-theunbound');
                   } else {
                     isActive = activeTab === 'DESTINATIONS' && currentActiveDest === item.targetId;
                   }
@@ -296,18 +314,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                       </button>
 
                       <button
-                        id="user-menu-b2b-builder"
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          if (onSelectTab) onSelectTab('B2B_BUILDER');
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-slate-800 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer font-medium"
-                      >
-                        <Briefcase className="w-4 h-4 text-[#00C6A6]" />
-                        <span>B2B Quote Builder</span>
-                      </button>
-
-                      <button
                         id="user-menu-bookings"
                         onClick={() => {
                           setIsUserMenuOpen(false);
@@ -317,19 +323,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                       >
                         <Calendar className="w-4 h-4 text-[#00C6A6]" />
                         <span>Bookings</span>
-                      </button>
-
-                      <button
-                        id="user-menu-admin"
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          if (onSelectTab) onSelectTab('ADMIN');
-                          if (onOpenAdmin) onOpenAdmin();
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-slate-800 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer font-medium"
-                      >
-                        <ShieldCheck className="w-4 h-4 text-[#00C6A6]" />
-                        <span>Admin Hub</span>
                       </button>
 
                       <button
@@ -344,6 +337,20 @@ export const Navbar: React.FC<NavbarProps> = ({
                         <Layers className="w-4 h-4 text-slate-400" />
                         <span>Quotes & Dashboard</span>
                       </button>
+
+                      {canAccessAdminCMS && onOpenAdmin && (
+                        <button
+                          id="user-menu-admin-cms"
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            onOpenAdmin();
+                          }}
+                          className="w-full px-4 py-2 text-left text-sm text-emerald-700 hover:bg-emerald-50 flex items-center space-x-2 cursor-pointer font-bold border-b border-slate-100"
+                        >
+                          <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                          <span>Admin CMS Operations</span>
+                        </button>
+                      )}
 
                       <button
                         id="user-menu-specs"
@@ -451,19 +458,6 @@ export const Navbar: React.FC<NavbarProps> = ({
 
                     <button
                       onClick={() => {
-                        onSelectTab('B2B_BUILDER');
-                        setIsMobileNavOpen(false);
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-slate-800 hover:bg-slate-50 flex items-center justify-between"
-                    >
-                      <span className="flex items-center space-x-2">
-                        <Briefcase className="w-4 h-4 text-[#00C6A6]" />
-                        <span>B2B Quote Builder</span>
-                      </span>
-                    </button>
-
-                    <button
-                      onClick={() => {
                         if (onOpenBookings) onOpenBookings();
                         setIsMobileNavOpen(false);
                       }}
@@ -472,20 +466,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                       <span className="flex items-center space-x-2">
                         <Calendar className="w-4 h-4 text-[#00C6A6]" />
                         <span>Bookings</span>
-                      </span>
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        onSelectTab('ADMIN');
-                        if (onOpenAdmin) onOpenAdmin();
-                        setIsMobileNavOpen(false);
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-slate-800 hover:bg-slate-50 flex items-center justify-between"
-                    >
-                      <span className="flex items-center space-x-2">
-                        <ShieldCheck className="w-4 h-4 text-[#00C6A6]" />
-                        <span>Admin Hub</span>
                       </span>
                     </button>
 
@@ -502,6 +482,20 @@ export const Navbar: React.FC<NavbarProps> = ({
                         <span>Quotes & Dashboard</span>
                       </span>
                     </button>
+                    {canAccessAdminCMS && onOpenAdmin && (
+                      <button
+                        onClick={() => {
+                          onOpenAdmin();
+                          setIsMobileNavOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-emerald-700 hover:bg-emerald-50 flex items-center justify-between"
+                      >
+                        <span className="flex items-center space-x-2">
+                          <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                          <span>Admin CMS Operations</span>
+                        </span>
+                      </button>
+                    )}
                   </>
                 )}
               </div>

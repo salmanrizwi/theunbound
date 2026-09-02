@@ -5,6 +5,26 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
   heroSubheading: 'Contracted wholesale rates, verified licensed bilingual guides, executive transfers, and 24–48h SLA booking operations across Japan, the UK, Europe, Southeast Asia, and the Middle East.',
   heroBadgeText: 'UNBOUND EXPERIENCES INDIA PVT LTD • OPERATIONS DESK',
   heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=2000&auto=format&fit=crop',
+  heroImageAlt: 'TheUnbound Premier Ground Operations & Wholesale DMC Network',
+  heroOverlayOpacity: 0.65,
+  primaryCtaText: 'Explore Contracted Inventory',
+  primaryCtaAction: 'EXPLORE_PRODUCTS',
+  showPrimaryCta: true,
+  secondaryCtaText: 'View Destination Gateways',
+  secondaryCtaAction: 'DESTINATION_FILTER',
+  showSecondaryCta: true,
+  heroTrustBadges: [
+    { label: 'Destinations', subtext: '7 Core Global Regions', icon: 'Globe2' },
+    { label: 'City Hubs', subtext: '24+ Direct Gateways', icon: 'Building2' },
+    { label: 'Ground Logistics', subtext: '100% Direct Contracts', icon: 'ShieldCheck' },
+    { label: 'Operations SLA', subtext: '24–48h Booking Desk', icon: 'Clock' }
+  ],
+  heroSellingPoints: [
+    'Direct B2B net contracted rates with verified ground suppliers',
+    'Dedicated on-ground operations desks in Tokyo, London, Paris & Bangkok',
+    'Verified licensed bilingual private guides & executive chauffeur fleets',
+    'Instant B2B white-label client quotation generation in multi-currency'
+  ],
   featuredDestinationIds: ['japan', 'united-kingdom', 'western-europe', 'southeast-asia', 'middle-east', 'usa', 'australia'],
   destinationOrdering: ['japan', 'united-kingdom', 'western-europe', 'southeast-asia', 'middle-east', 'usa', 'australia'],
   

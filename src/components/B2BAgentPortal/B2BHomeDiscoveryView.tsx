@@ -608,7 +608,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                                     }`}
                                   >
                                     {inQuote ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
-                                    <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Quote'}</span>
+                                    <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Cart'}</span>
                                   </button>
                                   <button
                                     onClick={() => onViewProductDetails ? onViewProductDetails(p) : onNavigate('products')}
@@ -653,7 +653,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                                     }`}
                                   >
                                     {inQuote ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
-                                    <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Quote'}</span>
+                                    <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Cart'}</span>
                                   </button>
                                   <button
                                     onClick={() => onViewHotelDetails ? onViewHotelDetails(h) : onNavigate('hotels')}
@@ -697,7 +697,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                                     }`}
                                   >
                                     {inQuote ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
-                                    <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Quote'}</span>
+                                    <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Cart'}</span>
                                   </button>
                                   <button
                                     onClick={() => onNavigate('visa')}
@@ -984,7 +984,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                         }`}
                       >
                         {inQuote ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-                        <span>{inQuote ? 'In Cart (Edit Stay)' : 'Configure & Add to Quote'}</span>
+                        <span>{inQuote ? 'In Cart (Edit Stay)' : 'Configure & Add to Cart'}</span>
                       </button>
 
                       <button

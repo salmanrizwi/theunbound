@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppDatabase } from '../../services/db';
 import { HomepageConfig, Destination, HomepageFAQItem } from '../../types';
+import { INITIAL_HOMEPAGE_CONFIG } from '../../data/initialHomepage';
 import { useAuth } from '../../context/AuthContext';
 import { 
   LayoutTemplate, 
@@ -23,7 +24,13 @@ import {
   Search,
   Check,
   Building2,
-  MessageSquare
+  MessageSquare,
+  RotateCcw,
+  Compass,
+  ShieldCheck,
+  Clock,
+  Globe2,
+  ExternalLink
 } from 'lucide-react';
 
 interface HomepageManagerProps {
@@ -49,6 +56,16 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
 
   // Destination Search for adding to ordering
   const [destSearchQuery, setDestSearchQuery] = useState('');
+  const [sellingPointInput, setSellingPointInput] = useState('');
+
+  const HERO_IMAGE_PRESETS = [
+    { name: 'Tokyo Operations (Modern)', url: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=2000&auto=format&fit=crop' },
+    { name: 'Global DMC Portfolio (Skyline)', url: 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=2000&auto=format&fit=crop' },
+    { name: 'London & UK Heritage', url: 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?q=80&w=2000&auto=format&fit=crop' },
+    { name: 'Western Europe & Alps', url: 'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?q=80&w=2000&auto=format&fit=crop' },
+    { name: 'Southeast Asia Hubs', url: 'https://images.unsplash.com/photo-1508009603885-50cf7c579365?q=80&w=2000&auto=format&fit=crop' },
+    { name: 'Middle East Executive', url: 'https://images.unsplash.com/photo-1512453979798-5ea266f8880c?q=80&w=2000&auto=format&fit=crop' }
+  ];
 
   useEffect(() => {
     return db.subscribe(() => {
@@ -362,117 +379,517 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
 
       {/* SUB TAB 2: HERO BANNER & CTA */}
       {activeSubTab === 'HERO' && (
-        <form onSubmit={handleSave} className="space-y-6">
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
-            <div className="flex items-center space-x-3 pb-4 border-b border-slate-100">
-              <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center justify-center font-bold">
-                <Sliders className="w-5 h-5 text-[#008972]" />
+        <div className="space-y-6">
+          {/* Header Action Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+            <div className="flex items-center space-x-3">
+              <div className="w-9 h-9 rounded-xl bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
+                <Sliders className="w-5 h-5 text-[#00C6A6]" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">Hero Section Content & Visuals</h3>
-                <p className="text-xs text-slate-500">Customize the top headline, operational badge, and high-resolution backdrop image.</p>
+                <h3 className="text-sm font-bold text-slate-900">B2B Destination Management Company Hero Suite</h3>
+                <p className="text-xs text-slate-500">Live preview and granular control for the All Destinations hero banner.</p>
               </div>
             </div>
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('Reset all Hero settings to standard TheUnbound B2B DMC defaults?')) {
+                    const restored = {
+                      ...config,
+                      heroBadgeText: INITIAL_HOMEPAGE_CONFIG.heroBadgeText,
+                      heroHeading: INITIAL_HOMEPAGE_CONFIG.heroHeading,
+                      heroSubheading: INITIAL_HOMEPAGE_CONFIG.heroSubheading,
+                      heroImage: INITIAL_HOMEPAGE_CONFIG.heroImage,
+                      heroImageAlt: INITIAL_HOMEPAGE_CONFIG.heroImageAlt,
+                      heroOverlayOpacity: INITIAL_HOMEPAGE_CONFIG.heroOverlayOpacity,
+                      showPrimaryCta: INITIAL_HOMEPAGE_CONFIG.showPrimaryCta,
+                      primaryCtaText: INITIAL_HOMEPAGE_CONFIG.primaryCtaText,
+                      showSecondaryCta: INITIAL_HOMEPAGE_CONFIG.showSecondaryCta,
+                      secondaryCtaText: INITIAL_HOMEPAGE_CONFIG.secondaryCtaText,
+                      heroTrustBadges: INITIAL_HOMEPAGE_CONFIG.heroTrustBadges,
+                      heroSellingPoints: INITIAL_HOMEPAGE_CONFIG.heroSellingPoints
+                    };
+                    setConfig(restored);
+                    db.updateHomepageConfig(restored, user);
+                    setSavedSuccess(true);
+                    setTimeout(() => setSavedSuccess(false), 3000);
+                  }
+                }}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 cursor-pointer transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                <span>Reset to DMC Defaults</span>
+              </button>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Hero Operational Badge Text
-                </label>
-                <input
-                  type="text"
-                  value={config.heroBadgeText}
-                  onChange={e => setConfig({ ...config, heroBadgeText: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-xs font-bold"
-                  placeholder="e.g. UNBOUND EXPERIENCES INDIA PVT LTD • OPERATIONS DESK"
-                />
+              <button
+                type="button"
+                onClick={() => handleSave()}
+                className="inline-flex items-center space-x-1.5 bg-[#008972] hover:bg-[#00C6A6] text-white hover:text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Save Changes</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Interactive Live Preview Box */}
+          <div className="bg-slate-900 rounded-3xl p-4 sm:p-6 text-white overflow-hidden shadow-lg border border-slate-800">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-4">
+              <div className="flex items-center space-x-2 text-xs font-semibold text-slate-400">
+                <Eye className="w-4 h-4 text-[#00C6A6]" />
+                <span className="uppercase tracking-wider">Live Storefront Preview</span>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-900/60 text-[#00C6A6] border border-teal-700/50">
+                Overlay: {Math.round((config.heroOverlayOpacity ?? 0.65) * 100)}%
+              </span>
+            </div>
+
+            <div className="relative rounded-2xl overflow-hidden min-h-[300px] flex flex-col justify-between p-6 sm:p-8 bg-slate-950 border border-slate-800">
+              <img
+                src={config.heroImage || INITIAL_HOMEPAGE_CONFIG.heroImage}
+                alt={config.heroImageAlt || 'Hero'}
+                className="absolute inset-0 w-full h-full object-cover object-center"
+              />
+              <div
+                className="absolute inset-0 bg-slate-950 transition-opacity"
+                style={{ opacity: config.heroOverlayOpacity ?? 0.65 }}
+              />
+
+              {/* Top Row: Eyebrow Badge */}
+              <div className="relative z-10">
+                <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-[11px] font-bold tracking-wider uppercase bg-teal-500/20 text-[#00C6A6] border border-teal-400/30 backdrop-blur-md">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>{config.heroBadgeText || 'UNBOUND EXPERIENCES • B2B GROUND PARTNER'}</span>
+                </span>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Main Hero Heading (H1)
-                </label>
-                <input
-                  type="text"
-                  value={config.heroHeading}
-                  onChange={e => setConfig({ ...config, heroHeading: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-sm font-bold"
-                />
+              {/* Middle: Title & Subtitle */}
+              <div className="relative z-10 max-w-2xl py-4 space-y-2">
+                <h1 className="text-xl sm:text-2xl lg:text-3xl font-black text-white tracking-tight leading-tight">
+                  {config.heroHeading || 'Direct DMC Ground Partner & Destination Wholesaler'}
+                </h1>
+                <p className="text-xs sm:text-sm text-slate-300 line-clamp-2">
+                  {config.heroSubheading || 'Direct contracting, guaranteed SLAs, and wholesale inventory across premier global destinations.'}
+                </p>
+
+                {/* Preview CTA Buttons */}
+                <div className="flex flex-wrap items-center gap-2 pt-2">
+                  {config.showPrimaryCta !== false && (
+                    <div className="px-4 py-2 rounded-xl bg-[#00C6A6] text-slate-950 text-xs font-bold shadow-sm">
+                      {config.primaryCtaText || 'Explore Curated Destinations'}
+                    </div>
+                  )}
+                  {config.showSecondaryCta !== false && (
+                    <div className="px-4 py-2 rounded-xl bg-white/10 text-white text-xs font-semibold border border-white/20 backdrop-blur-sm">
+                      {config.secondaryCtaText || 'Operations Desk'}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Subheading / Operational SLA Description
-                </label>
-                <textarea
-                  rows={3}
-                  value={config.heroSubheading}
-                  onChange={e => setConfig({ ...config, heroSubheading: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Hero Background Image URL (Unsplash / CDN)
-                </label>
-                <input
-                  type="url"
-                  value={config.heroImage}
-                  onChange={e => setConfig({ ...config, heroImage: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-xs"
-                />
-                {config.heroImage && (
-                  <div className="mt-2 h-32 rounded-xl overflow-hidden border border-slate-200">
-                    <img src={config.heroImage} alt="Hero Preview" className="w-full h-full object-cover" />
+              {/* Bottom: Trust Stats Strip */}
+              <div className="relative z-10 pt-4 border-t border-white/10 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {(config.heroTrustBadges && config.heroTrustBadges.length > 0
+                  ? config.heroTrustBadges
+                  : (INITIAL_HOMEPAGE_CONFIG.heroTrustBadges || [])
+                ).slice(0, 4).map((badge, idx) => (
+                  <div key={idx} className="bg-slate-900/60 backdrop-blur-md rounded-lg p-2 border border-white/10">
+                    <span className="text-[10px] text-slate-400 block">{badge.label}</span>
+                    <span className="text-xs font-bold text-[#00C6A6] block">{badge.subtext}</span>
                   </div>
-                )}
+                ))}
               </div>
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
-            <div className="flex items-center space-x-3 pb-4 border-b border-slate-100">
-              <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center font-bold">
-                <Tag className="w-5 h-5" />
+          <form onSubmit={handleSave} className="space-y-6">
+            {/* 1. Core Content & Typography */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+              <div className="flex items-center space-x-3 pb-3 border-b border-slate-100">
+                <div className="w-8 h-8 rounded-lg bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
+                  <Sliders className="w-4 h-4 text-[#00C6A6]" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Hero Headlines & DMC Positioning</h4>
+                  <p className="text-xs text-slate-500">Configure the top badge, main title, and operational description.</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Bottom Conversion CTA Banner</h3>
-                <p className="text-xs text-slate-500">Customize the final call-to-action banner driving travel agents to the Quotation Studio.</p>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Operational Eyebrow Badge
+                  </label>
+                  <input
+                    type="text"
+                    value={config.heroBadgeText || ''}
+                    onChange={e => setConfig({ ...config, heroBadgeText: e.target.value })}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-xs font-bold"
+                    placeholder="e.g. THEUNBOUND • DIRECT B2B DESTINATION MANAGEMENT COMPANY"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Main Hero Title (H1)
+                  </label>
+                  <input
+                    type="text"
+                    value={config.heroHeading || ''}
+                    onChange={e => setConfig({ ...config, heroHeading: e.target.value })}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-sm font-bold"
+                    placeholder="e.g. Direct DMC Ground Partner & Destination Wholesaler"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Operational Subheading / Value Proposition
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={config.heroSubheading || ''}
+                    onChange={e => setConfig({ ...config, heroSubheading: e.target.value })}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-xs"
+                    placeholder="Describe ground operations, SLAs, direct contracts, and trade booking support..."
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">CTA Headline</label>
-                <input
-                  type="text"
-                  value={config.ctaTitle || ''}
-                  onChange={e => setConfig({ ...config, ctaTitle: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold"
-                />
+            {/* 2. Hero Background Image & Visual Controls */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+              <div className="flex items-center space-x-3 pb-3 border-b border-slate-100">
+                <div className="w-8 h-8 rounded-lg bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
+                  <ImageIcon className="w-4 h-4 text-[#00C6A6]" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Imagery, Overlay Contrast & SEO</h4>
+                  <p className="text-xs text-slate-500">Backdrop resolution, accessibility alt text, and dark scrim opacity.</p>
+                </div>
               </div>
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">CTA Subtitle</label>
-                <input
-                  type="text"
-                  value={config.ctaSubtitle || ''}
-                  onChange={e => setConfig({ ...config, ctaSubtitle: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">CTA Button Text</label>
-                <input
-                  type="text"
-                  value={config.ctaButtonText || ''}
-                  onChange={e => setConfig({ ...config, ctaButtonText: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold"
-                />
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Hero Background Image URL (Unsplash / CDN)
+                  </label>
+                  <input
+                    type="url"
+                    value={config.heroImage || ''}
+                    onChange={e => setConfig({ ...config, heroImage: e.target.value })}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-xs font-mono"
+                    placeholder="https://images.unsplash.com/photo-..."
+                  />
+                </div>
+
+                {/* Quick Presets */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                    Quick Preset Gallery:
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {HERO_IMAGE_PRESETS.map((preset, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setConfig({ ...config, heroImage: preset.url })}
+                        className={`text-left p-2 rounded-xl border text-[11px] transition-all cursor-pointer flex items-center space-x-2 ${
+                          config.heroImage === preset.url
+                            ? 'border-[#00C6A6] bg-teal-50 text-slate-900 font-bold'
+                            : 'border-slate-200 hover:border-slate-300 text-slate-600 bg-white'
+                        }`}
+                      >
+                        <img src={preset.url} alt={preset.name} className="w-8 h-8 rounded-lg object-cover shrink-0" />
+                        <span className="truncate">{preset.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Image Alt Text (Accessibility & SEO)
+                    </label>
+                    <input
+                      type="text"
+                      value={config.heroImageAlt || ''}
+                      onChange={e => setConfig({ ...config, heroImageAlt: e.target.value })}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-xs"
+                      placeholder="e.g. TheUnbound Global DMC Destination Operations Skyline"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Background Dark Overlay Density
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { label: 'Light (45%)', val: 0.45 },
+                        { label: 'Balanced (65%)', val: 0.65 },
+                        { label: 'Deep (80%)', val: 0.80 }
+                      ].map(opt => (
+                        <button
+                          key={opt.val}
+                          type="button"
+                          onClick={() => setConfig({ ...config, heroOverlayOpacity: opt.val })}
+                          className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                            (config.heroOverlayOpacity ?? 0.65) === opt.val
+                              ? 'bg-slate-900 text-white border-slate-900'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </form>
+
+            {/* 3. Call to Action (CTA) Controls */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+              <div className="flex items-center space-x-3 pb-3 border-b border-slate-100">
+                <div className="w-8 h-8 rounded-lg bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
+                  <ExternalLink className="w-4 h-4 text-[#00C6A6]" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Hero Call to Action (CTA) Buttons</h4>
+                  <p className="text-xs text-slate-500">Configure visibility and labels for the primary and secondary hero buttons.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                {/* Primary CTA */}
+                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">Primary Button</label>
+                    <label className="flex items-center space-x-2 text-xs font-semibold cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showPrimaryCta !== false}
+                        onChange={e => setConfig({ ...config, showPrimaryCta: e.target.checked })}
+                        className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                      />
+                      <span>Show in Hero</span>
+                    </label>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-500 mb-1">Button Label</label>
+                    <input
+                      type="text"
+                      value={config.primaryCtaText || ''}
+                      onChange={e => setConfig({ ...config, primaryCtaText: e.target.value })}
+                      placeholder="e.g. Explore Curated Destinations"
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold bg-white"
+                    />
+                  </div>
+                </div>
+
+                {/* Secondary CTA */}
+                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">Secondary Button</label>
+                    <label className="flex items-center space-x-2 text-xs font-semibold cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showSecondaryCta !== false}
+                        onChange={e => setConfig({ ...config, showSecondaryCta: e.target.checked })}
+                        className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                      />
+                      <span>Show in Hero</span>
+                    </label>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-500 mb-1">Button Label</label>
+                    <input
+                      type="text"
+                      value={config.secondaryCtaText || ''}
+                      onChange={e => setConfig({ ...config, secondaryCtaText: e.target.value })}
+                      placeholder="e.g. Direct DMC Operations Desk"
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 4. Operational Trust Badges (4 Ground Pillars) */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+              <div className="flex items-center space-x-3 pb-3 border-b border-slate-100">
+                <div className="w-8 h-8 rounded-lg bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
+                  <ShieldCheck className="w-4 h-4 text-[#00C6A6]" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Hero Operational Trust Badges (4 Pillars)</h4>
+                  <p className="text-xs text-slate-500">The 4 key credentials displayed on the hero banner cards.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {(config.heroTrustBadges || INITIAL_HOMEPAGE_CONFIG.heroTrustBadges || []).map((badge, idx) => (
+                  <div key={idx} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pillar {idx + 1}</span>
+                    <div>
+                      <label className="block text-[11px] text-slate-500 mb-1">Category / Title</label>
+                      <input
+                        type="text"
+                        value={badge.label}
+                        onChange={e => {
+                          const updatedBadges = [...(config.heroTrustBadges || INITIAL_HOMEPAGE_CONFIG.heroTrustBadges || [])];
+                          updatedBadges[idx] = { ...updatedBadges[idx], label: e.target.value };
+                          setConfig({ ...config, heroTrustBadges: updatedBadges });
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-slate-500 mb-1">Metric / Subtext</label>
+                      <input
+                        type="text"
+                        value={badge.subtext}
+                        onChange={e => {
+                          const updatedBadges = [...(config.heroTrustBadges || INITIAL_HOMEPAGE_CONFIG.heroTrustBadges || [])];
+                          updatedBadges[idx] = { ...updatedBadges[idx], subtext: e.target.value };
+                          setConfig({ ...config, heroTrustBadges: updatedBadges });
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-[#008972]"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 5. Value Highlights Bar (Selling Points) */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+              <div className="flex items-center space-x-3 pb-3 border-b border-slate-100">
+                <div className="w-8 h-8 rounded-lg bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
+                  <CheckCircle2 className="w-4 h-4 text-[#00C6A6]" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Hero Highlights Bar (Value Points)</h4>
+                  <p className="text-xs text-slate-500">Horizontal feature strip displayed at the bottom of the hero banner.</p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {(config.heroSellingPoints || INITIAL_HOMEPAGE_CONFIG.heroSellingPoints || []).map((point, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs bg-slate-100 border border-slate-200 text-slate-800 font-medium"
+                    >
+                      <span>{point}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = (config.heroSellingPoints || INITIAL_HOMEPAGE_CONFIG.heroSellingPoints || []).filter((_, i) => i !== idx);
+                          setConfig({ ...config, heroSellingPoints: updated });
+                        }}
+                        className="text-slate-400 hover:text-rose-600 p-0.5 rounded cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
+
+                <div className="flex space-x-2 pt-2">
+                  <input
+                    type="text"
+                    value={sellingPointInput}
+                    onChange={e => setSellingPointInput(e.target.value)}
+                    placeholder="Add a new ground operations value highlight..."
+                    className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (sellingPointInput.trim()) {
+                          const updated = [...(config.heroSellingPoints || INITIAL_HOMEPAGE_CONFIG.heroSellingPoints || []), sellingPointInput.trim()];
+                          setConfig({ ...config, heroSellingPoints: updated });
+                          setSellingPointInput('');
+                        }
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sellingPointInput.trim()) {
+                        const updated = [...(config.heroSellingPoints || INITIAL_HOMEPAGE_CONFIG.heroSellingPoints || []), sellingPointInput.trim()];
+                        setConfig({ ...config, heroSellingPoints: updated });
+                        setSellingPointInput('');
+                      }
+                    }}
+                    className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 cursor-pointer"
+                  >
+                    Add Highlight
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* 6. Bottom Conversion CTA Banner */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
+              <div className="flex items-center space-x-3 pb-4 border-b border-slate-100">
+                <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center font-bold">
+                  <Tag className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Bottom Conversion CTA Banner</h4>
+                  <p className="text-xs text-slate-500">Customize the final call-to-action banner driving travel agents to the Quotation Studio.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">CTA Headline</label>
+                  <input
+                    type="text"
+                    value={config.ctaTitle || ''}
+                    onChange={e => setConfig({ ...config, ctaTitle: e.target.value })}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">CTA Subtitle</label>
+                  <input
+                    type="text"
+                    value={config.ctaSubtitle || ''}
+                    onChange={e => setConfig({ ...config, ctaSubtitle: e.target.value })}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">CTA Button Text</label>
+                  <input
+                    type="text"
+                    value={config.ctaButtonText || ''}
+                    onChange={e => setConfig({ ...config, ctaButtonText: e.target.value })}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Save Button */}
+            <div className="flex justify-end pt-2">
+              <button
+                type="submit"
+                className="inline-flex items-center space-x-2 bg-[#008972] hover:bg-[#00C6A6] text-white hover:text-slate-950 font-bold px-8 py-3 rounded-xl shadow-xs transition-all cursor-pointer text-xs"
+              >
+                <Save className="w-4 h-4" />
+                <span>Publish All Changes Live</span>
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       {/* SUB TAB 3: DESTINATIONS & ORDERING */}
