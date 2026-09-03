@@ -81,7 +81,11 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
 
   useEffect(() => {
     refresh();
-  }, []);
+    const unsub = db.subscribe(() => {
+      refresh();
+    });
+    return () => unsub();
+  }, [db]);
 
   const handleOpenCreate = () => {
     const defaultRegion = masterRegions[0] || { id: 'reg-east-asia', name: 'East Asia' };

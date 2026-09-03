@@ -80,7 +80,7 @@ export function parseRoute(pathString?: string): ParsedRoute {
     subTab = 'contact';
   } else if (first === 'about') {
     subTab = 'about';
-  } else if (first === 'page') {
+  } else if (first === 'page' || first === 'pages') {
     subTab = 'page';
     param = segments[1];
   } else if (first === 'blogs') {

@@ -36,8 +36,10 @@ import {
   TrendingUp,
   X,
   Compass,
-  Briefcase
+  Briefcase,
+  MessageCircle
 } from 'lucide-react';
+import { ShareWhatsAppModal } from '../B2BAgentPortal/ShareWhatsAppModal';
 
 interface QuoteMasterManagerProps {
   onLoadQuote?: (quote: Quotation) => void;
@@ -68,6 +70,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
   const [leadLinkModalQuote, setLeadLinkModalQuote] = useState<Quotation | null>(null);
   const [selectedLeadIdToLink, setSelectedLeadIdToLink] = useState<string>('');
   const [customLeadIdInput, setCustomLeadIdInput] = useState<string>('');
+  const [whatsAppSharingQuote, setWhatsAppSharingQuote] = useState<Quotation | null>(null);
   
   // Feedback
   const [actionSuccessMsg, setActionSuccessMsg] = useState('');
@@ -949,6 +952,15 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                     <td className="py-4 px-4 text-right">
                       <div className="flex items-center justify-end space-x-1">
                         
+                        {/* WhatsApp Share */}
+                        <button
+                          onClick={() => setWhatsAppSharingQuote(q)}
+                          className="p-1.5 text-emerald-600 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors cursor-pointer"
+                          title="Share Quote on WhatsApp"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                        </button>
+
                         {/* PDF Download */}
                         <button
                           onClick={() => handleDownloadPDF(q)}
@@ -1304,6 +1316,19 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
 
           </div>
         </div>
+      )}
+
+      {/* WHATSAPP SHARE MODAL */}
+      {whatsAppSharingQuote && (
+        <ShareWhatsAppModal
+          quote={whatsAppSharingQuote}
+          user={user}
+          onClose={() => setWhatsAppSharingQuote(null)}
+          onSuccess={() => {
+            setQuotes(db.getQuotesForUser(user));
+            setAllLeads(db.getLeadsAuthorized(user));
+          }}
+        />
       )}
 
     </div>

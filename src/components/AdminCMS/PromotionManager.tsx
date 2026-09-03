@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Promotion, PromotionDiscountType, PromotionAudience, PromotionPlacement, PromotionFrequency, Destination, Product } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
@@ -68,6 +68,13 @@ export const PromotionManager: React.FC<PromotionManagerProps> = ({ destinations
   const refreshPromos = () => {
     setPromotions(db.getPromotions());
   };
+
+  useEffect(() => {
+    const unsub = db.subscribe(() => {
+      refreshPromos();
+    });
+    return () => unsub();
+  }, [db]);
 
   const handleOpenCreate = () => {
     setEditingPromo(null);

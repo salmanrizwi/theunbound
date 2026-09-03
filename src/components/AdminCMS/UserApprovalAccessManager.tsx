@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, UserRole, UserApprovalStatus, UserPermissionAccess } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
@@ -89,6 +89,13 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
       if (refreshedTarget) setSelectedUserForModal(refreshedTarget);
     }
   };
+
+  useEffect(() => {
+    const unsub = db.subscribe(() => {
+      refreshUsers();
+    });
+    return () => unsub();
+  }, [db]);
 
   const handleOpenPermissionModal = (targetUser: User) => {
     setSelectedUserForModal(targetUser);

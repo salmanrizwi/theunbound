@@ -25,7 +25,8 @@ import {
   Check,
   PlaneTakeoff,
   Award,
-  Globe
+  Globe,
+  MessageCircle
 } from 'lucide-react';
 
 interface ProposalDocumentViewProps {
@@ -36,6 +37,7 @@ interface ProposalDocumentViewProps {
   onPrint?: () => void;
   onDownloadPdf?: () => void;
   onShareLink?: () => void;
+  onShareWhatsApp?: () => void;
 }
 
 export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
@@ -45,7 +47,8 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
   onBookNow,
   onPrint,
   onDownloadPdf,
-  onShareLink
+  onShareLink,
+  onShareWhatsApp
 }) => {
   const handlePrint = () => {
     if (onPrint) {
@@ -254,6 +257,17 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
             >
               <Share2 className="w-3.5 h-3.5 text-slate-500" />
               <span>Share</span>
+            </button>
+          )}
+
+          {onShareWhatsApp && (
+            <button
+              onClick={onShareWhatsApp}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
+              title="Share quotation via WhatsApp"
+            >
+              <MessageCircle className="w-3.5 h-3.5 text-emerald-200" />
+              <span>WhatsApp</span>
             </button>
           )}
 

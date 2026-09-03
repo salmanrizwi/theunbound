@@ -494,6 +494,24 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
                     </div>
                   </label>
 
+                  {/* WhatsApp Quote Sharing */}
+                  <label className={`flex items-start space-x-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                    perms.canShareWhatsAppQuotes !== false ? 'bg-emerald-50/60 border-emerald-300' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <input
+                      type="checkbox"
+                      checked={perms.canShareWhatsAppQuotes !== false}
+                      onChange={() => handleToggleTopPermission('canShareWhatsAppQuotes')}
+                      className="mt-0.5 rounded text-emerald-600 focus:ring-0 w-4 h-4"
+                    />
+                    <div>
+                      <div className="text-xs font-bold text-slate-900">Share Quotes on WhatsApp</div>
+                      <div className="text-[11px] text-slate-500 leading-tight mt-0.5">
+                        Permits generating sanitized customer quotation summaries and opening direct WhatsApp chats.
+                      </div>
+                    </div>
+                  </label>
+
                   {/* Manual Hotel Rates */}
                   <label className={`flex items-start space-x-3 p-3 rounded-xl border cursor-pointer transition-all ${
                     perms.canAddManualHotelRates ? 'bg-sky-50/60 border-sky-300' : 'bg-slate-50 border-slate-200'

@@ -40,7 +40,8 @@ import {
   BedDouble,
   Plane,
   FileCheck,
-  Eye
+  Eye,
+  MessageCircle
 } from 'lucide-react';
 import { 
   QuoteItem, 
@@ -194,6 +195,7 @@ export interface StepByStepQuotationWorkspaceProps {
   onSaveDraft: () => void;
   onPreviewQuotation: () => void;
   onDownloadPDF: () => void;
+  onShareWhatsApp?: () => void;
   onOpenEmailModal: () => void;
   onConvertBooking: () => void;
   onOpenSavePackageModal?: () => void;
@@ -297,6 +299,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   onSaveDraft,
   onPreviewQuotation,
   onDownloadPDF,
+  onShareWhatsApp,
   onOpenEmailModal,
   onConvertBooking,
   onOpenSavePackageModal,
@@ -2622,6 +2625,18 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   <Download className="w-3.5 h-3.5 text-teal-600" />
                   <span>Download PDF</span>
                 </button>
+
+                {onShareWhatsApp && (
+                  <button
+                    type="button"
+                    onClick={onShareWhatsApp}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-xs"
+                    title="Share customer quotation summary directly on WhatsApp"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5 text-emerald-200" />
+                    <span>Share on WhatsApp</span>
+                  </button>
+                )}
 
                 <button
                   type="button"

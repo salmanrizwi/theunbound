@@ -77,6 +77,8 @@ import { ManualHotelFormModal } from './ManualHotelFormModal';
 import { VISA_CATALOG, VisaProduct } from './B2BVisaView';
 import { AddVisaToQuoteModal, visaProductToProduct } from './AddVisaToQuoteModal';
 import { AddAddonModal } from './AddAddonModal';
+import { ShareWhatsAppModal } from './ShareWhatsAppModal';
+import { canUserShareQuoteWhatsApp } from '../../services/permissionEngine';
 import { 
   classifyPassengers, 
   STANDARD_OPERATIONAL_REMARKS, 
@@ -349,6 +351,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   // Addon Modal (Insurance, eSIM, VIP Services)
   const [showAddonModal, setShowAddonModal] = useState<boolean>(false);
   const [addonModalCategory, setAddonModalCategory] = useState<'ALL' | 'INSURANCE' | 'ESIM' | 'SERVICES'>('ALL');
+
+  // WhatsApp Share Modal State
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState<boolean>(false);
+  const [whatsAppModalQuote, setWhatsAppModalQuote] = useState<Quotation | null>(null);
 
   // Dynamic Passenger Classification Engine
   const passengerClassification = useMemo(() => {
@@ -994,6 +1000,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         totalMargin: totalMarginAmount + (finalClientPrice - totalSellingPrice),
         clientName: clientName || 'Client Name Pending',
         clientEmail: clientEmail || 'client@example.com',
+        clientPhone: clientPhone || '',
         clientCompany: clientCompany || user?.agencyName || 'Direct B2B Client',
         agentId: user?.id || 'usr-agent-01',
         agentName: user?.name || 'Travel Consultant',
@@ -1417,6 +1424,24 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     } catch (err) {
       console.error('PDF export error:', err);
     }
+  };
+
+  // Share on WhatsApp Action
+  const handleShareWhatsApp = () => {
+    // 1. Check authorization
+    const permCheck = canUserShareQuoteWhatsApp(user);
+    if (!permCheck.allowed) {
+      alert(permCheck.reason || 'You are not authorized to share quotations via WhatsApp.');
+      return;
+    }
+
+    // 2. Save quote state to ensure latest numbers, items, and version are persisted
+    const saved = handleSaveDraft();
+    if (!saved) return;
+
+    // 3. Open WhatsApp Modal
+    setWhatsAppModalQuote(saved);
+    setIsWhatsAppModalOpen(true);
   };
 
   // Open Email Modal
@@ -1873,6 +1898,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               totalMargin: totalMarginAmount + (finalClientPrice - totalSellingPrice),
               clientName: clientName || 'Valued Guest',
               clientEmail: clientEmail || 'client@example.com',
+              clientPhone: clientPhone || '',
               clientCompany: clientCompany || user?.agencyName || 'Direct B2B Client',
               agentId: user?.id || 'usr-agent-01',
               agentName: user?.name || 'Travel Consultant',
@@ -1893,6 +1919,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             onClose={() => setActiveViewTab('BUILDER')}
             onPrint={() => window.print()}
             onDownloadPdf={handleDownloadPDF}
+            onShareWhatsApp={handleShareWhatsApp}
             onShareLink={() => {
               navigator.clipboard.writeText(window.location.href);
               alert('Proposal preview link copied to clipboard!');
@@ -2001,6 +2028,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                 setActiveViewTab('PROPOSAL_PREVIEW');
               }}
               onDownloadPDF={handleDownloadPDF}
+              onShareWhatsApp={handleShareWhatsApp}
               onOpenEmailModal={handleOpenEmailModal}
               onConvertBooking={handleConvertBooking}
               onOpenSavePackageModal={handleOpenSavePackageModal}
@@ -2502,6 +2530,26 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             </div>
           </div>
         </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: SHARE ON WHATSAPP MODAL */}
+      {/* ========================================================================= */}
+      {isWhatsAppModalOpen && whatsAppModalQuote && (
+        <ShareWhatsAppModal
+          quote={whatsAppModalQuote}
+          user={user}
+          selectedOptionIndex={activeOptionTab}
+          onClose={() => {
+            setIsWhatsAppModalOpen(false);
+            setWhatsAppModalQuote(null);
+          }}
+          onSuccess={(updatedQuote) => {
+            if (updatedQuote.clientPhone && setClientPhone) {
+              setClientPhone(updatedQuote.clientPhone);
+            }
+          }}
+        />
       )}
 
       {/* ========================================================================= */}

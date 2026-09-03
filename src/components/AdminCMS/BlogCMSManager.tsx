@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BlogArticle, BlogStatus } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
@@ -64,6 +64,13 @@ export const BlogCMSManager: React.FC<BlogCMSManagerProps> = ({ onViewArticle })
   const refresh = () => {
     setBlogs(db.getBlogs());
   };
+
+  useEffect(() => {
+    const unsub = db.subscribe(() => {
+      refresh();
+    });
+    return () => unsub();
+  }, [db]);
 
   const handleOpenCreate = () => {
     setEditingBlog(null);

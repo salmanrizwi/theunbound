@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   B2BPackage, 
   Destination, 
@@ -101,6 +101,13 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
   const refreshPackages = () => {
     setPackages(db.getPackages());
   };
+
+  useEffect(() => {
+    const unsub = db.subscribe(() => {
+      refreshPackages();
+    });
+    return () => unsub();
+  }, [db]);
 
   const showNotification = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
     setFeedbackMsg({ text, type });

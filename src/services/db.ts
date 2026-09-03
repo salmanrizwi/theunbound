@@ -50,6 +50,7 @@ import {
   WishlistItem,
   SitePagesConfig,
   MenuItemConfig,
+  MenuLocation,
   CustomPage,
   VisaProduct,
   FooterConfig,
@@ -468,10 +469,18 @@ export class AppDatabase {
   private bookingSaveListeners: BookingSaveListener[] = [];
   private quotationSaveListeners: QuotationSaveListener[] = [];
   private isFirestoreInitialized: boolean = false;
+  private notifyTimer: any = null;
 
   private constructor() {
     this.initDefaultData();
     this.initFirestoreSync();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', (e) => {
+        if (e.key && e.key.startsWith(STORAGE_KEY_PREFIX)) {
+          this.notify();
+        }
+      });
+    }
   }
 
   public static getInstance(): AppDatabase {
@@ -505,27 +514,18 @@ export class AppDatabase {
   }
 
   private notify() {
-    if (typeof queueMicrotask === 'function') {
-      queueMicrotask(() => {
-        this.listeners.forEach(cb => {
-          try {
-            cb();
-          } catch (err) {
-            console.debug('Listener callback error:', err);
-          }
-        });
-      });
-    } else {
-      setTimeout(() => {
-        this.listeners.forEach(cb => {
-          try {
-            cb();
-          } catch (err) {
-            console.debug('Listener callback error:', err);
-          }
-        });
-      }, 0);
+    if (this.notifyTimer) {
+      clearTimeout(this.notifyTimer);
     }
+    this.notifyTimer = setTimeout(() => {
+      this.listeners.forEach(cb => {
+        try {
+          cb();
+        } catch (err) {
+          console.debug('Listener callback error:', err);
+        }
+      });
+    }, 25);
   }
 
   private getItem<T>(key: string, fallback: T): T {
@@ -591,7 +591,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: Product[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as Product));
-          this.setItem('products', list, false);
+          this.setItem('products', list, true);
         } else {
           // Seed initial products to Firestore
           const initial = this.getProducts();
@@ -606,7 +606,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: Destination[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as Destination));
-          this.setItem('destinations', list, false);
+          this.setItem('destinations', list, true);
         } else {
           const initial = this.getDestinations();
           initial.forEach(d => {
@@ -620,7 +620,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: Quotation[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as Quotation));
-          this.setItem('saved_quotes', list, false);
+          this.setItem('saved_quotes', list, true);
         }
       }, (err) => console.debug('Firestore quotations sync note:', err));
 
@@ -629,7 +629,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: Booking[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as Booking));
-          this.setItem('bookings', list, false);
+          this.setItem('bookings', list, true);
         }
       }, (err) => console.debug('Firestore bookings sync note:', err));
 
@@ -638,7 +638,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: Hotel[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as Hotel));
-          this.setItem('hotels', list, false);
+          this.setItem('hotels', list, true);
         } else {
           const initial = this.getHotels();
           initial.forEach(h => {
@@ -652,7 +652,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: TravelLead[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as TravelLead));
-          this.setItem('leads', list, false);
+          this.setItem('leads', list, true);
         }
       }, (err) => console.debug('Firestore leads sync note:', err));
 
@@ -661,7 +661,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: Promotion[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as Promotion));
-          this.setItem('promotions', list, false);
+          this.setItem('promotions', list, true);
         } else {
           const initial = this.getPromotions();
           initial.forEach(pr => {
@@ -675,7 +675,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: GalleryImage[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as GalleryImage));
-          this.setItem('gallery', list, false);
+          this.setItem('gallery', list, true);
         }
       }, (err) => console.debug('Firestore gallery sync note:', err));
 
@@ -684,7 +684,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: GoogleReview[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as GoogleReview));
-          this.setItem('reviews', list, false);
+          this.setItem('reviews', list, true);
         }
       }, (err) => console.debug('Firestore reviews sync note:', err));
 
@@ -693,7 +693,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: BlogArticle[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as BlogArticle));
-          this.setItem('blogs', list, false);
+          this.setItem('blogs', list, true);
         }
       }, (err) => console.debug('Firestore blogs sync note:', err));
 
@@ -702,7 +702,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: WishlistFolder[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as WishlistFolder));
-          this.setItem('wishlist_folders', list, false);
+          this.setItem('wishlist_folders', list, true);
         }
       }, (err) => console.debug('Firestore wishlist folders sync note:', err));
 
@@ -711,7 +711,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: WishlistItem[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as WishlistItem));
-          this.setItem('wishlist_items', list, false);
+          this.setItem('wishlist_items', list, true);
         }
       }, (err) => console.debug('Firestore wishlist items sync note:', err));
 
@@ -720,7 +720,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: User[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as User));
-          this.setItem('system_users', list, false);
+          this.setItem('system_users', list, true);
         }
       }, (err) => console.debug('Firestore users sync note:', err));
 
@@ -729,7 +729,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: MenuItemConfig[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as MenuItemConfig));
-          this.setItem('menu_items', list, false);
+          this.setItem('menu_items', list, true);
         }
       }, (err) => console.debug('Firestore menu_items sync note:', err));
 
@@ -738,7 +738,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: CustomPage[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as CustomPage));
-          this.setItem('custom_pages', list, false);
+          this.setItem('custom_pages', list, true);
         }
       }, (err) => console.debug('Firestore custom_pages sync note:', err));
 
@@ -747,7 +747,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: CityHub[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as CityHub));
-          this.setItem('city_hubs', list, false);
+          this.setItem('city_hubs', list, true);
         } else {
           const initial = this.getCityHubs();
           initial.forEach(hub => {
@@ -761,7 +761,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: DestinationFAQ[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as DestinationFAQ));
-          this.setItem('destination_faqs', list, false);
+          this.setItem('destination_faqs', list, true);
         } else {
           const initial = this.getDestinationFAQs();
           initial.forEach(faq => {
@@ -775,7 +775,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: DestinationRegionItem[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as DestinationRegionItem));
-          this.setItem('regions', list, false);
+          this.setItem('regions', list, true);
         } else {
           const initial = this.getRegions();
           initial.forEach(reg => {
@@ -789,7 +789,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: MasterRegion[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as MasterRegion));
-          this.setItem('master_regions', list, false);
+          this.setItem('master_regions', list, true);
         } else {
           const initial = this.getMasterRegions();
           initial.forEach(mreg => {
@@ -803,7 +803,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: CampaignEvent[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as CampaignEvent));
-          this.setItem('campaign_events', list, false);
+          this.setItem('campaign_events', list, true);
         }
       }, (err) => console.debug('Firestore campaign_events sync note:', err));
 
@@ -812,7 +812,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: B2BPackage[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as B2BPackage));
-          this.setItem('b2b_packages', list, false);
+          this.setItem('b2b_packages', list, true);
         } else {
           const initial = this.getPackages();
           initial.forEach(pkg => {
@@ -826,7 +826,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: VisaProduct[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as VisaProduct));
-          this.setItem('visas', list, false);
+          this.setItem('visas', list, true);
         } else {
           const initial = this.getVisas();
           initial.forEach(v => {
@@ -840,7 +840,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: B2BCustomer[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as B2BCustomer));
-          this.setItem('b2b_customers', list, false);
+          this.setItem('b2b_customers', list, true);
         } else {
           const initial = this.getB2BCustomers();
           initial.forEach(c => {
@@ -854,7 +854,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: B2BTask[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as B2BTask));
-          this.setItem('b2b_tasks', list, false);
+          this.setItem('b2b_tasks', list, true);
         } else {
           const initial = this.getB2BTasks();
           initial.forEach(t => {
@@ -868,7 +868,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: CalendarTask[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as CalendarTask));
-          this.setItem('calendar_tasks', list, false);
+          this.setItem('calendar_tasks', list, true);
         }
       }, (err) => console.debug('Firestore calendar_tasks sync note:', err));
 
@@ -877,7 +877,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           const list: SLAAutomationRule[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as SLAAutomationRule));
-          this.setItem('sla_automation_rules', list, false);
+          this.setItem('sla_automation_rules', list, true);
         } else {
           const initial = this.getSLAAutomationRules();
           initial.forEach(r => {
@@ -891,7 +891,7 @@ export class AppDatabase {
         if (!snapshot.empty) {
           snapshot.forEach(docSnap => {
             if (docSnap.id === 'main_footer') {
-              this.setItem('footer_config', docSnap.data() as FooterConfig, false);
+              this.setItem('footer_config', docSnap.data() as FooterConfig, true);
             }
           });
         }
@@ -2932,6 +2932,7 @@ export class AppDatabase {
       | 'BOOKING_REQUESTED' 
       | 'BOOKED' 
       | 'VERSION_BRANCHED' 
+      | 'WHATSAPP_SHARED' 
       | 'CONVERTED' = 'EDITED',
     customDetails?: string
   ): Quotation {
@@ -2999,6 +3000,9 @@ export class AppDatabase {
       case 'SENT_TO_CLIENT':
       case 'SENT':
         defaultActionDetails = `Sent quotation proposal directly to client (${quote.clientEmail || quote.clientName})`;
+        break;
+      case 'WHATSAPP_SHARED':
+        defaultActionDetails = `Shared quotation proposal via WhatsApp to client (${quote.clientPhone || quote.clientName})`;
         break;
       case 'VIEWED_BY_CLIENT':
         defaultActionDetails = `Client ${quote.clientName} opened and viewed the quotation proposal`;
@@ -6276,16 +6280,36 @@ export class AppDatabase {
   // ==========================================
   // MENU & NAVIGATION PAGES MANAGEMENT
   // ==========================================
-  public getMenuItems(): MenuItemConfig[] {
-    return this.getItem<MenuItemConfig[]>('menu_items', INITIAL_MENU_ITEMS).sort((a, b) => a.displayOrder - b.displayOrder);
+  public getMenuItems(location?: MenuLocation): MenuItemConfig[] {
+    const all = this.getItem<MenuItemConfig[]>('menu_items', INITIAL_MENU_ITEMS);
+    if (!location) {
+      return all.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+    }
+    return all
+      .filter(item => {
+        if (location === 'HEADER') return !item.menuLocation || item.menuLocation === 'HEADER';
+        return item.menuLocation === location;
+      })
+      .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+  }
+
+  public getHeaderMenuItems(): MenuItemConfig[] {
+    return this.getMenuItems('HEADER');
+  }
+
+  public getSecondaryMenuItems(): MenuItemConfig[] {
+    return this.getMenuItems('SECONDARY');
   }
 
   public saveMenuItem(item: MenuItemConfig, user?: User | null): void {
-    const items = this.getMenuItems();
+    const items = this.getItem<MenuItemConfig[]>('menu_items', INITIAL_MENU_ITEMS);
     const index = items.findIndex(m => m.id === item.id);
     let savedItem: MenuItemConfig;
     if (index >= 0) {
-      savedItem = item;
+      savedItem = {
+        ...items[index],
+        ...item
+      };
       items[index] = savedItem;
       this.logAudit(user || null, 'SETTINGS_UPDATED', 'NavigationMenu', item.id, `Updated menu item: ${item.label}`);
     } else {
@@ -6301,7 +6325,7 @@ export class AppDatabase {
   }
 
   public deleteMenuItem(itemId: string, user?: User | null): void {
-    const items = this.getMenuItems();
+    const items = this.getItem<MenuItemConfig[]>('menu_items', INITIAL_MENU_ITEMS);
     const target = items.find(m => m.id === itemId);
     this.setItem('menu_items', items.filter(m => m.id !== itemId));
     this.deleteFirestoreDoc('menu_items', itemId);
@@ -6349,7 +6373,7 @@ export class AppDatabase {
     this.setItem('custom_pages', pages);
 
     // If showInMenu is enabled, ensure it exists in Menu items
-    const menuItems = this.getMenuItems();
+    const menuItems = this.getItem<MenuItemConfig[]>('menu_items', INITIAL_MENU_ITEMS);
     const menuIndex = menuItems.findIndex(m => m.targetId === savedPage.slug || m.id === `menu-${savedPage.id}`);
     if (savedPage.showInMenu && savedPage.isPublished) {
       const menuItem: MenuItemConfig = {
@@ -6358,16 +6382,48 @@ export class AppDatabase {
         type: 'CUSTOM_PAGE',
         targetId: savedPage.slug,
         displayOrder: savedPage.menuOrder || (menuItems.length + 1),
-        isVisible: true
+        isVisible: true,
+        menuLocation: 'HEADER'
       };
       if (menuIndex >= 0) {
-        menuItems[menuIndex] = menuItem;
+        menuItems[menuIndex] = { ...menuItems[menuIndex], ...menuItem };
       } else {
         menuItems.push(menuItem);
       }
       this.updateMenuOrdering(menuItems, user);
     } else if (!savedPage.showInMenu && menuIndex >= 0) {
       this.deleteMenuItem(menuItems[menuIndex].id, user);
+    }
+
+    // Sync footer if configured
+    if (savedPage.showInFooter && savedPage.footerColumnId) {
+      const footerConfig = this.getFooterConfig();
+      const colIndex = (footerConfig.columns || []).findIndex(c => c.id === savedPage.footerColumnId);
+      if (colIndex >= 0) {
+        const col = footerConfig.columns[colIndex];
+        const linkId = `footer-link-page-${savedPage.id}`;
+        const links = col.links || [];
+        const linkIdx = links.findIndex(l => l.id === linkId || l.targetId === savedPage.slug);
+        const footerLink: FooterMenuLink = {
+          id: linkId,
+          label: savedPage.menuLabel || savedPage.title,
+          type: 'CMS_PAGE',
+          targetId: savedPage.slug,
+          url: `/pages/${savedPage.slug}`,
+          displayOrder: links.length + 1,
+          openIn: '_self',
+          status: savedPage.isPublished ? 'ACTIVE' : 'INACTIVE',
+          createdAt: now,
+          updatedAt: now
+        };
+        if (linkIdx >= 0) {
+          links[linkIdx] = footerLink;
+        } else {
+          links.push(footerLink);
+        }
+        footerConfig.columns[colIndex] = { ...col, links };
+        this.saveFooterConfig(footerConfig, user);
+      }
     }
   }
 
@@ -6378,6 +6434,21 @@ export class AppDatabase {
     this.deleteFirestoreDoc('custom_pages', pageId);
     if (target) {
       this.deleteMenuItem(`menu-${pageId}`, user);
+      // Clean from footer columns if linked
+      const footerConfig = this.getFooterConfig();
+      let changed = false;
+      if (footerConfig.columns) {
+        footerConfig.columns.forEach(col => {
+          if (col.links) {
+            const origLen = col.links.length;
+            col.links = col.links.filter(l => l.targetId !== target.slug && l.id !== `footer-link-page-${pageId}`);
+            if (col.links.length !== origLen) changed = true;
+          }
+        });
+      }
+      if (changed) {
+        this.saveFooterConfig(footerConfig, user);
+      }
       this.logAudit(user || null, 'SETTINGS_UPDATED', 'CustomPage', pageId, `Deleted custom page: ${target.title}`);
     }
   }

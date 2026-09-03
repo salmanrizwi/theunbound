@@ -134,6 +134,8 @@ export interface UserPermissionAccess {
   canViewWholesaleNetRates?: boolean;
   canAddManualHotelRates?: boolean;
   canManagePackages?: boolean;
+  shareWhatsApp?: boolean; // Controls whether user can share quotation via WhatsApp
+  canShareWhatsAppQuotes?: boolean; // Alias for permission matrix control
 
   // CMS Access & Hierarchical Modules
   canAccessCMS?: boolean;
@@ -642,6 +644,7 @@ export interface QuoteActivityRecord {
     | 'BOOKING_REQUESTED'
     | 'BOOKED'
     | 'VERSION_BRANCHED'
+    | 'WHATSAPP_SHARED'
     | 'CONVERTED';
   timestamp: string;
   userName: string;
@@ -1553,6 +1556,8 @@ export type AuditAction =
   | 'QUOTE_EDITED'
   | 'QUOTE_DOWNLOADED'
   | 'QUOTE_SENT'
+  | 'QUOTE_WHATSAPP_SHARED'
+  | 'WHATSAPP_QUOTE_SHARE_INITIATED'
   | 'QUOTE_CONVERTED'
   | 'QUOTE_ARCHIVED'
   | 'QUOTE_DELETED'
@@ -2458,6 +2463,7 @@ export interface LeadTimelineEvent {
     | 'FOLLOWUP_CREATED' 
     | 'FOLLOWUP_COMPLETED' 
     | 'EMAIL_SENT' 
+    | 'WHATSAPP_QUOTE_SHARED'
     | 'CAMPAIGN_CLICK'
     | 'CUSTOM_ACTIVITY';
   title: string;
@@ -2888,6 +2894,7 @@ export interface SitePagesConfig {
 // MENU & DYNAMIC PAGES CONFIGURATION
 // ----------------------------------------------------
 export type MenuItemType = 'DESTINATION' | 'PAGE' | 'CUSTOM_PAGE' | 'EXTERNAL_LINK' | 'SYSTEM_VIEW' | 'CUSTOM_LINK';
+export type MenuLocation = 'HEADER' | 'SECONDARY' | 'FOOTER';
 
 export interface MenuItemConfig {
   id: string;
@@ -2899,6 +2906,29 @@ export interface MenuItemConfig {
   displayOrder: number;
   isVisible: boolean;
   badgeText?: string;
+  menuLocation?: MenuLocation; // 'HEADER' | 'SECONDARY' | 'FOOTER' (defaults to 'HEADER')
+  parentId?: string; // For hierarchy / dropdowns
+  children?: MenuItemConfig[]; // Nested items if any
+  openIn?: '_self' | '_blank';
+  icon?: string;
+}
+
+export type CustomPageLayout = 'DEFAULT' | 'HERO_BANNER' | 'FEATURED_SHOWCASE' | 'SPLIT_ENQUIRY' | 'STANDARD' | 'HERO_SIDEBAR' | 'MINIMAL' | 'FEATURE_GRID';
+
+export interface CustomPageBlock {
+  id: string;
+  type: 'RICHTEXT' | 'FEATURE_GRID' | 'CTA_BOX' | 'FAQ_ACCORDION' | 'IMAGE_GALLERY' | 'DESTINATION_CARDS' | 'RICH_TEXT' | 'CTA' | 'FAQ';
+  title?: string;
+  subtitle?: string;
+  content?: string;
+  items?: {
+    title: string;
+    description: string;
+    icon?: string;
+    linkUrl?: string;
+    imageUrl?: string;
+  }[];
+  data?: any;
 }
 
 export interface CustomPage {
@@ -2907,6 +2937,7 @@ export interface CustomPage {
   subtitle?: string;
   slug: string;
   menuLabel?: string;
+  menuLocation?: MenuLocation;
   heroTitle?: string;
   heroSubtitle?: string;
   heroImage?: string;
@@ -2914,9 +2945,19 @@ export interface CustomPage {
   showInMenu: boolean;
   menuOrder: number;
   isPublished: boolean;
+  layoutTemplate?: CustomPageLayout;
+  ctaButtonText?: string;
+  ctaButtonUrl?: string;
+  showInFooter?: boolean;
+  footerColumnId?: string;
+  blocks?: CustomPageBlock[];
   seoTitle?: string;
   seoDescription?: string;
+  metaTitle?: string;
   metaDescription?: string;
+  ogImage?: string;
+  keywords?: string[];
+  author?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -2928,7 +2969,7 @@ export interface FooterMenuLink {
   id: string;
   label: string;
   url: string;
-  type: 'DESTINATION' | 'CUSTOM_PAGE' | 'SYSTEM_VIEW' | 'EXTERNAL_LINK' | 'CUSTOM_LINK';
+  type: 'DESTINATION' | 'CUSTOM_PAGE' | 'CMS_PAGE' | 'SYSTEM_VIEW' | 'EXTERNAL_LINK' | 'CUSTOM_LINK';
   targetId?: string;
   displayOrder: number;
   status?: 'ACTIVE' | 'INACTIVE';

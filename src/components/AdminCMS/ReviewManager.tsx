@@ -48,6 +48,13 @@ export const ReviewManager: React.FC = () => {
   const [gbpConfig, setGbpConfig] = useState<GoogleBusinessProfileConfig>(() => googleBusinessService.getConfig());
   const [authState, setAuthState] = useState<GoogleAuthState>(() => googleAuth.getAuthState());
 
+  useEffect(() => {
+    const unsub = db.subscribe(() => {
+      setReviews(db.getReviews());
+    });
+    return () => unsub();
+  }, [db]);
+
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('');
   const [filterRating, setFilterRating] = useState('ALL');

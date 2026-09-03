@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   FileCheck, 
   Search, 
@@ -25,6 +25,7 @@ import { useQuotation } from '../../context/QuotationContext';
 import { formatCurrency } from '../../services/pricingEngine';
 import { useAuth } from '../../context/AuthContext';
 import { AddVisaToQuoteModal } from './AddVisaToQuoteModal';
+import { AppDatabase } from '../../services/db';
 
 export interface VisaProduct {
   id: string;
@@ -237,6 +238,63 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
   const { user } = useAuth();
   const { items, addProductToQuote, removeProductFromQuote, currency, setIsQuoteDrawerOpen } = useQuotation();
 
+  const db = AppDatabase.getInstance();
+  const [dbVisas, setDbVisas] = useState<any[]>(() => db.getVisas());
+
+  useEffect(() => {
+    const unsub = db.subscribe(() => {
+      setDbVisas(db.getVisas());
+    });
+    return () => unsub();
+  }, [db]);
+
+  const activeVisasCatalog = useMemo<VisaProduct[]>(() => {
+    if (dbVisas && dbVisas.length > 0) {
+      return dbVisas.map(v => {
+        // If it's already in the rich local format
+        if (v.wholesaleNetUSD !== undefined && v.embassyFeeUSD !== undefined && v.requiredDocuments) {
+          return v as VisaProduct;
+        }
+        // Otherwise map from global VisaProduct interface
+        return {
+          id: v.id,
+          country: v.country || 'International',
+          countryCode: v.countryCode || 'INTL',
+          visaType: v.visaType || 'Official Visa Facilitation',
+          category: v.category || 'TOURIST',
+          processingTimeDays: typeof v.processingTimeDays === 'number' 
+            ? `${v.processingTimeDays} Business Days` 
+            : (v.processingTimeDays || '3-5 Days'),
+          stayDuration: typeof v.stayDurationDays === 'number' 
+            ? `Up to ${v.stayDurationDays} Days` 
+            : (v.stayDuration || '30 Days'),
+          validity: typeof v.validityDays === 'number' 
+            ? `${v.validityDays} Days` 
+            : (v.validity || '90 Days'),
+          entryType: v.entryType === 'MULTIPLE_ENTRY' ? 'Multiple Entry' : 'Single Entry',
+          wholesaleNetUSD: v.wholesaleNetUSD ?? v.serviceFee ?? 40,
+          embassyFeeUSD: v.embassyFeeUSD ?? v.embassyFee ?? 50,
+          suggestedSellingUSD: v.suggestedSellingUSD ?? ((v.embassyFee || 50) + (v.serviceFee || 40) + 35),
+          imageUrl: v.heroImage || v.imageUrl || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=800&auto=format&fit=crop',
+          requiredDocuments: v.documentsChecklist || v.requiredDocuments || [
+            'Original Passport valid for at least 6 months',
+            'Passport-sized photographs with white background',
+            'Confirmed travel itinerary and flight bookings',
+            'Bank statements from the last 3-6 months'
+          ],
+          photoSpecs: v.photoSpecs || '35mm x 45mm, crisp contrast, white background, neutral expression.',
+          financialRequirements: v.financialRequirements || 'Valid proof of funds & recent 3-month bank statement.',
+          embassySubmissionType: v.embassySubmissionType || (v.expressProcessingAvailable ? 'Online eVisa' : 'Embassy / VFS Submission'),
+          importantNotes: v.eligibilityNotes || v.importantNotes || [
+            'All document submissions undergo strict consular verification.',
+            'Ensure names match exactly with the traveler passport bio-data.'
+          ]
+        };
+      });
+    }
+    return VISA_CATALOG;
+  }, [dbVisas]);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCountry, setSelectedCountry] = useState<string>('ALL');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
@@ -246,12 +304,12 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
   const [quoteSuccessNotification, setQuoteSuccessNotification] = useState<{ visa: VisaProduct; applicants: number } | null>(null);
 
   const countries = useMemo(() => {
-    const list = Array.from(new Set(VISA_CATALOG.map(v => v.country)));
+    const list = Array.from(new Set(activeVisasCatalog.map(v => v.country)));
     return ['ALL', ...list];
-  }, []);
+  }, [activeVisasCatalog]);
 
   const filteredVisas = useMemo(() => {
-    return VISA_CATALOG.filter(v => {
+    return activeVisasCatalog.filter(v => {
       const q = searchQuery.toLowerCase();
       const matchesSearch = 
         !q ||
@@ -265,7 +323,7 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
 
       return matchesSearch && matchesCountry && matchesCategory;
     });
-  }, [searchQuery, selectedCountry, selectedCategory]);
+  }, [activeVisasCatalog, searchQuery, selectedCountry, selectedCategory]);
 
   const isVisaInQuote = (visaId: string) => {
     return items.some(it => it.product.id === visaId);
@@ -336,7 +394,7 @@ Support: visa-operations@theunbound.in
             <span className="px-2.5 py-0.5 rounded-full bg-[#00C6A6]/10 text-[#00a88c] border border-[#00C6A6]/20 text-[10px] font-bold uppercase tracking-wider">
               Travel Trade Visa Services
             </span>
-            <span className="text-xs text-slate-400 font-mono">({VISA_CATALOG.length} Direct Visas)</span>
+            <span className="text-xs text-slate-400 font-mono">({activeVisasCatalog.length} Direct Visas)</span>
           </div>
           <h1 className="text-2xl font-black text-slate-900 font-sans mt-1">Visa Facilitation & Document Checklists</h1>
           <p className="text-xs text-slate-500 max-w-2xl mt-0.5">

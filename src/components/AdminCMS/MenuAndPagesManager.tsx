@@ -1,6 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { AppDatabase } from '../../services/db';
-import { MenuItemConfig, CustomPage, Destination, FooterMenuColumn, FooterMenuLink } from '../../types';
+import { 
+  MenuItemConfig, 
+  CustomPage, 
+  Destination, 
+  FooterConfig, 
+  FooterMenuColumn, 
+  CustomPageBlock, 
+  CustomPageLayout, 
+  MenuLocation 
+} from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { FooterNavigationBuilder } from './FooterNavigationBuilder';
 import { 
@@ -22,7 +31,17 @@ import {
   AlertCircle,
   CheckCircle2,
   FolderTree,
-  Columns
+  Columns,
+  Layout,
+  Globe,
+  Tag,
+  HelpCircle,
+  ChevronDown,
+  Compass,
+  Calendar,
+  Search,
+  ShieldCheck,
+  X
 } from 'lucide-react';
 
 interface MenuAndPagesManagerProps {
@@ -36,10 +55,12 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
   const [menuItems, setMenuItems] = useState<MenuItemConfig[]>([]);
   const [customPages, setCustomPages] = useState<CustomPage[]>([]);
   const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [footerConfig, setFooterConfig] = useState<FooterConfig>(() => db.getFooterConfig());
   const [activeTab, setActiveTab] = useState<'MENU' | 'CUSTOM_PAGES' | 'FOOTER'>(defaultTab);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
+  const [menuLocationFilter, setMenuLocationFilter] = useState<'ALL' | MenuLocation>('ALL');
 
   // Editing state for Menu Item
   const [editingMenuItem, setEditingMenuItem] = useState<MenuItemConfig | null>(null);
@@ -56,6 +77,10 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
   const [pageError, setPageError] = useState<string | null>(null);
   const [pagePreviewTab, setPagePreviewTab] = useState<'EDIT' | 'PREVIEW'>('EDIT');
 
+  // Block Builder modal state inside Page Editor
+  const [isAddingBlock, setIsAddingBlock] = useState(false);
+  const [newBlockType, setNewBlockType] = useState<CustomPageBlock['type']>('FEATURE_GRID');
+
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -67,6 +92,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
     setMenuItems(db.getMenuItems());
     setCustomPages(db.getCustomPages());
     setDestinations(db.getDestinations());
+    setFooterConfig(db.getFooterConfig());
   };
 
   useEffect(() => {
@@ -87,10 +113,22 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
     return pageId === 'page-about-theunbound' || slug === 'about-theunbound';
   };
 
+  // Filtered menu items
+  const filteredMenuItems = useMemo(() => {
+    return menuItems.filter(item => {
+      const locMatch = menuLocationFilter === 'ALL' || (item.menuLocation || 'HEADER') === menuLocationFilter;
+      const qMatch = !searchQuery.trim() || 
+        item.label.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        (item.targetId && item.targetId.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (item.customUrl && item.customUrl.toLowerCase().includes(searchQuery.toLowerCase()));
+      return locMatch && qMatch;
+    });
+  }, [menuItems, menuLocationFilter, searchQuery]);
+
   // Menu item actions
   const handleSaveMenuItem = (item: MenuItemConfig) => {
     if (!item.label.trim()) {
-      setMenuItemError('Menu link label is required.');
+      setMenuItemError('Navigation link label is required.');
       return;
     }
     setMenuItemError(null);
@@ -98,7 +136,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
     loadData();
     setEditingMenuItem(null);
     setIsCreatingMenuItem(false);
-    showToast(`Saved menu link "${item.label}"`);
+    showToast(`Saved navigation item "${item.label}"`);
   };
 
   const executeDeleteMenuItem = (id: string, label: string) => {
@@ -109,7 +147,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
       setIsCreatingMenuItem(false);
     }
     setDeletingMenuItem(null);
-    showToast(`Removed menu link "${label}"`);
+    showToast(`Removed navigation link "${label}"`);
   };
 
   const handleMoveMenuItem = (index: number, direction: 'UP' | 'DOWN') => {
@@ -157,7 +195,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
     loadData();
     setEditingPage(null);
     setIsCreatingPage(false);
-    showToast(`Saved page "${updatedPage.title}"`);
+    showToast(`Saved page "${updatedPage.title}" with live navigation sync`);
   };
 
   const executeDeletePage = (id: string, title: string) => {
@@ -168,7 +206,60 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
       setIsCreatingPage(false);
     }
     setDeletingPage(null);
-    showToast(`Deleted page "${title}"`);
+    showToast(`Deleted page "${title}" and synced navigation`);
+  };
+
+  // Helper to add block to editing page
+  const handleAddBlockToPage = () => {
+    if (!editingPage) return;
+    const blockId = `block-${Date.now()}`;
+    let newBlock: CustomPageBlock = {
+      id: blockId,
+      type: newBlockType,
+      title: newBlockType === 'FEATURE_GRID' ? 'Key Inclusions & Highlights' : newBlockType === 'CTA' ? 'Direct Ground Operations Support' : newBlockType === 'FAQ' ? 'Frequently Asked Questions' : 'Featured Gallery'
+    };
+
+    if (newBlockType === 'FEATURE_GRID') {
+      newBlock.data = {
+        items: [
+          { title: 'VIP Ground Logistics', description: 'Direct chauffeur service with premium executive fleet.' },
+          { title: 'Licensed Guides', description: 'Certified local specialists for heritage access.' },
+          { title: 'Contracted Wholesale Tariffs', description: 'Zero intermediary markups on ground inventory.' }
+        ]
+      };
+    } else if (newBlockType === 'CTA') {
+      newBlock.content = 'Contact our destination operations desk for customized multi-city bookings and wholesale agency rates.';
+    } else if (newBlockType === 'FAQ') {
+      newBlock.data = {
+        faqs: [
+          { q: 'What is the standard SLA for itinerary confirmation?', a: 'Ground confirmations are issued within 24 to 48 hours.' },
+          { q: 'Can we request customized dietary or vehicle requirements?', a: 'Yes, full bespoke requests are handled by our dedicated logistics dispatch.' }
+        ]
+      };
+    } else if (newBlockType === 'IMAGE_GALLERY') {
+      newBlock.data = {
+        images: [
+          'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=600&auto=format&fit=crop',
+          'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?q=80&w=600&auto=format&fit=crop',
+          'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=600&auto=format&fit=crop'
+        ]
+      };
+    }
+
+    const currentBlocks = editingPage.blocks || [];
+    setEditingPage({
+      ...editingPage,
+      blocks: [...currentBlocks, newBlock]
+    });
+    setIsAddingBlock(false);
+  };
+
+  const handleRemoveBlock = (blockId: string) => {
+    if (!editingPage || !editingPage.blocks) return;
+    setEditingPage({
+      ...editingPage,
+      blocks: editingPage.blocks.filter(b => b.id !== blockId)
+    });
   };
 
   return (
@@ -189,7 +280,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
             <span>Navigation Menu & Custom Pages CMS</span>
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Arrange navigation hierarchy, re-order menu links, and author custom marketing/destination landing pages with real-time sync.
+            Authoritative menu management for Header, Secondary & Footer menus, plus dynamic custom page builder with real-time sync.
           </p>
         </div>
 
@@ -203,7 +294,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            Navigation Links ({menuItems.length})
+            Menu Management ({menuItems.length})
           </button>
           <button
             id="tab-sub-custom-pages"
@@ -214,7 +305,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            Custom Pages ({customPages.length})
+            Custom Page Builder ({customPages.length})
           </button>
           <button
             id="tab-sub-footer-menus"
@@ -230,27 +321,44 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
         </div>
       </div>
 
-      {/* TAB 1: MENU ARRANGER */}
+      {/* TAB 1: MENU MANAGEMENT */}
       {activeTab === 'MENU' && (
         <div className="space-y-4">
+          {/* Controls & Filter Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm font-bold text-slate-900">Header & Mobile Navigation Menu Structure</h3>
+              <h3 className="text-sm font-bold text-slate-900">Authoritative Website Navigation</h3>
               <p className="text-xs text-slate-500">
-                Use the arrows to re-order navigation items. Toggling visibility hides them instantly on the public website.
+                Manage Header links, sub-menu dropdowns, secondary quick links, and pill badges without code changes.
               </p>
             </div>
 
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 flex-wrap">
+              {/* Location Filter Pills */}
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+                {(['ALL', 'HEADER', 'SECONDARY', 'FOOTER'] as const).map(loc => (
+                  <button
+                    key={loc}
+                    onClick={() => setMenuLocationFilter(loc)}
+                    className={`px-2.5 py-1 rounded-lg font-bold transition-colors cursor-pointer ${
+                      menuLocationFilter === loc ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    {loc === 'ALL' ? 'All Links' : loc === 'HEADER' ? 'Header' : loc === 'SECONDARY' ? 'Secondary' : 'Footer'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Search */}
               <div className="relative">
                 <input
                   type="text"
                   placeholder="Filter links..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="px-3 py-1.5 pl-8 text-xs bg-white border border-slate-200 rounded-xl outline-none focus:ring-1 focus:ring-[#00C6A6] w-36 sm:w-48"
+                  className="px-3 py-1.5 pl-8 text-xs bg-white border border-slate-200 rounded-xl outline-none focus:ring-1 focus:ring-[#00C6A6] w-32 sm:w-44"
                 />
-                <LinkIcon className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
               </div>
 
               <button
@@ -260,10 +368,12 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                   setEditingMenuItem({
                     id: `menu-${Date.now()}`,
                     label: 'New Link',
-                    type: 'CUSTOM_LINK',
-                    customUrl: '/',
+                    type: 'CUSTOM_PAGE',
+                    targetId: customPages[0]?.slug || '',
+                    menuLocation: menuLocationFilter !== 'ALL' ? menuLocationFilter : 'HEADER',
                     displayOrder: menuItems.length + 1,
-                    isVisible: true
+                    isVisible: true,
+                    openIn: '_self'
                   });
                   setIsCreatingMenuItem(true);
                 }}
@@ -277,100 +387,160 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
 
           {/* Menu Items List */}
           <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100 overflow-hidden shadow-xs">
-            {menuItems
-              .filter(item => !searchQuery.trim() || item.label.toLowerCase().includes(searchQuery.toLowerCase()) || (item.targetId && item.targetId.toLowerCase().includes(searchQuery.toLowerCase())))
-              .map((item, index) => (
-              <div 
-                key={item.id}
-                id={`menu-item-row-${item.id}`}
-                className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50 transition-colors"
-              >
-                <div className="flex items-center space-x-3">
-                  {/* Order Index */}
-                  <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center">
-                    {index + 1}
-                  </span>
+            {filteredMenuItems.length === 0 ? (
+              <div className="p-8 text-center text-slate-400 text-xs space-y-2">
+                <LinkIcon className="w-6 h-6 mx-auto text-slate-300" />
+                <p>No menu items match the current filter.</p>
+              </div>
+            ) : (
+              filteredMenuItems.map((item, index) => {
+                const parentItem = item.parentId ? menuItems.find(m => m.id === item.parentId) : null;
+                const childCount = menuItems.filter(m => m.parentId === item.id).length;
 
-                  <div>
-                    <div className="flex items-center space-x-2">
-                      <span className="font-bold text-sm text-slate-900">{item.label}</span>
-                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-                        {item.type}
-                      </span>
-                      {!item.isVisible && (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
-                          Hidden
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Target: {item.targetId || item.customUrl || 'Home / Main View'}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Actions & Reordering Controls */}
-                <div className="flex items-center space-x-1 sm:space-x-2">
-                  <button
-                    id={`btn-move-up-${item.id}`}
-                    onClick={() => handleMoveMenuItem(index, 'UP')}
-                    disabled={index === 0}
-                    title="Move Up"
-                    className="p-1.5 text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    <ArrowUp className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    id={`btn-move-down-${item.id}`}
-                    onClick={() => handleMoveMenuItem(index, 'DOWN')}
-                    disabled={index === menuItems.length - 1}
-                    title="Move Down"
-                    className="p-1.5 text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    <ArrowDown className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    id={`btn-toggle-visible-${item.id}`}
-                    onClick={() => handleToggleVisibility(item)}
-                    title={item.isVisible ? 'Hide from navigation' : 'Show in navigation'}
-                    className={`p-1.5 rounded-lg cursor-pointer ${
-                      item.isVisible ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-slate-400 bg-slate-100 hover:bg-slate-200'
+                return (
+                  <div 
+                    key={item.id}
+                    id={`menu-item-row-${item.id}`}
+                    className={`p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50 transition-colors ${
+                      parentItem ? 'pl-8 bg-slate-50/50' : ''
                     }`}
                   >
-                    {item.isVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                  </button>
-                  <button
-                    id={`edit-menu-item-${item.id}`}
-                    onClick={() => {
-                      setMenuItemError(null);
-                      setEditingMenuItem({ ...item });
-                      setIsCreatingMenuItem(false);
-                    }}
-                    title="Edit Item"
-                    className="p-1.5 text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 rounded-lg cursor-pointer"
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    id={`delete-menu-item-${item.id}`}
-                    onClick={() => setDeletingMenuItem(item)}
-                    title="Remove Item"
-                    className="p-1.5 text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 rounded-lg cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
+                    <div className="flex items-center space-x-3">
+                      {/* Order Index */}
+                      <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center shrink-0">
+                        {index + 1}
+                      </span>
+
+                      <div>
+                        <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                          {parentItem && (
+                            <span className="text-xs font-mono text-slate-400 flex items-center">
+                              ↳ <span className="text-[10px] ml-1 px-1.5 py-0.2 bg-slate-100 rounded text-slate-500">{parentItem.label}</span>
+                            </span>
+                          )}
+                          <span className="font-bold text-sm text-slate-900">{item.label}</span>
+                          
+                          {/* Badge tag if any */}
+                          {item.badgeText && (
+                            <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-full bg-[#00C6A6]/20 text-[#00a88d] border border-[#00C6A6]/30">
+                              {item.badgeText}
+                            </span>
+                          )}
+
+                          {/* Location Pill */}
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            (item.menuLocation || 'HEADER') === 'HEADER'
+                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                              : (item.menuLocation || 'HEADER') === 'SECONDARY'
+                              ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          }`}>
+                            {item.menuLocation || 'HEADER'}
+                          </span>
+
+                          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                            {item.type}
+                          </span>
+
+                          {childCount > 0 && (
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
+                              {childCount} sub-links
+                            </span>
+                          )}
+
+                          {!item.isVisible && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                              Hidden
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-2">
+                          <span>Target: {item.targetId || item.customUrl || 'Home / Main View'}</span>
+                          {item.openIn === '_blank' && (
+                            <span className="text-[10px] text-slate-500 font-medium flex items-center gap-0.5">
+                              <ExternalLink className="w-3 h-3" /> New Tab
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Actions & Reordering Controls */}
+                    <div className="flex items-center space-x-1 sm:space-x-2">
+                      <button
+                        id={`btn-move-up-${item.id}`}
+                        onClick={() => handleMoveMenuItem(index, 'UP')}
+                        disabled={index === 0}
+                        title="Move Up"
+                        className="p-1.5 text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        <ArrowUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        id={`btn-move-down-${item.id}`}
+                        onClick={() => handleMoveMenuItem(index, 'DOWN')}
+                        disabled={index === filteredMenuItems.length - 1}
+                        title="Move Down"
+                        className="p-1.5 text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        <ArrowDown className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        id={`btn-toggle-visible-${item.id}`}
+                        onClick={() => handleToggleVisibility(item)}
+                        title={item.isVisible ? 'Hide from navigation' : 'Show in navigation'}
+                        className={`p-1.5 rounded-lg cursor-pointer ${
+                          item.isVisible ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-slate-400 bg-slate-100 hover:bg-slate-200'
+                        }`}
+                      >
+                        {item.isVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        id={`edit-menu-item-${item.id}`}
+                        onClick={() => {
+                          setMenuItemError(null);
+                          setEditingMenuItem({ ...item });
+                          setIsCreatingMenuItem(false);
+                        }}
+                        title="Edit Item"
+                        className="p-1.5 text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 rounded-lg cursor-pointer"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        id={`delete-menu-item-${item.id}`}
+                        onClick={() => setDeletingMenuItem(item)}
+                        title="Remove Item"
+                        className="p-1.5 text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 rounded-lg cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
 
           {/* Edit / Create Modal for Menu Item */}
           {editingMenuItem && (
             <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl border border-slate-200 animate-in zoom-in-95">
-                <h3 className="font-bold text-base text-slate-900">
-                  {isCreatingMenuItem ? 'Add Navigation Link' : `Edit Menu Link: ${editingMenuItem.label}`}
-                </h3>
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <h3 className="font-bold text-base text-slate-900">
+                    {isCreatingMenuItem ? 'Add Navigation Link' : `Edit Navigation Link: ${editingMenuItem.label}`}
+                  </h3>
+                  <button 
+                    onClick={() => {
+                      setEditingMenuItem(null);
+                      setIsCreatingMenuItem(false);
+                    }}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
 
                 {menuItemError && (
                   <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center space-x-2">
@@ -392,8 +562,60 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                     />
                   </div>
 
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">Menu Location</label>
+                      <select
+                        id="select-menu-location"
+                        value={editingMenuItem.menuLocation || 'HEADER'}
+                        onChange={(e) => setEditingMenuItem({ ...editingMenuItem, menuLocation: e.target.value as MenuLocation })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none cursor-pointer"
+                      >
+                        <option value="HEADER">Header Primary Menu</option>
+                        <option value="SECONDARY">Secondary Top Utility Menu</option>
+                        <option value="FOOTER">Footer Menu Link</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">Badge Pill (Optional)</label>
+                      <input
+                        id="input-menu-badge"
+                        type="text"
+                        value={editingMenuItem.badgeText || ''}
+                        onChange={(e) => setEditingMenuItem({ ...editingMenuItem, badgeText: e.target.value })}
+                        placeholder="e.g. New, Hot, B2B"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none"
+                      >
+                      </input>
+                    </div>
+                  </div>
+
+                  {/* Parent Menu Item for Sub-menus / Dropdowns */}
                   <div>
-                    <label className="font-bold text-slate-700 block mb-1">Link Type</label>
+                    <label className="font-bold text-slate-700 block mb-1">Parent Menu Item (For Dropdowns)</label>
+                    <select
+                      id="select-menu-parent"
+                      value={editingMenuItem.parentId || ''}
+                      onChange={(e) => setEditingMenuItem({ ...editingMenuItem, parentId: e.target.value || undefined })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none cursor-pointer"
+                    >
+                      <option value="">-- None (Top Level Navigation Item) --</option>
+                      {menuItems
+                        .filter(m => m.id !== editingMenuItem.id && (!m.parentId))
+                        .map(m => (
+                          <option key={m.id} value={m.id}>
+                            {m.label} ({m.menuLocation || 'HEADER'})
+                          </option>
+                        ))}
+                    </select>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Assigning a parent item converts it into a dropdown sub-item under that heading.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Link Target Type</label>
                     <select
                       id="select-menu-type"
                       value={editingMenuItem.type}
@@ -407,27 +629,37 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                       }}
                       className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none cursor-pointer"
                     >
-                      <option value="SYSTEM_VIEW">System Screen (Home, Destinations, Experiences, About, B2B, Contact)</option>
-                      <option value="DESTINATION">Specific Destination Page</option>
                       <option value="CUSTOM_PAGE">CMS Custom Page</option>
-                      <option value="CUSTOM_LINK">External URL or Hash Link</option>
+                      <option value="DESTINATION">Destination Portfolio Page</option>
+                      <option value="SYSTEM_VIEW">System Screen (Destinations, About, B2B, Contact, Blogs)</option>
+                      <option value="CUSTOM_LINK">Custom Link or Section Anchor</option>
+                      <option value="EXTERNAL_LINK">External Website Link</option>
                     </select>
                   </div>
 
-                  {editingMenuItem.type === 'SYSTEM_VIEW' && (
+                  {editingMenuItem.type === 'CUSTOM_PAGE' && (
                     <div>
-                      <label className="font-bold text-slate-700 block mb-1">Target Screen View</label>
+                      <label className="font-bold text-slate-700 block mb-1">Choose CMS Page</label>
                       <select
-                        id="select-menu-target-system"
-                        value={editingMenuItem.targetId || 'destinations'}
-                        onChange={(e) => setEditingMenuItem({ ...editingMenuItem, targetId: e.target.value })}
+                        id="select-menu-target-page"
+                        value={editingMenuItem.targetId || ''}
+                        onChange={(e) => {
+                          const slug = e.target.value;
+                          const pg = customPages.find(p => p.slug === slug);
+                          setEditingMenuItem({
+                            ...editingMenuItem,
+                            targetId: slug,
+                            label: editingMenuItem.label === 'New Link' || !editingMenuItem.label ? (pg ? (pg.menuLabel || pg.title) : slug) : editingMenuItem.label
+                          });
+                        }}
                         className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none cursor-pointer"
                       >
-                        <option value="destinations">Destinations Hub</option>
-                        <option value="home">Home / All Destinations</option>
-                        <option value="about">About TheUnbound DMC</option>
-                        <option value="b2b">B2B Agent Portal</option>
-                        <option value="contact">Contact Ground Operations</option>
+                        <option value="">-- Choose Page --</option>
+                        {customPages.map(p => (
+                          <option key={p.id} value={p.slug}>
+                            {p.title} (/{p.slug})
+                          </option>
+                        ))}
                       </select>
                     </div>
                   )}
@@ -459,34 +691,27 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                     </div>
                   )}
 
-                  {editingMenuItem.type === 'CUSTOM_PAGE' && (
+                  {editingMenuItem.type === 'SYSTEM_VIEW' && (
                     <div>
-                      <label className="font-bold text-slate-700 block mb-1">Select Custom CMS Page</label>
+                      <label className="font-bold text-slate-700 block mb-1">Target Screen View</label>
                       <select
-                        id="select-menu-target-page"
-                        value={editingMenuItem.targetId || ''}
-                        onChange={(e) => {
-                          const slug = e.target.value;
-                          const pg = customPages.find(p => p.slug === slug);
-                          setEditingMenuItem({
-                            ...editingMenuItem,
-                            targetId: slug,
-                            label: editingMenuItem.label === 'New Link' || !editingMenuItem.label ? (pg ? (pg.menuLabel || pg.title) : slug) : editingMenuItem.label
-                          });
-                        }}
+                        id="select-menu-target-system"
+                        value={editingMenuItem.targetId || 'destinations'}
+                        onChange={(e) => setEditingMenuItem({ ...editingMenuItem, targetId: e.target.value })}
                         className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none cursor-pointer"
                       >
-                        <option value="">-- Choose Page --</option>
-                        {customPages.map(p => (
-                          <option key={p.id} value={p.slug}>
-                            {p.title} (/{p.slug})
-                          </option>
-                        ))}
+                        <option value="destinations">Destinations Hub</option>
+                        <option value="home">Home / All Destinations</option>
+                        <option value="about">About TheUnbound DMC</option>
+                        <option value="b2b">B2B Agent Portal</option>
+                        <option value="contact">Contact Ground Operations</option>
+                        <option value="blogs">Market Briefings & Blogs</option>
+                        <option value="visas">Visa Desk</option>
                       </select>
                     </div>
                   )}
 
-                  {editingMenuItem.type === 'CUSTOM_LINK' && (
+                  {(editingMenuItem.type === 'CUSTOM_LINK' || editingMenuItem.type === 'EXTERNAL_LINK') && (
                     <div>
                       <label className="font-bold text-slate-700 block mb-1">Target URL</label>
                       <input
@@ -494,23 +719,38 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                         type="text"
                         value={editingMenuItem.customUrl || ''}
                         onChange={(e) => setEditingMenuItem({ ...editingMenuItem, customUrl: e.target.value })}
-                        placeholder="https://... or #section"
+                        placeholder="https://... or /section"
                         className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none"
                       />
                     </div>
                   )}
 
-                  <div className="flex items-center space-x-2 pt-2">
-                    <input
-                      type="checkbox"
-                      id="edit-menu-visible"
-                      checked={editingMenuItem.isVisible}
-                      onChange={(e) => setEditingMenuItem({ ...editingMenuItem, isVisible: e.target.checked })}
-                      className="w-4 h-4 text-[#00C6A6] rounded cursor-pointer"
-                    />
-                    <label htmlFor="edit-menu-visible" className="font-semibold text-slate-700 cursor-pointer">
-                      Visible in Navigation Bar
-                    </label>
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">Open Behavior</label>
+                      <select
+                        id="select-menu-open-in"
+                        value={editingMenuItem.openIn || '_self'}
+                        onChange={(e) => setEditingMenuItem({ ...editingMenuItem, openIn: e.target.value as '_self' | '_blank' })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none cursor-pointer"
+                      >
+                        <option value="_self">Same Window / Tab</option>
+                        <option value="_blank">New Tab / Window (_blank)</option>
+                      </select>
+                    </div>
+
+                    <div className="flex items-center space-x-2 pt-5">
+                      <input
+                        type="checkbox"
+                        id="edit-menu-visible"
+                        checked={editingMenuItem.isVisible}
+                        onChange={(e) => setEditingMenuItem({ ...editingMenuItem, isVisible: e.target.checked })}
+                        className="w-4 h-4 text-[#00C6A6] rounded cursor-pointer"
+                      />
+                      <label htmlFor="edit-menu-visible" className="font-semibold text-slate-700 cursor-pointer">
+                        Link Visible
+                      </label>
+                    </div>
                   </div>
                 </div>
 
@@ -528,7 +768,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                         className="px-3.5 py-2 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl cursor-pointer flex items-center space-x-1.5 transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        <span>Delete Menu Link</span>
+                        <span>Delete</span>
                       </button>
                     )}
                   </div>
@@ -559,14 +799,14 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
         </div>
       )}
 
-      {/* TAB 2: CUSTOM PAGES */}
+      {/* TAB 2: CUSTOM PAGES BUILDER */}
       {activeTab === 'CUSTOM_PAGES' && (
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm font-bold text-slate-900">Custom Landing & Educational Pages</h3>
+              <h3 className="text-sm font-bold text-slate-900">Custom Landing & Educational Pages Builder</h3>
               <p className="text-xs text-slate-500">
-                Author customized pages for destination itineraries, seasonal promotions, or private service guarantees.
+                Design custom pages with modular blocks, automated SEO tags, and synchronized menu/footer integration.
               </p>
             </div>
 
@@ -592,13 +832,19 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                     slug: 'new-custom-page',
                     title: 'New Custom Page',
                     subtitle: 'Explore bespoke itinerary details and luxury logistics.',
+                    layoutTemplate: 'STANDARD',
                     content: '## Executive Overview\n\nAdd your detailed rich-text itinerary and DMC capability specifications here.\n\n### Inclusions & Guarantees\n- VIP Airport Meet & Greet\n- Direct Ground Operations Coordinator\n- Transparent Wholesale B2B Tariffs',
                     heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
                     isPublished: true,
                     showInMenu: true,
+                    menuLocation: 'HEADER',
                     menuLabel: 'New Page',
+                    showInFooter: true,
+                    footerColumnId: footerConfig.columns[0]?.id || 'col-destinations',
                     menuOrder: customPages.length + 1,
+                    metaTitle: '',
                     metaDescription: '',
+                    blocks: [],
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString()
                   });
@@ -625,30 +871,31 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                   className={`bg-white rounded-2xl border ${isSys ? 'border-sky-200' : 'border-slate-200'} overflow-hidden shadow-xs flex flex-col justify-between`}
                 >
                   {page.heroImage && (
-                    <div className="h-32 w-full overflow-hidden relative">
+                    <div className="h-36 w-full overflow-hidden relative">
                       <img 
                         src={page.heroImage} 
                         alt={page.title} 
                         className="w-full h-full object-cover" 
                       />
-                      <div className="absolute top-2 right-2 flex items-center space-x-1">
+                      <div className="absolute top-2 right-2 flex items-center space-x-1 flex-wrap gap-1">
                         {isSys && (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-600 text-white shadow-xs">
                             Core Page
                           </span>
                         )}
-                        {page.isPublished ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white shadow-xs">
-                            Published
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-white shadow-xs">
-                            Draft
-                          </span>
-                        )}
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shadow-xs ${
+                          page.isPublished ? 'bg-emerald-500 text-white' : 'bg-slate-800 text-white'
+                        }`}>
+                          {page.isPublished ? 'Published' : 'Draft'}
+                        </span>
                         {page.showInMenu && (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#00C6A6] text-slate-950 shadow-xs">
-                            In Menu
+                            In Menu ({page.menuLocation || 'HEADER'})
+                          </span>
+                        )}
+                        {page.showInFooter && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-600 text-white shadow-xs">
+                            In Footer
                           </span>
                         )}
                       </div>
@@ -658,14 +905,19 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                   <div className="p-4 space-y-2 flex-1">
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-mono text-slate-400">/{page.slug}</span>
-                      {isSys && (
-                        <span className="text-[10px] text-sky-600 font-semibold flex items-center gap-1">
-                          <Sparkles className="w-3 h-3" /> System Managed
-                        </span>
-                      )}
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-600">
+                        {page.layoutTemplate || 'STANDARD'}
+                      </span>
                     </div>
                     <h4 className="font-bold text-sm text-slate-900">{page.title}</h4>
                     <p className="text-xs text-slate-500 line-clamp-2">{page.subtitle || page.content.slice(0, 100)}</p>
+                    
+                    {Array.isArray(page.blocks) && page.blocks.length > 0 && (
+                      <div className="pt-1 flex items-center gap-1.5 text-[10px] text-slate-500 font-medium">
+                        <Layers className="w-3 h-3 text-[#00C6A6]" />
+                        <span>{page.blocks.length} custom blocks attached</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
@@ -678,10 +930,10 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                         target="_blank"
                         rel="noreferrer"
                         title="Preview live page in new tab"
-                        className="px-2 py-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer flex items-center space-x-1"
+                        className="px-2.5 py-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer flex items-center space-x-1"
                       >
                         <ExternalLink className="w-3 h-3" />
-                        <span>Preview</span>
+                        <span>View Page</span>
                       </a>
                       <button
                         id={`edit-page-btn-${page.id}`}
@@ -713,7 +965,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
           {/* Edit Page Modal */}
           {editingPage && (
             <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-              <div className="bg-white rounded-3xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl border border-slate-200 animate-in zoom-in-95">
+              <div className="bg-white rounded-3xl p-6 max-w-3xl w-full max-h-[92vh] overflow-y-auto space-y-4 shadow-2xl border border-slate-200 animate-in zoom-in-95">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <div className="flex items-center space-x-2">
                     <h3 className="font-bold text-base text-slate-900">
@@ -743,7 +995,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                         pagePreviewTab === 'PREVIEW' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
                       }`}
                     >
-                      Preview Formatted
+                      Live Preview
                     </button>
                   </div>
                 </div>
@@ -757,7 +1009,8 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
 
                 {pagePreviewTab === 'PREVIEW' ? (
                   <div className="space-y-4 py-2">
-                    <div className="relative rounded-2xl overflow-hidden bg-slate-900 text-white min-h-[160px] flex flex-col justify-end p-6">
+                    {/* Live Preview Render */}
+                    <div className="relative rounded-2xl overflow-hidden bg-slate-950 text-white min-h-[160px] flex flex-col justify-end p-6">
                       {editingPage.heroImage && (
                         <img 
                           src={editingPage.heroImage} 
@@ -766,9 +1019,14 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                         />
                       )}
                       <div className="relative z-10 space-y-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#00C6A6]">
-                          /{editingPage.slug}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-[#00C6A6]">
+                            /{editingPage.slug}
+                          </span>
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 bg-white/20 rounded">
+                            Layout: {editingPage.layoutTemplate || 'STANDARD'}
+                          </span>
+                        </div>
                         <h2 className="text-xl font-extrabold">{editingPage.title}</h2>
                         {editingPage.subtitle && (
                           <p className="text-xs text-slate-300 max-w-xl">{editingPage.subtitle}</p>
@@ -793,6 +1051,22 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                         return <p key={idx} className="text-slate-600 leading-relaxed">{trimmed}</p>;
                       })}
                     </div>
+
+                    {/* Preview attached blocks */}
+                    {Array.isArray(editingPage.blocks) && editingPage.blocks.length > 0 && (
+                      <div className="space-y-3">
+                        <div className="font-bold text-slate-400 uppercase text-[10px] tracking-wider">Dynamic Blocks ({editingPage.blocks.length})</div>
+                        {editingPage.blocks.map((b, i) => (
+                          <div key={b.id || i} className="p-3 bg-white border border-slate-200 rounded-xl text-xs space-y-1">
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 bg-[#00C6A6]/20 text-[#00a88d] rounded">
+                              {b.type}
+                            </span>
+                            <div className="font-bold text-slate-800">{b.title}</div>
+                            {b.content && <p className="text-slate-500 text-[11px]">{b.content}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <>
@@ -810,13 +1084,14 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                               ...editingPage,
                               title: 'About TheUnbound: Premier Destination Management Company',
                               subtitle: 'Direct ground operations, wholesale B2B partner tariffs, and bespoke luxury logistics.',
-                              content: `## Who We Are: The Destination Operations Standard\n\nTheUnbound is a premier Destination Management Company (DMC) delivering direct-contracted ground logistics, VIP chauffeur fleets, accredited private guides, and exclusive venue access across our specialized multi-country network.\n\n### Our Core Mission\nTo eliminate middleman markups and operational delays for luxury travel designers and agencies.\n\n### Direct Ground Support Guarantee\n- 100% Direct Supplier Contracts\n- 24/7 Ground Ops Dispatch\n- Accredited Multilingual Guides\n- Transparent Wholesale Pricing`,
+                              layoutTemplate: 'HERO_SIDEBAR',
+                              content: `## Who We Are: The Destination Operations Standard\n\nTheUnbound is a premier Destination Management Company (DMC) delivering direct-contracted ground logistics, VIP chauffeur fleets, accredited private guides, and exclusive venue access across our specialized multi-country network.\n\n### Direct Ground Support Guarantee\n- 100% Direct Supplier Contracts\n- 24/7 Ground Ops Dispatch\n- Accredited Multilingual Guides\n- Transparent Wholesale Pricing`,
                               heroImage: 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=1600&auto=format&fit=crop'
                             });
                           }}
                           className="px-2 py-1 text-[10px] font-bold bg-white border border-slate-200 hover:border-[#00C6A6] text-slate-700 rounded-lg cursor-pointer"
                         >
-                          About Us
+                          About Us (Sidebar Layout)
                         </button>
                         <button
                           type="button"
@@ -825,6 +1100,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                               ...editingPage,
                               title: 'VIP Ground Logistics & Chauffeur Fleet',
                               subtitle: 'Direct executive transportation, airport VIP fast-track, and bespoke multi-city transfers.',
+                              layoutTemplate: 'STANDARD',
                               content: `## Executive Ground Transportation Services\n\nOur owned and contracted luxury fleet includes Mercedes-Benz S-Class, V-Class vans, and Toyota Alphard Executive Lounges.\n\n### Inclusions\n- Uniformed bilingual chauffeur\n- Flight tracking & meet-and-greet\n- Complimentary onboard Wi-Fi and chilled refreshments`,
                               heroImage: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?q=80&w=1600&auto=format&fit=crop'
                             });
@@ -838,20 +1114,22 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                           onClick={() => {
                             setEditingPage({
                               ...editingPage,
-                              title: 'Specialty Seasonal Campaign',
-                              subtitle: 'Exclusive seasonal allocations and private cultural entries.',
+                              title: 'Specialty Seasonal Itinerary Allocations',
+                              subtitle: 'Exclusive seasonal hotel allocations and private cultural entries.',
+                              layoutTemplate: 'FEATURE_GRID',
                               content: `## Peak Season Ground Allocations\n\nEnsure confirmed availability during peak travel periods with guaranteed ground permits and exclusive dining reservations.\n\n### Highlights\n- Advance queue-jump permits\n- Private dining buyouts\n- Dedicated destination coordinator`,
                               heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop'
                             });
                           }}
                           className="px-2 py-1 text-[10px] font-bold bg-white border border-slate-200 hover:border-[#00C6A6] text-slate-700 rounded-lg cursor-pointer"
                         >
-                          Campaign Guide
+                          Seasonal Campaign
                         </button>
                       </div>
                     </div>
 
                     <div className="space-y-3 text-xs">
+                      {/* Title & Slug */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="font-bold text-slate-700 block mb-1">Page Title</label>
@@ -859,7 +1137,20 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                             id="input-page-title"
                             type="text"
                             value={editingPage.title}
-                            onChange={(e) => setEditingPage({ ...editingPage, title: e.target.value })}
+                            onChange={(e) => {
+                              const newTitle = e.target.value;
+                              const currentSlug = editingPage.slug;
+                              // Auto update slug if it was a default placeholder
+                              if (!isSystemPage(editingPage.id, currentSlug) && (currentSlug.startsWith('page-') || currentSlug === 'new-custom-page')) {
+                                setEditingPage({
+                                  ...editingPage,
+                                  title: newTitle,
+                                  slug: newTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+                                });
+                              } else {
+                                setEditingPage({ ...editingPage, title: newTitle });
+                              }
+                            }}
                             className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none font-medium"
                           />
                         </div>
@@ -876,15 +1167,32 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                         </div>
                       </div>
 
-                      <div>
-                        <label className="font-bold text-slate-700 block mb-1">Hero Subtitle</label>
-                        <input
-                          id="input-page-subtitle"
-                          type="text"
-                          value={editingPage.subtitle || ''}
-                          onChange={(e) => setEditingPage({ ...editingPage, subtitle: e.target.value })}
-                          className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none"
-                        />
+                      {/* Subtitle & Hero Image */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Hero Subtitle</label>
+                          <input
+                            id="input-page-subtitle"
+                            type="text"
+                            value={editingPage.subtitle || ''}
+                            onChange={(e) => setEditingPage({ ...editingPage, subtitle: e.target.value })}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Layout Template</label>
+                          <select
+                            id="select-page-layout"
+                            value={editingPage.layoutTemplate || 'STANDARD'}
+                            onChange={(e) => setEditingPage({ ...editingPage, layoutTemplate: e.target.value as CustomPageLayout })}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none cursor-pointer"
+                          >
+                            <option value="STANDARD">Standard Hero + Body</option>
+                            <option value="HERO_SIDEBAR">Hero + Sidebar with Operations Dispatch Card</option>
+                            <option value="MINIMAL">Minimal Clean Editorial (Lightweight)</option>
+                            <option value="FEATURE_GRID">Feature Grid Layout</option>
+                          </select>
+                        </div>
                       </div>
 
                       <div>
@@ -899,6 +1207,37 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                         />
                       </div>
 
+                      {/* SEO Settings Accordion/Card */}
+                      <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2.5">
+                        <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                          <Globe className="w-3.5 h-3.5 text-[#00C6A6]" />
+                          <span>Search Engine Optimization (SEO) & Social Meta</span>
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="font-semibold text-slate-600 block mb-1">Meta Page Title</label>
+                            <input
+                              type="text"
+                              value={editingPage.metaTitle || ''}
+                              onChange={(e) => setEditingPage({ ...editingPage, metaTitle: e.target.value })}
+                              placeholder={editingPage.title}
+                              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="font-semibold text-slate-600 block mb-1">Meta Description</label>
+                            <input
+                              type="text"
+                              value={editingPage.metaDescription || ''}
+                              onChange={(e) => setEditingPage({ ...editingPage, metaDescription: e.target.value })}
+                              placeholder="Concise overview for Google search snippets..."
+                              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none text-xs"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Markdown Content */}
                       <div>
                         <div className="flex items-center justify-between mb-1">
                           <label className="font-bold text-slate-700">Markdown Body Content</label>
@@ -906,7 +1245,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                         </div>
                         <textarea
                           id="input-page-content"
-                          rows={8}
+                          rows={6}
                           value={editingPage.content}
                           onChange={(e) => setEditingPage({ ...editingPage, content: e.target.value })}
                           placeholder="## Executive Overview\n\nEnter rich narrative..."
@@ -914,44 +1253,202 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                         />
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 bg-slate-50 p-3 rounded-2xl border border-slate-200">
-                        <label className="flex items-center space-x-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            id="input-page-published"
-                            checked={editingPage.isPublished}
-                            onChange={(e) => setEditingPage({ ...editingPage, isPublished: e.target.checked })}
-                            className="w-4 h-4 text-[#00C6A6] rounded cursor-pointer"
-                          />
-                          <span className="font-semibold text-slate-700">Published Live</span>
-                        </label>
-
-                        <label className="flex items-center space-x-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            id="input-page-show-in-menu"
-                            checked={editingPage.showInMenu}
-                            onChange={(e) => setEditingPage({ ...editingPage, showInMenu: e.target.checked })}
-                            className="w-4 h-4 text-[#00C6A6] rounded cursor-pointer"
-                          />
-                          <span className="font-semibold text-slate-700">Show in Navigation Header</span>
-                        </label>
-
-                        {editingPage.showInMenu && (
-                          <div className="col-span-full pt-2">
-                            <label className="font-bold text-slate-700 block mb-1">Navigation Menu Short Label</label>
-                            <input
-                              type="text"
-                              value={editingPage.menuLabel || ''}
-                              onChange={(e) => setEditingPage({ ...editingPage, menuLabel: e.target.value })}
-                              placeholder={editingPage.title}
-                              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none text-xs"
-                            />
-                            <p className="text-[10px] text-slate-400 mt-1">
-                              Short title displayed directly in the top navigation bar.
+                      {/* Block Builder Section */}
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                              <Layers className="w-3.5 h-3.5 text-[#00C6A6]" />
+                              <span>Modular Content Blocks ({editingPage.blocks?.length || 0})</span>
+                            </span>
+                            <p className="text-[10px] text-slate-500 mt-0.5">
+                              Add interactive sections like Inclusions Grids, Ground Ops CTA callouts, and FAQ accordions.
                             </p>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => setIsAddingBlock(true)}
+                            className="px-2.5 py-1 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1 cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Add Block</span>
+                          </button>
+                        </div>
+
+                        {/* Block Addition Selector */}
+                        {isAddingBlock && (
+                          <div className="p-3 bg-white border border-[#00C6A6] rounded-xl space-y-2 animate-in fade-in">
+                            <div className="font-bold text-slate-800 text-xs">Choose Block Type to Add:</div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              {[
+                                { type: 'FEATURE_GRID', label: 'Feature / Inclusions Grid' },
+                                { type: 'CTA', label: 'Call to Action Banner' },
+                                { type: 'FAQ', label: 'FAQ Accordion' },
+                                { type: 'IMAGE_GALLERY', label: 'Image Gallery' }
+                              ].map(b => (
+                                <button
+                                  key={b.type}
+                                  type="button"
+                                  onClick={() => {
+                                    setNewBlockType(b.type as any);
+                                  }}
+                                  className={`p-2 rounded-lg text-xs font-bold border text-left cursor-pointer transition-colors ${
+                                    newBlockType === b.type
+                                      ? 'border-[#00C6A6] bg-[#00C6A6]/10 text-slate-900'
+                                      : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                                  }`}
+                                >
+                                  {b.label}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="flex justify-end space-x-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => setIsAddingBlock(false)}
+                                className="px-3 py-1 text-xs text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleAddBlockToPage}
+                                className="px-3 py-1 text-xs font-bold bg-[#00C6A6] text-slate-950 rounded-lg cursor-pointer"
+                              >
+                                Insert Block
+                              </button>
+                            </div>
+                          </div>
                         )}
+
+                        {/* List of currently attached blocks */}
+                        {Array.isArray(editingPage.blocks) && editingPage.blocks.length > 0 ? (
+                          <div className="space-y-2">
+                            {editingPage.blocks.map((block, bIdx) => (
+                              <div key={block.id || bIdx} className="p-3 bg-white border border-slate-200 rounded-xl flex items-center justify-between gap-3 text-xs">
+                                <div className="flex items-center space-x-2">
+                                  <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-700 font-bold text-[10px] flex items-center justify-center">
+                                    {bIdx + 1}
+                                  </span>
+                                  <div>
+                                    <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                                      <span>{block.title || 'Untitled Block'}</span>
+                                      <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 bg-slate-100 rounded text-slate-600">
+                                        {block.type}
+                                      </span>
+                                    </div>
+                                    <p className="text-[11px] text-slate-400 line-clamp-1">
+                                      {block.content || (block.data?.items?.length ? `${block.data.items.length} items configured` : 'Configured')}
+                                    </p>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveBlock(block.id)}
+                                  className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg cursor-pointer"
+                                  title="Remove Block"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-slate-400 italic">No modular blocks attached. Click "Add Block" above to enrich the page.</p>
+                        )}
+                      </div>
+
+                      {/* Navigation Sync Settings */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
+                        {/* Menu Integration */}
+                        <div className="space-y-2">
+                          <label className="flex items-center space-x-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              id="input-page-show-in-menu"
+                              checked={editingPage.showInMenu}
+                              onChange={(e) => setEditingPage({ ...editingPage, showInMenu: e.target.checked })}
+                              className="w-4 h-4 text-[#00C6A6] rounded cursor-pointer"
+                            />
+                            <span className="font-bold text-slate-700">Add to Navigation Menu</span>
+                          </label>
+
+                          {editingPage.showInMenu && (
+                            <div className="space-y-2 pl-6 pt-1 border-l-2 border-[#00C6A6]">
+                              <div>
+                                <label className="font-semibold text-slate-600 block mb-1 text-[11px]">Menu Location</label>
+                                <select
+                                  value={editingPage.menuLocation || 'HEADER'}
+                                  onChange={(e) => setEditingPage({ ...editingPage, menuLocation: e.target.value as MenuLocation })}
+                                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl text-xs outline-none cursor-pointer"
+                                >
+                                  <option value="HEADER">Header Primary Menu</option>
+                                  <option value="SECONDARY">Secondary Top Utility Menu</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="font-semibold text-slate-600 block mb-1 text-[11px]">Short Nav Label</label>
+                                <input
+                                  type="text"
+                                  value={editingPage.menuLabel || ''}
+                                  onChange={(e) => setEditingPage({ ...editingPage, menuLabel: e.target.value })}
+                                  placeholder={editingPage.title}
+                                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl text-xs outline-none"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Footer Integration */}
+                        <div className="space-y-2">
+                          <label className="flex items-center space-x-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              id="input-page-show-in-footer"
+                              checked={editingPage.showInFooter}
+                              onChange={(e) => setEditingPage({ ...editingPage, showInFooter: e.target.checked })}
+                              className="w-4 h-4 text-[#00C6A6] rounded cursor-pointer"
+                            />
+                            <span className="font-bold text-slate-700">Add to Footer Column</span>
+                          </label>
+
+                          {editingPage.showInFooter && (
+                            <div className="space-y-2 pl-6 pt-1 border-l-2 border-purple-500">
+                              <div>
+                                <label className="font-semibold text-slate-600 block mb-1 text-[11px]">Select Footer Column</label>
+                                <select
+                                  value={editingPage.footerColumnId || (footerConfig.columns[0]?.id || '')}
+                                  onChange={(e) => setEditingPage({ ...editingPage, footerColumnId: e.target.value })}
+                                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl text-xs outline-none cursor-pointer"
+                                >
+                                  {footerConfig.columns.map(col => (
+                                    <option key={col.id} value={col.id}>
+                                      {col.title} ({col.links?.length || 0} links)
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Status Toggle */}
+                        <div className="col-span-full pt-1 border-t border-slate-200">
+                          <label className="flex items-center space-x-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              id="input-page-published"
+                              checked={editingPage.isPublished}
+                              onChange={(e) => setEditingPage({ ...editingPage, isPublished: e.target.checked })}
+                              className="w-4 h-4 text-[#00C6A6] rounded cursor-pointer"
+                            />
+                            <span className="font-bold text-slate-800">Publish Live Immediately</span>
+                          </label>
+                          <p className="text-[10px] text-slate-400 ml-6">
+                            When unchecked, the page remains in Draft mode and will not appear to public buyers.
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </>
@@ -1050,7 +1547,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
             <div>
               <h4 className="font-bold text-base text-slate-900">Delete Custom Page?</h4>
               <p className="text-xs text-slate-500 mt-1">
-                Are you sure you want to delete <strong className="text-slate-800">"{deletingPage.title}"</strong> (/{deletingPage.slug})? Any navigation headers or footer links linked to this page will also be updated.
+                Are you sure you want to delete <strong className="text-slate-800">"{deletingPage.title}"</strong> (/{deletingPage.slug})? All associated menu links and footer references will be automatically removed.
               </p>
             </div>
             <div className="flex items-center justify-end space-x-2 pt-2">

@@ -381,6 +381,73 @@ export function canUserAccessQuoteBuilder(
 }
 
 /**
+ * Evaluates whether a user is authorized to share a quotation via WhatsApp.
+ * Adheres to TheUnbound access guidelines:
+ * - Admin / Master Admin: Always allowed
+ * - B2B Agent: Allowed if Quote Builder access is granted (unless explicitly revoked via shareWhatsApp: false)
+ * - Team Member / DMC Staff: Allowed if authorized
+ * - Buyer: Follows Buyer Quote Builder access rules
+ */
+export function canUserShareQuoteWhatsApp(
+  user: User | null | undefined,
+  _quote?: any
+): { allowed: boolean; reason?: string } {
+  if (!user) {
+    return { allowed: false, reason: 'You must be signed in to share quotations.' };
+  }
+
+  const approvalStatus = user.approvalStatus || 'APPROVED';
+  if (approvalStatus === 'PENDING') {
+    return { allowed: false, reason: 'Your account is pending verification.' };
+  }
+  if (approvalStatus === 'REJECTED') {
+    return { allowed: false, reason: 'Your account access has been revoked.' };
+  }
+
+  // Master Admin & Admin always have full authority
+  if (isMasterAdmin(user) || user.role === 'ADMIN') {
+    return { allowed: true };
+  }
+
+  const perms = user.permissions;
+
+  // If explicitly revoked for this user profile
+  if (perms && (perms.shareWhatsApp === false || perms.canShareWhatsAppQuotes === false)) {
+    return { allowed: false, reason: 'WhatsApp quotation sharing is disabled for your user account.' };
+  }
+
+  // B2B Agent: Allowed if B2B Quote Builder is allowed
+  if (user.role === 'B2B_AGENT' || user.role === 'AGENT') {
+    const qb = canUserAccessQuoteBuilder(user, 'B2B');
+    if (!qb.allowed) {
+      return { allowed: false, reason: 'Quotation builder access is required to share quotes.' };
+    }
+    return { allowed: true };
+  }
+
+  // Team Member / DMC Staff: Allowed if authorized
+  if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+    if (perms?.shareWhatsApp === true) return { allowed: true };
+    const qb = canUserAccessQuoteBuilder(user, 'B2B');
+    if (qb.allowed && perms?.shareWhatsApp !== false) {
+      return { allowed: true };
+    }
+    return { allowed: false, reason: 'WhatsApp sharing authorization is required for staff accounts.' };
+  }
+
+  // Buyer: Allowed if Buyer Quote Builder is allowed
+  if (user.role === 'BUYER') {
+    const buyerQb = canUserAccessQuoteBuilder(user, 'BUYER');
+    if (!buyerQb.allowed) {
+      return { allowed: false, reason: 'Quote access required.' };
+    }
+    return { allowed: true };
+  }
+
+  return { allowed: false, reason: 'Unauthorized role for quote sharing.' };
+}
+
+/**
  * Evaluates whether a user has top-level access to Admin CMS
  */
 export function canUserAccessCMS(user: User | null | undefined): boolean {

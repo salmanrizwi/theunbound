@@ -445,7 +445,11 @@ export const DataSyncAuditViewer: React.FC<{ currentUser?: User | null }> = ({ c
 
   useEffect(() => {
     runAuditScan();
-  }, []);
+    const unsub = db.subscribe(() => {
+      runAuditScan();
+    });
+    return () => unsub();
+  }, [db]);
 
   const handleRunSafeRepair = () => {
     setIsRepairing(true);

@@ -63,6 +63,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const db = AppDatabase.getInstance();
   const [cmsMenuItems, setCmsMenuItems] = useState<MenuItemConfig[]>(() => db.getMenuItems());
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
 
   useEffect(() => {
     return db.subscribe(() => {
@@ -77,11 +78,45 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   // Visible menu items ordered by displayOrder
   const visibleMenuItems = useMemo(() => {
-    return cmsMenuItems.filter(m => m.isVisible !== false).sort((a, b) => a.displayOrder - b.displayOrder);
+    return cmsMenuItems.filter(m => m.isVisible !== false).sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
   }, [cmsMenuItems]);
+
+  // Separate Header vs Secondary items
+  const headerMenuItems = useMemo(() => {
+    return visibleMenuItems.filter(m => !m.menuLocation || m.menuLocation === 'HEADER');
+  }, [visibleMenuItems]);
+
+  const secondaryMenuItems = useMemo(() => {
+    return visibleMenuItems.filter(m => m.menuLocation === 'SECONDARY');
+  }, [visibleMenuItems]);
+
+  // Root header items and helper for child items (hierarchical dropdowns)
+  const rootHeaderItems = useMemo(() => {
+    return headerMenuItems.filter(m => !m.parentId);
+  }, [headerMenuItems]);
+
+  const getChildItems = (parentId: string) => {
+    return headerMenuItems.filter(m => m.parentId === parentId);
+  };
 
   const handleMenuItemClick = (item: MenuItemConfig) => {
     setIsMobileNavOpen(false);
+    setOpenDropdownId(null);
+
+    // Handle openIn _blank
+    if (item.openIn === '_blank') {
+      if (item.type === 'CUSTOM_PAGE') {
+        window.open(`/pages/${item.targetId}`, '_blank', 'noopener,noreferrer');
+        return;
+      } else if (item.type === 'CUSTOM_LINK' && item.customUrl) {
+        window.open(item.customUrl, '_blank', 'noopener,noreferrer');
+        return;
+      } else if (item.type === 'EXTERNAL_LINK' && (item.targetUrl || item.customUrl)) {
+        window.open(item.targetUrl || item.customUrl, '_blank', 'noopener,noreferrer');
+        return;
+      }
+    }
+
     if (item.type === 'CUSTOM_PAGE') {
       if (onSelectCustomPage && item.targetId) {
         onSelectCustomPage(item.targetId);
@@ -115,8 +150,45 @@ export const Navbar: React.FC<NavbarProps> = ({
       } else if (target === 'about') {
         if (onSelectTab) onSelectTab('ABOUT');
         if (onSelectCustomPage) onSelectCustomPage('about-theunbound');
+      } else if (target === 'blogs') {
+        if (onSelectTab) onSelectTab('BLOGS');
+      } else if (target === 'terms') {
+        if (onSelectTab) onSelectTab('TERMS');
+      } else if (target === 'privacy') {
+        if (onSelectTab) onSelectTab('PRIVACY');
+      } else if (target === 'refund') {
+        if (onSelectTab) onSelectTab('REFUND');
       }
     }
+  };
+
+  const isItemActive = (item: MenuItemConfig): boolean => {
+    if (item.type === 'CUSTOM_PAGE') {
+      return activeTab === 'CUSTOM_PAGE' && activeCustomPageSlug === item.targetId;
+    } else if (item.type === 'DESTINATION') {
+      return activeTab === 'DESTINATIONS' && currentActiveDest === item.targetId;
+    } else if (item.type === 'SYSTEM_VIEW') {
+      if (item.targetId === 'home' || item.targetId === 'destinations') {
+        return activeTab === 'DESTINATIONS' && (currentActiveDest === 'all' || !currentActiveDest);
+      } else if (item.targetId === 'b2b') {
+        return activeTab === 'B2B_BUILDER';
+      } else if (item.targetId === 'contact') {
+        return activeTab === 'CONTACT';
+      } else if (item.targetId === 'about') {
+        return activeTab === 'ABOUT' || (activeTab === 'CUSTOM_PAGE' && activeCustomPageSlug === 'about-theunbound');
+      } else if (item.targetId === 'blogs') {
+        return activeTab === 'BLOGS';
+      } else if (item.targetId === 'terms') {
+        return activeTab === 'TERMS';
+      } else if (item.targetId === 'privacy') {
+        return activeTab === 'PRIVACY';
+      } else if (item.targetId === 'refund') {
+        return activeTab === 'REFUND';
+      } else {
+        return activeTab === 'DESTINATIONS' && currentActiveDest === item.targetId;
+      }
+    }
+    return false;
   };
 
   const isB2BAgentOrAdmin = role === 'B2B_AGENT' || role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF';
@@ -135,6 +207,27 @@ export const Navbar: React.FC<NavbarProps> = ({
           </span>
         </div>
         <div className="flex items-center space-x-3">
+          {/* Secondary Menu Utility Links */}
+          {secondaryMenuItems.length > 0 && (
+            <div className="hidden lg:flex items-center space-x-3 text-xs border-r border-slate-800 pr-3 mr-1">
+              {secondaryMenuItems.map(secItem => (
+                <button
+                  key={secItem.id}
+                  id={`sec-nav-${secItem.id}`}
+                  onClick={() => handleMenuItemClick(secItem)}
+                  className="text-slate-300 hover:text-[#00E5C0] font-medium transition-colors cursor-pointer flex items-center space-x-1"
+                >
+                  <span>{secItem.label}</span>
+                  {secItem.badgeText && (
+                    <span className="text-[9px] font-bold px-1.5 py-0.2 bg-[#00C6A6]/20 text-[#00E5C0] rounded">
+                      {secItem.badgeText}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
           <button 
             id="nav-btn-specs"
             onClick={onOpenSpecs}
@@ -212,24 +305,76 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {/* Desktop Dynamic Navigation Links from CMS */}
             <nav className="hidden lg:flex items-center space-x-1 pl-4 border-l border-slate-200">
-              {visibleMenuItems.map((item) => {
-                let isActive = false;
-                if (item.type === 'CUSTOM_PAGE') {
-                  isActive = activeTab === 'CUSTOM_PAGE' && activeCustomPageSlug === item.targetId;
-                } else if (item.type === 'DESTINATION') {
-                  isActive = activeTab === 'DESTINATIONS' && currentActiveDest === item.targetId;
-                } else if (item.type === 'SYSTEM_VIEW') {
-                  if (item.targetId === 'home' || item.targetId === 'destinations') {
-                    isActive = activeTab === 'DESTINATIONS' && (currentActiveDest === 'all' || !currentActiveDest);
-                  } else if (item.targetId === 'b2b') {
-                    isActive = activeTab === 'B2B_BUILDER';
-                  } else if (item.targetId === 'contact') {
-                    isActive = activeTab === 'CONTACT';
-                  } else if (item.targetId === 'about') {
-                    isActive = activeTab === 'ABOUT' || (activeTab === 'CUSTOM_PAGE' && activeCustomPageSlug === 'about-theunbound');
-                  } else {
-                    isActive = activeTab === 'DESTINATIONS' && currentActiveDest === item.targetId;
-                  }
+              {rootHeaderItems.map((item) => {
+                const children = getChildItems(item.id);
+                const hasChildren = children.length > 0;
+                const isCurrentActive = isItemActive(item) || children.some(c => isItemActive(c));
+                const isDropdownOpen = openDropdownId === item.id;
+
+                if (hasChildren) {
+                  return (
+                    <div 
+                      key={item.id} 
+                      className="relative"
+                      onMouseEnter={() => setOpenDropdownId(item.id)}
+                      onMouseLeave={() => setOpenDropdownId(null)}
+                    >
+                      <button
+                        id={`menu-nav-${item.id}`}
+                        onClick={() => setOpenDropdownId(isDropdownOpen ? null : item.id)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                          isCurrentActive
+                            ? 'bg-[#00C6A6]/10 text-[#00C6A6] font-bold'
+                            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${isCurrentActive ? 'bg-[#00C6A6]' : 'bg-slate-300'}`}></span>
+                        <span>{item.label}</span>
+                        {item.badgeText && (
+                          <span className="text-[9px] uppercase tracking-wider font-extrabold px-1.5 py-0.2 rounded-full bg-[#00C6A6]/20 text-[#00a88d]">
+                            {item.badgeText}
+                          </span>
+                        )}
+                        <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180 text-[#00C6A6]' : 'text-slate-400'}`} />
+                      </button>
+
+                      {isDropdownOpen && (
+                        <div className="absolute left-0 top-full mt-1 w-56 bg-white rounded-2xl shadow-xl border border-slate-200 py-1.5 z-50 animate-in fade-in zoom-in-95">
+                          {/* Option to navigate to parent if parent has a target */}
+                          {item.type !== 'CUSTOM_LINK' && (
+                            <button
+                              onClick={() => handleMenuItemClick(item)}
+                              className="w-full text-left px-3.5 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 flex items-center justify-between border-b border-slate-100"
+                            >
+                              <span>Overview ({item.label})</span>
+                            </button>
+                          )}
+                          {children.map(child => {
+                            const isChildActive = isItemActive(child);
+                            return (
+                              <button
+                                key={child.id}
+                                id={`menu-sub-${child.id}`}
+                                onClick={() => handleMenuItemClick(child)}
+                                className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors cursor-pointer ${
+                                  isChildActive 
+                                    ? 'bg-[#00C6A6]/10 text-[#00C6A6] font-bold' 
+                                    : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                                }`}
+                              >
+                                <span>{child.label}</span>
+                                {child.badgeText && (
+                                  <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded-full bg-[#00C6A6]/20 text-[#00a88d]">
+                                    {child.badgeText}
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
                 }
 
                 return (
@@ -238,17 +383,21 @@ export const Navbar: React.FC<NavbarProps> = ({
                     id={`menu-nav-${item.id}`}
                     onClick={() => handleMenuItemClick(item)}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                      isActive
+                      isCurrentActive
                         ? 'bg-[#00C6A6]/10 text-[#00C6A6] font-bold'
                         : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                     }`}
                   >
-                    <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-[#00C6A6]' : 'bg-slate-300'}`}></span>
+                    <span className={`w-1.5 h-1.5 rounded-full ${isCurrentActive ? 'bg-[#00C6A6]' : 'bg-slate-300'}`}></span>
                     <span>{item.label}</span>
+                    {item.badgeText && (
+                      <span className="text-[9px] uppercase tracking-wider font-extrabold px-1.5 py-0.2 rounded-full bg-[#00C6A6]/20 text-[#00a88d]">
+                        {item.badgeText}
+                      </span>
+                    )}
                   </button>
                 );
               })}
-
             </nav>
           </div>
 
@@ -407,37 +556,105 @@ export const Navbar: React.FC<NavbarProps> = ({
         {isMobileNavOpen && (
           <div className="lg:hidden border-t border-slate-200 py-3 space-y-1 animate-in fade-in">
             <p className="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Navigation Menu</p>
-            {visibleMenuItems.map((item) => {
-              let isActive = false;
-              if (item.type === 'CUSTOM_PAGE') {
-                isActive = activeTab === 'CUSTOM_PAGE' && activeCustomPageSlug === item.targetId;
-              } else if (item.type === 'DESTINATION') {
-                isActive = activeTab === 'DESTINATIONS' && currentActiveDest === item.targetId;
-              } else if (item.type === 'SYSTEM_VIEW') {
-                if (item.targetId === 'home' || item.targetId === 'destinations') {
-                  isActive = activeTab === 'DESTINATIONS' && (currentActiveDest === 'all' || !currentActiveDest);
-                } else if (item.targetId === 'b2b') {
-                  isActive = activeTab === 'B2B_BUILDER';
-                } else if (item.targetId === 'contact') {
-                  isActive = activeTab === 'CONTACT';
-                } else {
-                  isActive = activeTab === 'DESTINATIONS' && currentActiveDest === item.targetId;
-                }
+            {rootHeaderItems.map((item) => {
+              const children = getChildItems(item.id);
+              const hasChildren = children.length > 0;
+              const isCurrentActive = isItemActive(item) || children.some(c => isItemActive(c));
+              const isSubOpen = openDropdownId === item.id;
+
+              if (hasChildren) {
+                return (
+                  <div key={item.id} className="space-y-0.5">
+                    <div className="flex items-center justify-between px-3 py-2 rounded-md hover:bg-slate-50">
+                      <button
+                        onClick={() => handleMenuItemClick(item)}
+                        className={`flex items-center gap-2 text-sm font-medium ${
+                          isCurrentActive ? 'text-[#00C6A6] font-bold' : 'text-slate-700'
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${isCurrentActive ? 'bg-[#00C6A6]' : 'bg-slate-300'}`}></span>
+                        <span>{item.label}</span>
+                        {item.badgeText && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-[#00C6A6]/20 text-[#00a88d]">
+                            {item.badgeText}
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => setOpenDropdownId(isSubOpen ? null : item.id)}
+                        className="p-1 text-slate-400 hover:text-slate-600 rounded"
+                      >
+                        <ChevronDown className={`w-4 h-4 transition-transform ${isSubOpen ? 'rotate-180 text-[#00C6A6]' : ''}`} />
+                      </button>
+                    </div>
+
+                    {isSubOpen && (
+                      <div className="pl-6 space-y-0.5 border-l-2 border-slate-100 ml-4 py-1">
+                        {children.map(child => {
+                          const isChildActive = isItemActive(child);
+                          return (
+                            <button
+                              key={child.id}
+                              onClick={() => handleMenuItemClick(child)}
+                              className={`w-full text-left px-3 py-1.5 text-xs rounded-md flex items-center justify-between ${
+                                isChildActive ? 'bg-[#00C6A6]/10 text-[#00C6A6] font-bold' : 'text-slate-600 hover:bg-slate-50'
+                              }`}
+                            >
+                              <span>{child.label}</span>
+                              {child.badgeText && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-[#00C6A6]/20 text-[#00a88d]">
+                                  {child.badgeText}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
               }
 
               return (
                 <button
                   key={item.id}
                   onClick={() => handleMenuItemClick(item)}
-                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium ${
-                    isActive ? 'bg-[#00C6A6]/10 text-[#00C6A6] font-bold' : 'text-slate-700 hover:bg-slate-50'
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium ${
+                    isCurrentActive ? 'bg-[#00C6A6]/10 text-[#00C6A6] font-bold' : 'text-slate-700 hover:bg-slate-50'
                   }`}
                 >
-                  <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-[#00C6A6]' : 'bg-slate-300'}`}></span>
-                  <span>{item.label}</span>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-1.5 h-1.5 rounded-full ${isCurrentActive ? 'bg-[#00C6A6]' : 'bg-slate-300'}`}></span>
+                    <span>{item.label}</span>
+                  </div>
+                  {item.badgeText && (
+                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-[#00C6A6]/20 text-[#00a88d]">
+                      {item.badgeText}
+                    </span>
+                  )}
                 </button>
               );
             })}
+
+            {secondaryMenuItems.length > 0 && (
+              <div className="pt-2 border-t border-slate-100 space-y-0.5">
+                <p className="px-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Quick Links</p>
+                {secondaryMenuItems.map(secItem => (
+                  <button
+                    key={secItem.id}
+                    onClick={() => handleMenuItemClick(secItem)}
+                    className="w-full text-left px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50 rounded flex items-center justify-between"
+                  >
+                    <span>{secItem.label}</span>
+                    {secItem.badgeText && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-[#00C6A6]/20 text-[#00a88d]">
+                        {secItem.badgeText}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {onSelectTab && (
               <div className="pt-2 border-t border-slate-100 space-y-1">
