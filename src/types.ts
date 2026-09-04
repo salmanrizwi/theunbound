@@ -125,9 +125,12 @@ export interface CMSSystemPermissions {
 }
 
 export interface UserPermissionAccess {
-  // Quote Builder Access
+  // Quote Builder & AI Planner Access
   b2bQuoteBuilderAccess?: boolean;
   buyerQuoteBuilderAccess?: boolean;
+  aiPlannerAccess?: boolean; // Controls whether user has explicit access to AI Planner in B2B Agent Portal
+  aiPlannerGrantedBy?: string;
+  aiPlannerGrantedAt?: string;
   canAccessPricingCalculator?: boolean; // backwards-compatible alias
   canCreateBookings?: boolean;
   canExportPDF?: boolean;
@@ -578,7 +581,19 @@ export interface PricingCalculationResult {
     };
     allowMultipleVehicles?: boolean;
   };
+
+  // Master Pricing Source of Truth & Audit Metadata
+  rateId?: string;
+  rateVersion?: string | number;
+  rateEffectiveFrom?: string;
+  rateEffectiveTo?: string;
+  isAuthoritative?: boolean;
+  sourceCollection?: string;
+  pricingRequestId?: string;
+  calculatedAt?: string;
 }
+
+export type QuoteItemSource = 'AI_PLANNER' | 'USER' | 'SYSTEM';
 
 export interface QuoteItem {
   id: string;
@@ -596,6 +611,8 @@ export interface QuoteItem {
   accommodationType?: AccommodationType;
   isManualHotel?: boolean;
   manualHotelDetails?: ManualHotelDetails;
+  source?: QuoteItemSource;
+  aiSuggested?: boolean;
 }
 
 export type QuoteStatus = 
@@ -740,6 +757,8 @@ export interface Quotation {
   createdAt: string;
   updatedAt: string;
   lastActivityAt?: string;
+  lastSharedViaWhatsAppAt?: string;
+  lastSharedRecipientPhone?: string;
   validUntil: string;
   
   // Aggregated totals
@@ -1756,6 +1775,181 @@ export interface GmailNotificationToggleConfig {
   bookingCancellation: boolean;
   operationsDossier: boolean;
   adminAlerts: boolean;
+}
+
+// ====================================================
+// ADMIN ACTIVITY CENTER & UNIFIED NOTIFICATIONS
+// ====================================================
+
+export type AdminActivityCategory = 
+  | 'USER'
+  | 'LEAD'
+  | 'QUOTE'
+  | 'AI_PLANNER'
+  | 'BOOKING'
+  | 'PAYMENT'
+  | 'OPERATIONS'
+  | 'PRODUCT'
+  | 'DESTINATION'
+  | 'SYSTEM';
+
+export type AdminActivitySeverity = 'INFO' | 'WARNING' | 'CRITICAL';
+
+export type AdminActivityActorType = 
+  | 'BUYER' 
+  | 'B2B_AGENT' 
+  | 'ADMIN' 
+  | 'TEAM_MEMBER' 
+  | 'AI_PLANNER' 
+  | 'SYSTEM';
+
+export type AdminActivityType =
+  // User Activities
+  | 'USER_REGISTERED'
+  | 'USER_APPROVED'
+  | 'USER_REJECTED'
+  | 'USER_PROFILE_UPDATED'
+  | 'USER_DISABLED'
+  | 'USER_ENABLED'
+  | 'B2B_AGENT_REGISTRATION'
+  | 'BUYER_REGISTRATION'
+  | 'USER_PERMISSIONS_CHANGED'
+  // Lead Activities
+  | 'LEAD_CREATED'
+  | 'LEAD_STATUS_CHANGED'
+  | 'LEAD_ASSIGNED'
+  | 'LEAD_PRIORITY_CHANGED'
+  | 'LEAD_CONVERTED'
+  | 'LEAD_NOTE_ADDED'
+  | 'LEAD_DELETED'
+  // Quote Activities
+  | 'QUOTE_CREATED'
+  | 'QUOTE_SAVED'
+  | 'QUOTE_UPDATED'
+  | 'QUOTE_PDF_GENERATED'
+  | 'QUOTE_PDF_DOWNLOADED'
+  | 'QUOTE_EMAIL_SENT'
+  | 'QUOTE_WHATSAPP_SHARED'
+  | 'QUOTE_CONVERTED_TO_BOOKING'
+  | 'QUOTE_EXPIRED'
+  // AI Planner Activities
+  | 'AI_PLANNER_OPENED'
+  | 'AI_PLAN_GENERATED'
+  | 'AI_PLAN_REGENERATED'
+  | 'AI_OPTION_SELECTED'
+  | 'AI_QUOTE_MODIFIED'
+  | 'AI_QUOTE_SAVED'
+  | 'AI_QUOTE_GENERATED'
+  | 'AI_PLANNING_ERROR'
+  // Booking Activities
+  | 'BOOKING_SUBMITTED'
+  | 'BOOKING_CREATED'
+  | 'BOOKING_UPDATED'
+  | 'BOOKING_CONFIRMED'
+  | 'BOOKING_CANCELLED'
+  | 'SUPPLIER_STATUS_UPDATED'
+  | 'VOUCHER_GENERATED'
+  | 'INVOICE_GENERATED'
+  // Payment Activities
+  | 'PAYMENT_INITIATED'
+  | 'PAYMENT_RECEIVED'
+  | 'PAYMENT_PROOF_UPLOADED'
+  | 'PAYMENT_PROOF_VERIFIED'
+  | 'PAYMENT_PROOF_REJECTED'
+  | 'PAYMENT_OVERDUE'
+  // Operations Activities
+  | 'OPERATIONS_JOB_CREATED'
+  | 'OPERATIONS_JOB_ASSIGNED'
+  | 'OPERATIONS_ROSTER_UPDATED'
+  | 'OPERATIONS_NOTE_ADDED'
+  | 'SLA_TASK_DUE'
+  | 'SLA_BREACH_WARNING'
+  // Product & Inventory Activities
+  | 'PRODUCT_CREATED'
+  | 'PRODUCT_UPDATED'
+  | 'HOTEL_CREATED'
+  | 'HOTEL_UPDATED'
+  | 'RATE_UPDATED'
+  | 'PACKAGE_CREATED'
+  | 'PACKAGE_UPDATED'
+  | 'VISAS_UPDATED'
+  // Destination & Content Activities
+  | 'DESTINATION_CREATED'
+  | 'DESTINATION_UPDATED'
+  | 'CITY_HUB_UPDATED'
+  | 'PAGE_UPDATED'
+  | 'MENU_UPDATED'
+  | 'BLOG_PUBLISHED'
+  | 'REVIEW_SYNCED'
+  // System & Integration Activities
+  | 'GOOGLE_SHEETS_SYNCED'
+  | 'GMAIL_SENT'
+  | 'CALENDAR_SYNCED'
+  | 'INTEGRATION_ERROR'
+  | 'FIRESTORE_HEALTH_ALERT'
+  | 'SECURITY_AUDIT_LOGGED';
+
+export interface AdminActivityRecord {
+  activityId: string;
+  activityType: AdminActivityType;
+  category: AdminActivityCategory;
+  actorId?: string;
+  actorType?: AdminActivityActorType;
+  actorName: string;
+  timestamp: string; // ISO 8601 string
+  
+  // Reference IDs
+  leadId?: string;
+  quoteId?: string;
+  bookingId?: string;
+  bookingReference?: string;
+  customerId?: string;
+  destinationId?: string;
+  hubId?: string;
+  productId?: string;
+  hotelId?: string;
+  userId?: string;
+  
+  entityType: string;
+  entityId: string;
+  summary: string;
+  details: {
+    customerName?: string;
+    agentName?: string;
+    destinationName?: string;
+    travelDates?: string;
+    totalAmount?: number;
+    currency?: string;
+    previousValue?: string;
+    newValue?: string;
+    itemType?: string;
+    reason?: string;
+    actionNeeded?: string;
+    [key: string]: any;
+  };
+  severity: AdminActivitySeverity;
+  actionRequired: boolean;
+  actionLabel?: string;
+  read: boolean;
+  readAt?: string;
+  readBy?: string;
+  
+  // Deep Linking Target Destination
+  targetRoute?: string;
+  targetSection: string;
+  targetSubTab?: string;
+  recordId?: string;
+  
+  createdAt: string;
+}
+
+export interface AdminActivityFilter {
+  category?: AdminActivityCategory | 'ALL';
+  severity?: AdminActivitySeverity | 'ALL';
+  actionRequiredOnly?: boolean;
+  unreadOnly?: boolean;
+  dateRange?: 'TODAY' | 'YESTERDAY' | 'LAST_7_DAYS' | 'ALL_TIME';
+  searchQuery?: string;
 }
 
 export interface GoogleCalendarSyncConfig {
@@ -3254,11 +3448,15 @@ export interface TripRouteHub {
   order: number;
   hotelId?: string;
   roomTypeId?: string;
+  mealPlan?: string;
+  mealPlanId?: string;
   roomsCount?: number;
   accommodationType?: AccommodationType;
   isManualHotel?: boolean;
   manualHotel?: ManualHotelDetails;
   notes?: string;
+  source?: QuoteItemSource;
+  aiSuggested?: boolean;
 }
 
 export type PackageStatus = 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'UNPUBLISHED' | 'ARCHIVED';
@@ -3458,6 +3656,7 @@ export interface B2BTask {
 export type B2BTabType = 
   | 'home'
   | 'dashboard' 
+  | 'ai-planner'
   | 'create-quote' 
   | 'packages' 
   | 'products' 
@@ -3549,5 +3748,298 @@ export interface B2BEsimPlan {
   features: string[];
 }
 
+// ----------------------------------------------------
+// AI PLANNER & INTELLIGENT B2B QUOTE BUILDER TYPES
+// ----------------------------------------------------
 
+export type RequirementFieldStatus = 'CONFIRMED' | 'INFERRED' | 'MISSING';
+
+export interface AiPlannerRequirementItem<T = any> {
+  value: T;
+  status: RequirementFieldStatus;
+  sourceText?: string;
+  confidence?: number;
+}
+
+export interface AiPlannerStructuredRequirements {
+  destination: AiPlannerRequirementItem<string>;
+  destinationId?: string;
+  hubs: AiPlannerRequirementItem<string[]>;
+  hubIds?: string[];
+  travelers: {
+    adults: AiPlannerRequirementItem<number>;
+    children: AiPlannerRequirementItem<number>;
+    infants: AiPlannerRequirementItem<number>;
+    childAges: AiPlannerRequirementItem<number[]>;
+  };
+  duration: {
+    nights: AiPlannerRequirementItem<number>;
+    days: AiPlannerRequirementItem<number>;
+  };
+  travelDates: {
+    startDate: AiPlannerRequirementItem<string | null>;
+    endDate: AiPlannerRequirementItem<string | null>;
+  };
+  hotelPreference: {
+    category: AiPlannerRequirementItem<string>;
+    mealPlan: AiPlannerRequirementItem<string | null>;
+    roomCount: AiPlannerRequirementItem<number>;
+  };
+  travelStyle: AiPlannerRequirementItem<string[]>;
+  transportPreference: AiPlannerRequirementItem<'PRIVATE' | 'SHARED' | 'TRAIN' | 'MIXED'>;
+  budget?: AiPlannerRequirementItem<{
+    amount: number;
+    currency: CurrencyCode;
+    basis: 'per_person' | 'total';
+  } | null>;
+  interests: AiPlannerRequirementItem<string[]>;
+  visaAssistance: AiPlannerRequirementItem<'YES' | 'NO' | 'NOT_REQUIRED'>;
+  specialRequests?: string[];
+  arrivalCity?: string;
+  departureCity?: string;
+  clientName?: string;
+  clientEmail?: string;
+  clientPhone?: string;
+}
+
+export interface AiPlannerFollowUpQuestion {
+  id: string;
+  question: string;
+  field: string;
+  placeholder?: string;
+  options?: string[];
+  currentValue?: any;
+  resolved: boolean;
+}
+
+export interface AiPlannerDayItem {
+  type: 'HOTEL' | 'ACTIVITY' | 'TRANSFER' | 'VISA' | 'OPTIONAL';
+  id: string;
+  name: string;
+  category?: string;
+  hubId?: string;
+  hubName?: string;
+  timeSlot?: 'MORNING' | 'AFTERNOON' | 'EVENING' | 'FULL_DAY';
+  serviceTime?: string;
+  productId?: string;
+  hotelId?: string;
+  roomTypeId?: string;
+  transferRouteId?: string;
+  notes?: string;
+  sellingPriceFormatted?: string;
+  sellingPrice: number;
+  reasoning?: string;
+  product?: Product;
+}
+
+export interface AiPlannerDaySlot {
+  dayNumber: number;
+  dateString: string;
+  formattedDate: string;
+  hubId: string;
+  hubName: string;
+  themeTitle: string;
+  isTransitionDay: boolean;
+  fromHubName?: string;
+  toHubName?: string;
+  items: AiPlannerDayItem[];
+}
+
+export interface AiPlannerOptionPlan {
+  optionNumber: 1 | 2 | 3;
+  optionKey: 'BEST_MATCH' | 'BEST_VALUE' | 'PREMIUM';
+  title: string;
+  badge: string;
+  tagline: string;
+  hotelTier: string;
+  destinationId: string;
+  destinationName: string;
+  routeSummary: string[];
+  routeHubs: TripRouteHub[];
+  days: AiPlannerDaySlot[];
+  items: QuoteItem[];
+  dayThemes: Record<number, string>;
+  totalSellingPrice: number;
+  perPersonSellingPrice: number;
+  currency: CurrencyCode;
+  feasibility: FeasibilityCheckResult;
+  reasoning: string;
+  highlights: string[];
+}
+
+export interface AiPlannerResult {
+  requirements: AiPlannerStructuredRequirements;
+  confirmedSummary: string[];
+  inferredSummary: string[];
+  missingSummary: string[];
+  followUpQuestions: AiPlannerFollowUpQuestion[];
+  options: AiPlannerOptionPlan[];
+  selectedOptionIndex: number;
+  generatedAt: string;
+  plannerVersion: string;
+  promptText: string;
+  assumptions: string[];
+  inventoryStatus: {
+    destinationFound: boolean;
+    hubsFound: number;
+    hotelsFound: number;
+    activitiesFound: number;
+    transfersFound: number;
+    warnings: string[];
+  };
+}
+
+export type AiPlannerActivityAction =
+  | 'AI_PLANNER_OPENED'
+  | 'AI_REQUEST_SUBMITTED'
+  | 'AI_PLAN_GENERATED'
+  | 'AI_PLAN_REGENERATED'
+  | 'AI_OPTION_SELECTED'
+  | 'AI_PLAN_OPENED_IN_QUOTE_BUILDER'
+  | 'AI_PLAN_MODIFIED'
+  | 'AI_PLAN_SAVED'
+  | 'QUOTE_GENERATED';
+
+export interface AiPlannerActivityEvent {
+  id: string;
+  userId: string;
+  userName?: string;
+  userRole?: string;
+  quoteId?: string;
+  leadId?: string;
+  timestamp: string;
+  action: AiPlannerActivityAction;
+  source: 'AI_PLANNER';
+  details?: Record<string, any>;
+  destination?: string;
+  pax?: number;
+  nights?: number;
+  totalSellingPrice?: number;
+  currency?: CurrencyCode;
+}
+
+export interface AiPlannerAdminConfig {
+  enabledGlobally: boolean;
+  modelProvider: 'GEMINI_FLASH' | 'INTELLIGENT_ENGINE' | 'HYBRID';
+  modelName: string;
+  maxAlternatives: number;
+  defaultPlannerBehavior: 'STRICT_INVENTORY' | 'RECOMMEND_CLOSEST';
+  allowedDataSources: string[];
+  plannerVersion: string;
+  loggingEnabled: boolean;
+  timeoutMs: number;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export interface AiPlannerPermissionAuditLog {
+  id: string;
+  actorUserId: string;
+  actorName: string;
+  targetUserId: string;
+  targetUserName: string;
+  targetUserEmail: string;
+  permission: 'aiPlanner.access';
+  previousValue: boolean;
+  newValue: boolean;
+  timestamp: string;
+  reason: string;
+}
+
+export interface AiQuoteReadinessItem {
+  status: 'COMPLETE' | 'NEEDS_SELECTION' | 'OPTIONAL' | 'NOT_REQUESTED' | 'PASSED' | 'CALCULATED';
+  label: string;
+  detail: string;
+}
+
+export interface AiQuoteReadiness {
+  tripDetails: AiQuoteReadinessItem;
+  route: AiQuoteReadinessItem;
+  hotels: AiQuoteReadinessItem;
+  rooms: AiQuoteReadinessItem;
+  mealPlans: AiQuoteReadinessItem;
+  transfers: AiQuoteReadinessItem;
+  activities: AiQuoteReadinessItem;
+  visa: AiQuoteReadinessItem;
+  optionalServices: AiQuoteReadinessItem;
+  feasibility: AiQuoteReadinessItem;
+  pricing: AiQuoteReadinessItem;
+  isReadyForHandoff: boolean;
+}
+
+export interface QuoteBuilderHandoffPayload {
+  source: 'AI_PLANNER';
+  plannerVersion: string;
+  createdAt: string;
+  createdBy?: string;
+  requirementSnapshot: AiPlannerStructuredRequirements;
+  destination: {
+    id: string;
+    name: string;
+    slug?: string;
+    code?: string;
+  };
+  travelDates: {
+    startDate: string;
+    endDate: string;
+    nights: number;
+  };
+  pax: {
+    adults: number;
+    children: number;
+    childAges: number[];
+    infants: number;
+    classificationSummary?: string;
+  };
+  routeHubs: TripRouteHub[];
+  items: QuoteItem[];
+  dayThemes: Record<number, string>;
+  calculatedSellingPrice: number;
+  currency: CurrencyCode;
+  readiness: AiQuoteReadiness;
+  badge?: string;
+}
+
+// ----------------------------------------------------
+// THEUNBOUND AUTHORITATIVE COMMUNICATION STANDARD TYPES
+// ----------------------------------------------------
+
+export type CommunicationChannel = 'PDF' | 'EMAIL' | 'WHATSAPP' | 'NOTIFICATION' | 'PREVIEW';
+export type CommunicationRole = 'BUYER' | 'B2B_AGENT' | 'ADMIN_OPS';
+
+export type CommunicationEventType =
+  | 'QUOTE_EMAIL_SENT'
+  | 'QUOTE_PDF_GENERATED'
+  | 'QUOTE_WHATSAPP_SHARED'
+  | 'QUOTE_STATUS_CHANGED'
+  | 'BOOKING_EMAIL_SENT'
+  | 'BOOKING_STATUS_UPDATED'
+  | 'PAYMENT_NOTIFICATION_SENT'
+  | 'PAYMENT_PROOF_SUBMITTED'
+  | 'PAYMENT_PROOF_VERIFIED'
+  | 'LEAD_NOTIFICATION_SENT'
+  | 'OPERATIONAL_ALERT_SENT'
+  | 'COMMUNICATION_FAILED';
+
+export interface CommunicationAuditLog {
+  id: string;
+  communicationId: string;
+  quoteId?: string;
+  bookingId?: string;
+  leadId?: string;
+  recipientId?: string;
+  recipientEmail?: string;
+  recipientPhone?: string;
+  recipientType: 'BUYER' | 'B2B_AGENT' | 'DMC_OPS' | 'ADMIN' | 'SUPPLIER';
+  channel: CommunicationChannel;
+  eventType: CommunicationEventType;
+  templateVersion: string;
+  dataSnapshotVersion?: number;
+  dataSnapshot?: any;
+  sentAt: string;
+  sentBy?: string;
+  sentByName?: string;
+  deliveryStatus: 'SUCCESS' | 'DELIVERED' | 'FAILED' | 'PENDING';
+  failureReason?: string;
+}
 

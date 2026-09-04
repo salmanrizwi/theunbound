@@ -53,16 +53,14 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
   currentUser,
   allUsers
 }) => {
-  if (!isOpen || !user) return null;
-
-  const isMaster = isMasterAdmin(user);
+  const isMaster = user ? isMasterAdmin(user) : false;
 
   // Form State
-  const [role, setRole] = useState<UserRole>(user.role);
-  const [category, setCategory] = useState<UserCategory>(user.category || (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' ? 'INTERNAL' : 'EXTERNAL'));
-  const [approvalStatus, setApprovalStatus] = useState<UserApprovalStatus>(user.approvalStatus || 'APPROVED');
-  const [buyerMargin, setBuyerMargin] = useState<number>(user.customBuyerMarginPercent ?? 25);
-  const [agentMargin, setAgentMargin] = useState<number>(user.customAgentMarginPercent ?? 10);
+  const [role, setRole] = useState<UserRole>(user?.role || 'B2B_AGENT');
+  const [category, setCategory] = useState<UserCategory>(user?.category || ((user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER') ? 'INTERNAL' : 'EXTERNAL'));
+  const [approvalStatus, setApprovalStatus] = useState<UserApprovalStatus>(user?.approvalStatus || 'APPROVED');
+  const [buyerMargin, setBuyerMargin] = useState<number>(user?.customBuyerMarginPercent ?? 25);
+  const [agentMargin, setAgentMargin] = useState<number>(user?.customAgentMarginPercent ?? 10);
   const [auditReason, setAuditReason] = useState<string>('');
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -70,8 +68,9 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
 
   // Permissions state initialized with existing or default
   const [perms, setPerms] = useState<UserPermissionAccess>(() => {
-    const existing = user.permissions || {};
-    const roleDefaults = getDefaultPermissionsForRole(user.role);
+    const userRole = user?.role || 'B2B_AGENT';
+    const existing = user?.permissions || {};
+    const roleDefaults = getDefaultPermissionsForRole(userRole);
     return {
       ...roleDefaults,
       ...existing,
@@ -94,9 +93,9 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
     };
   });
 
-  // Re-sync if user changes
+  // Re-sync if user changes or modal opens
   useEffect(() => {
-    if (user) {
+    if (user && isOpen) {
       setRole(user.role);
       setCategory(user.category || (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' ? 'INTERNAL' : 'EXTERNAL'));
       setApprovalStatus(user.approvalStatus || 'APPROVED');
@@ -128,7 +127,9 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
         }
       });
     }
-  }, [user]);
+  }, [user, isOpen]);
+
+  if (!isOpen || !user) return null;
 
   // Handle Role change: offer to load role defaults
   const handleRoleChange = (newRole: UserRole) => {

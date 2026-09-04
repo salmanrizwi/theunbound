@@ -379,5 +379,235 @@ export const INITIAL_B2B_PACKAGES: B2BPackage[] = [
     isPublished: true,
     createdAt: '2026-01-25T16:00:00Z',
     updatedAt: '2026-02-25T11:00:00Z'
+  },
+  // =========================================================================
+  // DUBAI & UAE PACKAGES
+  // =========================================================================
+  {
+    id: 'pkg-dxb-glamour-5n',
+    title: 'Dubai Supercar Glamour & Arabian Desert Dunes',
+    slug: 'dubai-supercar-glamour-5n',
+    destinationId: 'dest-dubai',
+    destinationName: 'Dubai & UAE',
+    regionId: 'region-uae-dubai',
+    regionName: 'Dubai & Abu Dhabi',
+    heroImage: 'https://images.unsplash.com/photo-1512453979798-5ea266f8880c?q=80&w=1200&auto=format&fit=crop',
+    durationNights: 5,
+    durationDays: 6,
+    tagline: 'Burj Al Arab • Royal Desert Dunes • Abu Dhabi Grand Mosque 5-Star Indulgence',
+    description: 'A high-octane luxury escape across the United Arab Emirates. Experience the sail-shaped Burj Al Arab, private Land Cruiser dune bashing in the Dubai Conservation Reserve, Level 148 At the Top SKY hospitality, and the royal heritage of Abu Dhabi.',
+    routeSummary: ['Dubai (4 Nights)', 'Abu Dhabi (1 Night)'],
+    routeHubs: [
+      {
+        id: 'rh-pkg-dxb-1',
+        hubId: 'hub-dubai',
+        hubName: 'Dubai',
+        nights: 4,
+        order: 1,
+        hotelId: 'hotel-burj-al-arab',
+        roomTypeId: 'room-deluxe-one-bed-suite'
+      },
+      {
+        id: 'rh-pkg-dxb-2',
+        hubId: 'hub-abudhabi',
+        hubName: 'Abu Dhabi',
+        nights: 1,
+        order: 2,
+        hotelId: 'hotel-emirates-palace-abudhabi',
+        roomTypeId: 'room-palace-sea-view'
+      }
+    ],
+    hotelsSummary: [
+      {
+        name: 'Burj Al Arab Jumeirah',
+        cityName: 'Dubai',
+        nights: 4,
+        roomType: 'Deluxe One-Bedroom Duplex Suite',
+        mealPlan: 'Sumptuous Buffet Breakfast'
+      },
+      {
+        name: 'Emirates Palace Mandarin Oriental',
+        cityName: 'Abu Dhabi',
+        nights: 1,
+        roomType: 'Palace Deluxe Sea View Room',
+        mealPlan: 'Palace Gourmet Breakfast'
+      }
+    ],
+    productIds: [
+      'dxb-act-burj-sky',
+      'dxb-act-desert-safari',
+      'dxb-trf-dxb-city'
+    ],
+    highlights: [
+      'VIP Gate-to-Curbside ahlan arrival transfer in a Mercedes S-Class',
+      'Level 148 Burj Khalifa SKY fast-track lounge pass with private outdoor deck',
+      'Royal desert safari with private 4WD dune bashing and 5-star Bedouin camp feast',
+      'Full-day Abu Dhabi excursion including Sheikh Zayed Mosque & Louvre entry'
+    ],
+    inclusions: [
+      '4 nights at Burj Al Arab Jumeirah and 1 night at Emirates Palace',
+      'Daily luxury breakfast for 2 adults',
+      'Private Mercedes S-Class airport and intercity transfers',
+      'All listed excursions and VIP priority access passes'
+    ],
+    exclusions: ['International flights', 'Personal discretionary expenses and gratuities'],
+    baseNetCostUSD: 5400,
+    suggestedSellingPriceUSD: 6750,
+    currency: 'USD',
+    tripType: 'LUXURY',
+    tags: ['Supercar', 'Ultra-Luxury', 'Desert Dunes', 'Iconic Hotels'],
+    isFeatured: true,
+    isPublished: true,
+    createdAt: '2026-02-01T10:00:00Z',
+    updatedAt: '2026-08-20T10:00:00Z'
+  },
+  // =========================================================================
+  // THAILAND PACKAGES
+  // =========================================================================
+  {
+    id: 'pkg-th-royal-andaman-7n',
+    title: 'Thailand Royalty & Tropical Andaman Splendor',
+    slug: 'thailand-royalty-tropical-andaman-7n',
+    destinationId: 'dest-thailand',
+    destinationName: 'Thailand',
+    regionId: 'region-th-bangkok',
+    regionName: 'Bangkok & Phuket',
+    heroImage: 'https://images.unsplash.com/photo-1508009603885-50cf7c579365?q=80&w=1200&auto=format&fit=crop',
+    durationNights: 7,
+    durationDays: 8,
+    tagline: 'Bangkok Mandarin Oriental • Chao Phraya Canals • Amanpuri Phuket Luxury',
+    description: 'The definitive luxury itinerary across the Kingdom of Thailand. Marvel at Bangkok\'s Grand Palace and Wat Pho with an art historian, cruise the Chao Phraya on a teak longtail boat, and fly to the secluded headlands of Phuket for private Phi Phi Island speedboat sailing.',
+    routeSummary: ['Bangkok (3 Nights)', 'Phuket (4 Nights)'],
+    routeHubs: [
+      {
+        id: 'rh-pkg-th-1',
+        hubId: 'hub-bangkok',
+        hubName: 'Bangkok',
+        nights: 3,
+        order: 1,
+        hotelId: 'hotel-mandarin-oriental-bangkok',
+        roomTypeId: 'room-deluxe-premier-riverview'
+      },
+      {
+        id: 'rh-pkg-th-2',
+        hubId: 'hub-phuket',
+        hubName: 'Phuket',
+        nights: 4,
+        order: 2,
+        hotelId: 'hotel-amanpuri-phuket',
+        roomTypeId: 'room-ocean-pavilion'
+      }
+    ],
+    hotelsSummary: [
+      {
+        name: 'Mandarin Oriental Bangkok',
+        cityName: 'Bangkok',
+        nights: 3,
+        roomType: 'Deluxe Premier Riverview Room',
+        mealPlan: 'Riverside Buffet Breakfast'
+      },
+      {
+        name: 'Amanpuri Phuket Sanctuary',
+        cityName: 'Phuket',
+        nights: 4,
+        roomType: 'Ocean View Pool Pavilion',
+        mealPlan: 'Amanpuri Organic À La Carte Breakfast'
+      }
+    ],
+    productIds: [
+      'th-act-grand-palace',
+      'th-act-phuket-islands'
+    ],
+    highlights: [
+      '3 nights in a riverview room at Mandarin Oriental Bangkok with 24h butler',
+      'Private art historian tour of Grand Palace, Emerald Buddha, and Thonburi canals',
+      '4 nights in an ocean plunge pool pavilion at Amanpuri on private Pansea Beach',
+      'Exclusive private twin-engine speedboat charter to Phi Phi & Maya Bay'
+    ],
+    inclusions: [
+      '7 nights luxury resort and palace accommodation',
+      'Daily gourmet breakfast for 2 adults',
+      'All private airport transfers with VIP luggage assistance',
+      'Private guided temple tours and island speedboat charter'
+    ],
+    exclusions: ['Domestic flight BKK -> HKT', 'Personal expenses'],
+    baseNetCostUSD: 4600,
+    suggestedSellingPriceUSD: 5900,
+    currency: 'USD',
+    tripType: 'LUXURY',
+    tags: ['Tropical', 'Beach', 'Luxury', 'Culture'],
+    isFeatured: true,
+    isPublished: true,
+    createdAt: '2026-02-01T10:00:00Z',
+    updatedAt: '2026-08-20T10:00:00Z'
+  },
+  // =========================================================================
+  // SINGAPORE PACKAGES
+  // =========================================================================
+  {
+    id: 'pkg-sg-urban-oasis-5n',
+    title: 'Singapore Urban Oasis & Sentosa Island Escapade',
+    slug: 'singapore-urban-oasis-5n',
+    destinationId: 'dest-singapore',
+    destinationName: 'Singapore',
+    regionId: 'region-sg-downtown',
+    regionName: 'Singapore City',
+    heroImage: 'https://images.unsplash.com/photo-1525625293386-3f8f99389edd?q=80&w=1200&auto=format&fit=crop',
+    durationNights: 5,
+    durationDays: 6,
+    tagline: 'Marina Bay Sands SkyPark • Gardens by the Bay • Sentosa Island Escapade',
+    description: 'Experience the Garden City at its most glamorous. Stay high above Marina Bay with unlimited access to the 57th-floor infinity pool, visit the Cloud Forest mist mountain, and unwind along the coast of Sentosa.',
+    routeSummary: ['Singapore (3 Nights)', 'Sentosa Island (2 Nights)'],
+    routeHubs: [
+      {
+        id: 'rh-pkg-sg-1',
+        hubId: 'hub-singapore',
+        hubName: 'Singapore',
+        nights: 3,
+        order: 1,
+        hotelId: 'hotel-marina-bay-sands',
+        roomTypeId: 'room-sands-premier-harbour'
+      },
+      {
+        id: 'rh-pkg-sg-2',
+        hubId: 'hub-sentosa',
+        hubName: 'Sentosa Island',
+        nights: 2,
+        order: 2,
+        hotelId: 'hotel-marina-bay-sands',
+        roomTypeId: 'room-sands-premier-harbour'
+      }
+    ],
+    hotelsSummary: [
+      {
+        name: 'Marina Bay Sands',
+        cityName: 'Singapore',
+        nights: 5,
+        roomType: 'Sands Premier Harbour View King',
+        mealPlan: 'International Buffet Breakfast'
+      }
+    ],
+    productIds: ['sg-act-gardens-bay'],
+    highlights: [
+      '57th Floor SkyPark infinity pool access overlooking Singapore Strait',
+      'VIP Flower Dome, Cloud Forest, and OCBC Supertree Skyway passes',
+      'Private chauffeur airport arrivals and departures'
+    ],
+    inclusions: [
+      '5 nights luxury accommodation at Marina Bay Sands',
+      'Daily international buffet breakfast',
+      'Private airport roundtrip transfers',
+      'Gardens by the Bay priority admission'
+    ],
+    exclusions: ['Airfare', 'Personal purchases'],
+    baseNetCostUSD: 3100,
+    suggestedSellingPriceUSD: 3950,
+    currency: 'SGD',
+    tripType: 'LUXURY',
+    tags: ['Urban', 'Futuristic', 'Luxury', 'Skyline'],
+    isFeatured: false,
+    isPublished: true,
+    createdAt: '2026-02-01T10:00:00Z',
+    updatedAt: '2026-08-20T10:00:00Z'
   }
 ];

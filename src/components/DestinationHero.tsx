@@ -1,6 +1,7 @@
 import React from 'react';
 import { Destination } from '../types';
-import { Sparkles, Calendar, Clock, Compass, Shield, CheckCircle2, Building2, MapPin, Globe2 } from 'lucide-react';
+import { Sparkles, Calendar, Clock, Compass, Shield, CheckCircle2, Building2, MapPin, Globe2, Layers, PlusCircle } from 'lucide-react';
+import { navigateTo } from '../services/portalRouter';
 
 interface DestinationHeroProps {
   destination: Destination;
@@ -134,6 +135,44 @@ export const DestinationHero: React.FC<DestinationHeroProps> = ({
             <Shield className="w-4 h-4 text-[#00C6A6]" />
             <span>{trustBadge}</span>
           </div>
+        </div>
+
+        {/* Quick Access Actions: Create Quote, AI Planner, Ready-Made Packages */}
+        <div className="flex flex-wrap items-center gap-2.5 pt-3 border-t border-white/10 mt-2">
+          <button
+            id="dest-hero-create-quote-btn"
+            onClick={() => navigateTo('/b2b/quote-builder')}
+            className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 px-4 py-2 rounded-xl text-xs font-black transition-all shadow-md cursor-pointer hover:scale-[1.02]"
+          >
+            <PlusCircle className="w-3.5 h-3.5" />
+            <span>Create Quote</span>
+          </button>
+
+          <button
+            id="dest-hero-ai-planner-btn"
+            onClick={() => navigateTo('/b2b/ai-planner')}
+            className="inline-flex items-center space-x-2 bg-gradient-to-r from-teal-900 via-slate-900 to-indigo-950 hover:from-teal-800 hover:to-indigo-900 text-white px-4 py-2 rounded-xl text-xs font-bold border border-teal-500/40 transition-all shadow-md cursor-pointer hover:scale-[1.02] group"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-[#00E5C0] group-hover:rotate-12 transition-transform" />
+            <span>AI Planner</span>
+            <span className="text-[9px] bg-[#00E5C0] text-slate-950 px-1 py-0.5 rounded-full font-black uppercase tracking-wider">AI</span>
+          </button>
+
+          <button
+            id="dest-hero-ready-made-packages-btn"
+            onClick={() => {
+              const el = document.getElementById('ready-made-packages-section');
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth' });
+              } else {
+                navigateTo('/b2b/packages');
+              }
+            }}
+            className="inline-flex items-center space-x-2 bg-white/15 hover:bg-white/25 text-white border border-white/20 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer backdrop-blur-md hover:scale-[1.02]"
+          >
+            <Layers className="w-3.5 h-3.5 text-[#00E5C0]" />
+            <span>Ready-Made Packages</span>
+          </button>
         </div>
       </div>
 

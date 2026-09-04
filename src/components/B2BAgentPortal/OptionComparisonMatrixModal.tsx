@@ -174,7 +174,7 @@ export const OptionComparisonMatrixModal: React.FC<OptionComparisonMatrixModalPr
                     {/* Price Banner */}
                     <div className="mt-4 pt-3 border-t border-slate-200/80 flex items-baseline justify-between">
                       <div>
-                        <span className="text-[10px] text-slate-400 uppercase font-bold block">Quoted Investment</span>
+                        <span className="text-[10px] text-slate-400 uppercase font-bold block">Final Selling Price</span>
                         <div className="text-xl font-black text-slate-900 font-mono">
                           {formatCurrency(opt.finalClientPrice, currency)}
                         </div>

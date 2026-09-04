@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { Quotation, QuoteItem, CurrencyCode, TripRouteHub } from '../types';
 import { formatCurrency } from './pricingEngine';
+import { AppDatabase } from './db';
 
 export interface PDFExportOptions {
   quote: Quotation;
@@ -735,5 +736,27 @@ export function downloadQuotationPDF(options: PDFExportOptions): void {
   const doc = generateQuotationPDF(options);
   const filename = `TheUnbound-Itinerary-${options.quote.quoteNumber || 'Proposal'}.pdf`;
   doc.save(filename);
+
+  // Section 32 Mandate: Track QUOTE_PDF_GENERATED communication event
+  try {
+    const db = AppDatabase.getInstance();
+    const commId = `comm-pdf-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+    db.saveCommunicationAuditLog({
+      id: `audit-${Date.now()}`,
+      communicationId: commId,
+      quoteId: options.quote.id,
+      leadId: options.leadId || options.quote.leadId,
+      recipientEmail: options.quote.clientEmail,
+      recipientType: 'BUYER',
+      channel: 'PDF',
+      eventType: 'QUOTE_PDF_GENERATED',
+      templateVersion: '1.0.0-standard',
+      sentAt: new Date().toISOString(),
+      sentByName: options.agentName || options.quote.agentName,
+      deliveryStatus: 'SUCCESS'
+    });
+  } catch (err) {
+    console.error('Failed to log PDF communication audit:', err);
+  }
 }
 

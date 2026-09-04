@@ -37,8 +37,28 @@ export const CustomPageView: React.FC<CustomPageViewProps> = ({
   onSelectDestination,
   onNavigateToContact
 }) => {
+  const isAboutPage = pageSlug === 'about-theunbound' || pageSlug === 'about' || pageSlug === 'about-us';
+
+  const db = AppDatabase.getInstance();
+  const page = db.getCustomPageBySlug(pageSlug);
+  const [copied, setCopied] = useState(false);
+  const [expandedFaqIndex, setExpandedFaqIndex] = useState<number | null>(null);
+
+  // SEO synchronization: update document title and meta description
+  useEffect(() => {
+    if (!isAboutPage && page) {
+      const pageTitle = page.metaTitle || `${page.title} | TheUnbound DMC`;
+      document.title = pageTitle;
+
+      let metaDesc = document.querySelector('meta[name="description"]');
+      if (metaDesc && page.metaDescription) {
+        metaDesc.setAttribute('content', page.metaDescription);
+      }
+    }
+  }, [page, isAboutPage]);
+
   // If viewing about theunbound, show the dedicated rich About Us page
-  if (pageSlug === 'about-theunbound' || pageSlug === 'about' || pageSlug === 'about-us') {
+  if (isAboutPage) {
     return (
       <AboutUsPage
         onBackToExplore={onBackToExplore}
@@ -48,24 +68,6 @@ export const CustomPageView: React.FC<CustomPageViewProps> = ({
       />
     );
   }
-
-  const db = AppDatabase.getInstance();
-  const page = db.getCustomPageBySlug(pageSlug);
-  const [copied, setCopied] = useState(false);
-  const [expandedFaqIndex, setExpandedFaqIndex] = useState<number | null>(null);
-
-  // SEO synchronization: update document title and meta description
-  useEffect(() => {
-    if (page) {
-      const pageTitle = page.metaTitle || `${page.title} | TheUnbound DMC`;
-      document.title = pageTitle;
-
-      let metaDesc = document.querySelector('meta[name="description"]');
-      if (metaDesc && page.metaDescription) {
-        metaDesc.setAttribute('content', page.metaDescription);
-      }
-    }
-  }, [page]);
 
   if (!page) {
     return (

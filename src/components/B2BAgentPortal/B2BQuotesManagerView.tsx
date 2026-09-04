@@ -205,8 +205,10 @@ export const B2BQuotesManagerView: React.FC<B2BQuotesManagerViewProps> = ({
                   <th className="py-3 px-4">Client Name & Org</th>
                   <th className="py-3 px-4">Destination</th>
                   <th className="py-3 px-4">Items</th>
-                  <th className="py-3 px-4">Selling Value</th>
-                  <th className="py-3 px-4">Margin</th>
+                  <th className="py-3 px-4">Final Selling Price</th>
+                  {(user?.role === 'ADMIN' || user?.role === 'DMC_STAFF') && (
+                    <th className="py-3 px-4">Margin</th>
+                  )}
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
@@ -241,9 +243,11 @@ export const B2BQuotesManagerView: React.FC<B2BQuotesManagerViewProps> = ({
                       {formatCurrency(quote.totalSellingPrice, quote.currency || currency)}
                     </td>
 
-                    <td className="py-3.5 px-4 font-mono text-emerald-600 font-semibold">
-                      +{formatCurrency(quote.totalMarginAmount || (quote.totalSellingPrice * 0.15), quote.currency || currency)}
-                    </td>
+                    {(user?.role === 'ADMIN' || user?.role === 'DMC_STAFF') && (
+                      <td className="py-3.5 px-4 font-mono text-emerald-600 font-semibold">
+                        +{formatCurrency(quote.totalMarginAmount || (quote.totalSellingPrice * 0.15), quote.currency || currency)}
+                      </td>
+                    )}
 
                     <td className="py-3.5 px-4">
                       <select

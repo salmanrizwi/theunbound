@@ -359,7 +359,7 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
                 </span>
                 <span className="inline-flex items-center space-x-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
                   <Lock className="w-2.5 h-2.5" />
-                  <span>Wholesale Protected</span>
+                  <span>{(role === 'ADMIN' || role === 'DMC_STAFF') ? 'Wholesale Protected' : 'Rate Guaranteed'}</span>
                 </span>
               </div>
 
@@ -427,8 +427,8 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
                   </div>
                 )}
 
-                {/* Internal DMC Profit & Margin (Visible ONLY to Authorized Users with Wholesale Net Rate permission) */}
-                {canViewWholesale && (
+                {/* Internal DMC Profit & Margin (Strictly Visible ONLY to Admin and DMC Staff) */}
+                {(role === 'ADMIN' || role === 'DMC_STAFF') && (
                   <div className="mt-3 pt-3 border-t border-slate-800 space-y-1.5 text-[11px]">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Internal DMC Management Data</p>
                     <div className="flex justify-between text-slate-400">
@@ -466,7 +466,7 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
               <div className="flex items-baseline justify-between mb-1">
                 <div>
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                    Total Quotation Selling Price
+                    Final Selling Price
                   </span>
                   <p className="text-2xl font-black text-[#00E5C0] font-sans">
                     {formatCurrency(calculation.finalTotalSellingPrice, targetCurrency)}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { TravelLead, LeadStatus, LeadPriority, LeadSource } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
@@ -20,11 +20,15 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
 
-  if (!isOpen || !lead) return null;
+  const [formData, setFormData] = useState<Partial<TravelLead>>(() => lead || {});
 
-  const [formData, setFormData] = useState<Partial<TravelLead>>({
-    ...lead
-  });
+  useEffect(() => {
+    if (lead) {
+      setFormData({ ...lead });
+    }
+  }, [lead, isOpen]);
+
+  if (!isOpen || !lead) return null;
 
   const destinations = [
     { id: 'japan', name: 'Japan' },

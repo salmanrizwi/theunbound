@@ -1,10 +1,22 @@
 /// <reference types="vite/client" />
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
+import { 
+  getFirestore, 
+  initializeFirestore, 
+  enableIndexedDbPersistence, 
+  setLogLevel 
+} from 'firebase/firestore';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 const metaEnv = (import.meta as unknown as { env?: Record<string, string> }).env || {};
+
+// Silence noisy internal network/offline status warnings from @firebase/firestore
+try {
+  setLogLevel('silent');
+} catch (e) {
+  // Ignore if already set or unsupported in environment
+}
 
 const firebaseConfig = {
   apiKey: firebaseConfigJson.apiKey || metaEnv.VITE_FIREBASE_API_KEY,
@@ -18,11 +30,25 @@ const firebaseConfig = {
 // Initialize Firebase App singleton
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Initialize Firestore
+// Initialize Firestore with auto long-polling to prevent WebChannel / streaming connection dropouts
 const customDatabaseId = (firebaseConfigJson as any).firestoreDatabaseId;
-export const db = customDatabaseId && customDatabaseId !== '(default)'
-  ? getFirestore(app, customDatabaseId)
-  : getFirestore(app);
+let firestoreInstance;
+try {
+  firestoreInstance = initializeFirestore(
+    app,
+    {
+      experimentalAutoDetectLongPolling: true,
+    },
+    customDatabaseId && customDatabaseId !== '(default)' ? customDatabaseId : undefined
+  );
+} catch (e) {
+  // Fallback to standard getFirestore if already initialized
+  firestoreInstance = customDatabaseId && customDatabaseId !== '(default)'
+    ? getFirestore(app, customDatabaseId)
+    : getFirestore(app);
+}
+
+export const db = firestoreInstance;
 
 // Initialize Auth
 export const auth = getAuth(app);
@@ -36,9 +62,9 @@ try {
   if (typeof window !== 'undefined') {
     enableIndexedDbPersistence(db).catch((err) => {
       if (err.code === 'failed-precondition') {
-        console.warn('Firestore persistence failed: Multiple tabs open');
+        console.debug('Firestore persistence note: Multiple tabs open');
       } else if (err.code === 'unimplemented') {
-        console.warn('Firestore persistence not supported in this browser environment');
+        console.debug('Firestore persistence not supported in this browser environment');
       }
     });
   }

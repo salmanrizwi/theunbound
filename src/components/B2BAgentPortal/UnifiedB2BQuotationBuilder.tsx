@@ -91,6 +91,7 @@ import { hotelToProduct, manualHotelToProduct, calculateHotelStayPrice, validate
 import { downloadQuotationPDF } from '../../services/pdfGenerator';
 import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { EmailNotificationService } from '../../services/emailNotificationService';
+import { DestinationRelevanceService, matchesDestination } from '../../services/destinationRelevanceService';
 
 export type QuotationScope = 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY';
 
@@ -206,7 +207,20 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     totalNetCost,
     totalSellingPrice,
     totalMarginAmount,
-    saveCurrentQuote
+    saveCurrentQuote,
+    routeHubs: contextRouteHubs,
+    setRouteHubs: setContextRouteHubs,
+    paxConfig: contextPaxConfig,
+    setPaxConfig: setContextPaxConfig,
+    dayThemes: contextDayThemes,
+    setDayThemes: setContextDayThemes,
+    destination: contextDestination,
+    travelStartDate: contextStartDate,
+    travelEndDate: contextEndDate,
+    handoffPayload,
+    quoteSource,
+    priceRefreshNotice,
+    clearQuote
   } = useQuotation();
 
   // Local agent markup state
@@ -245,20 +259,22 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   // Travel Dates & Passengers
   const [startDate, setStartDate] = useState<string>(() => {
+    if (contextStartDate) return contextStartDate;
     const d = new Date();
     d.setDate(d.getDate() + 21);
     return d.toISOString().split('T')[0];
   });
   const [endDate, setEndDate] = useState<string>(() => {
+    if (contextEndDate) return contextEndDate;
     const d = new Date();
     d.setDate(d.getDate() + 28);
     return d.toISOString().split('T')[0];
   });
 
-  const [adultsCount, setAdultsCount] = useState<number>(2);
-  const [childrenCount, setChildrenCount] = useState<number>(0);
-  const [infantsCount, setInfantsCount] = useState<number>(0);
-  const [childAges, setChildAges] = useState<number[]>([]);
+  const [adultsCount, setAdultsCount] = useState<number>(() => contextPaxConfig?.adults || 2);
+  const [childrenCount, setChildrenCount] = useState<number>(() => contextPaxConfig?.children || 0);
+  const [infantsCount, setInfantsCount] = useState<number>(() => contextPaxConfig?.infants || 0);
+  const [childAges, setChildAges] = useState<number[]>(() => contextPaxConfig?.childAges || []);
   const [nationality, setNationality] = useState<string>('Indian');
   const [travelStyle, setTravelStyle] = useState<string>('FIT Luxury');
   const [mealPlanPreference, setMealPlanPreference] = useState<string>('CP (Breakfast Included)');
@@ -267,6 +283,34 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     extraBedRequired: true
   });
   const [visaAssistanceChoice, setVisaAssistanceChoice] = useState<'YES' | 'NO' | 'NOT_REQUIRED' | 'LATER'>('NOT_REQUIRED');
+
+  // Synchronize state when QuotationContext changes (e.g. from AI Planner handoff)
+  useEffect(() => {
+    if (contextStartDate) setStartDate(contextStartDate);
+    if (contextEndDate) setEndDate(contextEndDate);
+  }, [contextStartDate, contextEndDate]);
+
+  useEffect(() => {
+    if (contextPaxConfig) {
+      setAdultsCount(contextPaxConfig.adults ?? 2);
+      setChildrenCount(contextPaxConfig.children ?? 0);
+      setChildAges(contextPaxConfig.childAges ?? []);
+      setInfantsCount(contextPaxConfig.infants ?? 0);
+    }
+  }, [contextPaxConfig]);
+
+  useEffect(() => {
+    if (contextDestination) {
+      const found = destinations.find(d => 
+        d.name.toLowerCase() === contextDestination.toLowerCase() ||
+        d.slug.toLowerCase() === contextDestination.toLowerCase() ||
+        d.id.toLowerCase() === contextDestination.toLowerCase()
+      );
+      if (found) {
+        setCurrentDestination(found);
+      }
+    }
+  }, [contextDestination, destinations]);
 
   // Quotation Multi-Options State (Option 1, Option 2, Option 3)
   const [activeOptionTab, setActiveOptionTab] = useState<number>(1);
@@ -407,82 +451,124 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [quoteNumber] = useState<string>(() => `QTE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
   const [quoteVersion] = useState<number>(1);
 
-  // City Hubs for Destination
+  // City Hubs for Destination (strictly destination-aware via DestinationRelevanceService)
   const destinationHubs = useMemo(() => {
-    const filtered = propCityHubs.filter(h => 
-      h.destinationId === currentDestination.id || 
-      h.country?.toLowerCase() === currentDestination.name.toLowerCase()
-    );
-    if (filtered.length > 0) return filtered;
+    return DestinationRelevanceService.getInstance().getRelevantHubs(currentDestination.id);
+  }, [currentDestination]);
 
-    // Fallback Japanese hubs
-    return [
-      { id: 'hub-tokyo', name: 'Tokyo Metropolitan Hub', slug: 'tokyo', destinationId: currentDestination.id, destinationName: currentDestination.name, hubName: 'Tokyo', region: 'Kanto', isMajor: true, airportCodes: ['NRT', 'HND'], description: 'Ultra-modern metropolis, culinary capital, and cultural center.' },
-      { id: 'hub-kyoto', name: 'Kyoto Cultural Hub', slug: 'kyoto', destinationId: currentDestination.id, destinationName: currentDestination.name, hubName: 'Kyoto', region: 'Kansai', isMajor: true, airportCodes: ['KIX', 'ITM'], description: 'Ancient imperial temples, serene zen gardens, and geisha districts.' },
-      { id: 'hub-osaka', name: 'Osaka Culinary Hub', slug: 'osaka', destinationId: currentDestination.id, destinationName: currentDestination.name, hubName: 'Osaka', region: 'Kansai', isMajor: true, airportCodes: ['KIX', 'ITM'], description: 'Gastronomy haven, neon canals, and vibrant commerce.' },
-      { id: 'hub-hakone', name: 'Hakone Onsen & Mt Fuji Hub', slug: 'hakone', destinationId: currentDestination.id, destinationName: currentDestination.name, hubName: 'Hakone', region: 'Chubu', isMajor: false, airportCodes: [], description: 'Hot springs ryokan retreats with Mount Fuji panoramas.' }
-    ];
-  }, [propCityHubs, currentDestination]);
-
-  // Route Hubs Sequence
-  const [routeHubs, setRouteHubs] = useState<TripRouteHub[]>([
-    {
-      id: 'rhub-1',
-      hubId: 'hub-tokyo',
-      hubName: 'Tokyo',
-      nights: 3,
-      order: 1,
-      hotelId: undefined,
-      notes: 'Initial international arrival at Haneda/Narita'
-    },
-    {
-      id: 'rhub-2',
-      hubId: 'hub-kyoto',
-      hubName: 'Kyoto',
-      nights: 2,
-      order: 2,
-      hotelId: undefined,
-      notes: 'Shinkansen bullet train transit to historic cultural capital'
-    },
-    {
-      id: 'rhub-3',
-      hubId: 'hub-osaka',
-      hubName: 'Osaka',
-      nights: 2,
-      order: 3,
-      hotelId: undefined,
-      notes: 'Gastronomy, Dotonbori nightlife and departure flight via KIX'
+  // Route Hubs Sequence (dynamic - starts empty unless provided by context or AI Planner)
+  const [routeHubs, setRouteHubs] = useState<TripRouteHub[]>(() => {
+    if (contextRouteHubs && contextRouteHubs.length > 0) {
+      return contextRouteHubs;
     }
-  ]);
+    return [];
+  });
+
+  // Sync route hubs with context when AI Planner loads or context updates
+  useEffect(() => {
+    if (contextRouteHubs && contextRouteHubs.length > 0) {
+      setRouteHubs(contextRouteHubs);
+    }
+  }, [contextRouteHubs]);
+
+  const handleUpdateRouteHubs = (newHubs: TripRouteHub[]) => {
+    setRouteHubs(newHubs);
+    setContextRouteHubs(newHubs);
+  };
 
   // Route Validation
   const routeTotalNights = useMemo(() => {
     return routeHubs.reduce((acc, h) => acc + (h.nights || 0), 0);
   }, [routeHubs]);
 
-  // Hotels list for destination
+  // Hotels list for destination (strictly destination-aware via DestinationRelevanceService)
   const availableHotels = useMemo(() => {
-    const list = propHotels.filter(h => 
-      h.destinationId === currentDestination.id || 
-      h.country?.toLowerCase() === currentDestination.name.toLowerCase()
-    );
-    if (list.length > 0) return list;
-    return propHotels;
-  }, [propHotels, currentDestination]);
+    return DestinationRelevanceService.getInstance().getRelevantHotels(currentDestination.id);
+  }, [currentDestination]);
 
-  // Products list for destination
+  // Products list for destination (strictly destination-aware via DestinationRelevanceService)
   const availableProducts = useMemo(() => {
-    const list = products.filter(p => 
-      p.destinationId === currentDestination.id || 
-      p.country?.toLowerCase() === currentDestination.name.toLowerCase() ||
-      p.destinationName?.toLowerCase() === currentDestination.name.toLowerCase()
-    );
-    if (list.length > 0) return list;
-    return products;
-  }, [products, currentDestination]);
+    return DestinationRelevanceService.getInstance().getRelevantProducts(currentDestination.id).allDestinationProducts;
+  }, [currentDestination]);
+
+  // Destination Change Safety and Sanitization State
+  const [pendingDestination, setPendingDestination] = useState<Destination | null>(null);
+  const [showDestinationChangeModal, setShowDestinationChangeModal] = useState<boolean>(false);
+
+  const handleDestinationChange = (newDest: Destination) => {
+    if (newDest.id === currentDestination.id) return;
+
+    // Check if there are existing items or route hubs incompatible with new destination
+    const incompatibleItems = items.filter(it => {
+      if (it.product.subcategory === 'Travel Insurance' || it.product.subcategory === 'eSIM Connectivity') return false;
+      return !matchesDestination(newDest.id, it.product.destinationId, it.product.country);
+    });
+
+    const incompatibleHubs = routeHubs.filter(h => {
+      return !matchesDestination(newDest.id, h.destinationId);
+    });
+
+    const relService = DestinationRelevanceService.getInstance();
+    const compatibility = relService.validateEntireQuoteForDestination(newDest.id, {
+      routeHubs,
+      items
+    });
+
+    if (!compatibility.isCompatible) {
+      setPendingDestination(newDest);
+      setShowDestinationChangeModal(true);
+    } else {
+      // Clean switch
+      setCurrentDestination(newDest);
+      setBuilderToast({
+        message: `Active destination set to ${newDest.name}.`,
+        type: 'SUCCESS'
+      });
+    }
+  };
+
+  const confirmDestinationChange = () => {
+    if (!pendingDestination) return;
+
+    const relService = DestinationRelevanceService.getInstance();
+    const sanitized = relService.sanitizeQuoteForDestination(pendingDestination.id, items, routeHubs);
+
+    // Apply sanitized items and route hubs
+    setItems(sanitized.cleanedItems);
+    setRouteHubs(sanitized.cleanedRouteHubs);
+    setContextRouteHubs(sanitized.cleanedRouteHubs);
+
+    // Switch destination
+    setCurrentDestination(pendingDestination);
+    setPendingDestination(null);
+    setShowDestinationChangeModal(false);
+
+    if (sanitized.removedCount > 0) {
+      setBuilderToast({
+        message: `Switched to ${pendingDestination.name}. Removed ${sanitized.removedCount} non-matching items from previous destination.`,
+        type: 'WARNING'
+      });
+    } else {
+      setBuilderToast({
+        message: `Switched active destination to ${pendingDestination.name}.`,
+        type: 'SUCCESS'
+      });
+    }
+  };
 
   // Day Theme and Notes customization
-  const [dayThemes, setDayThemes] = useState<Record<number, string>>({});
+  const [dayThemes, setDayThemes] = useState<Record<number, string>>(() => contextDayThemes || {});
+
+  useEffect(() => {
+    if (contextDayThemes && Object.keys(contextDayThemes).length > 0) {
+      setDayThemes(contextDayThemes);
+    }
+  }, [contextDayThemes]);
+
+  const handleUpdateDayThemes = (themes: Record<number, string>) => {
+    setDayThemes(themes);
+    setContextDayThemes(themes);
+  };
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
 
   // Visa Section & Picker Modal State
@@ -1489,7 +1575,15 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       const result = await emailService.sendViaGmailApi(
         emailRecipient,
         emailSubject,
-        generatedEmail.fullHtml
+        generatedEmail.fullHtml,
+        {
+          quoteId: saved.id,
+          leadId: saved.leadId,
+          recipientType: 'BUYER',
+          eventType: 'QUOTE_EMAIL_SENT',
+          sentBy: user?.id,
+          sentByName: user?.name || 'Agent'
+        }
       );
 
       if (result.success) {
@@ -1499,14 +1593,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           setEmailSuccessMessage(null);
         }, 3000);
       } else {
-        setEmailSuccessMessage(`Proposal saved & simulated dispatch to ${emailRecipient}. (Google Workspace authorization active).`);
-        setTimeout(() => {
-          setIsEmailModalOpen(false);
-          setEmailSuccessMessage(null);
-        }, 3500);
+        // Section 33 Mandate: Do NOT show false success when email delivery fails!
+        setEmailErrorMessage(`Email delivery failed. Reason: ${result.error || 'Unable to connect to Google Workspace Gmail service'}. Please check your authorization in Settings.`);
       }
     } catch (err: any) {
-      setEmailErrorMessage(err?.message || 'Failed to dispatch email. Please try again.');
+      setEmailErrorMessage(`Email delivery failed. Reason: ${err?.message || 'Network error'}. Please retry.`);
     } finally {
       setIsSendingEmail(false);
     }
@@ -1674,21 +1765,26 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     const targetCity = quickAddModalDay.hubName;
     const targetHubId = quickAddModalDay.hubId;
 
-    return availableProducts.filter(p => {
-      // 1. City / Hub Filter: When active, only show products tagged for this day's city (e.g. Tokyo, Kyoto)
-      if (filterByDayCityOnly && targetCity) {
-        const matchesCity = isProductMatchingCity(p, targetCity, targetHubId);
-        if (!matchesCity) return false;
-      }
+    let baseList: Product[] = [];
+    if (filterByDayCityOnly && (targetCity || targetHubId)) {
+      const rel = DestinationRelevanceService.getInstance().getRelevantProducts(
+        currentDestination.id,
+        targetHubId || targetCity
+      );
+      baseList = rel.hubActivities;
+    } else {
+      baseList = availableProducts;
+    }
 
-      // 2. Category Filter
+    return baseList.filter(p => {
+      // 1. Category Filter
       const matchCat = quickAddCategory === 'ALL' || p.category === quickAddCategory;
       if (!matchCat) return false;
 
-      // 3. Search text query
+      // 2. Search text query
       const matchSearch = !quickAddSearch || 
         p.name.toLowerCase().includes(quickAddSearch.toLowerCase()) ||
-        p.description?.toLowerCase().includes(quickAddSearch.toLowerCase()) ||
+        p.longDescription?.toLowerCase().includes(quickAddSearch.toLowerCase()) ||
         p.shortDescription?.toLowerCase().includes(quickAddSearch.toLowerCase()) ||
         p.city?.toLowerCase().includes(quickAddSearch.toLowerCase()) ||
         p.location?.toLowerCase().includes(quickAddSearch.toLowerCase()) ||
@@ -1696,13 +1792,16 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
       return matchCat && matchSearch;
     });
-  }, [availableProducts, quickAddModalDay, quickAddCategory, quickAddSearch, filterByDayCityOnly]);
+  }, [availableProducts, currentDestination, quickAddModalDay, quickAddCategory, quickAddSearch, filterByDayCityOnly]);
 
   // Total products in catalog tagged specifically for this day's city/hub
   const totalCityProductsCount = useMemo(() => {
     if (!quickAddModalDay) return 0;
-    return availableProducts.filter(p => isProductMatchingCity(p, quickAddModalDay.hubName, quickAddModalDay.hubId)).length;
-  }, [availableProducts, quickAddModalDay]);
+    return DestinationRelevanceService.getInstance().getRelevantProducts(
+      currentDestination.id, 
+      quickAddModalDay.hubId || quickAddModalDay.hubName
+    ).hubActivities.length;
+  }, [currentDestination, quickAddModalDay]);
 
   // Product categories for filter
   const productCategories = ['ALL', 'Activity', 'Tour', 'Transfer', 'Transport', 'Rail', 'Guide', 'Restaurant', 'Private Yacht'];
@@ -1931,15 +2030,62 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         /* VIEW: PRIMARY ITINERARY BUILDER & DAY-WISE WORKSPACE (GUIDED WORKSPACE) */
         /* ========================================================================= */
         <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 pb-36">
+          {/* AI Planner Handoff Notification Banner */}
+          {quoteSource === 'AI_PLANNER' && handoffPayload && (
+            <div className="mb-6 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-3xl p-5 border border-slate-700/80 shadow-lg relative overflow-hidden">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+                <div className="flex items-start space-x-3.5">
+                  <div className="w-10 h-10 rounded-2xl bg-[#00E5C0]/20 border border-[#00E5C0]/40 text-[#00E5C0] flex items-center justify-center shrink-0 mt-0.5">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-black uppercase tracking-wider text-[#00E5C0]">AI Planner Handoff</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-teal-500/20 text-[#00E5C0] border border-teal-500/30">
+                        {handoffPayload.badge || 'Verified Itinerary'}
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        Zero Hallucination Verified • Authoritative Contract Rates
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300 mt-1">
+                      Imported <strong className="text-white">{handoffPayload.destination.name}</strong> circuit ({handoffPayload.travelDates.nights} Nights, {handoffPayload.travelDates.startDate} → {handoffPayload.travelDates.endDate}) for {handoffPayload.pax.adults} Adults{handoffPayload.pax.children > 0 ? `, ${handoffPayload.pax.children} Children` : ''} with <strong className="text-white">{items.length} confirmed services</strong>.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearQuote();
+                      setRouteHubs([]);
+                      setDayThemes({});
+                      showBuilderToast('Reset to clean workspace for manual configuration', 'INFO');
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-600 text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Clear / New Manual Quote
+                  </button>
+                </div>
+              </div>
+              {priceRefreshNotice && (
+                <div className="mt-3.5 pt-3 border-t border-slate-700/80 flex items-center space-x-2 text-xs text-teal-300">
+                  <AlertCircle className="w-4 h-4 text-[#00E5C0] shrink-0" />
+                  <span>{priceRefreshNotice}</span>
+                </div>
+              )}
+            </div>
+          )}
+
           <StepByStepQuotationWorkspace
               activeStepId={activeStepId}
               setActiveStepId={setActiveStepId}
               currentDestination={currentDestination}
               destinations={destinations}
-              onSelectDestination={(dest) => setCurrentDestination(dest)}
+              onSelectDestination={(dest) => handleDestinationChange(dest)}
               destinationHubs={destinationHubs}
               availableHotels={availableHotels}
-              products={products}
+              products={availableProducts}
               crmLeads={crmLeads}
               currency={currency}
               setCurrency={setCurrency}
@@ -1984,7 +2130,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               visaAssistanceChoice={visaAssistanceChoice}
               setVisaAssistanceChoice={setVisaAssistanceChoice}
               routeHubs={routeHubs}
-              setRouteHubs={setRouteHubs}
+              setRouteHubs={handleUpdateRouteHubs}
               routeTotalNights={routeTotalNights}
               getHubDates={getHubDates}
               calendarDays={calendarDays}
@@ -2042,7 +2188,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               onRemoveManualHotel={handleRemoveManualHotel}
               onOpenEditItem={handleOpenEditItem}
               dayThemes={dayThemes}
-              setDayThemes={setDayThemes}
+              setDayThemes={handleUpdateDayThemes}
             />
         </main>
       )}
@@ -2991,6 +3137,47 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             setShowDuplicateOptionModal(false);
           }}
         />
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: DESTINATION CHANGE SANITIZATION CONFIRMATION */}
+      {/* ========================================================================= */}
+      {showDestinationChangeModal && pendingDestination && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-start space-x-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 mt-0.5">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900">Switch Destination?</h3>
+                <p className="text-xs text-slate-500">From {currentDestination.name} to {pendingDestination.name}</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Your quote currently has inventory items or itinerary hubs configured for <strong>{currentDestination.name}</strong>. Switching destination will remove items and hubs that do not belong to <strong>{pendingDestination.name}</strong> to prevent incompatible travel bookings.
+            </p>
+            <div className="flex items-center justify-end space-x-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingDestination(null);
+                  setShowDestinationChangeModal(false);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDestinationChange}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-teal-600 hover:bg-teal-700 transition-colors shadow-xs cursor-pointer"
+              >
+                Switch to {pendingDestination.name}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ========================================================================= */}

@@ -348,8 +348,8 @@ export const AddProductToQuoteModal: React.FC<AddProductToQuoteModalProps> = ({
               <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col justify-between">
                 <div>
                   <span className="text-xs font-bold text-slate-800 block">Adults (12+)</span>
-                  <span className="text-[10px] text-slate-400 block font-mono">
-                    {formatCurrency(convertCurrency(product.adultNetPrice, product.currency || 'USD', currency), currency)} net
+                  <span className="text-[10px] text-slate-500 block font-mono">
+                    {formatCurrency(calculation?.adultPricePerPax || convertCurrency(product.adultNetPrice * (1 + (product.defaultMarkupPercent || 15) / 100), product.currency || 'USD', currency), currency)} / pax
                   </span>
                 </div>
                 <div className="flex items-center justify-between mt-2 pt-1 border-t border-slate-200">
@@ -376,8 +376,8 @@ export const AddProductToQuoteModal: React.FC<AddProductToQuoteModalProps> = ({
               <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col justify-between">
                 <div>
                   <span className="text-xs font-bold text-slate-800 block">Children (2-11)</span>
-                  <span className="text-[10px] text-slate-400 block font-mono">
-                    {formatCurrency(convertCurrency(product.childNetPrice || (product.adultNetPrice * 0.7), product.currency || 'USD', currency), currency)} net
+                  <span className="text-[10px] text-slate-500 block font-mono">
+                    {formatCurrency(calculation?.childPricePerPax || convertCurrency((product.childNetPrice || (product.adultNetPrice * 0.7)) * (1 + (product.defaultMarkupPercent || 15) / 100), product.currency || 'USD', currency), currency)} / child
                   </span>
                 </div>
                 <div className="flex items-center justify-between mt-2 pt-1 border-t border-slate-200">
@@ -404,8 +404,8 @@ export const AddProductToQuoteModal: React.FC<AddProductToQuoteModalProps> = ({
               <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex flex-col justify-between">
                 <div>
                   <span className="text-xs font-bold text-slate-800 block">Infants (0-2)</span>
-                  <span className="text-[10px] text-slate-400 block font-mono">
-                    Free / 0 net
+                  <span className="text-[10px] text-emerald-600 block font-bold">
+                    Complimentary
                   </span>
                 </div>
                 <div className="flex items-center justify-between mt-2 pt-1 border-t border-slate-200">

@@ -259,5 +259,44 @@ export const INITIAL_VISAS: VisaProduct[] = [
     featured: false,
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-03-01T00:00:00Z'
+  },
+  {
+    id: 'visa-singapore-evisa',
+    country: 'Singapore',
+    countryCode: 'SG',
+    destinationId: 'dest-singapore',
+    visaType: 'Singapore Entry Visa (E-Pass)',
+    entryType: 'MULTIPLE_ENTRY',
+    validityDays: 60,
+    stayDurationDays: 30,
+    processingTimeDays: 3,
+    expressProcessingAvailable: true,
+    expressProcessingTimeDays: 1,
+    embassyFee: 30,
+    serviceFee: 25,
+    expressServiceFee: 50,
+    currency: 'USD',
+    description: 'Official Singapore electronic entry visa / SG Arrival Card facilitation for luxury holidays, Marina Bay stays, and business events.',
+    documentsChecklist: [
+      'Original Passport bio page valid for at least 6 months',
+      'Recent color passport photograph (white background)',
+      'Confirmed return or onward flight itinerary',
+      'Hotel reservation confirmation voucher'
+    ],
+    submissionSteps: [
+      'Submit traveler details & passport copy via portal',
+      'DMC authorized strategic partner submits via ICA Singapore SAVE system',
+      'Receive official electronic visa PDF ready for travel'
+    ],
+    eligibilityNotes: [
+      'Must enter Singapore within the visa validity period'
+    ],
+    downloadableForms: [],
+    faqs: [],
+    heroImage: 'https://images.unsplash.com/photo-1525625293386-3f8f99389edd?q=80&w=1200&auto=format&fit=crop',
+    status: 'ACTIVE',
+    featured: false,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-03-01T00:00:00Z'
   }
 ];

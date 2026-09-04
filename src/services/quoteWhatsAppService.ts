@@ -1,5 +1,9 @@
-import { Quotation, User, TravelLead } from '../types';
+import { Quotation, User, TravelLead, CommunicationAuditLog } from '../types';
 import { AppDatabase } from './db';
+import {
+  buildQuoteCommunicationPayload,
+  formatWhatsAppQuoteFromPayload
+} from './communicationDataBuilder';
 import {
   CustomerSanitizedQuote,
   sanitizeQuoteForCustomer,
@@ -20,33 +24,6 @@ export interface GenerateWhatsAppMessageOptions {
   customNote?: string;
   useEmojis?: boolean;
 }
-
-// Universal emojis that render reliably across iOS, Android, Windows, Mac, Linux, and WhatsApp Web.
-// Avoids variation selectors (\uFE0F) which break or render as  in certain browser engines and monospace fonts.
-const E = {
-  WAVE: '👋',
-  SPARKLE: '✨',
-  OVERVIEW: '📋',
-  PIN: '📌',
-  LOCATION: '📍',
-  CALENDAR: '📅',
-  DURATION: '⏳',
-  PEOPLE: '👥',
-  STAR: '⭐',
-  HOTEL: '🏨',
-  TOUR: '🎯',
-  CAR: '🚗',
-  FLIGHT: '✈️',
-  SERVICES: '💼',
-  PRICE: '💰',
-  CASH: '💵',
-  TIP: '💡',
-  NOTES: '📝',
-  HANDSHAKE: '🤝',
-  USER: '👤',
-  AGENCY: '🏢',
-  PHONE: '📞'
-};
 
 export interface RecordWhatsAppShareOptions {
   quote: Quotation;
@@ -115,192 +92,90 @@ export function maskPhoneNumber(phone?: string): string {
 }
 
 /**
- * Builds the dynamically generated WhatsApp message adhering strictly to TheUnbound template.
+ * Builds the dynamically generated WhatsApp message adhering strictly to TheUnbound Standard (Section 16).
+ * MANDATE: Contains trip summary, accommodations, AND complete chronological Day-Wise Plan!
  * GUARANTEE: Never exposes internal costs, supplier rates, or commercial margins.
  */
 export function generateWhatsAppQuoteMessage(options: GenerateWhatsAppMessageOptions): string {
-  const sanitized: CustomerSanitizedQuote = sanitizeQuoteForCustomer(
-    options.quote,
-    options.selectedOptionIndexOrId,
-    options.senderBranding
-  );
+  // Derive from authoritative QuoteCommunicationPayload
+  const payload = buildQuoteCommunicationPayload(options.quote, {
+    selectedOptionIndexOrId: options.selectedOptionIndexOrId,
+    role: 'BUYER',
+    senderBranding: options.senderBranding
+  });
 
-  const DIVIDER = '------------------------';
-  const sections: string[] = [];
-  const withEmojis = options.useEmojis !== false;
-
-  const e = withEmojis ? E : {
-    WAVE: '',
-    SPARKLE: '',
-    OVERVIEW: '•',
-    PIN: '•',
-    LOCATION: '•',
-    CALENDAR: '•',
-    DURATION: '•',
-    PEOPLE: '•',
-    STAR: '•',
-    HOTEL: '•',
-    TOUR: '•',
-    CAR: '•',
-    FLIGHT: '•',
-    SERVICES: '•',
-    PRICE: '•',
-    CASH: '•',
-    TIP: '•',
-    NOTES: '•',
-    HANDSHAKE: '',
-    USER: '•',
-    AGENCY: '•',
-    PHONE: '•'
-  };
-
-  // 1. Salutation & Greeting Section
-  const senderEntity = sanitized.senderAgency || sanitized.senderName || 'TheUnbound';
-  const greetingLines = [
-    `${e.WAVE ? e.WAVE + ' ' : ''}*Hello ${sanitized.clientName},*`,
-    `Greetings from *${senderEntity}*!${e.SPARKLE ? ' ' + e.SPARKLE : ''}`,
-    `We are pleased to present your customized travel quotation below:`
-  ];
-  sections.push(greetingLines.join('\n\n'));
-
-  // 2. Trip Overview Section
-  const overviewLines = [
-    `${e.OVERVIEW} *TRIP OVERVIEW*`,
-    `${e.PIN} *Quote ID:* ${sanitized.quoteId}`,
-    `${e.LOCATION} *Destination:* ${sanitized.destinationSummary}`,
-    `${e.CALENDAR} *Travel Dates:* ${sanitized.travelDates}`,
-    `${e.DURATION} *Duration:* ${sanitized.tripDuration}`,
-    `${e.PEOPLE} *Travellers:* ${sanitized.passengerSummary}`
-  ];
-  if (sanitized.selectedOptionTitle) {
-    overviewLines.push(`${e.STAR} *Package Option:* ${sanitized.selectedOptionTitle}`);
-  }
-  sections.push(overviewLines.join('\n'));
-
-  // 3. Inclusions & Itinerary Highlights Section
-  const inclusionBlocks: string[] = [];
-
-  if (sanitized.hotelsSummary.length > 0) {
-    const displayHotels = sanitized.hotelsSummary.slice(0, 4);
-    let hotelText = displayHotels.join('\n  • ');
-    if (sanitized.hotelsSummary.length > 4) {
-      hotelText += `\n  • (+${sanitized.hotelsSummary.length - 4} more curated stay${sanitized.hotelsSummary.length - 4 > 1 ? 's' : ''})`;
-    }
-    inclusionBlocks.push(`${e.HOTEL} *Accommodation & Stays:*\n  • ${hotelText}`);
-  }
-
-  if (sanitized.experiencesSummary.length > 0) {
-    const displayExp = sanitized.experiencesSummary.slice(0, 5);
-    let expText = displayExp.join('\n  • ');
-    if (sanitized.experiencesSummary.length > 5) {
-      expText += `\n  • (+${sanitized.experiencesSummary.length - 5} additional tours)`;
-    }
-    inclusionBlocks.push(`${e.TOUR} *Experiences & Sightseeing:*\n  • ${expText}`);
-  }
-
-  if (sanitized.transfersSummary.length > 0) {
-    const displayTransfers = sanitized.transfersSummary.slice(0, 4);
-    let transText = displayTransfers.join('\n  • ');
-    if (sanitized.transfersSummary.length > 4) {
-      transText += `\n  • (+${sanitized.transfersSummary.length - 4} more transfers)`;
-    }
-    inclusionBlocks.push(`${e.CAR} *Transfers & Transport:*\n  • ${transText}`);
-  }
-
-  if (sanitized.visaSummary) {
-    inclusionBlocks.push(`${e.FLIGHT} *Visa Facilitation:*\n  • ${sanitized.visaSummary}`);
-  }
-
-  if (sanitized.otherServicesSummary.length > 0) {
-    inclusionBlocks.push(`${e.SERVICES} *Travel Services & Add-ons:*\n  • ${sanitized.otherServicesSummary.slice(0, 4).join('\n  • ')}`);
-  }
-
-  if (inclusionBlocks.length > 0) {
-    sections.push(`${e.SPARKLE} *PACKAGE HIGHLIGHTS & INCLUSIONS*\n\n${inclusionBlocks.join('\n\n')}`);
-  }
-
-  // 4. Total Package Investment / Pricing Section
-  const pricingLines: string[] = [
-    `${e.PRICE} *PACKAGE INVESTMENT*`,
-    `${e.CASH} *Total Price:* *${sanitized.formattedSellingPrice}*`,
-    `${e.TIP} _(All taxes, planned activities & stays included)_`
-  ];
-  if (sanitized.validUntil) {
-    pricingLines.push(`${e.DURATION} *Quotation Valid Until:* ${sanitized.validUntil}`);
-  }
-  sections.push(pricingLines.join('\n'));
-
-  // 5. Special Notes & Remarks (if provided)
-  if (options.customNote && options.customNote.trim()) {
-    sections.push(`${e.NOTES} *SPECIAL NOTES & REMARKS*\n${options.customNote.trim()}`);
-  }
-
-  // 6. Sign-off & Contact Section
-  const closingLines = [
-    `${e.HANDSHAKE ? e.HANDSHAKE + ' ' : ''}*ASSISTANCE & CUSTOMIZATION*`,
-    'We would be delighted to customize any portion of this journey according to your preferences.\n',
-    'Warm regards,',
-    `${e.USER} *${sanitized.senderName}*`
-  ];
-  if (sanitized.senderAgency && sanitized.senderAgency !== sanitized.senderName) {
-    closingLines.push(`${e.AGENCY} ${sanitized.senderAgency}`);
-  }
-  if (sanitized.senderContact) {
-    closingLines.push(`${e.PHONE} ${sanitized.senderContact}`);
-  }
-  sections.push(closingLines.join('\n'));
-
-  // Join all sections using the requested divider
-  const fullMessage = sections.join(`\n\n${DIVIDER}\n\n`);
-
-  // Double-check security
-  const leakCheck = verifyNoCommercialLeak(fullMessage);
-  if (!leakCheck.isSafe) {
-    console.error('SECURITY WARNING: Leaked commercial terms detected in WhatsApp quote message:', leakCheck.detectedTerms);
-    // Remove leaked terms defensively if any slipped through
-    return fullMessage.replace(new RegExp(`\\b(${leakCheck.detectedTerms.join('|')})\\b`, 'gi'), '');
-  }
-
-  return fullMessage;
+  return formatWhatsAppQuoteFromPayload(payload, options.customNote);
 }
 
 /**
- * Builds the official WhatsApp wa.me deep link URL
+ * Generates official click-to-chat WhatsApp URL (wa.me)
  */
-export function generateWhatsAppShareUrl(phoneNumber: string, message: string): string {
+export function generateWhatsAppShareUrl(phoneNumber: string, messageText: string): string {
   const cleanPhone = normalizePhoneNumber(phoneNumber);
-  const encodedText = encodeURIComponent(message);
+  const encodedText = encodeURIComponent(messageText);
   return `https://wa.me/${cleanPhone}?text=${encodedText}`;
 }
 
 /**
- * Audits, links CRM lead, records activity logs, and synchronizes database upon WhatsApp share
+ * Records WhatsApp share event, updates quote version/history,
+ * logs comprehensive CommunicationAuditLog according to Section 32,
+ * and seamlessly synchronizes with Lead CRM.
  */
 export function recordWhatsAppQuoteShare(
   db: AppDatabase,
   quote: Quotation,
   options: RecordWhatsAppShareOptions
-): { updatedQuote: Quotation; lead?: TravelLead } {
+): {
+  updatedQuote: Quotation;
+  lead?: TravelLead;
+} {
   const timestamp = new Date().toISOString();
   const maskedPhone = maskPhoneNumber(options.recipientPhone);
-  const userName = options.user?.name || options.quote.agentName || 'Travel Consultant';
+  const userName = options.user?.name || quote.agentName || 'Agent';
   const userRole = options.user?.role || 'B2B_AGENT';
+  const optionDetail = options.selectedOptionTitle ? ` (Option: ${options.selectedOptionTitle})` : '';
+  const shareDetails = `Proposal shared via WhatsApp to ${maskedPhone}${optionDetail}`;
 
-  // 1. Prepare updated Quotation activity record
-  const optionDetail = options.selectedOptionTitle ? ` [Option: ${options.selectedOptionTitle}]` : '';
-  const shareDetails = `Shared quotation proposal via WhatsApp to ${maskedPhone}${optionDetail}. Total: ${quote.currency} ${quote.totalSellingPrice}. Status: Initiated.`;
-
+  // 1. Update quote record
   const updatedQuote: Quotation = {
     ...quote,
+    status: quote.status === 'DRAFT' ? 'SENT' : quote.status,
+    lastSharedViaWhatsAppAt: timestamp,
+    lastSharedRecipientPhone: maskedPhone,
     clientPhone: options.savePhoneToCustomerProfile ? (options.recipientPhone || quote.clientPhone) : quote.clientPhone,
-    updatedAt: timestamp,
-    lastActivityAt: timestamp
+    versionHistory: [
+      {
+        version: quote.version || 1,
+        updatedAt: timestamp,
+        updatedBy: userName,
+        changesSummary: shareDetails,
+        totalSellingPrice: quote.totalSellingPrice
+      },
+      ...(quote.versionHistory || [])
+    ]
   };
 
-  // Save the quote with the WHATSAPP_SHARED action type
   const savedQuote = db.saveQuote(updatedQuote, options.user, 'WHATSAPP_SHARED', shareDetails);
 
-  // 2. Audit Trail logging
+  // 2. Authoritative Communication Audit Log (Section 32 Mandate)
+  const commId = `comm-wa-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+  db.saveCommunicationAuditLog({
+    id: `audit-${Date.now()}`,
+    communicationId: commId,
+    quoteId: quote.id,
+    leadId: quote.leadId,
+    recipientPhone: maskedPhone,
+    recipientType: 'BUYER',
+    channel: 'WHATSAPP',
+    eventType: 'QUOTE_WHATSAPP_SHARED',
+    templateVersion: '1.0.0-standard',
+    sentAt: timestamp,
+    sentBy: options.user?.id,
+    sentByName: userName,
+    deliveryStatus: 'SUCCESS'
+  });
+
+  // General Audit Trail logging
   db.logAudit(
     options.user,
     'QUOTE_SENT',
@@ -359,7 +234,6 @@ export function recordWhatsAppQuoteShare(
     db.saveLead(updatedLead, options.user);
     linkedLead = updatedLead;
   } else {
-    // Automatically create a new CRM lead with unique 6-character ID format (e.g., A7K92P)
     const unique6Char = generate6CharAlphanumericId();
     const newLeadNumber = `LED-${new Date().getFullYear()}-${unique6Char}`;
 
@@ -408,7 +282,6 @@ export function recordWhatsAppQuoteShare(
     db.saveLead(newLead, options.user);
     linkedLead = newLead;
 
-    // Attach lead ID back to quote if it was missing
     if (!quote.leadId) {
       savedQuote.leadId = newLead.id;
       db.saveQuote(savedQuote, options.user, 'EDITED');

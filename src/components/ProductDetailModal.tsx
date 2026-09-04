@@ -314,7 +314,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     {/* Rate Header with integrated Currency Dropdown */}
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <span className="text-[11px] font-bold uppercase tracking-wider text-[#00C6A6]">
-                        Published Starting Rate
+                        Final Selling Price
                       </span>
                       <div className="relative inline-flex items-center">
                         <Globe2 className="w-3 h-3 text-slate-400 absolute left-2 pointer-events-none" />
@@ -339,7 +339,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                       <span className="text-3xl font-black text-white font-sans tracking-tight">
                         {formatCurrency(convertedStartingPrice, currency)}
                       </span>
-                      <span className="text-xs text-slate-400">/ Adult (Retail)</span>
+                      <span className="text-xs text-slate-400">/ Guest</span>
                     </div>
 
                     {product.currency !== currency && (

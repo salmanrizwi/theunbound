@@ -381,6 +381,59 @@ export function canUserAccessQuoteBuilder(
 }
 
 /**
+ * Evaluates whether a user is authorized to access the AI Planner.
+ * Strictly adheres to TheUnbound access guidelines:
+ * - AI Planner access is controlled EXCLUSIVELY by Admin.
+ * - A user does NOT automatically receive access merely by role.
+ * - Must have explicit permission: user.permissions.aiPlannerAccess === true.
+ * - Master Admin is always granted access to prevent administrative lockouts.
+ */
+export function canUserAccessAIPlanner(
+  user: User | null | undefined
+): { allowed: boolean; reason?: 'LOGGED_OUT' | 'APPROVAL_PENDING' | 'REJECTED' | 'PERMISSION_DENIED'; message?: string } {
+  if (!user) {
+    return { 
+      allowed: false, 
+      reason: 'LOGGED_OUT',
+      message: 'You must be signed in to access the AI Planner.' 
+    };
+  }
+
+  const approvalStatus = user.approvalStatus || 'APPROVED';
+  if (approvalStatus === 'PENDING') {
+    return { 
+      allowed: false, 
+      reason: 'APPROVAL_PENDING',
+      message: 'Your account registration is pending Admin verification.' 
+    };
+  }
+  if (approvalStatus === 'REJECTED') {
+    return { 
+      allowed: false, 
+      reason: 'REJECTED',
+      message: 'Your account access has been revoked.' 
+    };
+  }
+
+  // Master Admin always has access to prevent system lockout
+  if (isMasterAdmin(user)) {
+    return { allowed: true };
+  }
+
+  // Check explicit permission
+  if (user.permissions?.aiPlannerAccess === true) {
+    return { allowed: true };
+  }
+
+  // Explicitly denied or unallocated
+  return { 
+    allowed: false, 
+    reason: 'PERMISSION_DENIED',
+    message: 'AI Planner access has not been allocated to your account by an Administrator.' 
+  };
+}
+
+/**
  * Evaluates whether a user is authorized to share a quotation via WhatsApp.
  * Adheres to TheUnbound access guidelines:
  * - Admin / Master Admin: Always allowed
@@ -647,7 +700,9 @@ export function canUserAccessCMSSubTab(
 }
 
 /**
- * Evaluates whether a user is authorized to view wholesale contracted net rates and internal DMC margins
+ * Evaluates whether a user is authorized to view wholesale contracted net rates and internal DMC margins.
+ * STRICT GLOBAL RULE: No Buyer or B2B Agent may EVER view wholesale nett rates or internal calculations.
+ * Internal pricing details are reserved strictly for Admin and internal DMC Staff.
  */
 export function canUserViewWholesaleRates(user: User | null | undefined): boolean {
   if (!user) return false;
@@ -655,15 +710,7 @@ export function canUserViewWholesaleRates(user: User | null | undefined): boolea
   if (isMasterAdmin(user)) return true;
   if (user.role === 'ADMIN' || user.role === 'DMC_STAFF') return true;
 
-  if (user.permissions && typeof user.permissions.canViewWholesaleNetRates === 'boolean') {
-    return user.permissions.canViewWholesaleNetRates;
-  }
-
-  // B2B travel agents may have wholesale rate access if explicitly granted or default
-  if (user.role === 'B2B_AGENT' || user.role === 'AGENT') {
-    return user.permissions?.canViewWholesaleNetRates === true;
-  }
-
+  // STRICT GLOBAL RULE: Neither B2B Agent nor Buyer may ever see wholesale net rates or margins
   return false;
 }
 

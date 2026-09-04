@@ -465,7 +465,11 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
             <div className="space-y-2">
               {roomTypes.map((room) => {
                 const isSelected = room.id === selectedRoomId;
-                const baseRateUSD = room.rates?.[0]?.adultNettCost || room.rates?.[0]?.doubleNetRate || 380;
+                const markupMultiplier = 1 + ((room.rates?.[0]?.markupPercent || 18) / 100);
+                const taxMultiplier = 1 + ((room.rates?.[0]?.taxPercent || 10) / 100);
+                const feeMultiplier = 1 + ((room.rates?.[0]?.feePercent || 2.5) / 100);
+                const rawNettUSD = room.rates?.[0]?.adultNettCost || room.rates?.[0]?.doubleNetRate || 380;
+                const sellingRateUSD = Math.round(rawNettUSD * markupMultiplier * taxMultiplier * feeMultiplier);
                 return (
                   <div
                     key={room.id}
@@ -504,10 +508,10 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
 
                     <div className="text-right pl-6 sm:pl-0 shrink-0">
                       <div className="text-xs font-black font-mono text-slate-900">
-                        {formatCurrency(convertCurrency(baseRateUSD, 'USD', currency), currency)} <span className="text-[10px] font-normal text-slate-500">/ night</span>
+                        {formatCurrency(convertCurrency(sellingRateUSD, 'USD', currency), currency)} <span className="text-[10px] font-normal text-slate-500">/ night</span>
                       </div>
                       <span className="text-[10px] text-emerald-600 font-bold">
-                        Wholesale Confirmed
+                        Guaranteed Tariff
                       </span>
                     </div>
                   </div>

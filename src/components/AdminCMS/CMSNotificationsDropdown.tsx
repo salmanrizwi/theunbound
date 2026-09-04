@@ -1,45 +1,50 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { AppDatabase } from '../../services/db';
+import { AdminActivityRecord, User } from '../../types';
+import { useAuth } from '../../context/AuthContext';
 import { 
   Bell, 
   CheckCircle2, 
   Clock, 
   AlertTriangle, 
+  AlertCircle,
   DollarSign, 
   UserPlus, 
   FileText, 
   Calendar, 
   RefreshCw, 
-  ArrowRight,
-  X,
-  ExternalLink
+  ArrowRight, 
+  X, 
+  ExternalLink,
+  Activity,
+  Check
 } from 'lucide-react';
-
-export interface SystemNotificationItem {
-  id: string;
-  type: 'NEW_LEAD' | 'BOOKING_PENDING' | 'PAYMENT_PROOF' | 'QUOTE_FOLLOWUP' | 'SYNC_ALERT' | 'USER_APPROVAL' | 'TASK_DUE';
-  title: string;
-  message: string;
-  timestamp: string;
-  relativeTime: string;
-  isRead: boolean;
-  priority: 'HIGH' | 'MEDIUM' | 'LOW';
-  moduleSection: string;
-  subTab?: string;
-  targetId?: string;
-}
 
 interface CMSNotificationsDropdownProps {
   onNavigate: (section: string, subTab?: string, targetId?: string) => void;
+  currentUser?: User | null;
 }
 
 export const CMSNotificationsDropdown: React.FC<CMSNotificationsDropdownProps> = ({
-  onNavigate
+  onNavigate,
+  currentUser: propUser
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [readIds, setReadIds] = useState<Set<string>>(() => new Set());
+  const [filterActionRequired, setFilterActionRequired] = useState(false);
+  const [dbTick, setDbTick] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const db = AppDatabase.getInstance();
+  const { user: authUser } = useAuth();
+
+  const currentUser = propUser || authUser || null;
+
+  // Real-time synchronization
+  useEffect(() => {
+    const unsub = db.subscribe(() => {
+      setDbTick(t => t + 1);
+    });
+    return () => unsub();
+  }, [db]);
 
   // Close when clicking outside
   useEffect(() => {
@@ -52,210 +57,208 @@ export const CMSNotificationsDropdown: React.FC<CMSNotificationsDropdownProps> =
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Compute live real system notifications from actual db records
-  const notifications = useMemo<SystemNotificationItem[]>(() => {
-    const items: SystemNotificationItem[] = [];
+  // Fetch real activities from database
+  const activities = useMemo(() => {
+    return db.getAdminActivities(currentUser);
+  }, [db, currentUser, dbTick]);
 
-    // 1. Leads with status 'NEW'
-    const newLeads = db.getLeads().filter(l => l.status === 'NEW');
-    newLeads.slice(0, 5).forEach(l => {
-      items.push({
-        id: `notif-lead-${l.id}`,
-        type: 'NEW_LEAD',
-        title: `New Lead: ${l.contactName}`,
-        message: `${l.agencyName ? l.agencyName + ' • ' : ''}Requested ${l.destinationName || 'Tour'} (${l.paxAdults} Pax) — Est. ${l.currency} ${l.estimatedBudget || 0}`,
-        timestamp: l.notes?.[0]?.timestamp || l.createdAt || new Date().toISOString(),
-        relativeTime: 'Action Required',
-        isRead: readIds.has(`notif-lead-${l.id}`),
-        priority: 'HIGH',
-        moduleSection: 'LEAD_MANAGEMENT',
-        subTab: 'LEADS',
-        targetId: l.id
-      });
-    });
+  // Counts
+  const counts = useMemo(() => {
+    return db.getActivityCountsByModule(currentUser);
+  }, [db, currentUser, dbTick]);
 
-    // 2. Bookings with status 'PENDING_CONFIRMATION'
-    const pendingBookings = db.getAllBookings().filter(b => b.status === 'PENDING_CONFIRMATION');
-    pendingBookings.slice(0, 5).forEach(b => {
-      items.push({
-        id: `notif-booking-${b.id}`,
-        type: 'BOOKING_PENDING',
-        title: `Booking Pending: ${b.bookingReference}`,
-        message: `${b.customer.leadTravelerName} • ${b.items?.length || 0} items • Travel: ${b.travelStartDate}`,
-        timestamp: b.travelStartDate,
-        relativeTime: 'Ground Dispatch Required',
-        isRead: readIds.has(`notif-booking-${b.id}`),
-        priority: 'HIGH',
-        moduleSection: 'BOOKING_MANAGEMENT',
-        subTab: 'BOOKINGS',
-        targetId: b.id
-      });
-    });
+  const unreadCount = counts.TOTAL.unread;
+  const actionRequiredCount = counts.TOTAL.actionRequired;
 
-    // 3. Payment proofs pending verification
-    const bookingsWithProofs = db.getAllBookings().filter(b => 
-      b.paymentProofs?.some(p => p.verificationStatus === 'PENDING_VERIFICATION')
-    );
-    bookingsWithProofs.slice(0, 3).forEach(b => {
-      items.push({
-        id: `notif-payment-${b.id}`,
-        type: 'PAYMENT_PROOF',
-        title: `Payment Proof Uploaded: ${b.bookingReference}`,
-        message: `Customer ${b.customer.leadTravelerName} uploaded payment proof for verification.`,
-        timestamp: new Date().toISOString(),
-        relativeTime: 'Finance Review',
-        isRead: readIds.has(`notif-payment-${b.id}`),
-        priority: 'HIGH',
-        moduleSection: 'BOOKING_MANAGEMENT',
-        subTab: 'BOOKINGS',
-        targetId: b.id
-      });
-    });
+  // Filtered dropdown items
+  const displayItems = useMemo(() => {
+    let items = activities;
+    if (filterActionRequired) {
+      items = items.filter(a => a.actionRequired);
+    }
+    return items.slice(0, 10);
+  }, [activities, filterActionRequired]);
 
-    // 4. Users pending approval
-    const pendingUsers = db.getUsers().filter(u => u.approvalStatus === 'PENDING');
-    pendingUsers.slice(0, 3).forEach(u => {
-      items.push({
-        id: `notif-user-${u.id}`,
-        type: 'USER_APPROVAL',
-        title: `User Approval Pending: ${u.name}`,
-        message: `Role: ${u.role} • ${u.agencyName || u.email} requested portal access.`,
-        timestamp: u.createdAt,
-        relativeTime: 'Account Access',
-        isRead: readIds.has(`notif-user-${u.id}`),
-        priority: 'MEDIUM',
-        moduleSection: 'ACCOUNT_MANAGEMENT',
-        subTab: 'USERS_ACCESS',
-        targetId: u.id
-      });
-    });
-
-    // 5. Calendar Tasks due today
-    const calendarTasks = db.getCalendarTasks().filter(t => t.status === 'PENDING');
-    calendarTasks.slice(0, 3).forEach(t => {
-      items.push({
-        id: `notif-task-${t.id}`,
-        type: 'TASK_DUE',
-        title: `Task Due: ${t.title}`,
-        message: `Assigned to ${t.assignedToName} • Due: ${t.startDate} ${t.startTime}`,
-        timestamp: t.createdAt,
-        relativeTime: `${t.priority} Priority`,
-        isRead: readIds.has(`notif-task-${t.id}`),
-        priority: t.priority === 'URGENT' || t.priority === 'HIGH' ? 'HIGH' : 'MEDIUM',
-        moduleSection: 'NOTIFICATIONS_MANAGEMENT',
-        subTab: 'CALENDAR_TASKS',
-        targetId: t.id
-      });
-    });
-
-    return items;
-  }, [readIds, db]);
-
-  const unreadCount = notifications.filter(n => !n.isRead).length;
-
-  const handleMarkAllAsRead = () => {
-    const newSet = new Set(readIds);
-    notifications.forEach(n => newSet.add(n.id));
-    setReadIds(newSet);
-  };
-
-  const handleNotificationClick = (item: SystemNotificationItem) => {
-    const newSet = new Set(readIds);
-    newSet.add(item.id);
-    setReadIds(newSet);
+  const handleNotificationClick = (activity: AdminActivityRecord) => {
+    if (!activity.read) {
+      db.markAdminActivityAsRead(activity.activityId, currentUser?.name || 'admin');
+    }
     setIsOpen(false);
-    onNavigate(item.moduleSection, item.subTab, item.targetId);
+    onNavigate(activity.targetSection, activity.targetSubTab, activity.recordId);
   };
 
-  const getIcon = (type: SystemNotificationItem['type']) => {
-    switch (type) {
-      case 'NEW_LEAD': return UserPlus;
-      case 'BOOKING_PENDING': return Clock;
-      case 'PAYMENT_PROOF': return DollarSign;
-      case 'USER_APPROVAL': return AlertTriangle;
-      case 'TASK_DUE': return Calendar;
-      default: return Bell;
+  const handleMarkAllAsRead = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    db.markAllAdminActivitiesAsRead(undefined, currentUser?.name || 'admin');
+  };
+
+  const formatRelativeTime = (timestamp: string): string => {
+    try {
+      const now = new Date().getTime();
+      const past = new Date(timestamp).getTime();
+      const diffSecs = Math.max(0, Math.floor((now - past) / 1000));
+
+      if (diffSecs < 60) return 'Just now';
+      const diffMins = Math.floor(diffSecs / 60);
+      if (diffMins < 60) return `${diffMins}m ago`;
+      const diffHours = Math.floor(diffMins / 60);
+      if (diffHours < 24) return `${diffHours}h ago`;
+      const diffDays = Math.floor(diffHours / 24);
+      if (diffDays === 1) return 'Yesterday';
+      return `${diffDays}d ago`;
+    } catch {
+      return timestamp;
     }
   };
 
   return (
     <div className="relative" ref={dropdownRef}>
-      {/* Notification Bell Button */}
+      {/* Bell Trigger Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="relative p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-colors flex items-center justify-center cursor-pointer"
-        aria-label="View notifications"
+        className="relative p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+        title="Admin Notifications & Activity Center"
       >
-        <Bell className="w-3.5 h-3.5" />
+        <Bell className="w-5 h-5" />
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white text-[9px] font-extrabold rounded-full flex items-center justify-center border border-slate-950 shadow-xs animate-pulse">
+          <span className="absolute top-1 right-1 w-4 h-4 bg-rose-500 text-white text-[9px] font-black rounded-full flex items-center justify-center border-2 border-white animate-pulse">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
       </button>
 
-      {/* Dropdown Menu */}
+      {/* Dropdown Card */}
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="absolute right-0 mt-2 w-96 sm:w-[420px] bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150">
+          
           {/* Header */}
-          <div className="p-3.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+          <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <span className="text-xs font-extrabold uppercase tracking-wider text-slate-900">
-                Actionable Alerts
+                System Alerts & Activity
               </span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#008972]/10 text-[#008972]">
-                {unreadCount} New
-              </span>
+              {unreadCount > 0 && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#008972]/10 text-[#008972]">
+                  {unreadCount} Unread
+                </span>
+              )}
             </div>
-            {unreadCount > 0 && (
+            
+            <div className="flex items-center space-x-2">
+              {unreadCount > 0 && (
+                <button
+                  onClick={handleMarkAllAsRead}
+                  className="text-[11px] font-bold text-slate-500 hover:text-slate-900 transition-colors cursor-pointer"
+                >
+                  Mark all read
+                </button>
+              )}
               <button
-                onClick={handleMarkAllAsRead}
-                className="text-[11px] font-bold text-slate-500 hover:text-slate-900 transition-colors"
+                onClick={() => setIsOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
               >
-                Mark all read
+                <X className="w-3.5 h-3.5" />
               </button>
-            )}
+            </div>
+          </div>
+
+          {/* Quick Filter Tabs */}
+          <div className="px-4 py-2 bg-slate-100/70 border-b border-slate-100 flex items-center space-x-2 text-xs">
+            <button
+              onClick={() => setFilterActionRequired(false)}
+              className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                !filterActionRequired
+                  ? 'bg-white text-slate-900 shadow-2xs'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              All Recent
+            </button>
+            <button
+              onClick={() => setFilterActionRequired(true)}
+              className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                filterActionRequired
+                  ? 'bg-rose-500 text-white shadow-2xs'
+                  : 'text-rose-600 hover:bg-rose-50'
+              }`}
+            >
+              <span>Action Required</span>
+              {actionRequiredCount > 0 && (
+                <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-black ${
+                  filterActionRequired ? 'bg-white text-rose-600' : 'bg-rose-100 text-rose-700'
+                }`}>
+                  {actionRequiredCount}
+                </span>
+              )}
+            </button>
           </div>
 
           {/* Notifications List */}
           <div className="max-h-[380px] overflow-y-auto divide-y divide-slate-100 p-1">
-            {notifications.length === 0 ? (
-              <div className="py-10 text-center text-slate-400 space-y-1">
+            {displayItems.length === 0 ? (
+              <div className="py-12 text-center text-slate-400 space-y-1">
                 <CheckCircle2 className="w-8 h-8 mx-auto text-emerald-500/80" />
-                <p className="text-xs font-bold text-slate-600">All caught up!</p>
-                <p className="text-[11px] text-slate-400">No urgent operational alerts right now.</p>
+                <p className="text-xs font-bold text-slate-700">All caught up!</p>
+                <p className="text-[11px] text-slate-400">No urgent operational notifications right now.</p>
               </div>
             ) : (
-              notifications.map(item => {
-                const Icon = getIcon(item.type);
+              displayItems.map(item => {
+                const isUnread = !item.read;
+
                 return (
                   <button
-                    key={item.id}
+                    key={item.activityId}
                     onClick={() => handleNotificationClick(item)}
-                    className={`w-full text-left p-3 rounded-xl transition-all flex items-start space-x-3 cursor-pointer ${
-                      item.isRead ? 'bg-white hover:bg-slate-50 opacity-75' : 'bg-slate-50/80 hover:bg-slate-100'
+                    className={`w-full text-left p-3 rounded-2xl transition-all flex items-start space-x-3 cursor-pointer ${
+                      isUnread ? 'bg-slate-50/90 hover:bg-slate-100/80' : 'bg-white hover:bg-slate-50 opacity-75'
                     }`}
                   >
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                      item.priority === 'HIGH' 
-                        ? 'bg-rose-100 text-rose-600' 
+                    {/* Status Icon */}
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
+                      item.severity === 'CRITICAL' || item.actionRequired
+                        ? 'bg-rose-100 text-rose-600'
+                        : item.severity === 'WARNING'
+                        ? 'bg-amber-100 text-amber-700'
                         : 'bg-[#008972]/10 text-[#008972]'
                     }`}>
-                      <Icon className="w-4 h-4" />
+                      {item.severity === 'CRITICAL' ? (
+                        <AlertCircle className="w-4 h-4" />
+                      ) : item.severity === 'WARNING' ? (
+                        <AlertTriangle className="w-4 h-4" />
+                      ) : (
+                        <Activity className="w-4 h-4" />
+                      )}
                     </div>
 
-                    <div className="min-w-0 flex-1">
+                    {/* Content */}
+                    <div className="min-w-0 flex-1 space-y-0.5">
                       <div className="flex items-center justify-between">
-                        <h5 className={`text-xs font-bold truncate ${item.isRead ? 'text-slate-700' : 'text-slate-900'}`}>
-                          {item.title}
-                        </h5>
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                          {item.category} • {item.actorName}
+                        </span>
                         <span className="text-[9px] font-bold text-slate-400 shrink-0 ml-1">
-                          {item.relativeTime}
+                          {formatRelativeTime(item.timestamp)}
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">
-                        {item.message}
-                      </p>
+
+                      <h5 className={`text-xs font-bold truncate ${isUnread ? 'text-slate-900' : 'text-slate-700'}`}>
+                        {item.summary}
+                      </h5>
+
+                      {item.details?.actionNeeded && (
+                        <p className="text-[11px] text-slate-500 line-clamp-1">
+                          <strong className="text-slate-600">Action:</strong> {item.details.actionNeeded}
+                        </p>
+                      )}
+
+                      {item.actionRequired && (
+                        <div className="pt-0.5">
+                          <span className="inline-flex items-center space-x-1 text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-rose-100 text-rose-700">
+                            <span className="w-1 h-1 rounded-full bg-rose-500 animate-ping" />
+                            <span>{item.actionLabel || 'Action Required'}</span>
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </button>
                 );
@@ -263,17 +266,27 @@ export const CMSNotificationsDropdown: React.FC<CMSNotificationsDropdownProps> =
             )}
           </div>
 
-          {/* Footer */}
-          <div className="p-2.5 bg-slate-50 border-t border-slate-100 text-center">
+          {/* Footer Navigation */}
+          <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
             <button
               onClick={() => {
                 setIsOpen(false);
-                onNavigate('NOTIFICATIONS_MANAGEMENT', 'CALENDAR_TASKS');
+                onNavigate('NOTIFICATIONS_MANAGEMENT', 'TASKS');
               }}
-              className="text-xs font-bold text-[#008972] hover:text-[#00705d] flex items-center justify-center space-x-1 mx-auto"
+              className="text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
             >
-              <span>View All SLA Tasks & Follow-Ups</span>
-              <ArrowRight className="w-3 h-3" />
+              Ground SLAs
+            </button>
+
+            <button
+              onClick={() => {
+                setIsOpen(false);
+                onNavigate('INTEGRATIONS_DB', 'ACTIVITY_CENTER');
+              }}
+              className="text-xs font-bold text-[#008972] hover:text-[#00705d] flex items-center space-x-1 cursor-pointer"
+            >
+              <span>Open Admin Activity Center</span>
+              <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>

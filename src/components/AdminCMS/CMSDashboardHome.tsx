@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { AppDatabase } from '../../services/db';
 import { 
   Product, 
@@ -55,22 +55,30 @@ export const CMSDashboardHome: React.FC<CMSDashboardHomeProps> = ({
 }) => {
   const db = AppDatabase.getInstance();
   const [showAllActionsModal, setShowAllActionsModal] = useState(false);
+  const [dbTick, setDbTick] = useState(0);
+
+  useEffect(() => {
+    const unsub = db.subscribe(() => {
+      setDbTick(t => t + 1);
+    });
+    return () => unsub();
+  }, [db]);
 
   // Load live real records from database
-  const products = useMemo(() => db.getProducts(), [db]);
-  const hotels = useMemo(() => db.getHotels(), [db]);
-  const destinations = useMemo(() => db.getDestinations(), [db]);
-  const cityHubs = useMemo(() => db.getCityHubs(), [db]);
-  const masterRegions = useMemo(() => db.getMasterRegions(), [db]);
-  const leads = useMemo(() => db.getLeads(), [db]);
-  const quotes = useMemo(() => db.getAllSavedQuotes(), [db]);
-  const bookings = useMemo(() => db.getAllBookings(), [db]);
-  const users = useMemo(() => db.getUsers(), [db]);
-  const promotions = useMemo(() => db.getPromotions(), [db]);
-  const blogs = useMemo(() => db.getBlogs(), [db]);
-  const reviews = useMemo(() => db.getReviews(), [db]);
-  const tasks = useMemo(() => db.getCalendarTasks(), [db]);
-  const auditLogs = useMemo(() => db.getAuditLogs().slice(0, 6), [db]);
+  const products = useMemo(() => db.getProducts(), [db, dbTick]);
+  const hotels = useMemo(() => db.getHotels(), [db, dbTick]);
+  const destinations = useMemo(() => db.getDestinations(), [db, dbTick]);
+  const cityHubs = useMemo(() => db.getCityHubs(), [db, dbTick]);
+  const masterRegions = useMemo(() => db.getMasterRegions(), [db, dbTick]);
+  const leads = useMemo(() => db.getLeads(), [db, dbTick]);
+  const quotes = useMemo(() => db.getAllSavedQuotes(), [db, dbTick]);
+  const bookings = useMemo(() => db.getAllBookings(), [db, dbTick]);
+  const users = useMemo(() => db.getUsers(), [db, dbTick]);
+  const promotions = useMemo(() => db.getPromotions(), [db, dbTick]);
+  const blogs = useMemo(() => db.getBlogs(), [db, dbTick]);
+  const reviews = useMemo(() => db.getReviews(), [db, dbTick]);
+  const tasks = useMemo(() => db.getCalendarTasks(), [db, dbTick]);
+  const auditLogs = useMemo(() => db.getAuditLogs().slice(0, 6), [db, dbTick]);
 
   // 1. KEY BUSINESS METRICS (6 Core KPI Cards)
   const kpiMetrics = useMemo(() => {

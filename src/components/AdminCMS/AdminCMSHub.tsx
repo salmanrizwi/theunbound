@@ -8,6 +8,7 @@ import { useAuth } from '../../context/AuthContext';
 import { CMSDashboardHome } from './CMSDashboardHome';
 import { CMSGlobalSearch } from './CMSGlobalSearch';
 import { CMSNotificationsDropdown } from './CMSNotificationsDropdown';
+import { AdminActivityCenter } from './AdminActivityCenter';
 import { CMSCalendarTasksManager } from './CMSCalendarTasksManager';
 import { ProductManager } from './ProductManager';
 import { HotelManager } from './HotelManager';
@@ -233,13 +234,15 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     agencyName: 'TheUnbound DMC Global Headquarters'
   };
 
+  // Active users count (total count of active users using B2B + Buyer portal)
+  const [dbTick, setDbTick] = useState(0);
+
   const counts = countingEngine.getCountsBreakdown({ onlyPublished: false });
   const pendingLeads = db.getLeads().filter(l => l.status === 'NEW').length;
   const pendingBookings = db.getAllBookings().filter(b => b.status === 'PENDING_CONFIRMATION').length;
   const pendingUsers = db.getUsers().filter(u => u.approvalStatus === 'PENDING').length;
   const pendingTasks = db.getCalendarTasks().filter(t => t.status === 'PENDING').length;
 
-  // Active users count (total count of active users using B2B + Buyer portal)
   const [activePortalStats, setActivePortalStats] = useState(() => {
     const users = db.getUsers();
     const b2b = users.filter(u => 
@@ -269,12 +272,18 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
         u.role !== 'ADMIN' && u.role !== 'TEAM_MEMBER'
       ).length;
       setActivePortalStats({ b2b, buyer, total: b2b + buyer });
+      setDbTick(t => t + 1);
     };
+
+    const unsub = db.subscribe(() => {
+      updateStats();
+    });
 
     window.addEventListener('storage', updateStats);
     window.addEventListener('focus', updateStats);
     const interval = setInterval(updateStats, 4000);
     return () => {
+      unsub();
       window.removeEventListener('storage', updateStats);
       window.removeEventListener('focus', updateStats);
       clearInterval(interval);
@@ -533,6 +542,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           badge: 'Live',
           description: 'Production Integrations Hub for Firestore, Gmail, Calendar, and Sheets, along with database verification & audit trail.',
           subTabs: [
+            { id: 'ACTIVITY_CENTER', label: 'Activity & Notification Center', icon: Activity },
             { id: 'DATA_SYNC_AUDIT', label: 'Data Sync & Consistency Audit', icon: ShieldCheck },
             { id: 'INTEGRATIONS_HUB', label: 'Integrations & Database Hub', icon: Sparkles },
             { id: 'FIRESTORE_DIAGNOSTICS', label: 'Firestore Diagnostics', icon: Activity },
@@ -548,6 +558,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   const normalizeSectionId = (sec: string): CMSSection => {
     if (sec === 'NOTIFICATIONS_MANAGEMENT') return 'CALENDAR_SLAS';
     if (sec === 'DATABASE_MANAGEMENT') return 'INTEGRATIONS_DB';
+    if (sec === 'ACTIVITY_CENTER') return 'INTEGRATIONS_DB';
     return sec as CMSSection;
   };
 
@@ -819,7 +830,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
 
               {/* Real-time Notifications & SLA Dropdown */}
               <div className="shrink-0">
-                <CMSNotificationsDropdown onNavigate={handleNavigate} />
+                <CMSNotificationsDropdown onNavigate={handleNavigate} currentUser={currentUser} />
               </div>
 
               {/* Fullscreen Toggle */}
@@ -1205,8 +1216,11 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           {/* 5.2 INTEGRATIONS & DATABASE */}
           {(currentModuleConfig.id === 'INTEGRATIONS_DB' || currentModuleConfig.id === 'DATABASE_MANAGEMENT') && (
             <>
+              {(!activeSubTab || activeSubTab === 'ACTIVITY_CENTER') && (
+                <AdminActivityCenter onNavigate={handleNavigate} currentUser={currentUser} />
+              )}
               {activeSubTab === 'DATA_SYNC_AUDIT' && <DataSyncAuditViewer currentUser={currentUser} />}
-              {(activeSubTab === 'INTEGRATIONS_HUB' || activeSubTab === 'OVERVIEW' || !activeSubTab) && (
+              {activeSubTab === 'INTEGRATIONS_HUB' && (
                 <IntegrationsManager currentUser={currentUser} />
               )}
               {activeSubTab === 'FIRESTORE_DIAGNOSTICS' && <FirestoreDiagnosticsViewer />}

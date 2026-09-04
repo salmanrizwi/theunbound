@@ -566,16 +566,13 @@ Support: visa-operations@theunbound.in
                 {/* Price Row */}
                 <div className="pt-3 border-t border-slate-100 flex items-baseline justify-between">
                   <div>
-                    <span className="text-[10px] text-slate-400 block font-medium">B2B Net Rate</span>
+                    <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
                     <span className="text-base font-extrabold text-slate-900 font-mono">
-                      {formatCurrency(visa.wholesaleNetUSD + visa.embassyFeeUSD, currency)}
+                      {formatCurrency(visa.suggestedSellingUSD, currency)}
                     </span>
                   </div>
                   <div className="text-right">
-                    <span className="text-[10px] text-slate-400 block font-medium">Suggested Retail</span>
-                    <span className="text-xs font-bold text-emerald-600 font-mono">
-                      {formatCurrency(visa.suggestedSellingUSD, currency)}
-                    </span>
+                    <span className="text-[10px] text-teal-600 font-semibold">All Taxes & Fees Included</span>
                   </div>
                 </div>
 
@@ -749,9 +746,9 @@ Support: visa-operations@theunbound.in
             {/* Fixed Footer */}
             <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0 gap-3">
               <div>
-                <span className="text-[10px] text-slate-400 block font-medium">Total B2B Net Cost</span>
+                <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
                 <span className="text-base font-extrabold text-slate-900 font-mono">
-                  {formatCurrency(selectedVisaDetails.wholesaleNetUSD + selectedVisaDetails.embassyFeeUSD, currency)}
+                  {formatCurrency(selectedVisaDetails.suggestedSellingUSD, currency)}
                 </span>
               </div>
 

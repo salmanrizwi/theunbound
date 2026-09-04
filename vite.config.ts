@@ -9,7 +9,10 @@ const __dirname = path.dirname(__filename);
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
@@ -32,20 +35,38 @@ export default defineConfig(() => {
       rollupOptions: {
         output: {
           manualChunks(id) {
-            if (id.includes('jspdf') || id.includes('html2canvas') || id.includes('dompurify')) {
-              return 'vendor-pdf';
+            if (id.includes('node_modules')) {
+              if (id.includes('jspdf') || id.includes('html2canvas') || id.includes('dompurify') || id.includes('canvg') || id.includes('fflate')) {
+                return 'vendor-pdf';
+              }
+              if (id.includes('firebase')) {
+                return 'vendor-firebase';
+              }
+              if (id.includes('lucide-react')) {
+                return 'vendor-lucide';
+              }
+              if (id.includes('motion') || id.includes('framer-motion')) {
+                return 'vendor-motion';
+              }
+              if (id.includes('react') || id.includes('react-dom') || id.includes('scheduler')) {
+                return 'vendor-react';
+              }
+              return 'vendor-misc';
             }
-            if (id.includes('firebase')) {
-              return 'vendor-firebase';
+            if (id.includes('src/components/AdminCMS/')) {
+              return 'app-admin-cms';
             }
-            if (id.includes('lucide-react')) {
-              return 'vendor-lucide';
+            if (id.includes('src/components/QuoteBuilder/')) {
+              return 'app-quote-builder';
             }
-            if (id.includes('motion')) {
-              return 'vendor-motion';
+            if (id.includes('src/components/AIPlanner/')) {
+              return 'app-ai-planner';
             }
-            if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) {
-              return 'vendor-react';
+            if (id.includes('src/components/Operations/')) {
+              return 'app-operations';
+            }
+            if (id.includes('src/services/db.ts')) {
+              return 'app-db';
             }
           },
         },

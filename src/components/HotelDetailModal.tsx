@@ -91,26 +91,8 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
   const [extraBeds, setExtraBeds] = useState<number>(0);
   const [addedSuccess, setAddedSuccess] = useState(false);
 
-  if (!hotel) return null;
-
-  const galleryImages = hotel.images && (hotel.images || []).length > 0 ? hotel.images : [hotel.heroImage];
-
-  // Calculate live stay price
-  const stayCalc = selectedRoom ? calculateHotelStayPrice({
-    hotel,
-    roomType: selectedRoom,
-    rate: activeRate,
-    checkInDate,
-    nights,
-    roomsCount,
-    adults,
-    children,
-    extraBeds,
-    targetCurrency: currency,
-    agentClientMarkupPercent: 12
-  }) : null;
-
   const startingSellingPrice = useMemo(() => {
+    if (!hotel) return 0;
     const firstRoom = hotel.roomTypes?.[0];
     const firstRate = firstRoom?.rates?.[0] || activeRate;
     if (firstRoom && firstRate) {
@@ -132,6 +114,25 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
     const netConverted = convertCurrency(hotel.startingNetPrice || 400, hotel.currency, currency);
     return Math.round(netConverted * 1.12 * 1.1);
   }, [hotel, activeRate, checkInDate, currency]);
+
+  if (!hotel) return null;
+
+  const galleryImages = hotel.images && (hotel.images || []).length > 0 ? hotel.images : [hotel.heroImage];
+
+  // Calculate live stay price
+  const stayCalc = selectedRoom ? calculateHotelStayPrice({
+    hotel,
+    roomType: selectedRoom,
+    rate: activeRate,
+    checkInDate,
+    nights,
+    roomsCount,
+    adults,
+    children,
+    extraBeds,
+    targetCurrency: currency,
+    agentClientMarkupPercent: 12
+  }) : null;
 
   const handleAddHotelStay = () => {
     if (!selectedRoom) return;
@@ -388,7 +389,7 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                       <Bed className="w-4 h-4 text-[#00C6A6]" />
                       <span>Stay Price Calculator</span>
                     </h4>
-                    <span className="text-[11px] text-slate-400">Direct B2B Wholesale calculation</span>
+                    <span className="text-[11px] text-slate-400">Real-time tariff calculation</span>
                   </div>
                   <span className="text-xs font-bold bg-[#00C6A6]/20 text-[#00C6A6] px-2 py-0.5 rounded-md">
                     Instant Quote

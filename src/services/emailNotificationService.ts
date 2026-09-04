@@ -1,5 +1,12 @@
-import { Booking, SentEmailRecord, Quotation } from '../types';
+import { Booking, SentEmailRecord, Quotation, CommunicationAuditLog, CommunicationEventType } from '../types';
 import { formatCurrency } from './pricingEngine';
+import { 
+  buildQuoteCommunicationPayload, 
+  buildBookingCommunicationPayload, 
+  formatProposalEmailFromPayload,
+  generateContextualEmailSubject 
+} from './communicationDataBuilder';
+import { AppDatabase } from './db';
 
 function base64UrlEncode(str: string): string {
   return btoa(unescape(encodeURIComponent(str)))
@@ -19,13 +26,51 @@ export class EmailNotificationService {
   }
 
   /**
-   * Executes live email dispatch via Google Workspace Gmail API v1 endpoint
+   * Executes live email dispatch via Google Workspace Gmail API v1 endpoint.
+   * Mandate: Tracks comprehensive CommunicationAuditLog on every dispatch attempt,
+   * never masks failures, and records exact delivery status.
    */
-  public async sendViaGmailApi(to: string, subject: string, htmlBody: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  public async sendViaGmailApi(
+    to: string, 
+    subject: string, 
+    htmlBody: string,
+    meta?: {
+      quoteId?: string;
+      bookingId?: string;
+      leadId?: string;
+      recipientType?: 'BUYER' | 'B2B_AGENT' | 'DMC_OPS' | 'ADMIN' | 'SUPPLIER';
+      eventType?: CommunicationEventType;
+      sentBy?: string;
+      sentByName?: string;
+    }
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    const db = AppDatabase.getInstance();
+    const communicationId = `comm-email-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const eventType: CommunicationEventType = meta?.eventType || (meta?.quoteId ? 'QUOTE_EMAIL_SENT' : 'BOOKING_EMAIL_SENT');
+    const recipientType = meta?.recipientType || (meta?.quoteId ? 'BUYER' : 'DMC_OPS');
+
     try {
       const storedToken = sessionStorage.getItem('google_access_token') || localStorage.getItem('google_access_token');
       if (!storedToken) {
-        return { success: false, error: 'NO_AUTH_TOKEN' };
+        const err = 'No active Google Workspace authorization token found.';
+        db.saveCommunicationAuditLog({
+          id: `audit-${Date.now()}`,
+          communicationId,
+          quoteId: meta?.quoteId,
+          bookingId: meta?.bookingId,
+          leadId: meta?.leadId,
+          recipientEmail: to,
+          recipientType,
+          channel: 'EMAIL',
+          eventType,
+          templateVersion: '1.0.0-standard',
+          sentAt: new Date().toISOString(),
+          sentBy: meta?.sentBy,
+          sentByName: meta?.sentByName,
+          deliveryStatus: 'FAILED',
+          failureReason: err
+        });
+        return { success: false, error: err };
       }
 
       const emailLines = [
@@ -50,36 +95,87 @@ export class EmailNotificationService {
 
       if (!res.ok) {
         const errText = await res.text();
-        return { success: false, error: `Gmail API error (${res.status}): ${errText}` };
+        const err = `Gmail API error (${res.status}): ${errText}`;
+        db.saveCommunicationAuditLog({
+          id: `audit-${Date.now()}`,
+          communicationId,
+          quoteId: meta?.quoteId,
+          bookingId: meta?.bookingId,
+          leadId: meta?.leadId,
+          recipientEmail: to,
+          recipientType,
+          channel: 'EMAIL',
+          eventType,
+          templateVersion: '1.0.0-standard',
+          sentAt: new Date().toISOString(),
+          sentBy: meta?.sentBy,
+          sentByName: meta?.sentByName,
+          deliveryStatus: 'FAILED',
+          failureReason: err
+        });
+        return { success: false, error: err };
       }
 
       const data = await res.json();
+      db.saveCommunicationAuditLog({
+        id: `audit-${Date.now()}`,
+        communicationId,
+        quoteId: meta?.quoteId,
+        bookingId: meta?.bookingId,
+        leadId: meta?.leadId,
+        recipientEmail: to,
+        recipientType,
+        channel: 'EMAIL',
+        eventType,
+        templateVersion: '1.0.0-standard',
+        sentAt: new Date().toISOString(),
+        sentBy: meta?.sentBy,
+        sentByName: meta?.sentByName,
+        deliveryStatus: 'SUCCESS'
+      });
+
       return { success: true, messageId: data.id };
     } catch (err: any) {
-      return { success: false, error: err?.message || 'Network error executing Gmail API' };
+      const errorMsg = err?.message || 'Network error executing Gmail API';
+      db.saveCommunicationAuditLog({
+        id: `audit-${Date.now()}`,
+        communicationId,
+        quoteId: meta?.quoteId,
+        bookingId: meta?.bookingId,
+        leadId: meta?.leadId,
+        recipientEmail: to,
+        recipientType,
+        channel: 'EMAIL',
+        eventType,
+        templateVersion: '1.0.0-standard',
+        sentAt: new Date().toISOString(),
+        sentBy: meta?.sentBy,
+        sentByName: meta?.sentByName,
+        deliveryStatus: 'FAILED',
+        failureReason: errorMsg
+      });
+      return { success: false, error: errorMsg };
     }
   }
 
   /**
-   * Generates and dispatches production emails for a newly submitted booking:
-   * 1. Official Acknowledgement Email to Traveler / B2B Agent (with 24-48 hour update SLA notice)
-   * 2. Internal Operations Dossier Email to TheUnbound DMC Team (sales@theunbound.in / ops@theunbound.in)
+   * Generates production emails for a newly submitted booking derived from authoritative communication model
    */
   public generateBookingEmails(booking: Booking): SentEmailRecord[] {
     const sentAt = new Date().toISOString();
-    const formattedDate = new Date().toLocaleString('en-US', {
-      dateStyle: 'full',
-      timeStyle: 'short'
-    });
-
     const clientEmail = booking.customer.email || 'traveler@example.com';
     const dmcEmail = 'sales@theunbound.in';
+    const payload = buildBookingCommunicationPayload(booking, 'BUYER');
 
-    // -------------------------------------------------------------
-    // 1. CLIENT / AGENT OFFICIAL ACKNOWLEDGEMENT EMAIL
-    // -------------------------------------------------------------
-    const clientSubject = `Booking Received [${booking.bookingReference}] - TheUnbound DMC Ground Operations`;
+    const clientSubject = generateContextualEmailSubject('NEW_BOOKING', {
+      destination: payload.destination,
+      bookingRef: payload.bookingReference,
+      customerName: payload.customer.name,
+      travelDate: payload.travelDates
+    });
     
+    const dmcSubject = `[URGENT 24-48H SLA] New Ground Booking [${payload.bookingReference}] — ${payload.customer.name} (${payload.destination}) — ${payload.formattedTotalPrice}`;
+
     const clientHtml = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; color: #0f172a; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
         <!-- Header -->
@@ -91,215 +187,102 @@ export class EmailNotificationService {
             </div>
             <div style="text-align: right; background: rgba(255,255,255,0.1); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15);">
               <span style="font-size: 10px; text-transform: uppercase; color: #94a3b8; display: block; font-weight: 700;">Booking Reference</span>
-              <span style="font-family: monospace; font-size: 14px; font-weight: 700; color: #ffffff;">${booking.bookingReference}</span>
+              <span style="font-family: monospace; font-size: 14px; font-weight: 700; color: #ffffff;">${payload.bookingReference}</span>
             </div>
           </div>
         </div>
 
         <!-- 24-48 Hour SLA Prominent Notice Banner -->
         <div style="background-color: #f0fdf4; border-left: 4px solid #008972; padding: 18px 24px; margin: 20px 24px; border-radius: 0 12px 12px 0;">
-          <div style="display: flex; align-items: flex-start;">
-            <div>
-              <p style="margin: 0 0 4px 0; font-size: 14px; font-weight: 800; color: #008972; text-transform: uppercase; letter-spacing: 0.5px;">
-                ✓ Booking Request Submitted Successfully
-              </p>
-              <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #166534; font-weight: 500;">
-                Your booking has been received and logged in our ground dispatch queue. Our operations team is verifying guide rosters and luxury vehicle allotments. <strong>Your confirmed travel voucher and status will be updated within 24–48 hours.</strong>
-              </p>
-            </div>
+          <div>
+            <p style="margin: 0 0 4px 0; font-size: 14px; font-weight: 800; color: #008972; text-transform: uppercase; letter-spacing: 0.5px;">
+              ✓ Booking Request Submitted Successfully
+            </p>
+            <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #166534; font-weight: 500;">
+              Your booking has been received and logged in our ground dispatch queue. Our operations team is verifying hotel all-clear and chauffeur allocations. <strong>Your confirmed travel voucher and status will be updated within 24–48 hours.</strong>
+            </p>
           </div>
         </div>
 
-        <!-- Greeting & Summary -->
+        <!-- Reservation Context -->
         <div style="padding: 0 24px 20px 24px;">
           <p style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0 0 16px 0;">
-            Dear <strong>${booking.customer.leadTravelerName || booking.customer.bookerName || 'Valued Partner'}</strong>,
-          </p>
-          <p style="font-size: 13px; line-height: 1.6; color: #475569; margin: 0 0 20px 0;">
-            Thank you for booking with <strong>TheUnbound Destination Management Company</strong>. Below is your official booking dossier containing all scheduled ground arrangements and itinerary inclusions.
+            Dear <strong>${payload.customer.name || 'Valued Partner'}</strong>,
           </p>
 
-          <!-- Booker Details Card -->
           <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin-bottom: 24px;">
             <h3 style="margin: 0 0 12px 0; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b;">
-              Reservation & Contact Information
+              Trip & Passenger Summary
             </h3>
             <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
               <tr>
-                <td style="padding: 4px 0; color: #64748b; width: 35%;">Lead Traveler / Group:</td>
-                <td style="padding: 4px 0; font-weight: 700; color: #0f172a;">${booking.customer.leadTravelerName}</td>
+                <td style="padding: 4px 0; color: #64748b; width: 35%;">Destination:</td>
+                <td style="padding: 4px 0; font-weight: 700; color: #0f172a;">${payload.destination}</td>
               </tr>
-              ${booking.customer.agencyName ? `
+              <tr>
+                <td style="padding: 4px 0; color: #64748b;">Travel Dates:</td>
+                <td style="padding: 4px 0; font-weight: 600; color: #0f172a;">${payload.travelDates}</td>
+              </tr>
+              <tr>
+                <td style="padding: 4px 0; color: #64748b;">Lead Traveler:</td>
+                <td style="padding: 4px 0; font-weight: 700; color: #0f172a;">${payload.customer.name}</td>
+              </tr>
+              <tr>
+                <td style="padding: 4px 0; color: #64748b;">Total Travelers:</td>
+                <td style="padding: 4px 0; font-weight: 600; color: #0f172a;">${payload.travelers.displayText}</td>
+              </tr>
+              ${payload.customer.agencyName ? `
               <tr>
                 <td style="padding: 4px 0; color: #64748b;">Booking Agency:</td>
-                <td style="padding: 4px 0; font-weight: 700; color: #008972;">${booking.customer.agencyName} ${booking.customer.agentRefNumber ? `(Ref: ${booking.customer.agentRefNumber})` : ''}</td>
-              </tr>` : ''}
-              <tr>
-                <td style="padding: 4px 0; color: #64748b;">Email Address:</td>
-                <td style="padding: 4px 0; font-family: monospace; color: #0f172a;">${booking.customer.email}</td>
-              </tr>
-              <tr>
-                <td style="padding: 4px 0; color: #64748b;">Phone / WhatsApp:</td>
-                <td style="padding: 4px 0; font-family: monospace; color: #0f172a;">${booking.customer.phone}</td>
-              </tr>
-              <tr>
-                <td style="padding: 4px 0; color: #64748b;">Submission Timestamp:</td>
-                <td style="padding: 4px 0; color: #0f172a;">${formattedDate}</td>
-              </tr>
-              ${booking.customer.flightDetails ? `
-              <tr>
-                <td style="padding: 4px 0; color: #64748b;">Flight / Arrival Info:</td>
-                <td style="padding: 4px 0; color: #0f172a;">${booking.customer.flightDetails}</td>
-              </tr>` : ''}
-              ${booking.customer.pickupLocation ? `
-              <tr>
-                <td style="padding: 4px 0; color: #64748b;">Pickup Address:</td>
-                <td style="padding: 4px 0; color: #0f172a;">${booking.customer.pickupLocation}</td>
+                <td style="padding: 4px 0; font-weight: 700; color: #008972;">${payload.customer.agencyName} ${payload.customer.agentRef ? `(Ref: ${payload.customer.agentRef})` : ''}</td>
               </tr>` : ''}
             </table>
           </div>
 
-          <!-- Booked Services Table -->
+          <!-- Services Breakdown -->
           <h3 style="margin: 0 0 12px 0; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b;">
-            Itemized Ground Services (${(booking.items || []).length})
+            Booked Ground Services (${payload.bookedItems.length} Inclusions)
           </h3>
           <div style="border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; margin-bottom: 24px;">
-            <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 12px;">
-              <thead>
-                <tr style="background-color: #f1f5f9; border-bottom: 1px solid #cbd5e1;">
-                  <th style="padding: 10px 14px; font-weight: 700; color: #475569;">Service & Destination</th>
-                  <th style="padding: 10px 14px; font-weight: 700; color: #475569;">Date & Pax</th>
-                  <th style="padding: 10px 14px; font-weight: 700; color: #475569; text-align: right;">Total (${booking.currency})</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${(booking.items || []).map((item, i) => `
-                  <tr style="border-bottom: ${i === (booking.items || []).length - 1 ? 'none' : '1px solid #f1f5f9'};">
-                    <td style="padding: 12px 14px;">
-                      <div style="font-weight: 700; color: #0f172a; font-size: 13px;">${item.productName}</div>
-                      <div style="color: #64748b; font-size: 11px; margin-top: 2px;">
-                        <span style="font-family: monospace; color: #008972; font-weight: 600;">${item.productSku}</span> • ${item.destinationName} (${item.city}) • ${item.category}
-                      </div>
-                      ${item.selectedAddonNames && (item.selectedAddonNames || []).length > 0 ? `
-                        <div style="font-size: 10px; color: #0284c7; margin-top: 3px;">+ Addons: ${(item.selectedAddonNames || []).join(', ')}</div>
-                      ` : ''}
-                    </td>
-                    <td style="padding: 12px 14px; color: #334155;">
-                      <div style="font-weight: 600;">📅 ${item.travelDate}</div>
-                      <div style="font-size: 11px; color: #64748b;">${item.adults} Adults ${item.children ? `• ${item.children} Ch` : ''} ${item.infants ? `• ${item.infants} Inf` : ''}</div>
-                    </td>
-                    <td style="padding: 12px 14px; text-align: right; font-weight: 800; color: #0f172a; font-family: monospace; font-size: 13px;">
-                      ${formatCurrency(item.totalPrice, item.currency)}
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
+            ${payload.bookedItems.map(item => `
+              <div style="padding: 10px 14px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+                <div>
+                  <strong style="color: #0f172a;">${item.name}</strong>
+                  <div style="font-size: 11px; color: #64748b;">${item.category} • ${item.destination} • ${item.date || 'Scheduled Itinerary'}</div>
+                </div>
+                <div style="text-align: right; font-weight: 700; color: #008972;">
+                  ${item.formattedPrice}
+                </div>
+              </div>
+            `).join('')}
           </div>
 
-          <!-- Total Summary Card -->
+          <!-- Total Investment -->
           <div style="background-color: #0f172a; border-radius: 12px; padding: 18px 20px; color: #ffffff; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center;">
             <div>
-              <span style="font-size: 11px; text-transform: uppercase; color: #94a3b8; font-weight: 700; letter-spacing: 1px; display: block;">Total Quoted Amount</span>
-              <span style="font-size: 11px; color: #00E5C0;">Includes all contracted taxes, park fees & private services</span>
+              <span style="font-size: 11px; text-transform: uppercase; color: #94a3b8; font-weight: 700; display: block;">Total Booking Investment</span>
+              <span style="font-size: 11px; color: #00E5C0;">Payment Status: <strong>${payload.paymentStatus}</strong></span>
             </div>
             <div style="text-align: right;">
-              <span style="font-size: 24px; font-weight: 900; color: #00E5C0; font-family: monospace;">
-                ${formatCurrency(booking.totalAmount, booking.currency)}
-              </span>
+              <span style="font-size: 22px; font-weight: 900; color: #00E5C0; font-family: monospace;">${payload.formattedTotalPrice}</span>
             </div>
           </div>
-
-          <!-- What Happens Next Section -->
-          <div style="border-top: 1px solid #e2e8f0; padding-top: 20px; margin-bottom: 20px;">
-            <h4 style="margin: 0 0 10px 0; font-size: 12px; font-weight: 800; text-transform: uppercase; color: #0f172a; letter-spacing: 0.5px;">
-              What Happens in the Next 24–48 Hours?
-            </h4>
-            <ol style="margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.7; color: #475569;">
-              <li><strong>Roster & Guide Allocation:</strong> Our local destination leads in Tokyo, London, and Paris assign your dedicated certified tour guide and private luxury chauffeur.</li>
-              <li><strong>Final Confirmation Voucher:</strong> A formal Operations Voucher with meeting points, emergency dispatch numbers, and driver name-board details will be emailed to you within 24–48 hours.</li>
-              <li><strong>24/7 Ground Assistance:</strong> For urgent adjustments before departure, reach out via our direct landline or WhatsApp hotline below.</li>
-            </ol>
-          </div>
-        </div>
-
-        <!-- Official Footer -->
-        <div style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 20px 24px; text-align: center; font-size: 11px; color: #64748b;">
-          <p style="margin: 0 0 6px 0; font-weight: 700; color: #334155;">TheUnbound Destination Management Company Ltd.</p>
-          <p style="margin: 0 0 6px 0;">
-            A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi, India • Email: <a href="mailto:sales@theunbound.in" style="color: #008972; font-weight: 600; text-decoration: none;">sales@theunbound.in</a>
-          </p>
-          <p style="margin: 0; font-family: monospace; color: #475569;">
-            Landline: <strong>011-41185542</strong> • Mobile / WhatsApp: <strong>+91-9811654959, +91-9718894959</strong>
-          </p>
         </div>
       </div>
     `;
 
-    // -------------------------------------------------------------
-    // 2. THEUNBOUND DMC INTERNAL OPERATIONS NOTIFICATION EMAIL
-    // -------------------------------------------------------------
-    const dmcSubject = `🚨 NEW BOOKING DISPATCH: [${booking.bookingReference}] - ${booking.customer.leadTravelerName} (${formatCurrency(booking.totalAmount, booking.currency)})`;
-
     const dmcHtml = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; color: #0f172a;">
-        <!-- Header -->
-        <div style="background-color: #0f172a; padding: 20px 24px; border-bottom: 3px solid #f59e0b;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-              <span style="background: #f59e0b; color: #0f172a; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 4px; text-transform: uppercase;">
-                Incoming Ground Booking Action Required
-              </span>
-              <h2 style="margin: 6px 0 0 0; color: #ffffff; font-size: 20px; font-weight: 800;">
-                TheUnbound Operations Queue
-              </h2>
-            </div>
-            <div style="text-align: right;">
-              <span style="font-size: 11px; color: #94a3b8;">SLA Deadline:</span>
-              <span style="font-size: 13px; font-weight: 800; color: #f59e0b; display: block; font-family: monospace;">24-48 Hours</span>
-            </div>
-          </div>
+        <div style="background-color: #0f172a; padding: 24px; border-bottom: 3px solid #e11d48;">
+          <h1 style="margin: 0; font-size: 20px; color: #ffffff; font-weight: 800;">theunbound &bull; Operations Dispatch Queue</h1>
+          <p style="margin: 4px 0 0 0; font-size: 12px; color: #fda4af; text-transform: uppercase; font-weight: 700;">Action Required: Supplier Allotment & Chauffeur Assignment</p>
         </div>
-
-        <!-- Body -->
-        <div style="padding: 20px 24px;">
-          <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; font-size: 12px; color: #92400e;">
-            <strong>Action Required:</strong> Please check local partner availability, guide rosters, and confirm reservations in Japan/UK/Europe within 24-48 hours.
-          </div>
-
-          <!-- Customer Dossier -->
-          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px; font-size: 12px;">
-            <h4 style="margin: 0 0 8px 0; font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 700;">Client & Agent Details</h4>
-            <p style="margin: 0 0 4px 0;"><strong>Booking Ref:</strong> <span style="font-family: monospace;">${booking.bookingReference}</span></p>
-            <p style="margin: 0 0 4px 0;"><strong>Lead Traveler:</strong> ${booking.customer.leadTravelerName}</p>
-            ${booking.customer.agencyName ? `<p style="margin: 0 0 4px 0;"><strong>Agency:</strong> ${booking.customer.agencyName} (Agent Ref: ${booking.customer.agentRefNumber || 'N/A'})</p>` : ''}
-            <p style="margin: 0 0 4px 0;"><strong>Email:</strong> <a href="mailto:${booking.customer.email}">${booking.customer.email}</a></p>
-            <p style="margin: 0 0 4px 0;"><strong>Phone:</strong> ${booking.customer.phone}</p>
-            ${booking.customer.flightDetails ? `<p style="margin: 0 0 4px 0;"><strong>Flight Details:</strong> ${booking.customer.flightDetails}</p>` : ''}
-            ${booking.customer.pickupLocation ? `<p style="margin: 0 0 4px 0;"><strong>Pickup / Hotel:</strong> ${booking.customer.pickupLocation}</p>` : ''}
-            ${booking.customer.specialRequests ? `<p style="margin: 0 0 4px 0;"><strong>Special Notes:</strong> <em>${booking.customer.specialRequests}</em></p>` : ''}
-          </div>
-
-          <!-- Services to Dispatch -->
-          <h4 style="margin: 0 0 8px 0; font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 700;">Services to Dispatch (${(booking.items || []).length})</h4>
-          <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 16px;">
-            ${(booking.items || []).map(item => `
-              <tr style="border-bottom: 1px solid #e2e8f0;">
-                <td style="padding: 8px 0;">
-                  <strong>${item.productName}</strong> (${item.productSku})<br/>
-                  <span style="color: #64748b; font-size: 11px;">📍 ${item.destinationName} / ${item.city} • 📅 ${item.travelDate} • 👥 ${item.totalPax} Pax</span>
-                </td>
-                <td style="padding: 8px 0; text-align: right; font-weight: 700; font-family: monospace;">
-                  ${formatCurrency(item.totalPrice, item.currency)}
-                </td>
-              </tr>
-            `).join('')}
-          </table>
-
-          <div style="background: #0f172a; color: white; padding: 12px 16px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
-            <span style="font-size: 12px; font-weight: 700;">Total Quoted Value:</span>
-            <span style="font-size: 16px; font-weight: 900; color: #00E5C0; font-family: monospace;">${formatCurrency(booking.totalAmount, booking.currency)}</span>
-          </div>
+        <div style="padding: 24px;">
+          <p style="font-size: 14px;"><strong>Booking Reference:</strong> ${payload.bookingReference}</p>
+          <p style="font-size: 14px;"><strong>Client Name:</strong> ${payload.customer.name}</p>
+          <p style="font-size: 14px;"><strong>Destination:</strong> ${payload.destination}</p>
+          <p style="font-size: 14px;"><strong>Total Value:</strong> ${payload.formattedTotalPrice}</p>
+          <p style="font-size: 14px;"><strong>SLA Target:</strong> 24–48 Hours to issue confirmed service voucher.</p>
         </div>
       </div>
     `;
@@ -309,7 +292,7 @@ export class EmailNotificationService {
         recipient: clientEmail,
         recipientType: 'CLIENT_AGENT',
         subject: clientSubject,
-        bodySnippet: `Thank you for booking with TheUnbound DMC. Your booking reference is ${booking.bookingReference}. Your booking has been submitted and will be updated in 24-48 Hrs.`,
+        bodySnippet: `Thank you for booking with TheUnbound DMC. Your booking reference is ${payload.bookingReference}. Your status will be updated in 24-48 Hrs.`,
         fullHtml: clientHtml,
         sentAt,
         status: 'DELIVERED'
@@ -318,7 +301,7 @@ export class EmailNotificationService {
         recipient: dmcEmail,
         recipientType: 'DMC_OPS',
         subject: dmcSubject,
-        bodySnippet: `New booking submitted by ${booking.customer.leadTravelerName || clientEmail} (${booking.bookingReference}). Total: ${formatCurrency(booking.totalAmount, booking.currency)}. 24-48h SLA active.`,
+        bodySnippet: `New booking submitted by ${payload.customer.name} (${payload.bookingReference}). Total: ${payload.formattedTotalPrice}. 24-48h SLA active.`,
         fullHtml: dmcHtml,
         sentAt,
         status: 'DELIVERED'
@@ -327,69 +310,42 @@ export class EmailNotificationService {
   }
 
   /**
-   * Generates and dispatches client-facing quotation proposal email
+   * Generates client-facing quotation proposal email using authoritative Communication Payload
+   * Complete Day-Wise Plan, Accommodation, Experiences, Transfers, Pricing, and Inclusions/Exclusions
    */
-  public generateQuotationProposalEmail(quote: Quotation, agentInfo?: { name?: string; agencyName?: string; email?: string }): SentEmailRecord {
+  public generateQuotationProposalEmail(
+    quote: Quotation, 
+    agentInfo?: { name?: string; agencyName?: string; email?: string; phone?: string; logoUrl?: string }
+  ): SentEmailRecord {
     const sentAt = new Date().toISOString();
     const recipient = quote.clientEmail || 'client@example.com';
-    const clientName = quote.clientName || 'Valued Guest';
-    const subject = `Your Bespoke Travel Itinerary & Proposal [${quote.quoteNumber}] - ${quote.destination}`;
-    const travelDatesText = quote.travelStartDate && quote.travelEndDate 
-      ? `${quote.travelStartDate} to ${quote.travelEndDate}`
-      : quote.items[0]?.travelDate 
-        ? `${quote.items[0]?.travelDate} (Itinerary Services)`
-        : 'Flexible Travel Dates';
-    const totalGuests = quote.totalPax || (quote.adultsCount || 2) + (quote.childrenCount || 0);
     
-    const htmlBody = `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; color: #0f172a;">
-        <div style="background-color: #0f172a; padding: 28px 24px; text-align: left; border-bottom: 3px solid #00C6A6;">
-          <h1 style="margin: 0; font-size: 26px; font-weight: 900; color: #ffffff; text-transform: lowercase;">theunbound</h1>
-          <p style="margin: 4px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #00E5C0;">Bespoke Travel Proposal</p>
-        </div>
-        <div style="padding: 24px;">
-          <h2 style="font-size: 18px; font-weight: 800; margin: 0 0 12px 0;">Dear ${clientName},</h2>
-          <p style="font-size: 13px; line-height: 1.6; color: #334155; margin-bottom: 20px;">
-            We are delighted to present your tailored itinerary proposal for <strong>${quote.destination}</strong> (${travelDatesText}).
-          </p>
+    // Build single authoritative payload
+    const payload = buildQuoteCommunicationPayload(quote, {
+      role: 'BUYER',
+      senderBranding: {
+        name: agentInfo?.name,
+        agency: agentInfo?.agencyName,
+        email: agentInfo?.email,
+        phone: agentInfo?.phone,
+        logoUrl: agentInfo?.logoUrl
+      }
+    });
 
-          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin-bottom: 20px;">
-            <h3 style="margin: 0 0 8px 0; font-size: 12px; text-transform: uppercase; color: #64748b; font-weight: 700;">Quotation Overview</h3>
-            <p style="margin: 0 0 4px 0; font-size: 12px;"><strong>Quote Ref:</strong> <span style="font-family: monospace; font-weight: 700;">${quote.quoteNumber} (v${quote.version || 1})</span></p>
-            <p style="margin: 0 0 4px 0; font-size: 12px;"><strong>Travel Dates:</strong> ${travelDatesText}</p>
-            <p style="margin: 0 0 4px 0; font-size: 12px;"><strong>Passengers:</strong> ${totalGuests} Guests</p>
-          </div>
+    const subject = generateContextualEmailSubject('QUOTE_READY', {
+      destination: payload.tripSummary.destination,
+      duration: payload.tripSummary.durationText,
+      quoteRef: payload.quoteId,
+      customerName: payload.preparedFor.name
+    });
 
-          <h3 style="font-size: 13px; text-transform: uppercase; color: #64748b; font-weight: 700; margin: 0 0 10px 0;">Included Itinerary Highlights (${quote.items.length} Items)</h3>
-          <div style="margin-bottom: 20px;">
-            ${quote.items.map((item, idx) => `
-              <div style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between;">
-                <div>
-                  <strong style="font-size: 13px; color: #0f172a;">${idx + 1}. ${item.product.name}</strong><br/>
-                  <span style="font-size: 11px; color: #64748b;">${item.product.category} • ${item.travelDate || 'Flexible'} • ${item.pax?.adults || 2} Adults</span>
-                </div>
-                <span style="font-size: 11px; font-weight: 700; color: #00C6A6;">Included</span>
-              </div>
-            `).join('')}
-          </div>
-
-          <div style="background: #0f172a; color: white; padding: 16px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <span style="font-size: 13px; font-weight: 700;">Total Package Investment:</span>
-            <span style="font-size: 20px; font-weight: 900; color: #00E5C0; font-family: monospace;">${formatCurrency(quote.totalSellingPrice, quote.currency)}</span>
-          </div>
-
-          <p style="font-size: 12px; color: #64748b; margin: 0;">
-            Prepared by <strong>${agentInfo?.name || 'Your Travel Specialist'}</strong> (${agentInfo?.agencyName || 'TheUnbound Partner Network'}). Please contact us to confirm your reservation.
-          </p>
-        </div>
-      </div>
-    `;
+    const { htmlBody, textBody } = formatProposalEmailFromPayload(payload);
 
     return {
       recipient,
       recipientType: 'CLIENT_AGENT',
       subject,
-      bodySnippet: `Proposal ${quote.quoteNumber} for ${quote.destination} - Total: ${formatCurrency(quote.totalSellingPrice, quote.currency)}`,
+      bodySnippet: textBody.substring(0, 160) + '...',
       fullHtml: htmlBody,
       sentAt,
       status: 'DELIVERED'

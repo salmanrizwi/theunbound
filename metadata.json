@@ -1,6 +1,6 @@
 {
   "name": "TheUnbound - DMC Travel Portal",
-  "description": "Scalable B2B/B2C Destination Management Company portal featuring dynamic multi-product pricing calculators, quotation engine, Google Sheets sync architecture, and destination inventories for Europe, UK, and Japan.",
+  "description": "Scalable B2B/B2C Destination Management Company portal featuring an intelligent AI Planner, quotation engine, dynamic multi-product pricing calculators, and destination inventories for Europe, UK, and Japan.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

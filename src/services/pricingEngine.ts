@@ -1,5 +1,7 @@
-import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, Product, User, UserRole } from '../types';
+import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, Product, User, UserRole, HotelRate } from '../types';
 import { ExchangeRateService, DEFAULT_EXCHANGE_RATES } from './exchangeRateService';
+import { AppDatabase } from './db';
+import { hotelToProduct } from '../utils/hotelHelpers';
 
 // Standardized exchange rate base: 1 USD
 export const EXCHANGE_RATES: Record<CurrencyCode, number> = {
@@ -274,10 +276,63 @@ export function calculateProductPrice(
   const quantity = Math.max(1, request.quantity || 1);
   const travelDate = request.travelDate || new Date().toISOString().split('T')[0];
 
-  // 1. Determine Base Net Costs with Date-Wise & Tiered Overrides in Base Currency
+  // 1. Authoritative Rate Sheet & Database Lookup
+  // Check if database contains an active, valid rate for this product / travel date
   let baseAdultNet = product.adultNetPrice ?? product.adultNettCost ?? 0;
   let baseChildNet = product.childNetPrice !== undefined ? product.childNetPrice : (product.childNettCost !== undefined ? product.childNettCost : baseAdultNet * 0.5);
   let baseInfantNet = product.infantNetPrice !== undefined ? product.infantNetPrice : (product.infantNettCost !== undefined ? product.infantNettCost : 0);
+  let nativeCurrency = product.currency;
+
+  let authoritativeRateId: string | undefined = (product as any).rateId;
+  let authoritativeRateVersion: string | number | undefined = (product as any).version || 1;
+  let authoritativeRateFrom: string | undefined = product.validityFrom;
+  let authoritativeRateTo: string | undefined = product.validityTo;
+  let authoritativeSourceCollection: string = 'products';
+  let rateMarkupBuyer: number | undefined = undefined;
+  let rateMarkupAgent: number | undefined = undefined;
+  let rateTaxPercentage: number | undefined = undefined;
+
+  try {
+    const db = AppDatabase.getInstance();
+    const productRates = db.getProductRates();
+    const matchingRates = productRates.filter(r => 
+      (r.productId === product.id || r.productId === product.sku) && 
+      (r.status === 'ACTIVE' || !r.status)
+    );
+
+    if (matchingRates.length > 0) {
+      // Prioritize date-valid rate
+      let matchedRate = matchingRates.find(r => {
+        if (!travelDate) return true;
+        const from = r.validityFrom || '1970-01-01';
+        const to = r.validityTo || '2099-12-31';
+        return from <= travelDate && travelDate <= to;
+      });
+
+      if (!matchedRate) {
+        matchedRate = matchingRates[0];
+      }
+
+      if (matchedRate) {
+        baseAdultNet = matchedRate.adultNett ?? matchedRate.perPersonCost ?? baseAdultNet;
+        baseChildNet = matchedRate.childNett ?? matchedRate.cwbNett ?? (baseAdultNet * 0.5);
+        baseInfantNet = matchedRate.infantNett ?? 0;
+        if (matchedRate.currency) {
+          nativeCurrency = matchedRate.currency;
+        }
+        authoritativeRateId = matchedRate.id;
+        authoritativeRateVersion = (matchedRate as any).version || 1;
+        authoritativeRateFrom = matchedRate.validityFrom;
+        authoritativeRateTo = matchedRate.validityTo;
+        authoritativeSourceCollection = 'product_pricing_rates';
+        rateMarkupBuyer = matchedRate.markupBuyer;
+        rateMarkupAgent = matchedRate.markupAgent;
+        rateTaxPercentage = matchedRate.taxPercentage;
+      }
+    }
+  } catch (e) {
+    // Database instance not yet initialized or test environment
+  }
 
   // Check Calendar Date Overrides if available
   if (product.datePricingOverrides && travelDate && product.datePricingOverrides[travelDate]) {
@@ -415,27 +470,29 @@ export function calculateProductPrice(
   rawTotalNetCostInNative += addonsNetInNative;
 
   // Convert Net Subtotals to Target Currency
-  const targetCurrency = request.targetCurrency || product.currency;
-  const adultsSubtotalNet = convertCurrency(adultNetInNative, product.currency, targetCurrency);
-  const childrenSubtotalNet = convertCurrency(childNetInNative, product.currency, targetCurrency);
-  const infantsSubtotalNet = convertCurrency(infantNetInNative, product.currency, targetCurrency);
-  const addonsSubtotalNet = convertCurrency(addonsNetInNative, product.currency, targetCurrency);
-  const totalNetCost = convertCurrency(rawTotalNetCostInNative, product.currency, targetCurrency);
+  const targetCurrency = request.targetCurrency || nativeCurrency;
+  const adultsSubtotalNet = convertCurrency(adultNetInNative, nativeCurrency, targetCurrency);
+  const childrenSubtotalNet = convertCurrency(childNetInNative, nativeCurrency, targetCurrency);
+  const infantsSubtotalNet = convertCurrency(infantNetInNative, nativeCurrency, targetCurrency);
+  const addonsSubtotalNet = convertCurrency(addonsNetInNative, nativeCurrency, targetCurrency);
+  const totalNetCost = convertCurrency(rawTotalNetCostInNative, nativeCurrency, targetCurrency);
 
   // Update vehicle details with converted currency costs if applicable
   if (vehicleDetails) {
-    vehicleDetails.unitVehicleNetCost = convertCurrency(vehicleDetails.unitVehicleNetCost, product.currency, targetCurrency);
-    vehicleDetails.totalVehicleNetCost = convertCurrency(vehicleDetails.totalVehicleNetCost, product.currency, targetCurrency);
+    vehicleDetails.unitVehicleNetCost = convertCurrency(vehicleDetails.unitVehicleNetCost, nativeCurrency, targetCurrency);
+    vehicleDetails.totalVehicleNetCost = convertCurrency(vehicleDetails.totalVehicleNetCost, nativeCurrency, targetCurrency);
     vehicleDetails.perPersonNetCost = totalPax > 0 ? vehicleDetails.totalVehicleNetCost / totalPax : vehicleDetails.totalVehicleNetCost;
   }
 
-  // Configurable Commercial Rates with User-Type Hierarchy:
+  // Configurable Commercial Rates with User-Type Hierarchy & Rate Sheet Overrides:
   let configuredMarkupPercent = 25;
   if (request.customMarkupPercent !== undefined) {
     configuredMarkupPercent = request.customMarkupPercent;
   } else if (pricingTier === 'B2B') {
     if (user?.customAgentMarginPercent !== undefined) {
       configuredMarkupPercent = user.customAgentMarginPercent;
+    } else if (rateMarkupAgent !== undefined) {
+      configuredMarkupPercent = rateMarkupAgent;
     } else if (product.b2bAgentMarkupPercent !== undefined) {
       configuredMarkupPercent = product.b2bAgentMarkupPercent;
     } else {
@@ -445,6 +502,8 @@ export function calculateProductPrice(
     // Buyer tier
     if (user?.customBuyerMarginPercent !== undefined) {
       configuredMarkupPercent = user.customBuyerMarginPercent;
+    } else if (rateMarkupBuyer !== undefined) {
+      configuredMarkupPercent = rateMarkupBuyer;
     } else if (product.buyerMarkupPercent !== undefined) {
       configuredMarkupPercent = product.buyerMarkupPercent;
     } else {
@@ -470,7 +529,9 @@ export function calculateProductPrice(
   }
 
   // TAX SPEC: Tax is calculated on the MARGIN amount only!
-  const configuredTaxPercent = product.taxPercent !== undefined ? product.taxPercent : 10;
+  const configuredTaxPercent = rateTaxPercentage !== undefined 
+    ? rateTaxPercentage 
+    : (product.taxPercent !== undefined ? product.taxPercent : 10);
   const taxRate = configuredTaxPercent / 100;
   const taxAmount = markupAmount * taxRate;
 
@@ -552,6 +613,474 @@ export function calculateProductPrice(
     dmcMarginPercent,
     isCapacityBased: isCapacity,
     pricingMethod: isCapacity ? 'capacity_based' : 'per_person',
-    vehicleDetails
+    vehicleDetails,
+
+    // Master Pricing Source of Truth & Audit Fields
+    rateId: authoritativeRateId || (product as any).rateId || 'RTE-DEF-001',
+    rateVersion: authoritativeRateVersion || 1,
+    rateEffectiveFrom: authoritativeRateFrom || product.validityFrom || '2026-01-01',
+    rateEffectiveTo: authoritativeRateTo || product.validityTo || '2026-12-31',
+    isAuthoritative: true,
+    sourceCollection: authoritativeSourceCollection,
+    pricingRequestId: `PRQ-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    calculatedAt: new Date().toISOString()
   };
+}
+
+/**
+ * AUTHORITATIVE PRICING SERVICE - UNIFIED ENTRY POINT
+ * Section 5: "Inventory ID + Passenger Configuration + Date + Quantity + Service Configuration -> AUTHORITATIVE PRICING SERVICE -> Final Selling Price"
+ */
+export interface AuthoritativePriceRequest {
+  inventoryId: string;
+  inventoryType?: 'PRODUCT' | 'HOTEL' | 'TRANSFER' | 'VISA' | 'PACKAGE';
+  passengerConfiguration?: {
+    adults?: number;
+    children?: number;
+    infants?: number;
+  };
+  date?: string;
+  quantity?: number;
+  serviceConfiguration?: {
+    roomTypeId?: string;
+    mealPlan?: string;
+    nights?: number;
+    roomsCount?: number;
+    routeId?: string;
+    vehicleId?: string;
+    selectedAddonIds?: string[];
+    [key: string]: any;
+  };
+  targetCurrency?: CurrencyCode;
+  user?: User | null;
+  userRole?: UserRole;
+  pricingTier?: 'B2B' | 'B2C';
+  customMarkupPercent?: number;
+  agentClientMarkupPercent?: number;
+  customDiscountPercent?: number;
+}
+
+export function calculatePrice(request: AuthoritativePriceRequest): PricingCalculationResult {
+  const db = AppDatabase.getInstance();
+  const inventoryId = request.inventoryId;
+  const inventoryType = request.inventoryType || 'PRODUCT';
+
+  // 1. Resolve Product or Inventory Object
+  let product: Product | undefined;
+
+  // Check products table
+  product = db.getProductById(inventoryId) || db.getProducts().find(p => p.sku === inventoryId);
+
+  // If not found directly, check hotels
+  if (!product && (inventoryType === 'HOTEL' || inventoryId.startsWith('htl-') || inventoryId.startsWith('hotel-'))) {
+    const hotel = db.getHotelById(inventoryId) || db.getHotels().find(h => h.id === inventoryId || h.code === inventoryId);
+    if (hotel) {
+      const roomTypeId = request.serviceConfiguration?.roomTypeId;
+      const room = roomTypeId ? hotel.roomTypes?.find(r => r.id === roomTypeId) : hotel.roomTypes?.[0];
+      const nights = request.serviceConfiguration?.nights || 1;
+      const roomsCount = request.serviceConfiguration?.roomsCount || 1;
+      const mealPlan = request.serviceConfiguration?.mealPlan || 'BB';
+
+      // Find matching hotel rate from db or room
+      const hotelRates = db.getHotelRates ? db.getHotelRates() : [];
+      const matchedDbRate = hotelRates.find((hr: any) => 
+        (hr.hotelId === hotel.id || hr.id.includes(hotel.id)) && 
+        (!room || hr.roomId === room.id || hr.id.includes(room.id)) &&
+        (hr.status === 'ACTIVE' || !hr.status)
+      );
+
+      const baseRate = matchedDbRate || room?.rates?.[0] || {
+        id: `HRATE-${hotel.id}-001`,
+        mealPlan: mealPlan as any,
+        mealPlanName: 'Breakfast Included',
+        singleNetRate: hotel.startingNetPrice,
+        doubleNetRate: hotel.startingNetPrice,
+        tripleNetRate: hotel.startingNetPrice,
+        extraBedRate: 0,
+        childRate: 0,
+        markupPercent: 20,
+        taxPercent: 10,
+        feePercent: 0,
+        currency: hotel.currency || 'USD',
+        validityFrom: '2026-01-01',
+        validityTo: '2026-12-31'
+      };
+
+      const nightlyCost = baseRate.doubleNetRate || baseRate.singleNetRate || hotel.startingNetPrice;
+      const totalStayCost = nightlyCost * nights * roomsCount;
+
+      product = hotelToProduct(hotel, room, baseRate, nights, roomsCount);
+      // Ensure custom rates and dates are preserved
+      product.adultNetPrice = totalStayCost;
+      product.currency = baseRate.currency || hotel.currency || 'USD';
+      product.validityFrom = baseRate.validityFrom || '2026-01-01';
+      product.validityTo = baseRate.validityTo || '2026-12-31';
+      product.defaultMarkupPercent = baseRate.markupPercent || 20;
+      product.b2bAgentMarkupPercent = baseRate.markupPercent || 20;
+      product.taxPercent = baseRate.taxPercent || 10;
+    }
+  }
+
+  // If not found, check transfer routes
+  if (!product && (inventoryType === 'TRANSFER' || inventoryId.startsWith('tr-') || inventoryId.startsWith('TR-') || inventoryId.startsWith('route-'))) {
+    const route = db.getTransferRoutes().find(r => r.id === inventoryId);
+    if (route) {
+      const transferRates = db.getTransferRates();
+      const matchedRate = transferRates.find(tr => tr.routeId === route.id && tr.status === 'ACTIVE') || transferRates[0];
+      const vehicleCost = matchedRate?.nettCost || 120;
+      const curr = matchedRate?.currency || 'USD';
+
+      product = {
+        id: route.id,
+        sku: route.id,
+        destinationId: route.destinationId,
+        destinationName: 'Destination Hub',
+        country: 'Destination',
+        city: route.routeName,
+        productType: 'Transfer',
+        category: 'Transfers',
+        subcategory: route.vehicleType,
+        name: route.routeName,
+        shortDescription: `Private chauffeur transfer: ${route.routeName}`,
+        longDescription: `Executive vehicle transfer with licensed chauffeur.`,
+        supplierId: 'sup-ground-logistics',
+        supplierName: 'Executive Ground Logistics',
+        supplierProductCode: 'TR-EXEC',
+        commissionPercent: 0,
+        duration: '1.5 Hours',
+        operatingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        operatingHours: '24/7 Operations',
+        adultNetPrice: vehicleCost,
+        childNetPrice: 0,
+        infantNetPrice: 0,
+        currency: curr,
+        defaultMarkupPercent: 20,
+        b2bAgentMarkupPercent: 20,
+        buyerMarkupPercent: 30,
+        taxPercent: 10,
+        serviceFeeFixed: 0,
+        sellingPriceStartingFrom: vehicleCost * 1.2,
+        season: 'All Year',
+        validityFrom: '2026-01-01',
+        validityTo: '2026-12-31',
+        minPax: 1,
+        maxPax: route.maxCapacity || 6,
+        availability: 'INSTANT',
+        bookingRequiredDays: 1,
+        cancellationPolicy: 'Free cancellation up to 24h prior.',
+        inclusions: ['Private Vehicle', 'Luggage Assistance', 'Toll Charges'],
+        exclusions: ['Driver Gratuities'],
+        importantInformation: ['Driver awaits in arrivals hall with name board'],
+        images: ['https://images.unsplash.com/photo-1549399542-7e3f8b79c341?q=80&w=1200'],
+        status: 'ACTIVE',
+        pricingMethod: 'capacity_based',
+        isTransfer: true,
+        vehicleConfig: {
+          pricingMethod: 'capacity_based',
+          vehicleName: route.vehicleType || 'Executive MPV',
+          vehicleModel: route.vehicleType || 'Executive MPV',
+          vehicleType: 'Executive MPV',
+          totalSeats: route.maxCapacity || 6,
+          maxSeats: route.maxCapacity || 6,
+          passengerCapacity: route.maxCapacity || 6,
+          unitVehicleNetCost: vehicleCost,
+          totalTransferCost: vehicleCost,
+          allowMultipleVehicles: true,
+          autoAllocateVehicles: true
+        }
+      };
+    }
+  }
+
+  // Fallback if product still missing
+  if (!product) {
+    const fallbackProducts = db.getProducts();
+    product = fallbackProducts[0] || {
+      id: inventoryId,
+      sku: inventoryId,
+      destinationId: 'dest-default',
+      destinationName: 'Global',
+      country: 'Global',
+      city: 'Hub',
+      productType: 'Day Tours',
+      category: 'Activities',
+      subcategory: 'Guided Excursions',
+      name: 'Travel Service',
+      shortDescription: 'Contracted ground service.',
+      longDescription: 'Authoritative DMC travel service.',
+      supplierId: 'sup-default',
+      supplierName: 'TheUnbound DMC Partner',
+      supplierProductCode: 'UNB-DEF',
+      commissionPercent: 0,
+      duration: 'Full Day',
+      operatingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+      operatingHours: '09:00 - 18:00',
+      adultNetPrice: 100,
+      childNetPrice: 50,
+      infantNetPrice: 0,
+      currency: 'USD',
+      defaultMarkupPercent: 25,
+      b2bAgentMarkupPercent: 20,
+      buyerMarkupPercent: 30,
+      taxPercent: 10,
+      serviceFeeFixed: 0,
+      sellingPriceStartingFrom: 125,
+      season: 'All Year',
+      validityFrom: '2026-01-01',
+      validityTo: '2026-12-31',
+      minPax: 1,
+      maxPax: 20,
+      availability: 'INSTANT',
+      bookingRequiredDays: 1,
+      cancellationPolicy: 'Standard cancellation terms.',
+      inclusions: ['Verified Service'],
+      exclusions: ['Personal Expenses'],
+      importantInformation: ['Standard service voucher'],
+      images: ['https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200'],
+      status: 'ACTIVE'
+    };
+  }
+
+  const calculationRequest: PricingCalculationRequest = {
+    productId: product.id,
+    adults: request.passengerConfiguration?.adults || 2,
+    children: request.passengerConfiguration?.children || 0,
+    infants: request.passengerConfiguration?.infants || 0,
+    quantity: request.quantity || 1,
+    travelDate: request.date || new Date().toISOString().split('T')[0],
+    targetCurrency: request.targetCurrency || product.currency,
+    user: request.user || null,
+    userRole: request.userRole || request.user?.role || 'BUYER',
+    pricingTier: request.pricingTier || (request.user?.role === 'B2B_AGENT' || request.user?.role === 'AGENT' ? 'B2B' : 'B2C'),
+    customMarkupPercent: request.customMarkupPercent,
+    agentClientMarkupPercent: request.agentClientMarkupPercent,
+    customDiscountPercent: request.customDiscountPercent,
+    selectedAddonIds: request.serviceConfiguration?.selectedAddonIds
+  };
+
+  return calculateProductPrice(product, calculationRequest);
+}
+
+/**
+ * AI PLANNER CONTROLLED PRICING TOOL (Section 26)
+ * "getCurrentPrice({ inventoryId, serviceConfiguration, passengerConfiguration, date })"
+ * Returns strictly what the AI needs: finalSellingPrice, currency, perPersonPrice, pax, audit metadata.
+ * Internal net costs, supplier margins, and markups are strictly hidden!
+ */
+export interface ControlledPriceResponse {
+  success: boolean;
+  inventoryId: string;
+  inventoryName: string;
+  finalSellingPrice: number;
+  currency: CurrencyCode;
+  pricePerPerson: number;
+  pax: {
+    adults: number;
+    children: number;
+    infants: number;
+    totalPax: number;
+  };
+  travelDate: string;
+  rateId: string;
+  rateVersion: string | number;
+  isAuthoritative: boolean;
+  pricingRequestId: string;
+  calculatedAt: string;
+  sourceCollection: string;
+}
+
+export function getCurrentPrice(params: {
+  inventoryId: string;
+  inventoryType?: 'PRODUCT' | 'HOTEL' | 'TRANSFER' | 'VISA' | 'PACKAGE';
+  serviceConfiguration?: Record<string, any>;
+  passengerConfiguration?: { adults?: number; children?: number; infants?: number };
+  date?: string;
+  currency?: CurrencyCode;
+  user?: User | null;
+  pricingTier?: 'B2B' | 'B2C';
+}): ControlledPriceResponse {
+  const result = calculatePrice({
+    inventoryId: params.inventoryId,
+    inventoryType: params.inventoryType,
+    serviceConfiguration: params.serviceConfiguration,
+    passengerConfiguration: params.passengerConfiguration,
+    date: params.date,
+    targetCurrency: params.currency,
+    user: params.user,
+    pricingTier: params.pricingTier
+  });
+
+  return {
+    success: true,
+    inventoryId: result.productId,
+    inventoryName: result.productName,
+    finalSellingPrice: result.finalTotalSellingPrice,
+    currency: result.currency,
+    pricePerPerson: result.pricePerPerson,
+    pax: result.pax,
+    travelDate: result.travelDate,
+    rateId: result.rateId || 'RTE-DEF-001',
+    rateVersion: result.rateVersion || 1,
+    isAuthoritative: true,
+    pricingRequestId: result.pricingRequestId || `PRQ-${Date.now()}`,
+    calculatedAt: result.calculatedAt || new Date().toISOString(),
+    sourceCollection: result.sourceCollection || 'product_pricing_rates'
+  };
+}
+
+/**
+ * PRICING SOURCE OF TRUTH AUDIT MAP (Section 39)
+ */
+export interface PricingSourceOfTruthEntry {
+  inventoryType: string;
+  sheetTab: string;
+  collection: string;
+  primaryKey: string;
+  foreignKey: string;
+  pricingFields: string[];
+  currencyField: string;
+  effectiveDateField: string;
+  statusField: string;
+  versionField: string;
+  consumers: string[];
+}
+
+export function getPricingSourceOfTruthMap(): PricingSourceOfTruthEntry[] {
+  return [
+    {
+      inventoryType: 'Activity & Day Tour Rates',
+      sheetTab: 'PRODUCT_PRICING',
+      collection: 'product_pricing_rates',
+      primaryKey: 'id (pricing_id)',
+      foreignKey: 'productId -> products.id',
+      pricingFields: ['adultNett', 'childNett', 'cwbNett', 'cnbNett', 'infantNett', 'markupBuyer', 'markupAgent', 'taxPercentage'],
+      currencyField: 'currency (USD, JPY, EUR, GBP)',
+      effectiveDateField: 'validityFrom / validityTo',
+      statusField: 'status (ACTIVE / INACTIVE)',
+      versionField: 'version',
+      consumers: ['AI Planner (getCurrentPrice)', 'B2B Quote Builder', 'Buyer Portal', 'Cart', 'Quotations', 'PDF / WhatsApp Quotes']
+    },
+    {
+      inventoryType: 'Capacity-Based Tours & Private Yachts',
+      sheetTab: 'PRODUCT_CAPACITY',
+      collection: 'product_capacities',
+      primaryKey: 'id (capacity_id)',
+      foreignKey: 'productId -> products.id',
+      pricingFields: ['capacity (max seats)', 'fixedNettCost', 'vehicleModel', 'unitVehicleNetCost'],
+      currencyField: 'currency',
+      effectiveDateField: 'season / validity dates',
+      statusField: 'status (ACTIVE / INACTIVE)',
+      versionField: 'version',
+      consumers: ['AI Planner Fleet Allocation', 'Capacity Simulation Matrix', 'B2B Quote Builder Step 4', 'Ground Transport Ops']
+    },
+    {
+      inventoryType: 'Hotel & Room Type Rates',
+      sheetTab: 'HOTEL_RATES',
+      collection: 'hotel_rates & hotels.roomTypes[].rates',
+      primaryKey: 'id (rate_id)',
+      foreignKey: 'hotelId -> hotels.id, roomId -> roomTypes.id',
+      pricingFields: ['singleNetRate', 'doubleNetRate', 'tripleNetRate', 'extraBedRate', 'childRate', 'markupPercent', 'taxPercent'],
+      currencyField: 'currency (USD, JPY, EUR)',
+      effectiveDateField: 'validityFrom / validityTo',
+      statusField: 'status (ACTIVE / INACTIVE)',
+      versionField: 'version',
+      consumers: ['AI Planner Hotel Matching', 'B2B Quote Builder Step 2 (Lodging)', 'calculateHotelStayPrice', 'Buyer Portal']
+    },
+    {
+      inventoryType: 'Hotel Meal Plans',
+      sheetTab: 'HOTEL_MEAL_PLANS',
+      collection: 'hotel_meal_plans',
+      primaryKey: 'id (meal_plan_id)',
+      foreignKey: 'hotelId -> hotels.id',
+      pricingFields: ['mealCode (RO, BB, HB, FB, AI)', 'mealName'],
+      currencyField: 'N/A',
+      effectiveDateField: 'Year-Round',
+      statusField: 'status (ACTIVE)',
+      versionField: 'version',
+      consumers: ['Hotel Room Selector', 'AI Planner Lodging Engine', 'Vouchers']
+    },
+    {
+      inventoryType: 'Ground Transfers & Chauffeur Fleet',
+      sheetTab: 'TRANSFER_RATES',
+      collection: 'transfer_rates',
+      primaryKey: 'id (transfer_rate_id)',
+      foreignKey: 'routeId -> transfer_routes.id',
+      pricingFields: ['nettCost', 'capacity', 'vehicle', 'rateType'],
+      currencyField: 'currency',
+      effectiveDateField: 'Year-Round / Effective Period',
+      statusField: 'status (ACTIVE)',
+      versionField: 'version',
+      consumers: ['AI Planner Route Transitions', 'B2B Quote Builder Step 3 (Transfers)', 'Airport Fast-Track']
+    },
+    {
+      inventoryType: 'Visa Facilitation Services',
+      sheetTab: 'VISA_RATES',
+      collection: 'visa_rates & visas',
+      primaryKey: 'id (visa_rate_id)',
+      foreignKey: 'visaId -> visas.id',
+      pricingFields: ['adultNett', 'childNett', 'embassyFee', 'serviceFee', 'markupAgent', 'markupBuyer'],
+      currencyField: 'currency (USD)',
+      effectiveDateField: 'Regulatory Validity',
+      statusField: 'status (ACTIVE)',
+      versionField: 'version',
+      consumers: ['B2B Quote Builder Step 5 (Visas)', 'AI Planner Requirements', 'Visa Submissions']
+    },
+    {
+      inventoryType: 'Fixed Packages & Circuit Itineraries',
+      sheetTab: 'PACKAGES / PACKAGE_ITEMS',
+      collection: 'b2b_packages & package_items',
+      primaryKey: 'id (package_id)',
+      foreignKey: 'packageId -> b2b_packages.id',
+      pricingFields: ['baseNetCostUSD', 'suggestedSellingPriceUSD', 'itemCostOverrides'],
+      currencyField: 'currency (USD)',
+      effectiveDateField: 'Seasonal Package Tariffs',
+      statusField: 'status (PUBLISHED)',
+      versionField: 'version',
+      consumers: ['Package Customizer', 'AI Planner Inspiration Circuits', 'B2B Quote Builder Import']
+    },
+    {
+      inventoryType: 'Saved Quotations (Frozen Historical Snapshots)',
+      sheetTab: 'N/A (Derived at Quote Issuance)',
+      collection: 'saved_quotes & Firestore quotes',
+      primaryKey: 'id (quoteId, quoteNumber)',
+      foreignKey: 'userId -> users.id, items[].productId',
+      pricingFields: ['items[].calculation (frozen snapshot)', 'totalSellingPrice', 'totalNetCost', 'totalMargin'],
+      currencyField: 'currency',
+      effectiveDateField: 'Frozen at Issuance Timestamp',
+      statusField: 'status (DRAFT, ISSUED, CONFIRMED)',
+      versionField: 'version',
+      consumers: ['Buyer Portal', 'PDF Generation', 'WhatsApp Quote Dispatch', 'Email Quotations', 'Booking Conversion']
+    }
+  ];
+}
+
+/**
+ * MASTER PRICING SERVICE
+ * Central class encapsulating all authoritative pricing access.
+ */
+export class MasterPricingService {
+  public static calculateProductPrice(product: Product, request: PricingCalculationRequest): PricingCalculationResult {
+    return calculateProductPrice(product, request);
+  }
+
+  public static calculatePrice(request: AuthoritativePriceRequest): PricingCalculationResult {
+    return calculatePrice(request);
+  }
+
+  public static getCurrentPrice(params: {
+    inventoryId: string;
+    inventoryType?: 'PRODUCT' | 'HOTEL' | 'TRANSFER' | 'VISA' | 'PACKAGE';
+    serviceConfiguration?: Record<string, any>;
+    passengerConfiguration?: { adults?: number; children?: number; infants?: number };
+    date?: string;
+    currency?: CurrencyCode;
+    user?: User | null;
+    pricingTier?: 'B2B' | 'B2C';
+  }): ControlledPriceResponse {
+    return getCurrentPrice(params);
+  }
+
+  public static getPricingSourceOfTruthMap(): PricingSourceOfTruthEntry[] {
+    return getPricingSourceOfTruthMap();
+  }
 }

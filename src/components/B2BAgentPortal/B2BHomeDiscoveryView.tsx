@@ -417,15 +417,26 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
             {/* Quick Action Triggers */}
             <div className="flex flex-wrap items-center gap-2.5 shrink-0">
               <button
+                id="home-new-quotation-btn"
                 onClick={() => onNavigate('create-quote')}
                 className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 px-5 py-3 rounded-2xl text-xs font-black transition-all shadow-md shadow-[#00C6A6]/20 hover:scale-[1.02] cursor-pointer"
               >
                 <PlusCircle className="w-4 h-4" />
-                <span>New Quotation</span>
+                <span>Create Quote</span>
               </button>
               <button
+                id="home-ai-planner-btn"
+                onClick={() => onNavigate('ai-planner')}
+                className="inline-flex items-center space-x-2 bg-gradient-to-r from-teal-900 via-slate-900 to-indigo-950 hover:from-teal-800 hover:to-indigo-900 text-white px-4 py-3 rounded-2xl text-xs font-bold border border-teal-500/40 transition-all shadow-md shadow-teal-950/20 hover:scale-[1.02] cursor-pointer group"
+              >
+                <Sparkles className="w-4 h-4 text-[#00E5C0] group-hover:rotate-12 transition-transform" />
+                <span>AI Planner</span>
+                <span className="text-[9px] bg-[#00E5C0] text-slate-950 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wider">AI</span>
+              </button>
+              <button
+                id="home-ready-packages-btn"
                 onClick={() => onNavigate('packages')}
-                className="inline-flex items-center space-x-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-3 rounded-2xl text-xs font-bold transition-colors cursor-pointer"
+                className="inline-flex items-center space-x-2 bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900 px-4 py-3 rounded-2xl text-xs font-bold border border-slate-200 transition-colors cursor-pointer"
               >
                 <Layers className="w-4 h-4 text-[#00C6A6]" />
                 <span>Ready-Made Packages</span>

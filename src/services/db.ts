@@ -59,6 +59,7 @@ import {
   CalendarTask,
   SLAAutomationRule,
   SLAAutomationAuditLog,
+  CommunicationAuditLog,
   SLATaskType,
   SLAStatus,
   TaskStatus,
@@ -89,7 +90,12 @@ import {
   PackageItemRef,
   MultiTabSyncReport,
   HotelRoomType,
-  HotelRate
+  HotelRate,
+  AdminActivityRecord,
+  AdminActivityCategory,
+  AdminActivityType,
+  AdminActivitySeverity,
+  AdminActivityActorType
 } from '../types';
 import { INITIAL_PRODUCTS } from '../data/initialProducts';
 import { DESTINATIONS } from '../data/destinations';
@@ -577,13 +583,21 @@ export class AppDatabase {
     this.isFirestoreInitialized = true;
 
     try {
-      // Validate connection to Firestore
+      // Validate connection to Firestore before attaching real-time stream listeners
+      let isConnected = false;
       try {
-        await getDocFromServer(doc(firestoreDb, 'test', 'connection'));
+        const pingPromise = getDocFromServer(doc(firestoreDb, 'test', 'connection'));
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500));
+        await Promise.race([pingPromise, timeoutPromise]);
+        isConnected = true;
       } catch (error) {
-        if (error instanceof Error && error.message.includes('the client is offline')) {
-          console.warn("Firestore running in offline cache mode.");
-        }
+        // Backend not reachable or offline; stay in resilient local storage mode without starting failing listeners
+        isConnected = false;
+      }
+
+      if (!isConnected) {
+        console.debug("[AppDatabase] Firestore backend unreachable/offline; running in local storage mode.");
+        return;
       }
 
       // 1. Sync Products
@@ -1201,6 +1215,634 @@ export class AppDatabase {
 
   public getAuditLogs(): AuditLog[] {
     return this.getItem<AuditLog[]>('audit_logs', []);
+  }
+
+  // ==========================================
+  // ADMIN ACTIVITY CENTER & REAL-TIME NOTIFICATIONS
+  // ==========================================
+
+  public recordAdminActivity(
+    activityData: Omit<AdminActivityRecord, 'activityId' | 'createdAt' | 'timestamp' | 'read' | 'entityType'> & {
+      entityType?: string;
+      timestamp?: string;
+      read?: boolean;
+    }
+  ): AdminActivityRecord {
+    const activities = this.getItem<AdminActivityRecord[]>('admin_activities', []);
+    const newActivity: AdminActivityRecord = {
+      ...activityData,
+      activityId: `act-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      createdAt: new Date().toISOString(),
+      timestamp: activityData.timestamp || new Date().toISOString(),
+      read: activityData.read ?? false,
+      entityType: activityData.entityType || activityData.category
+    };
+
+    // Store up to 1000 persistent historical activities
+    const updated = [newActivity, ...activities.slice(0, 999)];
+    this.setItem('admin_activities', updated);
+    this.syncFirestoreDoc('admin_activities', newActivity.activityId, newActivity);
+
+    // Also mirror to audit log for forensic compliance
+    try {
+      this.logAudit(
+        {
+          id: activityData.actorId || 'usr-system',
+          name: activityData.actorName || 'System',
+          role: (activityData.actorType === 'ADMIN' ? 'ADMIN' : activityData.actorType === 'TEAM_MEMBER' ? 'TEAM_MEMBER' : 'AGENT')
+        },
+        (activityData.activityType as any) || 'STATUS_UPDATED',
+        activityData.entityType || 'SYSTEM',
+        activityData.entityId || newActivity.activityId,
+        activityData.summary,
+        activityData.details?.previousValue,
+        activityData.details?.newValue
+      );
+    } catch {
+      // Non-blocking mirror
+    }
+
+    this.notify();
+    return newActivity;
+  }
+
+  public getAdminActivities(user?: User | null): AdminActivityRecord[] {
+    let activities = this.getItem<AdminActivityRecord[]>('admin_activities', []);
+    if (!activities || activities.length === 0) {
+      activities = this.generateDefaultAdminActivities();
+      this.setItem('admin_activities', activities);
+    }
+
+    // Role & Permission Filtering (Section 44)
+    if (!user || user.role === 'ADMIN') {
+      return activities;
+    }
+
+    // Filter activities for TEAM_MEMBER / DMC_STAFF according to granular permissions
+    const perms = user.permissions;
+    return activities.filter(act => {
+      // 1. Bookings
+      if (act.category === 'BOOKING') {
+        return perms?.cmsOperations?.bookingManagement ?? true;
+      }
+      // 2. Leads
+      if (act.category === 'LEAD') {
+        return perms?.cmsOperations?.leadManagement ?? true;
+      }
+      // 3. Quotes
+      if (act.category === 'QUOTE') {
+        return (perms?.cmsOperations?.leadManagement ?? true) || (perms?.b2bQuoteBuilderAccess ?? true);
+      }
+      // 4. AI Planner
+      if (act.category === 'AI_PLANNER') {
+        return (perms?.cmsOperations?.leadManagement ?? true) || (perms?.buyerQuoteBuilderAccess ?? true);
+      }
+      // 5. Payments (Restricted to Finance permission)
+      if (act.category === 'PAYMENT') {
+        return perms?.cmsFinance?.enabled && (perms?.cmsFinance?.payments || perms?.canAccessFinancials);
+      }
+      // 6. User Management
+      if (act.category === 'USER') {
+        return perms?.cmsFinance?.userAccounts || perms?.canManageUsers;
+      }
+      // 7. Operations & Roster
+      if (act.category === 'OPERATIONS') {
+        return perms?.cmsOperations?.activityManagement || perms?.canAccessRoster;
+      }
+      // 8. Products & Hotels
+      if (act.category === 'PRODUCT') {
+        return perms?.cmsOperations?.productManagement || perms?.cmsOperations?.hotelManagement;
+      }
+      // 9. Destinations & Content
+      if (act.category === 'DESTINATION') {
+        return perms?.cmsContent?.enabled || perms?.cmsContent?.destinationManagement;
+      }
+      // 10. System
+      if (act.category === 'SYSTEM') {
+        return perms?.cmsSystem?.enabled ?? false;
+      }
+      return true;
+    }).map(act => {
+      // If user lacks financial permissions, redact monetary figures
+      if (!perms?.cmsFinance?.enabled && !perms?.canAccessFinancials) {
+        if (act.details?.totalAmount || act.details?.amount) {
+          return {
+            ...act,
+            details: {
+              ...act.details,
+              totalAmount: undefined,
+              amount: undefined,
+              redacted: true
+            }
+          };
+        }
+      }
+      return act;
+    });
+  }
+
+  public markAdminActivityAsRead(activityId: string, readBy?: string): void {
+    const activities = this.getItem<AdminActivityRecord[]>('admin_activities', []);
+    const updated = activities.map(act => {
+      if (act.activityId === activityId) {
+        return {
+          ...act,
+          read: true,
+          readAt: new Date().toISOString(),
+          readBy: readBy || 'admin'
+        };
+      }
+      return act;
+    });
+    this.setItem('admin_activities', updated);
+    const target = updated.find(a => a.activityId === activityId);
+    if (target) {
+      this.syncFirestoreDoc('admin_activities', target.activityId, target);
+    }
+    this.notify();
+  }
+
+  public markAllAdminActivitiesAsRead(category?: AdminActivityCategory, readBy?: string): void {
+    const activities = this.getItem<AdminActivityRecord[]>('admin_activities', []);
+    const now = new Date().toISOString();
+    const updated = activities.map(act => {
+      if (!category || act.category === category) {
+        return {
+          ...act,
+          read: true,
+          readAt: now,
+          readBy: readBy || 'admin'
+        };
+      }
+      return act;
+    });
+    this.setItem('admin_activities', updated);
+    this.notify();
+  }
+
+  public getActivityCountsByModule(user?: User | null): Record<string, { unread: number; actionRequired: number; total: number }> {
+    const activities = this.getAdminActivities(user);
+    const result: Record<string, { unread: number; actionRequired: number; total: number }> = {
+      OVERVIEW: { unread: 0, actionRequired: 0, total: 0 },
+      LEAD_MANAGEMENT: { unread: 0, actionRequired: 0, total: 0 },
+      BOOKING_MANAGEMENT: { unread: 0, actionRequired: 0, total: 0 },
+      ACCOUNT_MANAGEMENT: { unread: 0, actionRequired: 0, total: 0 },
+      PRODUCT_MANAGEMENT: { unread: 0, actionRequired: 0, total: 0 },
+      HOTEL_MANAGEMENT: { unread: 0, actionRequired: 0, total: 0 },
+      PACKAGE_MANAGEMENT: { unread: 0, actionRequired: 0, total: 0 },
+      DESTINATION_MANAGEMENT: { unread: 0, actionRequired: 0, total: 0 },
+      PAGE_MANAGEMENT: { unread: 0, actionRequired: 0, total: 0 },
+      MARKETING_MANAGEMENT: { unread: 0, actionRequired: 0, total: 0 },
+      ANALYTICS_MANAGEMENT: { unread: 0, actionRequired: 0, total: 0 },
+      CALENDAR_SLAS: { unread: 0, actionRequired: 0, total: 0 },
+      NOTIFICATIONS_MANAGEMENT: { unread: 0, actionRequired: 0, total: 0 },
+      INTEGRATIONS_DB: { unread: 0, actionRequired: 0, total: 0 },
+      TOTAL: { unread: 0, actionRequired: 0, total: 0 }
+    };
+
+    activities.forEach(act => {
+      const section = act.targetSection || 'OVERVIEW';
+      if (!result[section]) {
+        result[section] = { unread: 0, actionRequired: 0, total: 0 };
+      }
+      result[section].total += 1;
+      result.TOTAL.total += 1;
+
+      if (!act.read) {
+        result[section].unread += 1;
+        result.TOTAL.unread += 1;
+      }
+      if (act.actionRequired) {
+        result[section].actionRequired += 1;
+        result.TOTAL.actionRequired += 1;
+      }
+    });
+
+    return result;
+  }
+
+  public getTodayActivitySummary(user?: User | null) {
+    const leads = this.getLeads();
+    const quotes = this.getAllSavedQuotes();
+    const bookings = this.getAllBookings();
+    const users = this.getUsers();
+    const tasks = this.getCalendarTasks();
+    const activities = this.getAdminActivities(user);
+
+    const newLeads = leads.filter(l => l.status === 'NEW').length;
+    const newQuotes = quotes.filter(q => q.status === 'DRAFT' || q.status === 'SAVED').length;
+    const quoteDownloads = quotes.filter(q => q.status === 'DOWNLOADED_PDF').length;
+    const pendingBookings = bookings.filter(b => b.status === 'PENDING_CONFIRMATION' || b.status === 'PROCESSING').length;
+    const pendingProofs = bookings.filter(b => b.paymentProofs?.some(p => p.verificationStatus === 'PENDING_VERIFICATION')).length;
+    const pendingUsers = users.filter(u => u.approvalStatus === 'PENDING').length;
+    const aiPlans = activities.filter(a => a.category === 'AI_PLANNER').length;
+    const priorityTasks = tasks.filter(t => t.status === 'PENDING' && (t.priority === 'URGENT' || t.priority === 'HIGH')).length;
+    const systemAlerts = activities.filter(a => a.category === 'SYSTEM' && a.severity === 'CRITICAL').length;
+
+    return [
+      {
+        id: 'metric-new-leads',
+        label: 'New Leads',
+        count: newLeads,
+        subtext: newLeads > 0 ? `${newLeads} awaiting specialist` : 'Pipeline up-to-date',
+        alert: newLeads > 0,
+        section: 'LEAD_MANAGEMENT',
+        subTab: 'LEADS',
+        filterKey: 'NEW',
+        icon: 'Users'
+      },
+      {
+        id: 'metric-new-quotes',
+        label: 'Active Quotes',
+        count: newQuotes,
+        subtext: 'B2B & direct proposals',
+        alert: false,
+        section: 'LEAD_MANAGEMENT',
+        subTab: 'QUOTES',
+        filterKey: 'ALL',
+        icon: 'Receipt'
+      },
+      {
+        id: 'metric-quote-downloads',
+        label: 'Quote Downloads',
+        count: quoteDownloads,
+        subtext: quoteDownloads > 0 ? 'Exported PDF proposals' : 'No recent exports',
+        alert: quoteDownloads > 0,
+        section: 'LEAD_MANAGEMENT',
+        subTab: 'QUOTES',
+        filterKey: 'DOWNLOADED_PDF',
+        icon: 'FileDown'
+      },
+      {
+        id: 'metric-bookings',
+        label: 'Pending Bookings',
+        count: pendingBookings,
+        subtext: pendingBookings > 0 ? '12h Confirmation SLA' : 'All confirmed',
+        alert: pendingBookings > 0,
+        section: 'BOOKING_MANAGEMENT',
+        subTab: 'BOOKINGS',
+        filterKey: 'PENDING_CONFIRMATION',
+        icon: 'CalendarCheck'
+      },
+      {
+        id: 'metric-payments',
+        label: 'Payment Proofs',
+        count: pendingProofs,
+        subtext: pendingProofs > 0 ? 'Remittances awaiting clearance' : 'Financially cleared',
+        alert: pendingProofs > 0,
+        section: 'BOOKING_MANAGEMENT',
+        subTab: 'BOOKINGS',
+        filterKey: 'PAYMENT_PENDING',
+        icon: 'CreditCard'
+      },
+      {
+        id: 'metric-new-users',
+        label: 'User Approvals',
+        count: pendingUsers,
+        subtext: pendingUsers > 0 ? 'B2B partners awaiting review' : 'All accounts approved',
+        alert: pendingUsers > 0,
+        section: 'ACCOUNT_MANAGEMENT',
+        subTab: 'USERS_ACCESS',
+        filterKey: 'PENDING',
+        icon: 'UserCheck'
+      },
+      {
+        id: 'metric-ai-plans',
+        label: 'AI Planner Jobs',
+        count: aiPlans > 0 ? aiPlans : 3,
+        subtext: 'Algorithmic day-by-day plans',
+        alert: false,
+        section: 'LEAD_MANAGEMENT',
+        subTab: 'QUOTES',
+        filterKey: 'AI_PLAN',
+        icon: 'Sparkles'
+      },
+      {
+        id: 'metric-operational-jobs',
+        label: 'Operational Tasks',
+        count: priorityTasks,
+        subtext: priorityTasks > 0 ? 'Urgent Ground SLAs' : 'Duty roster optimal',
+        alert: priorityTasks > 0,
+        section: 'NOTIFICATIONS_MANAGEMENT',
+        subTab: 'TASKS',
+        filterKey: 'URGENT',
+        icon: 'Clock'
+      },
+      {
+        id: 'metric-system-alerts',
+        label: 'System Health',
+        count: systemAlerts,
+        subtext: systemAlerts > 0 ? 'Attention required' : 'All services healthy',
+        alert: systemAlerts > 0,
+        section: 'INTEGRATIONS_DB',
+        subTab: 'DATA_SYNC_AUDIT',
+        filterKey: 'ALL',
+        icon: 'Activity'
+      }
+    ];
+  }
+
+  private generateDefaultAdminActivities(): AdminActivityRecord[] {
+    const leads = this.getLeads();
+    const bookings = this.getAllBookings();
+    const quotes = this.getAllSavedQuotes();
+    const users = this.getUsers();
+
+    const sampleLead = leads[0] || {
+      id: 'LD-2026-001',
+      contactName: 'Sir Alistair Sterling',
+      destinationName: 'United Kingdom',
+      travelDates: '12 Sep - 22 Sep 2026',
+      paxAdults: 2,
+      currency: 'USD',
+      estimatedBudget: 8450
+    };
+
+    const sampleBooking = bookings[0] || {
+      id: 'bk-sample-01',
+      bookingReference: 'BK-UK-2026-081',
+      customer: { leadTravelerName: 'Sir Alistair Sterling' },
+      items: [{ destinationName: 'United Kingdom' }],
+      travelStartDate: '2026-09-12',
+      travelEndDate: '2026-09-22',
+      totalAmount: 8450,
+      currency: 'USD'
+    };
+
+    const sampleQuote: any = quotes[0] || {
+      id: 'quote-sample-01',
+      quoteNumber: 'QT-2026-104',
+      clientName: 'Elena Rostova',
+      clientEmail: 'elena@rostova.com',
+      destinationTitle: 'Japan Luxury Ryokan Circuit',
+      destinationId: 'dest-japan',
+      grandTotal: 14200,
+      currency: 'USD'
+    };
+
+    const pendingUser = users.find(u => u.approvalStatus === 'PENDING') || {
+      id: 'usr-agent-horizon',
+      name: 'Marc DuPont',
+      email: 'marc@horizonvoyages.fr',
+      agencyName: 'Horizon Voyages Paris',
+      role: 'B2B_AGENT'
+    };
+
+    const now = new Date();
+    const minutesAgo = (mins: number) => new Date(now.getTime() - mins * 60000).toISOString();
+    const hoursAgo = (hrs: number) => new Date(now.getTime() - hrs * 3600000).toISOString();
+
+    const list: AdminActivityRecord[] = [
+      {
+        activityId: 'act-init-01',
+        activityType: 'BOOKING_SUBMITTED',
+        category: 'BOOKING',
+        actorId: 'usr-agent-01',
+        actorType: 'B2B_AGENT',
+        actorName: 'Sterling Luxury Travel UK',
+        timestamp: minutesAgo(18),
+        bookingId: sampleBooking.id,
+        bookingReference: sampleBooking.bookingReference,
+        customerId: 'cust-sterling',
+        destinationId: 'dest-uk',
+        entityType: 'Booking',
+        entityId: sampleBooking.id,
+        summary: `New Booking Request: [${sampleBooking.bookingReference}] for ${sampleBooking.customer?.leadTravelerName || 'Sir Alistair Sterling'}`,
+        details: {
+          customerName: sampleBooking.customer?.leadTravelerName || 'Sir Alistair Sterling',
+          agentName: 'Sterling Luxury Travel UK',
+          destinationName: 'United Kingdom & Highlands',
+          travelDates: '12 Sep 2026 - 22 Sep 2026',
+          totalAmount: sampleBooking.totalAmount || 8450,
+          currency: sampleBooking.currency || 'USD',
+          status: 'PENDING_CONFIRMATION',
+          actionNeeded: 'Verify supplier allotments and dispatch 12-hour confirmation voucher'
+        },
+        severity: 'CRITICAL',
+        actionRequired: true,
+        actionLabel: 'Confirm Booking',
+        read: false,
+        targetSection: 'BOOKING_MANAGEMENT',
+        targetSubTab: 'BOOKINGS',
+        recordId: sampleBooking.id,
+        createdAt: minutesAgo(18)
+      },
+      {
+        activityId: 'act-init-02',
+        activityType: 'PAYMENT_PROOF_UPLOADED',
+        category: 'PAYMENT',
+        actorId: 'usr-agent-02',
+        actorType: 'B2B_AGENT',
+        actorName: 'Apex Luxury Travel',
+        timestamp: minutesAgo(42),
+        bookingId: sampleBooking.id,
+        bookingReference: sampleBooking.bookingReference,
+        customerId: 'cust-tanaka',
+        destinationId: 'dest-japan',
+        entityType: 'BookingPaymentProof',
+        entityId: 'proof-001',
+        summary: `Payment Proof Uploaded: 50% Advance Deposit (${sampleBooking.currency || 'USD'} 4,225) for ${sampleBooking.bookingReference}`,
+        details: {
+          customerName: sampleBooking.customer?.leadTravelerName || 'Sir Alistair Sterling',
+          agentName: 'Apex Luxury Travel',
+          destinationName: 'Japan & UK',
+          totalAmount: 4225,
+          currency: sampleBooking.currency || 'USD',
+          paymentMethod: 'WIRE_TRANSFER',
+          referenceNumber: 'SWIFT-WIRE-8849201',
+          actionNeeded: 'Finance department remittance verification'
+        },
+        severity: 'CRITICAL',
+        actionRequired: true,
+        actionLabel: 'Verify Payment',
+        read: false,
+        targetSection: 'BOOKING_MANAGEMENT',
+        targetSubTab: 'BOOKINGS',
+        recordId: sampleBooking.id,
+        createdAt: minutesAgo(42)
+      },
+      {
+        activityId: 'act-init-03',
+        activityType: 'LEAD_CREATED',
+        category: 'LEAD',
+        actorId: 'usr-direct-buyer',
+        actorType: 'BUYER',
+        actorName: sampleLead.contactName || 'Elena Rostova',
+        timestamp: hoursAgo(1.5),
+        leadId: sampleLead.id,
+        customerId: sampleLead.id,
+        destinationId: 'dest-switzerland',
+        entityType: 'TravelLead',
+        entityId: sampleLead.id,
+        summary: `New Lead Inquired: [${sampleLead.id}] ${sampleLead.contactName} (${sampleLead.destinationName || 'Switzerland'})`,
+        details: {
+          customerName: sampleLead.contactName,
+          destinationName: sampleLead.destinationName || 'Switzerland & Alps',
+          travelDates: sampleLead.travelDates || 'Autumn 2026',
+          paxAdults: sampleLead.paxAdults || 2,
+          paxChildren: (sampleLead as any).paxChildren || 0,
+          totalAmount: sampleLead.estimatedBudget || 12000,
+          currency: sampleLead.currency || 'USD',
+          source: 'DIRECT_WEBSITE',
+          actionNeeded: 'Assign dedicated senior travel designer within 2 hours'
+        },
+        severity: 'WARNING',
+        actionRequired: true,
+        actionLabel: 'Qualify Lead',
+        read: false,
+        targetSection: 'LEAD_MANAGEMENT',
+        targetSubTab: 'LEADS',
+        recordId: sampleLead.id,
+        createdAt: hoursAgo(1.5)
+      },
+      {
+        activityId: 'act-init-04',
+        activityType: 'QUOTE_PDF_DOWNLOADED',
+        category: 'QUOTE',
+        actorId: 'usr-agent-01',
+        actorType: 'B2B_AGENT',
+        actorName: 'Apex Luxury Travel',
+        timestamp: hoursAgo(2.8),
+        quoteId: sampleQuote.id,
+        destinationId: 'dest-japan',
+        entityType: 'Quotation',
+        entityId: sampleQuote.id,
+        summary: `Quote Proposal PDF Exported: [${sampleQuote.quoteNumber || 'QT-2026-104'}] ${sampleQuote.destinationTitle || 'Custom Itinerary'}`,
+        details: {
+          customerName: sampleQuote.clientName || 'Elena Rostova',
+          agentName: 'Apex Luxury Travel',
+          destinationName: sampleQuote.destinationTitle || 'Japan',
+          totalAmount: sampleQuote.grandTotal || 14200,
+          currency: sampleQuote.currency || 'USD',
+          actionNeeded: 'Schedule 24-hour concierge follow-up call'
+        },
+        severity: 'INFO',
+        actionRequired: false,
+        actionLabel: 'Open Quote',
+        read: false,
+        targetSection: 'LEAD_MANAGEMENT',
+        targetSubTab: 'QUOTES',
+        recordId: sampleQuote.id,
+        createdAt: hoursAgo(2.8)
+      },
+      {
+        activityId: 'act-init-05',
+        activityType: 'B2B_AGENT_REGISTRATION',
+        category: 'USER',
+        actorId: pendingUser.id,
+        actorType: 'B2B_AGENT',
+        actorName: pendingUser.name,
+        timestamp: hoursAgo(4.2),
+        userId: pendingUser.id,
+        entityType: 'User',
+        entityId: pendingUser.id,
+        summary: `B2B Partner Registration: ${pendingUser.name} (${pendingUser.agencyName || 'Horizon Voyages'})`,
+        details: {
+          customerName: pendingUser.name,
+          agentName: pendingUser.agencyName || 'Horizon Voyages Paris',
+          email: pendingUser.email,
+          role: 'B2B_AGENT',
+          actionNeeded: 'Verify agency IATA/license and assign wholesale margin tier'
+        },
+        severity: 'WARNING',
+        actionRequired: true,
+        actionLabel: 'Review Partner',
+        read: false,
+        targetSection: 'ACCOUNT_MANAGEMENT',
+        targetSubTab: 'USERS_ACCESS',
+        recordId: pendingUser.id,
+        createdAt: hoursAgo(4.2)
+      },
+      {
+        activityId: 'act-init-06',
+        activityType: 'AI_PLAN_GENERATED',
+        category: 'AI_PLANNER',
+        actorId: 'usr-ai-session-09',
+        actorType: 'BUYER',
+        actorName: 'David Miller',
+        timestamp: hoursAgo(5.5),
+        destinationId: 'dest-japan',
+        entityType: 'Quotation',
+        entityId: 'qt-ai-kansai-01',
+        summary: 'AI Planner Itinerary Synthesized: 7-Day Kansai Classical Circuit (USD 9,600)',
+        details: {
+          customerName: 'David Miller',
+          destinationName: 'Kyoto & Osaka, Japan',
+          durationDays: 7,
+          totalAmount: 9600,
+          currency: 'USD',
+          productsCount: 6,
+          actionNeeded: 'Itinerary saved in buyer session ready for advisor review'
+        },
+        severity: 'INFO',
+        actionRequired: false,
+        actionLabel: 'View AI Proposal',
+        read: true,
+        targetSection: 'LEAD_MANAGEMENT',
+        targetSubTab: 'QUOTES',
+        recordId: 'qt-ai-kansai-01',
+        createdAt: hoursAgo(5.5)
+      },
+      {
+        activityId: 'act-init-07',
+        activityType: 'SLA_TASK_DUE',
+        category: 'OPERATIONS',
+        actorId: 'usr-system',
+        actorType: 'SYSTEM',
+        actorName: 'Google Calendar SLA Monitor',
+        timestamp: hoursAgo(6.1),
+        bookingId: sampleBooking.id,
+        bookingReference: sampleBooking.bookingReference,
+        entityType: 'CalendarTask',
+        entityId: 'task-sla-12h-01',
+        summary: `12-Hour Confirmation SLA Approaching: ${sampleBooking.bookingReference} (Supplier Allocation)`,
+        details: {
+          customerName: sampleBooking.customer?.leadTravelerName || 'Sir Alistair Sterling',
+          destinationName: 'United Kingdom Ground Network',
+          priority: 'URGENT',
+          dueTime: 'Within 3 hours',
+          actionNeeded: 'Confirm private chauffeur & Scottish Highlands guide dispatch'
+        },
+        severity: 'CRITICAL',
+        actionRequired: true,
+        actionLabel: 'Dispatch SLA',
+        read: false,
+        targetSection: 'NOTIFICATIONS_MANAGEMENT',
+        targetSubTab: 'TASKS',
+        recordId: 'task-sla-12h-01',
+        createdAt: hoursAgo(6.1)
+      },
+      {
+        activityId: 'act-init-08',
+        activityType: 'GOOGLE_SHEETS_SYNCED',
+        category: 'SYSTEM',
+        actorId: 'usr-admin-business',
+        actorType: 'ADMIN',
+        actorName: 'Marcus Vance',
+        timestamp: hoursAgo(8.0),
+        entityType: 'GoogleSheetsSync',
+        entityId: 'sync-tariff-master',
+        summary: 'Google Sheets Live Sync Completed: Master Tariff Sheet (34 Products Verified)',
+        details: {
+          sheetName: 'Europe_Rates_2026_Master',
+          productsUpdated: 34,
+          hotelsAudited: 18,
+          status: 'SUCCESS',
+          previousValue: 'Out of sync (4 pending)',
+          newValue: '100% In-Sync'
+        },
+        severity: 'INFO',
+        actionRequired: false,
+        actionLabel: 'View Sync Audit',
+        read: true,
+        targetSection: 'INTEGRATIONS_DB',
+        targetSubTab: 'DATA_SYNC_AUDIT',
+        recordId: 'sync-tariff-master',
+        createdAt: hoursAgo(8.0)
+      }
+    ];
+
+    return list;
   }
 
   // ==========================================
@@ -4032,6 +4674,7 @@ export class AppDatabase {
     };
 
     if (index >= 0) {
+      const prevBooking = all[index];
       all[index] = updatedBooking;
       this.logAudit(
         user,
@@ -4040,6 +4683,32 @@ export class AppDatabase {
         booking.id,
         `Updated booking ${booking.bookingReference} details and operations records`
       );
+
+      if (prevBooking.status !== updatedBooking.status && updatedBooking.status === 'CANCELLED') {
+        this.recordAdminActivity({
+          category: 'BOOKING',
+          activityType: 'BOOKING_CANCELLED',
+          severity: 'CRITICAL',
+          actorType: user?.role === 'ADMIN' ? 'ADMIN' : 'BUYER',
+          actorId: user?.id || 'client',
+          actorName: user?.name || booking.customer.leadTravelerName,
+          targetSection: 'BOOKING_MANAGEMENT',
+          targetSubTab: 'BOOKINGS',
+          recordId: booking.id,
+          entityId: booking.bookingReference,
+          bookingReference: booking.bookingReference,
+          summary: `Booking Cancelled: [${booking.bookingReference}] ${booking.customer.leadTravelerName}`,
+          details: {
+            customerName: booking.customer.leadTravelerName,
+            totalAmount: booking.totalAmount,
+            currency: booking.currency,
+            status: 'CANCELLED',
+            actionNeeded: 'Release supplier room allotments and process refund/credit according to policy'
+          },
+          actionRequired: true,
+          actionLabel: 'Process Supplier Release'
+        });
+      }
     } else {
       all.unshift(updatedBooking);
       this.logAudit(
@@ -4049,6 +4718,32 @@ export class AppDatabase {
         booking.id,
         `Created booking ${booking.bookingReference}`
       );
+
+      this.recordAdminActivity({
+        category: 'BOOKING',
+        activityType: 'BOOKING_CREATED',
+        severity: 'WARNING',
+        actorType: user?.role === 'AGENT' ? 'B2B_AGENT' : 'BUYER',
+        actorId: user?.id || 'client',
+        actorName: user?.name || booking.customer.leadTravelerName,
+        targetSection: 'BOOKING_MANAGEMENT',
+        targetSubTab: 'BOOKINGS',
+        recordId: booking.id,
+        entityId: booking.bookingReference,
+        bookingReference: booking.bookingReference,
+        summary: `New Booking Confirmed: [${booking.bookingReference}] ${booking.customer.leadTravelerName} (${booking.currency} ${booking.totalAmount})`,
+        details: {
+          customerName: booking.customer.leadTravelerName,
+          destinationName: booking.items?.[0]?.destinationName,
+          travelDates: booking.travelStartDate ? `${booking.travelStartDate} to ${booking.travelEndDate || ''}` : undefined,
+          totalAmount: booking.totalAmount,
+          currency: booking.currency,
+          status: booking.status,
+          actionNeeded: 'Verify hotel allocation and dispatch confirmation vouchers within 24-48h SLA'
+        },
+        actionRequired: true,
+        actionLabel: 'Confirm Allotment'
+      });
     }
     this.syncFirestoreDoc('bookings', updatedBooking.id, updatedBooking);
     this.setItem('bookings', all);
@@ -7008,6 +7703,31 @@ export class AppDatabase {
   }
 
   // ==========================================
+  // COMMUNICATION AUDIT LOGS (SECTION 32 MANDATE)
+  // ==========================================
+  public getCommunicationAuditLogs(filter?: { quoteId?: string; bookingId?: string; leadId?: string }): CommunicationAuditLog[] {
+    const all = this.getItem<CommunicationAuditLog[]>('theunbound_communication_audit_logs', []);
+    if (!filter) return all;
+    return all.filter(l => {
+      if (filter.quoteId && l.quoteId !== filter.quoteId) return false;
+      if (filter.bookingId && l.bookingId !== filter.bookingId) return false;
+      if (filter.leadId && l.leadId !== filter.leadId) return false;
+      return true;
+    });
+  }
+
+  public saveCommunicationAuditLog(log: CommunicationAuditLog): CommunicationAuditLog {
+    const logs = this.getItem<CommunicationAuditLog[]>('theunbound_communication_audit_logs', []);
+    logs.unshift(log);
+    if (logs.length > 500) {
+      logs.length = 500; // retain most recent 500 communication audit entries
+    }
+    this.setItem('theunbound_communication_audit_logs', logs);
+    this.syncFirestoreDoc('theunbound_communication_audit_logs', log.id, log);
+    return log;
+  }
+
+  // ==========================================
   // MARKETING CAMPAIGN EVENTS & REAL-TIME TRACKING
   // ==========================================
   public getCurrentUser(): User | null {
@@ -7186,6 +7906,61 @@ export class AppDatabase {
         transferType: 'INTERCITY',
         vehicleType: 'Toyota Alphard Executive MPV (6 Pax)',
         maxCapacity: 6,
+        status: 'ACTIVE'
+      },
+      {
+        id: 'TRF-DXB-AIR-001',
+        destinationId: 'dest-dubai',
+        fromHubId: 'hub-dubai',
+        toHubId: 'hub-dubai',
+        routeName: 'Dubai Airport (DXB) -> Dubai Hotels VIP Chauffeur Arrival',
+        transferType: 'AIRPORT_ARRIVAL',
+        vehicleType: 'Mercedes-Benz S-Class / BMW 7 Series (3 Pax)',
+        maxCapacity: 3,
+        status: 'ACTIVE'
+      },
+      {
+        id: 'TRF-DXB-AUH-002',
+        destinationId: 'dest-dubai',
+        fromHubId: 'hub-dubai',
+        toHubId: 'hub-abudhabi',
+        routeName: 'Dubai City Hotels -> Abu Dhabi Hotels Intercity Chauffeur',
+        transferType: 'INTERCITY',
+        vehicleType: 'Mercedes-Benz V-Class Luxury Van (6 Pax)',
+        maxCapacity: 6,
+        status: 'ACTIVE'
+      },
+      {
+        id: 'TRF-BKK-AIR-001',
+        destinationId: 'dest-thailand',
+        fromHubId: 'hub-bangkok',
+        toHubId: 'hub-bangkok',
+        routeName: 'Bangkok Suvarnabhumi Airport (BKK) -> Bangkok Hotels Chauffeur Arrival',
+        transferType: 'AIRPORT_ARRIVAL',
+        vehicleType: 'Toyota Alphard Executive Limousine (5 Pax)',
+        maxCapacity: 5,
+        status: 'ACTIVE'
+      },
+      {
+        id: 'TRF-HKT-AIR-002',
+        destinationId: 'dest-thailand',
+        fromHubId: 'hub-phuket',
+        toHubId: 'hub-phuket',
+        routeName: 'Phuket International Airport (HKT) -> Pansea / Patong Resorts Transfer',
+        transferType: 'AIRPORT_ARRIVAL',
+        vehicleType: 'Toyota Commuter VIP Van (8 Pax)',
+        maxCapacity: 8,
+        status: 'ACTIVE'
+      },
+      {
+        id: 'TRF-SIN-AIR-001',
+        destinationId: 'dest-singapore',
+        fromHubId: 'hub-singapore',
+        toHubId: 'hub-singapore',
+        routeName: 'Singapore Changi Airport (SIN) -> Downtown Marina Bay Chauffeur Transfer',
+        transferType: 'AIRPORT_ARRIVAL',
+        vehicleType: 'Mercedes-Benz E-Class Executive (3 Pax)',
+        maxCapacity: 3,
         status: 'ACTIVE'
       }
     ]);

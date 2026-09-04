@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { CurrencyCode, Product, QuoteItem, Quotation, TravelLead, B2BPackage } from '../types';
+import { CurrencyCode, Product, QuoteItem, Quotation, TravelLead, B2BPackage, TripRouteHub, QuoteBuilderHandoffPayload, QuoteItemSource } from '../types';
 import { calculateProductPrice } from '../services/pricingEngine';
 import { AppDatabase } from '../services/db';
 import { campaignAnalytics } from '../services/campaignAnalyticsService';
@@ -24,6 +24,8 @@ interface QuotationContextType {
       notes?: string;
       selectedAddonIds?: string[];
       openDrawer?: boolean;
+      source?: QuoteItemSource;
+      aiSuggested?: boolean;
     }
   ) => void;
   removeProductFromQuote: (itemId: string) => void;
@@ -37,7 +39,8 @@ interface QuotationContextType {
       serviceTime?: string; 
       pax?: { adults: number; children: number; infants: number }; 
       selectedAddonIds?: string[]; 
-      notes?: string 
+      notes?: string;
+      source?: QuoteItemSource;
     }
   ) => void;
   updateQuoteItem: (
@@ -81,6 +84,23 @@ interface QuotationContextType {
   activeQuoteId: string | null;
   currentVersion: number;
   isLocked: boolean;
+
+  // Route Hubs, Pax Configuration, Day Themes
+  routeHubs: TripRouteHub[];
+  setRouteHubs: React.Dispatch<React.SetStateAction<TripRouteHub[]>>;
+  paxConfig: { adults: number; children: number; childAges: number[]; infants: number };
+  setPaxConfig: React.Dispatch<React.SetStateAction<{ adults: number; children: number; childAges: number[]; infants: number }>>;
+  dayThemes: Record<number, string>;
+  setDayThemes: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+
+  // AI Planner Integration & State Tracking
+  handoffPayload: QuoteBuilderHandoffPayload | null;
+  setHandoffPayload: (payload: QuoteBuilderHandoffPayload | null) => void;
+  quoteSource: 'AI_PLANNER' | 'USER' | 'HYBRID';
+  setQuoteSource: (source: 'AI_PLANNER' | 'USER' | 'HYBRID') => void;
+  priceRefreshNotice: string | null;
+  clearPriceRefreshNotice: () => void;
+  loadAiPlannerPayload: (payload: QuoteBuilderHandoffPayload) => { priceVariance: boolean; oldPrice: number; newPrice: number };
   
   // Computed summary
   totalNetCost: number;
@@ -132,15 +152,24 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [clientEmail, setClientEmail] = useState('');
   const [clientCompany, setClientCompany] = useState('');
   const [clientPhone, setClientPhone] = useState('');
-  const [destination, setDestination] = useState('Japan');
-  const [travelStartDate, setTravelStartDate] = useState(new Date(Date.now() + 86400000 * 14).toISOString().split('T')[0]);
-  const [travelEndDate, setTravelEndDate] = useState(new Date(Date.now() + 86400000 * 24).toISOString().split('T')[0]);
+  // No hardcoded default destination or dates: Quote Builder starts empty unless AI or user provides values
+  const [destination, setDestination] = useState('');
+  const [travelStartDate, setTravelStartDate] = useState('');
+  const [travelEndDate, setTravelEndDate] = useState('');
+  const [routeHubs, setRouteHubs] = useState<TripRouteHub[]>([]);
+  const [paxConfig, setPaxConfig] = useState({ adults: 2, children: 0, childAges: [] as number[], infants: 0 });
+  const [dayThemes, setDayThemes] = useState<Record<number, string>>({});
+  const [handoffPayload, setHandoffPayload] = useState<QuoteBuilderHandoffPayload | null>(null);
+  const [quoteSource, setQuoteSource] = useState<'AI_PLANNER' | 'USER' | 'HYBRID'>('USER');
+  const [priceRefreshNotice, setPriceRefreshNotice] = useState<string | null>(null);
   const [leadId, setLeadId] = useState('');
   const [agentNotes, setAgentNotes] = useState('');
   const [overallDiscountPercent, setOverallDiscountPercent] = useState(0);
   const [activeQuoteId, setActiveQuoteId] = useState<string | null>(null);
   const [currentVersion, setCurrentVersion] = useState(1);
   const [isLocked, setIsLocked] = useState(false);
+
+  const clearPriceRefreshNotice = () => setPriceRefreshNotice(null);
 
   const setQuotationDates = (startDate: string, endDate: string) => {
     setTravelStartDate(startDate);
@@ -207,12 +236,14 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       notes?: string;
       selectedAddonIds?: string[];
       openDrawer?: boolean;
+      source?: QuoteItemSource;
+      aiSuggested?: boolean;
     }
   ) => {
     const adults = options?.adults ?? Math.max(1, product.minPax);
     const children = options?.children ?? 0;
     const infants = options?.infants ?? 0;
-    const travelDate = options?.travelDate ?? new Date(Date.now() + 86400000 * 14).toISOString().split('T')[0];
+    const travelDate = options?.travelDate ?? travelStartDate ?? '';
     const selectedAddonIds = options?.selectedAddonIds ?? [];
     const serviceTime = options?.serviceTime;
     const notes = options?.notes;
@@ -236,7 +267,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       serviceTime,
       notes,
       selectedAddonIds,
-      calculation
+      calculation,
+      source: options?.source || 'USER',
+      aiSuggested: options?.aiSuggested ?? false
     };
 
     setItems(prev => [...prev, newItem]);
@@ -266,7 +299,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return {
           ...item,
           pax,
-          calculation
+          calculation,
+          source: 'USER',
+          aiSuggested: false
         };
       })
     );
@@ -289,7 +324,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return {
           ...item,
           travelDate: date,
-          calculation
+          calculation,
+          source: 'USER',
+          aiSuggested: false
         };
       })
     );
@@ -297,7 +334,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const updateItemServiceTime = (itemId: string, time: string) => {
     setItems(prev =>
-      prev.map(item => (item.id === itemId ? { ...item, serviceTime: time } : item))
+      prev.map(item => (item.id === itemId ? { ...item, serviceTime: time, source: 'USER', aiSuggested: false } : item))
     );
   };
 
@@ -309,6 +346,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       pax?: { adults: number; children: number; infants: number };
       selectedAddonIds?: string[];
       notes?: string;
+      source?: QuoteItemSource;
     }
   ) => {
     setItems(prev =>
@@ -338,7 +376,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           pax: nextPax,
           selectedAddonIds: nextAddons,
           notes: nextNotes,
-          calculation
+          calculation,
+          source: updates.source ?? 'USER',
+          aiSuggested: updates.source === 'AI_PLANNER'
         };
       })
     );
@@ -387,7 +427,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           serviceTime,
           notes,
           selectedAddonIds,
-          calculation
+          calculation,
+          source: 'USER',
+          aiSuggested: false
         };
       })
     );
@@ -416,7 +458,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return {
           ...item,
           selectedAddonIds: nextAddons,
-          calculation
+          calculation,
+          source: 'USER',
+          aiSuggested: false
         };
       })
     );
@@ -424,7 +468,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const updateItemNotes = (itemId: string, notes: string) => {
     setItems(prev =>
-      prev.map(item => (item.id === itemId ? { ...item, notes } : item))
+      prev.map(item => (item.id === itemId ? { ...item, notes, source: 'USER', aiSuggested: false } : item))
     );
   };
 
@@ -433,12 +477,124 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setClientName('');
     setClientEmail('');
     setClientCompany('');
+    setClientPhone('');
+    setDestination('');
+    setTravelStartDate('');
+    setTravelEndDate('');
+    setRouteHubs([]);
+    setPaxConfig({ adults: 2, children: 0, childAges: [], infants: 0 });
+    setDayThemes({});
+    setHandoffPayload(null);
+    setQuoteSource('USER');
+    setPriceRefreshNotice(null);
     setLeadId('');
     setAgentNotes('');
     setOverallDiscountPercent(0);
     setActiveQuoteId(null);
     setCurrentVersion(1);
     setIsLocked(false);
+    try {
+      localStorage.removeItem('theunbound_cart_items');
+    } catch (e) {
+      console.error('Error clearing cart storage:', e);
+    }
+  };
+
+  const loadAiPlannerPayload = (payload: QuoteBuilderHandoffPayload) => {
+    const db = AppDatabase.getInstance();
+    const allDestinations = db.getDestinations();
+    const allProducts = db.getProducts();
+
+    // 1. Verify destination against DB
+    const matchedDest = allDestinations.find(
+      d => d.id === payload.destination.id ||
+           d.name.toLowerCase() === payload.destination.name.toLowerCase() ||
+           d.slug === payload.destination.slug
+    );
+    const destName = matchedDest ? matchedDest.name : payload.destination.name;
+
+    // 2. Validate route hubs with AI metadata
+    const validatedHubs: TripRouteHub[] = (payload.routeHubs || []).map((hub, idx) => ({
+      ...hub,
+      id: hub.id || `ai-hub-${idx + 1}-${Date.now()}`,
+      order: hub.order || idx + 1,
+      nights: Math.max(1, hub.nights || 1),
+      source: 'AI_PLANNER' as QuoteItemSource,
+      aiSuggested: true
+    }));
+
+    // 3. Recalculate each item via authoritative PricingEngine
+    let recalculatedItems: QuoteItem[] = [];
+    let sumRecalculatedPrice = 0;
+
+    if (payload.items && payload.items.length > 0) {
+      recalculatedItems = payload.items.map(item => {
+        const dbProduct = allProducts.find(p => p.id === item.product.id) || item.product;
+        const adults = item.pax?.adults || payload.pax.adults || 2;
+        const children = item.pax?.children || payload.pax.children || 0;
+        const infants = item.pax?.infants || payload.pax.infants || 0;
+        const travelDate = item.travelDate || payload.travelDates.startDate || '';
+
+        const calc = calculateProductPrice(dbProduct, {
+          productId: dbProduct.id,
+          pricingTier,
+          adults,
+          children,
+          infants,
+          travelDate,
+          targetCurrency: currency,
+          selectedAddonIds: item.selectedAddonIds || []
+        });
+
+        sumRecalculatedPrice += calc.finalTotalSellingPrice;
+
+        return {
+          ...item,
+          product: dbProduct,
+          pax: { adults, children, infants },
+          travelDate,
+          calculation: calc,
+          source: 'AI_PLANNER' as QuoteItemSource,
+          aiSuggested: true
+        };
+      });
+    }
+
+    // 4. Check for price variance between AI plan and live pricing engine
+    const aiExpectedPrice = payload.calculatedSellingPrice || 0;
+    const priceDiff = Math.abs(sumRecalculatedPrice - aiExpectedPrice);
+    const hasVariance = priceDiff > 1;
+
+    if (hasVariance) {
+      setPriceRefreshNotice('Pricing has been refreshed using the latest available rates.');
+    } else {
+      setPriceRefreshNotice(null);
+    }
+
+    // 5. Apply state to Quote Builder
+    setDestination(destName);
+    setTravelStartDate(payload.travelDates.startDate);
+    setTravelEndDate(payload.travelDates.endDate);
+    setRouteHubs(validatedHubs);
+    setPaxConfig({
+      adults: payload.pax.adults,
+      children: payload.pax.children,
+      childAges: payload.pax.childAges || [],
+      infants: payload.pax.infants
+    });
+    setDayThemes(payload.dayThemes || {});
+    setItems(recalculatedItems);
+    setHandoffPayload(payload);
+    setQuoteSource('AI_PLANNER');
+    setActiveQuoteId(null);
+    setCurrentVersion(1);
+    setIsLocked(false);
+
+    return {
+      priceVariance: hasVariance,
+      oldPrice: aiExpectedPrice,
+      newPrice: sumRecalculatedPrice
+    };
   };
 
   // Aggregated financials
@@ -734,6 +890,19 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         activeQuoteId,
         currentVersion,
         isLocked,
+        routeHubs,
+        setRouteHubs,
+        paxConfig,
+        setPaxConfig,
+        dayThemes,
+        setDayThemes,
+        handoffPayload,
+        setHandoffPayload,
+        quoteSource,
+        setQuoteSource,
+        priceRefreshNotice,
+        clearPriceRefreshNotice,
+        loadAiPlannerPayload,
         ...totals,
         savedQuotes,
         saveCurrentQuote,

@@ -219,12 +219,12 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
           </div>
         </div>
 
-        {/* Right: Confidential Wholesale Badge & Action Controls */}
+        {/* Right: Tariff Badge & Action Controls */}
         <div className="flex sm:flex-col items-end justify-between sm:justify-center gap-2.5 shrink-0 w-full sm:w-auto pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
           <div className="text-right">
             <span className="inline-flex items-center space-x-1 text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-1 rounded-md border border-slate-200/80">
               <Lock className="w-2.5 h-2.5 text-slate-400" />
-              <span>Confidential Wholesale</span>
+              <span>{user?.role === 'ADMIN' || user?.role === 'DMC_STAFF' ? 'Confidential Wholesale' : 'Guaranteed Tariff'}</span>
             </span>
             <span className="text-[10px] text-slate-400 block mt-0.5">
               Calculated on Quote Creation
@@ -532,7 +532,8 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
                 {/* Tagged Experience Upgrades */}
                 {taggedUpgrades.map(upg => {
                   const isChecked = selectedAddonIds.includes(upg.id);
-                  const convertedPrice = convertCurrency(upg.adultNetPrice, upg.currency, currency);
+                  const upgMarkup = 1 + ((upg.defaultMarkupPercent || 15) / 100);
+                  const convertedPrice = convertCurrency(upg.adultNetPrice * upgMarkup, upg.currency, currency);
                   return (
                     <label
                       key={upg.id}

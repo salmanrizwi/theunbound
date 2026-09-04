@@ -23,7 +23,6 @@ import {
   Calendar,
   DollarSign,
   Briefcase,
-  Sparkles,
   ArrowRight,
   TrendingUp,
   LayoutDashboard

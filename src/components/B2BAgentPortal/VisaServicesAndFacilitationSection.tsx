@@ -26,6 +26,7 @@ import { Product, CurrencyCode, QuoteItem, Destination, VisaProduct } from '../.
 import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
 import { INITIAL_VISAS } from '../../data/initialVisas';
 import { B2B_INSURANCE_PLANS, B2B_ESIM_PLANS } from '../../utils/b2bQuotationHelpers';
+import { DestinationRelevanceService } from '../../services/destinationRelevanceService';
 
 export interface VisaServicesAndFacilitationSectionProps {
   currentDestination: Destination;
@@ -116,17 +117,9 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
     return allSectionItemsInQuote.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
   }, [allSectionItemsInQuote]);
 
-  // Destination-matched available Visa
+  // Destination-matched available Visa (strictly destination-aware via DestinationRelevanceService)
   const destinationVisas = useMemo(() => {
-    const destName = currentDestination.name.toLowerCase();
-    const destCode = currentDestination.code?.toLowerCase() || '';
-    const filtered = INITIAL_VISAS.filter(v => 
-      v.destinationId === currentDestination.id ||
-      v.country.toLowerCase() === destName ||
-      (destCode && v.countryCode.toLowerCase() === destCode)
-    );
-    if (filtered.length > 0) return filtered;
-    return INITIAL_VISAS.slice(0, 2);
+    return DestinationRelevanceService.getInstance().getRelevantVisas(currentDestination.id);
   }, [currentDestination]);
 
   // Standard Ground Services Catalog tailored to destination

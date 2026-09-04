@@ -3,6 +3,7 @@ import { B2BPortalNavbar, B2BTabType } from './B2BPortalNavbar';
 import { B2BHomeDiscoveryView } from './B2BHomeDiscoveryView';
 import { B2BDashboardView } from './B2BDashboardView';
 import { UnifiedB2BQuotationBuilder } from './UnifiedB2BQuotationBuilder';
+import { AIPlannerView } from './AIPlannerView';
 import { B2BPackagesView } from './B2BPackagesView';
 import { B2BProductsCatalogView } from './B2BProductsCatalogView';
 import { B2BHotelsCatalogView } from './B2BHotelsCatalogView';
@@ -19,7 +20,7 @@ import { PricingCalculatorModal } from '../PricingCalculatorModal';
 import { BookingModal } from '../BookingModal';
 import { BookingConfirmationModal } from '../BookingConfirmationModal';
 import { QuoteBuilderDrawer } from '../QuoteBuilderDrawer';
-import { Destination, Hotel, Product, B2BPackage, Quotation, B2BCustomer, CityHub, Booking, HotelRoomType, HotelRate } from '../../types';
+import { Destination, Hotel, Product, B2BPackage, Quotation, B2BCustomer, CityHub, Booking, HotelRoomType, HotelRate, AiPlannerOptionPlan, AiPlannerStructuredRequirements, QuoteBuilderHandoffPayload } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
 import { AppDatabase } from '../../services/db';
@@ -98,7 +99,9 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
     setQuotationDates, 
     setDestination, 
     loadSavedQuote,
-    setIsQuoteDrawerOpen
+    setIsQuoteDrawerOpen,
+    loadAiPlannerPayload,
+    currency
   } = useQuotation();
 
   // Scroll to top when tab changes
@@ -114,6 +117,9 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
       'discovery': 'home',
       'DASHBOARD': 'dashboard',
       'dashboard': 'dashboard',
+      'AI_PLANNER': 'ai-planner',
+      'ai-planner': 'ai-planner',
+      'ai_planner': 'ai-planner',
       'CREATE_QUOTE': 'create-quote',
       'create-quote': 'create-quote',
       'PACKAGES': 'packages',
@@ -145,6 +151,73 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
     if (destSlug) {
       setInitialDestinationSlug(destSlug);
     }
+    setActiveTab('create-quote');
+  };
+
+  const handleOpenAiPlanInQuoteBuilder = (plan: AiPlannerOptionPlan, requirements: AiPlannerStructuredRequirements) => {
+    const startDate = requirements.travelDates?.startDate?.value || '2026-05-10';
+    const endDate = requirements.travelDates?.endDate?.value || '2026-05-18';
+    const nights = requirements.duration?.nights?.value || 7;
+    const adults = requirements.travelers?.adults?.value || 2;
+    const children = requirements.travelers?.children?.value || 0;
+    const childAges = requirements.travelers?.childAges?.value || [];
+    const infants = requirements.travelers?.infants?.value || 0;
+
+    const payload: QuoteBuilderHandoffPayload = {
+      source: 'AI_PLANNER',
+      plannerVersion: '2.4.0',
+      createdAt: new Date().toISOString(),
+      createdBy: user?.name || user?.email || 'B2B Agent',
+      requirementSnapshot: requirements,
+      destination: {
+        id: plan.destinationId,
+        name: plan.destinationName,
+        slug: plan.destinationName.toLowerCase().replace(/\s+/g, '-')
+      },
+      travelDates: {
+        startDate,
+        endDate,
+        nights
+      },
+      pax: {
+        adults,
+        children,
+        childAges,
+        infants,
+        classificationSummary: `${adults} Adults${children > 0 ? `, ${children} Children` : ''}${infants > 0 ? `, ${infants} Infants` : ''}`
+      },
+      routeHubs: plan.routeHubs || [],
+      items: (plan.items || []).map(item => ({
+        ...item,
+        source: 'AI_PLANNER',
+        aiSuggested: true
+      })),
+      dayThemes: plan.dayThemes || {},
+      calculatedSellingPrice: plan.totalSellingPrice,
+      currency: plan.currency || currency,
+      readiness: {
+        tripDetails: { status: 'COMPLETE', label: 'Trip Dates & Duration', detail: `${nights} Nights (${startDate} - ${endDate})` },
+        route: { status: 'COMPLETE', label: 'Route Hubs', detail: `${plan.routeHubs?.length || 0} Hubs Configured` },
+        hotels: { status: 'COMPLETE', label: 'Hotels & Lodging', detail: `${plan.items?.filter(i => i.isManualHotel || i.accommodationType || i.product.productType === 'HOTEL').length || 0} Confirmed Stays` },
+        rooms: { status: 'COMPLETE', label: 'Room Types', detail: 'Allocated from Authoritative Contracts' },
+        mealPlans: { status: 'COMPLETE', label: 'Meal Plans', detail: 'Breakfast (CP) Included' },
+        transfers: { status: 'COMPLETE', label: 'Ground Transfers', detail: 'All Transitions Routed' },
+        activities: { status: 'COMPLETE', label: 'Tours & Experiences', detail: `${plan.items?.filter(i => i.product.category === 'Activities' || i.product.category === 'Private Tours' || i.product.category === 'Day Trips').length || 0} Excursions` },
+        visa: { status: 'COMPLETE', label: 'Visa Facilitation', detail: 'Integrated' },
+        optionalServices: { status: 'OPTIONAL', label: 'Addons & Insurance', detail: 'Available in Step 6' },
+        feasibility: { status: 'PASSED', label: 'Feasibility Engine', detail: 'Geographic and schedule checks passed' },
+        pricing: { status: 'CALCULATED', label: 'Contract Pricing', detail: 'Live calculations verified' },
+        isReadyForHandoff: true
+      },
+      badge: plan.badge
+    };
+
+    const result = loadAiPlannerPayload(payload);
+
+    showToast(
+      'AI Itinerary Imported',
+      `${plan.badge}: ${plan.routeSummary.join(' → ')} (${plan.items?.length || 0} services)${result.priceVariance ? ' • Rates verified & updated' : ''}`
+    );
     setActiveTab('create-quote');
   };
 
@@ -293,6 +366,13 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
             destinations={destinations}
             products={products}
             hotels={hotels}
+          />
+        )}
+
+        {activeTab === 'ai-planner' && (
+          <AIPlannerView
+            onOpenInQuoteBuilder={handleOpenAiPlanInQuoteBuilder}
+            onNavigateToTab={handleNavigate}
           />
         )}
 

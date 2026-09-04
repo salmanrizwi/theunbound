@@ -63,6 +63,7 @@ import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
 import { TransferSuggestion } from '../../utils/b2bQuotationHelpers';
 import { validateRoomOccupancy, hotelToProduct, manualHotelToProduct } from '../../utils/hotelHelpers';
 import { VisaServicesAndFacilitationSection } from './VisaServicesAndFacilitationSection';
+import { DestinationRelevanceService } from '../../services/destinationRelevanceService';
 
 // Helper to check if a product matches a target city/hub
 export const isProductMatchingCity = (product: Product, targetCityName?: string, targetHubId?: string): boolean => {
@@ -746,7 +747,6 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   };
 
   const handleDeleteHub = (id: string) => {
-    if (routeHubs.length <= 1) return;
     const filtered = routeHubs.filter(h => h.id !== id);
     const reindexed = filtered.map((h, idx) => ({ ...h, order: idx + 1 }));
     setRouteHubs(reindexed);
@@ -1292,25 +1292,27 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
               </div>
 
               {/* Route Sequence Visualizer */}
-              <div className="space-y-2">
-                <span className="text-xs font-black text-slate-700 uppercase tracking-wider block">
-                  Route Sequence:
-                </span>
-                <div className="flex flex-wrap items-center gap-2">
-                  {routeHubs.map((hub, idx) => (
-                    <React.Fragment key={hub.id}>
-                      <div className="bg-slate-900 text-white px-3 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow-2xs">
-                        <span className="text-[#00E5C0]">Day {idx + 1}:</span>
-                        <span>{hub.hubName}</span>
-                        <span className="text-slate-400 font-mono">({hub.nights}N)</span>
-                      </div>
-                      {idx < routeHubs.length - 1 && (
-                        <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" />
-                      )}
-                    </React.Fragment>
-                  ))}
+              {routeHubs.length > 0 ? (
+                <div className="space-y-2">
+                  <span className="text-xs font-black text-slate-700 uppercase tracking-wider block">
+                    Route Sequence:
+                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {routeHubs.map((hub, idx) => (
+                      <React.Fragment key={hub.id}>
+                        <div className="bg-slate-900 text-white px-3 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow-2xs">
+                          <span className="text-[#00E5C0]">Day {idx + 1}:</span>
+                          <span>{hub.hubName}</span>
+                          <span className="text-slate-400 font-mono">({hub.nights}N)</span>
+                        </div>
+                        {idx < routeHubs.length - 1 && (
+                          <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" />
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ) : null}
 
               {/* Route Hubs List */}
               <div className="space-y-3">
@@ -1318,78 +1320,87 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   Configured City Hubs & Stays:
                 </span>
 
-                <div className="space-y-2.5">
-                  {routeHubs.map((hub, idx) => {
-                    const { checkInFormatted, checkOutFormatted } = getHubDates(hub.order, hub.nights || 1);
+                {routeHubs.length === 0 ? (
+                  <div className="p-6 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 text-center space-y-2">
+                    <MapPin className="w-7 h-7 text-slate-400 mx-auto" />
+                    <h4 className="text-xs font-bold text-slate-800">No City Hubs Configured</h4>
+                    <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
+                      Click any destination hub below to add it to your travel route and begin allocating nights.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {routeHubs.map((hub, idx) => {
+                      const { checkInFormatted, checkOutFormatted } = getHubDates(hub.order, hub.nights || 1);
 
-                    return (
-                      <div key={hub.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                        <div className="flex items-center space-x-3">
-                          <div className="w-8 h-8 rounded-xl bg-slate-900 text-[#00E5C0] font-black flex items-center justify-center text-xs shrink-0">
-                            #{hub.order}
+                      return (
+                        <div key={hub.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-8 h-8 rounded-xl bg-slate-900 text-[#00E5C0] font-black flex items-center justify-center text-xs shrink-0">
+                              #{hub.order}
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-bold text-slate-900">{hub.hubName} Hub</h4>
+                              <p className="text-[11px] text-slate-500">
+                                {checkInFormatted} → {checkOutFormatted} • {hub.nights} {hub.nights === 1 ? 'Night' : 'Nights'}
+                              </p>
+                            </div>
                           </div>
-                          <div>
-                            <h4 className="text-xs font-bold text-slate-900">{hub.hubName} Hub</h4>
-                            <p className="text-[11px] text-slate-500">
-                              {checkInFormatted} → {checkOutFormatted} • {hub.nights} {hub.nights === 1 ? 'Night' : 'Nights'}
-                            </p>
-                          </div>
-                        </div>
 
-                        <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
-                          <div className="flex items-center space-x-1 bg-white px-2 py-1 rounded-xl border border-slate-200">
-                            <span className="text-xs text-slate-500 font-semibold">Nights:</span>
+                          <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
+                            <div className="flex items-center space-x-1 bg-white px-2 py-1 rounded-xl border border-slate-200">
+                              <span className="text-xs text-slate-500 font-semibold">Nights:</span>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateHubNights(hub.id, (hub.nights || 1) - 1)}
+                                className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 text-xs font-bold cursor-pointer"
+                              >
+                                -
+                              </button>
+                              <span className="w-6 text-center text-xs font-bold">{hub.nights}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateHubNights(hub.id, (hub.nights || 1) + 1)}
+                                className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 text-xs font-bold cursor-pointer"
+                              >
+                                +
+                              </button>
+                            </div>
+
                             <button
                               type="button"
-                              onClick={() => handleUpdateHubNights(hub.id, (hub.nights || 1) - 1)}
-                              className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 text-xs font-bold cursor-pointer"
+                              disabled={idx === 0}
+                              onClick={() => handleMoveHub(idx, 'UP')}
+                              className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 disabled:opacity-30 cursor-pointer"
+                              title="Move Up"
                             >
-                              -
+                              <ChevronUp className="w-4 h-4" />
                             </button>
-                            <span className="w-6 text-center text-xs font-bold">{hub.nights}</span>
+
                             <button
                               type="button"
-                              onClick={() => handleUpdateHubNights(hub.id, (hub.nights || 1) + 1)}
-                              className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 text-xs font-bold cursor-pointer"
+                              disabled={idx === routeHubs.length - 1}
+                              onClick={() => handleMoveHub(idx, 'DOWN')}
+                              className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 disabled:opacity-30 cursor-pointer"
+                              title="Move Down"
                             >
-                              +
+                              <ChevronDown className="w-4 h-4" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteHub(hub.id)}
+                              className="p-1.5 rounded-lg bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-600 cursor-pointer"
+                              title="Delete Hub"
+                            >
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
-
-                          <button
-                            type="button"
-                            disabled={idx === 0}
-                            onClick={() => handleMoveHub(idx, 'UP')}
-                            className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 disabled:opacity-30 cursor-pointer"
-                            title="Move Up"
-                          >
-                            <ChevronUp className="w-4 h-4" />
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={idx === routeHubs.length - 1}
-                            onClick={() => handleMoveHub(idx, 'DOWN')}
-                            className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 disabled:opacity-30 cursor-pointer"
-                            title="Move Down"
-                          >
-                            <ChevronDown className="w-4 h-4" />
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={routeHubs.length <= 1}
-                            onClick={() => handleDeleteHub(hub.id)}
-                            className="p-1.5 rounded-lg bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-600 disabled:opacity-30 cursor-pointer"
-                            title="Delete Hub"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Add Destination Hub */}
@@ -1490,12 +1501,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
                   const { checkInFormatted, checkOutFormatted } = getHubDates(hub.order, hub.nights || 1);
 
-                  const currentHubHotels = availableHotels.filter(h => 
-                    h.cityName?.toLowerCase() === hub.hubName.toLowerCase() || 
-                    h.destinationId === currentDestination.id ||
-                    h.country?.toLowerCase() === currentDestination.name.toLowerCase()
+                  const hotelsToDisplay = DestinationRelevanceService.getInstance().getRelevantHotels(
+                    currentDestination.id,
+                    hub.hubId || hub.hubName
                   );
-                  const hotelsToDisplay = currentHubHotels.length > 0 ? currentHubHotels : availableHotels;
 
                   const isManualStay = Boolean(
                     hub.isManualHotel || 
@@ -2281,18 +2290,11 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             </div>
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                              {products
-                                .filter(p => {
-                                  const matchDest = p.destinationId === currentDestination.id || 
-                                    p.country?.toLowerCase() === currentDestination.name.toLowerCase();
-                                  if (!matchDest) return false;
-                                  const dayCity = slot.hub?.hubName || currentDestination.name;
-                                  const matchCity = isProductMatchingCity(p, dayCity, slot.hub?.hubId || slot.hub?.id);
-                                  if (!matchCity) return false;
-                                  const alreadyAdded = slot.productItems.some(it => it.product.id === p.id);
-                                  if (alreadyAdded) return false;
-                                  return true;
-                                })
+                              {DestinationRelevanceService.getInstance().getRelevantProducts(
+                                currentDestination.id,
+                                slot.hub?.hubId || slot.hub?.hubName
+                              ).hubActivities
+                                .filter(p => !slot.productItems.some(it => it.product.id === p.id))
                                 .slice(0, 3)
                                 .map(recProd => (
                                   <div
