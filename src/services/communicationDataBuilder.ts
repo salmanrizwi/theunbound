@@ -1081,99 +1081,338 @@ export function generateContextualEmailSubject(
 // WHATSAPP QUOTE MESSAGE FORMATTER (SECTION 16)
 // ----------------------------------------------------
 
+export interface FormatWhatsAppQuoteOptions {
+  useEmojis?: boolean;
+  formatStyle?: 'DETAILED' | 'SUMMARY';
+}
+
 export function formatWhatsAppQuoteFromPayload(
   payload: QuoteCommunicationPayload,
-  customNote?: string
+  customNote?: string,
+  optionsOrUseEmojis?: boolean | FormatWhatsAppQuoteOptions
 ): string {
-  const DIVIDER = '------------------------';
+  // Normalize options
+  const options: FormatWhatsAppQuoteOptions = typeof optionsOrUseEmojis === 'boolean'
+    ? { useEmojis: optionsOrUseEmojis }
+    : (optionsOrUseEmojis || { useEmojis: true, formatStyle: 'DETAILED' });
+
+  const useEmojis = options.useEmojis !== false;
+  const isSummary = options.formatStyle === 'SUMMARY';
+
+  const DIVIDER = useEmojis ? '━━━━━━━━━━━━━━━━━━━━━' : '------------------------';
   const sections: string[] = [];
 
-  // 1. Header
-  const headerLines = [
-    `*THEUNBOUND — TRAVEL PROPOSAL*`,
-    `Quote ID: *${payload.quoteId}*`,
-    ``,
-    `*${payload.tripSummary.destination.toUpperCase()}*`,
-    `*Duration:* ${payload.tripSummary.durationText}`,
-    `*Travelers:* ${payload.tripSummary.travelers.displayText}`,
-    `*Travel Dates:* ${payload.tripSummary.travelDates}`
-  ];
-  if (payload.selectedOptionTitle) {
-    headerLines.push(`*Selected Option:* ${payload.selectedOptionTitle}`);
+  // 1. Header & Trip Overview
+  const headerLines: string[] = [];
+  if (useEmojis) {
+    headerLines.push(
+      `✨ *THEUNBOUND — LUXURY TRAVEL PROPOSAL* ✨`,
+      `📋 *Quote Reference:* *#${payload.quoteId}*`,
+      `👋 *Prepared for:* *${payload.preparedFor.name}*`,
+      ``,
+      `🌍 *Destination:* *${payload.tripSummary.destination.toUpperCase()}*`,
+      `🗓️ *Duration:* ${payload.tripSummary.durationText}`,
+      `👥 *Travelers:* ${payload.tripSummary.travelers.displayText}`,
+      `✈️ *Travel Dates:* ${payload.tripSummary.travelDates}`
+    );
+    if (payload.selectedOptionTitle) {
+      headerLines.push(`🌟 *Curated Option:* ${payload.selectedOptionTitle}`);
+    }
+    if (payload.tripSummary.citiesHubs && payload.tripSummary.citiesHubs.length > 0) {
+      headerLines.push(`🗺️ *Route Highlights:* ${payload.tripSummary.citiesHubs.join(' ➔ ')}`);
+    }
+  } else {
+    headerLines.push(
+      `*THEUNBOUND — TRAVEL PROPOSAL*`,
+      `Quote ID: *#${payload.quoteId}*`,
+      `Prepared for: *${payload.preparedFor.name}*`,
+      ``,
+      `*${payload.tripSummary.destination.toUpperCase()}*`,
+      `Duration: ${payload.tripSummary.durationText}`,
+      `Travelers: ${payload.tripSummary.travelers.displayText}`,
+      `Travel Dates: ${payload.tripSummary.travelDates}`
+    );
+    if (payload.selectedOptionTitle) {
+      headerLines.push(`Selected Option: ${payload.selectedOptionTitle}`);
+    }
+    if (payload.tripSummary.citiesHubs && payload.tripSummary.citiesHubs.length > 0) {
+      headerLines.push(`Route Hubs: ${payload.tripSummary.citiesHubs.join(' -> ')}`);
+    }
   }
   sections.push(headerLines.join('\n'));
 
   // 2. Curated Accommodation by Hub
   if (payload.hotels.length > 0) {
-    const hotelLines = [`*ACCOMMODATION & STAYS*`];
+    const hotelLines: string[] = [
+      useEmojis ? `🏨 *CURATED ACCOMMODATION & LUXURY STAYS*` : `*ACCOMMODATION & STAYS*`
+    ];
     payload.hotels.forEach(h => {
-      hotelLines.push(
-        `• *${h.cityHub.toUpperCase()}* — ${h.nightsCount} ${h.nightsCount === 1 ? 'Night' : 'Nights'}\n  ${h.hotelName} (${h.roomType} • ${h.mealPlan})`
-      );
+      if (useEmojis) {
+        let hotelEntry = `• 🏙️ *${h.cityHub.toUpperCase()}* — *${h.nightsCount}* ${h.nightsCount === 1 ? 'Night' : 'Nights'}\n  ⭐ *${h.hotelName}*\n  🛏️ *Room:* ${h.roomType} | 🍳 *Meal Plan:* ${h.mealPlan}`;
+        if (h.checkInDate && h.checkOutDate) {
+          hotelEntry += `\n  📅 *Stay Dates:* ${h.checkInDate} ➔ ${h.checkOutDate}`;
+        }
+        hotelLines.push(hotelEntry);
+      } else {
+        let hotelEntry = `• *${h.cityHub.toUpperCase()}* — ${h.nightsCount} ${h.nightsCount === 1 ? 'Night' : 'Nights'}\n  ${h.hotelName} (${h.roomType} • ${h.mealPlan})`;
+        if (h.checkInDate && h.checkOutDate) {
+          hotelEntry += `\n  Stay Dates: ${h.checkInDate} to ${h.checkOutDate}`;
+        }
+        hotelLines.push(hotelEntry);
+      }
     });
     sections.push(hotelLines.join('\n'));
   }
 
   // 3. Complete Day-Wise Plan (Section 16 Mandate)
-  if (payload.dayWisePlan.length > 0) {
-    const planLines = [`*DAY-WISE PLAN*`];
+  if (!isSummary && payload.dayWisePlan && payload.dayWisePlan.length > 0) {
+    const planLines: string[] = [
+      useEmojis ? `🗺️ *CHRONOLOGICAL DAY-WISE ITINERARY*` : `*DAY-WISE ITINERARY*`
+    ];
+
     payload.dayWisePlan.forEach(day => {
-      planLines.push(`*Day ${day.dayNumber} — ${day.title}* (${day.date})`);
-      
-      if (day.transfers.length > 0) {
+      const dayHeader = useEmojis
+        ? `📅 *Day ${day.dayNumber} [${day.dayOfWeek ? `${day.dayOfWeek}, ` : ''}${day.date}]:* *${day.title}*`
+        : `*Day ${day.dayNumber} (${day.date}): ${day.title}*`;
+
+      const dayItems: string[] = [dayHeader];
+
+      // Transfers
+      if (day.transfers && day.transfers.length > 0) {
         day.transfers.forEach(t => {
-          planLines.push(`  • Transfer: ${t.title} (${t.pickupLocation} → ${t.dropLocation})`);
+          if (useEmojis) {
+            dayItems.push(`  🚗 *Private Transfer:* ${t.title}\n     📍 ${t.pickupLocation} ➔ ${t.dropLocation}${t.pickupTime ? ` (${t.pickupTime})` : ''}${t.vehicleType ? ` [${t.vehicleType}]` : ''}`);
+          } else {
+            dayItems.push(`  • Transfer: ${t.title} (${t.pickupLocation} -> ${t.dropLocation})${t.pickupTime ? ` @ ${t.pickupTime}` : ''}`);
+          }
         });
       }
-      if (day.activities.length > 0) {
+
+      // Transit / Rail
+      if (day.transportServices && day.transportServices.length > 0) {
+        day.transportServices.forEach(r => {
+          if (useEmojis) {
+            dayItems.push(`  🚅 *Transit / Train:* ${r.title} (${r.route}) [${r.classType}]`);
+          } else {
+            dayItems.push(`  • Rail / Transit: ${r.title} (${r.route}) [${r.classType}]`);
+          }
+        });
+      }
+
+      // Activities
+      if (day.activities && day.activities.length > 0) {
         day.activities.forEach(a => {
-          planLines.push(`  • Activity: ${a.title}${a.time ? ` @ ${a.time}` : ''}`);
+          if (useEmojis) {
+            let actLine = `  🎟️ *Curated Experience:* ${a.title}${a.time ? ` (@ ${a.time})` : ''}`;
+            if (a.location) {
+              actLine += `\n     📍 Location: ${a.location}`;
+            }
+            if (a.inclusions && a.inclusions.length > 0) {
+              actLine += `\n     ✨ Inclusions: ${a.inclusions.join(', ')}`;
+            }
+            if (a.specialInstructions) {
+              actLine += `\n     💡 Note: ${a.specialInstructions}`;
+            }
+            dayItems.push(actLine);
+          } else {
+            let actLine = `  • Activity: ${a.title}${a.time ? ` @ ${a.time}` : ''}`;
+            if (a.location) {
+              actLine += ` [${a.location}]`;
+            }
+            if (a.inclusions && a.inclusions.length > 0) {
+              actLine += ` (Includes: ${a.inclusions.join(', ')})`;
+            }
+            dayItems.push(actLine);
+          }
         });
       }
+
+      // Hotel stay
       if (day.hotelStay) {
-        planLines.push(`  • Hotel: ${day.hotelStay.hotelName}${day.hotelStay.checkIn ? ' [Check-in]' : ''}`);
+        if (useEmojis) {
+          dayItems.push(`  🏨 *Hotel Stay:* ${day.hotelStay.hotelName}${day.hotelStay.checkIn ? ' 🔑 [Check-in]' : ''}`);
+        } else {
+          dayItems.push(`  • Hotel: ${day.hotelStay.hotelName}${day.hotelStay.checkIn ? ' [Check-in]' : ''}`);
+        }
       }
-      if (day.meals.length > 0 && day.meals[0] !== 'At Leisure') {
-        planLines.push(`  • Meals: ${day.meals.join(', ')}`);
+
+      // Meals
+      if (day.meals && day.meals.length > 0 && day.meals[0] !== 'At Leisure') {
+        if (useEmojis) {
+          dayItems.push(`  🍽️ *Meals Included:* ${day.meals.join(', ')}`);
+        } else {
+          dayItems.push(`  • Meals: ${day.meals.join(', ')}`);
+        }
       }
-      planLines.push(`  • Overnight: ${day.overnight}`);
-      planLines.push(``);
+
+      // Overnight
+      if (useEmojis) {
+        dayItems.push(`  🛌 *Overnight Hub:* ${day.overnight}`);
+      } else {
+        dayItems.push(`  • Overnight: ${day.overnight}`);
+      }
+
+      planLines.push(dayItems.join('\n'));
+      planLines.push(useEmojis ? `┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈` : `------------------------`);
     });
-    sections.push(planLines.join('\n').trim());
+
+    // Remove trailing mini divider
+    if (planLines[planLines.length - 1].startsWith('┈') || planLines[planLines.length - 1].startsWith('-')) {
+      planLines.pop();
+    }
+
+    sections.push(planLines.join('\n'));
   }
 
-  // 4. Visa & Special Services
-  if (payload.visaServices.length > 0) {
-    const visaLines = [`*VISA & TRAVEL SERVICES*`];
-    payload.visaServices.forEach(v => {
-      visaLines.push(`• ${v.serviceName} (${v.destination})`);
+  // 4. Package Inclusions & Privileges
+  const inclusionLines: string[] = [
+    useEmojis ? `💎 *PACKAGE INCLUSIONS & PRIVILEGES*` : `*PACKAGE INCLUSIONS*`
+  ];
+  if (payload.inclusions && payload.inclusions.length > 0) {
+    payload.inclusions.forEach(inc => {
+      inclusionLines.push(useEmojis ? `✅ ${inc}` : `• ${inc}`);
     });
+  } else {
+    const defaultInclusions = [
+      'All private door-to-door ground transfers with professional chauffeur',
+      'Handpicked luxury accommodation with daily gourmet breakfast',
+      'Pre-booked priority entrance tickets to all scheduled tours & attractions',
+      'English-speaking certified local guide on scheduled tours',
+      '24/7 dedicated emergency ground dispatch & concierge assistance via WhatsApp',
+      'All applicable destination road tolls, fuel fees & local service taxes'
+    ];
+    defaultInclusions.forEach(inc => {
+      inclusionLines.push(useEmojis ? `✅ ${inc}` : `• ${inc}`);
+    });
+  }
+  sections.push(inclusionLines.join('\n'));
+
+  // 5. Exclusions & Transparency
+  const exclusionLines: string[] = [
+    useEmojis ? `ℹ️ *IMPORTANT EXCLUSIONS / TRANSPARENCY*` : `*EXCLUSIONS*`
+  ];
+  if (payload.exclusions && payload.exclusions.length > 0) {
+    payload.exclusions.forEach(exc => {
+      exclusionLines.push(useEmojis ? `❌ ${exc}` : `• ${exc}`);
+    });
+  } else {
+    const defaultExclusions = [
+      'International flights (available upon request from our air ticketing desk)',
+      'Personal expenditures, laundry, telephone calls & minibar charges',
+      'City tourist taxes payable directly at hotel reception upon check-out (if applicable)',
+      'Optional travel insurance & personal gratuities'
+    ];
+    defaultExclusions.forEach(exc => {
+      exclusionLines.push(useEmojis ? `❌ ${exc}` : `• ${exc}`);
+    });
+  }
+  sections.push(exclusionLines.join('\n'));
+
+  // 6. Visa & Special Services (if applicable)
+  if ((payload.visaServices && payload.visaServices.length > 0) || (payload.otherServices && payload.otherServices.length > 0)) {
+    const visaLines: string[] = [
+      useEmojis ? `🛂 *VISA & CONCIERGE SERVICES*` : `*VISA & TRAVEL SERVICES*`
+    ];
+    if (payload.visaServices) {
+      payload.visaServices.forEach(v => {
+        if (useEmojis) {
+          visaLines.push(`• 📑 *${v.serviceName}* (${v.destination}) — ${v.applicability || 'Document verification & submission support'}`);
+        } else {
+          visaLines.push(`• Visa: ${v.serviceName} (${v.destination}) — ${v.applicability || 'Documentation support'}`);
+        }
+      });
+    }
+    if (payload.otherServices) {
+      payload.otherServices.forEach(s => {
+        if (useEmojis) {
+          visaLines.push(`• 📶 *${s.name}* (${s.category})`);
+        } else {
+          visaLines.push(`• Service: ${s.name} (${s.category})`);
+        }
+      });
+    }
     sections.push(visaLines.join('\n'));
   }
 
-  // 5. Total Selling Price & Validity
-  const priceLines = [
-    `*PACKAGE INVESTMENT*`,
-    `*TOTAL:* *${payload.pricing.formattedPrice}*`,
-    `_(Includes all private transfers, scheduled activities, stays & taxes)_`,
-    ``,
-    `*Quote Valid Until:* ${payload.pricing.validUntilText}`
-  ];
+  // 7. Investment & Pricing
+  const priceLines: string[] = [];
+  if (useEmojis) {
+    priceLines.push(
+      `💰 *PACKAGE INVESTMENT SUMMARY*`,
+      `🏷️ *TOTAL FINAL SELLING PRICE:* *${payload.pricing.formattedPrice}*`,
+      `👥 *Travelers:* ${payload.tripSummary.travelers.displayText}`,
+      `🔒 *Taxes & Fees:* Fully Included — Zero Hidden Surcharges`,
+      `⏳ *Price Guaranteed Until:* *${payload.pricing.validUntilText}*`
+    );
+  } else {
+    priceLines.push(
+      `*PACKAGE INVESTMENT*`,
+      `Total Final Selling Price: *${payload.pricing.formattedPrice}*`,
+      `Travelers: ${payload.tripSummary.travelers.displayText}`,
+      `Taxes & Fees: Included`,
+      `Quote Valid Until: ${payload.pricing.validUntilText}`
+    );
+  }
   sections.push(priceLines.join('\n'));
 
-  // 6. Custom Note
+  // 8. Custom Note (if provided)
   if (customNote && customNote.trim()) {
-    sections.push(`*SPECIAL NOTES*\n${customNote.trim()}`);
+    if (useEmojis) {
+      sections.push(`📝 *PERSONAL NOTE FROM YOUR TRAVEL DESIGNER:*\n"${customNote.trim()}"`);
+    } else {
+      sections.push(`*SPECIAL NOTES:*\n${customNote.trim()}`);
+    }
   }
 
-  // 7. Contact / Sign-off
-  const closingLines = [
-    `*ASSISTANCE & CUSTOMIZATION*`,
-    `Prepared by: *${payload.preparedBy.name}*`,
-    payload.preparedBy.agency ? `${payload.preparedBy.agency}` : `TheUnbound DMC Global Partner Network`,
-    payload.preparedBy.phone ? `WhatsApp / Tel: ${payload.preparedBy.phone}` : ''
-  ].filter(Boolean);
-  sections.push(closingLines.join('\n'));
+  // 9. Interactive Quick Replies & Call to Actions (MANDATE)
+  const interactiveLines: string[] = [];
+  if (useEmojis) {
+    interactiveLines.push(
+      `📲 *INTERACTIVE QUICK REPLIES (TAP TO RESPOND):*`,
+      `To proceed or customize, simply reply to this message:`,
+      ``,
+      `1️⃣ *Reply "1" or "CONFIRM"* ➔ Lock in dates & receive booking voucher + invoice`,
+      `2️⃣ *Reply "2" or "CUSTOMIZE"* ➔ Adjust dates, swap hotels, or customize activities`,
+      `3️⃣ *Reply "3" or "CALL ME"* ➔ Request a quick consultation call with our destination specialist`,
+      `4️⃣ *Reply "4" or "PDF"* ➔ Receive full high-resolution official PDF proposal brochure`,
+      ``,
+      `💬 *Have a question?* Reply directly to this WhatsApp chat — our concierge desk is online to assist you!`
+    );
+  } else {
+    interactiveLines.push(
+      `*HOW TO PROCEED (QUICK REPLIES):*`,
+      `Reply to this message with any of the following options:`,
+      `[1] Confirm & Request Booking Invoice`,
+      `[2] Customize Hotels, Dates or Itinerary`,
+      `[3] Request a Call with our Destination Specialist`,
+      `[4] Request Official PDF Proposal Document`,
+      ``,
+      `For any questions or changes, please reply directly to this chat.`
+    );
+  }
+  sections.push(interactiveLines.join('\n'));
+
+  // 10. Contact / Dedicated Concierge Sign-off
+  const closingLines: string[] = [];
+  if (useEmojis) {
+    closingLines.push(
+      `🛎️ *DEDICATED TRAVEL CONCIERGE*`,
+      `👤 *${payload.preparedBy.name}*`,
+      `🏢 ${payload.preparedBy.agency || 'TheUnbound Luxury DMC'}`,
+      payload.preparedBy.phone ? `📞 WhatsApp / Direct: ${payload.preparedBy.phone}` : '📞 WhatsApp: +91-9811654959',
+      payload.preparedBy.email ? `✉️ Email: ${payload.preparedBy.email}` : '✉️ Email: concierge@theunbound.in',
+      `🌐 *TheUnbound Global Partner Network*`
+    );
+  } else {
+    closingLines.push(
+      `*TRAVEL CONCIERGE & DESK*`,
+      `Prepared by: *${payload.preparedBy.name}*`,
+      `Agency: ${payload.preparedBy.agency || 'TheUnbound Luxury DMC'}`,
+      payload.preparedBy.phone ? `WhatsApp / Tel: ${payload.preparedBy.phone}` : 'WhatsApp: +91-9811654959',
+      payload.preparedBy.email ? `Email: ${payload.preparedBy.email}` : 'Email: concierge@theunbound.in'
+    );
+  }
+  sections.push(closingLines.filter(Boolean).join('\n'));
 
   const fullMessage = sections.join(`\n\n${DIVIDER}\n\n`);
 

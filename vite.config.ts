@@ -62,9 +62,6 @@ export default defineConfig(() => {
             if (id.includes('src/components/AIPlanner/')) {
               return 'app-ai-planner';
             }
-            if (id.includes('src/components/Operations/')) {
-              return 'app-operations';
-            }
             if (id.includes('src/services/db.ts')) {
               return 'app-db';
             }

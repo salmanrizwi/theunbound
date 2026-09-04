@@ -55,6 +55,7 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
   const [saveToProfile, setSaveToProfile] = useState<boolean>(true);
   const [customNote, setCustomNote] = useState<string>('');
   const [includeEmojis, setIncludeEmojis] = useState<boolean>(true);
+  const [formatStyle, setFormatStyle] = useState<'DETAILED' | 'SUMMARY'>('DETAILED');
   const [copied, setCopied] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [shareSuccessNotice, setShareSuccessNotice] = useState<string | null>(null);
@@ -82,9 +83,10 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
       selectedOptionIndexOrId: selectedOptionIndex,
       senderBranding,
       customNote,
-      useEmojis: includeEmojis
+      useEmojis: includeEmojis,
+      formatStyle
     });
-  }, [quote, selectedOptionIndex, senderBranding, customNote, includeEmojis]);
+  }, [quote, selectedOptionIndex, senderBranding, customNote, includeEmojis, formatStyle]);
 
   // Real-time phone validation
   const phoneValidation = useMemo(() => {
@@ -311,46 +313,132 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
 
           {/* OPTIONAL CONSULTANT NOTE */}
           <div className="space-y-1.5">
-            <label htmlFor="whatsapp-custom-note" className="text-xs font-semibold text-slate-700">
-              Personalized Note / Add-on Note <span className="text-slate-400 text-[11px] font-normal">(Optional)</span>
-            </label>
+            <div className="flex items-center justify-between">
+              <label htmlFor="whatsapp-custom-note" className="text-xs font-semibold text-slate-700">
+                Personalized Consultant Note <span className="text-slate-400 text-[11px] font-normal">(Optional)</span>
+              </label>
+            </div>
             <input
               id="whatsapp-custom-note"
               type="text"
               value={customNote}
               onChange={e => setCustomNote(e.target.value)}
-              placeholder="e.g. Rate guaranteed until Friday. Complimentary room upgrade confirmed."
+              placeholder="e.g. Rate guaranteed for 48 hrs. Private airport chauffeur upgrade confirmed."
               className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-emerald-500"
             />
+            {/* QUICK PRESET CHIPS */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <span className="text-[10px] font-medium text-slate-400">Quick additions:</span>
+              {[
+                'Special rate guaranteed for 48 hrs',
+                'Complimentary room upgrade confirmed',
+                'Private chauffeur airport transfer included',
+                'Custom flights available upon request'
+              ].map((preset, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => {
+                    if (customNote.trim()) {
+                      if (!customNote.includes(preset)) {
+                        setCustomNote(`${customNote.trim()}. ${preset}`);
+                      }
+                    } else {
+                      setCustomNote(preset);
+                    }
+                  }}
+                  className="px-2 py-0.5 rounded-lg bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-600 border border-slate-200/80 hover:border-emerald-200 text-[10px] font-medium transition-colors cursor-pointer"
+                >
+                  + {preset}
+                </button>
+              ))}
+              {customNote && (
+                <button
+                  type="button"
+                  onClick={() => setCustomNote('')}
+                  className="text-[10px] text-red-500 hover:text-red-700 font-medium px-1 cursor-pointer"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
 
           {/* LIVE MESSAGE PREVIEW */}
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center space-x-2">
                 <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
                   WhatsApp Message Preview
                 </span>
+                
+                {/* INTERACTIVE EMOJIS TOGGLE BUTTON */}
                 <button
                   type="button"
+                  id="toggle-whatsapp-emojis"
                   onClick={() => setIncludeEmojis(!includeEmojis)}
-                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border transition-all cursor-pointer ${
+                  className={`px-3 py-1 rounded-full text-xs font-bold border transition-all flex items-center space-x-1.5 cursor-pointer shadow-2xs ${
                     includeEmojis
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                      : 'bg-slate-100 text-slate-600 border-slate-300'
+                      ? 'bg-gradient-to-r from-emerald-50 to-teal-50 text-emerald-800 border-emerald-300 ring-2 ring-emerald-400/20'
+                      : 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200/70'
                   }`}
-                  title="Toggle emojis in WhatsApp proposal"
+                  title="Toggle emojis and interactive visual formatting in WhatsApp message"
                 >
-                  {includeEmojis ? '✨ Emojis: ON' : 'Emojis: OFF (Plain)'}
+                  <span>{includeEmojis ? '✨' : '📄'}</span>
+                  <span>{includeEmojis ? 'Interactive Emojis: ACTIVE' : 'Emojis: OFF (Plain Text)'}</span>
                 </button>
               </div>
-              <span className="text-[10px] font-mono text-slate-400">
-                {generatedMessage.length} characters
+
+              <div className="flex items-center space-x-2">
+                {/* FORMAT STYLE SELECTOR */}
+                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-[10px] font-medium">
+                  <button
+                    type="button"
+                    onClick={() => setFormatStyle('DETAILED')}
+                    className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                      formatStyle === 'DETAILED'
+                        ? 'bg-white text-slate-900 font-bold shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Detailed Itinerary
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormatStyle('SUMMARY')}
+                    className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                      formatStyle === 'SUMMARY'
+                        ? 'bg-white text-slate-900 font-bold shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Executive Summary
+                  </button>
+                </div>
+
+                <span className="text-[10px] font-mono text-slate-400">
+                  {generatedMessage.length} chars
+                </span>
+              </div>
+            </div>
+
+            {/* STATUS BANNER */}
+            <div className="flex items-center justify-between text-[11px] px-3 py-1.5 bg-slate-800 text-slate-300 rounded-t-xl border-x border-t border-slate-700">
+              <div className="flex items-center space-x-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="font-medium text-slate-200">
+                  {includeEmojis 
+                    ? '✨ Interactive Rich Travel Emojis & Quick Action Replies' 
+                    : '📄 Plain Text Format (Corporate / Minimalist)'}
+                </span>
+              </div>
+              <span className="text-[10px] text-slate-400 font-mono">
+                {formatStyle === 'DETAILED' ? 'Full Day-by-Day' : 'Summary'}
               </span>
             </div>
 
             <div
-              className="relative rounded-2xl bg-slate-900 text-slate-100 p-4 text-xs max-h-56 overflow-y-auto border border-slate-800 shadow-inner leading-relaxed whitespace-pre-wrap select-text"
+              className="relative rounded-b-xl bg-slate-900 text-slate-100 p-4 text-xs max-h-60 overflow-y-auto border border-slate-800 shadow-inner leading-relaxed whitespace-pre-wrap select-text"
               style={{
                 fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif'
               }}

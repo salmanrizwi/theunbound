@@ -73,6 +73,7 @@ export const INITIAL_B2B_PACKAGES: B2BPackage[] = [
       'Personal incidental expenses and discretionary gratuities'
     ],
     baseNetCostUSD: 3450,
+    finalSellingPriceUSD: 4650,
     suggestedSellingPriceUSD: 4650,
     currency: 'USD',
     tripType: 'LUXURY',
@@ -146,6 +147,7 @@ export const INITIAL_B2B_PACKAGES: B2BPackage[] = [
       'Personal expenditures'
     ],
     baseNetCostUSD: 3890,
+    finalSellingPriceUSD: 5250,
     suggestedSellingPriceUSD: 5250,
     currency: 'USD',
     tripType: 'CULTURAL',
@@ -224,6 +226,7 @@ export const INITIAL_B2B_PACKAGES: B2BPackage[] = [
       'Personal meals and city tourist taxes'
     ],
     baseNetCostUSD: 4120,
+    finalSellingPriceUSD: 5690,
     suggestedSellingPriceUSD: 5690,
     currency: 'USD',
     tripType: 'LUXURY',
@@ -295,6 +298,7 @@ export const INITIAL_B2B_PACKAGES: B2BPackage[] = [
       'Personal shopping'
     ],
     baseNetCostUSD: 4350,
+    finalSellingPriceUSD: 5950,
     suggestedSellingPriceUSD: 5950,
     currency: 'USD',
     tripType: 'HONEYMOON',
@@ -371,6 +375,7 @@ export const INITIAL_B2B_PACKAGES: B2BPackage[] = [
       'Personal incidental expenses'
     ],
     baseNetCostUSD: 3680,
+    finalSellingPriceUSD: 4980,
     suggestedSellingPriceUSD: 4980,
     currency: 'USD',
     tripType: 'ADVENTURE',
@@ -452,6 +457,7 @@ export const INITIAL_B2B_PACKAGES: B2BPackage[] = [
     ],
     exclusions: ['International flights', 'Personal discretionary expenses and gratuities'],
     baseNetCostUSD: 5400,
+    finalSellingPriceUSD: 6750,
     suggestedSellingPriceUSD: 6750,
     currency: 'USD',
     tripType: 'LUXURY',
@@ -532,6 +538,7 @@ export const INITIAL_B2B_PACKAGES: B2BPackage[] = [
     ],
     exclusions: ['Domestic flight BKK -> HKT', 'Personal expenses'],
     baseNetCostUSD: 4600,
+    finalSellingPriceUSD: 5900,
     suggestedSellingPriceUSD: 5900,
     currency: 'USD',
     tripType: 'LUXURY',
@@ -601,6 +608,7 @@ export const INITIAL_B2B_PACKAGES: B2BPackage[] = [
     ],
     exclusions: ['Airfare', 'Personal purchases'],
     baseNetCostUSD: 3100,
+    finalSellingPriceUSD: 3950,
     suggestedSellingPriceUSD: 3950,
     currency: 'SGD',
     tripType: 'LUXURY',

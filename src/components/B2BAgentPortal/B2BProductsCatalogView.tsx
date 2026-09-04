@@ -257,17 +257,17 @@ export const B2BProductsCatalogView: React.FC<B2BProductsCatalogViewProps> = ({
                   {/* Price Row */}
                   <div className="pt-2 border-t border-slate-100 flex items-baseline justify-between">
                     <div>
-                      <span className="text-[10px] text-slate-400 block font-medium">B2B Net Tariff</span>
-                      <span className="text-sm font-extrabold text-slate-900 font-mono">
-                        {formatCurrency(prod.adultNetPrice, prod.currency || currency)}
-                      </span>
+                      <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
+                      <div className="flex items-baseline space-x-1">
+                        <span className="text-sm font-extrabold text-slate-900 font-mono">
+                          {formatCurrency(prod.sellingPriceStartingFrom, prod.currency || currency)}
+                        </span>
+                        <span className="text-[10px] text-slate-400">/ person</span>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <span className="text-[10px] text-slate-400 block font-medium">Suggested Retail</span>
-                      <span className="text-xs font-bold text-emerald-600 font-mono">
-                        {formatCurrency(prod.sellingPriceStartingFrom, prod.currency || currency)}
-                      </span>
-                    </div>
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-md">
+                      Contracted Rate
+                    </span>
                   </div>
 
                     {/* 3 Standard Actions */}
@@ -483,10 +483,13 @@ export const B2BProductsCatalogView: React.FC<B2BProductsCatalogViewProps> = ({
             {/* Fixed Footer */}
             <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0 gap-3">
               <div>
-                <span className="text-[10px] text-slate-400 block font-medium">B2B Net Tariff</span>
-                <span className="text-base font-extrabold text-slate-900 font-mono">
-                  {formatCurrency(selectedProductDetails.adultNetPrice, selectedProductDetails.currency || currency)}
-                </span>
+                <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
+                <div className="flex items-baseline space-x-1">
+                  <span className="text-base font-extrabold text-slate-900 font-mono">
+                    {formatCurrency(selectedProductDetails.sellingPriceStartingFrom, selectedProductDetails.currency || currency)}
+                  </span>
+                  <span className="text-xs text-slate-500 font-medium">/ person</span>
+                </div>
               </div>
 
               <div className="flex items-center space-x-2">

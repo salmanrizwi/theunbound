@@ -722,10 +722,10 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
 
                       <div className="text-right">
                         <span className="text-[10px] font-bold text-[#008972] uppercase tracking-wider block">
-                          Suggested Selling
+                          Final Selling Price
                         </span>
                         <span className="text-sm font-black text-slate-900">
-                          {formatCurrency(pkg.suggestedSellingPriceUSD || (pkg.baseNetCostUSD * 1.3), pkg.currency || 'USD')}
+                          {formatCurrency(pkg.finalSellingPriceUSD || pkg.suggestedSellingPriceUSD || (pkg.baseNetCostUSD * 1.3), pkg.currency || 'USD')}
                         </span>
                       </div>
                     </div>
@@ -1609,10 +1609,12 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                             ...editingPackage,
                             baseNetCostUSD: net,
                             suggestedSellingPriceUSD: suggested,
+                            finalSellingPriceUSD: suggested,
                             pricingConfiguration: {
                               ...(editingPackage.pricingConfiguration || { pricingMode: 'LIVE', currency: 'USD' }),
                               baseNetCostUSD: net,
-                              suggestedSellingPriceUSD: suggested
+                              suggestedSellingPriceUSD: suggested,
+                              finalSellingPriceUSD: suggested
                             }
                           });
                         }}
@@ -1637,10 +1639,12 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                           setEditingPackage({
                             ...editingPackage,
                             suggestedSellingPriceUSD: suggested,
+                            finalSellingPriceUSD: suggested,
                             pricingConfiguration: {
                               ...(editingPackage.pricingConfiguration || { pricingMode: 'LIVE', currency: 'USD', baseNetCostUSD: net }),
                               buyerMarkupPercent: markup,
-                              suggestedSellingPriceUSD: suggested
+                              suggestedSellingPriceUSD: suggested,
+                              finalSellingPriceUSD: suggested
                             }
                           });
                         }}
@@ -1701,9 +1705,9 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] uppercase text-emerald-300 font-bold block">Retail Selling Price</span>
+                        <span className="text-[10px] uppercase text-emerald-300 font-bold block">Final Selling Price (Retail)</span>
                         <span className="text-xl font-black text-amber-300 font-mono">
-                          {formatCurrency(editingPackage.suggestedSellingPriceUSD || (editingPackage.baseNetCostUSD * 1.25), 'USD')}
+                          {formatCurrency(editingPackage.finalSellingPriceUSD || editingPackage.suggestedSellingPriceUSD || (editingPackage.baseNetCostUSD * 1.25), 'USD')}
                         </span>
                       </div>
                     </div>

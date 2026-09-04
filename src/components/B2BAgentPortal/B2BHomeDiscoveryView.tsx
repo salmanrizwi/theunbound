@@ -35,7 +35,7 @@ import {
 } from 'lucide-react';
 import { Destination, Hotel, Product, B2BPackage, CityHub, Quotation } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
-import { formatCurrency } from '../../services/pricingEngine';
+import { formatCurrency, calculatePackagePrice } from '../../services/pricingEngine';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { VISA_CATALOG, VisaProduct } from './B2BVisaView';
@@ -327,7 +327,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
   const FAQS = [
     {
       q: 'How do TheUnbound DMC wholesale contracted tariffs work?',
-      a: 'All rates displayed in your B2B portal are net confidential wholesale contract rates directly negotiated with local hotels, chauffeured fleets, and licensed tour operators. You can freely set your client markup percentage or use suggested selling prices.'
+      a: 'All inventory and services in your B2B portal reflect direct contracted operations negotiated with local hotels, chauffeured fleets, and licensed tour operators. All client proposals display the authoritative Final Selling Price with zero internal cost disclosures.'
     },
     {
       q: 'What is the guaranteed Ground Operations SLA?',
@@ -940,7 +940,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
             {hotels.slice(0, 4).map(hotel => {
               const inQuote = isHotelInQuote(hotel.id);
               const room = hotel.roomTypes?.[0];
-              const rateUSD = room?.rates?.[0]?.adultNettCost || room?.rates?.[0]?.doubleNetRate || 380;
+              const hotelSellingRateUSD = hotel.startingSellingPrice || Math.round((room?.rates?.[0]?.adultNettCost || room?.rates?.[0]?.doubleNetRate || hotel.startingNetPrice || 380) * 1.25);
               return (
                 <div
                   key={hotel.id}
@@ -974,10 +974,13 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
 
                     <div className="pt-2 border-t border-slate-100 flex items-baseline justify-between">
                       <div>
-                        <span className="text-[10px] text-slate-400 block font-medium">B2B Net / Night</span>
-                        <span className="text-sm font-extrabold text-slate-900 font-mono">
-                          {formatCurrency(rateUSD, currency)}
-                        </span>
+                        <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
+                        <div className="flex items-baseline space-x-1">
+                          <span className="text-sm font-extrabold text-slate-900 font-mono">
+                            {formatCurrency(hotelSellingRateUSD, currency)}
+                          </span>
+                          <span className="text-[10px] text-slate-400">/ night</span>
+                        </div>
                       </div>
                       <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
                         Instant SLA
@@ -1081,13 +1084,16 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
 
                   <div className="pt-3 border-t border-slate-100 flex items-baseline justify-between">
                     <div>
-                      <span className="text-[10px] text-slate-400 block font-medium">Wholesale Tariff / Pax</span>
-                      <span className="text-base font-extrabold text-slate-900 font-mono">
-                        {formatCurrency(pkg.baseNetCostUSD, currency)}
-                      </span>
+                      <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
+                      <div className="flex items-baseline space-x-1">
+                        <span className="text-base font-extrabold text-slate-900 font-mono">
+                          {formatCurrency(calculatePackagePrice({ packageItem: pkg, targetCurrency: currency }).pricePerPerson, currency)}
+                        </span>
+                        <span className="text-[11px] text-slate-500 font-medium">/ person</span>
+                      </div>
                     </div>
-                    <span className="text-xs font-bold text-emerald-600 font-mono">
-                      Rec. {formatCurrency(pkg.suggestedSellingPriceUSD, currency)}
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-md">
+                      Authoritative
                     </span>
                   </div>
 

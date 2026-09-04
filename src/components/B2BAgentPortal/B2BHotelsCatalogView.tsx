@@ -191,7 +191,7 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
         {filteredHotels.map(hotel => {
           const inQuote = isHotelInQuote(hotel.id);
           const room = hotel.roomTypes?.[0];
-          const rateUSD = room?.rates?.[0]?.adultNettCost || room?.rates?.[0]?.doubleNetRate || hotel.startingNetPrice || 380;
+          const finalSellingPriceUSD = hotel.startingSellingPrice || Math.round((room?.rates?.[0]?.adultNettCost || room?.rates?.[0]?.doubleNetRate || hotel.startingNetPrice || 380) * 1.25);
 
           return (
             <div
@@ -244,10 +244,13 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
                 {/* Price Row */}
                 <div className="pt-3 border-t border-slate-100 flex items-baseline justify-between">
                   <div>
-                    <span className="text-[10px] text-slate-400 block font-medium">B2B Net Tariff / Night</span>
-                    <span className="text-base font-black text-slate-900 font-mono">
-                      {formatCurrency(rateUSD, currency)}
-                    </span>
+                    <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
+                    <div className="flex items-baseline space-x-1">
+                      <span className="text-base font-black text-slate-900 font-mono">
+                        {formatCurrency(finalSellingPriceUSD, currency)}
+                      </span>
+                      <span className="text-[10px] text-slate-400">/ night</span>
+                    </div>
                   </div>
                   <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
                     Direct Allotment

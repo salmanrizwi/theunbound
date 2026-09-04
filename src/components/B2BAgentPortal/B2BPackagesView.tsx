@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { B2BPackage, CurrencyCode } from '../../types';
 import { AppDatabase } from '../../services/db';
-import { formatCurrency } from '../../services/pricingEngine';
+import { formatCurrency, calculatePackagePrice } from '../../services/pricingEngine';
 import { useQuotation } from '../../context/QuotationContext';
 
 interface B2BPackagesViewProps {
@@ -198,13 +198,16 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
             <div className="p-5 pt-3 border-t border-slate-100 space-y-3 bg-slate-50/50">
               <div className="flex items-baseline justify-between">
                 <div>
-                  <span className="text-[10px] text-slate-400 block leading-tight font-medium">Wholesale Net From</span>
-                  <span className="text-base font-black text-slate-900 font-mono">
-                    {formatCurrency(pkg.baseNetCostUSD, currency)}
-                  </span>
+                  <span className="text-[10px] text-slate-400 block leading-tight font-bold uppercase tracking-wider">Final Selling Price</span>
+                  <div className="flex items-baseline space-x-1">
+                    <span className="text-base font-black text-slate-900 font-mono">
+                      {formatCurrency(calculatePackagePrice({ packageItem: pkg, targetCurrency: currency }).pricePerPerson, currency)}
+                    </span>
+                    <span className="text-[11px] text-slate-500 font-medium">/ person</span>
+                  </div>
                 </div>
-                <span className="text-xs font-bold text-emerald-600 font-mono">
-                  Rec. {formatCurrency(pkg.suggestedSellingPriceUSD, currency)}
+                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-md">
+                  Authoritative Rate
                 </span>
               </div>
 
@@ -333,10 +336,13 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
             {/* Fixed Footer */}
             <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0 gap-3">
               <div>
-                <span className="text-[10px] text-slate-400 block font-medium">Wholesale Tariff / Person</span>
-                <span className="text-base font-extrabold text-slate-900 font-mono">
-                  {formatCurrency(selectedPackageDetails.baseNetCostUSD, currency)}
-                </span>
+                <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
+                <div className="flex items-baseline space-x-1">
+                  <span className="text-base font-extrabold text-slate-900 font-mono">
+                    {formatCurrency(calculatePackagePrice({ packageItem: selectedPackageDetails, targetCurrency: currency }).pricePerPerson, currency)}
+                  </span>
+                  <span className="text-xs text-slate-500 font-medium">/ person</span>
+                </div>
               </div>
 
               <div className="flex items-center space-x-2">

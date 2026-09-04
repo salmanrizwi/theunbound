@@ -334,13 +334,16 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
 
                     <div className="pt-2 border-t border-slate-100 flex items-baseline justify-between">
                       <div>
-                        <span className="text-[10px] text-slate-400 block font-medium">B2B Net Tariff</span>
-                        <span className="text-base font-extrabold text-slate-900 font-mono">
-                          {formatCurrency(convertCurrency(product.adultNetPrice, product.currency || 'USD', currency), currency)}
-                        </span>
+                        <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
+                        <div className="flex items-baseline space-x-1">
+                          <span className="text-sm font-extrabold text-slate-900 font-mono">
+                            {formatCurrency(convertCurrency(product.sellingPriceStartingFrom, product.currency || 'USD', currency), currency)}
+                          </span>
+                          <span className="text-[10px] text-slate-400">/ person</span>
+                        </div>
                       </div>
-                      <span className="text-[11px] font-bold text-emerald-600 font-mono">
-                        Rec. {formatCurrency(convertCurrency(product.sellingPriceStartingFrom, product.currency || 'USD', currency), currency)}
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-md">
+                        Authoritative
                       </span>
                     </div>
 
@@ -424,10 +427,13 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
 
                     <div className="pt-2 border-t border-slate-100 flex items-baseline justify-between">
                       <div>
-                        <span className="text-[10px] text-slate-400 block font-medium">B2B Net / Night</span>
-                        <span className="text-sm font-extrabold text-slate-900 font-mono">
-                          {formatCurrency(convertCurrency(rateUSD, hotel.currency || 'USD', currency), currency)}
-                        </span>
+                        <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
+                        <div className="flex items-baseline space-x-1">
+                          <span className="text-sm font-extrabold text-slate-900 font-mono">
+                            {formatCurrency(convertCurrency(hotel.startingSellingPrice || Math.round(rateUSD * 1.25), hotel.currency || 'USD', currency), currency)}
+                          </span>
+                          <span className="text-[10px] text-slate-400">/ night</span>
+                        </div>
                       </div>
                       <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
                         Instant SLA
@@ -811,13 +817,16 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
 
                       <div className="pt-2 border-t border-slate-100 flex items-baseline justify-between">
                         <div>
-                          <span className="text-[10px] text-slate-400 block font-medium">B2B Net Tariff</span>
-                          <span className="text-base font-extrabold text-slate-900 font-mono">
-                            {formatCurrency(convertCurrency(product.adultNetPrice, product.currency || 'USD', currency), currency)}
-                          </span>
+                          <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
+                          <div className="flex items-baseline space-x-1">
+                            <span className="text-sm font-extrabold text-slate-900 font-mono">
+                              {formatCurrency(convertCurrency(product.sellingPriceStartingFrom, product.currency || 'USD', currency), currency)}
+                            </span>
+                            <span className="text-[10px] text-slate-400">/ person</span>
+                          </div>
                         </div>
-                        <span className="text-[11px] font-bold text-emerald-600 font-mono">
-                          Rec. {formatCurrency(convertCurrency(product.sellingPriceStartingFrom, product.currency || 'USD', currency), currency)}
+                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-md">
+                          Authoritative
                         </span>
                       </div>
 
@@ -894,10 +903,13 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
 
                       <div className="pt-2 border-t border-slate-100 flex items-baseline justify-between">
                         <div>
-                          <span className="text-[10px] text-slate-400 block font-medium">B2B Net / Night</span>
-                          <span className="text-sm font-extrabold text-slate-900 font-mono">
-                            {formatCurrency(convertCurrency(rateUSD, hotel.currency || 'USD', currency), currency)}
-                          </span>
+                          <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
+                          <div className="flex items-baseline space-x-1">
+                            <span className="text-sm font-extrabold text-slate-900 font-mono">
+                              {formatCurrency(convertCurrency(hotel.startingSellingPrice || Math.round(rateUSD * 1.25), hotel.currency || 'USD', currency), currency)}
+                            </span>
+                            <span className="text-[10px] text-slate-400">/ night</span>
+                          </div>
                         </div>
                         <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
                           Instant SLA

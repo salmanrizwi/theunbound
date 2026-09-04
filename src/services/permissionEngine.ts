@@ -108,6 +108,14 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
           importLogs: true,
           syncLogs: true,
           securityLogs: true
+        },
+        cmsSystemAnalysis: {
+          enabled: true,
+          view: true,
+          userAnalysis: true,
+          activityAnalysis: true,
+          transactionAnalysis: true,
+          export: true
         }
       };
 
@@ -204,6 +212,14 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
           importLogs: true,
           syncLogs: false,
           securityLogs: false
+        },
+        cmsSystemAnalysis: {
+          enabled: true,
+          view: true,
+          userAnalysis: true,
+          activityAnalysis: true,
+          transactionAnalysis: false,
+          export: false
         }
       };
 
@@ -227,7 +243,8 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
         cmsOperations: { enabled: false },
         cmsContent: { enabled: false },
         cmsFinance: { enabled: false },
-        cmsSystem: { enabled: false }
+        cmsSystem: { enabled: false },
+        cmsSystemAnalysis: { enabled: false, view: false, userAnalysis: false, activityAnalysis: false, transactionAnalysis: false, export: false }
       };
 
     case 'BUYER':
@@ -249,7 +266,8 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
         cmsOperations: { enabled: false },
         cmsContent: { enabled: false },
         cmsFinance: { enabled: false },
-        cmsSystem: { enabled: false }
+        cmsSystem: { enabled: false },
+        cmsSystemAnalysis: { enabled: false, view: false, userAnalysis: false, activityAnalysis: false, transactionAnalysis: false, export: false }
       };
 
     case 'VIEWER':
@@ -501,6 +519,50 @@ export function canUserShareQuoteWhatsApp(
 }
 
 /**
+ * Evaluates whether a user is authorized to access System Analysis.
+ * Strict RBAC rules:
+ * - Master Admin & Admin: Always full access (view, user analysis, transactions, activity, export)
+ * - Authorized Team Member / DMC Staff: View, user journey, and activity analysis allowed (financial transactions & export require explicit permission)
+ * - B2B Agents, Direct Buyers, Public: STRICTLY BLOCKED.
+ */
+export function canUserAccessSystemAnalysis(
+  user: User | null | undefined,
+  action: 'view' | 'userAnalysis' | 'activityAnalysis' | 'transactionAnalysis' | 'export' = 'view'
+): boolean {
+  if (!user) return false;
+  if (isMasterAdmin(user)) return true;
+  if (user.role === 'ADMIN') return true;
+
+  // Strict: external roles can never access system analysis
+  if (user.role === 'BUYER' || user.role === 'B2B_AGENT' || user.role === 'AGENT' || user.role === 'VIEWER' || user.role === 'PUBLIC') {
+    return false;
+  }
+
+  // Must have CMS access
+  if (!canUserAccessCMS(user)) return false;
+
+  const perms = user.permissions;
+  if (perms?.cmsSystemAnalysis) {
+    if (perms.cmsSystemAnalysis.enabled === false) return false;
+    if (action === 'view') return perms.cmsSystemAnalysis.view !== false;
+    if (action === 'userAnalysis') return perms.cmsSystemAnalysis.userAnalysis !== false;
+    if (action === 'activityAnalysis') return perms.cmsSystemAnalysis.activityAnalysis !== false;
+    if (action === 'transactionAnalysis') return perms.cmsSystemAnalysis.transactionAnalysis === true;
+    if (action === 'export') return perms.cmsSystemAnalysis.export === true;
+  }
+
+  // Defaults for internal staff
+  if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+    if (action === 'view' || action === 'userAnalysis' || action === 'activityAnalysis') {
+      return true;
+    }
+    return false; // transactions and export need explicit grant
+  }
+
+  return false;
+}
+
+/**
  * Evaluates whether a user has top-level access to Admin CMS
  */
 export function canUserAccessCMS(user: User | null | undefined): boolean {
@@ -520,7 +582,7 @@ export function canUserAccessCMS(user: User | null | undefined): boolean {
  */
 export function canUserAccessTopSection(
   user: User | null | undefined, 
-  sectionId: 'OVERVIEW' | 'OPERATIONS' | 'CONTENT' | 'FINANCE' | 'SYSTEM'
+  sectionId: 'OVERVIEW' | 'OPERATIONS' | 'CONTENT' | 'FINANCE' | 'SYSTEM' | 'SYSTEM_ANALYSIS'
 ): boolean {
   if (!canUserAccessCMS(user)) return false;
   if (isMasterAdmin(user)) return true;
@@ -530,6 +592,9 @@ export function canUserAccessTopSection(
   switch (sectionId) {
     case 'OVERVIEW':
       return true; // Any authorized CMS user can view Command Dashboard
+
+    case 'SYSTEM_ANALYSIS':
+      return canUserAccessSystemAnalysis(user, 'view');
 
     case 'OPERATIONS':
       if (perms?.cmsOperations) {
@@ -639,6 +704,10 @@ export function canUserAccessCMSModule(
       }
       return user?.role === 'ADMIN';
 
+    // System Analysis module
+    case 'SYSTEM_ANALYSIS':
+      return canUserAccessSystemAnalysis(user, 'view');
+
     default:
       return true;
   }
@@ -659,6 +728,10 @@ export function canUserAccessCMSSubTab(
   const perms = user?.permissions;
 
   // Specific granular checks
+  if (subTabId === 'SYSTEM_ANALYSIS' || subTabId === 'USER_JOURNEYS' || subTabId === 'EVENT_STREAM' || subTabId === 'FUNNEL_ANALYSIS') {
+    return canUserAccessSystemAnalysis(user, 'view');
+  }
+
   if (subTabId === 'PERMISSIONS') {
     if (user?.role !== 'ADMIN' && !perms?.canManagePermissions && !perms?.cmsFinance?.userPermissionManagement) {
       return false;

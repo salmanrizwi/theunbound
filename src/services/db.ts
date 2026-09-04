@@ -65,6 +65,8 @@ import {
   TaskStatus,
   UserActivityEvent,
   UserTelemetrySummary,
+  SystemUserJourneyEvent,
+  JourneyEventCategory,
   BookingPassenger,
   BookingPaymentProof,
   BookingItem,
@@ -7608,6 +7610,415 @@ export class AppDatabase {
   public getAllUserTelemetry(): UserTelemetrySummary[] {
     const users = this.getUsers();
     return users.map(u => this.getUserTelemetrySummary(u.id)!).filter(Boolean);
+  }
+
+  // ==========================================
+  // SYSTEM ANALYSIS & COMPLETE USER JOURNEY TRACKING
+  // ==========================================
+  public getUserCompleteJourney(userId: string): SystemUserJourneyEvent[] {
+    const users = this.getUsers();
+    const user = users.find(u => u.id === userId);
+    if (!user) return [];
+
+    const events: SystemUserJourneyEvent[] = [];
+
+    // 1. User Registration Event
+    events.push({
+      id: `usr-reg-${user.id}`,
+      userId: user.id,
+      userEmail: user.email,
+      userName: user.name,
+      agencyName: user.agencyName || user.companyName,
+      userRole: user.role,
+      category: 'USER',
+      eventType: 'ACCOUNT_REGISTERED',
+      title: 'Account Registered',
+      description: `${user.name} created account with role ${user.role}${user.agencyName ? ` at ${user.agencyName}` : ''}`,
+      timestamp: user.createdAt || '2026-01-01T00:00:00.000Z',
+      entityId: user.id,
+      entityType: 'User',
+      severity: 'INFO',
+      metadata: {
+        approvalStatus: user.approvalStatus || 'APPROVED',
+        role: user.role,
+        agency: user.agencyName
+      }
+    });
+
+    // 2. Quotation Events (Created, Saved, PDF Exported, WhatsApp Shared, AI suggestions)
+    const allQuotes = this.getAllSavedQuotes();
+    const userQuotes = allQuotes.filter(q => 
+      q.agentId === user.id || 
+      q.createdBy === user.id || 
+      q.clientUserId === user.id || 
+      (user.email && (q.clientEmail?.toLowerCase() === user.email.toLowerCase() || q.agentEmail?.toLowerCase() === user.email.toLowerCase()))
+    );
+
+    userQuotes.forEach(q => {
+      // Creation
+      events.push({
+        id: `quote-create-${q.id}`,
+        userId: user.id,
+        userEmail: user.email,
+        userName: user.name,
+        agencyName: user.agencyName || user.companyName,
+        userRole: user.role,
+        category: 'QUOTE',
+        eventType: 'QUOTE_CREATED',
+        title: `Quotation Generated #${q.quoteNumber || q.id}`,
+        description: `Created custom proposal for ${q.destination || 'Luxury Tour'} (${q.totalPax || 2} Pax, ${q.currency || 'USD'} ${Number(q.totalSellingPrice || 0).toLocaleString()})`,
+        timestamp: q.createdAt || '2026-01-01T00:00:00.000Z',
+        entityId: q.id,
+        entityType: 'Quotation',
+        severity: 'SUCCESS',
+        metadata: {
+          destination: q.destination,
+          pax: q.totalPax,
+          totalSellingPrice: q.totalSellingPrice,
+          status: q.status,
+          quoteNumber: q.quoteNumber
+        }
+      });
+
+      // AI Planner attribution
+      const hasAiItems = q.items?.some(it => it.source === 'AI_PLANNER' || it.aiSuggested);
+      if (hasAiItems) {
+        events.push({
+          id: `quote-ai-${q.id}`,
+          userId: user.id,
+          userEmail: user.email,
+          userName: user.name,
+          agencyName: user.agencyName || user.companyName,
+          userRole: user.role,
+          category: 'AI_PLANNER',
+          eventType: 'AI_PLAN_CONVERTED',
+          title: `AI Planner Itinerary Added to Quote #${q.quoteNumber || q.id}`,
+          description: `AI-generated itinerary and experiences successfully converted into active quotation for ${q.destination}`,
+          timestamp: q.createdAt || '2026-01-01T00:00:00.000Z',
+          entityId: q.id,
+          entityType: 'Quotation',
+          severity: 'INFO',
+          metadata: {
+            destination: q.destination,
+            itemCount: q.items?.length || 0
+          }
+        });
+      }
+
+      // Downloaded
+      if (q.status === 'DOWNLOADED_PDF' || q.status === 'DOWNLOADED') {
+        events.push({
+          id: `quote-dl-${q.id}`,
+          userId: user.id,
+          userEmail: user.email,
+          userName: user.name,
+          agencyName: user.agencyName || user.companyName,
+          userRole: user.role,
+          category: 'QUOTE',
+          eventType: 'QUOTE_PDF_DOWNLOADED',
+          title: `Quote #${q.quoteNumber || q.id} PDF Exported`,
+          description: `Downloaded official branded client proposal PDF for ${q.clientName || 'Client'} (${q.destination})`,
+          timestamp: q.updatedAt || q.createdAt || new Date().toISOString(),
+          entityId: q.id,
+          entityType: 'Quotation',
+          severity: 'SUCCESS',
+          metadata: { destination: q.destination, clientName: q.clientName }
+        });
+      }
+
+      // WhatsApp share
+      if (q.lastSharedViaWhatsAppAt) {
+        events.push({
+          id: `quote-wa-${q.id}`,
+          userId: user.id,
+          userEmail: user.email,
+          userName: user.name,
+          agencyName: user.agencyName || user.companyName,
+          userRole: user.role,
+          category: 'COMMUNICATION',
+          eventType: 'QUOTE_WHATSAPP_SHARED',
+          title: `Quote #${q.quoteNumber || q.id} Shared via WhatsApp`,
+          description: `Direct proposal message dispatched to client mobile (${q.lastSharedRecipientPhone || 'Client Contact'})`,
+          timestamp: q.lastSharedViaWhatsAppAt,
+          entityId: q.id,
+          entityType: 'Quotation',
+          severity: 'INFO',
+          metadata: { phone: q.lastSharedRecipientPhone }
+        });
+      }
+
+      // Activity logs on quote
+      if (q.activityLog && Array.isArray(q.activityLog)) {
+        q.activityLog.forEach(act => {
+          events.push({
+            id: `q-act-${act.id || Math.random().toString(36).substr(2, 6)}`,
+            userId: user.id,
+            userEmail: user.email,
+            userName: act.userName || user.name,
+            agencyName: user.agencyName || user.companyName,
+            userRole: user.role,
+            category: 'QUOTE',
+            eventType: act.action,
+            title: `Quote #${q.quoteNumber || q.id}: ${act.action.replace(/_/g, ' ')}`,
+            description: act.details || `Quote status updated to ${act.action}`,
+            timestamp: act.timestamp || q.createdAt,
+            entityId: q.id,
+            entityType: 'Quotation',
+            severity: act.action.includes('BOOKED') || act.action.includes('APPROVED') ? 'SUCCESS' : 'INFO'
+          });
+        });
+      }
+    });
+
+    // 3. Bookings & Reservation Events
+    const allBookings = this.getAllBookings();
+    const userBookings = allBookings.filter(b => 
+      b.userId === user.id || 
+      b.agentId === user.id || 
+      (user.email && b.customer?.email?.toLowerCase() === user.email.toLowerCase())
+    );
+
+    userBookings.forEach(b => {
+      // Submission
+      events.push({
+        id: `bk-create-${b.id}`,
+        userId: user.id,
+        userEmail: user.email,
+        userName: user.name,
+        agencyName: user.agencyName || user.companyName,
+        userRole: user.role,
+        category: 'BOOKING',
+        eventType: 'BOOKING_SUBMITTED',
+        title: `Ground Booking Submitted #${b.bookingReference || b.id}`,
+        description: `Reservation submitted for ${b.customer?.leadTravelerName || 'Lead Traveler'} to ${b.destinationName || b.destination || 'Destination'} (${b.currency || 'USD'} ${Number(b.totalAmount || 0).toLocaleString()})`,
+        timestamp: b.createdAt || '2026-01-01T00:00:00.000Z',
+        entityId: b.id,
+        entityType: 'Booking',
+        severity: 'SUCCESS',
+        metadata: {
+          bookingReference: b.bookingReference,
+          destination: b.destinationName || b.destination,
+          totalAmount: b.totalAmount,
+          currency: b.currency,
+          status: b.status,
+          travelDates: `${b.travelStartDate || ''} - ${b.travelEndDate || ''}`
+        }
+      });
+
+      // Confirmation
+      if (b.status === 'CONFIRMED' || b.status === 'COMPLETED') {
+        events.push({
+          id: `bk-conf-${b.id}`,
+          userId: user.id,
+          userEmail: user.email,
+          userName: user.name,
+          agencyName: user.agencyName || user.companyName,
+          userRole: user.role,
+          category: 'BOOKING',
+          eventType: 'BOOKING_CONFIRMED',
+          title: `Booking Confirmed #${b.bookingReference || b.id}`,
+          description: `All suppliers locked, ground services confirmed for ${b.customer?.leadTravelerName || 'Traveler'}`,
+          timestamp: b.updatedAt || b.createdAt || new Date().toISOString(),
+          entityId: b.id,
+          entityType: 'Booking',
+          severity: 'SUCCESS'
+        });
+      }
+
+      // Payment Proofs
+      if (b.paymentProofs && Array.isArray(b.paymentProofs)) {
+        b.paymentProofs.forEach(p => {
+          events.push({
+            id: `bk-pay-${p.id}`,
+            userId: user.id,
+            userEmail: user.email,
+            userName: user.name,
+            agencyName: user.agencyName || user.companyName,
+            userRole: user.role,
+            category: 'TRANSACTION',
+            eventType: p.verificationStatus === 'VERIFIED' ? 'PAYMENT_VERIFIED' : 'PAYMENT_PROOF_UPLOADED',
+            title: `Payment: ${p.trancheLabel || 'Tranche'} (${p.currency || 'USD'} ${Number(p.amount || 0).toLocaleString()})`,
+            description: `Payment remittance uploaded for Booking #${b.bookingReference || b.id} (Status: ${p.verificationStatus})`,
+            timestamp: p.verifiedAt || b.createdAt || new Date().toISOString(),
+            entityId: b.id,
+            entityType: 'PaymentProof',
+            severity: p.verificationStatus === 'VERIFIED' ? 'SUCCESS' : 'WARNING',
+            metadata: {
+              amount: p.amount,
+              currency: p.currency,
+              status: p.verificationStatus,
+              verifiedBy: p.verifiedByName
+            }
+          });
+        });
+      }
+
+      // Timeline events from booking
+      if (b.timeline && Array.isArray(b.timeline)) {
+        b.timeline.forEach(t => {
+          events.push({
+            id: `bk-tm-${t.id || Math.random().toString(36).substr(2, 6)}`,
+            userId: user.id,
+            userEmail: user.email,
+            userName: user.name,
+            agencyName: user.agencyName || user.companyName,
+            userRole: user.role,
+            category: t.type === 'PAYMENT' ? 'TRANSACTION' : t.type === 'COMMUNICATION' ? 'COMMUNICATION' : 'BOOKING',
+            eventType: t.type,
+            title: `Booking #${b.bookingReference || b.id}: ${t.title}`,
+            description: t.description || t.title,
+            timestamp: t.timestamp || b.createdAt,
+            entityId: b.id,
+            entityType: 'Booking',
+            severity: 'INFO'
+          });
+        });
+      }
+    });
+
+    // 4. Leads & CRM Inquiries
+    const allLeads = this.getLeads();
+    const userLeads = allLeads.filter(l => 
+      l.userId === user.id || 
+      l.b2bAgentId === user.id || 
+      (user.email && l.email?.toLowerCase() === user.email.toLowerCase())
+    );
+
+    userLeads.forEach(l => {
+      events.push({
+        id: `lead-cr-${l.id}`,
+        userId: user.id,
+        userEmail: user.email,
+        userName: user.name,
+        agencyName: user.agencyName || user.companyName,
+        userRole: user.role,
+        category: 'LEAD',
+        eventType: 'LEAD_CREATED',
+        title: `Inquiry Submitted #${l.leadNumber || l.id}`,
+        description: `Travel requirement inquiry received for ${l.destinationName || 'Destination'} (${l.travelDates || 'Flexible dates'})`,
+        timestamp: l.createdAt || '2026-01-01T00:00:00.000Z',
+        entityId: l.id,
+        entityType: 'TravelLead',
+        severity: 'INFO',
+        metadata: {
+          destination: l.destinationName,
+          status: l.status,
+          source: l.source
+        }
+      });
+    });
+
+    // 5. User Activity Telemetry
+    const activities = this.getUserActivityEvents(user.id);
+    activities.forEach(act => {
+      let cat: JourneyEventCategory = 'USER';
+      let title = act.targetTitle || act.type;
+      let sev: 'INFO' | 'SUCCESS' | 'WARNING' = 'INFO';
+
+      if (act.type === 'CALCULATOR_USED' || act.type === 'AI_PLANNER_USED' || act.details?.isAiPlanner) {
+        cat = 'AI_PLANNER';
+        title = act.details?.isAiPlanner ? 'AI Planner Session' : 'Pricing Calculator Used';
+      } else if (act.type === 'PAGE_VIEW') {
+        cat = 'PRODUCT';
+        title = `Viewed Page: ${act.targetTitle || 'Catalog'}`;
+      } else if (act.type === 'LOGIN') {
+        cat = 'USER';
+        title = 'User Authenticated / Session Started';
+      } else if (act.type === 'PROPOSAL_SAVED') {
+        cat = 'QUOTE';
+        title = `Proposal Saved: ${act.targetTitle || ''}`;
+        sev = 'SUCCESS';
+      } else if (act.type === 'QUOTE_DOWNLOADED') {
+        cat = 'QUOTE';
+        title = `Quotation Downloaded: ${act.targetTitle || ''}`;
+        sev = 'SUCCESS';
+      } else if (act.type === 'WHATSAPP_SHARED') {
+        cat = 'COMMUNICATION';
+        title = `Proposal Shared via WhatsApp: ${act.targetTitle || ''}`;
+      }
+
+      events.push({
+        id: `act-event-${act.id}`,
+        userId: user.id,
+        userEmail: user.email,
+        userName: user.name,
+        agencyName: user.agencyName || user.companyName,
+        userRole: user.role,
+        category: cat,
+        eventType: act.type,
+        title,
+        description: act.details?.summary || act.targetTitle || `Performed action: ${act.type}`,
+        timestamp: act.timestamp,
+        entityId: act.targetId,
+        entityType: 'Activity',
+        severity: sev,
+        metadata: act.details
+      });
+    });
+
+    // 6. Audit Logs linked to this user
+    const auditLogs = this.getAuditLogs().filter(a => 
+      a.userId === user.id || 
+      a.entityId === user.id
+    );
+
+    auditLogs.forEach(a => {
+      let cat: JourneyEventCategory = 'USER';
+      if (a.entity === 'Quotation' || a.action.includes('QUOTE')) cat = 'QUOTE';
+      else if (a.entity === 'Booking' || a.action.includes('BOOKING')) cat = 'BOOKING';
+      else if (a.entity === 'Product') cat = 'PRODUCT';
+      else if (a.entity === 'Hotel') cat = 'HOTEL';
+
+      events.push({
+        id: `audit-ev-${a.id}`,
+        userId: user.id,
+        userEmail: user.email,
+        userName: a.userName || user.name,
+        agencyName: user.agencyName || user.companyName,
+        userRole: user.role,
+        category: cat,
+        eventType: a.action,
+        title: `${a.entity || 'System'}: ${a.action.replace(/_/g, ' ')}`,
+        description: a.details || `${a.action} performed on ${a.entity}`,
+        timestamp: a.timestamp,
+        entityId: a.entityId,
+        entityType: a.entity,
+        severity: 'INFO'
+      });
+    });
+
+    // Deduplicate by id and sort descending by timestamp
+    const seen = new Set<string>();
+    const uniqueEvents: SystemUserJourneyEvent[] = [];
+    for (const ev of events) {
+      if (!seen.has(ev.id)) {
+        seen.add(ev.id);
+        uniqueEvents.push(ev);
+      }
+    }
+
+    return uniqueEvents.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }
+
+  public getAllSystemJourneyEvents(limitCount = 150): SystemUserJourneyEvent[] {
+    const users = this.getUsers();
+    const allEvents: SystemUserJourneyEvent[] = [];
+    
+    users.forEach(u => {
+      const uEvents = this.getUserCompleteJourney(u.id);
+      allEvents.push(...uEvents);
+    });
+
+    const seen = new Set<string>();
+    const unique = allEvents.filter(ev => {
+      if (seen.has(ev.id)) return false;
+      seen.add(ev.id);
+      return true;
+    });
+
+    return unique
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, limitCount);
   }
 
   // ==========================================

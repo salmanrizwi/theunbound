@@ -321,7 +321,23 @@ const BANNED_COMMERCIAL_TERMS = [
   'internal fee',
   'agent margin',
   'internal discount',
-  'tax breakdown'
+  'tax breakdown',
+  'suggested selling price',
+  'suggested selling',
+  'suggested price',
+  'recommended price',
+  'recommended rate',
+  'estimated price',
+  'approximate price',
+  'indicative price',
+  'indicative rate',
+  'ai suggested',
+  'ai recommended',
+  'b2b net',
+  'wholesale tariff',
+  'client rate',
+  'cost before markup',
+  'internal pricing'
 ];
 
 export function verifyNoCommercialLeak(message: string): { isSafe: boolean; detectedTerms: string[] } {

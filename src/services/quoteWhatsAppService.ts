@@ -23,6 +23,7 @@ export interface GenerateWhatsAppMessageOptions {
   senderBranding?: WhatsAppSenderBranding;
   customNote?: string;
   useEmojis?: boolean;
+  formatStyle?: 'DETAILED' | 'SUMMARY';
 }
 
 export interface RecordWhatsAppShareOptions {
@@ -104,7 +105,10 @@ export function generateWhatsAppQuoteMessage(options: GenerateWhatsAppMessageOpt
     senderBranding: options.senderBranding
   });
 
-  return formatWhatsAppQuoteFromPayload(payload, options.customNote);
+  return formatWhatsAppQuoteFromPayload(payload, options.customNote, {
+    useEmojis: options.useEmojis !== false,
+    formatStyle: options.formatStyle || 'DETAILED'
+  });
 }
 
 /**

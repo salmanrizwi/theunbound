@@ -31,7 +31,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
 import { B2BNavTab, Quotation, B2BPackage, Destination, Product, Hotel } from '../../types';
 import { AppDatabase } from '../../services/db';
-import { formatCurrency } from '../../services/pricingEngine';
+import { formatCurrency, calculatePackagePrice } from '../../services/pricingEngine';
 
 interface B2BDashboardViewProps {
   onNavigate: (tab: B2BNavTab) => void;
@@ -464,10 +464,13 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
 
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
                       <div>
-                        <span className="text-[10px] text-slate-400 block leading-tight">Starting Net Tariff</span>
-                        <span className="text-xs font-black text-slate-900 font-mono">
-                          {formatCurrency(pkg.baseNetCostUSD, currency)}
-                        </span>
+                        <span className="text-[10px] text-slate-400 block leading-tight font-bold uppercase tracking-wider">Final Selling Price</span>
+                        <div className="flex items-baseline space-x-1">
+                          <span className="text-xs font-black text-slate-900 font-mono">
+                            {formatCurrency(calculatePackagePrice({ packageItem: pkg, targetCurrency: currency }).pricePerPerson, currency)}
+                          </span>
+                          <span className="text-[10px] text-slate-400">/ person</span>
+                        </div>
                       </div>
 
                       <button

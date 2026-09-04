@@ -255,6 +255,46 @@ export const CMSDashboardHome: React.FC<CMSDashboardHomeProps> = ({
     return items;
   }, [leads, bookings, quotes, users, tasks]);
 
+  // SYSTEM ANALYSIS SNAPSHOT METRICS (Real Firestore Data)
+  const systemAnalysisMetrics = useMemo(() => {
+    const totalUsers = users.length;
+    const activeUsers = users.filter(u => u.approvalStatus === 'APPROVED').length;
+    const superUsers = users.filter(u => u.tier === 'SUPER_USER' || u.tier === 'PLATINUM' || u.role === 'ADMIN').length;
+    const b2bAgents = users.filter(u => u.role === 'B2B_AGENT').length;
+    const directClients = users.filter(u => u.role === 'DIRECT_CLIENT' || u.role === 'GUEST').length;
+
+    // Quotes generated & shared
+    const totalQuotes = quotes.length;
+    const pdfDownloaded = quotes.filter(q => q.status === 'DOWNLOADED_PDF').length;
+    const sentQuotes = quotes.filter(q => q.status === 'SENT_TO_CLIENT').length;
+
+    // Bookings & transactions
+    const totalBookings = bookings.length;
+    const totalRevenue = bookings.reduce((sum, b) => sum + (b.totalAmount || 0), 0);
+    const paidBookings = bookings.filter(b => b.paymentStatus === 'PAID').length;
+
+    // Journey events
+    const allEvents = db.getAllSystemJourneyEvents ? db.getAllSystemJourneyEvents() : [];
+    const aiPlannerEvents = allEvents.filter(e => e.category === 'AI_PLANNER' || e.eventType.includes('AI_PLANNER')).length;
+    const totalActivities = allEvents.length;
+
+    return {
+      totalUsers,
+      activeUsers,
+      superUsers,
+      b2bAgents,
+      directClients,
+      totalQuotes,
+      pdfDownloaded,
+      sentQuotes,
+      totalBookings,
+      totalRevenue,
+      paidBookings,
+      aiPlannerEvents,
+      totalActivities
+    };
+  }, [users, quotes, bookings, db, dbTick]);
+
   // 3. OPERATIONS TODAY SNAPSHOT
   const operationsSnapshot = useMemo(() => {
     const bookingsToProcess = bookings.filter(b => b.status === 'PENDING_CONFIRMATION' || b.status === 'PROCESSING').length;
@@ -439,6 +479,157 @@ export const CMSDashboardHome: React.FC<CMSDashboardHomeProps> = ({
               </div>
             </button>
           ))}
+        </div>
+      </section>
+
+      {/* ========================================================================= */}
+      {/* SYSTEM ANALYSIS — USER-LEVEL ANALYTICS & COMPLETE JOURNEY TRACKING */}
+      {/* ========================================================================= */}
+      <section id="cms-system-analysis-section" className="bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 text-white rounded-3xl border border-slate-800 p-6 sm:p-8 space-y-6 shadow-xl relative overflow-hidden">
+        {/* Subtle background glow */}
+        <div className="absolute top-0 right-0 -mt-8 -mr-8 w-64 h-64 bg-[#00C6A6]/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-5 relative z-10">
+          <div>
+            <div className="flex items-center space-x-2.5">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#00C6A6] to-[#008972] flex items-center justify-center text-slate-950 font-black shadow-md shadow-[#00C6A6]/20">
+                <Activity className="w-4 h-4 text-slate-950" />
+              </div>
+              <h2 className="text-lg sm:text-xl font-extrabold tracking-tight text-white">
+                SYSTEM ANALYSIS
+              </h2>
+              <span className="px-2.5 py-0.5 rounded-full bg-[#00C6A6]/20 border border-[#00C6A6]/40 text-[#00E5C0] text-[10px] font-black uppercase tracking-wider">
+                User-Level Analytics & 360° Journeys
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-1.5 max-w-2xl leading-relaxed">
+              Centralized intelligence command for user activity tracking, quote & booking lifecycles, transaction audit, AI Planner interactions, and end-to-end individual journey reconstructions.
+            </p>
+          </div>
+
+          <div className="flex items-center space-x-2.5 shrink-0">
+            <button
+              onClick={() => onNavigate('SYSTEM_ANALYSIS', 'USERS_MATRIX')}
+              className="px-4 py-2.5 bg-[#008972] hover:bg-[#00C6A6] hover:text-slate-950 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-[#008972]/30 flex items-center space-x-2 cursor-pointer"
+            >
+              <span>Explore Full System Analysis</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* 4 Primary Intelligence Tiles */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5 relative z-10">
+          {/* Tile 1: Total & Active Users */}
+          <div 
+            onClick={() => onNavigate('SYSTEM_ANALYSIS', 'USERS_MATRIX')}
+            className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 hover:border-[#00C6A6]/50 transition-all cursor-pointer group"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-400 group-hover:text-slate-200 transition-colors">Users Directory</span>
+              <Users className="w-4 h-4 text-[#00C6A6]" />
+            </div>
+            <div className="mt-3 flex items-baseline space-x-2">
+              <span className="text-2xl sm:text-3xl font-black text-white">{systemAnalysisMetrics.totalUsers}</span>
+              <span className="text-xs text-emerald-400 font-bold">{systemAnalysisMetrics.activeUsers} Active</span>
+            </div>
+            <div className="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
+              <span>{systemAnalysisMetrics.b2bAgents} B2B · {systemAnalysisMetrics.directClients} Direct</span>
+              <span className="text-[#00C6A6] group-hover:translate-x-0.5 transition-transform font-bold">→</span>
+            </div>
+          </div>
+
+          {/* Tile 2: Super Users & Tier Distribution */}
+          <div 
+            onClick={() => onNavigate('SYSTEM_ANALYSIS', 'USERS_MATRIX')}
+            className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 hover:border-[#00C6A6]/50 transition-all cursor-pointer group"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-400 group-hover:text-slate-200 transition-colors">Super Users</span>
+              <ShieldCheck className="w-4 h-4 text-amber-400" />
+            </div>
+            <div className="mt-3 flex items-baseline space-x-2">
+              <span className="text-2xl sm:text-3xl font-black text-amber-300">{systemAnalysisMetrics.superUsers}</span>
+              <span className="text-xs text-slate-400 font-medium">VIP Tier</span>
+            </div>
+            <div className="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
+              <span>High-frequency & VIP accounts</span>
+              <span className="text-amber-400 group-hover:translate-x-0.5 transition-transform font-bold">→</span>
+            </div>
+          </div>
+
+          {/* Tile 3: Quotes & Bookings Lifecycle */}
+          <div 
+            onClick={() => onNavigate('SYSTEM_ANALYSIS', 'EVENT_STREAM')}
+            className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 hover:border-[#00C6A6]/50 transition-all cursor-pointer group"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-400 group-hover:text-slate-200 transition-colors">Quote & Booking Flow</span>
+              <Receipt className="w-4 h-4 text-blue-400" />
+            </div>
+            <div className="mt-3 flex items-baseline space-x-2">
+              <span className="text-2xl sm:text-3xl font-black text-white">{systemAnalysisMetrics.totalQuotes}</span>
+              <span className="text-xs text-blue-400 font-bold">{systemAnalysisMetrics.totalBookings} Bookings</span>
+            </div>
+            <div className="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
+              <span>{systemAnalysisMetrics.pdfDownloaded} PDFs · {systemAnalysisMetrics.paidBookings} Paid</span>
+              <span className="text-blue-400 group-hover:translate-x-0.5 transition-transform font-bold">→</span>
+            </div>
+          </div>
+
+          {/* Tile 4: AI Planner & Total Interactions */}
+          <div 
+            onClick={() => onNavigate('SYSTEM_ANALYSIS', 'FUNNEL_ANALYSIS')}
+            className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 hover:border-[#00C6A6]/50 transition-all cursor-pointer group"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-400 group-hover:text-slate-200 transition-colors">AI Planner & Events</span>
+              <Sparkles className="w-4 h-4 text-purple-400" />
+            </div>
+            <div className="mt-3 flex items-baseline space-x-2">
+              <span className="text-2xl sm:text-3xl font-black text-purple-300">{systemAnalysisMetrics.aiPlannerEvents}</span>
+              <span className="text-xs text-slate-400 font-medium">{systemAnalysisMetrics.totalActivities} Total Events</span>
+            </div>
+            <div className="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
+              <span>AI plan sessions & conversion funnel</span>
+              <span className="text-purple-400 group-hover:translate-x-0.5 transition-transform font-bold">→</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Quick Deep-Dive Journey Subtabs */}
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800/80 relative z-10">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mr-2">
+            Direct Journey Views:
+          </span>
+          <button
+            onClick={() => onNavigate('SYSTEM_ANALYSIS', 'USERS_MATRIX')}
+            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer"
+          >
+            <Users className="w-3.5 h-3.5 text-[#00C6A6]" />
+            <span>User Performance Directory</span>
+          </button>
+          <button
+            onClick={() => onNavigate('SYSTEM_ANALYSIS', 'USER_JOURNEY')}
+            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer"
+          >
+            <Compass className="w-3.5 h-3.5 text-amber-400" />
+            <span>360° Complete Journey Timeline</span>
+          </button>
+          <button
+            onClick={() => onNavigate('SYSTEM_ANALYSIS', 'EVENT_STREAM')}
+            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer"
+          >
+            <Activity className="w-3.5 h-3.5 text-emerald-400" />
+            <span>System Event Ledger</span>
+          </button>
+          <button
+            onClick={() => onNavigate('SYSTEM_ANALYSIS', 'FUNNEL_ANALYSIS')}
+            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer"
+          >
+            <BarChart3 className="w-3.5 h-3.5 text-purple-400" />
+            <span>AI Planner Conversion Funnel</span>
+          </button>
         </div>
       </section>
 

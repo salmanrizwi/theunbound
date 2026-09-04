@@ -38,6 +38,7 @@ import { PackageManager } from './PackageManager';
 import { RosterAdminManager } from '../RosterAdminManager';
 import { IntegrationsManager } from './IntegrationsManager';
 import { DataSyncAuditViewer } from './DataSyncAuditViewer';
+import { SystemAnalysis } from './SystemAnalysis';
 import { GlobalRemindersBar } from '../GlobalRemindersBar';
 import { 
   canUserAccessCMS, 
@@ -89,6 +90,7 @@ import {
 
 export type TopSectionId = 
   | 'OVERVIEW'
+  | 'SYSTEM_ANALYSIS'
   | 'OPERATIONS'
   | 'CONTENT'
   | 'FINANCE'
@@ -96,6 +98,7 @@ export type TopSectionId =
 
 export type CMSSection = 
   | 'DASHBOARD'
+  | 'SYSTEM_ANALYSIS'
   | 'PRODUCT_MANAGEMENT'
   | 'HOTEL_MANAGEMENT'
   | 'PACKAGE_MANAGEMENT'
@@ -334,7 +337,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     }
   };
 
-  // 5 CORE TOP-LEVEL SECTIONS ARCHITECTURE
+  // 6 CORE TOP-LEVEL SECTIONS ARCHITECTURE
   const topSections: TopSectionConfig[] = [
     {
       id: 'OVERVIEW',
@@ -352,6 +355,30 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           description: 'Operations overview, urgent alerts, real-time database metrics, module health, and quick actions.',
           subTabs: [
             { id: 'OVERVIEW', label: 'Command Center Home', icon: LayoutDashboard }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'SYSTEM_ANALYSIS',
+      label: 'System Analysis',
+      fullLabel: 'System Analysis & Journeys',
+      icon: Activity,
+      description: 'User-level analytics, complete 360° journey tracking, quotes, bookings, transactions, and AI Planner performance.',
+      defaultModule: 'SYSTEM_ANALYSIS',
+      modules: [
+        {
+          id: 'SYSTEM_ANALYSIS',
+          label: 'System Analysis',
+          shortLabel: 'System Analysis',
+          icon: Activity,
+          badge: '360° Live',
+          description: 'Deep-dive user intelligence, activity ledger, individual timeline reconstruction, and conversion funnel analytics.',
+          subTabs: [
+            { id: 'USERS_MATRIX', label: 'User Performance Directory', icon: Users },
+            { id: 'USER_JOURNEY', label: '360° User Journey Timeline', icon: Compass },
+            { id: 'EVENT_STREAM', label: 'System Event Stream', icon: Activity },
+            { id: 'FUNNEL_ANALYSIS', label: 'Conversion & AI Funnel', icon: BarChart3 }
           ]
         }
       ]
@@ -1092,6 +1119,15 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             <CMSDashboardHome 
               onNavigate={handleNavigate}
               currentUser={currentUser}
+            />
+          )}
+
+          {/* SECTION: SYSTEM ANALYSIS & USER JOURNEY INTELLIGENCE */}
+          {currentModuleConfig.id === 'SYSTEM_ANALYSIS' && (
+            <SystemAnalysis 
+              currentUser={currentUser}
+              onNavigate={handleNavigate}
+              onLoadQuote={onLoadQuote}
             />
           )}
 

@@ -1,4 +1,4 @@
-import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, Product, User, UserRole, HotelRate } from '../types';
+import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, Product, User, UserRole, HotelRate, B2BPackage } from '../types';
 import { ExchangeRateService, DEFAULT_EXCHANGE_RATES } from './exchangeRateService';
 import { AppDatabase } from './db';
 import { hotelToProduct } from '../utils/hotelHelpers';
@@ -628,6 +628,186 @@ export function calculateProductPrice(
 }
 
 /**
+ * PACKAGE PRICING SERVICE - UNIFIED & CONTROLLED (Section 13)
+ * Authoritatively calculates package Final Selling Price based on inclusions,
+ * dynamic component rates, and tiered role rules.
+ * Never exposes internal net costs, markups, or tax breakdowns to non-admin roles!
+ */
+export interface PackagePricingRequest {
+  packageId?: string;
+  packageItem?: B2BPackage;
+  adults?: number;
+  children?: number;
+  infants?: number;
+  travelDate?: string;
+  targetCurrency?: CurrencyCode;
+  user?: User | null;
+  userRole?: UserRole | string;
+  pricingTier?: 'B2B' | 'B2C';
+  agentClientMarkupPercent?: number;
+  customMarkupPercent?: number;
+  customDiscountPercent?: number;
+}
+
+export interface PackagePricingResult {
+  success: boolean;
+  packageId: string;
+  packageTitle: string;
+  finalSellingPrice: number;
+  pricePerPerson: number;
+  currency: CurrencyCode;
+  pax: {
+    adults: number;
+    children: number;
+    infants: number;
+    totalPax: number;
+  };
+  isAuthoritative: boolean;
+  calculatedAt: string;
+  rateId: string;
+  rateVersion: number | string;
+  // Internal breakdown strictly present ONLY for ADMIN or DMC_STAFF
+  internalAudit?: {
+    totalNetCostUSD: number;
+    totalNetCostTarget: number;
+    markupAmount: number;
+    effectiveMarkupPercent: number;
+    pricingMode: string;
+    itemsCount: number;
+  };
+}
+
+export function calculatePackagePrice(request: PackagePricingRequest): PackagePricingResult {
+  const db = AppDatabase.getInstance();
+  const pkg: B2BPackage | undefined = request.packageItem || (request.packageId ? db.getPackages().find(p => p.id === request.packageId || p.slug === request.packageId) : undefined);
+
+  if (!pkg) {
+    return {
+      success: false,
+      packageId: request.packageId || 'UNKNOWN',
+      packageTitle: 'Package Not Found',
+      finalSellingPrice: 0,
+      pricePerPerson: 0,
+      currency: request.targetCurrency || 'USD',
+      pax: { 
+        adults: request.adults || 2, 
+        children: request.children || 0, 
+        infants: request.infants || 0, 
+        totalPax: (request.adults || 2) + (request.children || 0) + (request.infants || 0) 
+      },
+      isAuthoritative: false,
+      calculatedAt: new Date().toISOString(),
+      rateId: 'RATE-PKG-ERR',
+      rateVersion: 1
+    };
+  }
+
+  const adults = Math.max(1, request.adults || 2);
+  const children = Math.max(0, request.children || 0);
+  const infants = Math.max(0, request.infants || 0);
+  const totalPax = adults + children + infants;
+  const targetCurrency: CurrencyCode = request.targetCurrency || pkg.currency || 'USD';
+
+  const userRole = request.userRole || request.user?.role || 'BUYER';
+  const isAgent = userRole === 'B2B_AGENT' || userRole === 'AGENT' || request.pricingTier === 'B2B';
+  const isAdminOrStaff = userRole === 'ADMIN' || userRole === 'DMC_STAFF';
+
+  // 1. Base component cost determination:
+  let evaluatedNetCostUSD = pkg.baseNetCostUSD || 2500;
+  let itemsCount = 0;
+
+  if (pkg.pricingConfiguration?.pricingMode === 'LIVE') {
+    let dynamicSum = 0;
+    const allProducts = db.getProducts();
+    if (pkg.productIds && pkg.productIds.length > 0) {
+      pkg.productIds.forEach(pid => {
+        const prod = allProducts.find(p => p.id === pid);
+        if (prod) {
+          dynamicSum += convertCurrency(prod.adultNetPrice, prod.currency || 'USD', 'USD');
+          itemsCount++;
+        }
+      });
+    }
+
+    const allHotels = db.getHotels();
+    if (pkg.hotelsSummary && pkg.hotelsSummary.length > 0) {
+      pkg.hotelsSummary.forEach(hs => {
+        const htl = allHotels.find(h => h.id === hs.hotelId || h.name.toLowerCase() === hs.name.toLowerCase());
+        const nightRate = htl?.startingNetPrice || 350;
+        dynamicSum += (nightRate * (hs.nights || 1));
+        itemsCount++;
+      });
+    }
+
+    if (dynamicSum > 0) {
+      evaluatedNetCostUSD = dynamicSum;
+    }
+  }
+
+  // 2. Markup determination:
+  let markupPercent = 25;
+  if (isAgent) {
+    markupPercent = pkg.pricingConfiguration?.b2bMarkupPercent ?? 12;
+    if (request.agentClientMarkupPercent) {
+      markupPercent += request.agentClientMarkupPercent;
+    }
+  } else {
+    markupPercent = pkg.pricingConfiguration?.buyerMarkupPercent ?? 25;
+  }
+
+  if (request.customMarkupPercent !== undefined) {
+    markupPercent = request.customMarkupPercent;
+  }
+
+  // 3. Authoritative per person price:
+  let perPersonUSD = 0;
+  if (!isAgent && (pkg.finalSellingPriceUSD || pkg.suggestedSellingPriceUSD) && pkg.pricingConfiguration?.pricingMode !== 'LIVE') {
+    perPersonUSD = pkg.finalSellingPriceUSD || pkg.suggestedSellingPriceUSD || Math.round(evaluatedNetCostUSD * 1.25);
+  } else {
+    perPersonUSD = Math.round(evaluatedNetCostUSD * (1 + markupPercent / 100));
+  }
+
+  if (request.customDiscountPercent) {
+    perPersonUSD = Math.round(perPersonUSD * (1 - request.customDiscountPercent / 100));
+  }
+
+  // Convert to target currency
+  const pricePerPerson = convertCurrency(perPersonUSD, 'USD', targetCurrency);
+  const childPricePerPerson = Math.round(pricePerPerson * 0.75);
+  const finalSellingPrice = (adults * pricePerPerson) + (children * childPricePerPerson);
+
+  const result: PackagePricingResult = {
+    success: true,
+    packageId: pkg.id,
+    packageTitle: pkg.title,
+    finalSellingPrice,
+    pricePerPerson,
+    currency: targetCurrency,
+    pax: { adults, children, infants, totalPax },
+    isAuthoritative: true,
+    calculatedAt: new Date().toISOString(),
+    rateId: `PKG-RATE-${pkg.id}`,
+    rateVersion: pkg.pricingConfiguration?.pricingMode === 'LIVE' ? 'LIVE-V1' : 'FIXED-V1'
+  };
+
+  // Only expose internal breakdown for ADMIN or DMC_STAFF
+  if (isAdminOrStaff) {
+    const totalNetCostTarget = convertCurrency(evaluatedNetCostUSD, 'USD', targetCurrency);
+    const markupAmount = finalSellingPrice - (totalNetCostTarget * adults + totalNetCostTarget * 0.75 * children);
+    result.internalAudit = {
+      totalNetCostUSD: evaluatedNetCostUSD,
+      totalNetCostTarget,
+      markupAmount,
+      effectiveMarkupPercent: markupPercent,
+      pricingMode: pkg.pricingConfiguration?.pricingMode || 'FIXED',
+      itemsCount
+    };
+  }
+
+  return result;
+}
+
+/**
  * AUTHORITATIVE PRICING SERVICE - UNIFIED ENTRY POINT
  * Section 5: "Inventory ID + Passenger Configuration + Date + Quantity + Service Configuration -> AUTHORITATIVE PRICING SERVICE -> Final Selling Price"
  */
@@ -664,6 +844,93 @@ export function calculatePrice(request: AuthoritativePriceRequest): PricingCalcu
   const db = AppDatabase.getInstance();
   const inventoryId = request.inventoryId;
   const inventoryType = request.inventoryType || 'PRODUCT';
+
+  // Handle Packages through Authoritative Package Engine
+  if (inventoryType === 'PACKAGE' || inventoryId.startsWith('pkg-')) {
+    const pkg = db.getPackages().find(p => p.id === inventoryId || p.slug === inventoryId);
+    if (pkg) {
+      const pkgResult = calculatePackagePrice({
+        packageItem: pkg,
+        adults: request.passengerConfiguration?.adults,
+        children: request.passengerConfiguration?.children,
+        infants: request.passengerConfiguration?.infants,
+        travelDate: request.date,
+        targetCurrency: request.targetCurrency,
+        user: request.user,
+        userRole: request.userRole,
+        pricingTier: request.pricingTier,
+        agentClientMarkupPercent: request.agentClientMarkupPercent,
+        customMarkupPercent: request.customMarkupPercent,
+        customDiscountPercent: request.customDiscountPercent
+      });
+
+      const adultsCount = request.passengerConfiguration?.adults || 2;
+      const childrenCount = request.passengerConfiguration?.children || 0;
+      const infantsCount = request.passengerConfiguration?.infants || 0;
+      const totalPax = adultsCount + childrenCount + infantsCount;
+      const isAdminOrStaff = (request.userRole === 'ADMIN' || request.userRole === 'DMC_STAFF' || request.user?.role === 'ADMIN' || request.user?.role === 'DMC_STAFF');
+
+      const adultsSelling = adultsCount * pkgResult.pricePerPerson;
+      const childrenSelling = childrenCount * Math.round(pkgResult.pricePerPerson * 0.75);
+
+      return {
+        productId: pkg.id,
+        productName: pkg.title,
+        pricingTier: (request.pricingTier || 'B2C') as any,
+        pax: {
+          adults: adultsCount,
+          children: childrenCount,
+          infants: infantsCount,
+          totalPax
+        },
+        travelDate: request.date || new Date().toISOString().split('T')[0],
+        currency: pkgResult.currency,
+        
+        adultsSubtotalNet: isAdminOrStaff && pkgResult.internalAudit ? pkgResult.internalAudit.totalNetCostTarget * adultsCount : 0,
+        childrenSubtotalNet: isAdminOrStaff && pkgResult.internalAudit ? pkgResult.internalAudit.totalNetCostTarget * 0.75 * childrenCount : 0,
+        infantsSubtotalNet: 0,
+        addonsSubtotalNet: 0,
+        totalNetCost: isAdminOrStaff && pkgResult.internalAudit ? pkgResult.internalAudit.totalNetCostTarget * totalPax : 0,
+
+        b2bWholesaleMarkupRate: isAdminOrStaff && pkgResult.internalAudit ? pkgResult.internalAudit.effectiveMarkupPercent / 100 : 0,
+        b2bWholesaleNetToAgent: 0,
+        agentClientMarkupRate: request.agentClientMarkupPercent ? request.agentClientMarkupPercent / 100 : 0,
+        agentProfitAmount: 0,
+
+        markupRate: isAdminOrStaff && pkgResult.internalAudit ? pkgResult.internalAudit.effectiveMarkupPercent / 100 : 0,
+        markupAmount: isAdminOrStaff && pkgResult.internalAudit ? pkgResult.internalAudit.markupAmount : 0,
+        grossBeforeTax: pkgResult.finalSellingPrice,
+
+        taxRate: 0,
+        taxAmount: 0,
+        serviceFee: 0,
+        discountRate: request.customDiscountPercent ? request.customDiscountPercent / 100 : 0,
+        discountAmount: 0,
+        commissionRate: 0,
+        commissionAmount: 0,
+
+        adultsSubtotalSelling: adultsSelling,
+        childrenSubtotalSelling: childrenSelling,
+        infantsSubtotalSelling: 0,
+        addonsSubtotalSelling: 0,
+        adultPricePerPax: pkgResult.pricePerPerson,
+        childPricePerPax: Math.round(pkgResult.pricePerPerson * 0.75),
+
+        finalTotalSellingPrice: pkgResult.finalSellingPrice,
+        sellingPriceFinal: pkgResult.finalSellingPrice,
+        pricePerPerson: pkgResult.pricePerPerson,
+
+        dmcMarginAmount: isAdminOrStaff && pkgResult.internalAudit ? pkgResult.internalAudit.markupAmount : 0,
+        dmcMarginPercent: isAdminOrStaff && pkgResult.internalAudit ? pkgResult.internalAudit.effectiveMarkupPercent : 0,
+
+        isAuthoritative: true,
+        rateId: pkgResult.rateId,
+        rateVersion: pkgResult.rateVersion,
+        calculatedAt: pkgResult.calculatedAt,
+        sourceCollection: 'b2b_packages'
+      };
+    }
+  }
 
   // 1. Resolve Product or Inventory Object
   let product: Product | undefined;
@@ -1065,6 +1332,10 @@ export class MasterPricingService {
 
   public static calculatePrice(request: AuthoritativePriceRequest): PricingCalculationResult {
     return calculatePrice(request);
+  }
+
+  public static calculatePackagePrice(request: PackagePricingRequest): PackagePricingResult {
+    return calculatePackagePrice(request);
   }
 
   public static getCurrentPrice(params: {

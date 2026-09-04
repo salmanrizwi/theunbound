@@ -124,6 +124,15 @@ export interface CMSSystemPermissions {
   securityLogs?: boolean;
 }
 
+export interface CMSSystemAnalysisPermissions {
+  enabled: boolean;
+  view?: boolean;
+  userAnalysis?: boolean;
+  activityAnalysis?: boolean;
+  transactionAnalysis?: boolean;
+  export?: boolean;
+}
+
 export interface UserPermissionAccess {
   // Quote Builder & AI Planner Access
   b2bQuoteBuilderAccess?: boolean;
@@ -146,6 +155,7 @@ export interface UserPermissionAccess {
   cmsContent?: CMSContentPermissions;
   cmsFinance?: CMSFinancePermissions;
   cmsSystem?: CMSSystemPermissions;
+  cmsSystemAnalysis?: CMSSystemAnalysisPermissions;
 
   // Flattened convenience & backward-compatibility flags
   canAccessRoster?: boolean;
@@ -3244,15 +3254,48 @@ export interface VisaProduct {
 }
 
 // ----------------------------------------------------
-// USER ACTIVITY & TELEMETRY TRACKING
+// USER ACTIVITY & TELEMETRY TRACKING & SYSTEM ANALYSIS
 // ----------------------------------------------------
+export type JourneyEventCategory = 
+  | 'USER'
+  | 'PRODUCT'
+  | 'HOTEL'
+  | 'PACKAGE'
+  | 'VISA'
+  | 'AI_PLANNER'
+  | 'QUOTE'
+  | 'BOOKING'
+  | 'TRANSACTION'
+  | 'LEAD'
+  | 'CART'
+  | 'COMMUNICATION';
+
+export interface SystemUserJourneyEvent {
+  id: string;
+  userId: string;
+  userEmail: string;
+  userName?: string;
+  agencyName?: string;
+  userRole?: UserRole;
+  category: JourneyEventCategory;
+  eventType: string; // e.g. 'REGISTERED', 'LOGIN', 'QUOTE_CREATED', 'QUOTE_SAVED', 'QUOTE_PDF_DOWNLOADED', 'QUOTE_WHATSAPP_SHARED', 'AI_PLANNER_SEARCH', 'AI_PLAN_GENERATED', 'BOOKING_SUBMITTED', 'BOOKING_CONFIRMED', 'PAYMENT_PROOF_UPLOADED', 'PAYMENT_VERIFIED', 'PRODUCT_VIEWED', 'HOTEL_VIEWED', 'PACKAGE_CUSTOMIZED', 'LEAD_CREATED'
+  title: string;
+  description: string;
+  timestamp: string;
+  entityId?: string;
+  entityType?: string;
+  metadata?: Record<string, any>;
+  iconName?: string;
+  severity?: 'INFO' | 'SUCCESS' | 'WARNING' | 'CRITICAL';
+}
+
 export interface UserActivityEvent {
   id: string;
   userId: string;
   userEmail: string;
   userName?: string;
   agencyName?: string;
-  type: 'PROPOSAL_SAVED' | 'QUOTE_DOWNLOADED' | 'BOOKING_SUBMITTED' | 'PAGE_VIEW' | 'LOGIN' | 'CALCULATOR_USED';
+  type: 'PROPOSAL_SAVED' | 'QUOTE_DOWNLOADED' | 'BOOKING_SUBMITTED' | 'PAGE_VIEW' | 'LOGIN' | 'CALCULATOR_USED' | 'AI_PLANNER_USED' | 'WHATSAPP_SHARED';
   targetId?: string;
   targetTitle?: string;
   details?: Record<string, any>;
@@ -3523,7 +3566,8 @@ export interface PackageItineraryDay {
 export interface PackagePricingConfig {
   pricingMode: PackagePricingMode;
   baseNetCostUSD: number;
-  suggestedSellingPriceUSD: number;
+  suggestedSellingPriceUSD?: number;
+  finalSellingPriceUSD?: number;
   adultNettUSD?: number;
   childNettUSD?: number;
   infantNettUSD?: number;
@@ -3601,7 +3645,8 @@ export interface B2BPackage {
   cancellationPolicy?: string;
   importantInformation?: string;
   baseNetCostUSD: number;
-  suggestedSellingPriceUSD: number;
+  suggestedSellingPriceUSD?: number;
+  finalSellingPriceUSD?: number;
   currency: CurrencyCode;
   tripType: 'LUXURY' | 'FAMILY' | 'HONEYMOON' | 'CULTURAL' | 'ADVENTURE' | 'CLASSIC';
   tags: string[];
