@@ -4,6 +4,7 @@ import { Hotel, HotelRoomType, HotelRate, HotelDailyPriceOverride, Destination, 
 import { useAuth } from '../../context/AuthContext';
 import { ImageUploadOrUrlInput } from '../ImageUploadOrUrlInput';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { 
   Hotel as HotelIcon, 
   Plus, 
@@ -64,7 +65,7 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editingHotel, setEditingHotel] = useState<Partial<Hotel> | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<'DETAILS' | 'ROOMS' | 'LOCATION' | 'CALENDAR_PRICING'>('DETAILS');
+  const [activeSubTab, setActiveSubTab] = useState<'DETAILS' | 'ROOMS' | 'LOCATION' | 'CALENDAR_PRICING' | 'SEO'>('DETAILS');
 
   // Calendar View State
   const [calendarHotelId, setCalendarHotelId] = useState<string>(hotels[0]?.id || '');
@@ -317,6 +318,8 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
       amenities: Array.isArray(editingHotel.amenities) ? editingHotel.amenities : [],
       blackoutDates: editingHotel.blackoutDates || [],
       dailyRateOverrides: editingHotel.dailyRateOverrides || {},
+      slug: (editingHotel as any).slug || editingHotel.name?.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+      seo: editingHotel.seo,
       status: editingHotel.status || 'PUBLISHED',
       startingNetPrice: lowestNet,
       currency: editingHotel.currency || 'USD',
@@ -1441,6 +1444,18 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                 >
                   3. Location & Transfers
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveSubTab('SEO')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                    activeSubTab === 'SEO'
+                      ? 'bg-[#008972] text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <Globe2 className="w-3.5 h-3.5" />
+                  <span>4. SEO & Indexing</span>
+                </button>
               </div>
 
               {/* Tab 1: Details */}
@@ -2231,6 +2246,16 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                     </div>
                   </div>
                 </div>
+              )}
+
+              {/* Tab 4: SEO */}
+              {activeSubTab === 'SEO' && editingHotel && (
+                <EntitySEOSettingsTab
+                  entityType="HOTEL"
+                  entity={editingHotel}
+                  seo={editingHotel.seo}
+                  onChange={(newSeo) => setEditingHotel(prev => prev ? ({ ...prev, seo: newSeo, slug: newSeo.slug || prev.slug }) : null)}
+                />
               )}
             </div>
 

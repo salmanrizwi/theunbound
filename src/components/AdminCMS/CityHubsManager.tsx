@@ -4,6 +4,7 @@ import { countingEngine } from '../../services/countingEngine';
 import { CityHub, Destination, MasterRegion } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { 
   Building2, 
   Plus, 
@@ -36,6 +37,7 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
   const [searchQuery, setSearchQuery] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [editingHub, setEditingHub] = useState<Partial<CityHub> | null>(null);
+  const [modalTab, setModalTab] = useState<'CONTENT' | 'SEO'>('CONTENT');
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
@@ -83,6 +85,7 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
       isPublished: true,
       status: 'ACTIVE'
     });
+    setModalTab('CONTENT');
     setIsEditing(true);
   };
 
@@ -100,6 +103,7 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
       regionId: targetRegion?.id || targetDest?.regionId || editingHub.regionId || '',
       regionName: targetRegion?.name || targetDest?.regionName || editingHub.regionName || '',
       name: editingHub.name,
+      slug: editingHub.slug || editingHub.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
       tagline: editingHub.tagline || '',
       description: editingHub.description || '',
       heroImage: editingHub.heroImage || 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1200&auto=format&fit=crop',
@@ -109,7 +113,8 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
       displayOrder: Number(editingHub.displayOrder || 1),
       highlights: Array.isArray(editingHub.highlights) ? editingHub.highlights : (editingHub.highlights as string || '').split(',').map((s: string) => s.trim()),
       isPublished: editingHub.isPublished !== undefined ? editingHub.isPublished : true,
-      status: editingHub.status || 'ACTIVE'
+      status: editingHub.status || 'ACTIVE',
+      seo: editingHub.seo
     };
 
     db.saveCityHub(completeHub, user);
@@ -254,6 +259,7 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
                 <button
                   onClick={() => {
                     setEditingHub(hub);
+                    setModalTab('CONTENT');
                     setIsEditing(true);
                   }}
                   className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 cursor-pointer"
@@ -314,7 +320,43 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
               </span>
             </div>
 
+            {/* Modal Subtabs */}
+            <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
+              <button
+                type="button"
+                onClick={() => setModalTab('CONTENT')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  modalTab === 'CONTENT' ? 'bg-[#00C6A6] text-slate-950 shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                City Hub Details
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalTab('SEO')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                  modalTab === 'SEO' ? 'bg-[#00C6A6] text-slate-950 shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <Globe2 className="w-3.5 h-3.5" />
+                <span>SEO & Search Indexing</span>
+              </button>
+            </div>
+
             <form onSubmit={handleSave} className="space-y-4">
+              {modalTab === 'SEO' ? (
+                <EntitySEOSettingsTab
+                  entityType="HUB"
+                  entity={editingHub}
+                  seo={editingHub.seo}
+                  onChange={(newSeo) => setEditingHub(prev => prev ? ({
+                    ...prev,
+                    seo: newSeo,
+                    slug: newSeo.slug || prev.slug
+                  }) : null)}
+                />
+              ) : (
+                <>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* 1. Parent Master Region */}
                 <div>
@@ -522,6 +564,8 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
                   </select>
                 </div>
               </div>
+              </>
+              )}
 
               <div className="flex items-center justify-between pt-4 border-t border-slate-100">
                 <div>

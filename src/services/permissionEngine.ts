@@ -675,6 +675,10 @@ export function canUserAccessCMSModule(
       if (!canUserAccessTopSection(user, 'CONTENT')) return false;
       return perms?.cmsContent?.marketingManagement !== false;
 
+    case 'SEO_MANAGEMENT':
+      if (!canUserAccessTopSection(user, 'CONTENT')) return false;
+      return perms?.cmsContent?.seoContent !== false;
+
     // Finance modules (blocked if cmsFinance.enabled === false)
     case 'ACCOUNT_MANAGEMENT':
       if (!canUserAccessTopSection(user, 'FINANCE')) return false;

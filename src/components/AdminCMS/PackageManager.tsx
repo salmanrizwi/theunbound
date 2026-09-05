@@ -57,6 +57,8 @@ import {
   Archive
 } from 'lucide-react';
 import { PackageDetailModal } from '../PackageDetailModal';
+import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
+import { EntitySEO } from '../../types/seo';
 
 interface PackageManagerProps {
   destinations: Destination[];
@@ -1954,31 +1956,22 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                     </div>
                   </div>
 
-                  {/* SEO Metadata */}
-                  <div className="space-y-3">
-                    <label className="font-bold text-slate-800 text-xs block">SEO Search Metadata</label>
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        value={editingPackage.seo?.metaTitle || ''}
-                        onChange={(e) => setEditingPackage({
-                          ...editingPackage,
-                          seo: { ...(editingPackage.seo || { metaDescription: '', keywords: [] }), metaTitle: e.target.value }
-                        })}
-                        placeholder="SEO Meta Title (e.g. Best 8-Day Japan Golden Route Itinerary | TheUnbound)"
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800"
-                      />
-                      <textarea
-                        rows={2}
-                        value={editingPackage.seo?.metaDescription || ''}
-                        onChange={(e) => setEditingPackage({
-                          ...editingPackage,
-                          seo: { ...(editingPackage.seo || { metaTitle: '', keywords: [] }), metaDescription: e.target.value }
-                        })}
-                        placeholder="SEO Meta Description..."
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800"
-                      />
-                    </div>
+                  {/* Advanced SEO, Open Graph & Structured Data Settings */}
+                  <div className="pt-2">
+                    <EntitySEOSettingsTab
+                      entityType="PACKAGE"
+                      entity={{
+                        ...editingPackage,
+                        name: editingPackage.title,
+                        description: editingPackage.description || editingPackage.tagline
+                      }}
+                      seo={editingPackage.seo as EntitySEO}
+                      onChange={(newSeo) => setEditingPackage({
+                        ...editingPackage,
+                        seo: newSeo,
+                        slug: newSeo.slug || editingPackage.slug
+                      })}
+                    />
                   </div>
                 </div>
               )}

@@ -97,8 +97,19 @@ import {
   AdminActivityCategory,
   AdminActivityType,
   AdminActivitySeverity,
-  AdminActivityActorType
+  AdminActivityActorType,
+  SEORedirect,
+  GlobalSEODefaults,
+  EntitySEO,
+  SEOAuditItem,
+  SEOEntityType
 } from '../types';
+import {
+  DEFAULT_GLOBAL_SEO_DEFAULTS,
+  auditEntitySEO,
+  buildFallbackSEO,
+  sanitizeSlug
+} from './seoEngine';
 import { INITIAL_PRODUCTS } from '../data/initialProducts';
 import { DESTINATIONS } from '../data/destinations';
 import { INITIAL_MASTER_REGIONS } from '../data/initialRegions';
@@ -913,6 +924,26 @@ export class AppDatabase {
         }
       }, (err) => console.debug('Firestore footer_config sync note:', err));
 
+      // 28. Sync SEO Redirects
+      onSnapshot(collection(firestoreDb, 'seo_redirects'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: SEORedirect[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as SEORedirect));
+          this.setItem('seo_redirects', list, true);
+        }
+      }, (err) => console.debug('Firestore seo_redirects sync note:', err));
+
+      // 29. Sync Global SEO Defaults & Settings
+      onSnapshot(collection(firestoreDb, 'seo_settings'), (snapshot) => {
+        if (!snapshot.empty) {
+          snapshot.forEach(docSnap => {
+            if (docSnap.id === 'global_defaults') {
+              this.setItem('seo_settings', docSnap.data() as GlobalSEODefaults, true);
+            }
+          });
+        }
+      }, (err) => console.debug('Firestore seo_settings sync note:', err));
+
     } catch (error) {
       console.warn('Firestore real-time listeners initialized with local fallback:', error);
     }
@@ -1048,6 +1079,12 @@ export class AppDatabase {
         }
       ];
       this.setItem('audit_logs', defaultLogs);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'seo_redirects')) {
+      this.setItem('seo_redirects', []);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'seo_settings')) {
+      this.setItem('seo_settings', DEFAULT_GLOBAL_SEO_DEFAULTS);
     }
 
     // AUTOMATIC MIGRATION: 
@@ -8728,6 +8765,311 @@ export class AppDatabase {
       }
     }
     return Array.from(map.values());
+  }
+
+  // ==========================================
+  // SEO SYSTEM INFRASTRUCTURE & 301 REDIRECTS
+  // ==========================================
+
+  public getSEORedirects(): SEORedirect[] {
+    return this.getItem<SEORedirect[]>('seo_redirects', []);
+  }
+
+  public saveSEORedirect(redirect: SEORedirect, actorName: string = 'Admin'): SEORedirect {
+    const list = this.getSEORedirects();
+    const existingIdx = list.findIndex(r => r.id === redirect.id);
+    const updatedRecord: SEORedirect = {
+      ...redirect,
+      sourceUrl: redirect.sourceUrl.trim().toLowerCase(),
+      destinationUrl: redirect.destinationUrl.trim(),
+      hits: redirect.hits || 0,
+      createdAt: redirect.createdAt || new Date().toISOString()
+    };
+
+    let updatedList: SEORedirect[];
+    if (existingIdx >= 0) {
+      updatedList = [...list];
+      updatedList[existingIdx] = updatedRecord;
+    } else {
+      updatedList = [updatedRecord, ...list];
+    }
+
+    this.setItem('seo_redirects', updatedList);
+    this.syncFirestoreDoc('seo_redirects', updatedRecord.id, updatedRecord);
+
+    this.logAudit(
+      { id: 'usr-admin', name: actorName, role: 'ADMIN' },
+      existingIdx >= 0 ? 'SEO_REDIRECT_UPDATED' : 'SEO_REDIRECT_CREATED',
+      'SEORedirect',
+      updatedRecord.id,
+      `Saved ${updatedRecord.statusCode} redirect: ${updatedRecord.sourceUrl} -> ${updatedRecord.destinationUrl}`
+    );
+
+    return updatedRecord;
+  }
+
+  public deleteSEORedirect(id: string, actorName: string = 'Admin'): void {
+    const list = this.getSEORedirects();
+    const target = list.find(r => r.id === id);
+    const filtered = list.filter(r => r.id !== id);
+    this.setItem('seo_redirects', filtered);
+    this.deleteFirestoreDoc('seo_redirects', id);
+
+    if (target) {
+      this.logAudit(
+        { id: 'usr-admin', name: actorName, role: 'ADMIN' },
+        'SEO_REDIRECT_DELETED',
+        'SEORedirect',
+        id,
+        `Deleted ${target.statusCode} redirect: ${target.sourceUrl}`
+      );
+    }
+  }
+
+  public getGlobalSEODefaults(): GlobalSEODefaults {
+    return this.getItem<GlobalSEODefaults>('seo_settings', DEFAULT_GLOBAL_SEO_DEFAULTS);
+  }
+
+  public saveGlobalSEODefaults(defaults: GlobalSEODefaults, actorName: string = 'Admin'): void {
+    this.setItem('seo_settings', defaults);
+    this.syncFirestoreDoc('seo_settings', 'global_defaults', defaults);
+
+    this.logAudit(
+      { id: 'usr-admin', name: actorName, role: 'ADMIN' },
+      'SEO_SETTINGS_UPDATED',
+      'GlobalSEODefaults',
+      'global_defaults',
+      `Updated Global SEO defaults and URL templates.`
+    );
+  }
+
+  public updateEntitySEO(
+    entityType: SEOEntityType,
+    entityId: string,
+    seo: EntitySEO,
+    actorName: string = 'Admin'
+  ): void {
+    const globalDefaults = this.getGlobalSEODefaults();
+    const cleanSlug = sanitizeSlug(seo.slug || '');
+    const cleanSEO: EntitySEO = {
+      ...seo,
+      slug: cleanSlug,
+      lastUpdated: new Date().toISOString(),
+      updatedBy: actorName
+    };
+
+    let oldSlug = '';
+    let urlPrefix = '';
+
+    switch (entityType) {
+      case 'DESTINATION': {
+        const list = this.getDestinations();
+        const item = list.find(d => d.id === entityId);
+        if (item) {
+          oldSlug = item.slug;
+          urlPrefix = '/destinations';
+          const updatedItem = { ...item, slug: cleanSlug || item.slug, seo: cleanSEO };
+          this.saveDestination(updatedItem, null);
+        }
+        break;
+      }
+      case 'REGION': {
+        const list = this.getMasterRegions();
+        const item = list.find(r => r.id === entityId);
+        if (item) {
+          oldSlug = item.slug;
+          urlPrefix = '/destinations';
+          const updatedItem = { ...item, slug: cleanSlug || item.slug, seo: cleanSEO };
+          this.saveMasterRegion(updatedItem, null);
+        }
+        break;
+      }
+      case 'CITY_HUB': {
+        const list = this.getCityHubs();
+        const item = list.find(c => c.id === entityId);
+        if (item) {
+          oldSlug = item.slug || sanitizeSlug(item.name);
+          urlPrefix = `/destinations/${item.destinationName?.toLowerCase() || 'japan'}`;
+          const updatedItem = { ...item, slug: cleanSlug || oldSlug, seo: cleanSEO };
+          this.saveCityHub(updatedItem, null);
+        }
+        break;
+      }
+      case 'PRODUCT': {
+        const list = this.getProducts();
+        const item = list.find(p => p.id === entityId);
+        if (item) {
+          oldSlug = item.slug || sanitizeSlug(item.name);
+          urlPrefix = '/products';
+          const updatedItem = { ...item, slug: cleanSlug || oldSlug, seo: cleanSEO };
+          this.saveProduct(updatedItem, null);
+        }
+        break;
+      }
+      case 'HOTEL': {
+        const list = this.getHotels();
+        const item = list.find(h => h.id === entityId);
+        if (item) {
+          oldSlug = (item as any).slug || sanitizeSlug(item.name);
+          urlPrefix = '/hotels';
+          const updatedItem = { ...item, slug: cleanSlug || oldSlug, seo: cleanSEO };
+          this.saveHotel(updatedItem, null);
+        }
+        break;
+      }
+      case 'PACKAGE': {
+        const list = this.getB2BPackages();
+        const item = list.find(p => p.id === entityId);
+        if (item) {
+          oldSlug = (item as any).slug || sanitizeSlug(item.title);
+          urlPrefix = '/packages';
+          const updatedItem = { ...item, slug: cleanSlug || oldSlug, seo: cleanSEO };
+          this.savePackage(updatedItem, null);
+        }
+        break;
+      }
+      case 'BLOG': {
+        const list = this.getBlogs();
+        const item = list.find(b => b.id === entityId);
+        if (item) {
+          oldSlug = item.slug;
+          urlPrefix = '/blogs';
+          const updatedItem = { ...item, slug: cleanSlug || item.slug, seo: cleanSEO };
+          this.saveBlog(updatedItem, null);
+        }
+        break;
+      }
+      case 'VISA': {
+        const list = this.getVisas();
+        const item = list.find(v => v.id === entityId);
+        if (item) {
+          oldSlug = (item as any).slug || sanitizeSlug(item.country);
+          urlPrefix = '/visas';
+          const updatedItem = { ...item, slug: cleanSlug || oldSlug, seo: cleanSEO };
+          this.saveVisa(updatedItem);
+        }
+        break;
+      }
+      case 'CUSTOM_PAGE': {
+        const list = this.getCustomPages();
+        const item = list.find(cp => cp.id === entityId);
+        if (item) {
+          oldSlug = item.slug;
+          urlPrefix = '/pages';
+          const updatedItem = { ...item, slug: cleanSlug || item.slug, seo: cleanSEO };
+          this.saveCustomPage(updatedItem);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+
+    this.logAudit(
+      { id: 'usr-admin', name: actorName, role: 'ADMIN' },
+      'SEO_METADATA_UPDATED',
+      entityType,
+      entityId,
+      `Updated SEO metadata for ${entityType} ID: ${entityId}`
+    );
+
+    // Auto-create 301 Redirect if slug has changed
+    if (oldSlug && cleanSlug && oldSlug !== cleanSlug && urlPrefix) {
+      const sourceUrl = `${urlPrefix}/${oldSlug}`.toLowerCase();
+      const destinationUrl = `${urlPrefix}/${cleanSlug}`.toLowerCase();
+      
+      const existingRedirects = this.getSEORedirects();
+      const alreadyExists = existingRedirects.some(r => r.sourceUrl === sourceUrl && r.destinationUrl === destinationUrl);
+      
+      if (!alreadyExists) {
+        this.saveSEORedirect({
+          id: `redir-${Date.now()}`,
+          sourceUrl,
+          destinationUrl,
+          statusCode: 301,
+          createdAt: new Date().toISOString(),
+          createdBy: actorName,
+          hits: 0,
+          active: true,
+          entityType,
+          entityId,
+          notes: `Auto-generated 301 redirect upon slug update from "${oldSlug}" to "${cleanSlug}"`
+        }, actorName);
+      }
+    }
+  }
+
+  public getAllSEOAuditItems(): SEOAuditItem[] {
+    const globalDefaults = this.getGlobalSEODefaults();
+    const items: SEOAuditItem[] = [];
+
+    // 1. Homepage
+    const homeEntity = {
+      id: 'page-home',
+      name: 'TheUnbound Official Homepage',
+      slug: '',
+      description: globalDefaults.defaultMetaDescription
+    };
+    items.push(auditEntitySEO('HOMEPAGE', homeEntity, (homeEntity as any).seo, globalDefaults));
+
+    // 2. Destinations
+    for (const d of this.getDestinations()) {
+      items.push(auditEntitySEO('DESTINATION', d, d.seo, globalDefaults));
+    }
+
+    // 3. Master Regions
+    for (const r of this.getMasterRegions()) {
+      items.push(auditEntitySEO('REGION', r, r.seo, globalDefaults));
+    }
+
+    // 4. City Hubs
+    for (const c of this.getCityHubs()) {
+      items.push(auditEntitySEO('CITY_HUB', c, c.seo, globalDefaults));
+    }
+
+    // 5. Products (Excursions, transfers, day tours)
+    for (const p of this.getProducts()) {
+      items.push(auditEntitySEO('PRODUCT', p, p.seo, globalDefaults));
+    }
+
+    // 6. Hotels
+    for (const h of this.getHotels()) {
+      items.push(auditEntitySEO('HOTEL', h, h.seo, globalDefaults));
+    }
+
+    // 7. Packages
+    for (const pkg of this.getB2BPackages()) {
+      items.push(auditEntitySEO('PACKAGE', pkg, pkg.seo as EntitySEO, globalDefaults));
+    }
+
+    // 8. Blogs
+    for (const b of this.getBlogs()) {
+      items.push(auditEntitySEO('BLOG', b, b.seo, globalDefaults));
+    }
+
+    // 9. Visas
+    for (const v of this.getVisas()) {
+      items.push(auditEntitySEO('VISA', v, v.seo, globalDefaults));
+    }
+
+    // 10. Custom Pages
+    for (const cp of this.getCustomPages()) {
+      items.push(auditEntitySEO('CUSTOM_PAGE', cp, cp.seo, globalDefaults));
+    }
+
+    // 11. Institutional / Legal Pages
+    const legalPages = [
+      { id: 'legal-about', name: 'About TheUnbound DMC', slug: 'about', description: 'About TheUnbound Destination Management Company and leadership.' },
+      { id: 'legal-contact', name: 'Contact Operations & Reservations', slug: 'contact', description: 'Contact TheUnbound global operations and concierge teams.' },
+      { id: 'legal-terms', name: 'Terms & Conditions of Ground Service', slug: 'terms', description: 'Legal booking terms and ground operator agreements.' },
+      { id: 'legal-privacy', name: 'Privacy & Data Protection Policy', slug: 'privacy', description: 'How TheUnbound collects and safeguards traveler data.' },
+      { id: 'legal-refund', name: 'Cancellation & Refund Policy', slug: 'refund', description: 'Cancellation timelines and refund procedures.' }
+    ];
+    for (const lp of legalPages) {
+      items.push(auditEntitySEO('LEGAL', lp, (lp as any).seo, globalDefaults));
+    }
+
+    return items;
   }
 }
 

@@ -20,6 +20,7 @@ import {
   Share2,
   Bookmark
 } from 'lucide-react';
+import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 
 interface BlogCMSManagerProps {
   onViewArticle?: (article: BlogArticle) => void;
@@ -36,6 +37,7 @@ export const BlogCMSManager: React.FC<BlogCMSManagerProps> = ({ onViewArticle })
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingBlog, setEditingBlog] = useState<BlogArticle | null>(null);
+  const [modalTab, setModalTab] = useState<'CONTENT' | 'SEO'>('CONTENT');
 
   // Form State
   const [formData, setFormData] = useState<Partial<BlogArticle>>({
@@ -74,6 +76,7 @@ export const BlogCMSManager: React.FC<BlogCMSManagerProps> = ({ onViewArticle })
 
   const handleOpenCreate = () => {
     setEditingBlog(null);
+    setModalTab('CONTENT');
     setFormData({
       title: '',
       slug: '',
@@ -92,13 +95,15 @@ export const BlogCMSManager: React.FC<BlogCMSManagerProps> = ({ onViewArticle })
       destinationSlug: 'japan',
       seoTitle: '',
       seoDescription: '',
-      seoKeywords: ''
+      seoKeywords: '',
+      seo: undefined
     });
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (blog: BlogArticle) => {
     setEditingBlog(blog);
+    setModalTab('CONTENT');
     setFormData({ ...blog });
     setIsModalOpen(true);
   };
@@ -110,7 +115,7 @@ export const BlogCMSManager: React.FC<BlogCMSManagerProps> = ({ onViewArticle })
     const blogToSave: BlogArticle = {
       id: editingBlog ? editingBlog.id : `blog-${Date.now()}`,
       title: formData.title || '',
-      slug: formData.slug.toLowerCase().replace(/\s+/g, '-'),
+      slug: (formData.slug || formData.title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
       author: formData.author || 'TheUnbound Editorial Desk',
       authorRole: formData.authorRole || 'Ground Specialist',
       authorAvatar: formData.authorAvatar || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop',
@@ -124,9 +129,10 @@ export const BlogCMSManager: React.FC<BlogCMSManagerProps> = ({ onViewArticle })
       publishDate: formData.publishDate || new Date().toISOString().split('T')[0],
       readTimeMinutes: Number(formData.readTimeMinutes) || 5,
       destinationSlug: formData.destinationSlug || 'japan',
-      seoTitle: formData.seoTitle || formData.title || '',
-      seoDescription: formData.seoDescription || formData.summary || '',
-      seoKeywords: formData.seoKeywords || '',
+      seoTitle: formData.seo?.metaTitle || formData.seoTitle || formData.title || '',
+      seoDescription: formData.seo?.metaDescription || formData.seoDescription || formData.summary || '',
+      seoKeywords: (formData.seo?.keywords && formData.seo.keywords.join(', ')) || formData.seoKeywords || '',
+      seo: formData.seo || editingBlog?.seo,
       views: editingBlog?.views || 0,
       createdAt: editingBlog?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -360,7 +366,49 @@ export const BlogCMSManager: React.FC<BlogCMSManagerProps> = ({ onViewArticle })
               </button>
             </div>
 
+            {/* Modal Subtabs */}
+            <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
+              <button
+                type="button"
+                onClick={() => setModalTab('CONTENT')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  modalTab === 'CONTENT' ? 'bg-[#008972] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Editorial Content
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalTab('SEO')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                  modalTab === 'SEO' ? 'bg-[#008972] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <Globe className="w-3.5 h-3.5" />
+                <span>SEO & Search Indexing</span>
+              </button>
+            </div>
+
             <form onSubmit={handleSave} className="space-y-4 text-xs">
+              {modalTab === 'SEO' ? (
+                <EntitySEOSettingsTab
+                  entityType="BLOG"
+                  entity={{
+                    ...formData,
+                    name: formData.title,
+                    description: formData.summary
+                  }}
+                  seo={formData.seo}
+                  onChange={(newSeo) => setFormData(prev => ({
+                    ...prev,
+                    seo: newSeo,
+                    slug: newSeo.slug || prev.slug,
+                    seoTitle: newSeo.metaTitle || prev.seoTitle,
+                    seoDescription: newSeo.metaDescription || prev.seoDescription
+                  }))}
+                />
+              ) : (
+                <>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-1 sm:col-span-2">
                   <label className="font-semibold text-slate-700">Article Title *</label>
@@ -503,6 +551,8 @@ export const BlogCMSManager: React.FC<BlogCMSManagerProps> = ({ onViewArticle })
                   </div>
                 </div>
               </div>
+              </>
+              )}
 
               {/* Publication Status & Toggles */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">

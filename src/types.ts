@@ -1,3 +1,6 @@
+export * from './types/seo';
+import type { EntitySEO } from './types/seo';
+
 export type UserCategory = 'EXTERNAL' | 'INTERNAL';
 
 export type UserRole = 
@@ -274,6 +277,7 @@ export interface MasterRegion {
   hotelsCount?: number;
   createdAt?: string;
   updatedAt?: string;
+  seo?: EntitySEO;
 }
 
 export type Region = MasterRegion;
@@ -319,6 +323,7 @@ export interface Destination {
   secondaryCtaText?: string;
   showSecondaryCta?: boolean;
   trustBadgeText?: string;
+  seo?: EntitySEO;
 }
 
 export interface Supplier {
@@ -357,6 +362,8 @@ export interface Product {
   city: string;
   productType: string;
   name: string;
+  title?: string;
+  slug?: string;
   shortDescription: string;
   longDescription: string;
   supplierId: string;
@@ -430,6 +437,7 @@ export interface Product {
   accommodationType?: AccommodationType;
   isManualHotel?: boolean;
   manualHotelDetails?: ManualHotelDetails;
+  seo?: EntitySEO;
 }
 
 export type ProductPricingMethod = 'per_person' | 'capacity_based' | 'fixed_stay';
@@ -1334,6 +1342,7 @@ export interface BlogArticle {
   views?: number;
   createdAt: string;
   updatedAt: string;
+  seo?: EntitySEO;
 }
 
 // ----------------------------------------------------
@@ -1532,6 +1541,11 @@ export type AuditAction =
   | 'RECORD_ARCHIVED'
   | 'DELETION_BLOCKED_DEPENDENCY'
   | 'UNAUTHORIZED_DELETE_ATTEMPT'
+  | 'SEO_REDIRECT_CREATED'
+  | 'SEO_REDIRECT_UPDATED'
+  | 'SEO_REDIRECT_DELETED'
+  | 'SEO_SETTINGS_UPDATED'
+  | 'SEO_METADATA_UPDATED'
   // Database Actions
   | 'DATABASE_HEALTH_CHECK'
   | 'DATABASE_REPAIR_EXECUTED'
@@ -2425,6 +2439,8 @@ export interface Hotel {
   currency: CurrencyCode;
   createdAt: string;
   updatedAt: string;
+  slug?: string;
+  seo?: EntitySEO;
 }
 
 // ----------------------------------------------------
@@ -2437,6 +2453,7 @@ export interface CityHub {
   regionId?: string;
   regionName?: string;
   name: string;
+  slug?: string;
   tagline: string;
   description: string;
   heroImage: string;
@@ -2447,6 +2464,7 @@ export interface CityHub {
   highlights: string[];
   isPublished: boolean;
   status: 'ACTIVE' | 'ARCHIVED';
+  seo?: EntitySEO;
 }
 
 export interface DestinationFAQ {
@@ -3164,6 +3182,7 @@ export interface CustomPage {
   author?: string;
   createdAt: string;
   updatedAt: string;
+  seo?: EntitySEO;
 }
 
 // ----------------------------------------------------
@@ -3251,6 +3270,8 @@ export interface VisaProduct {
   featured?: boolean;
   createdAt: string;
   updatedAt: string;
+  slug?: string;
+  seo?: EntitySEO;
 }
 
 // ----------------------------------------------------
@@ -3652,7 +3673,7 @@ export interface B2BPackage {
   tags: string[];
   status?: PackageStatus;
   visibility?: PackageVisibility;
-  seo?: PackageSEO;
+  seo?: PackageSEO | EntitySEO;
   isFeatured?: boolean;
   isPublished: boolean;
   createdBy?: string;

@@ -4,6 +4,7 @@ import { VisaProduct, Destination } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { ImageUploadOrUrlInput } from '../ImageUploadOrUrlInput';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { 
   FileText, 
   Plus, 
@@ -37,6 +38,7 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({ destinations }) 
   const [selectedCountry, setSelectedCountry] = useState<string>('all');
   const [isEditing, setIsEditing] = useState(false);
   const [editingVisa, setEditingVisa] = useState<Partial<VisaProduct> | null>(null);
+  const [modalTab, setModalTab] = useState<'CONTENT' | 'SEO'>('CONTENT');
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   // New checklist item input
@@ -103,6 +105,7 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({ destinations }) 
         }
       ]
     });
+    setModalTab('CONTENT');
     setIsEditing(true);
   };
 
@@ -133,6 +136,8 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({ destinations }) 
       downloadableForms: editingVisa.downloadableForms || [],
       faqs: editingVisa.faqs || [],
       heroImage: editingVisa.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
+      slug: editingVisa.slug || `${editingVisa.country}-${editingVisa.visaType}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+      seo: editingVisa.seo,
       status: (editingVisa.status as any) || 'ACTIVE',
       featured: !!editingVisa.featured,
       createdAt: editingVisa.createdAt || new Date().toISOString(),
@@ -282,6 +287,7 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({ destinations }) 
               <button
                 onClick={() => {
                   setEditingVisa({ ...visa });
+                  setModalTab('CONTENT');
                   setIsEditing(true);
                 }}
                 className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg text-xs font-bold flex items-center space-x-1 cursor-pointer transition-colors"
@@ -324,7 +330,39 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({ destinations }) 
               </button>
             </div>
 
+            {/* Modal Subtabs */}
+            <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
+              <button
+                type="button"
+                onClick={() => setModalTab('CONTENT')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  modalTab === 'CONTENT' ? 'bg-[#008972] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Visa Specifications
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalTab('SEO')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                  modalTab === 'SEO' ? 'bg-[#008972] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <Globe2 className="w-3.5 h-3.5" />
+                <span>SEO & Search Indexing</span>
+              </button>
+            </div>
+
             <form onSubmit={handleSave} className="space-y-4">
+              {modalTab === 'SEO' ? (
+                <EntitySEOSettingsTab
+                  entityType="VISA"
+                  entity={editingVisa}
+                  seo={editingVisa.seo}
+                  onChange={(newSeo) => setEditingVisa(prev => prev ? ({ ...prev, seo: newSeo, slug: newSeo.slug || prev.slug }) : null)}
+                />
+              ) : (
+                <>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
@@ -520,6 +558,8 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({ destinations }) 
                   ))}
                 </div>
               </div>
+              </>
+              )}
 
               <div className="flex items-center justify-between pt-4 border-t border-slate-100">
                 <div>

@@ -454,6 +454,20 @@ service cloud.firestore {
     }
 
     // =========================================================================
+    // SEO INFRASTRUCTURE & REDIRECTS
+    // =========================================================================
+
+    match /seo_redirects/{id} {
+      allow read: if true; // Public routing needs to resolve 301/302 redirects
+      allow write: if canAccessCMSContent() || canAccessCMSSystem();
+    }
+
+    match /seo_settings/{id} {
+      allow read: if true; // Public crawlers & sitemap need global SEO defaults
+      allow write: if canAccessCMSContent() || canAccessCMSSystem();
+    }
+
+    // =========================================================================
     // USER PERSONAL STORAGE (Wishlists)
     // =========================================================================
 

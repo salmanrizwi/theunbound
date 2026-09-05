@@ -24,6 +24,7 @@ import { MasterRegion, Destination, CityHub, Product, Hotel, CurrencyCode, SUPPO
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 
 interface RegionCMSManagerProps {
   onNavigateToDestinations?: (regionId?: string) => void;
@@ -47,6 +48,7 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
   const [selectedRegion, setSelectedRegion] = useState<MasterRegion | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [modalTab, setModalTab] = useState<'CONTENT' | 'SEO'>('CONTENT');
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
@@ -125,12 +127,14 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
       isPublished: true,
       featured: false
     });
+    setModalTab('CONTENT');
     setIsCreating(true);
     setIsEditing(false);
   };
 
   const handleEdit = (reg: MasterRegion) => {
     setFormData({ ...reg });
+    setModalTab('CONTENT');
     setIsEditing(true);
     setIsCreating(false);
   };
@@ -170,6 +174,7 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
       status: (formData.status as any) || 'ACTIVE',
       isPublished: formData.isPublished ?? true,
       featured: formData.featured ?? false,
+      seo: formData.seo,
       updatedAt: new Date().toISOString()
     };
 
@@ -515,8 +520,44 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
               </button>
             </div>
 
+            {/* Modal Subtabs */}
+            <div className="flex items-center space-x-2 px-6 pt-4 border-b border-slate-100">
+              <button
+                type="button"
+                onClick={() => setModalTab('CONTENT')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  modalTab === 'CONTENT' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Region Details
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalTab('SEO')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                  modalTab === 'SEO' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <Globe2 className="w-3.5 h-3.5" />
+                <span>SEO & Search Indexing</span>
+              </button>
+            </div>
+
             {/* Modal Form */}
             <form onSubmit={handleSave} className="p-6 overflow-y-auto space-y-4 flex-1">
+              {modalTab === 'SEO' ? (
+                <EntitySEOSettingsTab
+                  entityType="REGION"
+                  entity={formData}
+                  seo={formData.seo}
+                  onChange={(newSeo) => setFormData(prev => ({
+                    ...prev,
+                    seo: newSeo,
+                    slug: newSeo.slug || prev.slug
+                  }))}
+                />
+              ) : (
+                <>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="md:col-span-2">
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
@@ -669,6 +710,8 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
                   </label>
                 </div>
               </div>
+              </>
+              )}
 
               {/* Action Buttons */}
               <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-3">

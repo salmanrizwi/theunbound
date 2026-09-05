@@ -42,6 +42,7 @@ import {
 } from 'lucide-react';
 import { fileToDataUrl, convertUnsplashUrl, fetchUnsplashImagesByQuery } from '../../utils/imageUtils';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 
 interface ProductManagerProps {
   destinations: Destination[];
@@ -85,6 +86,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [modalTab, setModalTab] = useState<'CONTENT' | 'SEO'>('CONTENT');
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   // Form State
@@ -208,6 +210,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
 
   const handleOpenCreate = () => {
     setEditingProduct(null);
+    setModalTab('CONTENT');
     const firstReg = masterRegions[0] || { id: 'reg-asia', name: 'Asia', code: 'ASIA' };
     const matchingDests = destinations.filter(d => !firstReg.id || d.regionId === firstReg.id);
     const targetDest = matchingDests[0] || destinations[0] || { id: 'dest-japan', name: 'Japan', regionId: firstReg.id };
@@ -274,6 +277,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
 
   const handleOpenEdit = (product: Product) => {
     setEditingProduct(product);
+    setModalTab('CONTENT');
     const isCapCat = CAPACITY_BASED_CATEGORIES.includes(product.category as string);
     setFormData({
       ...product,
@@ -415,6 +419,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       longitude: formData.longitude || 139.6503,
       rating: formData.rating || 4.9,
       reviewCount: formData.reviewCount || 10,
+      slug: formData.slug || formData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+      seo: formData.seo,
       status: formData.status || 'ACTIVE',
       lastUpdated: new Date().toISOString().split('T')[0]
     };
@@ -755,7 +761,39 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
               </button>
             </div>
 
+            {/* Modal Subtabs */}
+            <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
+              <button
+                type="button"
+                onClick={() => setModalTab('CONTENT')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  modalTab === 'CONTENT' ? 'bg-[#00C6A6] text-slate-950 shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Product Details & Pricing
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalTab('SEO')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                  modalTab === 'SEO' ? 'bg-[#008972] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <Globe2 className="w-3.5 h-3.5" />
+                <span>SEO & Search Indexing</span>
+              </button>
+            </div>
+
             <form onSubmit={handleSave} className="space-y-4 text-xs">
+              {modalTab === 'SEO' ? (
+                <EntitySEOSettingsTab
+                  entityType="PRODUCT"
+                  entity={formData}
+                  seo={formData.seo}
+                  onChange={(newSeo) => setFormData(prev => ({ ...prev, seo: newSeo, slug: newSeo.slug || prev.slug }))}
+                />
+              ) : (
+                <>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-1 sm:col-span-2">
                   <label className="font-semibold text-slate-700">Product Name *</label>
@@ -2002,6 +2040,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   </select>
                 </div>
               </div>
+              </>
+              )}
 
               {/* Actions */}
               <div className="flex items-center justify-between pt-4 border-t border-slate-100">

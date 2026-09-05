@@ -39,6 +39,7 @@ import { RosterAdminManager } from '../RosterAdminManager';
 import { IntegrationsManager } from './IntegrationsManager';
 import { DataSyncAuditViewer } from './DataSyncAuditViewer';
 import { SystemAnalysis } from './SystemAnalysis';
+import { SEOManager } from './SEOManager';
 import { GlobalRemindersBar } from '../GlobalRemindersBar';
 import { 
   canUserAccessCMS, 
@@ -107,6 +108,7 @@ export type CMSSection =
   | 'DESTINATION_MANAGEMENT'
   | 'PAGE_MANAGEMENT'
   | 'MARKETING_MANAGEMENT'
+  | 'SEO_MANAGEMENT'
   | 'ACCOUNT_MANAGEMENT'
   | 'ANALYTICS_MANAGEMENT'
   | 'NOTIFICATIONS_MANAGEMENT'
@@ -502,6 +504,21 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             { id: 'REVIEWS', label: 'Google Business Reviews', icon: CheckCircle2 },
             { id: 'BLOGS', label: 'Editorial Articles & Guides', icon: Compass },
             { id: 'CAMPAIGNS', label: 'Email Triggers & Broadcasts', icon: Sparkles }
+          ]
+        },
+        {
+          id: 'SEO_MANAGEMENT',
+          label: 'SEO Management Engine',
+          shortLabel: 'SEO & Indexing',
+          icon: Globe2,
+          badge: 'Live',
+          description: 'Centralized SEO engine across all platform entities: global defaults, URL pattern templates, 301 redirects, robots.txt, dynamic sitemap.xml, and entity audit health.',
+          subTabs: [
+            { id: 'AUDIT', label: 'Site-wide SEO Audit', icon: ShieldCheck },
+            { id: 'DEFAULTS', label: 'Global Defaults & Brand', icon: SlidersHorizontal },
+            { id: 'TEMPLATES', label: 'URL & Meta Templates', icon: Layers },
+            { id: 'REDIRECTS', label: '301 / 302 Redirects', icon: Compass },
+            { id: 'TECHNICAL', label: 'Robots & Sitemap Tools', icon: Globe2 }
           ]
         }
       ]
@@ -1222,6 +1239,11 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
               {activeSubTab === 'BLOGS' && <BlogCMSManager onViewArticle={onViewArticle} />}
               {activeSubTab === 'CAMPAIGNS' && <EmailCampaignsManager />}
             </>
+          )}
+
+          {/* 3.4 SEO MANAGEMENT ENGINE */}
+          {currentModuleConfig.id === 'SEO_MANAGEMENT' && (
+            <SEOManager />
           )}
 
           {/* SECTION 4: FINANCE & ADMINISTRATION */}

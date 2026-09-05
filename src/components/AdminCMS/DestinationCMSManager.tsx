@@ -23,6 +23,7 @@ import {
   Filter,
   RefreshCw
 } from 'lucide-react';
+import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 
 interface DestinationCMSManagerProps {
   onSelectDestination?: (slug: string) => void;
@@ -46,6 +47,7 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRegionFilter, setSelectedRegionFilter] = useState<string>(initialRegionFilter);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalTab, setModalTab] = useState<'CONTENT' | 'SEO'>('CONTENT');
   const [editingDest, setEditingDest] = useState<Destination | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
@@ -90,6 +92,7 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
   const handleOpenCreate = () => {
     const defaultRegion = masterRegions[0] || { id: 'reg-east-asia', name: 'East Asia' };
     setEditingDest(null);
+    setModalTab('CONTENT');
     setFormData({
       name: '',
       slug: '',
@@ -123,6 +126,7 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
 
   const handleOpenEdit = (dest: Destination) => {
     setEditingDest(dest);
+    setModalTab('CONTENT');
     setFormData({ ...dest });
     setIsModalOpen(true);
   };
@@ -171,7 +175,8 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
       cities: formData.cities || [],
       highlights: formData.highlights || [],
       featuredProductIds: editingDest?.featuredProductIds || [],
-      status: formData.status || 'ACTIVE'
+      status: formData.status || 'ACTIVE',
+      seo: formData.seo
     };
 
     db.saveDestination(destToSave, user);
@@ -450,8 +455,40 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
               </button>
             </div>
 
+            {/* Modal Subtabs */}
+            <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
+              <button
+                type="button"
+                onClick={() => setModalTab('CONTENT')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  modalTab === 'CONTENT' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Content & Highlights
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalTab('SEO')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                  modalTab === 'SEO' ? 'bg-[#008972] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <Globe2 className="w-3.5 h-3.5" />
+                <span>SEO & Indexing</span>
+              </button>
+            </div>
+
             <form onSubmit={handleSave} className="space-y-4 text-xs">
-              {/* Hierarchy Selection - Parent Master Region */}
+              {modalTab === 'SEO' ? (
+                <EntitySEOSettingsTab
+                  entityType="DESTINATION"
+                  entity={formData}
+                  seo={formData.seo}
+                  onChange={(newSeo) => setFormData(prev => ({ ...prev, seo: newSeo, slug: newSeo.slug || prev.slug }))}
+                />
+              ) : (
+                <>
+                  {/* Hierarchy Selection - Parent Master Region */}
               <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
                 <label className="block text-xs font-bold text-amber-900 uppercase tracking-wider mb-1.5">
                   1. Parent Master Region (Tier 1) *
@@ -772,6 +809,8 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
                   ))}
                 </div>
               </div>
+              </>
+              )}
 
               {/* Action Buttons */}
               <div className="flex items-center justify-between pt-6 border-t border-slate-100">
