@@ -231,15 +231,15 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center space-x-1.5 sm:space-x-2">
+          <div className="flex items-center space-x-1 sm:space-x-2">
             <button
               type="button"
               id={`b2b-btn-roster-${product.id}`}
               onClick={() => onOpenRosterModal(product)}
-              className="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors flex items-center space-x-1 cursor-pointer"
+              className="px-2 sm:px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-[11px] sm:text-xs font-semibold rounded-lg transition-colors flex items-center space-x-1 cursor-pointer active:scale-95"
               title="Check Roster & Capacity Calendar"
             >
-              <CalendarCheck className="w-3.5 h-3.5 text-[#008972]" />
+              <CalendarCheck className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#008972]" />
               <span>Roster</span>
             </button>
 
@@ -247,9 +247,9 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
               type="button"
               id={`b2b-btn-view-details-${product.id}`}
               onClick={() => onViewDetails(product)}
-              className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors flex items-center space-x-1 cursor-pointer"
+              className="px-2 sm:px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-[11px] sm:text-xs font-semibold rounded-lg transition-colors flex items-center space-x-1 cursor-pointer active:scale-95"
             >
-              <Eye className="w-3.5 h-3.5 text-slate-400" />
+              <Eye className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400" />
               <span>Details</span>
             </button>
 
@@ -258,7 +258,7 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
               type="button"
               id={`b2b-btn-toggle-config-${product.id}`}
               onClick={() => setIsDropdownOpen(prev => !prev)}
-              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center space-x-1.5 cursor-pointer shadow-xs ${
+              className={`px-2.5 sm:px-3.5 py-1.5 text-[11px] sm:text-xs font-bold rounded-lg transition-all flex items-center space-x-1 sm:space-x-1.5 cursor-pointer shadow-xs active:scale-95 ${
                 isDropdownOpen
                   ? 'bg-slate-900 text-white ring-2 ring-[#00C6A6]'
                   : isAlreadyAdded
@@ -268,20 +268,20 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
             >
               {isDropdownOpen ? (
                 <>
-                  <span>Close Form</span>
-                  <ChevronUp className="w-3.5 h-3.5" />
+                  <span>Close</span>
+                  <ChevronUp className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                 </>
               ) : isAlreadyAdded ? (
                 <>
-                  <Plus className="w-3.5 h-3.5 text-[#00E5C0]" />
-                  <span>Add Another Day</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                  <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#00E5C0]" />
+                  <span>+ Day</span>
+                  <ChevronDown className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400" />
                 </>
               ) : (
                 <>
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add to Itinerary</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-700" />
+                  <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                  <span>Add <span className="hidden sm:inline">to Itinerary</span></span>
+                  <ChevronDown className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-700" />
                 </>
               )}
             </button>

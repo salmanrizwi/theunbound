@@ -75,7 +75,7 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
       <div className="bg-white rounded-3xl max-w-4xl w-full my-auto shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         
         {/* Header Hero Section */}
-        <div className="relative h-64 sm:h-72 w-full overflow-hidden bg-slate-900 shrink-0">
+        <div className="relative h-44 sm:h-72 w-full overflow-hidden bg-slate-900 shrink-0">
           <img 
             src={packageItem.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200'} 
             alt={packageItem.title}
@@ -87,35 +87,35 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
           {/* Close Button */}
           <button
             onClick={onClose}
-            className="absolute top-4 right-4 z-10 w-9 h-9 rounded-full bg-black/50 hover:bg-black/80 backdrop-blur-md text-white flex items-center justify-center transition-all cursor-pointer"
+            className="absolute top-3 right-3 sm:top-4 sm:right-4 z-10 w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-black/50 hover:bg-black/80 backdrop-blur-md text-white flex items-center justify-center transition-all cursor-pointer"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
           {/* Top Badges */}
-          <div className="absolute top-4 left-4 flex flex-wrap items-center gap-2">
-            <span className="px-3 py-1 rounded-full bg-[#008972] text-white text-[11px] font-black uppercase tracking-wider flex items-center space-x-1 shadow-sm">
-              <MapPin className="w-3.5 h-3.5" />
+          <div className="absolute top-3 left-3 sm:top-4 sm:left-4 flex flex-wrap items-center gap-1.5 sm:gap-2 max-w-[calc(100%-3.5rem)]">
+            <span className="px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full bg-[#008972] text-white text-[10px] sm:text-[11px] font-black uppercase tracking-wider flex items-center space-x-1 shadow-xs">
+              <MapPin className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
               <span>{packageItem.destinationName}</span>
             </span>
 
-            <span className="px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-white text-[11px] font-bold uppercase tracking-wider">
+            <span className="px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full bg-white/20 backdrop-blur-md text-white text-[10px] sm:text-[11px] font-bold uppercase tracking-wider">
               {packageItem.tripType || 'LUXURY'} • {durationText}
             </span>
 
             {isB2BAgent && (
-              <span className="px-2.5 py-1 rounded-full bg-emerald-400 text-slate-950 text-[10px] font-black uppercase tracking-wider">
-                B2B Wholesale Circuit
+              <span className="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-emerald-400 text-slate-950 text-[9px] sm:text-[10px] font-black uppercase tracking-wider">
+                B2B Circuit
               </span>
             )}
           </div>
 
           {/* Hero Bottom Overlay */}
-          <div className="absolute bottom-4 left-4 right-4 text-white">
-            <h1 className="text-xl sm:text-2xl font-black text-white leading-tight drop-shadow-md">
+          <div className="absolute bottom-3 left-3 right-3 sm:bottom-4 sm:left-4 sm:right-4 text-white">
+            <h1 className="text-lg sm:text-2xl font-black text-white leading-tight drop-shadow-md line-clamp-1 sm:line-clamp-none">
               {packageItem.title}
             </h1>
-            <p className="text-xs text-slate-200 mt-1 max-w-2xl line-clamp-2 leading-relaxed">
+            <p className="text-[11px] sm:text-xs text-slate-200 mt-0.5 sm:mt-1 max-w-2xl line-clamp-1 sm:line-clamp-2 leading-relaxed">
               {packageItem.tagline || packageItem.description}
             </p>
           </div>
@@ -123,19 +123,19 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
 
         {/* Route Summary Ribbon */}
         {packageItem.routeSummary && packageItem.routeSummary.length > 0 && (
-          <div className="bg-slate-900 px-6 py-3 border-b border-slate-800 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-            <div className="flex items-center space-x-2 overflow-x-auto py-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
+          <div className="bg-slate-900 px-3.5 sm:px-6 py-2 sm:py-3 border-b border-slate-800 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 shrink-0">
+            <div className="flex items-center space-x-2 overflow-x-auto py-0.5 sm:py-1 no-scrollbar">
+              <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
                 Itinerary Circuit:
               </span>
-              <div className="flex items-center space-x-1.5 shrink-0">
+              <div className="flex items-center space-x-1 sm:space-x-1.5 shrink-0">
                 {packageItem.routeSummary.map((route, i) => (
                   <React.Fragment key={i}>
-                    <span className="px-2.5 py-0.5 rounded-lg bg-slate-800 text-xs font-bold text-[#00C6A6]">
+                    <span className="px-2 sm:px-2.5 py-0.5 rounded-lg bg-slate-800 text-[11px] sm:text-xs font-bold text-[#00C6A6]">
                       {route}
                     </span>
                     {i < (packageItem.routeSummary || []).length - 1 && (
-                      <span className="text-slate-600 font-black">→</span>
+                      <span className="text-slate-600 font-black text-xs">→</span>
                     )}
                   </React.Fragment>
                 ))}
@@ -452,23 +452,33 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
         </div>
 
         {/* Modal Action Bar */}
-        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-          <div>
-            <span className="text-[10px] font-bold text-slate-500 uppercase block">
-              {isB2BAgent ? 'B2B Wholesale Price' : 'Total Package Price'}
-            </span>
-            <div className="flex items-baseline space-x-1.5">
-              <span className="text-xl font-black text-slate-900 font-mono">
-                {formatCurrency(displayPrice, selectedCurrency)}
+        <div className="px-4 sm:px-6 py-3 sm:py-4 border-t border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 shrink-0">
+          <div className="flex items-center justify-between sm:block">
+            <div>
+              <span className="text-[9px] sm:text-[10px] font-bold text-slate-500 uppercase block">
+                {isB2BAgent ? 'B2B Wholesale Price' : 'Total Package Price'}
               </span>
-              <span className="text-xs text-slate-500 font-medium">/ person</span>
+              <div className="flex items-baseline space-x-1 sm:space-x-1.5">
+                <span className="text-lg sm:text-xl font-black text-slate-900 font-mono">
+                  {formatCurrency(displayPrice, selectedCurrency)}
+                </span>
+                <span className="text-[11px] sm:text-xs text-slate-500 font-medium">/ person</span>
+              </div>
             </div>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+            {/* Mobile-only close link */}
             <button
               onClick={onClose}
-              className="px-4 py-2.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold rounded-2xl text-xs cursor-pointer"
+              className="sm:hidden px-3 py-1.5 bg-white border border-slate-200 text-slate-600 font-bold rounded-xl text-xs"
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+            <button
+              onClick={onClose}
+              className="hidden sm:inline-flex px-3.5 sm:px-4 py-2 sm:py-2.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold rounded-xl text-xs cursor-pointer active:scale-95"
             >
               Close
             </button>
@@ -478,7 +488,7 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
                 {onInstantBook && (
                   <button
                     onClick={() => onInstantBook(packageItem)}
-                    className="px-4 py-2.5 bg-[#008972] hover:bg-[#007360] text-white font-bold rounded-2xl text-xs shadow-xs transition-all cursor-pointer flex items-center space-x-1.5"
+                    className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 sm:py-2.5 bg-[#008972] hover:bg-[#007360] active:bg-[#005f50] text-white font-bold rounded-xl text-xs shadow-xs transition-all cursor-pointer flex items-center justify-center space-x-1.5 active:scale-95"
                   >
                     <CheckCircle2 className="w-3.5 h-3.5" />
                     <span>Instant Book</span>
@@ -487,10 +497,10 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
                 {onCustomizePackage && (
                   <button
                     onClick={() => onCustomizePackage(packageItem)}
-                    className="px-5 py-2.5 bg-slate-900 hover:bg-[#008972] text-white font-black rounded-2xl text-xs shadow-sm transition-all cursor-pointer flex items-center space-x-2"
+                    className="flex-1 sm:flex-initial px-3.5 sm:px-5 py-2 sm:py-2.5 bg-slate-900 hover:bg-[#008972] active:bg-slate-800 text-white font-black rounded-xl text-xs shadow-xs transition-all cursor-pointer flex items-center justify-center space-x-1.5 active:scale-95"
                   >
-                    <span>Customize Package Itinerary</span>
-                    <ArrowRight className="w-4 h-4" />
+                    <span>Customize Itinerary</span>
+                    <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   </button>
                 )}
               </>
@@ -499,20 +509,20 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
                 {onEnquirePackage && (
                   <button
                     onClick={() => onEnquirePackage(packageItem)}
-                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-2xl text-xs transition-all cursor-pointer flex items-center space-x-1.5 border border-slate-200"
+                    className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-bold rounded-xl text-xs transition-all cursor-pointer flex items-center justify-center space-x-1.5 border border-slate-200 active:scale-95"
                   >
                     <MessageSquare className="w-3.5 h-3.5 text-[#008972]" />
-                    <span>Enquire about Package</span>
+                    <span>Enquire</span>
                   </button>
                 )}
 
                 {onInstantBook && (
                   <button
                     onClick={() => onInstantBook(packageItem)}
-                    className="px-5 py-2.5 bg-[#008972] hover:bg-[#007360] text-white font-black rounded-2xl text-xs shadow-sm transition-all cursor-pointer flex items-center space-x-2"
+                    className="flex-1 sm:flex-initial px-3.5 sm:px-5 py-2 sm:py-2.5 bg-[#008972] hover:bg-[#007360] active:bg-[#005f50] text-white font-black rounded-xl text-xs shadow-xs transition-all cursor-pointer flex items-center justify-center space-x-1.5 active:scale-95"
                   >
-                    <Sparkles className="w-4 h-4" />
-                    <span>Book Package Now</span>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Book Package</span>
                   </button>
                 )}
               </>

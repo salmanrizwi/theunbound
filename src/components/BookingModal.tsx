@@ -659,11 +659,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           </div>
 
           {/* Modal Footer Actions */}
-          <div className="pt-2 flex items-center justify-end space-x-3">
+          <div className="pt-2 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2 sm:gap-3">
             <button
               type="button"
               onClick={onClose}
-              className="px-5 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer text-center active:scale-95"
             >
               Cancel
             </button>
@@ -672,10 +672,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               type="submit"
               disabled={isSubmitting}
               id="submit-booking-action-btn"
-              className="px-6 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold transition-all shadow-md flex items-center space-x-2 cursor-pointer"
+              className="w-full sm:w-auto px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold transition-all shadow-md flex items-center justify-center space-x-2 cursor-pointer active:scale-95"
             >
               <Send className={`w-4 h-4 text-[#00E5C0] ${isSubmitting ? 'animate-pulse' : ''}`} />
-              <span>{isSubmitting ? 'Submitting & Dispatching Emails...' : 'Submit Booking Request'}</span>
+              <span>{isSubmitting ? 'Submitting & Dispatching...' : 'Submit Booking Request'}</span>
             </button>
           </div>
         </form>

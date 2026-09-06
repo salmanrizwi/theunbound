@@ -237,27 +237,28 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1.5 sm:space-x-2">
             <button
               type="button"
               onClick={() => onViewHotelDetails(hotel)}
-              className="p-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-slate-900 text-xs font-semibold transition-colors cursor-pointer"
+              className="p-2 sm:p-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-slate-900 text-xs font-semibold transition-colors cursor-pointer active:scale-95"
               title="Inspect Property Details"
             >
-              <Eye className="w-4 h-4" />
+              <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
 
             <button
               type="button"
               onClick={() => setIsExpanded(!isExpanded)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+              className={`px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 sm:space-x-1.5 cursor-pointer active:scale-95 ${
                 isExpanded
                   ? 'bg-slate-900 text-white'
                   : 'bg-teal-50 hover:bg-teal-100 text-[#008972] border border-teal-200/80'
               }`}
             >
               <Bed className="w-3.5 h-3.5" />
-              <span>{isExpanded ? 'Hide Options' : 'Select Room & Stay'}</span>
+              <span>{isExpanded ? 'Hide Options' : 'Select Room'}</span>
+              <span className="hidden sm:inline">{!isExpanded && '& Stay'}</span>
               {isExpanded ? <ChevronUp className="w-3.5 h-3.5 ml-0.5" /> : <ChevronDown className="w-3.5 h-3.5 ml-0.5" />}
             </button>
           </div>
@@ -407,7 +408,7 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
               <button
                 type="button"
                 onClick={handleAddStay}
-                className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 transition-all shrink-0 cursor-pointer ${
+                className={`w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 transition-all shrink-0 cursor-pointer active:scale-95 ${
                   addedLocal || isJustAdded
                     ? 'bg-emerald-500 text-white'
                     : 'bg-[#00C6A6] hover:bg-[#00b296] text-white shadow-xs hover:shadow-md'

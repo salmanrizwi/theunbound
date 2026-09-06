@@ -248,10 +248,10 @@ export const ReadyMadePackagesSection: React.FC<ReadyMadePackagesSectionProps> =
 
                       <button
                         onClick={() => handleBook(pkg)}
-                        className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#008972] hover:bg-[#007360] text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs"
+                        className="inline-flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-3.5 py-1.5 sm:py-2 bg-[#008972] hover:bg-[#007360] active:bg-[#005f50] text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs active:scale-95"
                         title="Instant Book this package"
                       >
-                        <Sparkles className="w-3.5 h-3.5" />
+                        <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                         <span>Book Now</span>
                       </button>
                     </>

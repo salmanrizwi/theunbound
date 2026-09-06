@@ -331,18 +331,18 @@ export const PackageEnquiryModal: React.FC<PackageEnquiryModalProps> = ({
               </div>
 
               {/* Submit Buttons */}
-              <div className="pt-2 flex items-center justify-end space-x-2">
+              <div className="pt-2 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer text-center active:scale-95"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-6 py-2.5 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-xs font-black transition-all cursor-pointer shadow-xs flex items-center space-x-2 disabled:opacity-50"
+                  className="w-full sm:w-auto px-5 sm:px-6 py-2.5 rounded-xl bg-[#008972] hover:bg-[#007360] active:bg-[#005f50] text-white text-xs font-black transition-all cursor-pointer shadow-xs flex items-center justify-center space-x-2 disabled:opacity-50 active:scale-95"
                 >
                   <Send className="w-4 h-4" />
                   <span>{isSubmitting ? 'Sending Enquiry...' : 'Submit Package Enquiry'}</span>
