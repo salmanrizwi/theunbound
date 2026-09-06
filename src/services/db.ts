@@ -596,35 +596,14 @@ export class AppDatabase {
     this.isFirestoreInitialized = true;
 
     try {
-      // Validate connection to Firestore before attaching real-time stream listeners
-      let isConnected = false;
-      try {
-        const pingPromise = getDocFromServer(doc(firestoreDb, 'test', 'connection'));
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500));
-        await Promise.race([pingPromise, timeoutPromise]);
-        isConnected = true;
-      } catch (error) {
-        // Backend not reachable or offline; stay in resilient local storage mode without starting failing listeners
-        isConnected = false;
-      }
-
-      if (!isConnected) {
-        console.debug("[AppDatabase] Firestore backend unreachable/offline; running in local storage mode.");
-        return;
-      }
-
-      // 1. Sync Products
+      // 1. Sync Products (Live Catalog)
       onSnapshot(collection(firestoreDb, 'products'), (snapshot) => {
         if (!snapshot.empty) {
           const list: Product[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as Product));
           this.setItem('products', list, true);
         } else {
-          // Seed initial products to Firestore
-          const initial = this.getProducts();
-          initial.forEach(p => {
-            this.syncFirestoreDoc('products', p.id, p);
-          });
+          this.setItem('products', [], true);
         }
       }, (err) => console.debug('Firestore products sync note:', err));
 
@@ -635,10 +614,7 @@ export class AppDatabase {
           snapshot.forEach(docSnap => list.push(docSnap.data() as Destination));
           this.setItem('destinations', list, true);
         } else {
-          const initial = this.getDestinations();
-          initial.forEach(d => {
-            this.syncFirestoreDoc('destinations', d.id, d);
-          });
+          this.setItem('destinations', [], true);
         }
       }, (err) => console.debug('Firestore destinations sync note:', err));
 
@@ -648,6 +624,8 @@ export class AppDatabase {
           const list: Quotation[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as Quotation));
           this.setItem('saved_quotes', list, true);
+        } else {
+          this.setItem('saved_quotes', [], true);
         }
       }, (err) => console.debug('Firestore quotations sync note:', err));
 
@@ -657,6 +635,8 @@ export class AppDatabase {
           const list: Booking[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as Booking));
           this.setItem('bookings', list, true);
+        } else {
+          this.setItem('bookings', [], true);
         }
       }, (err) => console.debug('Firestore bookings sync note:', err));
 
@@ -667,10 +647,7 @@ export class AppDatabase {
           snapshot.forEach(docSnap => list.push(docSnap.data() as Hotel));
           this.setItem('hotels', list, true);
         } else {
-          const initial = this.getHotels();
-          initial.forEach(h => {
-            this.syncFirestoreDoc('hotels', h.id, h);
-          });
+          this.setItem('hotels', [], true);
         }
       }, (err) => console.debug('Firestore hotels sync note:', err));
 
@@ -680,6 +657,8 @@ export class AppDatabase {
           const list: TravelLead[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as TravelLead));
           this.setItem('leads', list, true);
+        } else {
+          this.setItem('leads', [], true);
         }
       }, (err) => console.debug('Firestore leads sync note:', err));
 
@@ -690,10 +669,7 @@ export class AppDatabase {
           snapshot.forEach(docSnap => list.push(docSnap.data() as Promotion));
           this.setItem('promotions', list, true);
         } else {
-          const initial = this.getPromotions();
-          initial.forEach(pr => {
-            this.syncFirestoreDoc('promotions', pr.id, pr);
-          });
+          this.setItem('promotions', [], true);
         }
       }, (err) => console.debug('Firestore promotions sync note:', err));
 
@@ -703,6 +679,8 @@ export class AppDatabase {
           const list: GalleryImage[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as GalleryImage));
           this.setItem('gallery', list, true);
+        } else {
+          this.setItem('gallery', [], true);
         }
       }, (err) => console.debug('Firestore gallery sync note:', err));
 
@@ -712,6 +690,8 @@ export class AppDatabase {
           const list: GoogleReview[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as GoogleReview));
           this.setItem('reviews', list, true);
+        } else {
+          this.setItem('reviews', [], true);
         }
       }, (err) => console.debug('Firestore reviews sync note:', err));
 
@@ -721,6 +701,8 @@ export class AppDatabase {
           const list: BlogArticle[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as BlogArticle));
           this.setItem('blogs', list, true);
+        } else {
+          this.setItem('blogs', [], true);
         }
       }, (err) => console.debug('Firestore blogs sync note:', err));
 
@@ -730,6 +712,8 @@ export class AppDatabase {
           const list: WishlistFolder[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as WishlistFolder));
           this.setItem('wishlist_folders', list, true);
+        } else {
+          this.setItem('wishlist_folders', [], true);
         }
       }, (err) => console.debug('Firestore wishlist folders sync note:', err));
 
@@ -739,6 +723,8 @@ export class AppDatabase {
           const list: WishlistItem[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as WishlistItem));
           this.setItem('wishlist_items', list, true);
+        } else {
+          this.setItem('wishlist_items', [], true);
         }
       }, (err) => console.debug('Firestore wishlist items sync note:', err));
 
@@ -776,10 +762,7 @@ export class AppDatabase {
           snapshot.forEach(docSnap => list.push(docSnap.data() as CityHub));
           this.setItem('city_hubs', list, true);
         } else {
-          const initial = this.getCityHubs();
-          initial.forEach(hub => {
-            this.syncFirestoreDoc('city_hubs', hub.id, hub);
-          });
+          this.setItem('city_hubs', [], true);
         }
       }, (err) => console.debug('Firestore city_hubs sync note:', err));
 
@@ -790,47 +773,40 @@ export class AppDatabase {
           snapshot.forEach(docSnap => list.push(docSnap.data() as DestinationFAQ));
           this.setItem('destination_faqs', list, true);
         } else {
-          const initial = this.getDestinationFAQs();
-          initial.forEach(faq => {
-            this.syncFirestoreDoc('faqs', faq.id, faq);
-          });
+          this.setItem('destination_faqs', [], true);
         }
       }, (err) => console.debug('Firestore faqs sync note:', err));
 
-      // 18. Sync Destination Regions (Sub-territories)
+      // 18. Sync Destination Regions
       onSnapshot(collection(firestoreDb, 'regions'), (snapshot) => {
         if (!snapshot.empty) {
           const list: DestinationRegionItem[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as DestinationRegionItem));
           this.setItem('regions', list, true);
         } else {
-          const initial = this.getRegions();
-          initial.forEach(reg => {
-            this.syncFirestoreDoc('regions', reg.id, reg);
-          });
+          this.setItem('regions', [], true);
         }
       }, (err) => console.debug('Firestore regions sync note:', err));
 
-      // 19. Sync Master Macro Regions (Tier 1 Hierarchy: REGION)
+      // 19. Sync Master Macro Regions
       onSnapshot(collection(firestoreDb, 'master_regions'), (snapshot) => {
         if (!snapshot.empty) {
           const list: MasterRegion[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as MasterRegion));
           this.setItem('master_regions', list, true);
         } else {
-          const initial = this.getMasterRegions();
-          initial.forEach(mreg => {
-            this.syncFirestoreDoc('master_regions', mreg.id, mreg);
-          });
+          this.setItem('master_regions', [], true);
         }
       }, (err) => console.debug('Firestore master_regions sync note:', err));
 
-      // 20. Sync Campaign Events (Real-time tracking analytics)
+      // 20. Sync Campaign Events
       onSnapshot(collection(firestoreDb, 'campaign_events'), (snapshot) => {
         if (!snapshot.empty) {
           const list: CampaignEvent[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as CampaignEvent));
           this.setItem('campaign_events', list, true);
+        } else {
+          this.setItem('campaign_events', [], true);
         }
       }, (err) => console.debug('Firestore campaign_events sync note:', err));
 
@@ -841,10 +817,7 @@ export class AppDatabase {
           snapshot.forEach(docSnap => list.push(docSnap.data() as B2BPackage));
           this.setItem('b2b_packages', list, true);
         } else {
-          const initial = this.getPackages();
-          initial.forEach(pkg => {
-            this.syncFirestoreDoc('b2b_packages', pkg.id, pkg);
-          });
+          this.setItem('b2b_packages', [], true);
         }
       }, (err) => console.debug('Firestore b2b_packages sync note:', err));
 
@@ -855,10 +828,7 @@ export class AppDatabase {
           snapshot.forEach(docSnap => list.push(docSnap.data() as VisaProduct));
           this.setItem('visas', list, true);
         } else {
-          const initial = this.getVisas();
-          initial.forEach(v => {
-            this.syncFirestoreDoc('visas', v.id, v);
-          });
+          this.setItem('visas', [], true);
         }
       }, (err) => console.debug('Firestore visas sync note:', err));
 
@@ -869,10 +839,7 @@ export class AppDatabase {
           snapshot.forEach(docSnap => list.push(docSnap.data() as B2BCustomer));
           this.setItem('b2b_customers', list, true);
         } else {
-          const initial = this.getB2BCustomers();
-          initial.forEach(c => {
-            this.syncFirestoreDoc('b2b_customers', c.id, c);
-          });
+          this.setItem('b2b_customers', [], true);
         }
       }, (err) => console.debug('Firestore b2b_customers sync note:', err));
 
@@ -883,10 +850,7 @@ export class AppDatabase {
           snapshot.forEach(docSnap => list.push(docSnap.data() as B2BTask));
           this.setItem('b2b_tasks', list, true);
         } else {
-          const initial = this.getB2BTasks();
-          initial.forEach(t => {
-            this.syncFirestoreDoc('b2b_tasks', t.id, t);
-          });
+          this.setItem('b2b_tasks', [], true);
         }
       }, (err) => console.debug('Firestore b2b_tasks sync note:', err));
 
@@ -896,6 +860,8 @@ export class AppDatabase {
           const list: CalendarTask[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as CalendarTask));
           this.setItem('calendar_tasks', list, true);
+        } else {
+          this.setItem('calendar_tasks', [], true);
         }
       }, (err) => console.debug('Firestore calendar_tasks sync note:', err));
 
@@ -905,11 +871,6 @@ export class AppDatabase {
           const list: SLAAutomationRule[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as SLAAutomationRule));
           this.setItem('sla_automation_rules', list, true);
-        } else {
-          const initial = this.getSLAAutomationRules();
-          initial.forEach(r => {
-            this.syncFirestoreDoc('sla_automation_rules', r.id, r);
-          });
         }
       }, (err) => console.debug('Firestore sla_automation_rules sync note:', err));
 
@@ -930,6 +891,8 @@ export class AppDatabase {
           const list: SEORedirect[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as SEORedirect));
           this.setItem('seo_redirects', list, true);
+        } else {
+          this.setItem('seo_redirects', [], true);
         }
       }, (err) => console.debug('Firestore seo_redirects sync note:', err));
 
@@ -944,8 +907,173 @@ export class AppDatabase {
         }
       }, (err) => console.debug('Firestore seo_settings sync note:', err));
 
+      // 30. Sync Hotel Rooms
+      onSnapshot(collection(firestoreDb, 'hotel_rooms'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: HotelRoomType[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as HotelRoomType));
+          this.setItem('hotel_rooms', list, true);
+        } else {
+          this.setItem('hotel_rooms', [], true);
+        }
+      }, (err) => console.debug('Firestore hotel_rooms sync note:', err));
+
+      // 31. Sync Hotel Rates
+      onSnapshot(collection(firestoreDb, 'hotel_rates'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: HotelRate[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as HotelRate));
+          this.setItem('hotel_rates', list, true);
+        } else {
+          this.setItem('hotel_rates', [], true);
+        }
+      }, (err) => console.debug('Firestore hotel_rates sync note:', err));
+
+      // 32. Sync Hotel Meal Plans
+      onSnapshot(collection(firestoreDb, 'hotel_meal_plans'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: HotelMealPlanItem[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as HotelMealPlanItem));
+          this.setItem('hotel_meal_plans', list, true);
+        } else {
+          this.setItem('hotel_meal_plans', [], true);
+        }
+      }, (err) => console.debug('Firestore hotel_meal_plans sync note:', err));
+
+      // 33. Sync Transfer Routes
+      onSnapshot(collection(firestoreDb, 'transfer_routes'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: TransferRoute[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as TransferRoute));
+          this.setItem('transfer_routes', list, true);
+        } else {
+          this.setItem('transfer_routes', [], true);
+        }
+      }, (err) => console.debug('Firestore transfer_routes sync note:', err));
+
+      // 34. Sync Transfer Rates
+      onSnapshot(collection(firestoreDb, 'transfer_rates'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: TransferRate[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as TransferRate));
+          this.setItem('transfer_rates', list, true);
+        } else {
+          this.setItem('transfer_rates', [], true);
+        }
+      }, (err) => console.debug('Firestore transfer_rates sync note:', err));
+
+      // 35. Sync Product Pricing Rates
+      onSnapshot(collection(firestoreDb, 'product_pricing_rates'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: ProductPricingRate[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as ProductPricingRate));
+          this.setItem('product_pricing_rates', list, true);
+        } else {
+          this.setItem('product_pricing_rates', [], true);
+        }
+      }, (err) => console.debug('Firestore product_pricing_rates sync note:', err));
+
+      // 36. Sync Product Capacities
+      onSnapshot(collection(firestoreDb, 'product_capacities'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: ProductCapacityItem[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as ProductCapacityItem));
+          this.setItem('product_capacities', list, true);
+        } else {
+          this.setItem('product_capacities', [], true);
+        }
+      }, (err) => console.debug('Firestore product_capacities sync note:', err));
+
+      // 37. Sync Visa Rates
+      onSnapshot(collection(firestoreDb, 'visa_rates'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: VisaRateItem[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as VisaRateItem));
+          this.setItem('visa_rates', list, true);
+        } else {
+          this.setItem('visa_rates', [], true);
+        }
+      }, (err) => console.debug('Firestore visa_rates sync note:', err));
+
+      // 38. Sync Package Items
+      onSnapshot(collection(firestoreDb, 'package_items'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: PackageItemRef[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as PackageItemRef));
+          this.setItem('package_items', list, true);
+        } else {
+          this.setItem('package_items', [], true);
+        }
+      }, (err) => console.debug('Firestore package_items sync note:', err));
+
+      // 39. Sync Financial Invoices
+      onSnapshot(collection(firestoreDb, 'invoices'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: BookingInvoice[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as BookingInvoice));
+          this.setItem('invoices', list, true);
+        } else {
+          this.setItem('invoices', [], true);
+        }
+      }, (err) => console.debug('Firestore invoices sync note:', err));
+
+      // 40. Sync Financial Vouchers
+      onSnapshot(collection(firestoreDb, 'vouchers'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: BookingVoucher[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as BookingVoucher));
+          this.setItem('vouchers', list, true);
+        } else {
+          this.setItem('vouchers', [], true);
+        }
+      }, (err) => console.debug('Firestore vouchers sync note:', err));
+
+      // 41. Sync Job Sheets
+      onSnapshot(collection(firestoreDb, 'job_sheets'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: JobSheet[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as JobSheet));
+          this.setItem('job_sheets', list, true);
+        } else {
+          this.setItem('job_sheets', [], true);
+        }
+      }, (err) => console.debug('Firestore job_sheets sync note:', err));
+
+      // 42. Sync Operations Roster Resources
+      onSnapshot(collection(firestoreDb, 'roster_resources'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: RosterResource[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as RosterResource));
+          this.setItem('roster_resources', list, true);
+        } else {
+          this.setItem('roster_resources', [], true);
+        }
+      }, (err) => console.debug('Firestore roster_resources sync note:', err));
+
+      // 43. Sync Admin Activities & Alerts
+      onSnapshot(collection(firestoreDb, 'admin_activities'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: AdminActivityRecord[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as AdminActivityRecord));
+          this.setItem('admin_activities', list, true);
+        } else {
+          this.setItem('admin_activities', [], true);
+        }
+      }, (err) => console.debug('Firestore admin_activities sync note:', err));
+
+      // 44. Sync Email Campaigns
+      onSnapshot(collection(firestoreDb, 'campaigns'), (snapshot) => {
+        if (!snapshot.empty) {
+          const list: EmailCampaignConfig[] = [];
+          snapshot.forEach(docSnap => list.push(docSnap.data() as EmailCampaignConfig));
+          this.setItem('campaigns', list, true);
+        } else {
+          this.setItem('campaigns', [], true);
+        }
+      }, (err) => console.debug('Firestore campaigns sync note:', err));
+
     } catch (error) {
-      console.warn('Firestore real-time listeners initialized with local fallback:', error);
+      console.warn('Firestore real-time listeners initialization note:', error);
     }
   }
 
@@ -1038,10 +1166,19 @@ export class AppDatabase {
       this.setItem('user_activities', []);
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'leads')) {
-      this.setItem('leads', INITIAL_LEADS);
+      this.setItem('leads', []);
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'bookings')) {
-      this.setItem('bookings', INITIAL_BOOKINGS);
+      this.setItem('bookings', []);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'saved_quotes')) {
+      this.setItem('saved_quotes', []);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_customers')) {
+      this.setItem('b2b_customers', []);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_tasks')) {
+      this.setItem('b2b_tasks', []);
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'roster_resources')) {
       this.setItem('roster_resources', INITIAL_ROSTER_RESOURCES);
@@ -1306,11 +1443,7 @@ export class AppDatabase {
   }
 
   public getAdminActivities(user?: User | null): AdminActivityRecord[] {
-    let activities = this.getItem<AdminActivityRecord[]>('admin_activities', []);
-    if (!activities || activities.length === 0) {
-      activities = this.generateDefaultAdminActivities();
-      this.setItem('admin_activities', activities);
-    }
+    const activities = this.getItem<AdminActivityRecord[]>('admin_activities', []);
 
     // Role & Permission Filtering (Section 44)
     if (!user || user.role === 'ADMIN') {
@@ -1548,7 +1681,7 @@ export class AppDatabase {
       {
         id: 'metric-ai-plans',
         label: 'AI Planner Jobs',
-        count: aiPlans > 0 ? aiPlans : 3,
+        count: aiPlans,
         subtext: 'Algorithmic day-by-day plans',
         alert: false,
         section: 'LEAD_MANAGEMENT',
@@ -3232,7 +3365,7 @@ export class AppDatabase {
   // GOOGLE REVIEWS CRUD (Real Google Business Profile)
   // ==========================================
   public getReviews(): GoogleReview[] {
-    const reviews = this.getItem<GoogleReview[]>('reviews', INITIAL_REVIEWS);
+    const reviews = this.getItem<GoogleReview[]>('reviews', []);
     // Strict filter: Never return legacy dummy mock reviews
     return reviews.filter(r => 
       !r.id.startsWith('rev-0') && 
@@ -3291,6 +3424,11 @@ export class AppDatabase {
   // STRICT SHARED QUOTE AUTHORIZATION & MANAGEMENT
   // ==========================================
   public getAllSavedQuotes(): Quotation[] {
+    return this.getItem<Quotation[]>('saved_quotes', []);
+  }
+
+  /*
+  private _legacyQuotes(): Quotation[] {
     const defaultQuotes: Quotation[] = [
       {
         id: 'quote-sample-01',
@@ -3515,9 +3653,9 @@ export class AppDatabase {
         ]
       }
     ];
-
-    return this.getItem<Quotation[]>('saved_quotes', defaultQuotes);
+    return defaultQuotes;
   }
+  */
 
   /**
    * Enforces strict Shared Quotation Authorization Layer:
@@ -4276,9 +4414,9 @@ export class AppDatabase {
   // B2B AGENT CUSTOMERS CRM
   // ==========================================
   public getB2BCustomers(agentId?: string): B2BCustomer[] {
-    const all = this.getItem<B2BCustomer[]>('b2b_customers', INITIAL_B2B_CUSTOMERS);
+    const all = this.getItem<B2BCustomer[]>('b2b_customers', []);
     if (!agentId) return all;
-    return all.filter(c => c.agentId === agentId || !c.agentId || c.agentId === 'usr-agent-01');
+    return all.filter(c => c.agentId === agentId);
   }
 
   public saveB2BCustomer(customer: B2BCustomer): B2BCustomer {
@@ -4307,9 +4445,9 @@ export class AppDatabase {
   // B2B AGENT TASKS & FOLLOW-UPS
   // ==========================================
   public getB2BTasks(agentId?: string): B2BTask[] {
-    const all = this.getItem<B2BTask[]>('b2b_tasks', INITIAL_B2B_TASKS);
+    const all = this.getItem<B2BTask[]>('b2b_tasks', []);
     if (!agentId) return all;
-    return all.filter(t => t.agentId === agentId || !t.agentId || t.agentId === 'usr-agent-01');
+    return all.filter(t => t.agentId === agentId);
   }
 
   public saveB2BTask(task: B2BTask): B2BTask {
@@ -4339,12 +4477,7 @@ export class AppDatabase {
   // BOOKINGS & RESERVATIONS SYSTEM
   // ==========================================
   public getAllBookings(): Booking[] {
-    const list = this.getItem<Booking[]>('bookings', INITIAL_BOOKINGS);
-    if (!list || list.length === 0) {
-      this.setItem('bookings', INITIAL_BOOKINGS);
-      return INITIAL_BOOKINGS;
-    }
-    return list;
+    return this.getItem<Booking[]>('bookings', []);
   }
 
   /**
@@ -5413,7 +5546,7 @@ export class AppDatabase {
   // INTERNAL CRM: LEADS & CUSTOMER JOURNEY ENGINE
   // ==========================================
   public getLeads(): TravelLead[] {
-    const raw = this.getItem<TravelLead[]>('leads', INITIAL_LEADS);
+    const raw = this.getItem<TravelLead[]>('leads', []);
     // Ensure all leads have required CRM arrays and valid defaults
     return raw.map(l => ({
       ...l,
