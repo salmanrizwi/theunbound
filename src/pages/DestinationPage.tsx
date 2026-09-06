@@ -299,10 +299,10 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] pb-20 space-y-8">
+    <div className="min-h-screen bg-[#F8FAFC] pb-12 sm:pb-20 space-y-5 sm:space-y-8">
       {/* 1. Hero Banner: All Destinations vs Single Destination */}
       {homepageConfig.showHeroSection !== false && (
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+        <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 pt-3 sm:pt-6">
           {isAllDestinations ? (
             <AllDestinationsHero
               destinations={allDestinations}
@@ -321,10 +321,10 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
         </div>
       )}
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+      <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 space-y-4 sm:space-y-6">
         {/* B2B DMC Operational Credibility Bar */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white rounded-2xl border border-slate-200 p-3.5 sm:p-5 shadow-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             <div className="flex items-start space-x-3">
               <div className="p-2.5 rounded-xl bg-teal-50 text-[#008f77] shrink-0 border border-teal-100">
                 <ShieldCheck className="w-5 h-5 text-[#00C6A6]" />
@@ -461,7 +461,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
 
         {/* Active Destination Campaign Promo Ribbon */}
         {destPromo && (
-          <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 rounded-2xl p-4 sm:p-6 border border-[#00C6A6]/30 shadow-md text-white flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 rounded-2xl p-3.5 sm:p-6 border border-[#00C6A6]/30 shadow-md text-white flex flex-col md:flex-row items-start md:items-center justify-between gap-3 sm:gap-4">
             <div className="space-y-1">
               <div className="flex items-center space-x-2">
                 <span className="bg-[#00C6A6] text-slate-950 font-bold text-[10px] uppercase tracking-wider px-2.5 py-0.5 rounded-full">
@@ -473,10 +473,10 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
                   </span>
                 )}
               </div>
-              <h3 className="text-base sm:text-lg font-bold text-white leading-tight">
+              <h3 className="text-sm sm:text-lg font-bold text-white leading-tight">
                 {destPromo.title}
               </h3>
-              <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+              <p className="text-[11px] sm:text-xs text-slate-300 max-w-2xl leading-relaxed">
                 {destPromo.subtitle || destPromo.description}
               </p>
             </div>
@@ -493,7 +493,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
                 const el = document.getElementById('products-grid-section');
                 if (el) el.scrollIntoView({ behavior: 'smooth' });
               }}
-              className="bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold text-xs px-5 py-2.5 rounded-xl shadow transition-colors shrink-0 cursor-pointer"
+              className="w-full sm:w-auto text-center bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold text-xs px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl shadow transition-colors shrink-0 cursor-pointer active:scale-95"
             >
               {destPromo.ctaText || 'Explore Contracted Rates'} →
             </button>
@@ -501,31 +501,31 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
         )}
 
         {/* 6. Products Section Heading */}
-        <div id="products-grid-section" className="flex items-center justify-between pt-2">
+        <div id="products-grid-section" className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 pt-2">
           <div>
-            <h2 className="text-xl font-bold text-slate-800">
+            <h2 className="text-lg sm:text-xl font-bold text-slate-800">
               {filters.category
                 ? `${filters.category} in ${isAllDestinations ? 'All Destinations' : destination?.name}`
                 : isAllDestinations
                 ? `All Available Products across ${safeAllDestinations.map(d => d.name).join(', ')}`
                 : `Featured Products in ${destination?.name}`}
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
               {isAllDestinations
                 ? `Showing direct wholesale DMC inventory across all ${safeAllDestinations.length} destination portfolios`
                 : `Verified ground contracts and bespoke experiences in ${destination?.country}`}
             </p>
           </div>
-          <span className="text-xs text-slate-500 font-medium shrink-0">
+          <span className="text-[11px] sm:text-xs text-slate-500 font-medium shrink-0">
             Showing <strong className="text-slate-900">{filteredProducts.length}</strong> verified contracts
           </span>
         </div>
 
         {/* 7. Product Grid */}
         {filteredProducts.length === 0 ? (
-          <div className="bg-white rounded-xl border border-slate-200 p-12 text-center shadow-xs">
-            <Compass className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-            <h3 className="text-base font-bold text-slate-800">No matching travel products found</h3>
+          <div className="bg-white rounded-xl border border-slate-200 p-8 sm:p-12 text-center shadow-xs">
+            <Compass className="w-8 h-8 sm:w-10 sm:h-10 text-slate-300 mx-auto mb-3" />
+            <h3 className="text-sm sm:text-base font-bold text-slate-800">No matching travel products found</h3>
             <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">
               Try adjusting your hub selection, clear search keywords, or reset category filters.
             </p>
@@ -542,13 +542,13 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
                 availability: '',
                 sortBy: 'popular'
               })}
-              className="bg-[#00C6A6] text-white font-semibold px-4 py-2 rounded-lg text-xs shadow-xs hover:bg-[#00b296] transition-colors cursor-pointer"
+              className="bg-[#00C6A6] text-white font-semibold px-4 py-2 rounded-lg text-xs shadow-xs hover:bg-[#00b296] transition-colors cursor-pointer active:scale-95"
             >
               Reset All Filters
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {filteredProducts.map((product) => (
               <ProductCard
                 key={product.id}
@@ -562,7 +562,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
         )}
 
         {/* 7. Ready-Made Packages Section */}
-        <div className="mt-14 pt-8 border-t border-slate-200">
+        <div className="mt-8 sm:mt-14 pt-6 sm:pt-8 border-t border-slate-200">
           <ReadyMadePackagesSection
             destinationId={isAllDestinations ? 'all' : (destination?.slug || destination?.id)}
             destinationName={isAllDestinations ? 'Signature Circuits' : destination?.name}

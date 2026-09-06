@@ -110,35 +110,35 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-6 animate-in fade-in duration-200">
       <div 
         id="product-detail-modal"
-        className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-5xl w-full overflow-hidden flex flex-col max-h-[94vh]"
+        className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 max-w-5xl w-full overflow-hidden flex flex-col max-h-[96vh] sm:max-h-[94vh]"
       >
         {/* Modal Top Nav Bar */}
-        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between border-b border-slate-800 shrink-0">
-          <div className="flex items-center space-x-2">
-            <span className="bg-[#00C6A6]/20 text-[#00E5C0] border border-[#00C6A6]/30 text-xs font-bold px-2.5 py-0.5 rounded-full">
+        <div className="bg-slate-900 text-white px-3.5 sm:px-6 py-2.5 sm:py-4 flex items-center justify-between border-b border-slate-800 shrink-0">
+          <div className="flex items-center space-x-1.5 sm:space-x-2 truncate pr-2">
+            <span className="bg-[#00C6A6]/20 text-[#00E5C0] border border-[#00C6A6]/30 text-[10px] sm:text-xs font-bold px-2 py-0.5 rounded-full shrink-0">
               {product.category}
             </span>
-            <span className="text-slate-400 text-xs">•</span>
-            <span className="text-slate-300 text-xs font-medium">{product.destinationName} / {product.city}</span>
+            <span className="text-slate-400 text-xs hidden xs:inline">•</span>
+            <span className="text-slate-300 text-[11px] sm:text-xs font-medium truncate">{product.destinationName} / {product.city}</span>
           </div>
 
-          <div className="flex items-center space-x-2.5">
+          <div className="flex items-center space-x-1.5 sm:space-x-2.5 shrink-0">
             {/* Synchronized Currency Selector in Modal Header */}
-            <div className="flex items-center space-x-1.5 bg-slate-800/90 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs text-slate-300">
-              <Globe2 className="w-3.5 h-3.5 text-[#00C6A6] shrink-0" />
+            <div className="flex items-center space-x-1 sm:space-x-1.5 bg-slate-800/90 border border-slate-700/80 rounded-lg sm:rounded-xl px-2 sm:px-2.5 py-1 sm:py-1.5 text-xs text-slate-300">
+              <Globe2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#00C6A6] shrink-0" />
               <select
                 id="modal-header-currency-select"
                 value={currency}
                 onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                className="bg-transparent text-white font-bold text-xs focus:outline-none cursor-pointer pr-1"
+                className="bg-transparent text-white font-bold text-[11px] sm:text-xs focus:outline-none cursor-pointer pr-0.5 sm:pr-1"
                 title="Switch Currency"
               >
                 {SUPPORTED_CURRENCIES.map(c => (
                   <option key={c.code} value={c.code} className="bg-slate-900 text-white">
-                    {c.code} ({c.symbol})
+                    {c.code}
                   </option>
                 ))}
               </select>
@@ -146,7 +146,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
             <button
               onClick={handleShare}
-              className="text-xs text-slate-300 hover:text-white flex items-center space-x-1.5 bg-slate-800 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+              className="text-[11px] sm:text-xs text-slate-300 hover:text-white flex items-center space-x-1 sm:space-x-1.5 bg-slate-800 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg transition-colors cursor-pointer active:scale-95"
             >
               {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5" />}
               <span className="hidden sm:inline">{copiedLink ? 'Link Copied' : 'Share'}</span>
@@ -155,30 +155,30 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             <button
               id="close-product-detail-btn"
               onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+              className="p-1 sm:p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer active:scale-95"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
           </div>
         </div>
 
         {/* Scrollable Content Body */}
-        <div className="overflow-y-auto p-6 space-y-8 flex-1">
+        <div className="overflow-y-auto p-3.5 sm:p-6 space-y-5 sm:space-y-8 flex-1">
           {/* Header Title & Ratings */}
           <div>
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-sans tracking-tight">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+              <h1 className="text-lg sm:text-2xl md:text-3xl font-extrabold text-slate-900 font-sans tracking-tight leading-snug">
                 {product.name}
               </h1>
 
-              <div className="flex items-center space-x-2 bg-amber-50 text-amber-900 px-3 py-1 rounded-full border border-amber-200">
-                <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
-                <span className="text-sm font-bold">{product.rating}</span>
-                <span className="text-xs text-amber-700">({product.reviewCount} Verified Client Reviews)</span>
+              <div className="flex items-center space-x-1.5 bg-amber-50 text-amber-900 px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full border border-amber-200 w-fit shrink-0">
+                <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                <span className="text-xs sm:text-sm font-bold">{product.rating}</span>
+                <span className="text-[10px] sm:text-xs text-amber-700">({product.reviewCount} Reviews)</span>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-[11px] sm:text-xs text-slate-500">
               <span className="flex items-center space-x-1 font-semibold text-slate-700">
                 <MapPin className="w-3.5 h-3.5 text-[#008972]" />
                 <span>{product.location}</span>
@@ -189,31 +189,31 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               </span>
               <span className="flex items-center space-x-1">
                 <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                <span>Operating Days: {(product.operatingDays || []).join(', ') || 'Daily'}</span>
+                <span>Operating: {(product.operatingDays || []).join(', ') || 'Daily'}</span>
               </span>
             </div>
           </div>
 
           {/* Photo Gallery & Thumbnail Selector */}
-          <div className="space-y-3">
-            <div className="aspect-21/9 sm:aspect-16/7 w-full rounded-2xl overflow-hidden bg-slate-900 relative shadow-inner">
+          <div className="space-y-2 sm:space-y-3">
+            <div className="aspect-16/10 sm:aspect-16/7 w-full rounded-xl sm:rounded-2xl overflow-hidden bg-slate-900 relative shadow-inner">
               <img
                 src={(product.images || [])[activeImageIdx] || (product.images || [])[0] || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
                 alt={product.name}
                 className="w-full h-full object-cover"
               />
-              <div className="absolute bottom-3 right-3 bg-slate-950/80 backdrop-blur-md text-white text-xs px-3 py-1 rounded-lg">
+              <div className="absolute bottom-2 right-2 sm:bottom-3 sm:right-3 bg-slate-950/80 backdrop-blur-md text-white text-[10px] sm:text-xs px-2 sm:px-3 py-0.5 sm:py-1 rounded-md sm:rounded-lg">
                 Photo {activeImageIdx + 1} of {(product.images || []).length || 1}
               </div>
             </div>
 
             {(product.images || []).length > 1 && (
-              <div className="flex items-center space-x-3 overflow-x-auto pb-1">
+              <div className="flex items-center space-x-2 sm:space-x-3 overflow-x-auto pb-1 no-scrollbar">
                 {product.images.map((img, idx) => (
                   <button
                     key={idx}
                     onClick={() => setActiveImageIdx(idx)}
-                    className={`relative w-24 h-16 rounded-xl overflow-hidden shrink-0 border-2 transition-all cursor-pointer ${
+                    className={`relative w-16 h-12 sm:w-24 sm:h-16 rounded-lg sm:rounded-xl overflow-hidden shrink-0 border-2 transition-all cursor-pointer ${
                       activeImageIdx === idx ? 'border-[#00C6A6] ring-2 ring-[#00C6A6]/30' : 'border-transparent opacity-70 hover:opacity-100'
                     }`}
                   >
@@ -523,16 +523,16 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     <button
                       id="modal-calc-trigger-btn"
                       onClick={handleCalculatorClick}
-                      className="w-full bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold py-3.5 px-4 rounded-xl text-sm transition-all shadow-md shadow-[#00C6A6]/20 flex items-center justify-center space-x-2 cursor-pointer hover:scale-102 mb-2.5"
+                      className="w-full bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold py-2.5 sm:py-3.5 px-3 sm:px-4 rounded-xl text-xs sm:text-sm transition-all shadow-md shadow-[#00C6A6]/20 flex items-center justify-center space-x-2 cursor-pointer active:scale-95 mb-2"
                     >
                       {isAuthenticated ? (
                         <>
-                          <Calculator className="w-4 h-4" />
+                          <Calculator className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                           <span>Open Dynamic Calculator</span>
                         </>
                       ) : (
                         <>
-                          <Lock className="w-4 h-4" />
+                          <Lock className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                           <span>Login to Access Pricing</span>
                         </>
                       )}
@@ -551,9 +551,9 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                           }
                           onBookProduct(product, selectedTravelDate, adults, childrenCount);
                         }}
-                        className="w-full bg-slate-100 hover:bg-white text-slate-900 font-extrabold py-2.5 px-4 rounded-xl text-xs transition-colors flex items-center justify-center space-x-2 cursor-pointer mb-2"
+                        className="w-full bg-slate-100 hover:bg-white text-slate-900 font-extrabold py-2 sm:py-2.5 px-3 sm:px-4 rounded-xl text-xs transition-colors flex items-center justify-center space-x-1.5 sm:space-x-2 cursor-pointer mb-2 active:scale-95"
                       >
-                        <CalendarCheck className="w-4 h-4 text-[#008972]" />
+                        <CalendarCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#008972]" />
                         <span>Instant Book (24–48h SLA Dispatch)</span>
                       </button>
                     )}
@@ -562,7 +562,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                       <button
                         disabled={!availability.isAvailable}
                         onClick={handleAddToQuote}
-                        className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center space-x-1.5 mb-2 ${
+                        className={`w-full py-2 sm:py-2.5 px-3 sm:px-4 rounded-xl text-xs font-semibold transition-colors flex items-center justify-center space-x-1.5 mb-2 active:scale-95 ${
                           availability.isAvailable
                             ? 'bg-slate-800 hover:bg-slate-700 text-white cursor-pointer'
                             : 'bg-slate-800/50 text-slate-600 cursor-not-allowed'

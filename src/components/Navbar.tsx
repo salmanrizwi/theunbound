@@ -196,17 +196,17 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-xs">
       {/* Top Banner for Operations & SLA Status */}
-      <div className="bg-slate-950 text-slate-300 text-xs px-4 sm:px-8 py-1.5 flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#00C6A6]/20 text-[#00E5C0] border border-[#00C6A6]/30">
-            DMC Operations Portal
+      <div className="bg-slate-950 text-slate-300 text-xs px-3 sm:px-8 py-1 sm:py-1.5 flex items-center justify-between gap-2">
+        <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
+          <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded text-[9px] sm:text-[10px] font-bold bg-[#00C6A6]/20 text-[#00E5C0] border border-[#00C6A6]/30">
+            DMC Operations
           </span>
-          <span className="hidden sm:inline text-slate-400 text-xs flex items-center space-x-1.5">
+          <span className="hidden md:inline text-slate-400 text-xs flex items-center space-x-1.5">
             <Clock className="w-3 h-3 text-[#00C6A6]" />
             <span>24–48h Ground Confirmation SLA • Contracted B2B Wholesale Inventory</span>
           </span>
         </div>
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-1.5 sm:space-x-3">
           {/* Secondary Menu Utility Links */}
           {secondaryMenuItems.length > 0 && (
             <div className="hidden lg:flex items-center space-x-3 text-xs border-r border-slate-800 pr-3 mr-1">
@@ -231,31 +231,31 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button 
             id="nav-btn-specs"
             onClick={onOpenSpecs}
-            className="flex items-center space-x-1.5 text-[#00C6A6] hover:text-[#00E5C0] font-medium transition-colors cursor-pointer text-xs"
+            className="hidden xs:flex items-center space-x-1 text-[#00C6A6] hover:text-[#00E5C0] font-medium transition-colors cursor-pointer text-[11px] sm:text-xs"
           >
-            <BookOpen className="w-3.5 h-3.5" />
-            <span>Platform Specs</span>
+            <BookOpen className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+            <span className="hidden sm:inline">Platform Specs</span>
           </button>
           <span className="text-slate-700 hidden md:inline">|</span>
           {canAccessAdminCMS && onOpenAdmin && (
             <button
               id="top-nav-admin-cms"
               onClick={onOpenAdmin}
-              className="flex items-center space-x-1 px-2.5 py-0.5 rounded bg-[#00C6A6]/20 hover:bg-[#00C6A6]/30 border border-[#00C6A6]/40 text-[#00E5C0] text-xs font-bold transition-colors cursor-pointer"
+              className="flex items-center space-x-1 px-1.5 sm:px-2.5 py-0.5 rounded bg-[#00C6A6]/20 hover:bg-[#00C6A6]/30 border border-[#00C6A6]/40 text-[#00E5C0] text-[10px] sm:text-xs font-bold transition-colors cursor-pointer"
               title="Open Admin CMS Operations Engine"
             >
-              <ShieldCheck className="w-3.5 h-3.5 text-[#00E5C0]" />
-              <span>Admin CMS</span>
+              <ShieldCheck className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#00E5C0]" />
+              <span>Admin</span>
             </button>
           )}
-          <div className="flex items-center space-x-2 text-slate-400 text-xs">
-            <Globe2 className="w-3.5 h-3.5 text-[#00C6A6]" />
+          <div className="flex items-center space-x-1 text-slate-400 text-xs">
+            <Globe2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#00C6A6]" />
             <span className="hidden sm:inline">Currency:</span>
             <select
               id="currency-selector"
               value={currency}
               onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-              className="bg-slate-800 text-white rounded-md px-2.5 py-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#00C6A6] cursor-pointer border border-slate-700 hover:bg-slate-750 transition-colors"
+              className="bg-slate-800 text-white rounded px-1.5 sm:px-2.5 py-0.5 sm:py-1 text-[11px] sm:text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#00C6A6] cursor-pointer border border-slate-700 hover:bg-slate-750 transition-colors"
             >
               {SUPPORTED_CURRENCIES.map(c => (
                 <option key={c.code} value={c.code}>
@@ -270,13 +270,13 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               id="quote-cart-btn"
               onClick={() => setIsQuoteDrawerOpen(true)}
-              className="relative flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-750 border border-slate-700 text-white px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer shadow-xs"
+              className="relative flex items-center space-x-1 bg-slate-800 hover:bg-slate-750 border border-slate-700 text-white px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded text-[11px] sm:text-xs font-semibold transition-all cursor-pointer shadow-xs"
               title="Open Quotation Cart"
             >
-              <FileText className="w-3.5 h-3.5 text-[#00C6A6]" />
+              <FileText className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#00C6A6]" />
               <span className="hidden sm:inline">Cart</span>
               {items.length > 0 && (
-                <span className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold bg-[#00C6A6] text-slate-950 rounded-full">
+                <span className="inline-flex items-center justify-center w-3.5 h-3.5 sm:w-4 sm:h-4 text-[9px] sm:text-[10px] font-bold bg-[#00C6A6] text-slate-950 rounded-full">
                   {items.length}
                 </span>
               )}
@@ -531,11 +531,11 @@ export const Navbar: React.FC<NavbarProps> = ({
                 )}
               </div>
             ) : (
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-1.5 sm:space-x-2">
                 <button
                   id="nav-login-btn"
                   onClick={() => openAuthModal('Sign in to access B2B dynamic pricing, custom quotes, and ground bookings.')}
-                  className="bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-sm shadow-[#00C6A6]/20 cursor-pointer"
+                  className="bg-[#00C6A6] hover:bg-[#00b094] active:bg-[#009b82] text-slate-950 px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-bold transition-all shadow-xs shadow-[#00C6A6]/20 cursor-pointer active:scale-[0.98] whitespace-nowrap"
                 >
                   Agent Login
                 </button>
