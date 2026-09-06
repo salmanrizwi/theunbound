@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { handleSitemapXml, handleRobotsTxt, injectSEOIntoHtml } from "./server/seoHandler";
+import { handleGeminiChat } from "./server/geminiChatHandler";
 
 async function startServer() {
   const app = express();
@@ -14,6 +15,9 @@ async function startServer() {
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", service: "theunbound-dmc-portal" });
   });
+
+  // TheUnbound Gemini AI Chatbot endpoint
+  app.post("/api/gemini/chat", handleGeminiChat);
 
   // SEO Technical Endpoints
   app.get("/sitemap.xml", handleSitemapXml);

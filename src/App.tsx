@@ -33,6 +33,7 @@ import { B2BAgentPortal } from './components/B2BAgentPortal/B2BAgentPortal';
 import { BuyerFooter } from './components/BuyerPortal/BuyerFooter';
 import { QuoteBuilderAuthRequiredModal } from './components/QuoteBuilderAuthRequiredModal';
 import { PortalAccessRestrictedView } from './components/PortalAccessRestrictedView';
+import { ChatbotLauncher } from './components/Chatbot/ChatbotLauncher';
 import { 
   parseRoute, 
   getCurrentPath, 
@@ -570,6 +571,9 @@ const MainAppContent: React.FC = () => {
       {isSpecsModalOpen && (
         <SpecificationModal onClose={() => setIsSpecsModalOpen(false)} />
       )}
+
+      {/* Global TheUnbound AI Travel Specialist Chatbot Launcher for Retail & Buyer Portals */}
+      <ChatbotLauncher portal="BUYER" />
     </div>
   );
 };

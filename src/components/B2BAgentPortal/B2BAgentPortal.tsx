@@ -20,6 +20,7 @@ import { PricingCalculatorModal } from '../PricingCalculatorModal';
 import { BookingModal } from '../BookingModal';
 import { BookingConfirmationModal } from '../BookingConfirmationModal';
 import { QuoteBuilderDrawer } from '../QuoteBuilderDrawer';
+import { ChatbotLauncher } from '../Chatbot/ChatbotLauncher';
 import { Destination, Hotel, Product, B2BPackage, Quotation, B2BCustomer, CityHub, Booking, HotelRoomType, HotelRate, AiPlannerOptionPlan, AiPlannerStructuredRequirements, QuoteBuilderHandoffPayload } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
@@ -546,6 +547,12 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
         onBookQuote={(booking: Booking) => setConfirmedBooking(booking)}
         onNavigateToQuoteBuilder={() => setActiveTab('create-quote')}
         onNavigateToCatalog={(tab) => setActiveTab(tab as B2BTabType)}
+      />
+
+      {/* TheUnbound Gemini AI Travel Specialist Chatbot Launcher */}
+      <ChatbotLauncher
+        portal="B2B_AGENT"
+        onOpenInQuoteBuilder={handleOpenAiPlanInQuoteBuilder}
       />
     </div>
   );

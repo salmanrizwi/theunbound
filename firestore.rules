@@ -377,6 +377,10 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /chat_sessions/{document=**} {
+      allow read, write: if true;
+    }
+
     match /sla_automation_rules/{id} {
       allow read, write: if true;
     }

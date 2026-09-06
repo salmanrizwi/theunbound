@@ -680,6 +680,14 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                               Buyer Builder: {buyerAllowed ? 'Allowed' : 'Off'}
                             </span>
                           </div>
+                          {(u.role === 'B2B_AGENT' || u.role === 'AGENT' || u.role === 'ADMIN' || isMaster) && (
+                            <div className="flex items-center space-x-1.5">
+                              <span className={`w-2 h-2 rounded-full ${p.chatbotAccess || p.b2bChatbotAccess || isMaster ? 'bg-teal-500' : 'bg-slate-300'}`} />
+                              <span className={`text-[11px] ${(p.chatbotAccess || p.b2bChatbotAccess || isMaster) ? 'font-bold text-teal-800' : 'text-slate-400'}`}>
+                                Chatbot: {(p.chatbotAccess || p.b2bChatbotAccess || isMaster) ? 'Active' : 'Locked'}
+                              </span>
+                            </div>
+                          )}
                           {p.canViewWholesaleNetRates && (
                             <span className="text-[10px] text-amber-700 font-semibold bg-amber-50 px-1.5 py-0.5 rounded w-fit">
                               Wholesale Net Rates
