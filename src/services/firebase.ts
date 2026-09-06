@@ -6,7 +6,7 @@ import {
   enableIndexedDbPersistence, 
   setLogLevel 
 } from 'firebase/firestore';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 const metaEnv = (import.meta as unknown as { env?: Record<string, string> }).env || {};
@@ -52,6 +52,14 @@ export const db = firestoreInstance;
 
 // Initialize Auth
 export const auth = getAuth(app);
+
+// Ensure local persistence for cross-tab and cross-session reliability across mobile and desktop
+if (typeof window !== 'undefined') {
+  setPersistence(auth, browserLocalPersistence).catch((err) => {
+    console.debug('Firebase Auth persistence initialization note:', err);
+  });
+}
+
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({
   prompt: 'select_account'

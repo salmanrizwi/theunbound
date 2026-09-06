@@ -548,14 +548,15 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         sumRecalculatedPrice += calc.finalTotalSellingPrice;
 
+        const itemSource = (item.source || 'AI_PLANNER') as QuoteItemSource;
         return {
           ...item,
           product: dbProduct,
           pax: { adults, children, infants },
           travelDate,
           calculation: calc,
-          source: 'AI_PLANNER' as QuoteItemSource,
-          aiSuggested: true
+          source: itemSource,
+          aiSuggested: itemSource === 'AI_PLANNER'
         };
       });
     }

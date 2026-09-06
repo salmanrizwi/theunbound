@@ -26,6 +26,8 @@ service cloud.firestore {
     function isMasterAdmin() {
       return isAuthenticated() && (
         request.auth.token.email == 'admin@theunbound.com' ||
+        request.auth.token.email == 'business@theunbound.in' ||
+        request.auth.token.email == 'marcus@theunbound.in' ||
         (hasUserDoc(request.auth.uid) && currentUserData().role == 'ADMIN')
       );
     }

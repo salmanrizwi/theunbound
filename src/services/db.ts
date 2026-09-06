@@ -6756,7 +6756,24 @@ export class AppDatabase {
   public getUserByEmail(email: string): User | undefined {
     if (!email) return undefined;
     const cleanEmail = email.trim().toLowerCase();
-    return this.getUsers().find(u => u.email.toLowerCase() === cleanEmail);
+    return this.getUsers().find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+  }
+
+  public getUserById(id: string): User | undefined {
+    if (!id) return undefined;
+    return this.getUsers().find(u => u.id === id);
+  }
+
+  public saveUserLocally(user: User): void {
+    const users = this.getUsers();
+    const cleanEmail = (user.email || '').trim().toLowerCase();
+    const idx = users.findIndex(u => u.id === user.id || (u.email && u.email.trim().toLowerCase() === cleanEmail));
+    if (idx >= 0) {
+      users[idx] = { ...users[idx], ...user };
+    } else {
+      users.push(user);
+    }
+    this.setItem('system_users', users);
   }
 
   public saveUser(updatedUser: User, actor: User | null, actionType: 'USER_ROLE_CHANGED' | 'USER_PERMISSIONS_CHANGED' = 'USER_ROLE_CHANGED', auditDetails?: string): void {

@@ -26,7 +26,8 @@ import {
   Info,
   ExternalLink,
   Shield,
-  FileCheck
+  FileCheck,
+  X
 } from 'lucide-react';
 import { 
   AiPlannerResult, 
@@ -35,7 +36,8 @@ import {
   CurrencyCode, 
   User, 
   TripRouteHub, 
-  QuoteItem 
+  QuoteItem,
+  AiPlannerRefinementItem
 } from '../../types';
 import { AiPlannerEngine } from '../../services/aiPlannerEngine';
 import { AiPlannerTrackingService, generateAlphanumericLeadId } from '../../services/aiPlannerTracking';
@@ -137,17 +139,18 @@ export const AIPlannerView: React.FC<AIPlannerViewProps> = ({
     }
   };
 
-  const handleRefine = async () => {
-    if (!refinementText.trim() || !currentResult) return;
+  const handleRefine = async (overridePrompt?: string, actionRefinement?: AiPlannerRefinementItem) => {
+    const promptToRun = overridePrompt || refinementText;
+    if ((!promptToRun.trim() && !actionRefinement) || !currentResult) return;
 
     setIsRefining(true);
     setErrorMessage(null);
 
     try {
       tracking.logActivity('AI_PLAN_REGENERATED', user, {
-        additional: { refinement: refinementText }
+        additional: { refinement: promptToRun || actionRefinement?.label }
       });
-      const updated = await engine.refinePlan(currentResult, refinementText, user);
+      const updated = await engine.refinePlan(currentResult, promptToRun, user, activeOptionIndex, actionRefinement);
       setCurrentResult(updated);
       setRefinementText('');
     } catch (err: any) {
@@ -156,6 +159,12 @@ export const AIPlannerView: React.FC<AIPlannerViewProps> = ({
     } finally {
       setIsRefining(false);
     }
+  };
+
+  const handleDismissSuggestion = (refinementId: string) => {
+    if (!currentResult) return;
+    const updated = engine.dismissRefinement(currentResult, refinementId, activeOptionIndex);
+    setCurrentResult(updated);
   };
 
   const handleSaveLead = () => {
@@ -354,7 +363,7 @@ export const AIPlannerView: React.FC<AIPlannerViewProps> = ({
                 </div>
               </div>
 
-              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
                 <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
                   <p className="text-xs font-semibold text-slate-500">Destination</p>
                   <p className="mt-1 text-sm font-bold text-slate-900">{currentResult.requirements.destination.value}</p>
@@ -364,6 +373,19 @@ export const AIPlannerView: React.FC<AIPlannerViewProps> = ({
                   <p className="mt-1 text-sm font-bold text-slate-900 truncate">
                     {currentResult.requirements.hubs.value.join(' → ')}
                   </p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold text-slate-500">Travel Dates</p>
+                  <div className="mt-1 flex items-center justify-between gap-1">
+                    <p className="text-sm font-bold text-slate-900 truncate">
+                      {currentResult.requirements.travelDates?.startDate?.value 
+                        ? `${new Date(currentResult.requirements.travelDates.startDate.value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` 
+                        : 'Flexible'}
+                      {currentResult.requirements.travelDates?.endDate?.value 
+                        ? ` – ${new Date(currentResult.requirements.travelDates.endDate.value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` 
+                        : ''}
+                    </p>
+                  </div>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
                   <p className="text-xs font-semibold text-slate-500">Duration</p>
@@ -511,6 +533,27 @@ export const AIPlannerView: React.FC<AIPlannerViewProps> = ({
                       </React.Fragment>
                     ))}
                   </div>
+
+                  {/* Applied Customizations Bar */}
+                  {activeOption.appliedRefinements && activeOption.appliedRefinements.length > 0 && (
+                    <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5">
+                      <div className="flex items-center gap-1.5">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                        <span className="text-xs font-bold text-emerald-900">Customized Refinements Applied:</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {activeOption.appliedRefinements.map((ref) => (
+                          <span
+                            key={ref.refinementId}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-2.5 py-1 text-xs font-medium text-emerald-800 shadow-xs"
+                          >
+                            <Check className="h-3.5 w-3.5 text-emerald-600" />
+                            <span>{ref.label}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Primary Action Button Bar */}
@@ -546,6 +589,59 @@ export const AIPlannerView: React.FC<AIPlannerViewProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Recommended Smart Refinements */}
+              {activeOption.suggestedRefinements && activeOption.suggestedRefinements.length > 0 && (
+                <div className="mt-8 rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50/50 via-slate-50 to-white p-6 shadow-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white shadow-xs">
+                        <Sparkles className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-slate-900">Recommended Smart Refinements</h3>
+                        <p className="text-xs text-slate-500">Contextual optimizations generated specifically for this itinerary.</p>
+                      </div>
+                    </div>
+                    <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-100/70 px-2.5 py-1 rounded-full self-start sm:self-auto">
+                      1-Click Instant Adjustment
+                    </span>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {activeOption.suggestedRefinements.map((sug) => (
+                      <div
+                        key={sug.refinementId}
+                        className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-xs transition hover:border-indigo-300 hover:shadow-sm"
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <h4 className="text-xs font-bold text-slate-900 leading-snug">{sug.label}</h4>
+                            <button
+                              type="button"
+                              title="Dismiss suggestion"
+                              onClick={() => handleDismissSuggestion(sug.refinementId)}
+                              className="text-slate-400 hover:text-slate-600 p-0.5"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                          <p className="mt-1.5 text-[11px] text-slate-600 leading-relaxed">{sug.description}</p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isRefining}
+                          onClick={() => handleRefine('', sug)}
+                          className="mt-3.5 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50"
+                        >
+                          <Zap className="h-3 w-3 text-amber-400" />
+                          <span>Apply Refinement</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Day-by-Day Chronological Itinerary */}
               <div className="mt-8">
@@ -591,10 +687,10 @@ export const AIPlannerView: React.FC<AIPlannerViewProps> = ({
                             <div className="flex items-start gap-3">
                               <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[11px] font-bold ${
                                 item.type === 'HOTEL' 
-                                  ? 'bg-blue-100 text-blue-800' 
-                                  : item.type === 'TRANSFER' 
-                                  ? 'bg-amber-100 text-amber-800' 
-                                  : 'bg-emerald-100 text-emerald-800'
+                                   ? 'bg-blue-100 text-blue-800' 
+                                   : item.type === 'TRANSFER' 
+                                   ? 'bg-amber-100 text-amber-800' 
+                                   : 'bg-emerald-100 text-emerald-800'
                               }`}>
                                 {item.type === 'HOTEL' ? <Building2 className="h-3.5 w-3.5" /> : item.type === 'TRANSFER' ? <Car className="h-3.5 w-3.5" /> : <Compass className="h-3.5 w-3.5" />}
                               </span>
@@ -604,6 +700,15 @@ export const AIPlannerView: React.FC<AIPlannerViewProps> = ({
                                   <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-500 border border-slate-200">
                                     {item.category}
                                   </span>
+                                  {item.source === 'USER' ? (
+                                    <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 border border-indigo-200">
+                                      Customized
+                                    </span>
+                                  ) : (
+                                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 border border-slate-200">
+                                      AI Scheduled
+                                    </span>
+                                  )}
                                   {item.serviceTime && (
                                     <span className="flex items-center gap-0.5 text-slate-400 text-[11px]">
                                       <Clock className="h-3 w-3" /> {item.serviceTime}
@@ -646,12 +751,37 @@ export const AIPlannerView: React.FC<AIPlannerViewProps> = ({
                     type="button"
                     id="btn-submit-refinement"
                     disabled={isRefining || !refinementText.trim()}
-                    onClick={handleRefine}
+                    onClick={() => handleRefine()}
                     className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white transition hover:bg-slate-800 disabled:opacity-50"
                   >
                     {isRefining ? <RotateCcw className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                     <span>Apply</span>
                   </button>
+                </div>
+
+                {/* Refinement Quick Presets */}
+                <div className="mt-3 flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200/60">
+                  <span className="text-[11px] font-semibold text-slate-500">Quick Adjustments:</span>
+                  {[
+                    { label: 'Make it more relaxed', prompt: 'Make it more relaxed and unhurried' },
+                    { label: 'Add Hakone & Fuji', prompt: 'Add Hakone and Mt. Fuji traditional onsen ryokan' },
+                    { label: '5-Star Luxury Hotels', prompt: 'Upgrade accommodations to 5-star luxury hotels' },
+                    { label: 'Reduce Price (4-Star)', prompt: 'Reduce the price using 4-star boutique hotels' },
+                    { label: 'Add Tsukiji Food Tour', prompt: 'Add Tsukiji market & Ginza food tasting walk' },
+                    { label: 'VIP Limousine Transfer', prompt: 'Upgrade to VIP executive limousine chauffeur' },
+                    { label: 'Add 1 Night in Tokyo', prompt: 'Add 1 additional night in Tokyo' }
+                  ].map((chip, cIdx) => (
+                    <button
+                      key={cIdx}
+                      type="button"
+                      disabled={isRefining}
+                      onClick={() => handleRefine(chip.prompt)}
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[11px] font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-100 disabled:opacity-50"
+                    >
+                      <Zap className="h-2.5 w-2.5 text-amber-500" />
+                      <span>{chip.label}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
 

@@ -22,7 +22,8 @@ import {
   HelpCircle,
   FileCheck,
   ShieldAlert,
-  ArrowLeft
+  ArrowLeft,
+  Loader2
 } from 'lucide-react';
 
 export const AuthModal: React.FC = () => {
@@ -55,6 +56,7 @@ export const AuthModal: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [pendingApprovalUser, setPendingApprovalUser] = useState<User | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   React.useEffect(() => {
     if (isAuthModalOpen) {
@@ -94,14 +96,15 @@ export const AuthModal: React.FC = () => {
     setPendingApprovalUser(null);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setErrorMessage(null);
     setStatusMessage(null);
 
     // 1. FORGOT PASSWORD
     if (authMode === 'FORGOT') {
-      const cleanEmail = email.trim();
+      const cleanEmail = email.trim().toLowerCase();
       if (!cleanEmail) {
         setErrorMessage('Please enter your email address to receive password reset instructions.');
         return;
@@ -119,7 +122,7 @@ export const AuthModal: React.FC = () => {
       const trimmedFirst = firstName.trim();
       const trimmedLast = lastName.trim();
       const trimmedName = (name.trim() || `${trimmedFirst} ${trimmedLast}`.trim());
-      const trimmedEmail = email.trim();
+      const trimmedEmail = email.trim().toLowerCase();
       const trimmedAgency = agencyName.trim();
 
       // Strict validation - no demo / empty / garbage
@@ -146,49 +149,69 @@ export const AuthModal: React.FC = () => {
         }
       }
 
-      const result = register({
-        name: trimmedName,
-        firstName: trimmedFirst || undefined,
-        lastName: trimmedLast || undefined,
-        email: trimmedEmail,
-        password,
-        role: activeRole,
-        category: userCategory,
-        agencyName: trimmedAgency,
-        companyName: trimmedAgency,
-        country: country.trim() || 'Global',
-        contactNumber: contactNumber.trim(),
-        jobTitle: jobTitle.trim(),
-        taxOrGstNumber: taxOrGstNumber.trim(),
-        iataOrAbtaNumber: iataOrAbtaNumber.trim()
-      });
+      setIsSubmitting(true);
+      try {
+        const result = await register({
+          name: trimmedName,
+          firstName: trimmedFirst || undefined,
+          lastName: trimmedLast || undefined,
+          email: trimmedEmail,
+          password,
+          role: activeRole,
+          category: userCategory,
+          agencyName: trimmedAgency,
+          companyName: trimmedAgency,
+          country: country.trim() || 'Global',
+          contactNumber: contactNumber.trim(),
+          jobTitle: jobTitle.trim(),
+          taxOrGstNumber: taxOrGstNumber.trim(),
+          iataOrAbtaNumber: iataOrAbtaNumber.trim()
+        });
 
-      if (!result.success) {
-        setErrorMessage(result.error || 'Failed to create profile. Please check your details.');
+        if (!result.success) {
+          setErrorMessage(result.error || 'Failed to create profile. Please check your details.');
+          return;
+        }
+
+        // If B2B Agent requires admin approval
+        if (result.requiresApproval && result.user) {
+          setPendingApprovalUser(result.user);
+          return;
+        }
+
+        // Auto-approved buyer or internal user
+        setStatusMessage('Registration successful! Logging you in...');
         return;
+      } catch (err: any) {
+        setErrorMessage(err?.message || 'Registration failed. Please try again.');
+      } finally {
+        setIsSubmitting(false);
       }
-
-      // If B2B Agent requires admin approval
-      if (result.requiresApproval && result.user) {
-        setPendingApprovalUser(result.user);
-        return;
-      }
-
-      // Auto-approved buyer or internal user
-      setStatusMessage('Registration successful! Logging you in...');
       return;
     }
 
     // 3. LOGIN
-    const cleanEmail = email.trim();
+    const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) {
       setErrorMessage('Please enter your registered email address.');
       return;
     }
 
-    const res = login(cleanEmail, activeRole, password);
-    if (!res.success) {
-      setErrorMessage(res.error || 'Invalid credentials or login failed.');
+    if (!password) {
+      setErrorMessage('Please enter your account password.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const res = await login(cleanEmail, activeRole, password);
+      if (!res.success) {
+        setErrorMessage(res.error || 'Invalid credentials or login failed.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Authentication error. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -746,14 +769,24 @@ export const AuthModal: React.FC = () => {
                 <button
                   type="submit"
                   id="auth-submit-btn"
-                  className="w-full bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold py-2.5 px-4 rounded-xl text-xs transition-all shadow-md shadow-[#00C6A6]/20 flex items-center justify-center space-x-2 cursor-pointer mt-2"
+                  disabled={isSubmitting}
+                  className={`w-full bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold py-2.5 px-4 rounded-xl text-xs transition-all shadow-md shadow-[#00C6A6]/20 flex items-center justify-center space-x-2 mt-2 ${isSubmitting ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
                 >
-                  <span>
-                    {authMode === 'LOGIN' && `Sign In as ${userCategory === 'EXTERNAL' ? (selectedExternalRole === 'BUYER' ? 'Buyer' : 'B2B Agent') : (selectedInternalRole === 'ADMIN' ? 'Admin' : 'Team Member')}`}
-                    {authMode === 'REGISTER' && (userCategory === 'EXTERNAL' && selectedExternalRole === 'B2B_AGENT' ? 'Submit B2B Agent Profile for Review' : 'Complete Profile Registration')}
-                    {authMode === 'FORGOT' && 'Send Password Reset'}
-                  </span>
-                  <ArrowRight className="w-4 h-4" />
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Verifying credentials...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>
+                        {authMode === 'LOGIN' && `Sign In as ${userCategory === 'EXTERNAL' ? (selectedExternalRole === 'BUYER' ? 'Buyer' : 'B2B Agent') : (selectedInternalRole === 'ADMIN' ? 'Admin' : 'Team Member')}`}
+                        {authMode === 'REGISTER' && (userCategory === 'EXTERNAL' && selectedExternalRole === 'B2B_AGENT' ? 'Submit B2B Agent Profile for Review' : 'Complete Profile Registration')}
+                        {authMode === 'FORGOT' && 'Send Password Reset'}
+                      </span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
                 </button>
               </form>
             </>

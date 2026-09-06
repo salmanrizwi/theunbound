@@ -3896,6 +3896,41 @@ export interface AiPlannerDayItem {
   sellingPrice: number;
   reasoning?: string;
   product?: Product;
+  source?: 'AI_PLANNER' | 'USER' | 'SYSTEM';
+}
+
+export type AiPlannerRefinementType = 
+  | 'ADD_HUB'
+  | 'REMOVE_HUB'
+  | 'ADD_ACTIVITY'
+  | 'REMOVE_ACTIVITY'
+  | 'REPLACE_ACTIVITY'
+  | 'UPGRADE_HOTEL'
+  | 'DOWNGRADE_HOTEL'
+  | 'REPLACE_HOTEL'
+  | 'UPGRADE_TRANSFER'
+  | 'CHANGE_PACE'
+  | 'ADD_NIGHT'
+  | 'REMOVE_NIGHT'
+  | 'CHANGE_DATES'
+  | 'REDUCE_PRICE';
+
+export interface AiPlannerRefinementItem {
+  refinementId: string;
+  type: AiPlannerRefinementType;
+  entityId?: string;
+  label: string;
+  description?: string;
+  status: 'PENDING' | 'APPLIED' | 'DISMISSED';
+  appliedAt?: string;
+  source: 'AI_PLANNER' | 'USER' | 'SYSTEM';
+  details?: Record<string, any>;
+}
+
+export interface AiPlannerRefinementState {
+  appliedRefinements: AiPlannerRefinementItem[];
+  dismissedRefinements: string[];
+  suggestedRefinements: AiPlannerRefinementItem[];
 }
 
 export interface AiPlannerDaySlot {
@@ -3931,6 +3966,9 @@ export interface AiPlannerOptionPlan {
   feasibility: FeasibilityCheckResult;
   reasoning: string;
   highlights: string[];
+  appliedRefinements?: AiPlannerRefinementItem[];
+  dismissedRefinements?: string[];
+  suggestedRefinements?: AiPlannerRefinementItem[];
 }
 
 export interface AiPlannerResult {
