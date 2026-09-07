@@ -274,10 +274,39 @@ export class IntegrationsHubService {
       ? (sessionStorage.getItem('google_access_token') || localStorage.getItem('google_access_token'))
       : null;
 
+    // 1. Primary: Verify via secure server-side health probe
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch('/api/integrations/gmail/health-check', {
+        method: 'POST',
+        headers
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        return {
+          success: true,
+          accountEmail: data.accountEmail,
+          messagesTotal: data.messagesTotal,
+          details: data.details || `Gmail API connected for ${data.accountEmail}. Ready for live dispatch.`
+        };
+      } else if (res.status === 401 || res.status === 400) {
+        return {
+          success: false,
+          details: data.details || data.error || 'Google Workspace authentication required. Please connect your account.'
+        };
+      }
+    } catch (e) {
+      // Fallback to client probe
+    }
+
+    // 2. Direct client probe fallback if token exists
     if (!token) {
       return {
         success: false,
-        details: 'No active Google OAuth access token detected in session. Click "Authenticate with Google" below.'
+        details: 'No active Google OAuth credentials detected. Connect Google Workspace to enable email dispatch.'
       };
     }
 
@@ -295,7 +324,7 @@ export class IntegrationsHubService {
           success: true,
           accountEmail: data.emailAddress,
           messagesTotal: data.messagesTotal,
-          details: `Authenticated with Gmail API for ${data.emailAddress}. Ready for production email dispatch.`
+          details: `Authenticated directly with Gmail API for ${data.emailAddress}.`
         };
       } else {
         const errText = await res.text();
@@ -308,6 +337,48 @@ export class IntegrationsHubService {
       return {
         success: false,
         details: err?.message || 'Network error verifying Gmail API connection.'
+      };
+    }
+  }
+
+  public async verifyGoogleSheetsConnection(spreadsheetId?: string): Promise<{
+    success: boolean;
+    spreadsheetTitle?: string;
+    availableTabs?: string[];
+    details: string;
+  }> {
+    const token = typeof window !== 'undefined'
+      ? (sessionStorage.getItem('google_access_token') || localStorage.getItem('google_access_token'))
+      : null;
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch('/api/integrations/sheets/health-check', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ spreadsheetId })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        return {
+          success: true,
+          spreadsheetTitle: data.spreadsheetTitle,
+          availableTabs: data.availableTabs,
+          details: data.details || `Connected to Google Spreadsheet "${data.spreadsheetTitle}".`
+        };
+      } else {
+        return {
+          success: false,
+          details: data.details || data.error || `Sheets verification failed (${res.status}).`
+        };
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        details: err?.message || 'Network error verifying Google Sheets connection.'
       };
     }
   }
@@ -328,14 +399,14 @@ export class IntegrationsHubService {
     if (!token && !apiKey) {
       return {
         success: false,
-        details: 'No active Google API Key or OAuth Access Token configured. Add your API Key or connect Google account.'
+        details: 'No active Google API Key or OAuth Access Token configured. Connect Google account.'
       };
     }
 
     try {
       const calendarId = encodeURIComponent(this.calendarConfig.calendarId || 'primary');
       
-      // If API Key is present, probe public calendar or metadata
+      // If API Key is present, probe calendar
       if (apiKey && !token) {
         const url = `https://www.googleapis.com/calendar/v3/calendars/${calendarId}?key=${apiKey}`;
         const res = await fetch(url);
@@ -343,34 +414,20 @@ export class IntegrationsHubService {
           const data = await res.json();
           return {
             success: true,
-            calendarSummary: data.summary || 'Google Calendar (API Key Mode)',
+            calendarSummary: data.summary || 'Google Calendar',
             timeZone: data.timeZone || 'Asia/Kolkata',
-            details: `Connected via Google Cloud API Key to calendar "${data.summary || calendarId}". Event dispatcher active.`
+            details: `Connected via Google Cloud API Key to calendar "${data.summary || calendarId}".`
           };
         } else {
-          // If API key is valid format AIza... but restricted to specific domain/IP or private calendar
-          if (apiKey.startsWith('AIza') || apiKey.length > 20) {
-            return {
-              success: true,
-              calendarSummary: `Target: ${this.calendarConfig.calendarId || 'Primary Calendar'}`,
-              timeZone: 'Asia/Kolkata',
-              details: `Google Calendar API Key configured (${apiKey.slice(0, 8)}...). Dispatcher ready for automated event creation.`
-            };
-          }
+          return {
+            success: false,
+            details: `Google Calendar API key probe returned status ${res.status}.`
+          };
         }
       }
 
       // If OAuth Token is present
       if (token) {
-        if (token.includes('simulated') || token.startsWith('ya29.theunbound_')) {
-          return {
-            success: true,
-            calendarSummary: 'TheUnbound Workspace Calendar (Live Simulation)',
-            timeZone: 'Asia/Kolkata',
-            details: 'Active operational simulation session token. All ground SLA tasks and calendar dispatches verified.'
-          };
-        }
-
         const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${calendarId}`, {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -386,21 +443,22 @@ export class IntegrationsHubService {
             timeZone: data.timeZone || 'Asia/Kolkata',
             details: `Connected to Google Calendar (${data.summary}, Timezone: ${data.timeZone || 'Asia/Kolkata'}).`
           };
+        } else {
+          return {
+            success: false,
+            details: `Calendar API returned status ${res.status}. Check OAuth permissions.`
+          };
         }
       }
 
       return {
-        success: true,
-        calendarSummary: `TheUnbound Calendar Queue (${this.calendarConfig.calendarId || 'primary'})`,
-        timeZone: 'Asia/Kolkata',
-        details: 'Google Calendar credentials stored & operational dispatcher active.'
+        success: false,
+        details: 'Calendar credentials not valid.'
       };
     } catch (err: any) {
       return {
-        success: true,
-        calendarSummary: 'Operational Calendar Dispatcher',
-        timeZone: 'Asia/Kolkata',
-        details: `Credentials loaded (${apiKey ? 'API Key Mode' : 'OAuth Token'}). Dispatcher will synchronize events.`
+        success: false,
+        details: err?.message || 'Network error verifying Calendar API connection.'
       };
     }
   }

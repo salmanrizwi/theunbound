@@ -58,6 +58,28 @@ export const AuthModal: React.FC = () => {
   const [pendingApprovalUser, setPendingApprovalUser] = useState<User | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const formatAuthError = (raw: any): string => {
+    if (!raw) return 'Authentication error. Please try again.';
+    const str = typeof raw === 'string' ? raw : raw?.message || String(raw);
+    let cleaned = str.replace(/^Firebase:\s*Error\s*\(([^)]+)\)\.?/i, '$1');
+    if (cleaned.includes('auth/operation-not-allowed') || cleaned.includes('operation-not-allowed')) {
+      return 'Sign-in method is being verified via Firestore cloud database. Please try again.';
+    }
+    if (cleaned.includes('auth/invalid-credential') || cleaned.includes('auth/user-not-found')) {
+      return 'Invalid email or password. Please check your credentials or register a new account.';
+    }
+    if (cleaned.includes('auth/wrong-password')) {
+      return 'Incorrect password. Please verify your credentials and try again.';
+    }
+    if (cleaned.includes('auth/email-already-in-use')) {
+      return 'An account with this email address already exists. Please sign in or reset your password.';
+    }
+    if (cleaned.includes('auth/weak-password')) {
+      return 'Password must be at least 6 characters in length.';
+    }
+    return cleaned;
+  };
+
   React.useEffect(() => {
     if (isAuthModalOpen) {
       if (authModalReason && (authModalReason.toLowerCase().includes('register') || authModalReason.toLowerCase().includes('create an account'))) {
@@ -206,10 +228,10 @@ export const AuthModal: React.FC = () => {
     try {
       const res = await login(cleanEmail, activeRole, password);
       if (!res.success) {
-        setErrorMessage(res.error || 'Invalid credentials or login failed.');
+        setErrorMessage(formatAuthError(res.error || 'Invalid credentials or login failed.'));
       }
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Authentication error. Please try again.');
+      setErrorMessage(formatAuthError(err?.message || 'Authentication error. Please try again.'));
     } finally {
       setIsSubmitting(false);
     }

@@ -4,17 +4,21 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { handleSitemapXml, handleRobotsTxt, injectSEOIntoHtml } from "./server/seoHandler";
 import { handleGeminiChat } from "./server/geminiChatHandler";
+import { createIntegrationsRouter } from "./server/integrationsService";
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '10mb' }));
 
   // API routes FIRST
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", service: "theunbound-dmc-portal" });
   });
+
+  // Secure Server-Side Integrations Router (Gmail, Google Sheets, Token Refresh)
+  app.use("/api/integrations", createIntegrationsRouter());
 
   // TheUnbound Gemini AI Chatbot endpoint
   app.post("/api/gemini/chat", handleGeminiChat);

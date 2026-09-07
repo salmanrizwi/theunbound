@@ -56,11 +56,12 @@ import {
   RotateCcw,
   Sparkles,
   ArrowRight,
-  ExternalLink
+  ExternalLink,
+  Loader2
 } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
-  const { isAuthenticated, role, user, openAuthModal } = useAuth();
+  const { isAuthenticated, role, user, isInitializing, openAuthModal } = useAuth();
   const { setIsQuoteDrawerOpen, loadSavedQuote, loadPackageIntoQuote } = useQuotation();
   const db = AppDatabase.getInstance();
 
@@ -206,6 +207,23 @@ const MainAppContent: React.FC = () => {
     setBookingQuotation(null);
     setConfirmedBooking(booking);
   };
+
+  // Prevent authentication flash or premature access rejection during session restoration
+  if (isInitializing) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-white selection:bg-[#00C6A6] selection:text-white">
+        <div className="flex flex-col items-center space-y-4 animate-in fade-in duration-300">
+          <div className="w-14 h-14 rounded-2xl bg-[#00C6A6]/10 border border-[#00C6A6]/30 flex items-center justify-center text-[#00E5C0]">
+            <Loader2 className="w-7 h-7 animate-spin" />
+          </div>
+          <div className="text-center space-y-1">
+            <p className="text-xs font-bold tracking-widest uppercase text-[#00E5C0]">TheUnbound DMC</p>
+            <p className="text-xs text-slate-400 font-medium">Restoring secure session...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Route Access Validation
   const accessCheck = validateRouteAccess(user, currentRoute.pathname);

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { AppDatabase } from '../../services/db';
 import { 
+  User,
   MenuItemConfig, 
   CustomPage, 
   Destination, 
@@ -46,11 +47,13 @@ import {
 
 interface MenuAndPagesManagerProps {
   defaultTab?: 'MENU' | 'CUSTOM_PAGES' | 'FOOTER';
+  currentUser?: User | null;
 }
 
-export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaultTab = 'MENU' }) => {
+export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaultTab = 'MENU', currentUser }) => {
   const db = AppDatabase.getInstance();
-  const { user } = useAuth();
+  const { user: authUser } = useAuth();
+  const activeUser = currentUser || authUser || db.getCurrentUser();
 
   const [menuItems, setMenuItems] = useState<MenuItemConfig[]>([]);
   const [customPages, setCustomPages] = useState<CustomPage[]>([]);
@@ -132,7 +135,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
       return;
     }
     setMenuItemError(null);
-    db.saveMenuItem(item, user);
+    db.saveMenuItem(item, activeUser);
     loadData();
     setEditingMenuItem(null);
     setIsCreatingMenuItem(false);
@@ -140,7 +143,12 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
   };
 
   const executeDeleteMenuItem = (id: string, label: string) => {
-    db.deleteMenuItem(id, user);
+    const result = db.deleteMenuItem(id, activeUser);
+    if (result && !result.success) {
+      showToast(result.error || 'Failed to delete menu link. Permission denied.');
+      setDeletingMenuItem(null);
+      return;
+    }
     loadData();
     if (editingMenuItem?.id === id) {
       setEditingMenuItem(null);
@@ -166,14 +174,14 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
     }));
 
     setMenuItems(ordered);
-    db.updateMenuOrdering(ordered, user);
+    db.updateMenuOrdering(ordered, activeUser);
     loadData();
     showToast('Updated menu order');
   };
 
   const handleToggleVisibility = (item: MenuItemConfig) => {
     const updated = { ...item, isVisible: !item.isVisible };
-    db.saveMenuItem(updated, user);
+    db.saveMenuItem(updated, activeUser);
     loadData();
     showToast(`${updated.isVisible ? 'Enabled' : 'Hidden'} "${item.label}"`);
   };
@@ -191,7 +199,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
       slug: slug || `page-${Date.now()}`
     };
 
-    db.saveCustomPage(updatedPage, user);
+    db.saveCustomPage(updatedPage, activeUser);
     loadData();
     setEditingPage(null);
     setIsCreatingPage(false);
@@ -199,7 +207,12 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
   };
 
   const executeDeletePage = (id: string, title: string) => {
-    db.deleteCustomPage(id, user);
+    const result = db.deleteCustomPage(id, activeUser);
+    if (result && !result.success) {
+      showToast(result.error || 'Failed to delete custom page. Permission denied.');
+      setDeletingPage(null);
+      return;
+    }
     loadData();
     if (editingPage?.id === id) {
       setEditingPage(null);

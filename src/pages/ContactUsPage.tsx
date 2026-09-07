@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Mail, 
   Phone, 
-  PhoneCall,
+  PhoneCall, 
   MapPin, 
   Send, 
   CheckCircle2, 
@@ -13,10 +13,16 @@ import {
   ShieldCheck,
   Headphones,
   ExternalLink,
-  Sparkles
+  Sparkles,
+  Plane,
+  Cpu,
+  ArrowRight
 } from 'lucide-react';
 import { AppDatabase } from '../services/db';
 import { TravelLead, SitePagesConfig } from '../types';
+import { navigateTo } from '../services/portalRouter';
+import { HeroTrustStrip } from '../components/Hero/HeroTrustStrip';
+import { FinalCTA } from '../components/FinalCTA';
 
 export const ContactUsPage: React.FC = () => {
   const db = AppDatabase.getInstance();
@@ -86,29 +92,64 @@ export const ContactUsPage: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-12 animate-in fade-in duration-200">
-      {/* Page Hero */}
-      <div className="bg-slate-900 rounded-3xl p-8 sm:p-12 text-white relative overflow-hidden shadow-xl border border-slate-800">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-[#00C6A6]/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
-        
-        <div className="max-w-3xl relative z-10 space-y-4">
-          <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-bold bg-[#00C6A6]/20 text-[#00E5C0] border border-[#00C6A6]/30">
-            <Globe2 className="w-3.5 h-3.5" />
-            <span>TheUnbound Global DMC Network</span>
+    <div className="w-full pb-16 space-y-12 animate-in fade-in duration-200">
+      {/* 1. Compact Hero Section */}
+      <div className="w-full bg-[#061329] text-white relative overflow-hidden border-b border-slate-800">
+        {/* Dot pattern */}
+        <div 
+          className="absolute inset-0 pointer-events-none opacity-20" 
+          style={{
+            backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.2) 1px, transparent 1px)',
+            backgroundSize: '20px 20px'
+          }}
+        />
+
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-10 sm:pt-14 pb-8 sm:pb-10 relative z-10 text-center flex flex-col items-center">
+          {/* Eyebrow Badge */}
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-bold tracking-wider text-teal-300 bg-teal-950/60 border border-teal-500/30 uppercase mb-4 shadow-xs">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#00C6A6] animate-pulse" />
+            <span>ESTABLISHED IN 2025 • THEUNBOUND OPERATIONS & TRADE DESK</span>
           </div>
 
-          <h1 className="text-3xl sm:text-4xl font-extrabold font-sans tracking-tight text-white">
-            Get in Touch with Our Ground Operations
+          {/* Main Headline */}
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-black font-sans tracking-tight text-white leading-tight uppercase max-w-3xl mx-auto mb-3">
+            GROUND OPERATIONS & <span className="text-[#00C6A6]">PARTNERSHIP DESK.</span>
           </h1>
 
-          <p className="text-sm sm:text-base text-slate-300 leading-relaxed">
-            Connect directly with TheUnbound Destination Management Company for bespoke travel quotations, wholesale contracted tariffs, guide allocations, and operational support across Japan, United Kingdom, and Europe.
+          {/* Subtitle */}
+          <p className="text-xs sm:text-sm md:text-base text-slate-300 max-w-2xl mx-auto leading-relaxed font-normal mb-6">
+            Connect directly with TheUnbound Destination Management operations for bespoke FIT proposals, wholesale contracted tariffs, guide allocations, and 24/7 on-tour emergency dispatch.
           </p>
+
+          {/* Action CTA Buttons */}
+          <div className="flex flex-wrap items-center justify-center gap-3 w-full max-w-md mx-auto">
+            <button
+              id="contact-send-inquiry-btn"
+              onClick={() => {
+                const el = document.getElementById('contact-form-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 text-xs sm:text-sm font-bold transition-all shadow-md cursor-pointer flex items-center justify-center space-x-2 active:scale-95"
+            >
+              <span>SEND AN INQUIRY</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+
+            <button
+              id="contact-partner-btn"
+              onClick={() => navigateTo('/b2b/quote-builder')}
+              className="px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/20 text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center justify-center space-x-2 active:scale-95"
+            >
+              <span>B2B QUOTATION STUDIO</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Main Grid: Contact Cards + Contact Form */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+        {/* Main Grid: Contact Cards + Contact Form */}
+        <div id="contact-form-section" className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Left Column: Official Contact Channels */}
         <div className="lg:col-span-5 space-y-6">
           {/* Primary Office Contact Card */}
@@ -346,7 +387,7 @@ export const ContactUsPage: React.FC = () => {
 
                   <button
                     type="submit"
-                    className="px-6 py-2.5 bg-[#008972] hover:bg-[#007460] text-white font-bold text-xs rounded-xl transition-all shadow-md flex items-center space-x-2 cursor-pointer"
+                    className="px-6 py-2.5 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold text-xs rounded-xl transition-all shadow-md flex items-center space-x-2 cursor-pointer active:scale-95"
                   >
                     <Send className="w-4 h-4" />
                     <span>Send Proposal Request</span>
@@ -357,6 +398,17 @@ export const ContactUsPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Final Conversion Section */}
+      <div className="pt-4 sm:pt-8">
+        <FinalCTA
+          title="EXPAND YOUR DESTINATION CAPABILITIES"
+          subtitle="Partner with TheUnbound for licensed DMC operations, contracted wholesale hotel allocations, and instant customized agent quotes."
+          primaryButtonText="BECOME A TRADE PARTNER"
+          primaryButtonLink="/b2b/quote-builder"
+        />
+      </div>
     </div>
+  </div>
   );
 };

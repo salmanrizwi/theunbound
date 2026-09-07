@@ -24,7 +24,8 @@ import {
   HotelMealPlanItem, 
   VisaRateItem, 
   PackageItemRef,
-  CurrencyCode
+  CurrencyCode,
+  MealPlanCode
 } from '../types';
 import { MASTER_SHEETS_TAB_DEFINITIONS, getTabSchemaByName } from '../data/googleSheetsTemplate';
 
@@ -103,7 +104,32 @@ export class SheetsSyncService {
     const cleanTabName = tabName.trim();
     if (!cleanSheetId) return null;
 
-    // 1. Try Google Sheets v4 API with OAuth Bearer Token if available
+    // 1. Primary: Use secure server-side proxy with automatic token refresh
+    try {
+      const storedToken = typeof window !== 'undefined' 
+        ? (sessionStorage.getItem('google_access_token') || localStorage.getItem('google_access_token'))
+        : null;
+
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (storedToken) headers['Authorization'] = `Bearer ${storedToken}`;
+
+      const serverRes = await fetch('/api/integrations/sheets/fetch-tab', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ spreadsheetId: cleanSheetId, tabName: cleanTabName })
+      });
+
+      if (serverRes.ok) {
+        const data = await serverRes.json();
+        if (data.rows && Array.isArray(data.rows) && data.rows.length > 0) {
+          return data.rows;
+        }
+      }
+    } catch (e) {
+      // Continue to next fetch method
+    }
+
+    // 2. Secondary fallback: Direct Google Sheets v4 API with client Bearer Token
     const storedToken = typeof window !== 'undefined' 
       ? (sessionStorage.getItem('google_access_token') || localStorage.getItem('google_access_token'))
       : null;
@@ -128,7 +154,7 @@ export class SheetsSyncService {
       }
     }
 
-    // 2. Try Google Sheets public CSV export endpoint
+    // 3. Fallback: Google Sheets public CSV export endpoint
     try {
       const csvUrl = `https://docs.google.com/spreadsheets/d/${cleanSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(cleanTabName)}`;
       const res = await fetch(csvUrl);
@@ -574,20 +600,30 @@ export class SheetsSyncService {
         db.getCityHubs().forEach(h => existingMap.set(h.id, h));
       } else if (tabKey === 'PRODUCTS') {
         db.getProducts().forEach(p => existingMap.set(p.sku || p.id, p));
-      } else if (tabKey === 'HOTELS') {
-        db.getHotels().forEach(h => existingMap.set(h.id, h));
-      } else if (tabKey === 'VISA') {
-        db.getVisas().forEach(v => existingMap.set(v.id, v));
-      } else if (tabKey === 'TRANSFER_ROUTES') {
-        db.getTransferRoutes().forEach(r => existingMap.set(r.id, r));
       } else if (tabKey === 'PRODUCT_PRICING') {
         db.getProductRates().forEach(r => existingMap.set(r.id, r));
+      } else if (tabKey === 'PRODUCT_CAPACITY') {
+        db.getProductCapacities().forEach(c => existingMap.set(c.id, c));
+      } else if (tabKey === 'HOTELS') {
+        db.getHotels().forEach(h => existingMap.set(h.id, h));
       } else if (tabKey === 'HOTEL_ROOMS') {
         db.getHotelRooms().forEach(r => existingMap.set(r.id, r));
+      } else if (tabKey === 'HOTEL_MEAL_PLANS') {
+        db.getHotelMealPlans().forEach(m => existingMap.set(m.id, m));
       } else if (tabKey === 'HOTEL_RATES') {
         db.getHotelRates().forEach(r => existingMap.set(r.id, r));
+      } else if (tabKey === 'VISA') {
+        db.getVisas().forEach(v => existingMap.set(v.id, v));
+      } else if (tabKey === 'VISA_RATES') {
+        db.getVisaRates().forEach(vr => existingMap.set(vr.id, vr));
+      } else if (tabKey === 'TRANSFER_ROUTES') {
+        db.getTransferRoutes().forEach(r => existingMap.set(r.id, r));
+      } else if (tabKey === 'TRANSFER_RATES') {
+        db.getTransferRates().forEach(tr => existingMap.set(tr.id, tr));
       } else if (tabKey === 'PACKAGES') {
         db.getB2BPackages().forEach(p => existingMap.set(p.id, p));
+      } else if (tabKey === 'PACKAGE_ITEMS') {
+        db.getPackageItems().forEach(pi => existingMap.set(pi.id, pi));
       }
 
       for (const row of objects) {
@@ -1021,6 +1057,66 @@ export class SheetsSyncService {
           updatedAt: new Date().toISOString()
         }));
         logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.packages.length} Packages.`);
+      } else if (tabKey === 'PRODUCT_CAPACITY') {
+        payload.productCapacities = objects.map(pc => ({
+          id: pc.capacity_id || pc.id || `CAP-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+          productId: pc.product_id,
+          capacity: Number(pc.capacity) || 6,
+          vehicleModel: pc.vehicle_model || 'Executive MPV',
+          fixedNettCost: Number(pc.fixed_cost) || 0,
+          currency: (pc.currency || 'USD') as CurrencyCode,
+          status: 'ACTIVE'
+        }));
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.productCapacities.length} Product Capacities.`);
+      } else if (tabKey === 'HOTEL_RATES') {
+        payload.hotelRates = objects.map(hr => ({
+          id: hr.hotel_rate_id || hr.id || `HRATE-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+          hotelId: hr.hotel_id,
+          roomId: hr.room_id,
+          mealPlan: (hr.meal_code || 'BB') as MealPlanCode,
+          mealPlanName: hr.meal_name || 'Breakfast Included',
+          singleNetRate: Number(hr.adult_nett) || 0,
+          doubleNetRate: Number(hr.adult_nett) || 0,
+          tripleNetRate: Math.round((Number(hr.adult_nett) || 0) * 1.4),
+          extraBedRate: Number(hr.extra_bed_nett) || 0,
+          childRate: Number(hr.cwb_nett) || Number(hr.cnb_nett) || 0,
+          adultNettCost: Number(hr.adult_nett) || 0,
+          markupPercent: 20,
+          taxPercent: 10,
+          feePercent: 0,
+          currency: (hr.currency || 'USD') as CurrencyCode,
+          validityFrom: hr.validity_from || '2026-01-01',
+          validityTo: hr.validity_to || '2026-12-31'
+        }));
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.hotelRates.length} Hotel Rates.`);
+      } else if (tabKey === 'VISA_RATES') {
+        payload.visaRates = objects.map(vr => ({
+          id: vr.visa_rate_id || vr.id || `VRATE-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+          visaId: vr.visa_id,
+          currency: (vr.currency || 'USD') as CurrencyCode,
+          validityFrom: vr.validity_from || '2026-01-01',
+          validityTo: vr.validity_to || '2026-12-31',
+          adultNett: Number(vr.adult_nett) || 0,
+          childNett: Number(vr.child_nett) || 0,
+          infantNett: Number(vr.infant_nett) || 0,
+          serviceFee: Number(vr.service_fee) || 0,
+          markupBuyer: Number(vr.markup_buyer) || 15,
+          markupAgent: Number(vr.markup_agent) || 10,
+          status: 'ACTIVE'
+        }));
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.visaRates.length} Visa Rates.`);
+      } else if (tabKey === 'PACKAGE_ITEMS') {
+        payload.packageItems = objects.map(pi => ({
+          id: pi.package_item_id || pi.id || `PKGITEM-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+          packageId: pi.package_id,
+          dayNumber: Number(pi.day_number) || 1,
+          hubId: pi.hub_id || 'HUB-TYO',
+          itemType: (pi.item_type || 'product') as any,
+          itemId: pi.item_id,
+          quantity: Number(pi.quantity) || 1,
+          remarks: pi.remarks || ''
+        }));
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.packageItems.length} Package Items.`);
       }
     }
 

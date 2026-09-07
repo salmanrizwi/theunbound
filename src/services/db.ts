@@ -740,8 +740,14 @@ export class AppDatabase {
       // 14. Sync Menu Items
       onSnapshot(collection(firestoreDb, 'menu_items'), (snapshot) => {
         if (!snapshot.empty) {
+          const deletedIds = this.getDeletedMenuItemIds();
           const list: MenuItemConfig[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as MenuItemConfig));
+          snapshot.forEach(docSnap => {
+            const data = docSnap.data() as MenuItemConfig;
+            if (!deletedIds.has(docSnap.id) && !deletedIds.has(data.id)) {
+              list.push(data);
+            }
+          });
           this.setItem('menu_items', list, true);
         }
       }, (err) => console.debug('Firestore menu_items sync note:', err));
@@ -749,8 +755,14 @@ export class AppDatabase {
       // 15. Sync Custom Pages
       onSnapshot(collection(firestoreDb, 'custom_pages'), (snapshot) => {
         if (!snapshot.empty) {
+          const deletedIds = this.getDeletedCustomPageIds();
           const list: CustomPage[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as CustomPage));
+          snapshot.forEach(docSnap => {
+            const data = docSnap.data() as CustomPage;
+            if (!deletedIds.has(docSnap.id) && !deletedIds.has(data.id)) {
+              list.push(data);
+            }
+          });
           this.setItem('custom_pages', list, true);
         }
       }, (err) => console.debug('Firestore custom_pages sync note:', err));
@@ -2021,16 +2033,48 @@ export class AppDatabase {
   // GLOBAL CMS DELETE & ARCHIVE PERMISSION CONTROL
   // ==========================================
   public canUserDelete(user: User | null, moduleName?: string): { allowed: boolean; reason?: string } {
-    if (!user) {
+    const effectiveUser = user || this.getCurrentUser();
+    if (!effectiveUser) {
       return { allowed: false, reason: 'Authentication required. Please sign in.' };
     }
-    if (user.role === 'ADMIN') {
+
+    const email = (effectiveUser.email || '').toLowerCase().trim();
+    const role = (effectiveUser.role || '').toUpperCase();
+    const userType = ((effectiveUser as any).userType || '').toUpperCase();
+
+    // 1. Full Admin & Master Admin Bypass
+    if (
+      role === 'ADMIN' || 
+      userType === 'ADMIN' ||
+      role === 'SUPER_ADMIN' ||
+      role === 'MASTER_ADMIN' ||
+      email === 'business@theunbound.in' ||
+      email === 'admin@theunbound.com' ||
+      email === 'marcus@theunbound.in' ||
+      isMasterAdmin(effectiveUser)
+    ) {
       return { allowed: true };
     }
-    if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
-      const perms = user.permissions;
+
+    // 2. Team Member / DMC Staff Permissions
+    if (role === 'TEAM_MEMBER' || role === 'DMC_STAFF' || userType === 'TEAM_MEMBER') {
+      const perms = effectiveUser.permissions;
       if (perms?.canDeleteRecords) {
         return { allowed: true };
+      }
+      // Content & Navigation Menu deletion
+      if (
+        moduleName === 'MenuItem' || 
+        moduleName === 'NavigationMenu' || 
+        moduleName === 'CustomPage' ||
+        moduleName === 'Editorial'
+      ) {
+        if (perms?.cmsContent && perms.cmsContent.enabled !== false) {
+          return { allowed: true };
+        }
+        if (perms?.canDeleteEditorial) {
+          return { allowed: true };
+        }
       }
       if (moduleName && perms) {
         const specificKey = `canDelete${moduleName}` as keyof typeof perms;
@@ -2043,9 +2087,66 @@ export class AppDatabase {
         reason: 'Restricted Action: Your Team Member profile does not have Admin-granted deletion permissions.' 
       };
     }
+
     return { 
       allowed: false, 
       reason: 'Access Denied: External accounts (B2B Agents & Buyers) cannot delete or archive CMS records.' 
+    };
+  }
+
+  // ==========================================
+  // GLOBAL CMS WRITE & EDIT PERMISSION CONTROL
+  // ==========================================
+  public canUserWriteCMS(
+    user: User | null, 
+    section: 'OPERATIONS' | 'CONTENT' | 'FINANCE' | 'SYSTEM' = 'OPERATIONS',
+    entityName?: string
+  ): { allowed: boolean; reason?: string } {
+    const effectiveUser = user || this.getCurrentUser();
+    if (!effectiveUser) {
+      return { 
+        allowed: false, 
+        reason: 'Authentication required: You must be signed in as an authorized internal user to modify CMS records.' 
+      };
+    }
+
+    const email = (effectiveUser.email || '').toLowerCase().trim();
+    if (
+      effectiveUser.role === 'ADMIN' || 
+      email === 'business@theunbound.in' || 
+      email === 'admin@theunbound.com' ||
+      email === 'marcus@theunbound.in'
+    ) {
+      return { allowed: true };
+    }
+
+    if (effectiveUser.role === 'TEAM_MEMBER' || effectiveUser.role === 'DMC_STAFF') {
+      if ((effectiveUser.approvalStatus || 'APPROVED') !== 'APPROVED') {
+        return { allowed: false, reason: 'Your staff account is pending Admin verification.' };
+      }
+      const perms = effectiveUser.permissions;
+      if (section === 'OPERATIONS') {
+        const allowed = perms?.cmsOperations ? perms.cmsOperations.enabled !== false : true;
+        return allowed ? { allowed: true } : { allowed: false, reason: 'Operations management access is disabled for your account.' };
+      }
+      if (section === 'CONTENT') {
+        const allowed = perms?.cmsContent ? perms.cmsContent.enabled !== false : true;
+        return allowed ? { allowed: true } : { allowed: false, reason: 'Content management access is disabled for your account.' };
+      }
+      if (section === 'FINANCE') {
+        const allowed = perms?.cmsFinance ? perms.cmsFinance.enabled === true : false;
+        return allowed ? { allowed: true } : { allowed: false, reason: 'Financial management is restricted to authorized Administrators.' };
+      }
+      if (section === 'SYSTEM') {
+        const allowed = perms?.cmsSystem ? perms.cmsSystem.enabled !== false : true;
+        return allowed ? { allowed: true } : { allowed: false, reason: 'System administration is disabled for your account.' };
+      }
+      return { allowed: true };
+    }
+
+    return { 
+      allowed: false, 
+      reason: `Access Denied: External accounts (${effectiveUser.role || 'Guest'}) are strictly prohibited from creating or modifying private CMS business data.` 
     };
   }
 
@@ -2773,7 +2874,7 @@ export class AppDatabase {
       case 'Lead': {
         const leads = this.getLeads();
         const target = leads.find(l => l.id === recordId);
-        this.setItem('travel_leads', leads.filter(l => l.id !== recordId));
+        this.setItem('leads', leads.filter(l => l.id !== recordId));
         this.deleteFirestoreDoc('leads', recordId);
         this.logAudit(user, 'LEAD_DELETED', 'TravelLead', recordId, `Deleted travel lead ${target?.leadNumber || recordId} (${target?.contactName || ''})`);
         break;
@@ -2959,6 +3060,13 @@ export class AppDatabase {
   }
 
   public saveProduct(product: Product, user: User | null): void {
+    if (user) {
+      const auth = this.canUserWriteCMS(user, 'OPERATIONS', 'Product');
+      if (!auth.allowed) {
+        this.logAudit(user, 'UNAUTHORIZED_WRITE_ATTEMPT', 'Product', product.id, `Unauthorized write attempt: ${auth.reason}`);
+        return;
+      }
+    }
     const products = this.getProducts();
     const existingIndex = products.findIndex(p => p.id === product.id);
     const prev = existingIndex >= 0 ? products[existingIndex] : null;
@@ -3100,6 +3208,13 @@ export class AppDatabase {
   }
 
   public saveDestination(destination: Destination, user: User | null): void {
+    if (user) {
+      const auth = this.canUserWriteCMS(user, 'CONTENT', 'Destination');
+      if (!auth.allowed) {
+        this.logAudit(user, 'UNAUTHORIZED_WRITE_ATTEMPT', 'Destination', destination.id, `Unauthorized write attempt: ${auth.reason}`);
+        return;
+      }
+    }
     const destinations = this.getDestinations();
     const index = destinations.findIndex(d => d.id === destination.id);
     if (index >= 0) {
@@ -4313,6 +4428,13 @@ export class AppDatabase {
   }
 
   public savePackage(pkg: B2BPackage, user?: User | null): void {
+    if (user) {
+      const auth = this.canUserWriteCMS(user, 'OPERATIONS', 'Package');
+      if (!auth.allowed) {
+        this.logAudit(user, 'UNAUTHORIZED_WRITE_ATTEMPT', 'B2BPackage', pkg.id, `Unauthorized write attempt: ${auth.reason}`);
+        return;
+      }
+    }
     const pkgs = this.getPackages();
     const idx = pkgs.findIndex(p => p.id === pkg.id);
     const timestamp = new Date().toISOString();
@@ -5382,6 +5504,13 @@ export class AppDatabase {
   }
 
   public saveHotel(hotel: Hotel, user: User | null): void {
+    if (user) {
+      const auth = this.canUserWriteCMS(user, 'OPERATIONS', 'Hotel');
+      if (!auth.allowed) {
+        this.logAudit(user, 'UNAUTHORIZED_WRITE_ATTEMPT', 'Hotel', hotel.id, `Unauthorized write attempt: ${auth.reason}`);
+        return;
+      }
+    }
     const hotels = this.getHotels();
     const index = hotels.findIndex(h => h.id === hotel.id);
     let savedHotel: Hotel;
@@ -5520,7 +5649,14 @@ export class AppDatabase {
   // HOMEPAGE CONTROL CONFIGURATION
   // ==========================================
   public getHomepageConfig(): HomepageConfig {
-    return this.getItem<HomepageConfig>('homepage_config', INITIAL_HOMEPAGE_CONFIG);
+    const config = this.getItem<HomepageConfig>('homepage_config', INITIAL_HOMEPAGE_CONFIG);
+    if (config?.heroConfig?.eyebrowText && config.heroConfig.eyebrowText.includes('ESTABLISHED IN 2018')) {
+      config.heroConfig.eyebrowText = config.heroConfig.eyebrowText.replace('ESTABLISHED IN 2018', 'ESTABLISHED IN 2025');
+    }
+    if (config?.heroBadgeText && config.heroBadgeText.includes('ESTABLISHED IN 2018')) {
+      config.heroBadgeText = config.heroBadgeText.replace('ESTABLISHED IN 2018', 'ESTABLISHED IN 2025');
+    }
+    return config;
   }
 
   public updateHomepageConfig(config: HomepageConfig, user: User | null): void {
@@ -6158,6 +6294,13 @@ export class AppDatabase {
   }
 
   public deleteLead(leadId: string, user: User | null): void {
+    if (user) {
+      const permCheck = this.canUserDelete(user, 'Lead');
+      if (!permCheck.allowed) {
+        this.logAudit(user, 'UNAUTHORIZED_DELETE_ATTEMPT', 'TravelLead', leadId, `Unauthorized delete attempt on lead: ${permCheck.reason}`);
+        return;
+      }
+    }
     const leads = this.getLeads();
     const target = leads.find(l => l.id === leadId || l.leadNumber === leadId);
     if (!target) return;
@@ -7164,6 +7307,44 @@ export class AppDatabase {
   // ==========================================
   // MENU & NAVIGATION PAGES MANAGEMENT
   // ==========================================
+  private getDeletedMenuItemIds(): Set<string> {
+    const ids = this.getItem<string[]>('deleted_menu_item_ids', []);
+    return new Set(ids);
+  }
+
+  private markMenuItemDeleted(itemId: string): void {
+    const set = this.getDeletedMenuItemIds();
+    set.add(itemId);
+    this.setItem('deleted_menu_item_ids', Array.from(set));
+  }
+
+  private unmarkMenuItemDeleted(itemId: string): void {
+    const set = this.getDeletedMenuItemIds();
+    if (set.has(itemId)) {
+      set.delete(itemId);
+      this.setItem('deleted_menu_item_ids', Array.from(set));
+    }
+  }
+
+  private getDeletedCustomPageIds(): Set<string> {
+    const ids = this.getItem<string[]>('deleted_custom_page_ids', []);
+    return new Set(ids);
+  }
+
+  private markCustomPageDeleted(pageId: string): void {
+    const set = this.getDeletedCustomPageIds();
+    set.add(pageId);
+    this.setItem('deleted_custom_page_ids', Array.from(set));
+  }
+
+  private unmarkCustomPageDeleted(pageId: string): void {
+    const set = this.getDeletedCustomPageIds();
+    if (set.has(pageId)) {
+      set.delete(pageId);
+      this.setItem('deleted_custom_page_ids', Array.from(set));
+    }
+  }
+
   public getMenuItems(location?: MenuLocation): MenuItemConfig[] {
     const all = this.getItem<MenuItemConfig[]>('menu_items', INITIAL_MENU_ITEMS);
     if (!location) {
@@ -7186,6 +7367,14 @@ export class AppDatabase {
   }
 
   public saveMenuItem(item: MenuItemConfig, user?: User | null): void {
+    const effectiveUser = user || this.getCurrentUser();
+    if (effectiveUser) {
+      const auth = this.canUserWriteCMS(effectiveUser, 'CONTENT', 'MenuItem');
+      if (!auth.allowed) {
+        this.logAudit(effectiveUser, 'UNAUTHORIZED_WRITE_ATTEMPT', 'NavigationMenu', item.id, `Unauthorized write attempt: ${auth.reason}`);
+        return;
+      }
+    }
     const items = this.getItem<MenuItemConfig[]>('menu_items', INITIAL_MENU_ITEMS);
     const index = items.findIndex(m => m.id === item.id);
     let savedItem: MenuItemConfig;
@@ -7195,35 +7384,67 @@ export class AppDatabase {
         ...item
       };
       items[index] = savedItem;
-      this.logAudit(user || null, 'SETTINGS_UPDATED', 'NavigationMenu', item.id, `Updated menu item: ${item.label}`);
+      this.logAudit(effectiveUser || null, 'SETTINGS_UPDATED', 'NavigationMenu', item.id, `Updated menu item: ${item.label}`);
     } else {
       savedItem = {
         ...item,
         id: item.id || `menu-${Date.now()}`
       };
       items.push(savedItem);
-      this.logAudit(user || null, 'SETTINGS_UPDATED', 'NavigationMenu', savedItem.id, `Added menu item: ${item.label}`);
+      this.logAudit(effectiveUser || null, 'SETTINGS_UPDATED', 'NavigationMenu', savedItem.id, `Added menu item: ${item.label}`);
     }
+    this.unmarkMenuItemDeleted(savedItem.id);
     this.syncFirestoreDoc('menu_items', savedItem.id, savedItem);
     this.setItem('menu_items', items);
   }
 
-  public deleteMenuItem(itemId: string, user?: User | null): void {
+  public deleteMenuItem(itemId: string, user?: User | null): { success: boolean; error?: string } {
+    const effectiveUser = user || this.getCurrentUser();
+    if (effectiveUser) {
+      const permCheck = this.canUserDelete(effectiveUser, 'MenuItem');
+      if (!permCheck.allowed) {
+        this.logAudit(effectiveUser, 'UNAUTHORIZED_DELETE_ATTEMPT', 'NavigationMenu', itemId, `Unauthorized delete attempt: ${permCheck.reason}`);
+        return { success: false, error: permCheck.reason };
+      }
+    }
     const items = this.getItem<MenuItemConfig[]>('menu_items', INITIAL_MENU_ITEMS);
     const target = items.find(m => m.id === itemId);
     this.setItem('menu_items', items.filter(m => m.id !== itemId));
+    this.markMenuItemDeleted(itemId);
     this.deleteFirestoreDoc('menu_items', itemId);
+
     if (target) {
-      this.logAudit(user || null, 'SETTINGS_UPDATED', 'NavigationMenu', itemId, `Removed menu item: ${target.label}`);
+      // Sync linked custom page if exists so it no longer attempts to display in navigation
+      try {
+        const pages = this.getCustomPages();
+        const linkedPage = pages.find(p => p.slug === target.targetId || `menu-${p.id}` === itemId || p.id === target.targetId);
+        if (linkedPage && linkedPage.showInMenu) {
+          const updatedPages = pages.map(p => p.id === linkedPage.id ? { ...p, showInMenu: false } : p);
+          this.setItem('custom_pages', updatedPages);
+          this.syncFirestoreDoc('custom_pages', linkedPage.id, { ...linkedPage, showInMenu: false });
+        }
+      } catch (err) {
+        console.debug('Error updating linked page on menu item deletion:', err);
+      }
+      this.logAudit(effectiveUser || null, 'SETTINGS_UPDATED', 'NavigationMenu', itemId, `Removed menu item: ${target.label}`);
     }
+    return { success: true };
   }
 
   public updateMenuOrdering(items: MenuItemConfig[], user?: User | null): void {
+    const effectiveUser = user || this.getCurrentUser();
+    if (effectiveUser) {
+      const auth = this.canUserWriteCMS(effectiveUser, 'CONTENT', 'MenuItem');
+      if (!auth.allowed) {
+        this.logAudit(effectiveUser, 'UNAUTHORIZED_WRITE_ATTEMPT', 'NavigationMenu', 'menu-order', `Unauthorized write attempt: ${auth.reason}`);
+        return;
+      }
+    }
     this.setItem('menu_items', items);
     items.forEach(item => {
       this.syncFirestoreDoc('menu_items', item.id, item);
     });
-    this.logAudit(user || null, 'SETTINGS_UPDATED', 'NavigationMenu', 'menu-order', `Re-arranged navigation menu order (${items.length} items)`);
+    this.logAudit(effectiveUser || null, 'SETTINGS_UPDATED', 'NavigationMenu', 'menu-order', `Re-arranged navigation menu order (${items.length} items)`);
   }
 
   public getCustomPages(): CustomPage[] {
@@ -7235,6 +7456,13 @@ export class AppDatabase {
   }
 
   public saveCustomPage(page: CustomPage, user?: User | null): void {
+    if (user) {
+      const auth = this.canUserWriteCMS(user, 'CONTENT', 'CustomPage');
+      if (!auth.allowed) {
+        this.logAudit(user, 'UNAUTHORIZED_WRITE_ATTEMPT', 'CustomPage', page.id, `Unauthorized write attempt: ${auth.reason}`);
+        return;
+      }
+    }
     const pages = this.getCustomPages();
     const index = pages.findIndex(p => p.id === page.id);
     let savedPage: CustomPage;
@@ -7253,6 +7481,7 @@ export class AppDatabase {
       pages.unshift(savedPage);
       this.logAudit(user || null, 'SETTINGS_UPDATED', 'CustomPage', savedPage.id, `Created custom page: ${page.title}`);
     }
+    this.unmarkCustomPageDeleted(savedPage.id);
     this.syncFirestoreDoc('custom_pages', savedPage.id, savedPage);
     this.setItem('custom_pages', pages);
 
@@ -7311,13 +7540,22 @@ export class AppDatabase {
     }
   }
 
-  public deleteCustomPage(pageId: string, user?: User | null): void {
+  public deleteCustomPage(pageId: string, user?: User | null): { success: boolean; error?: string } {
+    const effectiveUser = user || this.getCurrentUser();
+    if (effectiveUser) {
+      const permCheck = this.canUserDelete(effectiveUser, 'CustomPage');
+      if (!permCheck.allowed) {
+        this.logAudit(effectiveUser, 'UNAUTHORIZED_DELETE_ATTEMPT', 'CustomPage', pageId, `Unauthorized delete attempt: ${permCheck.reason}`);
+        return { success: false, error: permCheck.reason };
+      }
+    }
     const pages = this.getCustomPages();
     const target = pages.find(p => p.id === pageId);
     this.setItem('custom_pages', pages.filter(p => p.id !== pageId));
+    this.markCustomPageDeleted(pageId);
     this.deleteFirestoreDoc('custom_pages', pageId);
     if (target) {
-      this.deleteMenuItem(`menu-${pageId}`, user);
+      this.deleteMenuItem(`menu-${pageId}`, effectiveUser);
       // Clean from footer columns if linked
       const footerConfig = this.getFooterConfig();
       let changed = false;
@@ -7331,10 +7569,11 @@ export class AppDatabase {
         });
       }
       if (changed) {
-        this.saveFooterConfig(footerConfig, user);
+        this.saveFooterConfig(footerConfig, effectiveUser);
       }
-      this.logAudit(user || null, 'SETTINGS_UPDATED', 'CustomPage', pageId, `Deleted custom page: ${target.title}`);
+      this.logAudit(effectiveUser || null, 'SETTINGS_UPDATED', 'CustomPage', pageId, `Deleted custom page: ${target.title}`);
     }
+    return { success: true };
   }
 
   // ==========================================
@@ -8905,13 +9144,29 @@ export class AppDatabase {
 
   private mergeEntitiesById<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
     const map = new Map<string, T>();
+    const now = new Date().toISOString();
     for (const item of existing) {
       if (item && item.id) map.set(item.id, item);
     }
     for (const item of incoming) {
       if (item && item.id) {
         const prev = map.get(item.id);
-        map.set(item.id, prev ? { ...prev, ...item } : item);
+        const stampedItem: any = {
+          ...item,
+          source: (item as any).source || 'MASTER_GOOGLE_SHEETS',
+          sourceId: item.id,
+          lastSyncedAt: now,
+          updatedAt: (item as any).updatedAt || now
+        };
+        if (prev) {
+          map.set(item.id, {
+            ...prev,
+            ...stampedItem,
+            createdAt: (prev as any).createdAt || stampedItem.createdAt || now,
+          });
+        } else {
+          map.set(item.id, stampedItem);
+        }
       }
     }
     return Array.from(map.values());

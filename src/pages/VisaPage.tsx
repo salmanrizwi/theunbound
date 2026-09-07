@@ -18,8 +18,13 @@ import {
   ArrowRight,
   Send,
   Sparkles,
-  HelpCircle
+  HelpCircle,
+  Plane,
+  Cpu
 } from 'lucide-react';
+import { navigateTo } from '../services/portalRouter';
+import { HeroTrustStrip } from '../components/Hero/HeroTrustStrip';
+import { FinalCTA } from '../components/FinalCTA';
 
 export const VisaPage: React.FC = () => {
   const db = AppDatabase.getInstance();
@@ -135,27 +140,68 @@ Support Desk: business@theunbound.in | Operations Team
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 py-10">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
-        {/* Hero Section */}
-        <div className="bg-slate-950 text-white rounded-3xl p-8 sm:p-12 relative overflow-hidden shadow-xl">
-          <div className="absolute -right-20 -top-20 w-96 h-96 bg-[#008972]/20 rounded-full blur-3xl pointer-events-none" />
-          <div className="relative z-10 max-w-3xl space-y-4">
-            <div className="inline-flex items-center space-x-2 bg-[#008972]/20 text-[#00C6A6] px-3.5 py-1.5 rounded-full text-xs font-bold border border-[#008972]/30">
-              <ShieldCheck className="w-4 h-4" />
-              <span>Consular Verification & Visa Operations</span>
-            </div>
-            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">
-              Global Tourist & Business Visa Assistance
-            </h1>
-            <p className="text-sm sm:text-base text-slate-300 leading-relaxed">
-              Curated visa requirements, verified document checklists, fast-track processing, and dedicated B2B lodging assistance across Japan, United Kingdom, Schengen Europe, and Southeast Asia.
-            </p>
+    <div className="min-h-screen bg-slate-50 pb-16">
+      {/* 1. Compact Unified Hero Section */}
+      <div className="w-full bg-[#061329] text-white relative overflow-hidden border-b border-slate-800 mb-8 sm:mb-10">
+        {/* Subtle dot matrix grid pattern */}
+        <div 
+          className="absolute inset-0 pointer-events-none opacity-20" 
+          style={{
+            backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.2) 1px, transparent 1px)',
+            backgroundSize: '20px 20px'
+          }}
+        />
+
+        {/* Inner Hero Content Container */}
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-10 sm:pt-14 pb-8 sm:pb-10 relative z-10 text-center flex flex-col items-center">
+          {/* Top Pill Tag */}
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-bold tracking-wider text-teal-300 bg-teal-950/60 border border-teal-500/30 uppercase mb-4 shadow-xs">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#00C6A6] animate-pulse" />
+            <span>ESTABLISHED IN 2025 • CONSULAR VERIFICATION & VISA OPERATIONS</span>
+          </div>
+
+          {/* Main Display Headline */}
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-black font-sans tracking-tight text-white leading-tight uppercase max-w-3xl mx-auto mb-3">
+            GLOBAL VISA OPERATIONS SIMPLIFIED BY <span className="text-[#00C6A6]">INTELLIGENCE.</span>
+          </h1>
+
+          {/* Subheading */}
+          <p className="text-xs sm:text-sm md:text-base text-slate-300 max-w-2xl mx-auto leading-relaxed font-normal mb-6">
+            Curated consular requirements, verified document checklists, fast-track processing, and dedicated B2B lodging assistance across Japan, UK, Schengen Europe, and Southeast Asia.
+          </p>
+
+          {/* Action CTA Buttons */}
+          <div className="flex flex-wrap items-center justify-center gap-3 w-full max-w-md mx-auto">
+            <button
+              id="visa-explore-packages-btn"
+              onClick={() => {
+                const el = document.getElementById('visa-search-filter-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 text-xs sm:text-sm font-bold transition-all shadow-md cursor-pointer flex items-center justify-center space-x-2 active:scale-95"
+            >
+              <span>BROWSE VISA REQUIREMENTS</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+
+            <button
+              id="visa-partner-btn"
+              onClick={() => navigateTo('/b2b/quote-builder')}
+              className="px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/20 text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center justify-center space-x-2 active:scale-95"
+            >
+              <span>BECOME A PARTNER</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
 
+        {/* Unified Operational Trust Strip */}
+        <HeroTrustStrip />
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
         {/* Search & Filter Bar */}
-        <div className="flex flex-col sm:flex-row gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+        <div id="visa-search-filter-section" className="flex flex-col sm:flex-row gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
           <div className="flex-1 relative">
             <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
             <input
@@ -266,13 +312,13 @@ Support Desk: business@theunbound.in | Operations Team
                   onClick={() => handleDownloadChecklist(visa)}
                   className="flex items-center justify-center space-x-1.5 p-2.5 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-100 text-xs font-bold transition-colors cursor-pointer"
                 >
-                  <Download className="w-3.5 h-3.5 text-[#008972]" />
+                  <Download className="w-3.5 h-3.5 text-[#00C6A6]" />
                   <span>Download Checklist</span>
                 </button>
 
                 <button
                   onClick={() => setInquiryModalVisa(visa)}
-                  className="flex items-center justify-center space-x-1.5 p-2.5 rounded-xl bg-[#008972] hover:bg-[#007460] text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
+                  className="flex items-center justify-center space-x-1.5 p-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 text-xs font-bold transition-colors cursor-pointer shadow-xs active:scale-95"
                 >
                   <span>Apply / Inquire</span>
                   <ArrowRight className="w-3.5 h-3.5" />
@@ -281,6 +327,14 @@ Support Desk: business@theunbound.in | Operations Team
             </div>
           ))}
         </div>
+
+        {/* Final Conversion Section */}
+        <FinalCTA
+          title="EXPEDITE YOUR CLIENT VISA PROCESSING"
+          subtitle="Partner with TheUnbound consular operations for end-to-end embassy appointment scheduling, verified documentation vetting, and consolidated B2B billing."
+          primaryButtonText="BECOME A TRADE PARTNER"
+          primaryButtonLink="/b2b/quote-builder"
+        />
 
         {/* Visa Inquiry Modal */}
         {inquiryModalVisa && (
@@ -398,7 +452,7 @@ Support Desk: business@theunbound.in | Operations Team
 
                   <button
                     type="submit"
-                    className="w-full py-3 bg-[#008972] hover:bg-[#007460] text-white font-bold rounded-xl transition-colors cursor-pointer shadow-xs flex items-center justify-center space-x-2 mt-2"
+                    className="w-full py-3 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold rounded-xl transition-colors cursor-pointer shadow-xs flex items-center justify-center space-x-2 mt-2 active:scale-95"
                   >
                     <Send className="w-4 h-4" />
                     <span>Submit Visa Request & Download Forms</span>

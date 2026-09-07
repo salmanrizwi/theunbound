@@ -17,6 +17,8 @@ import { countingEngine } from '../services/countingEngine';
 import { campaignAnalytics } from '../services/campaignAnalyticsService';
 import { PublicReviewsCarousel } from '../components/PublicReviewsCarousel';
 import { PublicHappyCustomerGallery } from '../components/PublicHappyCustomerGallery';
+import { WhyTheUnbound } from '../components/WhyTheUnbound';
+import { FinalCTA } from '../components/FinalCTA';
 import { Sparkles, MapPin, Compass, ShieldCheck, HelpCircle, ChevronDown, ChevronUp, Globe2, Layers, CheckCircle2, Clock, Building2, FileText, Award } from 'lucide-react';
 
 interface DestinationPageProps {
@@ -300,9 +302,9 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] pb-12 sm:pb-20 space-y-5 sm:space-y-8">
-      {/* 1. Hero Banner: All Destinations vs Single Destination */}
+      {/* 1. Hero Banner: All Destinations vs Single Destination - Full Width */}
       {homepageConfig.showHeroSection !== false && (
-        <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 pt-3 sm:pt-6">
+        <div className="w-full">
           {isAllDestinations ? (
             <AllDestinationsHero
               destinations={allDestinations}
@@ -322,116 +324,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
       )}
 
       <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 space-y-4 sm:space-y-6">
-        {/* B2B DMC Operational Credibility Bar */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-3.5 sm:p-5 shadow-xs">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-            <div className="flex items-start space-x-3">
-              <div className="p-2.5 rounded-xl bg-teal-50 text-[#008f77] shrink-0 border border-teal-100">
-                <ShieldCheck className="w-5 h-5 text-[#00C6A6]" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wide">Direct DMC Licensing</h4>
-                <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                  Contracted ground operations, verified bilingual guides & executive fleets.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-start space-x-3">
-              <div className="p-2.5 rounded-xl bg-teal-50 text-[#008f77] shrink-0 border border-teal-100">
-                <Clock className="w-5 h-5 text-[#00C6A6]" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wide">24–48h SLA Operations Desk</h4>
-                <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                  Guaranteed booking turnaround & dedicated on-trip operations support.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-start space-x-3">
-              <div className="p-2.5 rounded-xl bg-teal-50 text-[#008f77] shrink-0 border border-teal-100">
-                <Building2 className="w-5 h-5 text-[#00C6A6]" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wide">Curated Inventory</h4>
-                <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                  Directly negotiated luxury stays, private ryokans, and high-touch excursions.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-start space-x-3">
-              <div className="p-2.5 rounded-xl bg-teal-50 text-[#008f77] shrink-0 border border-teal-100">
-                <FileText className="w-5 h-5 text-[#00C6A6]" />
-              </div>
-              <div>
-                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wide">B2B Quotation Studio</h4>
-                <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                  Multi-currency agent proposals, customizable markups & instant client PDFs.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* 2. Destination / Region Quick Filter Selector for 'All Destinations' */}
-        {isAllDestinations && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
-                  <Globe2 className="w-4 h-4 text-[#00C6A6]" />
-                  <span>Filter Products by Destination</span>
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Switch view or filter all travel experiences across our {safeAllDestinations.length} premier regions: {safeAllDestinations.map(d => d.name).join(', ')}
-                </p>
-              </div>
-              <div className="flex items-center space-x-2">
-                <span className="text-xs font-semibold text-slate-400">Total Portfolio:</span>
-                <span className="text-xs font-bold bg-slate-900 text-white px-2.5 py-0.5 rounded-full">
-                  {safeProducts.length} Products
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-              {safeAllDestinations.map((d, idx) => {
-                const metrics = countingEngine.getDestinationMetrics(d.slug || d.id);
-                return (
-                  <button
-                    key={`dest-portfolio-btn-${d.id || d.slug}-${idx}`}
-                    type="button"
-                    onClick={() => onSelectDestination(d.slug)}
-                    className="flex items-center justify-between p-3 rounded-xl border border-slate-200 hover:border-[#00C6A6] bg-slate-50 hover:bg-white hover:shadow-xs transition-all text-left group cursor-pointer"
-                  >
-                    <div className="flex items-center space-x-3">
-                      <img
-                        src={d.heroImage}
-                        alt={d.name}
-                        className="w-10 h-10 rounded-lg object-cover group-hover:scale-105 transition-transform"
-                      />
-                      <div>
-                        <h4 className="text-xs font-bold text-slate-900 group-hover:text-[#008972] transition-colors">
-                          {d.name}
-                        </h4>
-                        <span className="text-[11px] text-slate-500">
-                          {metrics.hubsCount} Hubs • {metrics.productsCount} Tours
-                        </span>
-                      </div>
-                    </div>
-                    <span className="text-xs font-bold text-[#00C6A6] group-hover:translate-x-0.5 transition-transform">
-                      →
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* 3. City Hubs Navigation */}
+        {/* City Hubs Navigation */}
         <CityHubs
           hubs={activeHubs}
           cities={activeCities}
@@ -582,6 +475,11 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
           </div>
         )}
 
+        {/* 7.3 Why TheUnbound Value & Trust Pillars */}
+        <div className="mt-16">
+          <WhyTheUnbound onExploreProducts={scrollToProducts} />
+        </div>
+
         {/* 7.4 Happy Customer Moments Gallery */}
         <div className="mt-16">
           <PublicHappyCustomerGallery destinationName={isAllDestinations ? undefined : destination?.name} />
@@ -689,6 +587,19 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
             </div>
           );
         })()}
+
+        {/* 9. Final Primary Conversion Section */}
+        {homepageConfig.showConversionCTA !== false && (
+          <div className="mt-14 sm:mt-20">
+            <FinalCTA
+              title={isAllDestinations ? homepageConfig.ctaTitle : undefined}
+              subtitle={isAllDestinations ? homepageConfig.ctaSubtitle : undefined}
+              primaryButtonText={isAllDestinations ? homepageConfig.ctaButtonText : undefined}
+              primaryButtonLink={isAllDestinations ? homepageConfig.ctaButtonLink : undefined}
+              destinationName={!isAllDestinations ? destination?.name : undefined}
+            />
+          </div>
+        )}
       </div>
 
       {/* Hotel Detail & Interactive Rate Calculator Modal */}

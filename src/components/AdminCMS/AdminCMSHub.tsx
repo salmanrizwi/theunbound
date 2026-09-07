@@ -399,11 +399,10 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           shortLabel: 'Products & Visas',
           icon: Package,
           badge: `${counts.totalProducts}`,
-          description: 'Master ground tour inventory engine, SKU specifications, child/infant rates, adult tiers, visas, and Google Sheets sync.',
+          description: 'Master ground tour inventory engine, SKU specifications, child/infant rates, adult tiers, and visas.',
           subTabs: [
             { id: 'PRODUCTS', label: `Product Inventory (${counts.totalProducts})`, icon: Package },
-            { id: 'VISAS', label: 'Visa Requirements & Checklists', icon: FileText },
-            { id: 'SHEETS_SYNC', label: 'Google Sheets Live Sync', icon: FileSpreadsheet }
+            { id: 'VISAS', label: 'Visa Requirements & Checklists', icon: FileText }
           ]
         },
         {
@@ -591,7 +590,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             { id: 'INTEGRATIONS_HUB', label: 'Integrations & Database Hub', icon: Sparkles },
             { id: 'FIRESTORE_DIAGNOSTICS', label: 'Firestore Diagnostics', icon: Activity },
             { id: 'AUDIT_TRAIL', label: 'Audit & Governance Ledger', icon: ShieldCheck },
-            { id: 'SHEETS_SYNC', label: 'Tariff Sheets Sync', icon: FileSpreadsheet }
+            { id: 'SHEETS_SYNC', label: 'Master Google Sheets Sync', icon: FileSpreadsheet }
           ]
         }
       ]
@@ -1158,9 +1157,6 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
               {activeSubTab === 'VISAS' && (
                 <VisaCMSManager destinations={destinations} />
               )}
-              {activeSubTab === 'SHEETS_SYNC' && (
-                <GoogleSheetsSyncManager />
-              )}
             </>
           )}
 
@@ -1223,7 +1219,10 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             <>
               {activeSubTab === 'HOMEPAGE' && <HomepageManager destinations={destinations} />}
               {(!activeSubTab || activeSubTab === 'NAVIGATION_MENU' || activeSubTab === 'MENU' || activeSubTab === 'CUSTOM_PAGES' || activeSubTab === 'PAGES') && (
-                <MenuAndPagesManager defaultTab={activeSubTab === 'CUSTOM_PAGES' || activeSubTab === 'PAGES' ? 'CUSTOM_PAGES' : 'MENU'} />
+                <MenuAndPagesManager 
+                  defaultTab={activeSubTab === 'CUSTOM_PAGES' || activeSubTab === 'PAGES' ? 'CUSTOM_PAGES' : 'MENU'} 
+                  currentUser={currentUser}
+                />
               )}
               {activeSubTab === 'PAGES_LEGAL' && <InstitutionalPagesManager />}
               {activeSubTab === 'FOOTER_NAV' && <FooterNavigationBuilder />}

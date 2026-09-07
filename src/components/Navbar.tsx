@@ -298,6 +298,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               className="flex items-center cursor-pointer group"
               id="brand-logo"
             >
+              <img 
+                src="/White Icon.jpg?v=3" 
+                alt="TheUnbound" 
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = '/white-icon.jpg?v=3';
+                }}
+                className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg mr-2.5 sm:mr-3 shadow-xs transition-transform group-hover:scale-105 object-contain shrink-0" 
+              />
               <span className="text-xl sm:text-2xl font-black tracking-tight text-[#00C6A6] font-sans lowercase select-none group-hover:text-[#00b296] transition-colors">
                 theunbound
               </span>

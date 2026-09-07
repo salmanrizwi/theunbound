@@ -83,7 +83,7 @@ export const IntegrationsManager: React.FC<IntegrationsManagerProps> = ({ curren
     { id: 'FIRESTORE' as TabType, label: 'Firestore / Database', icon: Database, badge: healthReport && healthReport.totalIssuesCount > 0 ? `${healthReport.totalIssuesCount}` : undefined },
     { id: 'GMAIL' as TabType, label: 'Gmail Operations', icon: Mail },
     { id: 'CALENDAR' as TabType, label: 'Google Calendar & SLAs', icon: Calendar },
-    { id: 'SHEETS' as TabType, label: 'Google Sheets Pipeline', icon: FileSpreadsheet },
+    { id: 'SHEETS' as TabType, label: 'Google Sheets — Master Sync', icon: FileSpreadsheet },
     { id: 'AUDIT' as TabType, label: 'Audit & Governance', icon: ShieldCheck },
     { id: 'WIZARD' as TabType, label: 'Setup Wizard', icon: Sparkles }
   ];

@@ -30,8 +30,18 @@ import {
   ShieldCheck,
   Clock,
   Globe2,
-  ExternalLink
+  ExternalLink,
+  Monitor,
+  Tablet,
+  Smartphone,
+  Video,
+  Award,
+  Zap,
+  Users,
+  CheckSquare
 } from 'lucide-react';
+import { UniversalHero } from '../UniversalHero';
+import { UniversalHeroConfig, HeroTrustItem } from '../../types';
 
 interface HomepageManagerProps {
   destinations: Destination[];
@@ -43,6 +53,10 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
   const [config, setConfig] = useState<HomepageConfig>(db.getHomepageConfig());
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<'LAYOUT' | 'HERO' | 'DESTINATIONS' | 'FAQS'>('LAYOUT');
+
+  // Hero CMS Specific State
+  const [previewDevice, setPreviewDevice] = useState<'DESKTOP' | 'TABLET' | 'MOBILE'>('DESKTOP');
+  const [heroConfigSection, setHeroConfigSection] = useState<'COPY' | 'MEDIA' | 'DISCOVERY' | 'PROMOTION' | 'PILLARS' | 'TRUST' | 'CTA'>('COPY');
 
   // FAQ Modal state
   const [isEditingFaq, setIsEditingFaq] = useState(false);
@@ -378,519 +392,853 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
       )}
 
       {/* SUB TAB 2: HERO BANNER & CTA */}
-      {activeSubTab === 'HERO' && (
-        <div className="space-y-6">
-          {/* Header Action Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-            <div className="flex items-center space-x-3">
-              <div className="w-9 h-9 rounded-xl bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
-                <Sliders className="w-5 h-5 text-[#00C6A6]" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">B2B Destination Management Company Hero Suite</h3>
-                <p className="text-xs text-slate-500">Live preview and granular control for the All Destinations hero banner.</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (window.confirm('Reset all Hero settings to standard TheUnbound B2B DMC defaults?')) {
-                    const restored = {
-                      ...config,
-                      heroBadgeText: INITIAL_HOMEPAGE_CONFIG.heroBadgeText,
-                      heroHeading: INITIAL_HOMEPAGE_CONFIG.heroHeading,
-                      heroSubheading: INITIAL_HOMEPAGE_CONFIG.heroSubheading,
-                      heroImage: INITIAL_HOMEPAGE_CONFIG.heroImage,
-                      heroImageAlt: INITIAL_HOMEPAGE_CONFIG.heroImageAlt,
-                      heroOverlayOpacity: INITIAL_HOMEPAGE_CONFIG.heroOverlayOpacity,
-                      showPrimaryCta: INITIAL_HOMEPAGE_CONFIG.showPrimaryCta,
-                      primaryCtaText: INITIAL_HOMEPAGE_CONFIG.primaryCtaText,
-                      showSecondaryCta: INITIAL_HOMEPAGE_CONFIG.showSecondaryCta,
-                      secondaryCtaText: INITIAL_HOMEPAGE_CONFIG.secondaryCtaText,
-                      heroTrustBadges: INITIAL_HOMEPAGE_CONFIG.heroTrustBadges,
-                      heroSellingPoints: INITIAL_HOMEPAGE_CONFIG.heroSellingPoints
-                    };
-                    setConfig(restored);
-                    db.updateHomepageConfig(restored, user);
-                    setSavedSuccess(true);
-                    setTimeout(() => setSavedSuccess(false), 3000);
-                  }
-                }}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 cursor-pointer transition-colors"
-              >
-                <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-                <span>Reset to DMC Defaults</span>
-              </button>
+      {activeSubTab === 'HERO' && (() => {
+        const heroCfg: UniversalHeroConfig = config.heroConfig || INITIAL_HOMEPAGE_CONFIG.heroConfig || {};
 
-              <button
-                type="button"
-                onClick={() => handleSave()}
-                className="inline-flex items-center space-x-1.5 bg-[#008972] hover:bg-[#00C6A6] text-white hover:text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition-colors cursor-pointer"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>Save Changes</span>
-              </button>
-            </div>
-          </div>
+        const updateHero = (updates: Partial<UniversalHeroConfig>) => {
+          const current = config.heroConfig || INITIAL_HOMEPAGE_CONFIG.heroConfig || {};
+          const nextHero: UniversalHeroConfig = {
+            ...current,
+            ...updates,
+            media: {
+              ...(current.media || {}),
+              ...(updates.media || {})
+            },
+            ctas: {
+              ...(current.ctas || {}),
+              ...(updates.ctas || {})
+            },
+            discoveryPanelConfig: {
+              ...(current.discoveryPanelConfig || {}),
+              ...(updates.discoveryPanelConfig || {})
+            },
+            promotion: {
+              ...(current.promotion || {}),
+              ...(updates.promotion || {})
+            }
+          };
 
-          {/* Interactive Live Preview Box */}
-          <div className="bg-slate-900 rounded-3xl p-4 sm:p-6 text-white overflow-hidden shadow-lg border border-slate-800">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-4">
-              <div className="flex items-center space-x-2 text-xs font-semibold text-slate-400">
-                <Eye className="w-4 h-4 text-[#00C6A6]" />
-                <span className="uppercase tracking-wider">Live Storefront Preview</span>
-              </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-900/60 text-[#00C6A6] border border-teal-700/50">
-                Overlay: {Math.round((config.heroOverlayOpacity ?? 0.65) * 100)}%
-              </span>
-            </div>
+          const nextConfig: HomepageConfig = {
+            ...config,
+            heroConfig: nextHero,
+            heroHeading: nextHero.heading ?? config.heroHeading,
+            heroSubheading: nextHero.subheading ?? config.heroSubheading,
+            heroBadgeText: nextHero.eyebrowText ?? config.heroBadgeText,
+            heroImage: nextHero.media?.desktopImageUrl ?? config.heroImage,
+            heroImageAlt: nextHero.media?.altText ?? config.heroImageAlt,
+            heroOverlayOpacity: nextHero.media?.overlayOpacity ?? config.heroOverlayOpacity,
+            primaryCtaText: nextHero.ctas?.primaryCtaText ?? config.primaryCtaText,
+            secondaryCtaText: nextHero.ctas?.secondaryCtaText ?? config.secondaryCtaText,
+            showPrimaryCta: nextHero.ctas?.showPrimaryCta ?? config.showPrimaryCta,
+            showSecondaryCta: nextHero.ctas?.showSecondaryCta ?? config.showSecondaryCta
+          };
 
-            <div className="relative rounded-2xl overflow-hidden min-h-[300px] flex flex-col justify-between p-6 sm:p-8 bg-slate-950 border border-slate-800">
-              <img
-                src={config.heroImage || INITIAL_HOMEPAGE_CONFIG.heroImage}
-                alt={config.heroImageAlt || 'Hero'}
-                className="absolute inset-0 w-full h-full object-cover object-center"
-              />
-              <div
-                className="absolute inset-0 bg-slate-950 transition-opacity"
-                style={{ opacity: config.heroOverlayOpacity ?? 0.65 }}
-              />
+          setConfig(nextConfig);
+        };
 
-              {/* Top Row: Eyebrow Badge */}
-              <div className="relative z-10">
-                <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-[11px] font-bold tracking-wider uppercase bg-teal-500/20 text-[#00C6A6] border border-teal-400/30 backdrop-blur-md">
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>{config.heroBadgeText || 'UNBOUND EXPERIENCES • B2B GROUND PARTNER'}</span>
-                </span>
-              </div>
+        const activePromotions = db.getActivePromotions();
 
-              {/* Middle: Title & Subtitle */}
-              <div className="relative z-10 max-w-2xl py-4 space-y-2">
-                <h1 className="text-xl sm:text-2xl lg:text-3xl font-black text-white tracking-tight leading-tight">
-                  {config.heroHeading || 'Direct DMC Ground Partner & Destination Wholesaler'}
-                </h1>
-                <p className="text-xs sm:text-sm text-slate-300 line-clamp-2">
-                  {config.heroSubheading || 'Direct contracting, guaranteed SLAs, and wholesale inventory across premier global destinations.'}
-                </p>
-
-                {/* Preview CTA Buttons */}
-                <div className="flex flex-wrap items-center gap-2 pt-2">
-                  {config.showPrimaryCta !== false && (
-                    <div className="px-4 py-2 rounded-xl bg-[#00C6A6] text-slate-950 text-xs font-bold shadow-sm">
-                      {config.primaryCtaText || 'Explore Curated Destinations'}
-                    </div>
-                  )}
-                  {config.showSecondaryCta !== false && (
-                    <div className="px-4 py-2 rounded-xl bg-white/10 text-white text-xs font-semibold border border-white/20 backdrop-blur-sm">
-                      {config.secondaryCtaText || 'Operations Desk'}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Bottom: Trust Stats Strip */}
-              <div className="relative z-10 pt-4 border-t border-white/10 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {(config.heroTrustBadges && config.heroTrustBadges.length > 0
-                  ? config.heroTrustBadges
-                  : (INITIAL_HOMEPAGE_CONFIG.heroTrustBadges || [])
-                ).slice(0, 4).map((badge, idx) => (
-                  <div key={idx} className="bg-slate-900/60 backdrop-blur-md rounded-lg p-2 border border-white/10">
-                    <span className="text-[10px] text-slate-400 block">{badge.label}</span>
-                    <span className="text-xs font-bold text-[#00C6A6] block">{badge.subtext}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <form onSubmit={handleSave} className="space-y-6">
-            {/* 1. Core Content & Typography */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
-              <div className="flex items-center space-x-3 pb-3 border-b border-slate-100">
-                <div className="w-8 h-8 rounded-lg bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
-                  <Sliders className="w-4 h-4 text-[#00C6A6]" />
+        return (
+          <div className="space-y-6">
+            {/* Header Action Bar */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+              <div className="flex items-center space-x-3">
+                <div className="w-9 h-9 rounded-xl bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold shrink-0">
+                  <Sliders className="w-5 h-5 text-[#00C6A6]" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-slate-900">Hero Headlines & DMC Positioning</h4>
-                  <p className="text-xs text-slate-500">Configure the top badge, main title, and operational description.</p>
+                  <h3 className="text-sm font-bold text-slate-900">B2B Destination Management Hero CMS</h3>
+                  <p className="text-xs text-slate-500">Universal Hero architecture powering Homepage, Destination pages, and Campaigns.</p>
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Operational Eyebrow Badge
-                  </label>
-                  <input
-                    type="text"
-                    value={config.heroBadgeText || ''}
-                    onChange={e => setConfig({ ...config, heroBadgeText: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-xs font-bold"
-                    placeholder="e.g. THEUNBOUND • DIRECT B2B DESTINATION MANAGEMENT COMPANY"
-                  />
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Device Switcher */}
+                <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewDevice('DESKTOP')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                      previewDevice === 'DESKTOP' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Monitor className="w-3.5 h-3.5" />
+                    <span>Desktop</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewDevice('TABLET')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                      previewDevice === 'TABLET' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Tablet className="w-3.5 h-3.5" />
+                    <span>Tablet</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewDevice('MOBILE')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                      previewDevice === 'MOBILE' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span>Mobile</span>
+                  </button>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Main Hero Title (H1)
-                  </label>
-                  <input
-                    type="text"
-                    value={config.heroHeading || ''}
-                    onChange={e => setConfig({ ...config, heroHeading: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-sm font-bold"
-                    placeholder="e.g. Direct DMC Ground Partner & Destination Wholesaler"
-                  />
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('Reset Hero settings to standard TheUnbound B2B DMC defaults?')) {
+                      const restored: HomepageConfig = {
+                        ...config,
+                        heroConfig: INITIAL_HOMEPAGE_CONFIG.heroConfig,
+                        heroBadgeText: INITIAL_HOMEPAGE_CONFIG.heroBadgeText,
+                        heroHeading: INITIAL_HOMEPAGE_CONFIG.heroHeading,
+                        heroSubheading: INITIAL_HOMEPAGE_CONFIG.heroSubheading,
+                        heroImage: INITIAL_HOMEPAGE_CONFIG.heroImage,
+                        heroImageAlt: INITIAL_HOMEPAGE_CONFIG.heroImageAlt,
+                        heroOverlayOpacity: INITIAL_HOMEPAGE_CONFIG.heroOverlayOpacity,
+                        showPrimaryCta: INITIAL_HOMEPAGE_CONFIG.showPrimaryCta,
+                        primaryCtaText: INITIAL_HOMEPAGE_CONFIG.primaryCtaText,
+                        showSecondaryCta: INITIAL_HOMEPAGE_CONFIG.showSecondaryCta,
+                        secondaryCtaText: INITIAL_HOMEPAGE_CONFIG.secondaryCtaText,
+                        heroTrustBadges: INITIAL_HOMEPAGE_CONFIG.heroTrustBadges,
+                        heroSellingPoints: INITIAL_HOMEPAGE_CONFIG.heroSellingPoints
+                      };
+                      setConfig(restored);
+                      db.updateHomepageConfig(restored, user);
+                      setSavedSuccess(true);
+                      setTimeout(() => setSavedSuccess(false), 3000);
+                    }
+                  }}
+                  className="inline-flex items-center space-x-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 cursor-pointer transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Reset</span>
+                </button>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Operational Subheading / Value Proposition
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={config.heroSubheading || ''}
-                    onChange={e => setConfig({ ...config, heroSubheading: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-xs"
-                    placeholder="Describe ground operations, SLAs, direct contracts, and trade booking support..."
+                <button
+                  type="button"
+                  onClick={() => handleSave()}
+                  className="inline-flex items-center space-x-1.5 bg-[#008972] hover:bg-[#00C6A6] text-white hover:text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition-colors cursor-pointer shadow-xs"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Save CMS</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Interactive Live Preview Box with Viewport Resizing */}
+            <div className="bg-slate-950 rounded-3xl p-3 sm:p-5 text-white overflow-hidden shadow-xl border border-slate-800">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-3 px-2">
+                <div className="flex items-center space-x-2 text-xs font-bold text-slate-300">
+                  <Eye className="w-4 h-4 text-[#00C6A6]" />
+                  <span className="uppercase tracking-wider">Live Universal Hero Preview ({previewDevice})</span>
+                </div>
+                <div className="flex items-center space-x-3 text-[11px] text-slate-400 font-mono">
+                  <span>Overlay: {Math.round((heroCfg.media?.overlayOpacity ?? config.heroOverlayOpacity ?? 0.65) * 100)}%</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#00C6A6]" />
+                  <span className="text-[#00C6A6]">WYSIWYG Mode</span>
+                </div>
+              </div>
+
+              {/* Viewport Frame */}
+              <div className="w-full overflow-x-auto flex justify-center py-2 bg-slate-900/60 rounded-2xl border border-white/5">
+                <div 
+                  className={`w-full transition-all duration-300 overflow-hidden ${
+                    previewDevice === 'DESKTOP' 
+                      ? 'max-w-full' 
+                      : previewDevice === 'TABLET' 
+                        ? 'max-w-[768px] border-4 border-slate-800 rounded-2xl shadow-2xl' 
+                        : 'max-w-[390px] border-4 border-slate-800 rounded-3xl shadow-2xl'
+                  }`}
+                >
+                  <UniversalHero
+                    context="HOMEPAGE"
+                    config={heroCfg}
+                    homepageConfig={config}
+                    allDestinations={destinations}
                   />
                 </div>
               </div>
             </div>
 
-            {/* 2. Hero Background Image & Visual Controls */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
-              <div className="flex items-center space-x-3 pb-3 border-b border-slate-100">
-                <div className="w-8 h-8 rounded-lg bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
-                  <ImageIcon className="w-4 h-4 text-[#00C6A6]" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-slate-900">Imagery, Overlay Contrast & SEO</h4>
-                  <p className="text-xs text-slate-500">Backdrop resolution, accessibility alt text, and dark scrim opacity.</p>
-                </div>
-              </div>
+            {/* Sub-Section Navigation Tabs */}
+            <div className="flex items-center space-x-2 overflow-x-auto pb-1 border-b border-slate-200">
+              {[
+                { key: 'COPY', label: '1. Copy & Positioning', icon: Sliders },
+                { key: 'MEDIA', label: '2. Media & Contrast', icon: ImageIcon },
+                { key: 'DISCOVERY', label: '3. Trip Discovery Panel', icon: Search },
+                { key: 'PROMOTION', label: '4. Campaign Integration', icon: Tag },
+                { key: 'PILLARS', label: '5. The Three Pillars', icon: Layers },
+                { key: 'TRUST', label: '6. Trust & Value Strip', icon: ShieldCheck },
+                { key: 'CTA', label: '7. Action Buttons', icon: ExternalLink }
+              ].map(tab => {
+                const Icon = tab.icon;
+                const active = heroConfigSection === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setHeroConfigSection(tab.key as any)}
+                    className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center space-x-2 cursor-pointer ${
+                      active
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                    }`}
+                  >
+                    <Icon className={`w-3.5 h-3.5 ${active ? 'text-[#00C6A6]' : 'text-slate-400'}`} />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Hero Background Image URL (Unsplash / CDN)
-                  </label>
-                  <input
-                    type="url"
-                    value={config.heroImage || ''}
-                    onChange={e => setConfig({ ...config, heroImage: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-xs font-mono"
-                    placeholder="https://images.unsplash.com/photo-..."
-                  />
-                </div>
-
-                {/* Quick Presets */}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                    Quick Preset Gallery:
-                  </label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {HERO_IMAGE_PRESETS.map((preset, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setConfig({ ...config, heroImage: preset.url })}
-                        className={`text-left p-2 rounded-xl border text-[11px] transition-all cursor-pointer flex items-center space-x-2 ${
-                          config.heroImage === preset.url
-                            ? 'border-[#00C6A6] bg-teal-50 text-slate-900 font-bold'
-                            : 'border-slate-200 hover:border-slate-300 text-slate-600 bg-white'
-                        }`}
-                      >
-                        <img src={preset.url} alt={preset.name} className="w-8 h-8 rounded-lg object-cover shrink-0" />
-                        <span className="truncate">{preset.name}</span>
-                      </button>
-                    ))}
-                  </div>
+            {/* Sub-Section 1: COPY */}
+            {heroConfigSection === 'COPY' && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+                <div className="border-b border-slate-100 pb-3">
+                  <h4 className="text-sm font-bold text-slate-900">Headlines, Eyebrow & Brand Positioning</h4>
+                  <p className="text-xs text-slate-500">Control the central H1 display title, orange highlight emphasis, and descriptive lead paragraph.</p>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                      Image Alt Text (Accessibility & SEO)
+                      Eyebrow Pill Tag
                     </label>
                     <input
                       type="text"
-                      value={config.heroImageAlt || ''}
-                      onChange={e => setConfig({ ...config, heroImageAlt: e.target.value })}
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-xs"
-                      placeholder="e.g. TheUnbound Global DMC Destination Operations Skyline"
+                      value={heroCfg.eyebrowText ?? config.heroBadgeText ?? ''}
+                      onChange={e => updateHero({ eyebrowText: e.target.value })}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-xs font-bold font-mono"
+                      placeholder="e.g. ESTABLISHED IN 2025 • B2B DESTINATION MANAGEMENT COMPANY"
                     />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Main Display Heading (H1)
+                      </label>
+                      <input
+                        type="text"
+                        value={heroCfg.heading ?? config.heroHeading ?? ''}
+                        onChange={e => updateHero({ heading: e.target.value })}
+                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-sm font-black"
+                        placeholder="e.g. DESTINATION MANAGEMENT"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Heading Accent Highlight (Brand Teal Emphasis)
+                      </label>
+                      <input
+                        type="text"
+                        value={heroCfg.headingHighlight ?? 'SIMPLIFIED BY INTELLIGENCE.'}
+                        onChange={e => updateHero({ headingHighlight: e.target.value })}
+                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-sm font-black text-[#008972]"
+                        placeholder="e.g. SIMPLIFIED BY INTELLIGENCE."
+                      />
+                    </div>
                   </div>
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                      Background Dark Overlay Density
+                      Lead Paragraph / Operational Value Proposition
                     </label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[
-                        { label: 'Light (45%)', val: 0.45 },
-                        { label: 'Balanced (65%)', val: 0.65 },
-                        { label: 'Deep (80%)', val: 0.80 }
-                      ].map(opt => (
+                    <textarea
+                      rows={3}
+                      value={heroCfg.subheading ?? config.heroSubheading ?? ''}
+                      onChange={e => updateHero({ subheading: e.target.value })}
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00C6A6] text-xs leading-relaxed"
+                      placeholder="TheUnbound combines destination expertise, travel technology and AI-powered package creation..."
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Sub-Section 2: MEDIA */}
+            {heroConfigSection === 'MEDIA' && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+                <div className="border-b border-slate-100 pb-3">
+                  <h4 className="text-sm font-bold text-slate-900">Visual Assets, Video & Scrim Contrast</h4>
+                  <p className="text-xs text-slate-500">Configure responsive imagery (Desktop, Tablet, Mobile), video backgrounds, and contrast overlays.</p>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Presets Gallery */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+                      Quick High-Res Destination Presets:
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+                      {HERO_IMAGE_PRESETS.map((preset, idx) => (
                         <button
-                          key={opt.val}
+                          key={idx}
                           type="button"
-                          onClick={() => setConfig({ ...config, heroOverlayOpacity: opt.val })}
-                          className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                            (config.heroOverlayOpacity ?? 0.65) === opt.val
-                              ? 'bg-slate-900 text-white border-slate-900'
-                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                          }`}
+                          onClick={() => updateHero({ media: { desktopImageUrl: preset.url } })}
+                          className="text-left p-1.5 rounded-xl border border-slate-200 hover:border-[#00C6A6] bg-slate-50 text-[11px] transition-all cursor-pointer group"
                         >
-                          {opt.label}
+                          <img src={preset.url} alt={preset.name} className="w-full h-14 rounded-lg object-cover mb-1 group-hover:scale-102 transition-transform" />
+                          <span className="truncate block font-semibold text-slate-800">{preset.name.split(' ')[0]}</span>
                         </button>
                       ))}
                     </div>
                   </div>
-                </div>
-              </div>
-            </div>
 
-            {/* 3. Call to Action (CTA) Controls */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
-              <div className="flex items-center space-x-3 pb-3 border-b border-slate-100">
-                <div className="w-8 h-8 rounded-lg bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
-                  <ExternalLink className="w-4 h-4 text-[#00C6A6]" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-slate-900">Hero Call to Action (CTA) Buttons</h4>
-                  <p className="text-xs text-slate-500">Configure visibility and labels for the primary and secondary hero buttons.</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                {/* Primary CTA */}
-                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">Primary Button</label>
-                    <label className="flex items-center space-x-2 text-xs font-semibold cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={config.showPrimaryCta !== false}
-                        onChange={e => setConfig({ ...config, showPrimaryCta: e.target.checked })}
-                        className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
-                      />
-                      <span>Show in Hero</span>
-                    </label>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-500 mb-1">Button Label</label>
-                    <input
-                      type="text"
-                      value={config.primaryCtaText || ''}
-                      onChange={e => setConfig({ ...config, primaryCtaText: e.target.value })}
-                      placeholder="e.g. Explore Curated Destinations"
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold bg-white"
-                    />
-                  </div>
-                </div>
-
-                {/* Secondary CTA */}
-                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">Secondary Button</label>
-                    <label className="flex items-center space-x-2 text-xs font-semibold cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={config.showSecondaryCta !== false}
-                        onChange={e => setConfig({ ...config, showSecondaryCta: e.target.checked })}
-                        className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
-                      />
-                      <span>Show in Hero</span>
-                    </label>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-500 mb-1">Button Label</label>
-                    <input
-                      type="text"
-                      value={config.secondaryCtaText || ''}
-                      onChange={e => setConfig({ ...config, secondaryCtaText: e.target.value })}
-                      placeholder="e.g. Direct DMC Operations Desk"
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold bg-white"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* 4. Operational Trust Badges (4 Ground Pillars) */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
-              <div className="flex items-center space-x-3 pb-3 border-b border-slate-100">
-                <div className="w-8 h-8 rounded-lg bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
-                  <ShieldCheck className="w-4 h-4 text-[#00C6A6]" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-slate-900">Hero Operational Trust Badges (4 Pillars)</h4>
-                  <p className="text-xs text-slate-500">The 4 key credentials displayed on the hero banner cards.</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {(config.heroTrustBadges || INITIAL_HOMEPAGE_CONFIG.heroTrustBadges || []).map((badge, idx) => (
-                  <div key={idx} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pillar {idx + 1}</span>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-[11px] text-slate-500 mb-1">Category / Title</label>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Desktop Image URL
+                      </label>
                       <input
-                        type="text"
-                        value={badge.label}
-                        onChange={e => {
-                          const updatedBadges = [...(config.heroTrustBadges || INITIAL_HOMEPAGE_CONFIG.heroTrustBadges || [])];
-                          updatedBadges[idx] = { ...updatedBadges[idx], label: e.target.value };
-                          setConfig({ ...config, heroTrustBadges: updatedBadges });
-                        }}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold"
+                        type="url"
+                        value={heroCfg.media?.desktopImageUrl ?? config.heroImage ?? ''}
+                        onChange={e => updateHero({ media: { desktopImageUrl: e.target.value } })}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono"
+                        placeholder="https://images.unsplash.com/..."
                       />
                     </div>
                     <div>
-                      <label className="block text-[11px] text-slate-500 mb-1">Metric / Subtext</label>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Tablet Image URL (Optional)
+                      </label>
                       <input
-                        type="text"
-                        value={badge.subtext}
-                        onChange={e => {
-                          const updatedBadges = [...(config.heroTrustBadges || INITIAL_HOMEPAGE_CONFIG.heroTrustBadges || [])];
-                          updatedBadges[idx] = { ...updatedBadges[idx], subtext: e.target.value };
-                          setConfig({ ...config, heroTrustBadges: updatedBadges });
-                        }}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-[#008972]"
+                        type="url"
+                        value={heroCfg.media?.tabletImageUrl ?? ''}
+                        onChange={e => updateHero({ media: { tabletImageUrl: e.target.value } })}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono"
+                        placeholder="Falls back to Desktop image if empty"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Mobile Image URL (Optional)
+                      </label>
+                      <input
+                        type="url"
+                        value={heroCfg.media?.mobileImageUrl ?? ''}
+                        onChange={e => updateHero({ media: { mobileImageUrl: e.target.value } })}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono"
+                        placeholder="Falls back to Tablet image if empty"
                       />
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
 
-            {/* 5. Value Highlights Bar (Selling Points) */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
-              <div className="flex items-center space-x-3 pb-3 border-b border-slate-100">
-                <div className="w-8 h-8 rounded-lg bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
-                  <CheckCircle2 className="w-4 h-4 text-[#00C6A6]" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-slate-900">Hero Highlights Bar (Value Points)</h4>
-                  <p className="text-xs text-slate-500">Horizontal feature strip displayed at the bottom of the hero banner.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Video URL (MP4 / WebM - Optional)
+                      </label>
+                      <input
+                        type="url"
+                        value={heroCfg.media?.videoUrl ?? ''}
+                        onChange={e => updateHero({ media: { videoUrl: e.target.value } })}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono"
+                        placeholder="https://cdn.example.com/hero-video.mp4"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Video Poster Fallback Image URL
+                      </label>
+                      <input
+                        type="url"
+                        value={heroCfg.media?.posterImageUrl ?? ''}
+                        onChange={e => updateHero({ media: { posterImageUrl: e.target.value } })}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono"
+                        placeholder="https://images.unsplash.com/..."
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Image Alt Text (SEO & Accessibility)
+                      </label>
+                      <input
+                        type="text"
+                        value={heroCfg.media?.altText ?? config.heroImageAlt ?? ''}
+                        onChange={e => updateHero({ media: { altText: e.target.value } })}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs"
+                        placeholder="TheUnbound B2B Destination Operations Hub"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Dark Overlay Scrim: {Math.round((heroCfg.media?.overlayOpacity ?? config.heroOverlayOpacity ?? 0.65) * 100)}%
+                      </label>
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="0.95"
+                        step="0.05"
+                        value={heroCfg.media?.overlayOpacity ?? config.heroOverlayOpacity ?? 0.65}
+                        onChange={e => updateHero({ media: { overlayOpacity: parseFloat(e.target.value) } })}
+                        className="w-full accent-[#00C6A6] cursor-pointer"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
+            )}
 
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-2">
-                  {(config.heroSellingPoints || INITIAL_HOMEPAGE_CONFIG.heroSellingPoints || []).map((point, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs bg-slate-100 border border-slate-200 text-slate-800 font-medium"
-                    >
-                      <span>{point}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const updated = (config.heroSellingPoints || INITIAL_HOMEPAGE_CONFIG.heroSellingPoints || []).filter((_, i) => i !== idx);
-                          setConfig({ ...config, heroSellingPoints: updated });
+            {/* Sub-Section 3: DISCOVERY PANEL */}
+            {heroConfigSection === 'DISCOVERY' && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900">Trip Discovery & Inventory Search Panel</h4>
+                    <p className="text-xs text-slate-500">Configure which search parameters travel agents can interact with directly in the Hero.</p>
+                  </div>
+                  <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={heroCfg.showDiscoveryPanel !== false}
+                      onChange={e => updateHero({ showDiscoveryPanel: e.target.checked })}
+                      className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                    />
+                    <span>Show Search Panel</span>
+                  </label>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {[
+                      { key: 'showDestination', label: 'Destination Selector' },
+                      { key: 'showHub', label: 'Regional Hub Cascading Dropdown' },
+                      { key: 'showDates', label: 'Travel Dates & Nights Calculator' },
+                      { key: 'showTravelers', label: 'Passenger Classification (ADT/CWB/CNB/INF)' },
+                      { key: 'showTravelStyle', label: 'Travel Style Filter' },
+                      { key: 'showProductType', label: 'Product Type Filter' },
+                      { key: 'showAiPlannerShortcut', label: 'Quick AI Planner Callout' }
+                    ].map(field => {
+                      const isChecked = (heroCfg.discoveryPanelConfig as any)?.[field.key] !== false;
+                      return (
+                        <label 
+                          key={field.key}
+                          className="flex items-center space-x-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer text-xs font-semibold text-slate-800"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={e => {
+                              const curr = heroCfg.discoveryPanelConfig || {};
+                              updateHero({
+                                discoveryPanelConfig: {
+                                  ...curr,
+                                  [field.key]: e.target.checked
+                                }
+                              });
+                            }}
+                            className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                          />
+                          <span>{field.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Search CTA Button Text
+                      </label>
+                      <input
+                        type="text"
+                        value={heroCfg.discoveryPanelConfig?.ctaText || 'Search Inventory'}
+                        onChange={e => {
+                          const curr = heroCfg.discoveryPanelConfig || {};
+                          updateHero({
+                            discoveryPanelConfig: {
+                              ...curr,
+                              ctaText: e.target.value
+                            }
+                          });
                         }}
-                        className="text-slate-400 hover:text-rose-600 p-0.5 rounded cursor-pointer"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold"
+                        placeholder="Search Inventory"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        30-Second AI Itinerary Callout Text
+                      </label>
+                      <input
+                        type="text"
+                        value={heroCfg.aiQuickBannerText ? String(heroCfg.aiQuickBannerText) : 'BUILD A COMPLETE TRAVEL PACKAGE IN AS LITTLE AS 30 SECONDS.'}
+                        onChange={e => updateHero({ aiQuickBannerText: e.target.value })}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs"
+                        placeholder="BUILD A COMPLETE TRAVEL PACKAGE IN AS LITTLE AS 30 SECONDS."
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Sub-Section 4: PROMOTION */}
+            {heroConfigSection === 'PROMOTION' && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900">Active Promotion & Campaign Integration</h4>
+                    <p className="text-xs text-slate-500">Showcase active B2B campaigns, seasonal flash promotions, or special wholesale tariffs.</p>
+                  </div>
+                  <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={heroCfg.promotion?.enabled !== false}
+                      onChange={e => {
+                        const curr = heroCfg.promotion || {};
+                        updateHero({
+                          promotion: {
+                            ...curr,
+                            enabled: e.target.checked
+                          }
+                        });
+                      }}
+                      className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                    />
+                    <span>Enable Campaign Banner</span>
+                  </label>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Selection Mode
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { id: 'AUTO', label: 'Highest Priority (Auto)' },
+                          { id: 'MANUAL', label: 'Specific Campaign' }
+                        ].map(m => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => {
+                              const curr = heroCfg.promotion || {};
+                              updateHero({
+                                promotion: {
+                                  ...curr,
+                                  mode: m.id as any
+                                }
+                              });
+                            }}
+                            className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                              (heroCfg.promotion?.mode || 'AUTO') === m.id
+                                ? 'bg-slate-900 text-white border-slate-900'
+                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Custom Badge Tag
+                      </label>
+                      <input
+                        type="text"
+                        value={heroCfg.promotion?.customBadge || 'SPECIAL CAMPAIGN'}
+                        onChange={e => {
+                          const curr = heroCfg.promotion || {};
+                          updateHero({
+                            promotion: {
+                              ...curr,
+                              customBadge: e.target.value
+                            }
+                          });
+                        }}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold uppercase"
+                        placeholder="SPECIAL CAMPAIGN"
+                      />
+                    </div>
+                  </div>
+
+                  {heroCfg.promotion?.mode === 'MANUAL' && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                        Select Promotion from Active Campaigns ({activePromotions.length} Available)
+                      </label>
+                      <select
+                        value={heroCfg.promotion?.manualPromotionId || ''}
+                        onChange={e => {
+                          const curr = heroCfg.promotion || {};
+                          updateHero({
+                            promotion: {
+                              ...curr,
+                              manualPromotionId: e.target.value
+                            }
+                          });
+                        }}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold"
                       >
-                        ✕
-                      </button>
-                    </span>
+                        <option value="">-- Choose Campaign --</option>
+                        {activePromotions.map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.title} ({p.discountType === 'PERCENTAGE' ? `${p.discountValue}% OFF` : `$${p.discountValue} OFF`}) - {p.promoCode || 'No Code'}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Sub-Section 5: PILLARS */}
+            {heroConfigSection === 'PILLARS' && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900">The Three Pillars with Connected Arc</h4>
+                    <p className="text-xs text-slate-500">The core triad illustrating Travel, Technology, and Intelligence.</p>
+                  </div>
+                  <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={heroCfg.showPillars !== false}
+                      onChange={e => updateHero({ showPillars: e.target.checked })}
+                      className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                    />
+                    <span>Show Three Pillars</span>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Pillar 1 */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">PILLAR 1: TRAVEL</span>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Title</label>
+                      <input
+                        type="text"
+                        value={heroCfg.pillar1Title || 'DESTINATION EXPERTISE'}
+                        onChange={e => updateHero({ pillar1Title: e.target.value })}
+                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Subtitle</label>
+                      <textarea
+                        rows={2}
+                        value={heroCfg.pillar1Subtitle || 'Local knowledge. Destination services. Ground operations.'}
+                        onChange={e => updateHero({ pillar1Subtitle: e.target.value })}
+                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Pillar 2 */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">PILLAR 2: TECHNOLOGY</span>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Title</label>
+                      <input
+                        type="text"
+                        value={heroCfg.pillar2Title || 'DIGITAL SOLUTIONS'}
+                        onChange={e => updateHero({ pillar2Title: e.target.value })}
+                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Subtitle</label>
+                      <textarea
+                        rows={2}
+                        value={heroCfg.pillar2Subtitle || 'Package creation. Quotations. Connected workflows.'}
+                        onChange={e => updateHero({ pillar2Subtitle: e.target.value })}
+                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Pillar 3 */}
+                  <div className="p-4 rounded-xl border border-teal-200 bg-teal-50/50 space-y-3">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-[#008972] block">PILLAR 3: INTELLIGENCE</span>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Title</label>
+                      <input
+                        type="text"
+                        value={heroCfg.pillar3Title || 'AI-POWERED'}
+                        onChange={e => updateHero({ pillar3Title: e.target.value })}
+                        className="w-full px-3 py-1.5 rounded-lg border border-teal-200 text-xs font-bold bg-white text-[#008972]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Subtitle</label>
+                      <textarea
+                        rows={2}
+                        value={heroCfg.pillar3Subtitle || 'Intelligent travel package creation in 30 seconds.'}
+                        onChange={e => updateHero({ pillar3Subtitle: e.target.value })}
+                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Sub-Section 6: TRUST */}
+            {heroConfigSection === 'TRUST' && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900">B2B Trust & Operational USP Strip</h4>
+                    <p className="text-xs text-slate-500">The 4 key ground capabilities displayed on the bottom bar of the hero.</p>
+                  </div>
+                  <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={heroCfg.showTrustStrip !== false}
+                      onChange={e => updateHero({ showTrustStrip: e.target.checked })}
+                      className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                    />
+                    <span>Show Trust Strip</span>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {(heroCfg.trustItems || [
+                    { title: 'Direct B2B Net Wholesale Rates', description: 'Contracted rates with verified ground suppliers', icon: 'ShieldCheck' },
+                    { title: '24–48h SLA Operations Desk', description: 'Dedicated on-ground operations in key hubs', icon: 'Clock' },
+                    { title: 'Verified Licensed Guides', description: 'Bilingual guides & executive chauffeur fleets', icon: 'Building2' },
+                    { title: 'White-Label Proposals', description: 'Instant multi-currency quotes & client itineraries', icon: 'Globe2' }
+                  ]).map((item, idx) => (
+                    <div key={idx} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">USP Item {idx + 1}</span>
+                      <div>
+                        <label className="block text-[11px] text-slate-500 mb-1">Headline</label>
+                        <input
+                          type="text"
+                          value={item.title}
+                          onChange={e => {
+                            const updated = [...(heroCfg.trustItems || [])];
+                            updated[idx] = { ...updated[idx], title: e.target.value };
+                            updateHero({ trustItems: updated });
+                          }}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-slate-500 mb-1">Description</label>
+                        <input
+                          type="text"
+                          value={item.description}
+                          onChange={e => {
+                            const updated = [...(heroCfg.trustItems || [])];
+                            updated[idx] = { ...updated[idx], description: e.target.value };
+                            updateHero({ trustItems: updated });
+                          }}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
+                        />
+                      </div>
+                    </div>
                   ))}
                 </div>
+              </div>
+            )}
 
-                <div className="flex space-x-2 pt-2">
-                  <input
-                    type="text"
-                    value={sellingPointInput}
-                    onChange={e => setSellingPointInput(e.target.value)}
-                    placeholder="Add a new ground operations value highlight..."
-                    className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs"
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        if (sellingPointInput.trim()) {
-                          const updated = [...(config.heroSellingPoints || INITIAL_HOMEPAGE_CONFIG.heroSellingPoints || []), sellingPointInput.trim()];
-                          setConfig({ ...config, heroSellingPoints: updated });
-                          setSellingPointInput('');
-                        }
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (sellingPointInput.trim()) {
-                        const updated = [...(config.heroSellingPoints || INITIAL_HOMEPAGE_CONFIG.heroSellingPoints || []), sellingPointInput.trim()];
-                        setConfig({ ...config, heroSellingPoints: updated });
-                        setSellingPointInput('');
-                      }
-                    }}
-                    className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 cursor-pointer"
-                  >
-                    Add Highlight
-                  </button>
+            {/* Sub-Section 7: CTA */}
+            {heroConfigSection === 'CTA' && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+                <div className="border-b border-slate-100 pb-3">
+                  <h4 className="text-sm font-bold text-slate-900">Action CTA Buttons & Destinations Routing</h4>
+                  <p className="text-xs text-slate-500">Configure button visibility, labels, and target destinations for the Hero buttons.</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  {/* Primary CTA */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">Primary Button</label>
+                      <label className="flex items-center space-x-2 text-xs font-semibold cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={heroCfg.ctas?.showPrimaryCta !== false}
+                          onChange={e => {
+                            const curr = heroCfg.ctas || {};
+                            updateHero({ ctas: { ...curr, showPrimaryCta: e.target.checked } });
+                          }}
+                          className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                        />
+                        <span>Show</span>
+                      </label>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-500 mb-1">Button Label</label>
+                      <input
+                        type="text"
+                        value={heroCfg.ctas?.primaryCtaText || 'EXPLORE PACKAGES'}
+                        onChange={e => {
+                          const curr = heroCfg.ctas || {};
+                          updateHero({ ctas: { ...curr, primaryCtaText: e.target.value } });
+                        }}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Secondary CTA */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">Secondary Button</label>
+                      <label className="flex items-center space-x-2 text-xs font-semibold cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={heroCfg.ctas?.showSecondaryCta !== false}
+                          onChange={e => {
+                            const curr = heroCfg.ctas || {};
+                            updateHero({ ctas: { ...curr, showSecondaryCta: e.target.checked } });
+                          }}
+                          className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                        />
+                        <span>Show</span>
+                      </label>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-500 mb-1">Button Label</label>
+                      <input
+                        type="text"
+                        value={heroCfg.ctas?.secondaryCtaText || 'BECOME A PARTNER'}
+                        onChange={e => {
+                          const curr = heroCfg.ctas || {};
+                          updateHero({ ctas: { ...curr, secondaryCtaText: e.target.value } });
+                        }}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold bg-white"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-
-            {/* 6. Bottom Conversion CTA Banner */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
-              <div className="flex items-center space-x-3 pb-4 border-b border-slate-100">
-                <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center font-bold">
-                  <Tag className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-slate-900">Bottom Conversion CTA Banner</h4>
-                  <p className="text-xs text-slate-500">Customize the final call-to-action banner driving travel agents to the Quotation Studio.</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">CTA Headline</label>
-                  <input
-                    type="text"
-                    value={config.ctaTitle || ''}
-                    onChange={e => setConfig({ ...config, ctaTitle: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold"
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">CTA Subtitle</label>
-                  <input
-                    type="text"
-                    value={config.ctaSubtitle || ''}
-                    onChange={e => setConfig({ ...config, ctaSubtitle: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">CTA Button Text</label>
-                  <input
-                    type="text"
-                    value={config.ctaButtonText || ''}
-                    onChange={e => setConfig({ ...config, ctaButtonText: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold"
-                  />
-                </div>
-              </div>
-            </div>
+            )}
 
             {/* Bottom Save Button */}
             <div className="flex justify-end pt-2">
               <button
-                type="submit"
+                type="button"
+                onClick={() => handleSave()}
                 className="inline-flex items-center space-x-2 bg-[#008972] hover:bg-[#00C6A6] text-white hover:text-slate-950 font-bold px-8 py-3 rounded-xl shadow-xs transition-all cursor-pointer text-xs"
               >
                 <Save className="w-4 h-4" />
-                <span>Publish All Changes Live</span>
+                <span>Publish Hero Changes Live</span>
               </button>
             </div>
-          </form>
-        </div>
-      )}
+          </div>
+        );
+      })()}
 
       {/* SUB TAB 3: DESTINATIONS & ORDERING */}
       {activeSubTab === 'DESTINATIONS' && (

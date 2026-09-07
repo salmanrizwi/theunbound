@@ -93,11 +93,9 @@ export const GmailManagementPanel: React.FC<GmailManagementPanelProps> = ({
     }));
   };
 
-  // Auto verify when component mounts if token exists
+  // Auto verify when component mounts (checks both server backend proxy and client credentials)
   useEffect(() => {
-    if (googleAuth.getAccessToken()) {
-      handleVerify();
-    }
+    handleVerify();
   }, []);
 
   // Recent emails sent from bookings

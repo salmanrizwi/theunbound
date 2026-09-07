@@ -1,8 +1,9 @@
 import React from 'react';
 import { Destination, HomepageConfig } from '../types';
-import { Compass, ArrowRight, ShieldCheck, CheckCircle2, Globe2, Building2, Clock, Sparkles, MapPin, Award, Layers, PlusCircle } from 'lucide-react';
+import { Globe2, Building2, Clock, Layers, PlusCircle, ArrowRight } from 'lucide-react';
 import { countingEngine } from '../services/countingEngine';
 import { navigateTo } from '../services/portalRouter';
+import { UniversalHero } from './UniversalHero';
 
 interface AllDestinationsHeroProps {
   destinations: Destination[];
@@ -18,194 +19,33 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
   onExploreProducts
 }) => {
   const destList = destinations || [];
-  const breakdown = countingEngine.getCountsBreakdown();
   const totalDestinations = destList.length;
-  const totalHubs = breakdown.hubs;
-  const totalProducts = breakdown.totalProducts;
-  const totalHotels = breakdown.hotels;
-  const destinationNamesList = destList.map(d => d.name).join(', ');
-  const sampleHubNames = destList.flatMap(d => (d.cities ? d.cities.map(c => c.name) : [])).slice(0, 3).join(', ');
-
-  // CMS Driven Values with Professional B2B DMC Fallbacks
-  const heroImage = config?.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=2000&auto=format&fit=crop';
-  const heroImageAlt = config?.heroImageAlt || 'TheUnbound Premier Ground Operations & Wholesale DMC Network';
-  const overlayOpacity = config?.heroOverlayOpacity !== undefined ? config.heroOverlayOpacity : 0.65;
-  const heroBadge = config?.heroBadgeText || 'UNBOUND EXPERIENCES INDIA PVT LTD • OPERATIONS DESK';
-  const heroTitle = config?.heroHeading || 'Premier Ground Operations & Wholesale DMC Network';
-  const heroSubtitle = config?.heroSubheading || 'Contracted wholesale rates, verified licensed bilingual guides, executive transfers, and 24–48h SLA booking operations across Japan, the UK, Europe, Southeast Asia, and the Middle East.';
-  
-  const showPrimaryCta = config?.showPrimaryCta !== false;
-  const primaryCtaText = config?.primaryCtaText || 'Explore Contracted Inventory';
-  const showSecondaryCta = config?.showSecondaryCta !== false;
-  const secondaryCtaText = config?.secondaryCtaText || 'View Destination Gateways';
-
-  const trustBadges = (config?.heroTrustBadges && config.heroTrustBadges.length > 0)
-    ? config.heroTrustBadges
-    : [
-        { label: 'Destinations', subtext: `${totalDestinations} Core Regions`, icon: 'Globe2' },
-        { label: 'City Hubs', subtext: `${totalHubs} Direct Gateways`, icon: 'Building2' },
-        { label: 'Ground Logistics', subtext: '100% Direct Contracts', icon: 'ShieldCheck' },
-        { label: 'Operations SLA', subtext: '24–48h Booking Desk', icon: 'Clock' }
-      ];
-
-  const sellingPoints = (config?.heroSellingPoints && config.heroSellingPoints.length > 0)
-    ? config.heroSellingPoints
-    : [
-        'Direct B2B net contracted rates with verified ground suppliers',
-        'Dedicated on-ground operations desks in Tokyo, London, Paris & Bangkok',
-        'Verified licensed bilingual private guides & executive chauffeur fleets',
-        'Instant B2B white-label client quotation generation in multi-currency'
-      ];
-
-  const handleSecondaryCtaClick = () => {
-    const el = document.getElementById('destinations-grid-heading');
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth' });
-    } else {
-      window.scrollBy({ top: 500, behavior: 'smooth' });
-    }
-  };
 
   return (
-    <div className="space-y-8 mb-10">
-      {/* Main Global Portfolio Banner */}
-      <div className="relative rounded-2xl sm:rounded-3xl overflow-hidden bg-slate-950 text-white shadow-xl border border-slate-800">
-        {/* Background Hero Image with Configurable Overlay */}
-        <div className="absolute inset-0 z-0">
-          <img
-            src={heroImage}
-            alt={heroImageAlt}
-            className="w-full h-full object-cover object-center scale-105 transition-transform duration-1000 ease-out"
-            referrerPolicy="no-referrer"
-          />
-          {/* Configurable overlay opacity layer */}
-          <div 
-            className="absolute inset-0 bg-slate-950 transition-opacity duration-300"
-            style={{ opacity: overlayOpacity }}
-          />
-          <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/70 to-transparent" />
-        </div>
+    <div className="w-full mb-10">
+      {/* 1. Master Universal Hero Section */}
+      <UniversalHero
+        context="HOMEPAGE"
+        config={{
+          ...config?.heroConfig,
+          showPillars: false,
+          showTrustStrip: false
+        }}
+        homepageConfig={config}
+        allDestinations={destList}
+        onExploreProducts={onExploreProducts}
+        onSelectDestination={onSelectDestination}
+      />
 
-        <div className="relative z-10 max-w-5xl mx-auto px-4 py-8 sm:py-14 sm:px-6 lg:px-8">
-          {/* Operational Eyebrow Badge */}
-          <div className="inline-flex items-center space-x-1.5 sm:space-x-2 px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full text-[10px] sm:text-xs font-semibold bg-[#00C6A6]/20 text-[#00E5C0] border border-[#00C6A6]/40 backdrop-blur-md mb-3 sm:mb-4 max-w-full">
-            <ShieldCheck className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
-            <span className="truncate">{heroBadge}</span>
-          </div>
-
-          <h1 className="text-2xl sm:text-4xl md:text-5xl font-extrabold tracking-tight text-white mb-2.5 sm:mb-4 leading-tight">
-            {heroTitle}
-          </h1>
-
-          <p className="text-xs sm:text-base text-slate-200 max-w-3xl leading-relaxed mb-6 sm:mb-8">
-            {heroSubtitle}
-          </p>
-
-          {/* Key Global DMC Statistics */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 max-w-3xl mb-6 sm:mb-8">
-            {trustBadges.map((badge, idx) => (
-              <div key={idx} className="bg-white/10 backdrop-blur-md border border-white/15 rounded-xl p-2.5 sm:p-3.5 hover:bg-white/15 transition-colors">
-                <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-[#00E5C0] block mb-0.5">
-                  {badge.label}
-                </span>
-                <span className="text-base sm:text-xl font-bold text-white block truncate">
-                  {badge.subtext}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3">
-            {showPrimaryCta && (
-              <button
-                id="hero-explore-all-products-btn"
-                onClick={onExploreProducts}
-                className="w-full sm:w-auto justify-center bg-[#00C6A6] text-slate-950 px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl font-bold hover:bg-[#00b296] active:bg-[#009b82] transition-all shadow-md cursor-pointer text-xs sm:text-sm flex items-center space-x-2 active:scale-[0.98]"
-              >
-                <Compass className="w-4 h-4" />
-                <span>{primaryCtaText}</span>
-              </button>
-            )}
-
-            {showSecondaryCta && (
-              <button
-                id="hero-view-gateways-btn"
-                onClick={handleSecondaryCtaClick}
-                className="w-full sm:w-auto justify-center bg-white/15 hover:bg-white/25 active:bg-white/30 text-white border border-white/20 px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl font-bold transition-all cursor-pointer text-xs sm:text-sm backdrop-blur-md flex items-center space-x-2 active:scale-[0.98]"
-              >
-                <Globe2 className="w-4 h-4 text-[#00E5C0]" />
-                <span>{secondaryCtaText}</span>
-              </button>
-            )}
-
-            <div className="flex items-center space-x-1.5 text-[11px] sm:text-xs text-slate-300 pt-1 sm:pt-0 sm:ml-1">
-              <ShieldCheck className="w-3.5 h-3.5 text-[#00C6A6] shrink-0" />
-              <span className="truncate">Direct Inbound DMC Licensing</span>
-            </div>
-          </div>
-
-          {/* Quick Access Actions: Create Quote, AI Planner, Ready-Made Packages */}
-          <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-white/10 mt-3 sm:mt-2">
-            <button
-              id="hero-create-quote-btn"
-              onClick={() => navigateTo('/b2b/quote-builder')}
-              className="inline-flex items-center space-x-1.5 bg-[#00C6A6] hover:bg-[#00E5C0] active:bg-[#009b82] text-slate-950 px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-xs font-black transition-all shadow-xs cursor-pointer active:scale-[0.98]"
-            >
-              <PlusCircle className="w-3.5 h-3.5" />
-              <span>Create Quote</span>
-            </button>
-
-            <button
-              id="hero-ai-planner-btn"
-              onClick={() => navigateTo('/b2b/ai-planner')}
-              className="inline-flex items-center space-x-1.5 bg-gradient-to-r from-teal-900 via-slate-900 to-indigo-950 hover:from-teal-800 hover:to-indigo-900 text-white px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-xs font-bold border border-teal-500/40 transition-all shadow-xs cursor-pointer active:scale-[0.98] group"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-[#00E5C0] group-hover:rotate-12 transition-transform" />
-              <span>AI Planner</span>
-              <span className="text-[9px] bg-[#00E5C0] text-slate-950 px-1 py-0.2 rounded-full font-black uppercase tracking-wider">AI</span>
-            </button>
-
-            <button
-              id="hero-ready-made-packages-btn"
-              onClick={() => {
-                const el = document.getElementById('ready-made-packages-section');
-                if (el) {
-                  el.scrollIntoView({ behavior: 'smooth' });
-                } else {
-                  navigateTo('/b2b/packages');
-                }
-              }}
-              className="inline-flex items-center space-x-1.5 bg-white/15 hover:bg-white/25 active:bg-white/30 text-white border border-white/20 px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer backdrop-blur-md active:scale-[0.98]"
-            >
-              <Layers className="w-3.5 h-3.5 text-[#00E5C0]" />
-              <span>Ready-Made Packages</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Value Highlights Bar */}
-        <div className="relative z-10 bg-slate-900/95 backdrop-blur-md border-t border-white/10 px-4 sm:px-6 py-2.5 sm:py-3.5">
-          <div className="max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 text-[11px] sm:text-xs text-slate-300">
-            {sellingPoints.map((point, idx) => (
-              <div key={idx} className="flex items-center space-x-2">
-                <CheckCircle2 className="w-4 h-4 text-[#00C6A6] shrink-0" />
-                <span className="truncate">{point}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Interactive Destination Feature Showcase Cards */}
-      <div>
-        <div id="destinations-grid-heading" className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center space-x-2">
-              <Globe2 className="w-5 h-5 text-[#00C6A6]" />
-              <span>Explore Our {totalDestinations} Core Destination Operations</span>
+      {/* 2. Interactive Destination Feature Showcase Cards */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 sm:pt-10">
+        <div id="destinations-grid-heading" className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-5 min-w-0">
+          <div className="min-w-0">
+            <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2 flex-wrap min-w-0">
+              <Globe2 className="w-5 h-5 text-[#00C6A6] shrink-0" />
+              <span className="break-words">Explore Our {totalDestinations} Core Destination Operations</span>
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-xs sm:text-sm text-slate-500 mt-1 leading-normal break-words">
               Select any destination to filter tours, regional hubs, and local DMC ground operations
             </p>
           </div>
@@ -219,65 +59,66 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
               key={`dest-hero-card-${dest.id || dest.slug}-${idx}`}
               id={`destination-card-${dest.slug}`}
               onClick={() => onSelectDestination(dest.slug)}
-              className="group bg-white rounded-2xl border border-slate-200 hover:border-[#00C6A6] hover:shadow-xl transition-all duration-300 overflow-hidden cursor-pointer flex flex-col"
+              className="group bg-white rounded-2xl border border-slate-200 hover:border-[#00C6A6] hover:shadow-xl transition-all duration-300 overflow-hidden cursor-pointer flex flex-col min-w-0 h-full"
             >
-              {/* Destination Image Banner */}
-              <div className="relative aspect-16/9 w-full overflow-hidden bg-slate-900">
+              {/* Destination Image Banner with coordinated overlays */}
+              <div className="relative aspect-16/10 sm:aspect-16/9 min-h-[175px] sm:min-h-[190px] w-full overflow-hidden bg-slate-900 shrink-0">
                 <img
                   src={dest.heroImage}
                   alt={dest.name}
                   className="w-full h-full object-cover group-hover:scale-108 transition-transform duration-700 ease-out"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/30 to-transparent" />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/40 to-transparent" />
                 
-                {/* Destination Badge */}
-                <div className="absolute top-3 left-3">
-                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-white/90 text-slate-900 backdrop-blur-md shadow-xs">
+                {/* Top Badges: Country + Hub/Tour counts in unified flexible container */}
+                <div className="absolute top-3 inset-x-3 flex flex-wrap items-center justify-between gap-2 pointer-events-none z-10">
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-white/95 text-slate-900 backdrop-blur-md shadow-xs shrink-0 max-w-full truncate">
                     {dest.country}
                   </span>
-                </div>
 
-                {/* Hub Count & Inventory Pill */}
-                <div className="absolute top-3 right-3 flex items-center space-x-1.5">
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#00C6A6] text-slate-950 shadow-xs">
-                    {metrics.hubsCount || (dest.cities ? (dest.cities || []).length : 0)} Hubs
-                  </span>
-                  {metrics.productsCount > 0 && (
-                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-900/90 text-white border border-white/20 backdrop-blur-xs">
-                      {metrics.productsCount} Tours
+                  <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#00C6A6] text-slate-950 shadow-xs whitespace-nowrap">
+                      {metrics.hubsCount || (dest.cities ? (dest.cities || []).length : 0)} Hubs
                     </span>
-                  )}
+                    {metrics.productsCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-900/90 text-white border border-white/20 backdrop-blur-xs whitespace-nowrap">
+                        {metrics.productsCount} Tours
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                {/* Destination Name on Image */}
-                <div className="absolute bottom-3 left-3 right-3 text-white">
-                  <h3 className="text-xl font-bold text-white leading-tight group-hover:text-[#00E5C0] transition-colors">
+                {/* Destination Name and Tagline on Image */}
+                <div className="absolute bottom-3 inset-x-3 text-white z-10">
+                  <h3 className="text-lg sm:text-xl font-bold text-white leading-tight group-hover:text-[#00E5C0] transition-colors break-words">
                     {dest.name}
                   </h3>
-                  <p className="text-[11px] text-slate-200 line-clamp-1 mt-0.5">
-                    {dest.tagline}
-                  </p>
+                  {dest.tagline && (
+                    <p className="text-[11px] sm:text-xs text-slate-200 mt-1 leading-snug break-words">
+                      {dest.tagline}
+                    </p>
+                  )}
                 </div>
               </div>
 
               {/* Destination Body Content */}
-              <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
-                <div className="space-y-3">
-                  <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+              <div className="p-4 sm:p-5 flex-1 flex flex-col justify-between gap-4 min-w-0">
+                <div className="space-y-3 min-w-0">
+                  <p className="text-xs text-slate-600 leading-relaxed break-words">
                     {dest.description}
                   </p>
 
-                  {/* Highlights Pill List */}
+                  {/* Highlights List */}
                   {dest.highlights && (dest.highlights || []).length > 0 && (
-                    <div className="space-y-1.5 pt-1">
+                    <div className="space-y-1.5 pt-1 min-w-0">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
                         DMC Key Highlights
                       </span>
-                      <ul className="space-y-1">
+                      <ul className="space-y-1.5 min-w-0">
                         {(dest.highlights || []).slice(0, 2).map((h, i) => (
-                          <li key={i} className="text-xs text-slate-700 flex items-start space-x-1.5">
-                            <span className="text-[#00C6A6] font-bold mt-0.5">•</span>
-                            <span className="line-clamp-1">{h}</span>
+                          <li key={i} className="text-xs text-slate-700 flex items-start gap-2 min-w-0">
+                            <span className="text-[#00C6A6] font-bold mt-0.5 shrink-0 select-none">•</span>
+                            <span className="break-words leading-snug min-w-0 flex-1">{h}</span>
                           </li>
                         ))}
                       </ul>
@@ -286,17 +127,17 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
 
                   {/* Hub Preview */}
                   {dest.cities && (dest.cities || []).length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 pt-2">
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1 min-w-0">
                       {(dest.cities || []).slice(0, 4).map((c, cIdx) => (
                         <span
                           key={`dest-city-${dest.id || dest.slug}-${c.id || c.name}-${cIdx}`}
-                          className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-medium"
+                          className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] font-medium whitespace-nowrap"
                         >
                           {c.name}
                         </span>
                       ))}
                       {(dest.cities || []).length > 4 && (
-                        <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-400 text-[11px]">
+                        <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500 text-[11px] font-medium whitespace-nowrap">
                           +{(dest.cities || []).length - 4}
                         </span>
                       )}
@@ -304,13 +145,13 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
                   )}
                 </div>
 
-                {/* Card Action Link */}
-                <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-900 group-hover:text-[#008972] transition-colors flex items-center space-x-1">
-                    <span>View {dest.name} Products ({metrics.productsCount})</span>
-                    <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+                {/* Card Action Link: Fully wrapped, flexible, and responsive */}
+                <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 min-w-0">
+                  <span className="text-xs font-bold text-slate-900 group-hover:text-[#008972] transition-colors inline-flex items-center gap-1.5 min-w-0 flex-1 break-words">
+                    <span className="break-words leading-snug">View {dest.name} Products ({metrics.productsCount})</span>
+                    <ArrowRight className="w-3.5 h-3.5 shrink-0 group-hover:translate-x-1 transition-transform" />
                   </span>
-                  <span className="text-[11px] font-mono font-semibold text-slate-400">
+                  <span className="text-[11px] font-mono font-semibold text-slate-500 shrink-0 whitespace-nowrap ml-auto">
                     Currency: {dest.currency}
                   </span>
                 </div>

@@ -64,7 +64,7 @@ export const GoogleSheetsSyncManager: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
 
   // Configuration & Data Source State
-  const [sheetId, setSheetId] = useState('1X9aBcD_TheUnbound_MasterRateSheet_2026');
+  const [sheetId, setSheetId] = useState('');
   const [selectedTabs, setSelectedTabs] = useState<MasterSheetTabName[]>([
     'REGIONS',
     'DESTINATIONS',
@@ -83,9 +83,7 @@ export const GoogleSheetsSyncManager: React.FC = () => {
     'PACKAGES',
     'PACKAGE_ITEMS'
   ]);
-  const [inputMode, setInputMode] = useState<'GOOGLE_SHEET' | 'PASTE_CSV' | 'SAMPLE_DATA'>('SAMPLE_DATA');
-  const [pastedCsvTab, setPastedCsvTab] = useState<MasterSheetTabName>('PRODUCTS');
-  const [pastedCsvContent, setPastedCsvContent] = useState('');
+  const [inputMode, setInputMode] = useState<'GOOGLE_SHEET' | 'SAMPLE_DATA'>('GOOGLE_SHEET');
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
 
@@ -155,19 +153,28 @@ export const GoogleSheetsSyncManager: React.FC = () => {
 
     let dataToValidate: RawMultiTabData = { ...stagedData };
 
-    // If in Paste mode, inject pasted CSV into selected tab
-    if (inputMode === 'PASTE_CSV' && pastedCsvContent.trim()) {
-      const parsedRows = syncService.parseCsvToRows(pastedCsvContent);
-      dataToValidate[pastedCsvTab] = parsedRows;
-      setStagedData(dataToValidate);
-    } else if (inputMode === 'GOOGLE_SHEET' && sheetId.trim()) {
-      setStatusMessage(`Attempting remote fetch from Google Sheets ID: ${sheetId}...`);
+    if (inputMode === 'GOOGLE_SHEET') {
+      if (!sheetId.trim()) {
+        setStatusMessage('Please enter a valid Google Spreadsheet ID or Sheet URL.');
+        setIsProcessing(false);
+        return;
+      }
+      setStatusMessage(`Fetching remote worksheets via backend proxy for: ${sheetId}...`);
+      let fetchedCount = 0;
+      const remoteData: RawMultiTabData = {};
       for (const tab of selectedTabs) {
-        const rows = await syncService.fetchRemoteWorksheet(sheetId, tab);
+        const rows = await syncService.fetchRemoteWorksheet(sheetId.trim(), tab);
         if (rows && rows.length > 0) {
-          dataToValidate[tab] = rows;
+          remoteData[tab] = rows;
+          fetchedCount++;
         }
       }
+      if (fetchedCount === 0) {
+        setStatusMessage(`Could not fetch data for spreadsheet "${sheetId}". Verify ID, permissions, and tab names.`);
+        setIsProcessing(false);
+        return;
+      }
+      dataToValidate = remoteData;
       setStagedData(dataToValidate);
     }
 
@@ -195,6 +202,24 @@ export const GoogleSheetsSyncManager: React.FC = () => {
   // Step 3 -> Step 4: Execute Atomic Commit
   const handleExecuteCommit = async () => {
     setIsProcessing(true);
+    setStatusMessage('Acquiring master synchronization lock and verifying concurrency...');
+    
+    let lockAcquired = false;
+    try {
+      const lockRes = await fetch('/api/integrations/sheets/acquire-lock', { method: 'POST' });
+      if (lockRes.status === 409) {
+        const lockData = await lockRes.json();
+        setStatusMessage(`Sync blocked: ${lockData.error || 'Another synchronization job is currently in progress.'}`);
+        setIsProcessing(false);
+        return;
+      }
+      if (lockRes.ok) {
+        lockAcquired = true;
+      }
+    } catch (e) {
+      console.debug('Lock acquisition via backend proxy skipped or offline', e);
+    }
+
     setStatusMessage('Committing validated records to database and synchronizing with Firestore...');
     try {
       const report = await syncService.commitMultiTabSync(
@@ -206,9 +231,38 @@ export const GoogleSheetsSyncManager: React.FC = () => {
       setLatestReport(report);
       loadSyncHistory();
       setCurrentStep(4);
-      setStatusMessage('Synchronization completed successfully!');
+      setStatusMessage('Master synchronization completed successfully!');
+
+      if (lockAcquired) {
+        await fetch('/api/integrations/sheets/release-lock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            success: true,
+            stats: {
+              rowsRead: report.totalRecords,
+              rowsCreated: report.createdTotal,
+              rowsUpdated: report.updatedTotal,
+              rowsSkipped: report.unchangedTotal,
+              rowsRejected: report.errorsTotal,
+              durationMs: report.durationMs,
+              validationStatus: report.status === 'SUCCESS' ? 'Passed (Hierarchy & FK Validated)' : 'Completed with warnings'
+            }
+          })
+        }).catch(e => console.debug('Failed to release server lock', e));
+      }
     } catch (err: any) {
       setStatusMessage(`Sync error: ${err?.message || 'Unknown error during commit'}`);
+      if (lockAcquired) {
+        await fetch('/api/integrations/sheets/release-lock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            success: false,
+            error: err?.message || 'Sync error during commit'
+          })
+        }).catch(e => console.debug('Failed to release server lock on error', e));
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -266,9 +320,9 @@ export const GoogleSheetsSyncManager: React.FC = () => {
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h2 className="text-xl font-bold text-slate-900">Master Google Sheets → Firebase Engine</h2>
+                <h2 className="text-xl font-bold text-slate-900">Master Google Sheets → Firebase Sync</h2>
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                  Strict 15-Tab Hierarchy
+                  Strict 16-Tab Hierarchy
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-1 max-w-3xl">
@@ -479,30 +533,13 @@ export const GoogleSheetsSyncManager: React.FC = () => {
                     className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-teal-50 border border-teal-200 text-[#008972] text-xs font-bold hover:bg-teal-100 cursor-pointer"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    <span>Load Master Sample (15 Tabs)</span>
+                    <span>Load Master Sample (16 Tabs)</span>
                   </button>
                 </div>
               </div>
 
               {/* Data Input Mode Selector */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <button
-                  onClick={() => setInputMode('SAMPLE_DATA')}
-                  className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
-                    inputMode === 'SAMPLE_DATA'
-                      ? 'border-[#008972] bg-teal-50/50 ring-1 ring-[#008972]'
-                      : 'border-slate-200 bg-white hover:border-slate-300'
-                  }`}
-                >
-                  <div className="flex items-center space-x-2 mb-1">
-                    <Sparkles className="w-4 h-4 text-[#008972]" />
-                    <span className="font-bold text-xs text-slate-900">Master Sample Simulation</span>
-                  </div>
-                  <p className="text-[11px] text-slate-500">
-                    Use full 15-tab pre-loaded dataset covering Japan, UK, France, Dubai, and Thailand.
-                  </p>
-                </button>
-
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <button
                   onClick={() => setInputMode('GOOGLE_SHEET')}
                   className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
@@ -513,27 +550,27 @@ export const GoogleSheetsSyncManager: React.FC = () => {
                 >
                   <div className="flex items-center space-x-2 mb-1">
                     <Globe className="w-4 h-4 text-blue-600" />
-                    <span className="font-bold text-xs text-slate-900">Connected Google Sheet ID</span>
+                    <span className="font-bold text-xs text-slate-900">Live Master Google Sheet</span>
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Sync directly from Google Sheets v4 API / public export feed.
+                    Sync directly from Google Sheets v4 API via authenticated server proxy.
                   </p>
                 </button>
 
                 <button
-                  onClick={() => setInputMode('PASTE_CSV')}
+                  onClick={() => setInputMode('SAMPLE_DATA')}
                   className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
-                    inputMode === 'PASTE_CSV'
+                    inputMode === 'SAMPLE_DATA'
                       ? 'border-[#008972] bg-teal-50/50 ring-1 ring-[#008972]'
                       : 'border-slate-200 bg-white hover:border-slate-300'
                   }`}
                 >
                   <div className="flex items-center space-x-2 mb-1">
-                    <Upload className="w-4 h-4 text-indigo-600" />
-                    <span className="font-bold text-xs text-slate-900">Direct CSV Paste / Upload</span>
+                    <Sparkles className="w-4 h-4 text-[#008972]" />
+                    <span className="font-bold text-xs text-slate-900">Master Dataset Simulation (16 Tabs)</span>
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Paste raw CSV export rows into any target tab.
+                    Use full 16-tab pre-loaded dataset covering Japan, UK, France, Dubai, and Thailand.
                   </p>
                 </button>
               </div>
@@ -555,33 +592,6 @@ export const GoogleSheetsSyncManager: React.FC = () => {
                     <Info className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                     <span>Spreadsheet must contain matching tab names: REGIONS, DESTINATIONS, HUBS, PRODUCTS, HOTELS, VISA, etc.</span>
                   </p>
-                </div>
-              )}
-
-              {/* Direct CSV Paste inputs */}
-              {inputMode === 'PASTE_CSV' && (
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      Target Worksheet Tab
-                    </label>
-                    <select
-                      value={pastedCsvTab}
-                      onChange={e => setPastedCsvTab(e.target.value as MasterSheetTabName)}
-                      className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold bg-white text-slate-800"
-                    >
-                      {MASTER_SHEETS_TAB_DEFINITIONS.filter(t => t.tabName !== 'INSTRUCTIONS').map(t => (
-                        <option key={t.tabName} value={t.tabName}>{t.displayName}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <textarea
-                    rows={6}
-                    value={pastedCsvContent}
-                    onChange={e => setPastedCsvContent(e.target.value)}
-                    placeholder="Paste CSV rows here (including header row)..."
-                    className="w-full p-3 rounded-xl border border-slate-200 text-xs font-mono bg-white focus:ring-2 focus:ring-[#008972] focus:outline-hidden"
-                  />
                 </div>
               )}
 

@@ -325,6 +325,7 @@ export interface Destination {
   secondaryCtaText?: string;
   showSecondaryCta?: boolean;
   trustBadgeText?: string;
+  heroConfig?: UniversalHeroConfig;
   seo?: EntitySEO;
 }
 
@@ -1543,6 +1544,7 @@ export type AuditAction =
   | 'RECORD_ARCHIVED'
   | 'DELETION_BLOCKED_DEPENDENCY'
   | 'UNAUTHORIZED_DELETE_ATTEMPT'
+  | 'UNAUTHORIZED_WRITE_ATTEMPT'
   | 'SEO_REDIRECT_CREATED'
   | 'SEO_REDIRECT_UPDATED'
   | 'SEO_REDIRECT_DELETED'
@@ -2498,6 +2500,126 @@ export interface HeroTrustBadge {
   icon?: string;
 }
 
+// ----------------------------------------------------
+// UNIVERSAL HERO ARCHITECTURE (CMS-DRIVEN & MULTI-CONTEXT)
+// ----------------------------------------------------
+export type HeroContextType = 'HOMEPAGE' | 'DESTINATION' | 'CAMPAIGN' | 'CUSTOM';
+export type HeroOverlayIntensity = 'none' | 'light' | 'medium' | 'strong' | 'custom';
+export type HeroFocalPoint = 'center' | 'top' | 'bottom' | 'left' | 'right';
+
+export interface HeroMediaConfig {
+  desktopImageUrl?: string;
+  tabletImageUrl?: string;
+  mobileImageUrl?: string;
+  videoUrl?: string;
+  mobileVideoUrl?: string;
+  posterImageUrl?: string;
+  altText?: string;
+  focalPoint?: HeroFocalPoint;
+  overlayIntensity?: HeroOverlayIntensity;
+  overlayOpacity?: number; // 0.0 to 1.0, e.g. 0.65
+  enableAmbientGrid?: boolean;
+}
+
+export interface HeroCtaConfig {
+  showPrimaryCta?: boolean;
+  primaryCtaText?: string;
+  primaryCtaAction?: 'EXPLORE_PRODUCTS' | 'DESTINATION_FILTER' | 'QUOTE_BUILDER' | 'AI_PLANNER' | 'CUSTOM';
+  primaryCtaLink?: string;
+  showSecondaryCta?: boolean;
+  secondaryCtaText?: string;
+  secondaryCtaAction?: 'EXPLORE_PRODUCTS' | 'DESTINATION_FILTER' | 'QUOTE_BUILDER' | 'AI_PLANNER' | 'CUSTOM';
+  secondaryCtaLink?: string;
+}
+
+export interface HeroDiscoveryFieldConfig {
+  showDestination?: boolean;
+  showHub?: boolean;
+  showDates?: boolean;
+  showTravelers?: boolean;
+  showTravelStyle?: boolean;
+  showProductType?: boolean;
+  showAiPlannerShortcut?: boolean;
+  ctaText?: string;
+  defaultTravelStyle?: string;
+}
+
+export interface HeroTrustItem {
+  id?: string;
+  title: string;
+  description: string;
+  icon?: string;
+  link?: string;
+}
+
+export interface HeroPromotionConfig {
+  enabled?: boolean;
+  mode?: 'AUTO_PRIORITY' | 'MANUAL';
+  manualPromotionId?: string;
+  customBadge?: string;
+}
+
+export interface UniversalHeroConfig {
+  id?: string;
+  context?: HeroContextType;
+  // Core Copy
+  eyebrowText?: string;
+  heading?: string;
+  headingHighlight?: string; // Highlighted portion in accent color
+  subheading?: string;
+  
+  // Media & Visuals
+  media?: HeroMediaConfig;
+  
+  // Three Pillars & Trust
+  showPillars?: boolean;
+  pillar1Title?: string;
+  pillar1Subtitle?: string;
+  pillar2Title?: string;
+  pillar2Subtitle?: string;
+  pillar3Title?: string;
+  pillar3Subtitle?: string;
+  
+  // CTAs
+  ctas?: HeroCtaConfig;
+  
+  // Search & Discovery Panel
+  showDiscoveryPanel?: boolean;
+  discoveryPanelConfig?: HeroDiscoveryFieldConfig;
+  
+  // Promotion Integration
+  promotion?: HeroPromotionConfig;
+  
+  // Trust / Value Strip
+  showTrustStrip?: boolean;
+  trustItems?: HeroTrustItem[];
+  
+  // AI Quick Banner
+  showAiQuickBanner?: boolean;
+  aiQuickBannerText?: string;
+  aiQuickBannerSubtext?: string;
+  
+  // Status & Scheduling
+  status?: 'DRAFT' | 'PUBLISHED' | 'SCHEDULED' | 'EXPIRED';
+  publishedAt?: string;
+  scheduledAt?: string;
+  expiresAt?: string;
+}
+
+export interface HeroSearchParams {
+  destinationId?: string;
+  destinationSlug?: string;
+  destinationName?: string;
+  hubId?: string;
+  hubName?: string;
+  startDate?: string;
+  endDate?: string;
+  durationDays?: number;
+  travelers: PassengerClassification;
+  travelStyle?: string;
+  productType?: string;
+}
+
 export interface HomepageConfig {
   heroHeading: string;
   heroSubheading: string;
@@ -2513,6 +2635,7 @@ export interface HomepageConfig {
   showSecondaryCta?: boolean;
   heroTrustBadges?: HeroTrustBadge[];
   heroSellingPoints?: string[];
+  heroConfig?: UniversalHeroConfig;
   featuredDestinationIds: string[];
   destinationOrdering: string[];
   

@@ -17,6 +17,7 @@ import {
   FileText, 
   Clock, 
   Plane, 
+  Cpu,
   ExternalLink,
   ChevronRight,
   MessageSquare,
@@ -27,6 +28,8 @@ import {
   Heart
 } from 'lucide-react';
 import { AppDatabase } from '../services/db';
+import { HeroTrustStrip } from '../components/Hero/HeroTrustStrip';
+import { WhyTheUnbound } from '../components/WhyTheUnbound';
 
 interface AboutUsPageProps {
   onBackToExplore?: () => void;
@@ -157,169 +160,78 @@ export const AboutUsPage: React.FC<AboutUsPageProps> = ({
     }
   ];
 
-  const whyChooseUsPillars = [
-    {
-      title: 'Authentic Exploration',
-      subtitle: 'Transforming tourists into true travelers',
-      description: 'We believe in helping tourists transition into authentic travelers who immerse themselves in local customs, heritage sites, and genuine cultural traditions beyond ordinary tourist itineraries.',
-      icon: Compass,
-      bgClass: 'bg-teal-50 text-teal-700 border-teal-200'
-    },
-    {
-      title: 'Personalized Journeys',
-      subtitle: 'Tailored for every unique traveler',
-      description: 'We understand that every guest and travel agency has distinct requirements. Every itinerary is fully customizable, from boutique hotels and scenic rail routes to private culinary masters.',
-      icon: Sparkles,
-      bgClass: 'bg-indigo-50 text-indigo-700 border-indigo-200'
-    },
-    {
-      title: 'Community of Explorers',
-      subtitle: 'Empowering young travel entrepreneurs',
-      description: 'A growing, vibrant community of curious, forward-thinking travel agents and designers who share our passion for authentic exploration and elevated customer care.',
-      icon: Users,
-      bgClass: 'bg-emerald-50 text-emerald-700 border-emerald-200'
-    },
-    {
-      title: 'Expert-Led Experiences',
-      subtitle: 'A decade of high-level B2B operational mastery',
-      description: 'Our team brings deep industry know-how, direct supplier contracts, accredited local guides, and a strict 24–48h operational SLA to design seamless trips that consistently exceed expectations.',
-      icon: Award,
-      bgClass: 'bg-purple-50 text-purple-700 border-purple-200'
-    }
-  ];
-
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-16 animate-in fade-in duration-200">
-      {/* Breadcrumb / Back button */}
-      {onBackToExplore && (
-        <button
-          onClick={onBackToExplore}
-          className="inline-flex items-center space-x-2 text-slate-600 hover:text-slate-900 text-xs font-bold transition-colors cursor-pointer"
-        >
-          <Compass className="w-4 h-4 text-[#00C6A6]" />
-          <span>← Back to Destination Explorer</span>
-        </button>
-      )}
+    <div className="w-full pb-16 space-y-12 animate-in fade-in duration-200">
+      {/* 1. Compact Hero Section */}
+      <div className="w-full bg-[#061329] text-white relative overflow-hidden border-b border-slate-800">
+        {/* Dot pattern */}
+        <div 
+          className="absolute inset-0 pointer-events-none opacity-20" 
+          style={{
+            backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.2) 1px, transparent 1px)',
+            backgroundSize: '20px 20px'
+          }}
+        />
 
-      {/* Hero Section */}
-      <section className="relative rounded-3xl overflow-hidden bg-slate-950 text-white border border-slate-800 shadow-2xl p-8 sm:p-14">
-        {/* Subtle decorative background glows */}
-        <div className="absolute -top-24 -right-24 w-96 h-96 bg-[#00C6A6]/15 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
-          <div className="lg:col-span-7 space-y-6">
-            <div className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#00C6A6]/15 text-[#00E5C0] border border-[#00C6A6]/30">
-              <span className="w-2 h-2 rounded-full bg-[#00E5C0] animate-pulse" />
-              <span>Founded in 2025 • Official Destination Management Company</span>
-            </div>
-
-            <div className="space-y-2">
-              <h1 className="text-3xl sm:text-5xl font-black font-sans tracking-tight text-white leading-tight">
-                Plan like a Tourist, <br className="hidden sm:inline" />
-                <span className="text-[#00E5C0]">Explore like a Traveler.</span>
-              </h1>
-              <p className="text-base sm:text-lg text-slate-300 font-light leading-relaxed max-w-2xl">
-                TheUnbound is a dedicated Destination Management Company (DMC) building a collaborative B2B community of young travel entrepreneurs and boutique agencies. We specialize in customizing premium travel packages to create unforgettable journeys for your guests.
-              </p>
-            </div>
-
-            {/* Quick value badges */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2">
-              <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-2xl">
-                <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Specialization</span>
-                <span className="text-xs font-bold text-white">Europe • UK • Japan</span>
-              </div>
-              <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-2xl">
-                <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Service Model</span>
-                <span className="text-xs font-bold text-[#00E5C0]">100% Direct Ground Ops</span>
-              </div>
-              <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-2xl col-span-2 sm:col-span-1">
-                <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Turnaround SLA</span>
-                <span className="text-xs font-bold text-white">24–48h Confirmation</span>
-              </div>
-            </div>
-
-            {/* Action buttons */}
-            <div className="flex flex-wrap items-center gap-3 pt-2">
-              {onNavigateToBuilder && (
-                <button
-                  onClick={onNavigateToBuilder}
-                  className="px-6 py-3 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-sm transition-all shadow-lg shadow-[#00C6A6]/20 cursor-pointer flex items-center space-x-2"
-                >
-                  <span>Build B2B Quotation</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              )}
-              {onSelectDestination && (
-                <button
-                  onClick={() => onSelectDestination('all')}
-                  className="px-5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 font-bold text-sm transition-colors cursor-pointer flex items-center space-x-2"
-                >
-                  <Globe2 className="w-4 h-4 text-[#00C6A6]" />
-                  <span>Explore Destinations</span>
-                </button>
-              )}
-            </div>
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-10 sm:pt-14 pb-8 sm:pb-10 relative z-10 text-center flex flex-col items-center">
+          {/* Eyebrow Badge */}
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-bold tracking-wider text-teal-300 bg-teal-950/60 border border-teal-500/30 uppercase mb-4 shadow-xs">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#00C6A6] animate-pulse" />
+            <span>ESTABLISHED IN 2025 • DESTINATION MANAGEMENT COMPANY</span>
           </div>
 
-          {/* Hero Visual Card / European Emblem & Slogan */}
-          <div className="lg:col-span-5 flex justify-center">
-            <div className="w-full max-w-md bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-3xl p-6 shadow-xl relative overflow-hidden">
-              <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-                <div className="flex items-center space-x-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-[#00C6A6]/20 text-[#00E5C0] flex items-center justify-center font-bold text-sm">
-                    EU
-                  </div>
-                  <div>
-                    <span className="text-xs font-black text-white block">TheUnbound DMC</span>
-                    <span className="text-[10px] text-slate-400">Official Operations Identity</span>
-                  </div>
-                </div>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                  EST. 2025
-                </span>
-              </div>
+          {/* Main Headline */}
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-black font-sans tracking-tight text-white leading-tight uppercase max-w-3xl mx-auto mb-3">
+            DESTINATION MANAGEMENT SIMPLIFIED BY <span className="text-[#00C6A6]">INTELLIGENCE.</span>
+          </h1>
 
-              <div className="py-6 space-y-4">
-                <div className="p-4 rounded-2xl bg-white/5 border border-white/5 space-y-2">
-                  <span className="text-[11px] text-[#00E5C0] font-bold uppercase tracking-wider flex items-center space-x-1.5">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Brand Philosophy</span>
-                  </span>
-                  <p className="text-sm font-medium text-slate-200 italic leading-relaxed">
-                    "Unleash your wild heart and become the unbound."
-                  </p>
-                </div>
+          {/* Subtitle */}
+          <p className="text-xs sm:text-sm md:text-base text-slate-300 max-w-2xl mx-auto leading-relaxed font-normal mb-6">
+            TheUnbound combines licensed ground operations, verified bilingual guide networks, and automated B2B quotation technology for modern travel advisors and tour operators worldwide.
+          </p>
 
-                <div className="space-y-2 text-xs text-slate-300">
-                  <div className="flex items-center space-x-2">
-                    <CheckCircle2 className="w-4 h-4 text-[#00C6A6] shrink-0" />
-                    <span>B2B wholesale pricing with clean all-inclusive passenger rates</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <CheckCircle2 className="w-4 h-4 text-[#00C6A6] shrink-0" />
-                    <span>Direct hotel allotments, luxury ryokans & historic manor access</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <CheckCircle2 className="w-4 h-4 text-[#00C6A6] shrink-0" />
-                    <span>Dedicated English-speaking guides & private chauffeur transfers</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <CheckCircle2 className="w-4 h-4 text-[#00C6A6] shrink-0" />
-                    <span>Official tourist visa facilitation & consular support desk</span>
-                  </div>
-                </div>
-              </div>
+          {/* Action CTA Buttons */}
+          <div className="flex flex-wrap items-center justify-center gap-3 w-full max-w-md mx-auto">
+            {onSelectDestination && (
+              <button
+                id="about-explore-dest-btn"
+                onClick={() => onSelectDestination('all')}
+                className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 text-xs sm:text-sm font-bold transition-all shadow-md cursor-pointer flex items-center justify-center space-x-2 active:scale-95"
+              >
+                <span>EXPLORE DESTINATIONS</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            )}
 
-              <div className="pt-4 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
-                <span>Domain: www.theunbound.in</span>
-                <span className="text-[#00E5C0] font-mono font-bold">sales@theunbound.in</span>
-              </div>
-            </div>
+            {onNavigateToBuilder && (
+              <button
+                id="about-partner-btn"
+                onClick={onNavigateToBuilder}
+                className="px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/20 text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center justify-center space-x-2 active:scale-95"
+              >
+                <span>BECOME A PARTNER</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
-      </section>
+
+        {/* Unified Operational Trust Strip */}
+        <HeroTrustStrip />
+      </div>
+
+      {/* 2. Main Body Content Container */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-16">
+        {/* Breadcrumb / Back button */}
+        {onBackToExplore && (
+          <button
+            onClick={onBackToExplore}
+            className="inline-flex items-center space-x-2 text-slate-600 hover:text-slate-900 text-xs font-bold transition-colors cursor-pointer"
+          >
+            <Compass className="w-4 h-4 text-[#00C6A6]" />
+            <span>← Back to Destination Explorer</span>
+          </button>
+        )}
 
       {/* Section: Founder & CEO Leadership */}
       <section className="bg-white rounded-3xl border border-slate-200 p-8 sm:p-12 shadow-sm space-y-10">
@@ -472,47 +384,8 @@ export const AboutUsPage: React.FC<AboutUsPageProps> = ({
           </p>
         </div>
 
-        {/* 4 Pillars: Why TheUnbound? */}
-        <div className="space-y-4">
-          <div className="text-center max-w-2xl mx-auto space-y-1 pb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-[#00C6A6]">Why Choose Us</span>
-            <h3 className="text-2xl sm:text-3xl font-black text-slate-900 font-sans">
-              Why Partner with TheUnbound?
-            </h3>
-            <p className="text-xs text-slate-500">
-              We're more than just a travel company; we're your dedicated ground partner in crafting memorable, seamless journeys.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {whyChooseUsPillars.map((pillar, idx) => {
-              const IconComp = pillar.icon;
-              return (
-                <div
-                  key={idx}
-                  className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 hover:border-teal-300 hover:shadow-lg transition-all space-y-4 group"
-                >
-                  <div className="flex items-center space-x-4">
-                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border shadow-xs ${pillar.bgClass}`}>
-                      <IconComp className="w-6 h-6" />
-                    </div>
-                    <div>
-                      <h4 className="text-lg font-black text-slate-900 group-hover:text-teal-700 transition-colors">
-                        {pillar.title}
-                      </h4>
-                      <p className="text-xs text-slate-500 font-medium">
-                        {pillar.subtitle}
-                      </p>
-                    </div>
-                  </div>
-                  <p className="text-xs sm:text-sm text-slate-600 leading-relaxed pl-1">
-                    {pillar.description}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        {/* Standardized Why TheUnbound Section */}
+        <WhyTheUnbound onExploreProducts={onBackToExplore} />
       </section>
 
       {/* Section: Our Key Destination Hubs */}
@@ -874,5 +747,6 @@ export const AboutUsPage: React.FC<AboutUsPageProps> = ({
         </div>
       </div>
     </div>
+  </div>
   );
 };

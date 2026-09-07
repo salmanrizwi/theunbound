@@ -25,6 +25,78 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
     'Verified licensed bilingual private guides & executive chauffeur fleets',
     'Instant B2B white-label client quotation generation in multi-currency'
   ],
+  heroConfig: {
+    context: 'HOMEPAGE',
+    eyebrowText: 'ESTABLISHED IN 2025 • B2B DESTINATION MANAGEMENT COMPANY',
+    heading: 'DESTINATION MANAGEMENT',
+    headingHighlight: 'SIMPLIFIED BY INTELLIGENCE.',
+    subheading: 'TheUnbound combines deep destination expertise, direct ground contracts, and AI-powered trip creation for modern travel professionals.',
+    media: {
+      desktopImageUrl: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=2000&auto=format&fit=crop',
+      altText: 'TheUnbound Premier Ground Operations & Wholesale DMC Network',
+      focalPoint: 'center',
+      overlayIntensity: 'medium',
+      overlayOpacity: 0.65,
+      enableAmbientGrid: true
+    },
+    showPillars: true,
+    pillar1Title: 'DESTINATION EXPERTISE',
+    pillar1Subtitle: 'Local knowledge. Destination services. Direct ground operations.',
+    pillar2Title: 'DIGITAL SOLUTIONS',
+    pillar2Subtitle: 'Package creation. Quotations. Connected multi-currency workflows.',
+    pillar3Title: 'AI-POWERED',
+    pillar3Subtitle: 'Intelligent B2B travel package and itinerary generation in 30 seconds.',
+    ctas: {
+      showPrimaryCta: true,
+      primaryCtaText: 'EXPLORE PACKAGES',
+      primaryCtaAction: 'EXPLORE_PRODUCTS',
+      showSecondaryCta: true,
+      secondaryCtaText: 'BECOME A PARTNER',
+      secondaryCtaAction: 'QUOTE_BUILDER'
+    },
+    showDiscoveryPanel: true,
+    discoveryPanelConfig: {
+      showDestination: true,
+      showHub: true,
+      showDates: true,
+      showTravelers: true,
+      showTravelStyle: true,
+      showProductType: true,
+      showAiPlannerShortcut: true,
+      ctaText: 'Search Inventory'
+    },
+    promotion: {
+      enabled: true,
+      mode: 'AUTO_PRIORITY'
+    },
+    showTrustStrip: true,
+    trustItems: [
+      {
+        title: 'Direct Net Wholesale Rates',
+        description: 'Direct supplier contracting across 7 regions',
+        icon: 'ShieldCheck'
+      },
+      {
+        title: '24–48h SLA Operations Desk',
+        description: 'Guaranteed booking turnaround and local support',
+        icon: 'Clock'
+      },
+      {
+        title: 'Verified Licensed Guides',
+        description: 'Bilingual experts and executive chauffeurs',
+        icon: 'Building2'
+      },
+      {
+        title: 'Instant White-Label Quotes',
+        description: 'Multi-currency proposals with partner branding',
+        icon: 'Globe2'
+      }
+    ],
+    showAiQuickBanner: true,
+    aiQuickBannerText: 'BUILD A COMPLETE TRAVEL PACKAGE IN AS LITTLE AS 30 SECONDS.',
+    aiQuickBannerSubtext: 'From requirement to editable itinerary and ready-to-send quotation.',
+    status: 'PUBLISHED'
+  },
   featuredDestinationIds: ['japan', 'united-kingdom', 'western-europe', 'southeast-asia', 'middle-east', 'usa', 'australia'],
   destinationOrdering: ['japan', 'united-kingdom', 'western-europe', 'southeast-asia', 'middle-east', 'usa', 'australia'],
   

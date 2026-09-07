@@ -1,14 +1,22 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User, UserRole, UserCategory, UserApprovalStatus } from '../types';
-import { AppDatabase } from '../services/db';
-import { authService, AuthResult, RegisterProfileData, normalizeEmail } from '../services/authService';
+import { User, UserRole } from '../types';
+import { 
+  authService, 
+  AuthState,
+  AuthResult, 
+  RegisterProfileData, 
+  normalizeEmail 
+} from '../services/authService';
 import { resolvePostLoginDestination, navigateTo, clearIntendedPath } from '../services/portalRouter';
 
-export type { AuthResult, RegisterProfileData };
+export type { AuthState, AuthResult, RegisterProfileData };
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
+  authState: AuthState;
+  isInitializing: boolean;
+  authError: string | null;
   role: UserRole;
   isAuthModalOpen: boolean;
   authModalReason: string;
@@ -26,7 +34,10 @@ const STORAGE_KEY_AUTH = 'theunbound_auth_user';
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Initialize user from cached session if available, immediately validated against Firebase Auth
+  const [authState, setAuthState] = useState<AuthState>(() => authService.getAuthState());
+  const [authError, setAuthError] = useState<string | null>(() => authService.getAuthError());
+
+  // Initialize cached display user for initial render while verifying with Firebase Auth
   const [user, setUser] = useState<User | null>(() => {
     if (typeof window === 'undefined') return null;
     const saved = localStorage.getItem(STORAGE_KEY_AUTH);
@@ -45,29 +56,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authModalReason, setAuthModalReason] = useState<string>('Access Protected Pricing Calculator');
   const [pendingCallback, setPendingCallback] = useState<(() => void) | null>(null);
 
-  // Synchronize state with unified AuthService singleton and Firebase Auth state
+  // Synchronize state with authoritative AuthService state machine
   useEffect(() => {
-    const unsubscribe = authService.subscribeToAuth((authoritativeUser) => {
-      if (authoritativeUser) {
-        console.log('[AUTH] Syncing authoritative user profile into state:', authoritativeUser.email, 'Role:', authoritativeUser.role);
+    const unsubscribe = authService.subscribeToAuth((authoritativeUser, state, error) => {
+      console.log(`[AUTH-CTX] Auth state transition: ${state}, User: ${authoritativeUser?.email || 'NONE'}`);
+      setAuthState(state);
+      setAuthError(error || null);
+
+      if (state === 'AUTHENTICATED_READY' && authoritativeUser) {
         setUser(authoritativeUser);
         try {
-          localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(authoritativeUser));
+          // Store sanitized display profile without password
+          const sanitized = { ...authoritativeUser };
+          delete sanitized.password;
+          localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(sanitized));
         } catch (e) {
           // Ignore
         }
-      } else {
-        // Only clear if authService explicitly confirmed no user
-        const currentFbUser = authService.getCurrentFirebaseUser();
-        if (currentFbUser === null) {
-          setUser(null);
-          try {
-            localStorage.removeItem(STORAGE_KEY_AUTH);
-          } catch (e) {
-            // Ignore
-          }
+      } else if (state === 'UNAUTHENTICATED') {
+        setUser(null);
+        try {
+          localStorage.removeItem(STORAGE_KEY_AUTH);
+        } catch (e) {
+          // Ignore
         }
       }
+      // Critical: During AUTH_INITIALIZING or AUTHENTICATED_PROFILE_LOADING, do NOT clear user or storage!
     });
 
     return () => {
@@ -81,7 +95,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (e.detail) {
         setUser(e.detail);
         try {
-          localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(e.detail));
+          const sanitized = { ...e.detail };
+          delete sanitized.password;
+          localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(sanitized));
         } catch (err) {
           // Ignore
         }
@@ -91,10 +107,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => window.removeEventListener('theunbound_auth_changed', handleAuthChanged as EventListener);
   }, []);
 
+  const isInitializing = authState === 'AUTH_INITIALIZING' || authState === 'AUTHENTICATED_PROFILE_LOADING';
+  const isAuthenticated = authState === 'AUTHENTICATED_READY' && !!user;
+
   /**
    * Universal Login Handler
-   * Authenticates against Firebase Authentication, then loads Firestore /users/{uid} profile.
-   * Works identically across desktop, tablet, and mobile browsers.
+   * Authenticates against Firebase Authentication, then resolves Firestore /users/{uid} profile.
    */
   const login = async (email: string, role: UserRole = 'B2B_AGENT', password?: string): Promise<AuthResult> => {
     const cleanEmail = normalizeEmail(email);
@@ -107,11 +125,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (result.success && result.user) {
       setUser(result.user);
-      try {
-        localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(result.user));
-      } catch (e) {
-        // Ignore
-      }
       setIsAuthModalOpen(false);
 
       if (pendingCallback) {
@@ -130,7 +143,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   /**
    * Universal Registration Handler
    * Creates real user account in Firebase Authentication, writes /users/{uid} in Firestore.
-   * Eliminates local-only registration discrepancies across devices.
    */
   const register = async (profileData: RegisterProfileData): Promise<AuthResult> => {
     const result = await authService.register(profileData);
@@ -146,11 +158,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Auto-approved buyer or internal user
     setUser(result.user);
-    try {
-      localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(result.user));
-    } catch (e) {
-      // Ignore
-    }
     setIsAuthModalOpen(false);
 
     if (pendingCallback) {
@@ -168,7 +175,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * Universal Logout Handler
    */
   const logout = async (): Promise<void> => {
-    await authService.logout();
+    await authService.logout('USER_INITIATED');
     setUser(null);
     try {
       localStorage.removeItem(STORAGE_KEY_AUTH);
@@ -190,7 +197,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (updated) {
       setUser(updated);
       try {
-        localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(updated));
+        const sanitized = { ...updated };
+        delete sanitized.password;
+        localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(sanitized));
       } catch (e) {
         // Ignore
       }
@@ -204,7 +213,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     setUser(fallbackUser);
     try {
-      localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(fallbackUser));
+      const sanitized = { ...fallbackUser };
+      delete sanitized.password;
+      localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(sanitized));
     } catch (e) {
       // Ignore
     }
@@ -225,7 +236,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const requireAuth = (callback: () => void, reason = 'Login required to access dynamic pricing and quotations'): boolean => {
-    if (user) {
+    if (isAuthenticated && user) {
       callback();
       return true;
     }
@@ -237,7 +248,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider
       value={{
         user,
-        isAuthenticated: !!user,
+        isAuthenticated,
+        authState,
+        isInitializing,
+        authError,
         role: user ? user.role : 'PUBLIC',
         isAuthModalOpen,
         authModalReason,

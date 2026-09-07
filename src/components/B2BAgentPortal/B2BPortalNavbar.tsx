@@ -203,6 +203,14 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
             onClick={() => onSelectTab('home')}
             className="cursor-pointer flex items-center group"
           >
+            <img 
+              src="/White Icon.jpg?v=3" 
+              alt="TheUnbound" 
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).src = '/white-icon.jpg?v=3';
+              }}
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg mr-2.5 sm:mr-3 shadow-xs transition-transform group-hover:scale-105 shrink-0 object-contain" 
+            />
             <div>
               <span className="text-xl font-black lowercase tracking-tight text-slate-950 group-hover:text-[#00a88c] transition-colors font-sans block leading-none">
                 theunbound

@@ -1,0 +1,44 @@
+{
+  "id": "/",
+  "name": "TheUnbound - DMC Travel Portal",
+  "short_name": "TheUnbound",
+  "description": "Scalable B2B/B2C Destination Management Company portal featuring an intelligent AI Planner, quotation engine, dynamic multi-product pricing calculators, and destination inventories.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#00A88F",
+  "theme_color": "#00A88F",
+  "icons": [
+    {
+      "src": "/white-icon.jpg",
+      "sizes": "1024x1024",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

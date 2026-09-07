@@ -50,52 +50,41 @@ export class EmailNotificationService {
     const recipientType = meta?.recipientType || (meta?.quoteId ? 'BUYER' : 'DMC_OPS');
 
     try {
-      const storedToken = sessionStorage.getItem('google_access_token') || localStorage.getItem('google_access_token');
-      if (!storedToken) {
-        const err = 'No active Google Workspace authorization token found.';
-        db.saveCommunicationAuditLog({
-          id: `audit-${Date.now()}`,
-          communicationId,
-          quoteId: meta?.quoteId,
-          bookingId: meta?.bookingId,
-          leadId: meta?.leadId,
-          recipientEmail: to,
-          recipientType,
-          channel: 'EMAIL',
-          eventType,
-          templateVersion: '1.0.0-standard',
-          sentAt: new Date().toISOString(),
-          sentBy: meta?.sentBy,
-          sentByName: meta?.sentByName,
-          deliveryStatus: 'FAILED',
-          failureReason: err
-        });
-        return { success: false, error: err };
+      const storedToken = typeof window !== 'undefined' ? (sessionStorage.getItem('google_access_token') || localStorage.getItem('google_access_token')) : null;
+      const idempotencyKey = `${meta?.quoteId || meta?.bookingId || meta?.leadId || to}-${eventType}-${Date.now()}`;
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      if (storedToken) {
+        headers['Authorization'] = `Bearer ${storedToken}`;
       }
 
-      const emailLines = [
-        `To: ${to}`,
-        `Subject: =?utf-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
-        `MIME-Version: 1.0`,
-        `Content-Type: text/html; charset=utf-8`,
-        ``,
-        htmlBody
-      ];
-
-      const raw = base64UrlEncode(emailLines.join('\r\n'));
-
-      const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+      // Dispatch through secure backend integration proxy
+      const res = await fetch('/api/integrations/gmail/send', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${storedToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ raw })
+        headers,
+        body: JSON.stringify({
+          to,
+          subject,
+          htmlBody,
+          meta: {
+            quoteId: meta?.quoteId,
+            bookingId: meta?.bookingId,
+            leadId: meta?.leadId,
+            recipientType,
+            eventType,
+            idempotencyKey,
+            sentBy: meta?.sentBy,
+            sentByName: meta?.sentByName
+          }
+        })
       });
 
-      if (!res.ok) {
-        const errText = await res.text();
-        const err = `Gmail API error (${res.status}): ${errText}`;
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.success) {
+        const err = data.error || data.details || `Gmail dispatch failed (${res.status})`;
         db.saveCommunicationAuditLog({
           id: `audit-${Date.now()}`,
           communicationId,
@@ -116,7 +105,6 @@ export class EmailNotificationService {
         return { success: false, error: err };
       }
 
-      const data = await res.json();
       db.saveCommunicationAuditLog({
         id: `audit-${Date.now()}`,
         communicationId,
@@ -128,13 +116,13 @@ export class EmailNotificationService {
         channel: 'EMAIL',
         eventType,
         templateVersion: '1.0.0-standard',
-        sentAt: new Date().toISOString(),
+        sentAt: data.sentAt || new Date().toISOString(),
         sentBy: meta?.sentBy,
         sentByName: meta?.sentByName,
         deliveryStatus: 'SUCCESS'
       });
 
-      return { success: true, messageId: data.id };
+      return { success: true, messageId: data.messageId };
     } catch (err: any) {
       const errorMsg = err?.message || 'Network error executing Gmail API';
       db.saveCommunicationAuditLog({

@@ -89,19 +89,13 @@ class GoogleAuthService {
 
       if (token) {
         this.saveAuth(token, result.user);
+        return this.getAuthState();
       } else {
-        // Fallback: If credential doesn't contain accessToken in some environments, generate a workspace session token
-        const fallbackToken = `ya29.theunbound_workspace_token_${Date.now()}_auth`;
-        this.saveAuth(fallbackToken, result.user);
+        throw new Error('Google OAuth sign-in completed, but did not return an access token for workspace scopes.');
       }
-
-      return this.getAuthState();
     } catch (error: any) {
-      console.warn('Firebase popup sign-in notice, falling back to workspace session auth:', error);
-      // Fallback token if popup blocked or dev environment
-      const simulatedToken = `ya29.theunbound_workspace_token_${Date.now()}_simulated`;
-      this.setManualToken(simulatedToken, 'business@theunbound.in', 'OAUTH_POPUP');
-      return this.getAuthState();
+      console.error('Google OAuth sign-in failed:', error);
+      throw error;
     }
   }
 
@@ -121,8 +115,8 @@ class GoogleAuthService {
       isAuthenticated: isAuthed,
       accessToken: token,
       apiKey: apiKey,
-      email: storedEmail || (isAuthed ? 'business@theunbound.in' : null),
-      displayName: storedName || (isAuthed ? 'TheUnbound Workspace' : null),
+      email: storedEmail || (isAuthed ? currentUser?.email || 'business@theunbound.in' : null),
+      displayName: storedName || (isAuthed ? currentUser?.displayName || 'TheUnbound Workspace' : null),
       photoURL: storedPhoto || null,
       scopes: WORKSPACE_SCOPES,
       lastAuthenticatedAt: lastAuth || undefined,
