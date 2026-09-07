@@ -1068,8 +1068,6 @@ export class AppDatabase {
           const list: AdminActivityRecord[] = [];
           snapshot.forEach(docSnap => list.push(docSnap.data() as AdminActivityRecord));
           this.setItem('admin_activities', list, true);
-        } else {
-          this.setItem('admin_activities', [], true);
         }
       }, (err) => console.debug('Firestore admin_activities sync note:', err));
 
@@ -1369,6 +1367,12 @@ export class AppDatabase {
     } catch (e) {
       console.warn('Migration note for hotels catalog:', e);
     }
+
+    try {
+      this.syncAdminActivitiesFromEntities();
+    } catch (e) {
+      console.warn('Initial admin activities synthesis note:', e);
+    }
   }
 
   // ==========================================
@@ -1454,16 +1458,321 @@ export class AppDatabase {
     return newActivity;
   }
 
+  /**
+   * Automatically synthesizes and syncs activity records from existing domain entities
+   * (leads, bookings, payment proofs, quotations, users, tasks, audit logs) so that the
+   * Admin Activity & Notification Center stream always accurately reflects the active state.
+   */
+  public syncAdminActivitiesFromEntities(): AdminActivityRecord[] {
+    try {
+      const existingActivities = this.getItem<AdminActivityRecord[]>('admin_activities', []);
+      const existingActivityIds = new Set(existingActivities.map(a => a.activityId));
+      const existingEntityIds = new Set(existingActivities.map(a => `${a.category}-${a.entityId}`));
+      const newSynthesized: AdminActivityRecord[] = [];
+
+      const nowIso = new Date().toISOString();
+
+      // 1. Leads
+      const leads = this.getLeads();
+      leads.forEach(lead => {
+        const entityKey = `LEAD-${lead.id}`;
+        if (!existingEntityIds.has(entityKey) && !existingActivityIds.has(`act-lead-${lead.id}`)) {
+          const isNew = lead.status === 'NEW';
+          const paxTotal = ((lead.paxAdults || 0) + (lead.paxChildren || 0)) || 2;
+          newSynthesized.push({
+            activityId: `act-lead-${lead.id}`,
+            activityType: isNew ? 'LEAD_CREATED' : 'LEAD_STATUS_CHANGED',
+            category: 'LEAD',
+            actorName: lead.source || 'CRM Lead Engine',
+            actorType: 'SYSTEM',
+            timestamp: lead.createdAt || lead.updatedAt || nowIso,
+            leadId: lead.id,
+            entityType: 'TravelLead',
+            entityId: lead.id,
+            summary: isNew 
+              ? `New Lead Captured: [${lead.leadNumber || lead.id}] ${lead.contactName} - ${lead.destinationName || 'Multi-Destination'} (${paxTotal} Pax)`
+              : `Lead ${lead.status}: [${lead.leadNumber || lead.id}] ${lead.contactName} (${lead.destinationName || 'General'})`,
+            details: {
+              customerName: lead.contactName,
+              destinationName: lead.destinationName,
+              travelDates: lead.travelDates,
+              leadNumber: lead.leadNumber,
+              status: lead.status,
+              actionNeeded: isNew ? 'Assign travel specialist & begin quotation proposal' : undefined
+            },
+            severity: isNew ? 'WARNING' : 'INFO',
+            actionRequired: isNew,
+            actionLabel: isNew ? 'Assign & Qualify' : 'View Lead',
+            read: !isNew,
+            targetSection: 'LEAD_MANAGEMENT',
+            targetSubTab: 'LEADS',
+            recordId: lead.id,
+            createdAt: lead.createdAt || nowIso
+          });
+        }
+      });
+
+      // 2. Bookings & Payment Proofs
+      const bookings = this.getAllBookings();
+      bookings.forEach(booking => {
+        const entityKey = `BOOKING-${booking.id}`;
+        if (!existingEntityIds.has(entityKey) && !existingActivityIds.has(`act-booking-${booking.id}`)) {
+          const isPending = booking.status === 'PENDING_CONFIRMATION' || booking.status === 'PROCESSING';
+          const isCancelled = booking.status === 'CANCELLED';
+          const travelDatesStr = booking.travelStartDate ? `${booking.travelStartDate} to ${booking.travelEndDate || ''}` : undefined;
+          newSynthesized.push({
+            activityId: `act-booking-${booking.id}`,
+            activityType: isCancelled ? 'BOOKING_CANCELLED' : booking.status === 'CONFIRMED' ? 'BOOKING_CONFIRMED' : 'BOOKING_CREATED',
+            category: 'BOOKING',
+            actorName: booking.agentName || booking.customer?.leadTravelerName || 'Guest Booking',
+            actorType: booking.agentName ? 'B2B_AGENT' : 'SYSTEM',
+            timestamp: booking.createdAt || booking.updatedAt || nowIso,
+            bookingId: booking.id,
+            bookingReference: booking.bookingReference,
+            customerId: booking.customer?.email,
+            entityType: 'Booking',
+            entityId: booking.id,
+            summary: `Booking [${booking.bookingReference}]: ${booking.customer?.leadTravelerName || 'Traveler'} - ${booking.destinationName || 'Destination'} (${booking.currency || 'USD'} ${(booking.totalAmount || 0).toLocaleString()}) [${booking.status}]`,
+            details: {
+              customerName: booking.customer?.leadTravelerName,
+              destinationName: booking.destinationName,
+              travelDates: travelDatesStr,
+              totalAmount: booking.totalAmount,
+              currency: booking.currency || 'USD',
+              status: booking.status,
+              actionNeeded: isPending ? '12h SLA: Reconfirm hotel allotments & transfer vouchers' : isCancelled ? 'Release locked inventory with suppliers' : undefined
+            },
+            severity: isCancelled ? 'CRITICAL' : isPending ? 'WARNING' : 'INFO',
+            actionRequired: isPending || isCancelled,
+            actionLabel: isCancelled ? 'Review Cancellation' : isPending ? 'Confirm Booking' : 'View Booking',
+            read: !isPending && !isCancelled,
+            targetSection: 'BOOKING_MANAGEMENT',
+            targetSubTab: 'BOOKINGS',
+            recordId: booking.id,
+            createdAt: booking.createdAt || nowIso
+          });
+        }
+
+        // Payment Proofs for each booking
+        if (booking.paymentProofs && booking.paymentProofs.length > 0) {
+          booking.paymentProofs.forEach((proof, pIdx) => {
+            const proofId = proof.id || `proof-${booking.id}-${pIdx}`;
+            const proofKey = `PAYMENT-${proofId}`;
+            if (!existingEntityIds.has(proofKey) && !existingActivityIds.has(`act-proof-${proofId}`)) {
+              const isPending = proof.verificationStatus === 'PENDING_VERIFICATION';
+              newSynthesized.push({
+                activityId: `act-proof-${proofId}`,
+                activityType: isPending ? 'PAYMENT_PROOF_UPLOADED' : 'PAYMENT_PROOF_VERIFIED',
+                category: 'PAYMENT',
+                actorName: proof.uploadedByName || booking.customer?.leadTravelerName || 'Finance',
+                actorType: 'TEAM_MEMBER',
+                timestamp: proof.uploadedAt || booking.updatedAt || nowIso,
+                bookingId: booking.id,
+                bookingReference: booking.bookingReference,
+                entityType: 'PaymentProof',
+                entityId: proofId,
+                summary: `Payment Proof Submitted: [${booking.bookingReference}] ${booking.customer?.leadTravelerName || 'Traveler'} (${proof.currency || booking.currency || 'USD'} ${(proof.amount || booking.totalAmount || 0).toLocaleString()}) - ${proof.trancheLabel || 'Bank Remittance'}`,
+                details: {
+                  customerName: booking.customer?.leadTravelerName,
+                  totalAmount: proof.amount || booking.totalAmount,
+                  currency: proof.currency || booking.currency || 'USD',
+                  status: proof.verificationStatus,
+                  actionNeeded: isPending ? 'Finance team clearance required against bank remittance statement' : undefined
+                },
+                severity: isPending ? 'WARNING' : 'INFO',
+                actionRequired: isPending,
+                actionLabel: isPending ? 'Verify Remittance' : 'View Receipt',
+                read: !isPending,
+                targetSection: 'BOOKING_MANAGEMENT',
+                targetSubTab: 'BOOKINGS',
+                recordId: booking.id,
+                createdAt: proof.uploadedAt || nowIso
+              });
+            }
+          });
+        }
+      });
+
+      // 3. Quotes & AI Planner proposals
+      const quotes = this.getAllSavedQuotes();
+      quotes.forEach(quote => {
+        const isAiPlan = (quote.id && quote.id.toLowerCase().includes('ai')) || (quote.title && quote.title.toLowerCase().includes('ai')) || Boolean(quote.items && quote.items.some((i: any) => i.isAiGenerated));
+        const entityKey = isAiPlan ? `AI_PLANNER-${quote.id}` : `QUOTE-${quote.id}`;
+        
+        if (!existingEntityIds.has(entityKey) && !existingActivityIds.has(`act-quote-${quote.id}`)) {
+          const isDownloaded = quote.status === 'DOWNLOADED_PDF';
+          newSynthesized.push({
+            activityId: `act-quote-${quote.id}`,
+            activityType: isAiPlan ? 'AI_PLAN_GENERATED' : isDownloaded ? 'QUOTE_PDF_DOWNLOADED' : 'QUOTE_CREATED',
+            category: isAiPlan ? 'AI_PLANNER' : 'QUOTE',
+            actorName: quote.createdByName || 'Travel Consultant',
+            actorType: 'B2B_AGENT',
+            timestamp: quote.updatedAt || quote.createdAt || nowIso,
+            quoteId: quote.id,
+            entityType: 'Quotation',
+            entityId: quote.id,
+            summary: isAiPlan 
+              ? `AI Itinerary Generated: [${quote.quoteNumber || quote.id}] ${quote.clientName} - ${quote.destination || 'Custom'} (${quote.items?.length || 0} services)`
+              : `Proposal [${quote.quoteNumber || quote.id}]: ${quote.clientName} - ${quote.destination || 'Destination'} (${quote.currency || 'USD'} ${(quote.totalSellingPrice || 0).toLocaleString()}) [${quote.status}]`,
+            details: {
+              customerName: quote.clientName,
+              destinationName: quote.destination,
+              totalAmount: quote.totalSellingPrice,
+              currency: quote.currency || 'USD',
+              status: quote.status,
+              actionNeeded: isDownloaded ? 'Client downloaded proposal PDF; follow up within 24h SLA' : undefined
+            },
+            severity: isDownloaded ? 'WARNING' : 'INFO',
+            actionRequired: isDownloaded,
+            actionLabel: isDownloaded ? 'Follow up Proposal' : 'View Quote',
+            read: !isDownloaded,
+            targetSection: 'LEAD_MANAGEMENT',
+            targetSubTab: 'QUOTES',
+            recordId: quote.id,
+            createdAt: quote.createdAt || nowIso
+          });
+        }
+      });
+
+      // 4. User Approvals
+      const users = this.getUsers();
+      users.forEach(userItem => {
+        const entityKey = `USER-${userItem.id}`;
+        if (!existingEntityIds.has(entityKey) && !existingActivityIds.has(`act-user-${userItem.id}`)) {
+          const isPending = userItem.approvalStatus === 'PENDING';
+          newSynthesized.push({
+            activityId: `act-user-${userItem.id}`,
+            activityType: isPending ? 'B2B_AGENT_REGISTRATION' : 'USER_PERMISSIONS_CHANGED',
+            category: 'USER',
+            actorName: userItem.name || userItem.email || 'New Partner',
+            actorType: 'B2B_AGENT',
+            timestamp: userItem.createdAt || nowIso,
+            userId: userItem.id,
+            entityType: 'User',
+            entityId: userItem.id,
+            summary: `B2B Account Application: ${userItem.name} (${userItem.companyName || userItem.email}) - ${userItem.role} [${userItem.approvalStatus}]`,
+            details: {
+              customerName: userItem.name,
+              agentName: userItem.name,
+              company: userItem.companyName,
+              email: userItem.email,
+              actionNeeded: isPending ? 'Verify trade license and assign wholesale discount margin tier' : undefined
+            },
+            severity: isPending ? 'WARNING' : 'INFO',
+            actionRequired: isPending,
+            actionLabel: isPending ? 'Review Application' : 'Manage Account',
+            read: !isPending,
+            targetSection: 'ACCOUNT_MANAGEMENT',
+            targetSubTab: 'USERS_ACCESS',
+            recordId: userItem.id,
+            createdAt: userItem.createdAt || nowIso
+          });
+        }
+      });
+
+      // 5. Calendar Tasks & Operations
+      const tasks = this.getCalendarTasks();
+      tasks.forEach(task => {
+        const entityKey = `OPERATIONS-${task.id}`;
+        if (!existingEntityIds.has(entityKey) && !existingActivityIds.has(`act-task-${task.id}`)) {
+          const isPending = task.status === 'PENDING';
+          const isUrgent = task.priority === 'URGENT';
+          newSynthesized.push({
+            activityId: `act-task-${task.id}`,
+            activityType: 'OPERATIONS_JOB_CREATED',
+            category: 'OPERATIONS',
+            actorName: 'Operations Dispatch',
+            actorType: 'SYSTEM',
+            timestamp: task.createdAt || nowIso,
+            entityType: 'CalendarTask',
+            entityId: task.id,
+            summary: `Operational Task: ${task.title} (Priority: ${task.priority}) - Due ${task.dueAt || 'ASAP'}`,
+            details: {
+              taskTitle: task.title,
+              priority: task.priority,
+              dueDate: task.dueAt,
+              actionNeeded: isPending ? 'Ensure task completion before travel date SLA' : undefined
+            },
+            severity: isUrgent ? 'CRITICAL' : task.priority === 'HIGH' ? 'WARNING' : 'INFO',
+            actionRequired: isPending,
+            actionLabel: 'View Task',
+            read: !isPending,
+            targetSection: 'NOTIFICATIONS_MANAGEMENT',
+            targetSubTab: 'TASKS',
+            recordId: task.id,
+            createdAt: task.createdAt || nowIso
+          });
+        }
+      });
+
+      // 6. Audit & System logs
+      const auditLogs = this.getAuditLogs();
+      auditLogs.slice(0, 15).forEach(log => {
+        const entityKey = `SYSTEM-${log.id}`;
+        if (!existingEntityIds.has(entityKey) && !existingActivityIds.has(`act-audit-${log.id}`)) {
+          newSynthesized.push({
+            activityId: `act-audit-${log.id}`,
+            activityType: 'SECURITY_AUDIT_LOGGED',
+            category: 'SYSTEM',
+            actorName: log.userName || 'System Admin',
+            actorType: 'ADMIN',
+            timestamp: log.timestamp || nowIso,
+            entityType: 'AuditLog',
+            entityId: log.id,
+            summary: `System Audit: [${log.action}] ${log.details}`,
+            details: {
+              actor: log.userName,
+              action: log.action,
+              entity: log.entity,
+              previousValue: log.previousValue,
+              newValue: log.newValue
+            },
+            severity: 'INFO',
+            actionRequired: false,
+            actionLabel: 'View Audit Log',
+            read: true,
+            targetSection: 'INTEGRATIONS_DB',
+            targetSubTab: 'AUDIT_TRAIL',
+            recordId: log.id,
+            createdAt: log.timestamp || nowIso
+          });
+        }
+      });
+
+      if (newSynthesized.length > 0) {
+        const combined = [...existingActivities, ...newSynthesized];
+        // Sort newest first
+        combined.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        this.setItem('admin_activities', combined);
+        return combined;
+      }
+
+      return existingActivities;
+    } catch (err) {
+      console.warn('syncAdminActivitiesFromEntities note:', err);
+      return this.getItem<AdminActivityRecord[]>('admin_activities', []);
+    }
+  }
+
   public getAdminActivities(user?: User | null): AdminActivityRecord[] {
-    const activities = this.getItem<AdminActivityRecord[]>('admin_activities', []);
+    let activities = this.getItem<AdminActivityRecord[]>('admin_activities', []);
+    if (activities.length === 0) {
+      activities = this.syncAdminActivitiesFromEntities();
+    }
+
+    // Always sort newest activities first
+    activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
     // Role & Permission Filtering (Section 44)
-    if (!user || user.role === 'ADMIN') {
+    const effectiveUser = user || this.getCurrentUser();
+    const isAdmin = !effectiveUser || effectiveUser.role === 'ADMIN' || (effectiveUser as any).userType === 'ADMIN' || isMasterAdmin(effectiveUser);
+
+    if (isAdmin) {
       return activities;
     }
 
     // Filter activities for TEAM_MEMBER / DMC_STAFF according to granular permissions
-    const perms = user.permissions;
+    const perms = effectiveUser.permissions;
     return activities.filter(act => {
       // 1. Bookings
       if (act.category === 'BOOKING') {
@@ -4084,6 +4393,38 @@ export class AppDatabase {
       }
     });
 
+    // Live Admin Activity Stream notification
+    try {
+      const isAi = (updatedQuote.id && updatedQuote.id.toLowerCase().includes('ai')) || (updatedQuote.title && updatedQuote.title.toLowerCase().includes('ai')) || Boolean(updatedQuote.items && updatedQuote.items.some((i: any) => i.isAiGenerated));
+      const isDownloaded = actionType === 'DOWNLOADED' || actionType === 'PRINTED';
+      this.recordAdminActivity({
+        category: isAi ? 'AI_PLANNER' : 'QUOTE',
+        activityType: isAi ? 'AI_PLAN_GENERATED' : isDownloaded ? 'QUOTE_PDF_DOWNLOADED' : actionType === 'SENT' || actionType === 'SENT_TO_CLIENT' ? 'QUOTE_EMAIL_SENT' : isNewQuote ? 'QUOTE_CREATED' : 'QUOTE_UPDATED',
+        actorName: userName,
+        actorType: userRole === 'ADMIN' ? 'ADMIN' : userRole === 'TEAM_MEMBER' ? 'TEAM_MEMBER' : 'B2B_AGENT',
+        severity: isDownloaded ? 'WARNING' : 'INFO',
+        actionRequired: isDownloaded,
+        actionLabel: isDownloaded ? 'Follow up Proposal' : 'View Quote',
+        summary: `${isAi ? 'AI Itinerary Plan' : isDownloaded ? 'Quote Downloaded (PDF)' : 'Proposal'}: [${updatedQuote.quoteNumber || updatedQuote.id}] ${updatedQuote.clientName} (${updatedQuote.currency} ${(updatedQuote.totalSellingPrice || 0).toLocaleString()})`,
+        details: {
+          customerName: updatedQuote.clientName,
+          destinationName: updatedQuote.destination,
+          totalAmount: updatedQuote.totalSellingPrice,
+          currency: updatedQuote.currency,
+          status: updatedQuote.status,
+          actionNeeded: isDownloaded ? 'Client downloaded proposal PDF; follow up within 24h SLA' : undefined
+        },
+        targetSection: 'LEAD_MANAGEMENT',
+        targetSubTab: 'QUOTES',
+        recordId: updatedQuote.id,
+        quoteId: updatedQuote.id,
+        entityId: updatedQuote.id,
+        entityType: 'Quotation'
+      });
+    } catch {
+      // Non-blocking
+    }
+
     return updatedQuote;
   }
 
@@ -5777,6 +6118,41 @@ export class AppDatabase {
 
     this.setItem('leads', leads);
     this.syncFirestoreDoc('leads', savedLead.id, savedLead);
+
+    // Live Admin Activity Stream notification
+    try {
+      const isNew = index < 0;
+      const paxTotal = ((savedLead.paxAdults || 0) + (savedLead.paxChildren || 0)) || 2;
+      this.recordAdminActivity({
+        category: 'LEAD',
+        activityType: isNew ? 'LEAD_CREATED' : 'LEAD_STATUS_CHANGED',
+        actorName: user?.name || savedLead.source || 'CRM Engine',
+        actorType: user?.role === 'ADMIN' ? 'ADMIN' : user?.role === 'TEAM_MEMBER' ? 'TEAM_MEMBER' : 'SYSTEM',
+        severity: savedLead.status === 'NEW' ? 'WARNING' : 'INFO',
+        actionRequired: savedLead.status === 'NEW',
+        actionLabel: savedLead.status === 'NEW' ? 'Assign & Qualify' : 'View Lead',
+        summary: isNew 
+          ? `New Lead Captured: [${savedLead.leadNumber}] ${savedLead.contactName} - ${savedLead.destinationName || 'Destination'} (${paxTotal} Pax)`
+          : `Lead Profile Updated: [${savedLead.leadNumber}] ${savedLead.contactName} (${savedLead.status})`,
+        details: {
+          customerName: savedLead.contactName,
+          destinationName: savedLead.destinationName,
+          travelDates: savedLead.travelDates,
+          leadNumber: savedLead.leadNumber,
+          status: savedLead.status,
+          actionNeeded: savedLead.status === 'NEW' ? 'Assign travel specialist & begin quotation proposal' : undefined
+        },
+        targetSection: 'LEAD_MANAGEMENT',
+        targetSubTab: 'LEADS',
+        recordId: savedLead.id,
+        leadId: savedLead.id,
+        entityId: savedLead.id,
+        entityType: 'TravelLead'
+      });
+    } catch {
+      // Non-blocking
+    }
+
     return savedLead;
   }
 
@@ -5821,6 +6197,36 @@ export class AppDatabase {
 
     this.setItem('leads', leads);
     this.syncFirestoreDoc('leads', leads[index].id, leads[index]);
+
+    // Live Admin Activity Stream notification
+    try {
+      this.recordAdminActivity({
+        category: 'LEAD',
+        activityType: 'LEAD_STATUS_CHANGED',
+        actorName: user?.name || 'CRM Specialist',
+        actorType: user?.role === 'ADMIN' ? 'ADMIN' : 'TEAM_MEMBER',
+        severity: status === 'WON' ? 'INFO' : 'INFO',
+        actionRequired: status === 'NEW',
+        actionLabel: 'View Lead Details',
+        summary: `Lead Status Changed: [${leads[index].leadNumber}] ${leads[index].contactName} (${prevStatus} ➔ ${status})`,
+        details: {
+          customerName: leads[index].contactName,
+          destinationName: leads[index].destinationName,
+          leadNumber: leads[index].leadNumber,
+          previousValue: prevStatus,
+          newValue: status,
+          status: status
+        },
+        targetSection: 'LEAD_MANAGEMENT',
+        targetSubTab: 'LEADS',
+        recordId: leads[index].id,
+        leadId: leads[index].id,
+        entityId: leads[index].id,
+        entityType: 'TravelLead'
+      });
+    } catch {
+      // Non-blocking
+    }
     this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', leads[index].id, `Updated status to ${status} for ${leads[index].leadNumber} (${leads[index].contactName})`);
     return leads[index];
   }
@@ -6948,6 +7354,38 @@ export class AppDatabase {
       previous ? JSON.stringify({ role: previous.role, permissions: previous.permissions }) : undefined,
       JSON.stringify({ role: updatedUser.role, permissions: updatedUser.permissions })
     );
+
+    // Live Admin Activity Stream notification
+    try {
+      const isPending = updatedUser.approvalStatus === 'PENDING';
+      this.recordAdminActivity({
+        category: 'USER',
+        activityType: isPending ? 'B2B_AGENT_REGISTRATION' : 'USER_PERMISSIONS_CHANGED',
+        actorName: actor?.name || updatedUser.name || 'System Admin',
+        actorType: actor?.role === 'ADMIN' ? 'ADMIN' : 'B2B_AGENT',
+        severity: isPending ? 'WARNING' : 'INFO',
+        actionRequired: isPending,
+        actionLabel: isPending ? 'Review Application' : 'Manage Account',
+        summary: `User Access: ${updatedUser.name} (${updatedUser.email}) - ${updatedUser.role} [${updatedUser.approvalStatus || 'APPROVED'}]`,
+        details: {
+          customerName: updatedUser.name,
+          agentName: updatedUser.name,
+          company: updatedUser.companyName || updatedUser.agencyName,
+          email: updatedUser.email,
+          previousValue: previous?.role,
+          newValue: updatedUser.role,
+          actionNeeded: isPending ? 'Verify trade credentials and configure pricing margins' : undefined
+        },
+        targetSection: 'ACCOUNT_MANAGEMENT',
+        targetSubTab: 'USERS_ACCESS',
+        recordId: updatedUser.id,
+        userId: updatedUser.id,
+        entityId: updatedUser.id,
+        entityType: 'User'
+      });
+    } catch {
+      // Non-blocking
+    }
   }
 
   public updateUserPermissions(
@@ -8475,6 +8913,36 @@ export class AppDatabase {
     }
     this.syncFirestoreDoc('calendar_tasks', saved.id, saved);
     this.setItem('calendar_tasks', tasks);
+
+    // Live Admin Activity Stream notification
+    try {
+      const isPending = saved.status === 'PENDING';
+      const isUrgent = saved.priority === 'URGENT';
+      this.recordAdminActivity({
+        category: 'OPERATIONS',
+        activityType: 'OPERATIONS_JOB_CREATED',
+        actorName: user?.name || 'Operations Dispatch',
+        actorType: user?.role === 'ADMIN' ? 'ADMIN' : user?.role === 'TEAM_MEMBER' ? 'TEAM_MEMBER' : 'SYSTEM',
+        severity: isUrgent ? 'CRITICAL' : saved.priority === 'HIGH' ? 'WARNING' : 'INFO',
+        actionRequired: isPending,
+        actionLabel: 'View Task',
+        summary: `Operational Task: ${saved.title} (${saved.priority}) - Due ${saved.dueAt || 'ASAP'}`,
+        details: {
+          taskTitle: saved.title,
+          priority: saved.priority,
+          dueDate: saved.dueAt,
+          actionNeeded: isPending ? 'Ensure SLA fulfillment for operations dispatch' : undefined
+        },
+        targetSection: 'NOTIFICATIONS_MANAGEMENT',
+        targetSubTab: 'TASKS',
+        recordId: saved.id,
+        entityId: saved.id,
+        entityType: 'CalendarTask'
+      });
+    } catch {
+      // Non-blocking
+    }
+
     return saved;
   }
 

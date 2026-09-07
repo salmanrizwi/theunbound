@@ -116,6 +116,7 @@ export const AdminActivityCenter: React.FC<AdminActivityCenterProps> = ({
       // Time filter
       if (timeFilter !== 'ALL') {
         const actTime = new Date(act.timestamp).getTime();
+        if (isNaN(actTime)) return true; // keep resilient if timestamp format varies
         if (timeFilter === 'TODAY' && actTime < startOfToday) return false;
         if (timeFilter === 'YESTERDAY' && (actTime < startOfYesterday || actTime >= startOfToday)) return false;
         if (timeFilter === 'WEEK' && actTime < startOfWeek) return false;
@@ -300,6 +301,18 @@ export const AdminActivityCenter: React.FC<AdminActivityCenterProps> = ({
 
           {/* Action Tools */}
           <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              onClick={() => {
+                db.syncAdminActivitiesFromEntities();
+                setDbTick(t => t + 1);
+              }}
+              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all flex items-center space-x-1.5 cursor-pointer shadow-2xs"
+              title="Resync latest activities from CRM Leads, Bookings, Quotes and Users"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+              <span>Refresh Stream</span>
+            </button>
+
             {moduleCounts.TOTAL.unread > 0 && (
               <button
                 onClick={handleMarkAllAsRead}
@@ -359,6 +372,10 @@ export const AdminActivityCenter: React.FC<AdminActivityCenterProps> = ({
                     setSelectedCategory('SYSTEM');
                   }
                   setTimeFilter('ALL');
+                  setSearchQuery('');
+                  setSelectedSeverity('ALL');
+                  setActionRequiredOnly(false);
+                  setUnreadOnly(false);
                 }}
                 className={`text-left p-3 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
                   isAlert 

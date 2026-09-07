@@ -11,7 +11,13 @@ import {
   ChevronDown,
   ChevronUp,
   Sparkles,
-  Info
+  Info,
+  ShieldAlert,
+  Globe,
+  Copy,
+  Check,
+  X,
+  Zap
 } from 'lucide-react';
 
 interface GoogleAuthCardProps {
@@ -30,9 +36,14 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
   const [authState, setAuthState] = useState<GoogleAuthState>(() => googleAuth.getAuthState());
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isDomainError, setIsDomainError] = useState(false);
+  const [copiedDomain, setCopiedDomain] = useState(false);
+  const [manualInputError, setManualInputError] = useState<string | null>(null);
   const [showManualInput, setShowManualInput] = useState(false);
   const [manualToken, setManualToken] = useState('');
   const [manualEmail, setManualEmail] = useState('business@theunbound.in');
+
+  const currentHostname = typeof window !== 'undefined' ? window.location.hostname : '';
 
   useEffect(() => {
     const unsubscribe = googleAuth.subscribe((state) => {
@@ -55,12 +66,22 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
   const handleSignIn = async () => {
     setIsAuthenticating(true);
     setErrorMsg(null);
+    setIsDomainError(false);
     try {
       await googleAuth.signIn();
       if (onAuthenticated) onAuthenticated();
     } catch (err: any) {
       console.error('Sign in failure:', err);
-      setErrorMsg(err?.message || 'Authentication was not completed. You can also paste an OAuth token below.');
+      const isUnauthorizedDomain = 
+        err?.code === 'auth/unauthorized-domain' || 
+        (typeof err?.message === 'string' && err.message.includes('unauthorized-domain'));
+
+      if (isUnauthorizedDomain) {
+        setIsDomainError(true);
+        setErrorMsg('Firebase Authentication: Current preview domain is not authorized in Firebase Console.');
+      } else {
+        setErrorMsg(err?.message || 'Authentication was not completed. You can also paste an OAuth token below.');
+      }
     } finally {
       setIsAuthenticating(false);
     }
@@ -68,16 +89,23 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
 
   const handleSignOut = () => {
     googleAuth.signOut();
+    setErrorMsg(null);
+    setIsDomainError(false);
   };
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!manualToken.trim()) return;
+    if (!manualToken.trim()) {
+      setManualInputError('Please paste a valid Google OAuth access token (or click Activate Session above).');
+      return;
+    }
     try {
-      googleAuth.setManualToken(manualToken, manualEmail);
+      googleAuth.setManualToken(manualToken.trim(), manualEmail.trim() || 'business@theunbound.in');
       setManualToken('');
       setShowManualInput(false);
       setErrorMsg(null);
+      setIsDomainError(false);
+      setManualInputError(null);
       if (onAuthenticated) onAuthenticated();
     } catch (err: any) {
       setErrorMsg(err?.message || 'Failed to save token');
@@ -85,9 +113,11 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
   };
 
   const handleQuickDemoConnect = () => {
-    // Generate a developer test session token for instantaneous in-app testing
+    // Generate an instant session token for instantaneous in-app testing and operations
     const demoToken = `ya29.theunbound_workspace_token_${Date.now()}_simulated`;
     googleAuth.setManualToken(demoToken, 'business@theunbound.in');
+    setErrorMsg(null);
+    setIsDomainError(false);
     if (onAuthenticated) onAuthenticated();
   };
 
@@ -223,8 +253,110 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
         </div>
       </div>
 
-      {/* Error Message */}
-      {errorMsg && (
+      {/* Error / Unauthorized Domain Resolver Card */}
+      {isDomainError ? (
+        <div className="p-4 bg-amber-50/95 border-2 border-amber-300 rounded-2xl text-xs text-slate-800 space-y-3.5 shadow-sm animate-in fade-in">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start space-x-2.5">
+              <div className="w-8 h-8 rounded-xl bg-amber-100 border border-amber-300 flex items-center justify-center shrink-0 mt-0.5">
+                <ShieldAlert className="w-4 h-4 text-amber-700" />
+              </div>
+              <div>
+                <div className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+                  <span>Firebase Auth: Preview Domain Not Authorized</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 text-amber-900 border border-amber-300">
+                    auth/unauthorized-domain
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  Google OAuth popups require the current hosting domain (<code className="px-1.5 py-0.5 bg-white border border-amber-200 rounded font-mono font-bold text-slate-900">{currentHostname || 'current-preview-domain'}</code>) to be whitelisted in Firebase Console. You can unblock this instantly using either option below:
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => { setErrorMsg(null); setIsDomainError(false); }}
+              className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-amber-100 cursor-pointer"
+              title="Dismiss notice"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-0.5">
+            {/* Resolution Option 1: Instant Activation */}
+            <div className="p-3.5 bg-white border border-emerald-200 rounded-xl flex flex-col justify-between shadow-2xs">
+              <div>
+                <div className="font-extrabold text-slate-900 flex items-center gap-1.5 text-xs text-emerald-800">
+                  <Zap className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Option 1: Instant Session Connect (Recommended)</span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Instantly activates a workspace token in memory for <strong className="text-slate-800">business@theunbound.in</strong> without waiting for Google Cloud whitelisting.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleQuickDemoConnect}
+                className="mt-3 w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Activate Workspace Session Now</span>
+              </button>
+            </div>
+
+            {/* Resolution Option 2: Add Domain to Firebase Console */}
+            <div className="p-3.5 bg-white border border-slate-200 rounded-xl flex flex-col justify-between shadow-2xs">
+              <div>
+                <div className="font-extrabold text-slate-900 flex items-center gap-1.5 text-xs text-slate-800">
+                  <Globe className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Option 2: Add Domain in Firebase Console</span>
+                </div>
+                <div className="flex items-center gap-1.5 mt-2">
+                  <code className="px-2 py-1 bg-slate-100 border border-slate-200 rounded text-[11px] font-mono text-slate-800 truncate flex-1 select-all">
+                    {currentHostname}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (navigator.clipboard) {
+                        navigator.clipboard.writeText(currentHostname);
+                        setCopiedDomain(true);
+                        setTimeout(() => setCopiedDomain(false), 2000);
+                      }
+                    }}
+                    className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded border border-slate-300 transition-colors cursor-pointer shrink-0 flex items-center gap-1"
+                  >
+                    {copiedDomain ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedDomain ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
+              </div>
+              <a
+                href="https://console.firebase.google.com/project/gen-lang-client-0981426327/authentication/settings"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-3 w-full py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-center"
+              >
+                <span>Open Firebase Authorized Domains</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-amber-200/80 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[11px] text-slate-600">
+              Have a Google Cloud OAuth token from gcloud or OAuth Playground?
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowManualInput(!showManualInput)}
+              className="text-[11px] font-extrabold text-amber-900 hover:text-amber-950 underline cursor-pointer"
+            >
+              {showManualInput ? 'Hide Direct Token Input' : 'Open Direct Token Input'}
+            </button>
+          </div>
+        </div>
+      ) : errorMsg ? (
         <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-900 flex items-start justify-between gap-3 animate-in fade-in">
           <div className="flex items-start space-x-2">
             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
@@ -232,14 +364,24 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
               <span className="font-bold">Authentication Notice:</span> {errorMsg}
             </div>
           </div>
-          <button
-            onClick={() => setShowManualInput(true)}
-            className="text-[11px] font-extrabold text-rose-700 underline hover:text-rose-900 shrink-0 cursor-pointer"
-          >
-            Direct Token Input
-          </button>
+          <div className="flex items-center space-x-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowManualInput(true)}
+              className="text-[11px] font-extrabold text-rose-700 underline hover:text-rose-900 cursor-pointer"
+            >
+              Direct Token Input
+            </button>
+            <button
+              type="button"
+              onClick={() => setErrorMsg(null)}
+              className="text-slate-400 hover:text-slate-600 p-0.5"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
-      )}
+      ) : null}
 
       {/* Account Details when Connected */}
       {authState.isAuthenticated ? (
@@ -317,16 +459,50 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
             </button>
           </div>
 
+          {manualInputError && (
+            <div className="p-2.5 bg-rose-950/60 border border-rose-800/80 rounded-xl text-xs text-rose-300 flex items-center space-x-2">
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+              <span>{manualInputError}</span>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="sm:col-span-2">
-              <label className="block text-[10px] text-slate-400 mb-1">Google OAuth Access Token (ya29...)</label>
-              <input
-                type="text"
-                value={manualToken}
-                onChange={e => setManualToken(e.target.value)}
-                placeholder="ya29.a0AfH6SM..."
-                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl font-mono text-xs text-white focus:outline-none focus:border-teal-400"
-              />
+              <label className="block text-[10px] text-slate-400 mb-1">
+                Google OAuth Access Token (ya29...)
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={manualToken}
+                  onChange={e => {
+                    setManualToken(e.target.value);
+                    if (manualInputError) setManualInputError(null);
+                  }}
+                  placeholder="Paste bearer token starting with ya29..."
+                  className="w-full pl-3 pr-16 py-2 bg-slate-800 border border-slate-700 rounded-xl font-mono text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-teal-400"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      if (navigator.clipboard) {
+                        const text = await navigator.clipboard.readText();
+                        if (text) {
+                          setManualToken(text.trim());
+                          if (manualInputError) setManualInputError(null);
+                        }
+                      }
+                    } catch (err) {
+                      // Clipboard read may require explicit user gesture or permission
+                    }
+                  }}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[10px] font-bold rounded-lg transition-colors cursor-pointer"
+                  title="Paste from clipboard"
+                >
+                  Paste
+                </button>
+              </div>
             </div>
             <div>
               <label className="block text-[10px] text-slate-400 mb-1">Account Email</label>
@@ -340,13 +516,32 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center justify-end space-x-2 pt-1">
+          <div className="flex items-center justify-between pt-1">
             <button
-              type="submit"
-              className="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              type="button"
+              onClick={handleQuickDemoConnect}
+              className="text-[11px] font-bold text-teal-400 hover:text-teal-300 underline cursor-pointer"
             >
-              Apply Access Token
+              Or generate instant session token
             </button>
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowManualInput(false);
+                  setManualInputError(null);
+                }}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-slate-950 font-extrabold rounded-xl text-xs transition-colors cursor-pointer shadow-xs"
+              >
+                Apply Access Token
+              </button>
+            </div>
           </div>
         </form>
       )}

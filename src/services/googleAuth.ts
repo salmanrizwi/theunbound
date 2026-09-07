@@ -95,6 +95,20 @@ class GoogleAuthService {
       }
     } catch (error: any) {
       console.error('Google OAuth sign-in failed:', error);
+      const isUnauthorizedDomain = 
+        error?.code === 'auth/unauthorized-domain' || 
+        (typeof error?.message === 'string' && error.message.includes('auth/unauthorized-domain'));
+
+      if (isUnauthorizedDomain) {
+        const domain = typeof window !== 'undefined' ? window.location.hostname : 'current domain';
+        const enhancedError: any = new Error(
+          `Firebase: Error (auth/unauthorized-domain). Preview domain "${domain}" is not authorized for OAuth in Firebase project "gen-lang-client-0981426327".`
+        );
+        enhancedError.code = 'auth/unauthorized-domain';
+        enhancedError.domain = domain;
+        enhancedError.originalError = error;
+        throw enhancedError;
+      }
       throw error;
     }
   }
