@@ -102,7 +102,8 @@ import {
   GlobalSEODefaults,
   EntitySEO,
   SEOAuditItem,
-  SEOEntityType
+  SEOEntityType,
+  MasterGoogleSheetConfig
 } from '../types';
 import {
   DEFAULT_GLOBAL_SEO_DEFAULTS,
@@ -121,14 +122,11 @@ import { INITIAL_CITY_HUBS } from '../data/initialCityHubs';
 import { INITIAL_FAQS } from '../data/initialFAQs';
 import { INITIAL_GALLERY } from '../data/initialGallery';
 import { INITIAL_HOMEPAGE_CONFIG } from '../data/initialHomepage';
-import { INITIAL_LEADS } from '../data/initialLeads';
-import { INITIAL_BOOKINGS } from '../data/initialBookings';
 import { INITIAL_CAMPAIGNS } from '../data/initialCampaigns';
 import { INITIAL_ROSTER_RESOURCES } from '../data/initialRoster';
 import { INITIAL_VISAS } from '../data/initialVisas';
 import { INITIAL_FOOTER_CONFIG } from '../data/initialFooter';
 import { INITIAL_B2B_PACKAGES } from '../data/initialPackages';
-import { INITIAL_B2B_CUSTOMERS, INITIAL_B2B_TASKS } from '../data/initialAgentCRM';
 import { EmailNotificationService } from './emailNotificationService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { googleBusinessService } from './googleBusinessService';
@@ -489,6 +487,21 @@ export class AppDatabase {
   private quotationSaveListeners: QuotationSaveListener[] = [];
   private isFirestoreInitialized: boolean = false;
   private notifyTimer: any = null;
+  private actionCenterHooks?: {
+    onBookingStatusChanged?: (bookingId: string, bookingRef: string, status: string, user: User | null) => void;
+    onPaymentVerified?: (bookingId: string, bookingRef: string, paymentId: string, user: User | null) => void;
+    onQuoteStatusChanged?: (quoteId: string, quoteNumber: string, status: string, user: User | null) => void;
+    onLeadStatusChanged?: (leadId: string, leadNumber: string, status: string, user: User | null) => void;
+  };
+
+  public registerActionCenterHooks(hooks: {
+    onBookingStatusChanged?: (bookingId: string, bookingRef: string, status: string, user: User | null) => void;
+    onPaymentVerified?: (bookingId: string, bookingRef: string, paymentId: string, user: User | null) => void;
+    onQuoteStatusChanged?: (quoteId: string, quoteNumber: string, status: string, user: User | null) => void;
+    onLeadStatusChanged?: (leadId: string, leadNumber: string, status: string, user: User | null) => void;
+  }) {
+    this.actionCenterHooks = hooks;
+  }
 
   private constructor() {
     this.initDefaultData();
@@ -1232,6 +1245,78 @@ export class AppDatabase {
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'seo_settings')) {
       this.setItem('seo_settings', DEFAULT_GLOBAL_SEO_DEFAULTS);
+    }
+
+    // DATA INTEGRITY SANITATION:
+    // Ensure zero mock/demo users, bookings, leads, or quotes linger in localStorage
+    try {
+      // 1. Sanitize system_users
+      const storedUsers = this.getItem<User[]>('system_users', []);
+      const mockUserIds = new Set([
+        'usr-buyer-01', 'usr-buyer-02', 'usr-buyer-03', 'usr-buyer-04', 'usr-buyer-05',
+        'usr-agent-01', 'usr-agent-02', 'usr-agent-03', 'usr-agent-04', 'usr-agent-05',
+        'usr-agent-pending-02'
+      ]);
+      const mockNames = new Set([
+        'James Harrison', 'Elena Rostova', 'Aarav Sharma', 'Charlotte Dubois',
+        'David Sterling', 'Hiroshi Tanaka', 'Rajesh Malhotra', 'Sarah Jenkins',
+        'Matteo Rossi', 'Emily Watson', 'Aiden Dupont', 'Oliver Queen', 'Chloe Sullivan'
+      ]);
+      const hasMockUsers = storedUsers.some(u => mockUserIds.has(u.id) || mockNames.has(u.name));
+      if (hasMockUsers) {
+        const cleanedUsers = storedUsers.filter(u => !mockUserIds.has(u.id) && !mockNames.has(u.name));
+        this.setItem('system_users', cleanedUsers);
+      }
+
+      // 2. Sanitize bookings
+      const storedBookings = this.getItem<Booking[]>('bookings', []);
+      const hasMockBookings = storedBookings.some(b => 
+        b.id?.startsWith('booking-2026-') || 
+        b.bookingReference?.startsWith('TUB-BK-2026-') ||
+        b.customer?.leadTravelerName === 'Rajesh Malhotra' ||
+        b.customer?.leadTravelerName === 'Lord Arthur Wellesley' ||
+        b.customer?.leadTravelerName === 'Hiroshi Tanaka'
+      );
+      if (hasMockBookings) {
+        const cleanedBookings = storedBookings.filter(b => 
+          !b.id?.startsWith('booking-2026-') && 
+          !b.bookingReference?.startsWith('TUB-BK-2026-') &&
+          b.customer?.leadTravelerName !== 'Rajesh Malhotra' &&
+          b.customer?.leadTravelerName !== 'Lord Arthur Wellesley' &&
+          b.customer?.leadTravelerName !== 'Hiroshi Tanaka'
+        );
+        this.setItem('bookings', cleanedBookings);
+      }
+
+      // 3. Sanitize leads
+      const storedLeads = this.getItem<TravelLead[]>('leads', []);
+      const hasMockLeads = storedLeads.some(l =>
+        l.id === 'lead-01' || l.id === 'lead-02' || l.id === 'lead-03' || l.id === 'lead-2026-001' ||
+        l.contactName === 'Alistair Montgomery' || l.contactName === 'Elena Rostova' || l.contactName === 'Siddharth & Priya Mehta'
+      );
+      if (hasMockLeads) {
+        const cleanedLeads = storedLeads.filter(l =>
+          l.id !== 'lead-01' && l.id !== 'lead-02' && l.id !== 'lead-03' && l.id !== 'lead-2026-001' &&
+          l.contactName !== 'Alistair Montgomery' && l.contactName !== 'Elena Rostova' && l.contactName !== 'Siddharth & Priya Mehta'
+        );
+        this.setItem('leads', cleanedLeads);
+      }
+
+      // 4. Sanitize saved_quotes
+      const storedQuotes = this.getItem<Quotation[]>('saved_quotes', []);
+      const hasMockQuotes = storedQuotes.some(q => 
+        q.id === 'quote-sample-01' || q.id === 'quote-sample-02' ||
+        q.quoteNumber === 'UBQ-2026-9104' || q.quoteNumber === 'TUB-QT-2026-4421'
+      );
+      if (hasMockQuotes) {
+        const cleanedQuotes = storedQuotes.filter(q => 
+          q.id !== 'quote-sample-01' && q.id !== 'quote-sample-02' &&
+          q.quoteNumber !== 'UBQ-2026-9104' && q.quoteNumber !== 'TUB-QT-2026-4421'
+        );
+        this.setItem('saved_quotes', cleanedQuotes);
+      }
+    } catch (e) {
+      console.debug('Data integrity sanitation error:', e);
     }
 
     // AUTOMATIC MIGRATION: 
@@ -4576,6 +4661,15 @@ export class AppDatabase {
 
     this.setItem('saved_quotes', quotes);
     this.syncFirestoreDoc('quotations', quoteId, quotes[idx]);
+
+    if (this.actionCenterHooks?.onQuoteStatusChanged) {
+      try {
+        this.actionCenterHooks.onQuoteStatusChanged(quoteId, quotes[idx].quoteNumber, status, user);
+      } catch (err) {
+        console.warn('Action center quote hook error:', err);
+      }
+    }
+
     return quotes[idx];
   }
 
@@ -5288,6 +5382,14 @@ export class AppDatabase {
       `Updated booking ${b.bookingReference} status: ${previousStatus} → ${status}. Reason: ${reason || 'Operational update'}`
     );
 
+    if (this.actionCenterHooks?.onBookingStatusChanged) {
+      try {
+        this.actionCenterHooks.onBookingStatusChanged(b.id, b.bookingReference, status, user);
+      } catch (err) {
+        console.warn('Action center hook error:', err);
+      }
+    }
+
     return b;
   }
 
@@ -5593,6 +5695,14 @@ export class AppDatabase {
     });
 
     this.saveBooking(b, user);
+
+    if (status === 'VERIFIED' && this.actionCenterHooks?.onPaymentVerified) {
+      try {
+        this.actionCenterHooks.onPaymentVerified(b.id, b.bookingReference, paymentId, user);
+      } catch (err) {
+        console.warn('Action center payment hook error:', err);
+      }
+    }
   }
 
   // ----------------------------------------------------
@@ -6228,6 +6338,15 @@ export class AppDatabase {
       // Non-blocking
     }
     this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', leads[index].id, `Updated status to ${status} for ${leads[index].leadNumber} (${leads[index].contactName})`);
+
+    if (this.actionCenterHooks?.onLeadStatusChanged) {
+      try {
+        this.actionCenterHooks.onLeadStatusChanged(leads[index].id, leads[index].leadNumber, status, user);
+      } catch (err) {
+        console.warn('Action center lead hook error:', err);
+      }
+    }
+
     return leads[index];
   }
 
@@ -6952,279 +7071,6 @@ export class AppDatabase {
   // ==========================================
   public getUsers(): User[] {
     const defaultUsers: User[] = [
-      {
-        id: 'usr-buyer-01',
-        name: 'James Harrison',
-        email: 'james.buyer@horizonventures.com',
-        role: 'BUYER',
-        category: 'EXTERNAL',
-        agencyName: 'Horizon Private Client Group',
-        country: 'United States',
-        approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 12,
-        contactNumber: '+1 415 555 2671',
-        permissions: {
-          canAccessPricingCalculator: true,
-          canCreateBookings: true,
-          canExportPDF: true,
-          canViewWholesaleNetRates: false,
-          canAccessCMS: false,
-          canAccessRoster: false,
-          canAccessFinancials: false,
-          canManageUsers: false
-        },
-        createdAt: '2026-02-01'
-      },
-      {
-        id: 'usr-agent-01',
-        name: 'Elena Rostova',
-        email: 'elena@luxurydiscovery.com',
-        role: 'B2B_AGENT',
-        category: 'EXTERNAL',
-        agencyName: 'Luxury Discovery Travel Partners',
-        country: 'United Kingdom',
-        approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
-        contactNumber: '+44 20 7946 0912',
-        permissions: {
-          b2bQuoteBuilderAccess: true,
-          canAccessPricingCalculator: true,
-          canCreateBookings: true,
-          canExportPDF: true,
-          canViewWholesaleNetRates: true,
-          canAccessCMS: false,
-          canAccessRoster: false,
-          canAccessFinancials: false,
-          canManageUsers: false
-        },
-        createdAt: '2025-11-12'
-      },
-      {
-        id: 'usr-agent-02',
-        name: 'Aarav Sharma',
-        email: 'aarav.sharma@apexluxury.in',
-        role: 'B2B_AGENT',
-        category: 'EXTERNAL',
-        agencyName: 'Apex Luxury Travels India',
-        country: 'India',
-        approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 12,
-        contactNumber: '+91 98200 45678',
-        permissions: {
-          b2bQuoteBuilderAccess: true,
-          canAccessPricingCalculator: true,
-          canCreateBookings: true,
-          canExportPDF: true,
-          canViewWholesaleNetRates: true,
-          canAccessCMS: false,
-          canAccessRoster: false,
-          canAccessFinancials: false,
-          canManageUsers: false
-        },
-        createdAt: '2026-01-10'
-      },
-      {
-        id: 'usr-agent-03',
-        name: 'Charlotte Dubois',
-        email: 'charlotte@monacoprestige.mc',
-        role: 'B2B_AGENT',
-        category: 'EXTERNAL',
-        agencyName: 'Monaco Prestige Voyages',
-        country: 'Monaco',
-        approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
-        contactNumber: '+377 98 97 00 11',
-        permissions: {
-          b2bQuoteBuilderAccess: true,
-          canAccessPricingCalculator: true,
-          canCreateBookings: true,
-          canExportPDF: true,
-          canViewWholesaleNetRates: true,
-          canAccessCMS: false,
-          canAccessRoster: false,
-          canAccessFinancials: false,
-          canManageUsers: false
-        },
-        createdAt: '2026-02-14'
-      },
-      {
-        id: 'usr-agent-04',
-        name: 'David Sterling',
-        email: 'david@sterlingbespoke.com',
-        role: 'B2B_AGENT',
-        category: 'EXTERNAL',
-        agencyName: 'Sterling Bespoke Journeys',
-        country: 'United States',
-        approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
-        contactNumber: '+1 212 555 8934',
-        permissions: {
-          b2bQuoteBuilderAccess: true,
-          canAccessPricingCalculator: true,
-          canCreateBookings: true,
-          canExportPDF: true,
-          canViewWholesaleNetRates: true,
-          canAccessCMS: false,
-          canAccessRoster: false,
-          canAccessFinancials: false,
-          canManageUsers: false
-        },
-        createdAt: '2026-03-05'
-      },
-      {
-        id: 'usr-agent-05',
-        name: 'Hiroshi Tanaka',
-        email: 'tanaka@nipponconcierge.jp',
-        role: 'B2B_AGENT',
-        category: 'EXTERNAL',
-        agencyName: 'Nippon Concierge Travel',
-        country: 'Japan',
-        approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
-        contactNumber: '+81 3 5555 0192',
-        permissions: {
-          b2bQuoteBuilderAccess: true,
-          canAccessPricingCalculator: true,
-          canCreateBookings: true,
-          canExportPDF: true,
-          canViewWholesaleNetRates: true,
-          canAccessCMS: false,
-          canAccessRoster: false,
-          canAccessFinancials: false,
-          canManageUsers: false
-        },
-        createdAt: '2026-04-18'
-      },
-      {
-        id: 'usr-buyer-02',
-        name: 'Rajesh Malhotra',
-        email: 'rajesh.malhotra@malhotragroup.in',
-        role: 'BUYER',
-        category: 'EXTERNAL',
-        agencyName: 'Malhotra Family Leisure',
-        country: 'India',
-        approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
-        contactNumber: '+91 98200 12345',
-        permissions: {
-          buyerQuoteBuilderAccess: true,
-          canAccessPricingCalculator: true,
-          canCreateBookings: true,
-          canExportPDF: true,
-          canViewWholesaleNetRates: false,
-          canAccessCMS: false,
-          canAccessRoster: false,
-          canAccessFinancials: false,
-          canManageUsers: false
-        },
-        createdAt: '2026-03-12'
-      },
-      {
-        id: 'usr-buyer-03',
-        name: 'Sarah Jenkins',
-        email: 'sarah.jenkins@sydneywealth.com.au',
-        role: 'BUYER',
-        category: 'EXTERNAL',
-        agencyName: 'Jenkins Family Voyages',
-        country: 'Australia',
-        approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
-        contactNumber: '+61 2 9876 5432',
-        permissions: {
-          buyerQuoteBuilderAccess: true,
-          canAccessPricingCalculator: true,
-          canCreateBookings: true,
-          canExportPDF: true,
-          canViewWholesaleNetRates: false,
-          canAccessCMS: false,
-          canAccessRoster: false,
-          canAccessFinancials: false,
-          canManageUsers: false
-        },
-        createdAt: '2026-04-02'
-      },
-      {
-        id: 'usr-buyer-04',
-        name: 'Matteo Rossi',
-        email: 'matteo.rossi@milanodesign.it',
-        role: 'BUYER',
-        category: 'EXTERNAL',
-        agencyName: 'Rossi Private Client',
-        country: 'Italy',
-        approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
-        contactNumber: '+39 02 555 4321',
-        permissions: {
-          buyerQuoteBuilderAccess: true,
-          canAccessPricingCalculator: true,
-          canCreateBookings: true,
-          canExportPDF: true,
-          canViewWholesaleNetRates: false,
-          canAccessCMS: false,
-          canAccessRoster: false,
-          canAccessFinancials: false,
-          canManageUsers: false
-        },
-        createdAt: '2026-05-19'
-      },
-      {
-        id: 'usr-buyer-05',
-        name: 'Emily Watson',
-        email: 'emily.watson@londonprivate.co.uk',
-        role: 'BUYER',
-        category: 'EXTERNAL',
-        agencyName: 'Watson Leisure Escapes',
-        country: 'United Kingdom',
-        approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
-        contactNumber: '+44 20 8901 2345',
-        permissions: {
-          buyerQuoteBuilderAccess: true,
-          canAccessPricingCalculator: true,
-          canCreateBookings: true,
-          canExportPDF: true,
-          canViewWholesaleNetRates: false,
-          canAccessCMS: false,
-          canAccessRoster: false,
-          canAccessFinancials: false,
-          canManageUsers: false
-        },
-        createdAt: '2026-06-25'
-      },
-      {
-        id: 'usr-agent-pending-02',
-        name: 'Aiden Dupont',
-        email: 'aiden@alpsluxurytours.fr',
-        role: 'B2B_AGENT',
-        category: 'EXTERNAL',
-        agencyName: 'Alps Luxury Escapes SARL',
-        country: 'France',
-        approvalStatus: 'PENDING',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
-        contactNumber: '+33 6 12 34 56 78',
-        permissions: {
-          canAccessPricingCalculator: false,
-          canCreateBookings: false,
-          canExportPDF: false,
-          canViewWholesaleNetRates: false,
-          canAccessCMS: false,
-          canAccessRoster: false,
-          canAccessFinancials: false,
-          canManageUsers: false
-        },
-        createdAt: '2026-08-20'
-      },
       {
         id: 'usr-admin-business',
         name: 'TheUnbound Executive Admin',
@@ -8892,6 +8738,80 @@ export class AppDatabase {
     return this.getItem<CalendarTask[]>('calendar_tasks', []);
   }
 
+  public async saveCalendarTaskAsync(task: CalendarTask, user?: User | null): Promise<CalendarTask> {
+    if (!task || !task.id) {
+      throw new Error('Valid task ID is required for persistence');
+    }
+
+    const tasks = this.getCalendarTasks();
+    const index = tasks.findIndex(t => t.id === task.id || (t.taskId && t.taskId === task.id));
+    const now = new Date().toISOString();
+    let saved: CalendarTask;
+
+    if (index >= 0) {
+      saved = { ...task, updatedAt: now };
+    } else {
+      saved = {
+        ...task,
+        id: task.id || `task-${Date.now()}`,
+        createdAt: task.createdAt || now,
+        updatedAt: now
+      };
+    }
+
+    // Update local list and notify subscribers immediately
+    if (index >= 0) {
+      tasks[index] = saved;
+      this.logAudit(user || null, 'SETTINGS_UPDATED', 'CalendarTask', saved.id, `Updated task: ${saved.title} (Status: ${saved.status})`);
+    } else {
+      tasks.unshift(saved);
+      this.logAudit(user || null, 'SETTINGS_UPDATED', 'CalendarTask', saved.id, `Created task: ${saved.title} (Assigned: ${saved.assignedToEmail})`);
+    }
+    this.setItem('calendar_tasks', tasks);
+
+    // Remote persistence to Firestore
+    try {
+      const cleanData = cleanForFirestore(saved);
+      await setDoc(doc(firestoreDb, 'calendar_tasks', saved.id), cleanData, { merge: true });
+    } catch (firestoreErr: any) {
+      console.warn(`[DB] Firestore saveCalendarTaskAsync remote sync note for ${saved.id}:`, firestoreErr);
+      // Fallback: sync via background queue
+      this.syncFirestoreDoc('calendar_tasks', saved.id, saved);
+    }
+
+    // Live Admin Activity Stream notification
+    try {
+      const isPending = saved.status === 'PENDING';
+      const isUrgent = saved.priority === 'URGENT';
+      this.recordAdminActivity({
+        category: 'OPERATIONS',
+        activityType: saved.status === 'COMPLETED' ? 'OPERATIONS_JOB_UPDATED' : 'OPERATIONS_JOB_CREATED',
+        actorName: user?.name || saved.completedBy || 'Operations Dispatch',
+        actorType: user?.role === 'ADMIN' ? 'ADMIN' : user?.role === 'TEAM_MEMBER' ? 'TEAM_MEMBER' : 'SYSTEM',
+        severity: isUrgent ? 'CRITICAL' : saved.priority === 'HIGH' ? 'WARNING' : 'INFO',
+        actionRequired: isPending,
+        actionLabel: 'View Task',
+        summary: `Operational Task: ${saved.title} (${saved.status})`,
+        details: {
+          taskTitle: saved.title,
+          status: saved.status,
+          priority: saved.priority,
+          dueDate: saved.dueAt,
+          actionNeeded: isPending ? 'Ensure SLA fulfillment for operations dispatch' : undefined
+        },
+        targetSection: 'NOTIFICATIONS_MANAGEMENT',
+        targetSubTab: 'TASKS',
+        recordId: saved.id,
+        entityId: saved.id,
+        entityType: 'CalendarTask'
+      });
+    } catch {
+      // Non-blocking
+    }
+
+    return saved;
+  }
+
   public saveCalendarTask(task: CalendarTask, user?: User | null): CalendarTask {
     const tasks = this.getCalendarTasks();
     const index = tasks.findIndex(t => t.id === task.id);
@@ -9461,6 +9381,44 @@ export class AppDatabase {
     }
     this.setItem('package_items', list, false);
     this.syncFirestoreDoc('package_items', item.id, item);
+  }
+
+  // Master Google Sheet Authoritative Configuration
+  public getMasterGoogleSheetConfig(): MasterGoogleSheetConfig {
+    const defaultConfig: MasterGoogleSheetConfig = {
+      masterSpreadsheetId: '',
+      spreadsheetName: 'TheUnbound Master Inventory & Tariff Sheet',
+      connectionStatus: 'UNCHECKED',
+      authStatus: 'NOT_AUTHENTICATED',
+      syncStatus: 'IDLE',
+      autoSyncEnabled: false,
+      syncSchedule: 'MANUAL',
+      syncKey: 'unbound_master_sync_key'
+    };
+    return this.getItem<MasterGoogleSheetConfig>('master_google_sheet_config', defaultConfig);
+  }
+
+  public saveMasterGoogleSheetConfig(
+    partial: Partial<MasterGoogleSheetConfig>,
+    actor?: User | null
+  ): MasterGoogleSheetConfig {
+    const current = this.getMasterGoogleSheetConfig();
+    const updated: MasterGoogleSheetConfig = {
+      ...current,
+      ...partial,
+      updatedAt: new Date().toISOString(),
+      updatedBy: actor?.name || actor?.email || 'Admin'
+    };
+    this.setItem('master_google_sheet_config', updated, false);
+    this.syncFirestoreDoc('system_settings', 'master_google_sheet_config', updated);
+    this.logAudit(
+      actor || null,
+      'MASTER_SHEETS_CONFIG_UPDATED' as any,
+      'GoogleSheets',
+      updated.masterSpreadsheetId || 'UNSET',
+      `Updated Master Google Sheet configuration: Spreadsheet ID ${updated.masterSpreadsheetId || 'unconfigured'}`
+    );
+    return updated;
   }
 
   // Multi-Tab Sync Reports History

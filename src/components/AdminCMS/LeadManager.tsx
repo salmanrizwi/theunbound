@@ -31,8 +31,18 @@ import {
 } from 'lucide-react';
 import { LeadDetailDrawer } from './LeadDetailDrawer';
 import { LeadEditModal } from './LeadEditModal';
+import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
+import { CalendarTask } from '../../types';
 
-export const LeadManager: React.FC = () => {
+export interface LeadManagerProps {
+  initialLeadId?: string | null;
+  onOpenActionCenter?: (task: CalendarTask) => void;
+}
+
+export const LeadManager: React.FC<LeadManagerProps> = ({
+  initialLeadId,
+  onOpenActionCenter
+}) => {
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
 
@@ -53,6 +63,22 @@ export const LeadManager: React.FC = () => {
       setLeads(db.getLeadsAuthorized(user));
     });
   }, [user]);
+
+  useEffect(() => {
+    if (initialLeadId && leads.length > 0) {
+      const clean = initialLeadId.replace(/^#/, '').trim().toLowerCase();
+      const target = leads.find(l => 
+        l.id === initialLeadId || 
+        l.leadNumber === initialLeadId ||
+        l.id.toLowerCase() === clean ||
+        l.leadNumber?.toLowerCase() === clean ||
+        l.leadNumber?.replace(/^#/, '').trim().toLowerCase() === clean
+      );
+      if (target) {
+        setSelectedLead(target);
+      }
+    }
+  }, [initialLeadId, leads]);
 
   // Lead metrics calculations
   const totalLeads = leads.length;
@@ -362,9 +388,19 @@ export const LeadManager: React.FC = () => {
                       {/* Lead # and Status */}
                       <td className="py-3.5 px-4">
                         <div className="flex flex-col gap-1">
-                          <span className="font-mono text-xs font-bold text-slate-900">
-                            {lead.leadNumber}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono text-xs font-bold text-slate-900">
+                              {lead.leadNumber}
+                            </span>
+                            <RecordReminderIndicator
+                              entityType="LEAD"
+                              entityId={lead.id}
+                              entityReference={lead.leadNumber}
+                              currentUser={user}
+                              variant="badge"
+                              onOpenActionCenter={onOpenActionCenter}
+                            />
+                          </div>
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border w-fit ${getStatusColor(lead.status)}`}>
                             {lead.status ? lead.status.replace(/_/g, ' ') : 'NEW'}
                           </span>
@@ -496,9 +532,19 @@ export const LeadManager: React.FC = () => {
             >
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded-md">
-                    {lead.leadNumber}
-                  </span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded-md">
+                      {lead.leadNumber}
+                    </span>
+                    <RecordReminderIndicator
+                      entityType="LEAD"
+                      entityId={lead.id}
+                      entityReference={lead.leadNumber}
+                      currentUser={user}
+                      variant="badge"
+                      onOpenActionCenter={onOpenActionCenter}
+                    />
+                  </div>
                   <div className="flex items-center gap-1.5">
                     {getPriorityBadge(lead.priority)}
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${getStatusColor(lead.status)}`}>

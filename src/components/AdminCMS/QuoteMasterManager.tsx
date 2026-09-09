@@ -40,15 +40,21 @@ import {
   MessageCircle
 } from 'lucide-react';
 import { ShareWhatsAppModal } from '../B2BAgentPortal/ShareWhatsAppModal';
+import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
+import { CalendarTask } from '../../types';
 
 interface QuoteMasterManagerProps {
+  initialQuoteId?: string | null;
   onLoadQuote?: (quote: Quotation) => void;
   onNavigateToLeads?: (leadId?: string) => void;
+  onOpenActionCenter?: (task: CalendarTask) => void;
 }
 
 export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({ 
+  initialQuoteId,
   onLoadQuote,
-  onNavigateToLeads 
+  onNavigateToLeads,
+  onOpenActionCenter
 }) => {
   const db = AppDatabase.getInstance();
   const { user, role } = useAuth();
@@ -85,6 +91,22 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
       setAllLeads(db.getLeadsAuthorized(user));
     });
   }, [db, user]);
+
+  useEffect(() => {
+    if (initialQuoteId && quotes.length > 0) {
+      const clean = initialQuoteId.replace(/^#/, '').trim().toLowerCase();
+      const target = quotes.find(q => 
+        q.id === initialQuoteId || 
+        q.quoteNumber === initialQuoteId ||
+        q.id.toLowerCase() === clean ||
+        q.quoteNumber?.toLowerCase() === clean ||
+        q.quoteNumber?.replace(/^#/, '').trim().toLowerCase() === clean
+      );
+      if (target) {
+        setViewingQuote(target);
+      }
+    }
+  }, [initialQuoteId, quotes]);
 
   const refresh = () => {
     setQuotes(db.getQuotesForUser(user));
@@ -795,6 +817,14 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                         <span className="font-mono text-[11px] bg-slate-900 text-[#00E5C0] px-2 py-0.5 rounded-md font-bold tracking-tight shadow-2xs">
                           {q.quoteNumber}
                         </span>
+                        <RecordReminderIndicator
+                          entityType="QUOTE"
+                          entityId={q.id}
+                          entityReference={q.quoteNumber}
+                          currentUser={user}
+                          variant="badge"
+                          onOpenActionCenter={onOpenActionCenter}
+                        />
                         {q.version && (
                           <span className="text-[10px] font-bold bg-[#00C6A6]/20 text-[#008972] px-1.5 py-0.5 rounded">
                             v{q.version}
@@ -1056,6 +1086,14 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                   <span className="font-mono text-xs bg-slate-900 text-[#00E5C0] px-2 py-0.5 rounded font-bold">
                     {viewingQuote.quoteNumber}
                   </span>
+                  <RecordReminderIndicator
+                    entityType="QUOTE"
+                    entityId={viewingQuote.id}
+                    entityReference={viewingQuote.quoteNumber}
+                    currentUser={user}
+                    variant="badge"
+                    onOpenActionCenter={onOpenActionCenter}
+                  />
                   {viewingQuote.version && (
                     <span className="text-[10px] font-bold bg-[#00C6A6]/20 text-[#008972] px-2 py-0.5 rounded">
                       v{viewingQuote.version}

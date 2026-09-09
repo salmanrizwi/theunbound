@@ -24,7 +24,6 @@ import {
 } from 'lucide-react';
 import { Product, CurrencyCode, QuoteItem, Destination, VisaProduct } from '../../types';
 import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
-import { INITIAL_VISAS } from '../../data/initialVisas';
 import { B2B_INSURANCE_PLANS, B2B_ESIM_PLANS } from '../../utils/b2bQuotationHelpers';
 import { DestinationRelevanceService } from '../../services/destinationRelevanceService';
 

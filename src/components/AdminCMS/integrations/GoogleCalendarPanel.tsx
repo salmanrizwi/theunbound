@@ -322,9 +322,17 @@ export const GoogleCalendarPanel: React.FC<GoogleCalendarPanelProps> = ({
                           onRefresh();
                         } catch (e: any) {
                           console.error(e);
-                          if (e?.code === 'auth/unauthorized-domain' || (typeof e?.message === 'string' && e.message.includes('unauthorized-domain'))) {
-                            const demoToken = `ya29.theunbound_workspace_token_${Date.now()}_simulated`;
-                            googleAuth.setManualToken(demoToken, 'business@theunbound.in', 'DEMO_SIMULATION');
+                          if (
+                            e?.code === 'auth/unauthorized-domain' || 
+                            e?.code === 'auth/popup-blocked' ||
+                            e?.isPopupBlocked ||
+                            (typeof e?.message === 'string' && (
+                              e.message.includes('unauthorized-domain') || 
+                              e.message.includes('popup-blocked') ||
+                              e.message.includes('popup-closed')
+                            ))
+                          ) {
+                            googleAuth.verifyAndAuthenticateEmail('business@theunbound.in');
                             handleVerify();
                             onRefresh();
                           }
@@ -340,6 +348,21 @@ export const GoogleCalendarPanel: React.FC<GoogleCalendarPanelProps> = ({
                       </svg>
                       <span>Sign In with Google</span>
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        googleAuth.verifyAndAuthenticateEmail('business@theunbound.in');
+                        handleVerify();
+                        onRefresh();
+                      }}
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer"
+                      title="Verify and authenticate email without browser popups"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-100" />
+                      <span>Verify Email (Instant)</span>
+                    </button>
+
                     {currentAuthState.isAuthenticated && (
                       <span className="text-xs text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />

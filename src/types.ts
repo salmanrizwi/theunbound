@@ -216,6 +216,7 @@ export interface User {
   password?: string;
   role: UserRole;
   category?: UserCategory;
+  department?: string;
   agencyName?: string;
   companyName?: string;
   businessType?: string;
@@ -1111,6 +1112,22 @@ export interface GoogleSheetsSyncStatus {
   }[];
 }
 
+export interface MasterGoogleSheetConfig {
+  masterSpreadsheetId: string;
+  spreadsheetName: string;
+  connectionStatus: 'CONNECTED' | 'DISCONNECTED' | 'AUTHENTICATION_REQUIRED' | 'CONFIG_ERROR' | 'UNCHECKED';
+  authStatus: 'AUTHENTICATED' | 'TOKEN_EXPIRED' | 'NOT_AUTHENTICATED';
+  lastSuccessfulConnectionCheck?: string;
+  lastSuccessfulSync?: string;
+  lastFailedSync?: string;
+  syncStatus: 'IDLE' | 'SYNCING' | 'SUCCESS' | 'FAILED' | 'COMPLETED_WITH_WARNINGS';
+  autoSyncEnabled?: boolean;
+  syncSchedule?: string;
+  syncKey?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
 export interface ProductFilterState {
   searchQuery: string;
   destination: string;
@@ -1887,6 +1904,7 @@ export type AdminActivityType =
   | 'PAYMENT_OVERDUE'
   // Operations Activities
   | 'OPERATIONS_JOB_CREATED'
+  | 'OPERATIONS_JOB_UPDATED'
   | 'OPERATIONS_JOB_ASSIGNED'
   | 'OPERATIONS_ROSTER_UPDATED'
   | 'OPERATIONS_NOTE_ADDED'
@@ -3492,7 +3510,40 @@ export type SLAStatus =
   | 'COMPLETED_ON_TIME'
   | 'COMPLETED_BREACHED';
 
-export type TaskStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'OVERDUE' | 'CANCELLED';
+export type TaskStatus = 'OPEN' | 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED' | 'SNOOZED' | 'OVERDUE' | 'CANCELLED';
+
+export type ActionCenterEntityType = 
+  | 'BOOKING' 
+  | 'LEAD' 
+  | 'QUOTE' 
+  | 'PAYMENT' 
+  | 'CUSTOMER' 
+  | 'USER' 
+  | 'PRODUCT' 
+  | 'HOTEL' 
+  | 'DESTINATION' 
+  | 'TRANSFER' 
+  | 'PACKAGE' 
+  | 'VISA' 
+  | 'JOB'
+  | 'TASK';
+
+export interface ActionTarget {
+  entityType: ActionCenterEntityType;
+  entityId: string;
+  targetRoute: string;
+  section: string;
+  subTab: string;
+  recordId: string;
+  targetElementId?: string;
+  filterIds?: string[];
+  filterStatus?: string;
+  actionRequired?: string;
+  label: string;
+  isRecordAvailable: boolean;
+}
+
+export type ActionCenterPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT' | 'CRITICAL' | 'OVERDUE';
 
 export interface CalendarReminderOption {
   method: 'popup' | 'email';
@@ -3501,12 +3552,15 @@ export interface CalendarReminderOption {
 
 export interface CalendarTask {
   id: string;
+  taskId?: string; // Action Center canonical taskId alias
   automationId?: string;
-  taskType?: SLATaskType;
+  taskType?: SLATaskType | string;
   title: string;
   description: string;
   assignedToEmail: string;
   assignedToName: string;
+  assignedTo?: string;
+  createdBy?: string;
   assignedDepartment?: 'OPERATIONS' | 'SALES' | 'GROUND_OPS' | 'FINANCE';
   category: 'CLIENT_FOLLOW_UP' | 'GROUND_DISPATCH' | 'SUPPLIER_CUTOFF' | 'PAYMENT_REMINDER' | 'VIP_ARRIVAL' | 'VISA_SUBMISSION' | 'OPERATIONS_SLA';
   
@@ -3515,6 +3569,9 @@ export interface CalendarTask {
   dueAt?: string; // ISO 8601 = generatedAt + slaHours
   slaHours?: number;
   slaStatus?: SLAStatus;
+  snoozedUntil?: string; // ISO 8601
+  dismissedAt?: string; // ISO 8601
+  dismissedBy?: string;
   
   // Date/Time fields for Calendar
   startDate: string; // YYYY-MM-DD
@@ -3522,13 +3579,21 @@ export interface CalendarTask {
   endDate?: string;
   endTime?: string;
   
-  // Relations
+  // Relations & Action Center entity link
+  entityType?: ActionCenterEntityType;
+  entityId?: string;
+  targetRoute?: string;
   bookingId?: string;
   bookingReference?: string;
   quoteId?: string;
   quoteNumber?: string;
   leadNumber?: string;
   leadId?: string;
+  customerId?: string;
+  userId?: string;
+  paymentId?: string;
+  serviceId?: string;
+  voucherId?: string;
   customerName?: string;
   customerEmail?: string;
   destination?: string;
@@ -3538,6 +3603,7 @@ export interface CalendarTask {
   quoteValue?: number;
   currency?: string;
   requiredAction?: string;
+  actionRequired?: string; // Alias for Action Center
   cmsLink?: string;
   
   // Google Calendar Sync
@@ -3552,9 +3618,15 @@ export interface CalendarTask {
   
   // State
   status: TaskStatus;
-  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+  previousStatus?: TaskStatus;
+  priority: ActionCenterPriority;
+  isOrphan?: boolean;
+  isFlaggedForRepair?: boolean;
   completedAt?: string;
   completedBy?: string;
+  completionNote?: string;
+  completionSource?: string;
+  snoozedBy?: string;
   notes?: string;
   
   createdAt: string;

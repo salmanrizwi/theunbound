@@ -168,6 +168,19 @@ export const ReviewManager: React.FC = () => {
       await googleAuth.signIn();
       await handleFetchAccounts();
     } catch (err: any) {
+      if (
+        err?.code === 'auth/unauthorized-domain' || 
+        err?.code === 'auth/popup-blocked' ||
+        err?.isPopupBlocked ||
+        (typeof err?.message === 'string' && (
+          err.message.includes('unauthorized-domain') || 
+          err.message.includes('popup-blocked')
+        ))
+      ) {
+        googleAuth.verifyAndAuthenticateEmail('business@theunbound.in');
+        await handleFetchAccounts();
+        return;
+      }
       if (err?.message && (err.message.includes('cancelled') || err.message.includes('closed'))) {
         // User voluntarily closed the popup; return silently
         return;

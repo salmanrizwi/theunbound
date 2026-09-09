@@ -1,4 +1,5 @@
 import { MasterSheetTabName } from '../types';
+import * as XLSX from 'xlsx';
 
 export interface SheetColumnDefinition {
   name: string;
@@ -610,3 +611,68 @@ export function generateAllTabsCsvBundle(): Record<string, string> {
   }
   return bundle;
 }
+
+/**
+ * Approved canonical 16-worksheet column headers for TheUnbound production schema.
+ */
+export const CANONICAL_SCHEMA_HEADERS: Record<MasterSheetTabName, string[]> = {
+  REGIONS: ['region_id', 'region_name', 'slug', 'description', 'status', 'sort_order', 'seo_title', 'seo_description'],
+  DESTINATIONS: ['destination_id', 'region_id', 'destination_name', 'slug', 'country', 'currency', 'description', 'hero_image_url', 'tagline', 'best_time', 'recommended_duration', 'status', 'sort_order', 'seo_title', 'seo_description'],
+  HUBS: ['hub_id', 'destination_id', 'hub_name', 'slug', 'hub_type', 'description', 'latitude', 'longitude', 'status', 'sort_order', 'seo_title', 'seo_description'],
+  PRODUCTS: ['product_id', 'destination_id', 'hub_id', 'product_category', 'product_name', 'slug', 'description', 'supplier_name', 'duration', 'meeting_point', 'status', 'is_featured', 'sort_order', 'seo_title', 'seo_description'],
+  PRODUCT_PRICING: ['product_pricing_id', 'product_id', 'currency', 'nett_cost', 'buyer_markup_pct', 'b2b_markup_pct', 'selling_price_override', 'valid_from', 'valid_to', 'status'],
+  PRODUCT_CAPACITY: ['product_capacity_id', 'product_id', 'capacity', 'vehicle_or_yacht_model', 'capacity_notes', 'status'],
+  HOTELS: ['hotel_id', 'destination_id', 'hub_id', 'hotel_name', 'slug', 'category', 'star_rating', 'address', 'latitude', 'longitude', 'nearest_airport', 'nearest_railway_station', 'description', 'status', 'is_featured', 'seo_title', 'seo_description'],
+  HOTEL_ROOMS: ['room_id', 'hotel_id', 'room_name', 'room_type', 'max_adults', 'max_children', 'max_infants', 'max_occupancy', 'available_rooms', 'status'],
+  HOTEL_MEAL_PLANS: ['meal_plan_id', 'hotel_id', 'meal_plan_code', 'meal_plan_name', 'description', 'status'],
+  HOTEL_RATES: ['hotel_rate_id', 'hotel_id', 'room_id', 'meal_plan_id', 'currency', 'rate_type', 'nett_cost', 'buyer_markup_pct', 'b2b_markup_pct', 'selling_price_override', 'valid_from', 'valid_to', 'min_nights', 'status'],
+  VISA: ['visa_id', 'destination_id', 'visa_name', 'visa_type', 'nationality_scope', 'description', 'processing_time', 'validity', 'status', 'seo_title', 'seo_description'],
+  VISA_RATES: ['visa_rate_id', 'visa_id', 'currency', 'nett_cost', 'buyer_markup_pct', 'b2b_markup_pct', 'selling_price_override', 'valid_from', 'valid_to', 'status'],
+  TRANSFER_ROUTES: ['transfer_route_id', 'destination_id', 'from_hub_id', 'to_hub_id', 'route_name', 'distance_km', 'estimated_duration_minutes', 'status'],
+  TRANSFER_RATES: ['transfer_rate_id', 'transfer_route_id', 'capacity', 'vehicle_model', 'currency', 'nett_cost', 'buyer_markup_pct', 'b2b_markup_pct', 'selling_price_override', 'valid_from', 'valid_to', 'status'],
+  PACKAGES: ['package_id', 'destination_id', 'package_name', 'slug', 'duration_nights', 'duration_days', 'description', 'package_type', 'status', 'is_featured', 'seo_title', 'seo_description'],
+  PACKAGE_ITEMS: ['package_item_id', 'package_id', 'day_number', 'item_type', 'item_id', 'hub_id', 'sequence', 'notes', 'is_optional', 'status']
+};
+
+/**
+ * Approved canonical ordering for processing and sheets layout
+ */
+export const CANONICAL_TAB_PROCESSING_ORDER: MasterSheetTabName[] = [
+  'REGIONS',
+  'DESTINATIONS',
+  'HUBS',
+  'PRODUCTS',
+  'PRODUCT_PRICING',
+  'PRODUCT_CAPACITY',
+  'HOTELS',
+  'HOTEL_ROOMS',
+  'HOTEL_MEAL_PLANS',
+  'HOTEL_RATES',
+  'VISA',
+  'VISA_RATES',
+  'TRANSFER_ROUTES',
+  'TRANSFER_RATES',
+  'PACKAGES',
+  'PACKAGE_ITEMS'
+];
+
+/**
+ * Generates an authentic .xlsx workbook containing exactly the canonical 16 worksheets.
+ * Each worksheet contains the approved column headers and schema.
+ * Blank templates are provided without mock/fake production records.
+ */
+export function generateCanonicalExcelWorkbookBlob(): Blob {
+  const wb = XLSX.utils.book_new();
+
+  for (const tabName of CANONICAL_TAB_PROCESSING_ORDER) {
+    const headers = CANONICAL_SCHEMA_HEADERS[tabName] || [];
+    const ws = XLSX.utils.aoa_to_sheet([headers]);
+    XLSX.utils.book_append_sheet(wb, ws, tabName);
+  }
+
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  return new Blob([wbout], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+}
+

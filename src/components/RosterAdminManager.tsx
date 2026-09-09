@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useRoster } from '../context/RosterContext';
 import { Product, RosterResource, DateAvailabilityStatus } from '../types';
-import { INITIAL_PRODUCTS } from '../data/initialProducts';
+import { db } from '../services/db';
 import { 
   Calendar as CalendarIcon, 
   ChevronLeft, 
@@ -40,7 +40,7 @@ const MONTH_NAMES = [
 const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export const RosterAdminManager: React.FC<RosterAdminManagerProps> = ({ products = [] }) => {
-  const safeProducts = (products && products.length > 0) ? products : INITIAL_PRODUCTS;
+  const safeProducts = (products && products.length > 0) ? products : db.getProducts();
 
   const {
     resources,
@@ -110,15 +110,7 @@ export const RosterAdminManager: React.FC<RosterAdminManagerProps> = ({ products
     return matchesSearch && matchesDest;
   });
 
-  const selectedProduct = safeProducts.find(p => p.id === selectedProductId) || safeProducts[0] || (INITIAL_PRODUCTS && INITIAL_PRODUCTS[0]) || ({
-    id: 'prod-jp-01',
-    sku: 'TYO-EX-001',
-    name: 'Tokyo Luxury Experience',
-    city: 'Tokyo',
-    country: 'Japan',
-    category: 'Experience',
-    destinationId: 'japan'
-  } as unknown as Product);
+  const selectedProduct = safeProducts.find(p => p.id === selectedProductId) || safeProducts[0] || null;
   const monthlyMap = selectedProduct ? getMonthlyAvailabilityMap(selectedProduct.id, currentYear, currentMonth) : {};
   const currentRule = selectedProduct ? rosterRules[selectedProduct.id] : undefined;
 

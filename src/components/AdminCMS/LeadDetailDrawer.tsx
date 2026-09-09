@@ -37,6 +37,7 @@ import {
   Compass,
   Check
 } from 'lucide-react';
+import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
 
 interface LeadDetailDrawerProps {
   lead: TravelLead | null;
@@ -180,6 +181,13 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
               <span className="font-mono text-xs font-bold bg-white/10 text-[#00C6A6] px-2.5 py-1 rounded-md">
                 {lead.leadNumber}
               </span>
+              <RecordReminderIndicator
+                entityType="LEAD"
+                entityId={lead.id}
+                entityReference={lead.leadNumber}
+                currentUser={user}
+                variant="header"
+              />
               <span className={`text-xs font-bold px-3 py-1 rounded-full border ${getStatusBadge(lead.status)}`}>
                 {lead.status.replace(/_/g, ' ')}
               </span>

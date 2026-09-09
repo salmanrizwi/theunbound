@@ -17,6 +17,7 @@
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.4",
     "autoprefixer": "^10.4.21",
+    "esbuild": "^0.28.2",
     "express": "^5.2.1",
     "firebase": "^12.18.0",
     "jspdf": "^4.2.1",
@@ -24,10 +25,10 @@
     "motion": "^12.23.24",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
-    "sharp": "^0.35.4",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.23.13",
     "typescript": "~5.8.2",
-    "vite": "^6.2.3"
+    "vite": "^6.2.3",
+    "xlsx": "^0.18.5"
   }
 }

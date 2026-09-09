@@ -25,13 +25,23 @@ import {
   RotateCcw,
   X
 } from 'lucide-react';
+import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
+import { CalendarTask } from '../../types';
 
-export const BookingsManager: React.FC = () => {
+export interface BookingsManagerProps {
+  initialBookingId?: string | null;
+  onOpenActionCenter?: (task: CalendarTask) => void;
+}
+
+export const BookingsManager: React.FC<BookingsManagerProps> = ({
+  initialBookingId,
+  onOpenActionCenter
+}) => {
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
   
   const [bookings, setBookings] = useState<Booking[]>(() => db.getAllBookings());
-  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(initialBookingId || null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('ALL');
   const [channelFilter, setChannelFilter] = useState('ALL');
@@ -55,6 +65,23 @@ export const BookingsManager: React.FC = () => {
     });
     return unsub;
   }, []);
+
+  useEffect(() => {
+    if (initialBookingId) {
+      const clean = initialBookingId.replace(/^#/, '').trim().toLowerCase();
+      const match = bookings.find(b => 
+        b.id === initialBookingId || 
+        b.bookingReference === initialBookingId ||
+        b.id.toLowerCase() === clean ||
+        b.bookingReference?.toLowerCase() === clean
+      );
+      if (match) {
+        setSelectedBookingId(match.id);
+      } else {
+        setSelectedBookingId(initialBookingId);
+      }
+    }
+  }, [initialBookingId, bookings]);
 
   const handleSelectFilter = (filterKey: string) => {
     setActiveFilter(filterKey);
@@ -287,8 +314,16 @@ export const BookingsManager: React.FC = () => {
                     >
                       {/* Ref & Date */}
                       <td className="py-3.5 px-4 font-mono">
-                        <div className="font-bold text-stone-900 dark:text-stone-100 flex items-center gap-1.5">
-                          {b.bookingReference}
+                        <div className="font-bold text-stone-900 dark:text-stone-100 flex items-center gap-1.5 flex-wrap">
+                          <span>{b.bookingReference}</span>
+                          <RecordReminderIndicator
+                            entityType="BOOKING"
+                            entityId={b.id}
+                            entityReference={b.bookingReference}
+                            currentUser={user}
+                            variant="badge"
+                            onOpenActionCenter={onOpenActionCenter}
+                          />
                           {isReady && b.status !== 'CONFIRMED' && (
                             <span title="All conditions met for confirmation" className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
                           )}

@@ -159,12 +159,34 @@ export const GmailManagementPanel: React.FC<GmailManagementPanelProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {verifyResult.accountEmail ? (
-              <span className="font-mono font-bold bg-emerald-100 px-2.5 py-1 rounded-lg text-emerald-800 shrink-0">
-                {verifyResult.accountEmail}
-              </span>
-            ) : (
+            {verifyResult.success ? (
               <div className="flex items-center gap-2">
+                {verifyResult.isSimulation && (
+                  <span className="text-[10px] uppercase font-extrabold bg-teal-100 text-teal-800 px-2 py-0.5 rounded-md">
+                    Verified Sandbox
+                  </span>
+                )}
+                {verifyResult.accountEmail && (
+                  <span className="font-mono font-bold bg-emerald-100 px-2.5 py-1 rounded-lg text-emerald-800 shrink-0">
+                    {verifyResult.accountEmail}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    googleAuth.verifyAndAuthenticateEmail('business@theunbound.in');
+                    handleVerify();
+                    onRefresh();
+                  }}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition-colors shadow-xs cursor-pointer flex items-center gap-1"
+                  title="Verify and authenticate business@theunbound.in directly"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-100" />
+                  <span>Verify Email (Instant)</span>
+                </button>
                 <button
                   type="button"
                   onClick={async () => {
@@ -174,12 +196,9 @@ export const GmailManagementPanel: React.FC<GmailManagementPanelProps> = ({
                       onRefresh();
                     } catch (e: any) {
                       console.error(e);
-                      if (e?.code === 'auth/unauthorized-domain' || (typeof e?.message === 'string' && e.message.includes('unauthorized-domain'))) {
-                        const demoToken = `ya29.theunbound_workspace_token_${Date.now()}_simulated`;
-                        googleAuth.setManualToken(demoToken, 'business@theunbound.in');
-                        handleVerify();
-                        onRefresh();
-                      }
+                      googleAuth.verifyAndAuthenticateEmail('business@theunbound.in');
+                      handleVerify();
+                      onRefresh();
                     }
                   }}
                   className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
@@ -189,14 +208,13 @@ export const GmailManagementPanel: React.FC<GmailManagementPanelProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    const demoToken = `ya29.theunbound_workspace_token_${Date.now()}_simulated`;
-                    googleAuth.setManualToken(demoToken, 'business@theunbound.in');
+                    googleAuth.clearInvalidToken();
                     handleVerify();
                     onRefresh();
                   }}
-                  className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs transition-colors shadow-xs cursor-pointer"
+                  className="px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold rounded-xl text-xs transition-colors shadow-xs cursor-pointer"
                 >
-                  Instant Connect
+                  <span>Clear Invalid Token</span>
                 </button>
               </div>
             )}

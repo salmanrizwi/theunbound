@@ -5,8 +5,7 @@ import { useRoster } from '../context/RosterContext';
 import { formatCurrency } from '../services/pricingEngine';
 import { RosterCalendarPicker } from './RosterCalendarPicker';
 import { Quotation, Product, Hotel, CurrencyCode, SUPPORTED_CURRENCIES, Booking } from '../types';
-import { INITIAL_HOTELS } from '../data/initialHotels';
-import { INITIAL_VISAS } from '../data/initialVisas';
+import { db } from '../services/db';
 import { VisaProduct } from './B2BAgentPortal/B2BVisaView';
 import { AddProductToQuoteModal } from './B2BAgentPortal/AddProductToQuoteModal';
 import { AddHotelToQuoteModal } from './B2BAgentPortal/AddHotelToQuoteModal';
@@ -111,7 +110,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
 
     // Check if Hotel
     if (cat === 'ACCOMMODATION' || cat === 'HOTELS' || code.startsWith('SUP-HTL-') || meta?.hotelId) {
-      const hotel = INITIAL_HOTELS.find(h => 
+      const hotel = db.getHotels().find(h => 
         h.id === item.product.id || 
         h.id === meta?.hotelId ||
         code === `SUP-HTL-${h.id}` || 
@@ -161,7 +160,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
 
     // Check if Visa
     if (cat === 'VISA' || cat === 'VISA SERVICE' || sku.startsWith('VSA-') || meta?.visaProductId) {
-      const visa = INITIAL_VISAS.find(v => 
+      const visa = db.getVisas().find(v => 
         v.id === item.product.id || 
         v.id === meta?.visaProductId ||
         sku.includes(v.countryCode) ||

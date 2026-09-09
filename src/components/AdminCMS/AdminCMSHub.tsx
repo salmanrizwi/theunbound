@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Product, Destination, Quotation, BlogArticle, User } from '../../types';
+import { Product, Destination, Quotation, BlogArticle, User, ActionTarget } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { countingEngine } from '../../services/countingEngine';
 import { useAuth } from '../../context/AuthContext';
@@ -41,6 +41,8 @@ import { DataSyncAuditViewer } from './DataSyncAuditViewer';
 import { SystemAnalysis } from './SystemAnalysis';
 import { SEOManager } from './SEOManager';
 import { GlobalRemindersBar } from '../GlobalRemindersBar';
+import { ActionCenterDrawer } from '../ActionCenter/ActionCenterDrawer';
+import { CalendarTask } from '../../types';
 import { 
   canUserAccessCMS, 
   canUserAccessTopSection, 
@@ -623,7 +625,26 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   const isModuleAllowed = isCMSAllowed && canUserAccessCMSModule(currentUser, currentModuleConfig.id);
   const isSubTabAllowed = isModuleAllowed && (activeSubTab ? canUserAccessCMSSubTab(currentUser, currentModuleConfig.id, activeSubTab) : true);
 
-  const handleNavigate = (section: string, subTab?: string, recordId?: string) => {
+  // Action Center Drawer & Linked Record Navigation state
+  const [isActionCenterDrawerOpen, setIsActionCenterDrawerOpen] = useState(false);
+  const [focusedActionCenterTask, setFocusedActionCenterTask] = useState<CalendarTask | null>(null);
+  const [initialRecordIds, setInitialRecordIds] = useState<{
+    bookingId?: string | null;
+    leadId?: string | null;
+    quoteId?: string | null;
+  }>({});
+
+  const handleOpenActionCenter = (task?: CalendarTask) => {
+    setFocusedActionCenterTask(task || null);
+    setIsActionCenterDrawerOpen(true);
+  };
+
+  const handleNavigate = (
+    section: string, 
+    subTab?: string, 
+    recordId?: string,
+    targetElementId?: string
+  ) => {
     const normalized = normalizeSectionId(section);
     const targetModule = allModules.find(m => m.id === normalized || m.id === section);
     if (targetModule) {
@@ -633,6 +654,25 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       } else if (targetModule.subTabs && targetModule.subTabs.length > 0) {
         setActiveSubTab(targetModule.subTabs[0].id);
       }
+    }
+    if (recordId) {
+      if (section === 'BOOKING_MANAGEMENT' || subTab === 'BOOKINGS') {
+        setInitialRecordIds(prev => ({ ...prev, bookingId: recordId }));
+      } else if ((section === 'LEAD_MANAGEMENT' && subTab === 'QUOTES') || subTab === 'QUOTES' || section === 'QUOTES') {
+        setInitialRecordIds(prev => ({ ...prev, quoteId: recordId }));
+      } else if (section === 'LEAD_MANAGEMENT' || subTab === 'LEADS') {
+        setInitialRecordIds(prev => ({ ...prev, leadId: recordId }));
+      }
+    }
+    if (targetElementId) {
+      setTimeout(() => {
+        const el = document.getElementById(targetElementId);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('ring-2', 'ring-teal-400');
+          setTimeout(() => el.classList.remove('ring-2', 'ring-teal-400'), 3000);
+        }
+      }, 400);
     }
     setOpenDropdown(null);
     setIsMobileMenuOpen(false);
@@ -871,6 +911,17 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                 <kbd className="hidden 2xl:inline-block text-[10px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800 font-mono">⌘K</kbd>
               </button>
 
+              {/* Action Center Drawer Trigger */}
+              <button
+                type="button"
+                onClick={() => setIsActionCenterDrawerOpen(true)}
+                className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition-all cursor-pointer group shrink-0"
+                title="Action Center (Tasks & Live Record Reminders)"
+              >
+                <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                <span className="hidden sm:inline text-xs font-semibold">Action Center</span>
+              </button>
+
               {/* Real-time Notifications & SLA Dropdown */}
               <div className="shrink-0">
                 <CMSNotificationsDropdown onNavigate={handleNavigate} currentUser={currentUser} />
@@ -1104,7 +1155,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
         <div className="rounded-2xl overflow-hidden border border-slate-200/90 shadow-xs">
           <GlobalRemindersBar 
             variant="admin" 
-            onNavigate={(sec, sub) => handleNavigate(sec, sub)} 
+            onNavigate={(sec, sub, recId, _route, opts) => handleNavigate(sec, sub, recId, opts?.targetElementId)} 
+            onOpenActionCenter={() => setIsActionCenterDrawerOpen(true)}
           />
         </div>
 
@@ -1177,17 +1229,27 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
 
           {/* 2.4 BOOKING MANAGEMENT */}
           {currentModuleConfig.id === 'BOOKING_MANAGEMENT' && (
-            <BookingsManager />
+            <BookingsManager 
+              initialBookingId={initialRecordIds.bookingId}
+              onOpenActionCenter={handleOpenActionCenter}
+            />
           )}
 
           {/* 2.5 LEAD MANAGEMENT */}
           {currentModuleConfig.id === 'LEAD_MANAGEMENT' && (
             <>
-              {(!activeSubTab || activeSubTab === 'LEADS') && <LeadManager />}
+              {(!activeSubTab || activeSubTab === 'LEADS') && (
+                <LeadManager 
+                  initialLeadId={initialRecordIds.leadId}
+                  onOpenActionCenter={handleOpenActionCenter}
+                />
+              )}
               {activeSubTab === 'QUOTES' && (
                 <QuoteMasterManager 
+                  initialQuoteId={initialRecordIds.quoteId}
                   onLoadQuote={onLoadQuote} 
                   onNavigateToLeads={() => setActiveSubTab('LEADS')}
+                  onOpenActionCenter={handleOpenActionCenter}
                 />
               )}
             </>
@@ -1288,6 +1350,36 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
         </div>
         )}
       </main>
+
+      {/* Global Action Center Drawer */}
+      <ActionCenterDrawer
+        isOpen={isActionCenterDrawerOpen}
+        onClose={() => {
+          setIsActionCenterDrawerOpen(false);
+          setFocusedActionCenterTask(null);
+        }}
+        currentUser={currentUser}
+        initialTask={focusedActionCenterTask}
+        onNavigateToRecord={(targetOrType: any, secondArg?: string, thirdArg?: string, fourthArg?: string) => {
+          setIsActionCenterDrawerOpen(false);
+          if (typeof targetOrType === 'object' && targetOrType !== null) {
+            const target = targetOrType as ActionTarget;
+            handleNavigate(target.section, target.subTab, target.recordId, target.targetElementId);
+          } else {
+            const entityType = targetOrType;
+            const entityId = secondArg;
+            if (entityType === 'BOOKING' || entityType === 'PAYMENT' || entityType === 'SERVICE' || entityType === 'SUPPLIER') {
+              handleNavigate('BOOKING_MANAGEMENT', 'BOOKINGS', entityId, fourthArg);
+            } else if (entityType === 'LEAD') {
+              handleNavigate('LEAD_MANAGEMENT', 'LEADS', entityId, fourthArg);
+            } else if (entityType === 'QUOTE') {
+              handleNavigate('LEAD_MANAGEMENT', 'QUOTES', entityId, fourthArg);
+            } else {
+              handleNavigate(entityType, secondArg, thirdArg, fourthArg);
+            }
+          }
+        }}
+      />
     </div>
   );
 };

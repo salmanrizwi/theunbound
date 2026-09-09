@@ -1025,7 +1025,8 @@ CMS Portal: ${window.location.origin}/#cms-tasks`;
         }
       };
 
-      if (accessToken && !accessToken.includes('simulated')) {
+      const isSim = googleAuth.isSimulation(accessToken);
+      if (accessToken && !isSim) {
         const response = await fetch(targetUrl, {
           method,
           headers: {
@@ -1044,10 +1045,19 @@ CMS Portal: ${window.location.origin}/#cms-tasks`;
           };
         } else {
           const errText = await response.text();
-          console.warn(`[GoogleCalendarAPI] Live sync notice (${response.status}):`, errText);
+          let parsedError = `Google Calendar sync error (${response.status})`;
+          try {
+            const parsed = JSON.parse(errText);
+            if (parsed.error?.message) {
+              parsedError = `${parsed.error.message} (HTTP ${response.status})`;
+            }
+          } catch (_) {
+            parsedError = `Google Calendar sync error (${response.status}): ${errText.slice(0, 100)}`;
+          }
+          console.warn(`[GoogleCalendarAPI] Live sync notice (${response.status}):`, parsedError);
           return {
             success: false,
-            error: `Google Calendar sync error (${response.status}): ${errText}`,
+            error: parsedError,
             htmlLink: dayViewLink
           };
         }

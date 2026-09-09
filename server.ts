@@ -1,14 +1,20 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { createServer as createViteServer } from "vite";
 import { handleSitemapXml, handleRobotsTxt, injectSEOIntoHtml } from "./server/seoHandler";
 import { handleGeminiChat } from "./server/geminiChatHandler";
 import { createIntegrationsRouter } from "./server/integrationsService";
 
+// Prevent unexpected unhandled crashes
+process.on('unhandledRejection', (reason) => {
+  console.error('[SERVER] Unhandled Rejection:', reason);
+});
+process.on('uncaughtException', (error) => {
+  console.error('[SERVER] Uncaught Exception:', error);
+});
+
 async function startServer() {
   const app = express();
-  const PORT = 3000;
 
   app.use(express.json({ limit: '10mb' }));
 
@@ -27,8 +33,14 @@ async function startServer() {
   app.get("/sitemap.xml", handleSitemapXml);
   app.get("/robots.txt", handleRobotsTxt);
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  // Robust environment detection: in production bundles, never load Vite dev server
+  const isCompiledBundle =
+    Boolean(process.argv[1] && (process.argv[1].includes("dist") || process.argv[1].endsWith(".cjs"))) ||
+    (typeof __filename !== "undefined" && __filename.endsWith(".cjs"));
+  const isProduction = process.env.NODE_ENV === "production" || isCompiledBundle;
+
+  if (!isProduction) {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "custom",
@@ -43,7 +55,7 @@ async function startServer() {
         url.startsWith("/@") ||
         url.startsWith("/src") ||
         url.startsWith("/node_modules") ||
-        url.includes(".") && !url.endsWith(".html")
+        (url.includes(".") && !url.endsWith(".html"))
       ) {
         return next();
       }
@@ -62,27 +74,60 @@ async function startServer() {
 
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    const distPath = path.resolve(process.cwd(), "dist");
+    const indexPath = path.join(distPath, "index.html");
+
+    app.use(express.static(distPath, { index: false }));
     app.get("*all", (req, res) => {
+      if (req.path.startsWith("/api")) {
+        return res.status(404).json({ error: "Endpoint not found" });
+      }
       try {
-        const indexPath = path.join(distPath, "index.html");
         if (fs.existsSync(indexPath)) {
           const rawHtml = fs.readFileSync(indexPath, "utf-8");
           const htmlWithSEO = injectSEOIntoHtml(rawHtml, req.originalUrl, req.get("host") || "theunbound.luxury");
-          res.status(200).set({ "Content-Type": "text/html" }).send(htmlWithSEO);
-        } else {
-          res.sendFile(indexPath);
+          return res.status(200).set({ "Content-Type": "text/html" }).send(htmlWithSEO);
         }
+        return res.sendFile(indexPath);
       } catch (err) {
-        res.sendFile(path.join(distPath, "index.html"));
+        return res.sendFile(indexPath);
       }
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log("Server running on port " + PORT);
+  const DEFAULT_PORT = 3000;
+  const cloudRunPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
+
+  // Primary bind: Port 3000 (required by internal proxy)
+  const server3000 = app.listen(DEFAULT_PORT, "0.0.0.0", () => {
+    console.log(`Server running on port ${DEFAULT_PORT}`);
   });
+  server3000.on("error", (err: any) => {
+    if (err.code === "EADDRINUSE") {
+      console.warn(`[SERVER] Port ${DEFAULT_PORT} already in use`);
+    } else {
+      console.error(`[SERVER] Port ${DEFAULT_PORT} error:`, err);
+    }
+  });
+
+  // Cloud Run direct traffic & health checks (bind to process.env.PORT, typically 8080)
+  if (cloudRunPort && cloudRunPort !== DEFAULT_PORT && !isNaN(cloudRunPort)) {
+    try {
+      const serverCloudRun = app.listen(cloudRunPort, "0.0.0.0", () => {
+        console.log(`Server also listening on Cloud Run port ${cloudRunPort}`);
+      });
+      serverCloudRun.on("error", (err: any) => {
+        if (err.code === "EADDRINUSE") {
+          // Expected in sandbox dev container where reverse proxy binds PORT 8080
+          console.log(`[SERVER] Cloud Run port ${cloudRunPort} is handled by reverse proxy`);
+        } else {
+          console.warn(`[SERVER] Cloud Run port ${cloudRunPort} error:`, err);
+        }
+      });
+    } catch (err) {
+      console.warn(`[SERVER] Could not bind to Cloud Run port ${cloudRunPort}:`, err);
+    }
+  }
 }
 
 startServer();

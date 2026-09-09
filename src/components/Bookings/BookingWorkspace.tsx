@@ -8,6 +8,7 @@ import { PaymentProofsManager } from './PaymentProofsManager';
 import { SupplierServicesManager } from './SupplierServicesManager';
 import { CustomerAndInternalNotes } from './CustomerAndInternalNotes';
 import { BookingTimelineView } from './BookingTimelineView';
+import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
 import { 
   ArrowLeft, 
   Calendar, 
@@ -142,6 +143,13 @@ export const BookingWorkspace: React.FC<BookingWorkspaceProps> = ({
               <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-md bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 border border-stone-200 dark:border-stone-700">
                 {booking.bookingReference}
               </span>
+              <RecordReminderIndicator 
+                entityType="BOOKING"
+                entityId={booking.id}
+                entityReference={booking.bookingReference}
+                currentUser={currentUser}
+                variant="header"
+              />
               <h2 className="text-lg font-bold text-stone-900 dark:text-stone-100">
                 {booking.customer?.leadTravelerName || 'Guest Booking Workspace'}
               </h2>
@@ -351,13 +359,21 @@ export const BookingWorkspace: React.FC<BookingWorkspaceProps> = ({
         </button>
         <button
           onClick={() => setActiveTab('PAYMENTS')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
             activeTab === 'PAYMENTS'
               ? 'bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900 shadow-sm'
               : 'text-stone-500 hover:text-stone-900 dark:hover:text-stone-100 hover:bg-stone-100 dark:hover:bg-stone-800'
           }`}
         >
-          Payments & Tranches ({booking.paymentProofs?.length || 0})
+          <span>Payments & Tranches ({booking.paymentProofs?.length || 0})</span>
+          <RecordReminderIndicator
+            entityType="PAYMENT"
+            entityId={booking.id}
+            entityReference={booking.bookingReference}
+            currentUser={currentUser}
+            variant="dot"
+            showCount={false}
+          />
         </button>
         <button
           onClick={() => setActiveTab('SUPPLIERS')}

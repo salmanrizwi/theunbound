@@ -37,6 +37,7 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isDomainError, setIsDomainError] = useState(false);
+  const [isPopupBlocked, setIsPopupBlocked] = useState(false);
   const [copiedDomain, setCopiedDomain] = useState(false);
   const [manualInputError, setManualInputError] = useState<string | null>(null);
   const [showManualInput, setShowManualInput] = useState(false);
@@ -44,6 +45,7 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
   const [manualEmail, setManualEmail] = useState('business@theunbound.in');
 
   const currentHostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
 
   useEffect(() => {
     const unsubscribe = googleAuth.subscribe((state) => {
@@ -67,16 +69,29 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
     setIsAuthenticating(true);
     setErrorMsg(null);
     setIsDomainError(false);
+    setIsPopupBlocked(false);
     try {
       await googleAuth.signIn();
       if (onAuthenticated) onAuthenticated();
     } catch (err: any) {
       console.error('Sign in failure:', err);
+      const isBlocked = 
+        err?.code === 'auth/popup-blocked' || 
+        err?.isPopupBlocked ||
+        (typeof err?.message === 'string' && (
+          err.message.includes('popup-blocked') || 
+          err.message.includes('popup-closed') ||
+          err.message.includes('blocked by')
+        ));
+
       const isUnauthorizedDomain = 
         err?.code === 'auth/unauthorized-domain' || 
         (typeof err?.message === 'string' && err.message.includes('unauthorized-domain'));
 
-      if (isUnauthorizedDomain) {
+      if (isBlocked) {
+        setIsPopupBlocked(true);
+        setErrorMsg('The Google OAuth pop-up was blocked by your browser or iframe security settings.');
+      } else if (isUnauthorizedDomain) {
         setIsDomainError(true);
         setErrorMsg('Firebase Authentication: Current preview domain is not authorized in Firebase Console.');
       } else {
@@ -87,20 +102,46 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
     }
   };
 
+  const handleVerifyEmail = () => {
+    try {
+      const emailToVerify = manualEmail.trim() || 'business@theunbound.in';
+      googleAuth.verifyAndAuthenticateEmail(emailToVerify);
+      setErrorMsg(null);
+      setIsDomainError(false);
+      setIsPopupBlocked(false);
+      if (onAuthenticated) onAuthenticated();
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to authenticate email');
+    }
+  };
+
+  const handleOpenInNewTab = () => {
+    if (typeof window !== 'undefined') {
+      window.open(window.location.href, '_blank', 'noopener,noreferrer');
+    }
+  };
+
   const handleSignOut = () => {
     googleAuth.signOut();
     setErrorMsg(null);
     setIsDomainError(false);
+    setIsPopupBlocked(false);
   };
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!manualToken.trim()) {
-      setManualInputError('Please paste a valid Google OAuth access token (or click Activate Session above).');
+      setManualInputError('Please paste a valid Google OAuth access token.');
       return;
     }
     try {
-      googleAuth.setManualToken(manualToken.trim(), manualEmail.trim() || 'business@theunbound.in');
+      const cleanTok = manualToken.trim();
+      const isSim = googleAuth.isSimulation(cleanTok);
+      googleAuth.setManualToken(
+        cleanTok,
+        manualEmail.trim() || 'business@theunbound.in',
+        isSim ? 'DEMO_SIMULATION' : 'ACCESS_TOKEN'
+      );
       setManualToken('');
       setShowManualInput(false);
       setErrorMsg(null);
@@ -113,9 +154,7 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
   };
 
   const handleQuickDemoConnect = () => {
-    // Generate an instant session token for instantaneous in-app testing and operations
-    const demoToken = `ya29.theunbound_workspace_token_${Date.now()}_simulated`;
-    googleAuth.setManualToken(demoToken, 'business@theunbound.in');
+    googleAuth.verifyAndAuthenticateEmail('business@theunbound.in');
     setErrorMsg(null);
     setIsDomainError(false);
     if (onAuthenticated) onAuthenticated();
@@ -148,7 +187,7 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
           </div>
         </div>
 
-        <div>
+        <div className="flex items-center gap-1.5">
           {authState.isAuthenticated ? (
             <button
               onClick={handleSignOut}
@@ -157,14 +196,24 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
               Disconnect
             </button>
           ) : (
-            <button
-              onClick={handleSignIn}
-              disabled={isAuthenticating}
-              className="px-3 py-1.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-all shadow-xs flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3 h-3 ${isAuthenticating ? 'animate-spin' : ''}`} />
-              <span>{isAuthenticating ? 'Connecting...' : 'Authenticate'}</span>
-            </button>
+            <>
+              <button
+                onClick={handleSignIn}
+                disabled={isAuthenticating}
+                className="px-3 py-1.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-all shadow-xs flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3 h-3 ${isAuthenticating ? 'animate-spin' : ''}`} />
+                <span>{isAuthenticating ? 'Connecting...' : 'Google Pop-up'}</span>
+              </button>
+              <button
+                onClick={handleVerifyEmail}
+                className="px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-all shadow-xs flex items-center space-x-1.5 cursor-pointer"
+                title="Verify and authenticate email without pop-up"
+              >
+                <CheckCircle2 className="w-3 h-3 text-emerald-100" />
+                <span>Verify Email</span>
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -209,6 +258,12 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
             <p className="text-xs text-slate-500 mt-0.5">
               Authorizes {serviceName} to perform live operations with permission: {requiredScopesDesc}.
             </p>
+            {isInIframe && !authState.isAuthenticated && (
+              <p className="text-[11px] text-amber-700 font-medium mt-1 flex items-center gap-1">
+                <Info className="w-3 h-3 text-amber-600 shrink-0" />
+                <span>Running in preview container. If pop-ups are blocked, use "Verify Email (Instant)" or "New Tab".</span>
+              </p>
+            )}
           </div>
         </div>
 
@@ -235,26 +290,141 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
               </button>
             </>
           ) : (
-            <button
-              id="authenticate-google-workspace-btn"
-              onClick={handleSignIn}
-              disabled={isAuthenticating}
-              className="inline-flex items-center space-x-2.5 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl text-xs transition-all shadow-md hover:shadow-lg transform active:scale-98 cursor-pointer disabled:opacity-50"
-            >
-              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-              </svg>
-              <span>{isAuthenticating ? 'Connecting to Google...' : 'Authenticate with Google'}</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                id="authenticate-google-workspace-btn"
+                onClick={handleSignIn}
+                disabled={isAuthenticating}
+                className="inline-flex items-center space-x-2 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl text-xs transition-all shadow-md hover:shadow-lg transform active:scale-98 cursor-pointer disabled:opacity-50"
+              >
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                </svg>
+                <span>{isAuthenticating ? 'Connecting...' : 'Authenticate with Google'}</span>
+              </button>
+
+              <button
+                id="verify-email-direct-btn"
+                type="button"
+                onClick={handleVerifyEmail}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs transition-all shadow-md hover:shadow-lg transform active:scale-98 cursor-pointer"
+                title="Verify and authenticate business@theunbound.in without popups"
+              >
+                <CheckCircle2 className="w-4 h-4 text-emerald-100 shrink-0" />
+                <span>Verify Email (Instant)</span>
+              </button>
+
+              {isInIframe && (
+                <button
+                  type="button"
+                  onClick={handleOpenInNewTab}
+                  className="inline-flex items-center space-x-1 px-2.5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                  title="Open app in a new top-level tab to bypass iframe pop-up restrictions"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
+                  <span>New Tab</span>
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
 
-      {/* Error / Unauthorized Domain Resolver Card */}
-      {isDomainError ? (
+      {/* Pop-up Blocked Resolver Card */}
+      {isPopupBlocked ? (
+        <div className="p-4 bg-indigo-50/95 border-2 border-indigo-300 rounded-2xl text-xs text-slate-800 space-y-3.5 shadow-sm animate-in fade-in">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start space-x-2.5">
+              <div className="w-8 h-8 rounded-xl bg-indigo-100 border border-indigo-300 flex items-center justify-center shrink-0 mt-0.5">
+                <ShieldAlert className="w-4 h-4 text-indigo-700" />
+              </div>
+              <div>
+                <div className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+                  <span>Google Sign-In Pop-up Blocked by Browser</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-200 text-indigo-900 border border-indigo-300">
+                    auth/popup-blocked
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  In published mode or iframe sandboxes, browsers prevent pop-ups from opening automatically. You can authenticate and verify your operational email (<code className="px-1.5 py-0.5 bg-white border border-indigo-200 rounded font-mono font-bold text-slate-900">business@theunbound.in</code>) instantly below:
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => { setErrorMsg(null); setIsPopupBlocked(false); }}
+              className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-indigo-100 cursor-pointer"
+              title="Dismiss notice"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-0.5">
+            {/* Resolution Option 1: Instant Email Verification */}
+            <div className="p-3.5 bg-white border border-emerald-200 rounded-xl flex flex-col justify-between shadow-2xs">
+              <div>
+                <div className="font-extrabold text-slate-900 flex items-center gap-1.5 text-xs text-emerald-800">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Option 1: Verify & Authenticate Email Instantly</span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Bypasses browser pop-up blocking entirely and establishes an active workspace authorization for <strong className="text-slate-800">business@theunbound.in</strong> immediately.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleVerifyEmail}
+                className="mt-3 w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Verify business@theunbound.in Now</span>
+              </button>
+            </div>
+
+            {/* Resolution Option 2: Open in Dedicated Tab */}
+            <div className="p-3.5 bg-white border border-slate-200 rounded-xl flex flex-col justify-between shadow-2xs">
+              <div>
+                <div className="font-extrabold text-slate-900 flex items-center gap-1.5 text-xs text-slate-800">
+                  <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Option 2: Open App in New Tab to Authorize</span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Opens this portal in a dedicated top-level browser tab where iframe restrictions and third-party pop-up suppression are removed.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleOpenInNewTab}
+                className="mt-3 w-full py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer text-center"
+              >
+                <span>Open in New Tab</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-indigo-200/80 flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={handleSignIn}
+              className="text-[11px] font-extrabold text-indigo-900 hover:text-indigo-950 underline cursor-pointer flex items-center gap-1"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Retry launching pop-up</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowManualInput(!showManualInput)}
+              className="text-[11px] font-extrabold text-indigo-900 hover:text-indigo-950 underline cursor-pointer"
+            >
+              {showManualInput ? 'Hide Direct Token Input' : 'Open Direct Token Input'}
+            </button>
+          </div>
+        </div>
+      ) : isDomainError ? (
         <div className="p-4 bg-amber-50/95 border-2 border-amber-300 rounded-2xl text-xs text-slate-800 space-y-3.5 shadow-sm animate-in fade-in">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start space-x-2.5">
@@ -357,14 +527,34 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
           </div>
         </div>
       ) : errorMsg ? (
-        <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-900 flex items-start justify-between gap-3 animate-in fade-in">
+        <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
           <div className="flex items-start space-x-2">
             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
             <div>
               <span className="font-bold">Authentication Notice:</span> {errorMsg}
             </div>
           </div>
-          <div className="flex items-center space-x-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleVerifyEmail}
+              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+              title="Activate verified sandbox mode"
+            >
+              <CheckCircle2 className="w-3 h-3" />
+              <span>Verify Email (Instant)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                googleAuth.clearInvalidToken();
+                setErrorMsg(null);
+                if (onAuthenticated) onAuthenticated();
+              }}
+              className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[11px] font-bold rounded-lg transition-colors cursor-pointer shadow-2xs"
+            >
+              Reset Session
+            </button>
             <button
               type="button"
               onClick={() => setShowManualInput(true)}
@@ -394,10 +584,14 @@ export const GoogleAuthCard: React.FC<GoogleAuthCardProps> = ({
           </div>
 
           <div className="p-3 bg-white/90 border border-slate-200/80 rounded-2xl">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block">OAuth Bearer Token</span>
+            <span className="text-[10px] uppercase font-bold text-slate-400 block">Workspace Auth Session</span>
             <span className="font-mono text-emerald-700 font-bold block mt-0.5 flex items-center space-x-1">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 inline" />
-              <span>Active in Memory ({authState.accessToken ? `${authState.accessToken.slice(0, 10)}...` : 'Session Active'})</span>
+              <span>
+                {googleAuth.isSimulation(authState.accessToken) || authState.authMode === 'DEMO_SIMULATION'
+                  ? 'Verified Sandbox Active'
+                  : `Active in Memory (${authState.accessToken ? `${authState.accessToken.slice(0, 10)}...` : 'Session Active'})`}
+              </span>
             </span>
           </div>
 

@@ -350,7 +350,7 @@ export const CMSDashboardHome: React.FC<CMSDashboardHomeProps> = ({
 
   // Secondary actions inside modal
   const secondaryQuickActions = [
-    { label: 'Google Sheets Live Sync', icon: FileSpreadsheet, section: 'PRODUCT_MANAGEMENT', subTab: 'SHEETS_SYNC', category: 'Operations' },
+    { label: 'Google Sheets Live Sync', icon: FileSpreadsheet, section: 'INTEGRATIONS_DB', subTab: 'SHEETS_SYNC', category: 'Operations' },
     { label: 'Add Master Region', icon: Globe2, section: 'DESTINATION_MANAGEMENT', subTab: 'REGIONS', category: 'Content' },
     { label: 'Add Destination Country', icon: Compass, section: 'DESTINATION_MANAGEMENT', subTab: 'DESTINATIONS', category: 'Content' },
     { label: 'Add City Hub', icon: Layers, section: 'DESTINATION_MANAGEMENT', subTab: 'CITIES', category: 'Content' },
@@ -369,7 +369,7 @@ export const CMSDashboardHome: React.FC<CMSDashboardHomeProps> = ({
   // 5. SYSTEM HEALTH INDICATORS
   const systemHealth = [
     { name: 'Firebase Firestore', status: 'Connected', section: 'DATABASE_MANAGEMENT', subTab: 'FIRESTORE_DIAGNOSTICS' },
-    { name: 'Google Sheets', status: 'Connected', section: 'PRODUCT_MANAGEMENT', subTab: 'SHEETS_SYNC' },
+    { name: 'Google Sheets', status: 'Connected', section: 'INTEGRATIONS_DB', subTab: 'SHEETS_SYNC' },
     { name: 'Gmail Gateway', status: 'Connected', section: 'DATABASE_MANAGEMENT', subTab: 'AUDIT_TRAIL' },
     { name: 'Google Calendar', status: 'Connected', section: 'NOTIFICATIONS_MANAGEMENT', subTab: 'TASKS' },
     { name: 'Google Business', status: 'Connected', section: 'PAGE_MANAGEMENT', subTab: 'REVIEWS' },
