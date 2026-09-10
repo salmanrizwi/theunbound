@@ -54,7 +54,7 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
       secondaryCtaText: 'BECOME A PARTNER',
       secondaryCtaAction: 'QUOTE_BUILDER'
     },
-    showDiscoveryPanel: true,
+    showDiscoveryPanel: false,
     discoveryPanelConfig: {
       showDestination: true,
       showHub: true,

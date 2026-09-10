@@ -15,9 +15,13 @@ export const ChatbotLauncher: React.FC<ChatbotLauncherProps> = ({
   onOpenInQuoteBuilder
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
 
-  // Admin manages chatbot access for B2B agents under Quote Builder Engine Access
+  // Strict: Plan with AI chat button is only visible to Buyer or approved B2B Agent; no one sees it if logged out
+  if (!user || !isAuthenticated) {
+    return null;
+  }
+
   const accessCheck = canUserAccessChatbot(user, portal);
   if (!accessCheck.allowed) {
     return null;

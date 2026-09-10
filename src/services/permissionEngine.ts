@@ -232,8 +232,8 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
       return {
         b2bQuoteBuilderAccess: true,
         buyerQuoteBuilderAccess: false,
-        chatbotAccess: false, // Admin decides which B2B agent has Chatbot access
-        b2bChatbotAccess: false,
+        chatbotAccess: true, // Visible to B2B Agent once approved
+        b2bChatbotAccess: true,
         canAccessPricingCalculator: true,
         canCreateBookings: true,
         canExportPDF: true,
@@ -467,30 +467,33 @@ export function canUserAccessAIPlanner(
  *   user.permissions.chatbotAccess === true || user.permissions.b2bChatbotAccess === true.
  * - Retail/Buyer portal users retain general assistant access for retail quotations unless revoked.
  */
+/**
+ * Evaluates whether a user is authorized to access the AI Travel Chatbot ("Plan with AI").
+ * Adheres strictly to TheUnbound access guidelines:
+ * - NO ONE should see or access the Plan with AI chat button if they are logged out.
+ * - Buyer: Visible and accessible once logged in.
+ * - B2B Agent: Visible and accessible once approved (pending/rejected agents are blocked).
+ * - Admin / Master Admin / Staff: Always authorized.
+ */
 export function canUserAccessChatbot(
   user: User | null | undefined,
-  portal: 'BUYER' | 'B2B_AGENT' | 'ADMIN' | string = 'B2B_AGENT'
+  _portal: 'BUYER' | 'B2B_AGENT' | 'ADMIN' | string = 'B2B_AGENT'
 ): { allowed: boolean; reason?: 'LOGGED_OUT' | 'APPROVAL_PENDING' | 'REJECTED' | 'PERMISSION_DENIED'; message?: string } {
-  // Master Admin and internal staff always have access
-  if (user && (isMasterAdmin(user) || user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF')) {
-    return { allowed: true };
-  }
-
-  // If in BUYER portal and user is NOT a B2B agent, public/buyer chatbot is available
-  if (portal === 'BUYER' && (!user || user.role === 'BUYER' || user.role === 'PUBLIC')) {
-    return { allowed: true };
-  }
-
-  // For B2B Agent portal access:
+  // 1. Strictly forbidden if logged out
   if (!user) {
-    if (portal === 'BUYER') return { allowed: true };
     return { 
       allowed: false, 
       reason: 'LOGGED_OUT',
-      message: 'You must be signed in as a verified B2B Agent to access the AI Travel Chatbot.' 
+      message: 'Please sign in to access the Plan with AI travel specialist.' 
     };
   }
 
+  // 2. Master Admin and internal staff always have access
+  if (isMasterAdmin(user) || user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+    return { allowed: true };
+  }
+
+  // 3. Approval status check for all external accounts
   const approvalStatus = user.approvalStatus || 'APPROVED';
   if (approvalStatus === 'PENDING') {
     return { 
@@ -503,25 +506,34 @@ export function canUserAccessChatbot(
     return { 
       allowed: false, 
       reason: 'REJECTED', 
-      message: 'Your B2B account access has been revoked.' 
+      message: 'Your account access has been revoked.' 
     };
   }
 
-  // Admin decides which agent should have access of ChatBot
+  // 4. Logged-in Buyer or Direct Client accounts
+  if (user.role === 'BUYER' || user.role === 'PUBLIC') {
+    return { allowed: true };
+  }
+
+  // 5. B2B Agent accounts: once approved (checked above)
   const isAgent = user.role === 'B2B_AGENT' || user.role === 'AGENT';
   if (isAgent) {
-    const hasPermission = user.permissions?.chatbotAccess === true || user.permissions?.b2bChatbotAccess === true;
-    if (hasPermission) {
-      return { allowed: true };
+    // If admin explicitly revoked chatbot access in permissions, respect the revocation
+    if (user.permissions && user.permissions.chatbotAccess === false && user.permissions.b2bChatbotAccess === false) {
+      return { 
+        allowed: false, 
+        reason: 'PERMISSION_DENIED', 
+        message: 'AI Chatbot access has been deactivated for your account by an Administrator.' 
+      };
     }
-    return { 
-      allowed: false, 
-      reason: 'PERMISSION_DENIED', 
-      message: 'AI Chatbot access has not been granted to your account by an Administrator. Admin can grant permission under Quote Builder Engine Access.' 
-    };
+    return { allowed: true };
   }
 
-  return { allowed: true };
+  return { 
+    allowed: false,
+    reason: 'PERMISSION_DENIED',
+    message: 'Chatbot access is restricted to Buyers and approved B2B Agents.'
+  };
 }
 
 /**

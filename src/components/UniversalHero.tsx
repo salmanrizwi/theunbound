@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { 
   UniversalHeroConfig, 
   Destination, 
@@ -6,9 +6,8 @@ import {
   HeroSearchParams,
   HeroContextType 
 } from '../types';
-import { Plane, Cpu, Sparkles, ArrowRight, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { Plane, Cpu, Sparkles, ArrowRight } from 'lucide-react';
 import { navigateTo } from '../services/portalRouter';
-import { HeroDiscoveryPanel } from './Hero/HeroDiscoveryPanel';
 import { HeroTrustStrip } from './Hero/HeroTrustStrip';
 import { HeroPromotionBanner } from './Hero/HeroPromotionBanner';
 import { useAuth } from '../context/AuthContext';
@@ -116,20 +115,6 @@ export const UniversalHero: React.FC<UniversalHeroProps> = ({
   const pillar2Subtitle = config?.pillar2Subtitle || 'Package creation. Quotations. Connected workflows.';
   const pillar3Title = config?.pillar3Title || 'AI-POWERED';
   const pillar3Subtitle = config?.pillar3Subtitle || 'Intelligent travel package creation in 30 seconds.';
-
-  // CRITICAL MANDATE: Search/Discovery must NEVER be displayed for logged-in users.
-  // For logged-out users, search is only rendered if explicitly configured for HOMEPAGE context.
-  const showDiscoveryPanel = !isLoggedIn && context === 'HOMEPAGE' && config?.showDiscoveryPanel === true;
-  const discoveryConfig = config?.discoveryPanelConfig || {
-    showDestination: !isDest,
-    showHub: true,
-    showDates: true,
-    showTravelers: true,
-    showTravelStyle: false,
-    showProductType: false,
-    showAiPlannerShortcut: true,
-    ctaText: isDest ? `Search ${destination?.name} Inventory` : 'Search Inventory'
-  };
 
   // Promotion Banner (Subtle single-line badge when configured)
   const promotionConfig = config?.promotion;
@@ -290,18 +275,6 @@ export const UniversalHero: React.FC<UniversalHeroProps> = ({
               </button>
             )}
           </div>
-
-          {/* 6. Optional Clean Search / Discovery Panel (Rendered ONLY if enabled AND user is logged out) */}
-          {showDiscoveryPanel && (
-            <div className="w-full mt-4">
-              <HeroDiscoveryPanel
-                destinations={allDestinations}
-                selectedDestinationId={destination?.id || destination?.slug}
-                config={discoveryConfig}
-                onSearch={onSearch}
-              />
-            </div>
-          )}
         </div>
       </div>
 
