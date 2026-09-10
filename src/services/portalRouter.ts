@@ -91,6 +91,8 @@ export function parseRoute(pathString?: string): ParsedRoute {
     subTab = 'privacy';
   } else if (first === 'refund') {
     subTab = 'refund';
+  } else if (first === 'cookies' || first === 'cookie-policy') {
+    subTab = 'cookies';
   } else if (first === 'account') {
     subTab = 'account';
   } else if (first === 'dashboard') {

@@ -1,45 +1,24 @@
-import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, Product, User, UserRole, HotelRate, B2BPackage } from '../types';
-import { ExchangeRateService, DEFAULT_EXCHANGE_RATES } from './exchangeRateService';
+import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, Product, User, UserRole, HotelRate, B2BPackage, FXRateDetails } from '../types';
+import { currencyEngine, convertCurrency as engineConvert, formatCurrency as engineFormat, getExchangeRateInfo, BASELINE_USD_RATES } from './currencyEngine';
 import { AppDatabase } from './db';
 import { hotelToProduct } from '../utils/hotelHelpers';
 
 // Standardized exchange rate base: 1 USD
 export const EXCHANGE_RATES: Record<CurrencyCode, number> = {
-  ...DEFAULT_EXCHANGE_RATES
+  ...BASELINE_USD_RATES
 };
 
 export function convertCurrency(amount: number, from: CurrencyCode | any, to: CurrencyCode | any): number {
   const fromCode: CurrencyCode = (typeof from === 'object' && from !== null) ? (from.code || 'USD') : (from || 'USD');
   const toCode: CurrencyCode = (typeof to === 'object' && to !== null) ? (to.code || 'USD') : (to || 'USD');
-  if (fromCode === toCode) return amount;
-  return ExchangeRateService.getInstance().convert(amount, fromCode, toCode);
+  return currencyEngine.convert(amount, fromCode, toCode);
 }
 
-export function formatCurrency(amount?: number | null, currency: CurrencyCode | any = 'USD'): string {
-  const safeAmount = (typeof amount === 'number' && !isNaN(amount)) ? amount : (Number(amount) || 0);
+export function formatCurrency(amount?: number | null, currency: CurrencyCode | any = 'USD', options?: { showCode?: boolean }): string {
   const safeCurrency: string = (typeof currency === 'object' && currency !== null) 
     ? (currency.code || 'USD') 
     : (typeof currency === 'string' ? currency : 'USD');
-  const decimals = (safeCurrency === 'JPY' || safeCurrency === 'THB') ? 0 : 2;
-  const symbolMap: Record<string, string> = {
-    USD: '$',
-    EUR: '€',
-    GBP: '£',
-    JPY: '¥',
-    AED: 'AED ',
-    THB: '฿',
-    AUD: 'A$',
-    CAD: 'CA$',
-    SGD: 'S$',
-    INR: '₹',
-    CHF: 'CHF '
-  };
-
-  const symbol = symbolMap[safeCurrency] || `${safeCurrency} `;
-  return `${symbol}${safeAmount.toLocaleString(undefined, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals
-  })}`;
+  return currencyEngine.format(amount, safeCurrency, options);
 }
 
 // Product categories that use capacity-based vehicle/yacht calculation by default
@@ -469,21 +448,6 @@ export function calculateProductPrice(
 
   rawTotalNetCostInNative += addonsNetInNative;
 
-  // Convert Net Subtotals to Target Currency
-  const targetCurrency = request.targetCurrency || nativeCurrency;
-  const adultsSubtotalNet = convertCurrency(adultNetInNative, nativeCurrency, targetCurrency);
-  const childrenSubtotalNet = convertCurrency(childNetInNative, nativeCurrency, targetCurrency);
-  const infantsSubtotalNet = convertCurrency(infantNetInNative, nativeCurrency, targetCurrency);
-  const addonsSubtotalNet = convertCurrency(addonsNetInNative, nativeCurrency, targetCurrency);
-  const totalNetCost = convertCurrency(rawTotalNetCostInNative, nativeCurrency, targetCurrency);
-
-  // Update vehicle details with converted currency costs if applicable
-  if (vehicleDetails) {
-    vehicleDetails.unitVehicleNetCost = convertCurrency(vehicleDetails.unitVehicleNetCost, nativeCurrency, targetCurrency);
-    vehicleDetails.totalVehicleNetCost = convertCurrency(vehicleDetails.totalVehicleNetCost, nativeCurrency, targetCurrency);
-    vehicleDetails.perPersonNetCost = totalPax > 0 ? vehicleDetails.totalVehicleNetCost / totalPax : vehicleDetails.totalVehicleNetCost;
-  }
-
   // Configurable Commercial Rates with User-Type Hierarchy & Rate Sheet Overrides:
   let configuredMarkupPercent = 25;
   if (request.customMarkupPercent !== undefined) {
@@ -511,54 +475,85 @@ export function calculateProductPrice(
     }
   }
 
-  // Markup calculation on totalNetCost
+  // COMMERCIAL PRICING PRINCIPLE: CALCULATE NATIVE FIRST, CONVERT SECOND
+  // 1. All commercial pricing (margins, taxes, discounts, fees) MUST be evaluated in product's native currency
+  const nativeTotalNetCost = rawTotalNetCostInNative;
   let markupRate = configuredMarkupPercent / 100;
-  let markupAmount = totalNetCost * markupRate;
+  let nativeMarkupAmount = nativeTotalNetCost * markupRate;
 
   let b2bWholesaleMarkupRate = configuredMarkupPercent / 100;
-  let b2bWholesaleNetToAgent = totalNetCost + (totalNetCost * b2bWholesaleMarkupRate);
+  let nativeB2bWholesaleNetToAgent = nativeTotalNetCost + (nativeTotalNetCost * b2bWholesaleMarkupRate);
   let agentClientMarkupRate = (request.agentClientMarkupPercent || 12) / 100;
-  let agentProfitAmount = b2bWholesaleNetToAgent * agentClientMarkupRate;
+  let nativeAgentProfitAmount = nativeB2bWholesaleNetToAgent * agentClientMarkupRate;
 
   if (pricingTier === 'B2B') {
-    const dmcWholesaleMarginAmount = totalNetCost * b2bWholesaleMarkupRate;
-    b2bWholesaleNetToAgent = totalNetCost + dmcWholesaleMarginAmount;
-    agentProfitAmount = b2bWholesaleNetToAgent * agentClientMarkupRate;
-    markupAmount = dmcWholesaleMarginAmount + agentProfitAmount;
-    markupRate = totalNetCost > 0 ? markupAmount / totalNetCost : 0;
+    const dmcWholesaleMarginAmount = nativeTotalNetCost * b2bWholesaleMarkupRate;
+    nativeB2bWholesaleNetToAgent = nativeTotalNetCost + dmcWholesaleMarginAmount;
+    nativeAgentProfitAmount = nativeB2bWholesaleNetToAgent * agentClientMarkupRate;
+    nativeMarkupAmount = dmcWholesaleMarginAmount + nativeAgentProfitAmount;
+    markupRate = nativeTotalNetCost > 0 ? nativeMarkupAmount / nativeTotalNetCost : 0;
   }
 
-  // TAX SPEC: Tax is calculated on the MARGIN amount only!
+  // TAX SPEC: Tax is calculated on the MARGIN amount only in Native Currency!
   const configuredTaxPercent = rateTaxPercentage !== undefined 
     ? rateTaxPercentage 
     : (product.taxPercent !== undefined ? product.taxPercent : 10);
   const taxRate = configuredTaxPercent / 100;
-  const taxAmount = markupAmount * taxRate;
+  const nativeTaxAmount = nativeMarkupAmount * taxRate;
 
-  // Dynamic Fee %: 0 if explicitly 0 or Hotels / Manual Accommodations, otherwise default service fee
+  // Dynamic Fee in Native Currency
   const configuredFeePercent = product.serviceFeeFixed !== undefined 
-    ? (totalNetCost > 0 ? (product.serviceFeeFixed / totalNetCost) * 100 : 0)
+    ? (nativeTotalNetCost > 0 ? (product.serviceFeeFixed / nativeTotalNetCost) * 100 : 0)
     : (product.productType === 'Hotel' || product.accommodationType === 'manual' || product.isManualHotel ? 0 : 2.5);
   const feeRate = configuredFeePercent / 100;
-  const serviceFee = totalNetCost * feeRate;
+  const nativeServiceFee = nativeTotalNetCost * feeRate;
 
-  // Discounts & Commissions
+  // Discounts & Commissions in Native Currency
   const discountPercent = request.customDiscountPercent || 0;
   const discountRate = discountPercent / 100;
-  const discountAmount = (totalNetCost + markupAmount + taxAmount + serviceFee) * discountRate;
+  const nativeDiscountAmount = (nativeTotalNetCost + nativeMarkupAmount + nativeTaxAmount + nativeServiceFee) * discountRate;
 
   const commissionPercent = product.commissionPercent || 0;
   const commissionRate = commissionPercent / 100;
-  const commissionAmount = totalNetCost * commissionRate;
+  const nativeCommissionAmount = nativeTotalNetCost * commissionRate;
 
-  const grossBeforeTax = totalNetCost + markupAmount;
-  const finalTotalSellingPrice = (totalNetCost + markupAmount + taxAmount + serviceFee) - discountAmount;
+  const nativeGrossBeforeTax = nativeTotalNetCost + nativeMarkupAmount;
+  const nativeFinalSellingPrice = (nativeTotalNetCost + nativeMarkupAmount + nativeTaxAmount + nativeServiceFee) - nativeDiscountAmount;
+  const nativePricePerPerson = totalPax > 0 ? nativeFinalSellingPrice / totalPax : nativeFinalSellingPrice;
+
+  // 2. CONVERT ONLY AT THE DELIVERED LEVEL (or convert itemized values using exact authoritative FX rate)
+  const targetCurrency = request.targetCurrency || nativeCurrency;
+  const isConverted = targetCurrency !== nativeCurrency;
+  const fxDetails: FXRateDetails = currencyEngine.getRateInfo(nativeCurrency, targetCurrency);
+
+  const finalTotalSellingPrice = isConverted ? currencyEngine.convert(nativeFinalSellingPrice, nativeCurrency, targetCurrency) : nativeFinalSellingPrice;
+  const totalNetCost = isConverted ? currencyEngine.convert(nativeTotalNetCost, nativeCurrency, targetCurrency) : nativeTotalNetCost;
+  const markupAmount = isConverted ? currencyEngine.convert(nativeMarkupAmount, nativeCurrency, targetCurrency) : nativeMarkupAmount;
+  const taxAmount = isConverted ? currencyEngine.convert(nativeTaxAmount, nativeCurrency, targetCurrency) : nativeTaxAmount;
+  const serviceFee = isConverted ? currencyEngine.convert(nativeServiceFee, nativeCurrency, targetCurrency) : nativeServiceFee;
+  const discountAmount = isConverted ? currencyEngine.convert(nativeDiscountAmount, nativeCurrency, targetCurrency) : nativeDiscountAmount;
+  const commissionAmount = isConverted ? currencyEngine.convert(nativeCommissionAmount, nativeCurrency, targetCurrency) : nativeCommissionAmount;
+  const grossBeforeTax = isConverted ? currencyEngine.convert(nativeGrossBeforeTax, nativeCurrency, targetCurrency) : nativeGrossBeforeTax;
+  const pricePerPerson = totalPax > 0 ? finalTotalSellingPrice / totalPax : finalTotalSellingPrice;
+
+  const b2bWholesaleNetToAgent = isConverted ? currencyEngine.convert(nativeB2bWholesaleNetToAgent, nativeCurrency, targetCurrency) : nativeB2bWholesaleNetToAgent;
+  const agentProfitAmount = isConverted ? currencyEngine.convert(nativeAgentProfitAmount, nativeCurrency, targetCurrency) : nativeAgentProfitAmount;
+
+  // Converted Net Subtotals for line-item reporting
+  const adultsSubtotalNet = isConverted ? currencyEngine.convert(adultNetInNative, nativeCurrency, targetCurrency) : adultNetInNative;
+  const childrenSubtotalNet = isConverted ? currencyEngine.convert(childNetInNative, nativeCurrency, targetCurrency) : childNetInNative;
+  const infantsSubtotalNet = isConverted ? currencyEngine.convert(infantNetInNative, nativeCurrency, targetCurrency) : infantNetInNative;
+  const addonsSubtotalNet = isConverted ? currencyEngine.convert(addonsNetInNative, nativeCurrency, targetCurrency) : addonsNetInNative;
+
+  // Update vehicle details with converted currency costs if applicable
+  if (vehicleDetails) {
+    vehicleDetails.unitVehicleNetCost = isConverted ? currencyEngine.convert(vehicleDetails.unitVehicleNetCost, nativeCurrency, targetCurrency) : vehicleDetails.unitVehicleNetCost;
+    vehicleDetails.totalVehicleNetCost = isConverted ? currencyEngine.convert(vehicleDetails.totalVehicleNetCost, nativeCurrency, targetCurrency) : vehicleDetails.totalVehicleNetCost;
+    vehicleDetails.perPersonNetCost = totalPax > 0 ? vehicleDetails.totalVehicleNetCost / totalPax : vehicleDetails.totalVehicleNetCost;
+  }
 
   const dmcMarginAmount = markupAmount + serviceFee - discountAmount;
   const dmcMarginPercent = totalNetCost > 0 ? (dmcMarginAmount / totalNetCost) * 100 : 0;
-
-  // Per Person Selling Cost
-  const pricePerPerson = totalPax > 0 ? finalTotalSellingPrice / totalPax : finalTotalSellingPrice;
 
   // Proportional breakdown of selling price
   const sellingMultiplier = totalNetCost > 0 ? finalTotalSellingPrice / totalNetCost : 1;
@@ -614,6 +609,16 @@ export function calculateProductPrice(
     isCapacityBased: isCapacity,
     pricingMethod: isCapacity ? 'capacity_based' : 'per_person',
     vehicleDetails,
+
+    // Native Commercial Calculation (Calculate Native First, Convert Second)
+    nativeCurrency,
+    nativeTotalNetCost,
+    nativeGrossBeforeTax,
+    nativeMarkupAmount,
+    nativeTaxAmount,
+    nativeFinalSellingPrice,
+    nativePricePerPerson,
+    fxDetails,
 
     // Master Pricing Source of Truth & Audit Fields
     rateId: authoritativeRateId || (product as any).rateId || 'RTE-DEF-001',

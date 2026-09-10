@@ -23,7 +23,7 @@ import { CurrencyCode, DestinationRegion, Destination, SUPPORTED_CURRENCIES, Men
 import { AppDatabase } from '../services/db';
 import { canUserAccessCMS, canUserAccessQuoteBuilder } from '../services/permissionEngine';
 
-export type MainNavTab = 'DESTINATIONS' | 'VISAS' | 'B2B_BUILDER' | 'DASHBOARD' | 'ADMIN' | 'ACCOUNT' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND' | 'CUSTOM_PAGE' | 'ABOUT';
+export type MainNavTab = 'DESTINATIONS' | 'VISAS' | 'B2B_BUILDER' | 'DASHBOARD' | 'ADMIN' | 'ACCOUNT' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND' | 'COOKIES' | 'CUSTOM_PAGE' | 'ABOUT';
 
 interface NavbarProps {
   destinations?: Destination[];

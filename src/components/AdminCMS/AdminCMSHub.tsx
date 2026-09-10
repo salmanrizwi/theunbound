@@ -28,6 +28,7 @@ import { DestinationFAQManager } from './DestinationFAQManager';
 import { LeadManager } from './LeadManager';
 import { UserApprovalAccessManager } from './UserApprovalAccessManager';
 import { FinancialsManager } from './FinancialsManager';
+import { CurrencyManagementPanel } from './CurrencyManagement/CurrencyManagementPanel';
 import { PromotionManager } from './PromotionManager';
 import { EmailCampaignsManager } from './EmailCampaignsManager';
 import { AuditTrailViewer } from './AuditTrailViewer';
@@ -64,6 +65,9 @@ import {
   Users, 
   UserCheck, 
   Receipt, 
+  CircleDollarSign,
+  Calculator,
+  History,
   Megaphone, 
   BarChart3, 
   Bell, 
@@ -113,6 +117,7 @@ export type CMSSection =
   | 'SEO_MANAGEMENT'
   | 'ACCOUNT_MANAGEMENT'
   | 'ANALYTICS_MANAGEMENT'
+  | 'CURRENCY_MANAGEMENT'
   | 'NOTIFICATIONS_MANAGEMENT'
   | 'CALENDAR_SLAS'
   | 'DATABASE_MANAGEMENT'
@@ -202,6 +207,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       else if (initialTab === 'MARKETING') targetSec = 'MARKETING_MANAGEMENT';
       else if (initialTab === 'ACCOUNTS' || initialTab === 'USERS') targetSec = 'ACCOUNT_MANAGEMENT';
       else if (initialTab === 'ANALYTICS') targetSec = 'ANALYTICS_MANAGEMENT';
+      else if (initialTab === 'CURRENCY' || initialTab === 'CURRENCY_MANAGEMENT' || initialTab === 'FX') targetSec = 'CURRENCY_MANAGEMENT';
       else if (initialTab === 'TASKS' || initialTab === 'SLAS') targetSec = 'NOTIFICATIONS_MANAGEMENT';
       else if (initialTab === 'INTEGRATIONS' || initialTab === 'DATABASE') targetSec = 'DATABASE_MANAGEMENT';
       else targetSec = initialTab as CMSSection;
@@ -555,6 +561,19 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           description: 'Commercial margin realization, tax on margin reporting, monthly sales revenue, conversion metrics, and official GST invoices.',
           subTabs: [
             { id: 'FINANCIALS', label: 'Financial Audit & Invoicing', icon: Receipt }
+          ]
+        },
+        {
+          id: 'CURRENCY_MANAGEMENT',
+          label: 'Currency Management',
+          shortLabel: 'Currency & FX',
+          icon: CircleDollarSign,
+          badge: 'Google Finance',
+          description: 'Standardized currency conversion engine, authoritative Google Finance live rates, CMS manual adjustments, and audit trail.',
+          subTabs: [
+            { id: 'RATES_TABLE', label: 'Currency Pairs & Adjustments', icon: CircleDollarSign },
+            { id: 'CALCULATOR_PREVIEW', label: 'Rate Preview & Simulator', icon: Calculator },
+            { id: 'AUDIT_LOGS', label: 'FX Rate Audit Log', icon: History }
           ]
         }
       ]
@@ -1320,6 +1339,11 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           {/* 4.2 ANALYTICS & FINANCIALS */}
           {currentModuleConfig.id === 'ANALYTICS_MANAGEMENT' && (
             <FinancialsManager />
+          )}
+
+          {/* 4.3 CURRENCY MANAGEMENT & FX ENGINE */}
+          {currentModuleConfig.id === 'CURRENCY_MANAGEMENT' && (
+            <CurrencyManagementPanel currentUser={currentUser} />
           )}
 
           {/* SECTION 5: SYSTEM & AUDIT */}

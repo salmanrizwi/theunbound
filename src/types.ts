@@ -50,6 +50,70 @@ export const SUPPORTED_CURRENCIES: CurrencyOption[] = [
   { code: 'CHF', name: 'Swiss Franc', symbol: 'CHF' }
 ];
 
+export type CurrencyPairStatus = 'ACTIVE' | 'PAUSED' | 'STALE';
+
+export interface CurrencyPairConfig {
+  id: string; // e.g. "USD_INR", "JPY_INR"
+  fromCurrency: CurrencyCode;
+  toCurrency: CurrencyCode;
+  googleFinanceLiveRate?: number; // Raw live rate evaluated by =GOOGLEFINANCE() in Google Sheets
+  googleFinanceFormula?: string; // e.g. =GOOGLEFINANCE("CURRENCY:USDINR")
+  xeLiveRate: number; // Raw live market rate (Google Finance / interbank)
+  manualAdjustment: number; // Absolute value added to live rate (e.g. +1.00, +0.03)
+  effectiveRate: number; // liveRate + manualAdjustment
+  status: CurrencyPairStatus;
+  lastFetchedAt: string;
+  lastUpdatedAt: string;
+  updatedBy?: string;
+  updatedByName?: string;
+  notes?: string;
+}
+
+export interface CurrencyAuditLog {
+  id: string;
+  pairId: string;
+  fromCurrency: CurrencyCode;
+  toCurrency: CurrencyCode;
+  previousLiveRate: number;
+  newLiveRate: number;
+  previousAdjustment: number;
+  newAdjustment: number;
+  previousEffectiveRate: number;
+  newEffectiveRate: number;
+  changedByUserId: string;
+  changedByName: string;
+  changedByEmail?: string;
+  reason: string;
+  timestamp: string;
+}
+
+export interface CurrencySettings {
+  baseCurrency: CurrencyCode;
+  googleSheetsSyncEnabled?: boolean;
+  googleSheetId?: string;
+  googleSheetTabName?: string;
+  googleFinanceProviderEnabled?: boolean;
+  xeProviderEnabled?: boolean;
+  cacheTtlMinutes: number;
+  fallbackPolicy: 'USE_LAST_VALID' | 'USE_BASELINE' | 'BLOCK_TRANSACTION';
+  staleThresholdMinutes: number;
+  lastGlobalSyncAt: string;
+  autoSyncIntervalMinutes: number;
+}
+
+export interface FXRateDetails {
+  nativeCurrency: CurrencyCode;
+  targetCurrency: CurrencyCode;
+  googleFinanceLiveRate?: number;
+  googleFinanceFormula?: string;
+  xeLiveRate: number;
+  manualAdjustment: number;
+  effectiveRate: number;
+  isConverted: boolean;
+  rateTimestamp: string;
+  provider: string;
+}
+
 export type QuotationScope = 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY';
 
 export type UserApprovalStatus = 'APPROVED' | 'PENDING' | 'REJECTED';
@@ -575,6 +639,16 @@ export interface PricingCalculationResult {
   finalTotalSellingPrice: number;
   sellingPriceFinal: number;
   pricePerPerson: number;
+
+  // Native Commercial Calculation (Calculate Native First, Convert Second)
+  nativeCurrency?: CurrencyCode;
+  nativeTotalNetCost?: number;
+  nativeGrossBeforeTax?: number;
+  nativeMarkupAmount?: number;
+  nativeTaxAmount?: number;
+  nativeFinalSellingPrice?: number;
+  nativePricePerPerson?: number;
+  fxDetails?: FXRateDetails;
   
   // Transparency badge
   dmcMarginAmount: number;
@@ -2091,7 +2165,8 @@ export type MasterSheetTabName =
   | 'TRANSFER_ROUTES'
   | 'TRANSFER_RATES'
   | 'PACKAGES'
-  | 'PACKAGE_ITEMS';
+  | 'PACKAGE_ITEMS'
+  | 'FX_RATES';
 
 export interface SheetValidationError {
   tabName: MasterSheetTabName | string;

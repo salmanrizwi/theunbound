@@ -1117,6 +1117,8 @@ export class SheetsSyncService {
           remarks: pi.remarks || ''
         }));
         logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.packageItems.length} Package Items.`);
+      } else if (tabKey === 'FX_RATES') {
+        logs.push(`[${new Date().toLocaleTimeString()}] Synchronized ${objects.length} Google Finance FX Rates (=GOOGLEFINANCE).`);
       }
     }
 

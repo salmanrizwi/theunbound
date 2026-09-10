@@ -51,6 +51,7 @@ export const AuthModal: React.FC = () => {
   const [taxOrGstNumber, setTaxOrGstNumber] = useState('');
   const [iataOrAbtaNumber, setIataOrAbtaNumber] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
+  const [agreedToLegal, setAgreedToLegal] = useState(false);
 
   // Status & Feedback State
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -106,6 +107,7 @@ export const AuthModal: React.FC = () => {
     setJobTitle('');
     setTaxOrGstNumber('');
     setIataOrAbtaNumber('');
+    setAgreedToLegal(false);
     setErrorMessage(null);
     setStatusMessage(null);
     setPendingApprovalUser(null);
@@ -113,6 +115,7 @@ export const AuthModal: React.FC = () => {
 
   const handleTabSwitch = (mode: 'LOGIN' | 'REGISTER' | 'FORGOT') => {
     setAuthMode(mode);
+    setAgreedToLegal(false);
     setErrorMessage(null);
     setStatusMessage(null);
     setPendingApprovalUser(null);
@@ -169,6 +172,11 @@ export const AuthModal: React.FC = () => {
           setErrorMessage('Travel Agency or Company Name is required for B2B Agent registration.');
           return;
         }
+      }
+
+      if (!agreedToLegal) {
+        setErrorMessage('Please accept the Terms of Service and Privacy Policy to create your account.');
+        return;
       }
 
       setIsSubmitting(true);
@@ -784,6 +792,47 @@ export const AuthModal: React.FC = () => {
                     >
                       Forgot Password?
                     </button>
+                  </div>
+                )}
+
+                {/* Registration Explicit Legal Consent Checkbox (GDPR Article 7 & DPDP Act 2023) */}
+                {authMode === 'REGISTER' && (
+                  <div className="pt-2">
+                    <label className="flex items-start space-x-2.5 text-xs text-slate-600 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        id="register-terms-consent"
+                        checked={agreedToLegal}
+                        onChange={(e) => {
+                          setAgreedToLegal(e.target.checked);
+                          if (e.target.checked) setErrorMessage(null);
+                        }}
+                        className="mt-0.5 w-4 h-4 rounded text-[#00C6A6] focus:ring-[#00C6A6] border-slate-300"
+                      />
+                      <span className="leading-snug text-[11px]">
+                        I have read and agree to TheUnbound's{' '}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            window.open('/terms', '_blank');
+                          }}
+                          className="text-[#008972] font-bold underline hover:text-[#00C6A6]"
+                        >
+                          Terms of Service
+                        </button>{' '}
+                        and{' '}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            window.open('/privacy', '_blank');
+                          }}
+                          className="text-[#008972] font-bold underline hover:text-[#00C6A6]"
+                        >
+                          Privacy Policy
+                        </button>
+                        . We never sell your personal data.
+                      </span>
+                    </label>
                   </div>
                 )}
 

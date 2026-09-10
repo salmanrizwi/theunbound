@@ -1,15 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { CurrencyCode, SUPPORTED_CURRENCIES } from '../types';
-import { ExchangeRateService, ExchangeRateData } from '../services/exchangeRateService';
-import { formatCurrency } from '../services/pricingEngine';
+import { currencyEngine, convertCurrency, formatCurrency, getExchangeRateInfo } from '../services/currencyEngine';
 import { useQuotation } from '../context/QuotationContext';
 import { 
   ArrowRightLeft, 
   RefreshCw, 
-  TrendingUp, 
   Globe, 
-  Check, 
-  ChevronDown
+  ShieldCheck
 } from 'lucide-react';
 
 interface CurrencyConverterWidgetProps {
@@ -33,13 +30,13 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
   const baseCurrency: CurrencyCode = propBaseCurrency as CurrencyCode;
   const onCurrencyChange = propOnCurrencyChange || quoteContext.setCurrency;
 
-  const [fxData, setFxData] = useState<ExchangeRateData>(() => ExchangeRateService.getInstance().getData());
+  const [status, setStatus] = useState(() => currencyEngine.getStatus());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [testAmount, setTestAmount] = useState<number>(baseAmount || 1000);
 
   useEffect(() => {
-    const unsub = ExchangeRateService.getInstance().subscribe((data) => {
-      setFxData(data);
+    const unsub = currencyEngine.subscribe(() => {
+      setStatus(currencyEngine.getStatus());
     });
     return () => unsub();
   }, []);
@@ -52,13 +49,13 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await ExchangeRateService.getInstance().fetchLiveRates();
+    await currencyEngine.fetchLiveRates(true);
     setTimeout(() => setIsRefreshing(false), 600);
   };
 
-  const exchangeService = ExchangeRateService.getInstance();
-  const convertedAmount = exchangeService.convert(testAmount, baseCurrency, currentCurrency);
-  const oneUnitConverted = exchangeService.convert(1, baseCurrency, currentCurrency);
+  const convertedAmount = currencyEngine.convert(testAmount, baseCurrency, currentCurrency);
+  const oneUnitConverted = currencyEngine.convert(1, baseCurrency, currentCurrency);
+  const rateInfo = currencyEngine.getRateInfo(baseCurrency, currentCurrency);
 
   if (compact) {
     return (
@@ -80,7 +77,7 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
           type="button"
           onClick={handleRefresh}
           className="p-1 text-slate-400 hover:text-[#00E5C0] transition-colors cursor-pointer"
-          title="Refresh Live FX Rates"
+          title="Refresh Live Google Finance FX Rates"
         >
           <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin text-[#00E5C0]' : ''}`} />
         </button>
@@ -101,7 +98,7 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
             </h4>
             <span className="text-[10px] text-emerald-400 flex items-center space-x-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span>Live Interbank Rates</span>
+              <span>Google Finance Live Feed</span>
             </span>
           </div>
         </div>
@@ -142,10 +139,15 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
       {/* Conversion Rate Snapshot */}
       <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700 flex items-center justify-between text-xs">
         <div>
-          <span className="text-[10px] text-slate-400 block font-mono">Current Pair Rate:</span>
+          <span className="text-[10px] text-slate-400 block font-mono">Effective Rate:</span>
           <span className="font-bold text-white font-mono">
             1 {baseCurrency} = {formatCurrency(oneUnitConverted, currentCurrency)}
           </span>
+          {rateInfo.manualAdjustment !== 0 && (
+            <span className="text-[10px] text-emerald-400 block mt-0.5 font-mono">
+              (GF: {rateInfo.xeLiveRate.toFixed(4)} {rateInfo.manualAdjustment >= 0 ? `+${rateInfo.manualAdjustment}` : rateInfo.manualAdjustment})
+            </span>
+          )}
         </div>
 
         {baseAmount !== undefined && (
@@ -161,8 +163,11 @@ export const CurrencyConverterWidget: React.FC<CurrencyConverterWidgetProps> = (
       </div>
 
       <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/80">
-        <span>Feed: Open ER & Live Interbank Market</span>
-        <span className="font-mono">Synced: {fxData.lastUpdated ? new Date(fxData.lastUpdated).toLocaleTimeString() : 'Live'}</span>
+        <span className="flex items-center gap-1">
+          <ShieldCheck className="w-3 h-3 text-emerald-400" />
+          TheUnbound Engine &middot; Google Finance Live
+        </span>
+        <span className="font-mono">Synced: {status.lastFetchedAt ? new Date(status.lastFetchedAt).toLocaleTimeString() : 'Live'}</span>
       </div>
     </div>
   );

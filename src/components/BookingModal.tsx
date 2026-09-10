@@ -85,6 +85,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [flightDetails, setFlightDetails] = useState<string>('');
   const [pickupLocation, setPickupLocation] = useState<string>('');
   const [specialRequests, setSpecialRequests] = useState<string>('');
+  const [agreedToBookingTerms, setAgreedToBookingTerms] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
@@ -149,6 +150,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     }
     if (!phone.trim() || phone.length < 7) {
       setErrorMessage('Please enter a valid phone or WhatsApp contact number.');
+      return;
+    }
+
+    if (!agreedToBookingTerms) {
+      setErrorMessage('Please confirm agreement to the Terms of Service, Privacy Policy, and Cancellation & Refund Policy.');
       return;
     }
 
@@ -656,6 +662,52 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 By submitting this booking request, our ground operations desk immediately reserves roster allotments. An automated confirmation receipt will be dispatched to <strong>{email || 'your email'}</strong> and <strong>sales@theunbound.in</strong>. Your official voucher and final status will be updated within 24–48 hours.
               </p>
             </div>
+          </div>
+
+          {/* Explicit Legal & Policy Consent Checkbox (GDPR, DPDP, Refund Governance) */}
+          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+            <label className="flex items-start space-x-2.5 text-xs text-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                id="booking-terms-consent-checkbox"
+                checked={agreedToBookingTerms}
+                onChange={(e) => {
+                  setAgreedToBookingTerms(e.target.checked);
+                  if (e.target.checked) setErrorMessage('');
+                }}
+                className="mt-0.5 w-4 h-4 rounded text-[#00C6A6] focus:ring-[#00C6A6] border-slate-300"
+              />
+              <span className="leading-snug text-[11px]">
+                I confirm traveler logistics are accurate and agree to TheUnbound's{' '}
+                <a
+                  href="/terms"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#008972] font-bold underline hover:text-[#00C6A6]"
+                >
+                  Terms of Service
+                </a>
+                ,{' '}
+                <a
+                  href="/privacy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#008972] font-bold underline hover:text-[#00C6A6]"
+                >
+                  Privacy Policy
+                </a>
+                , and{' '}
+                <a
+                  href="/refund"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#008972] font-bold underline hover:text-[#00C6A6]"
+                >
+                  Cancellation &amp; Refund Policy
+                </a>
+                .
+              </span>
+            </label>
           </div>
 
           {/* Modal Footer Actions */}

@@ -767,6 +767,13 @@ export function canUserAccessCMSModule(
       }
       return user?.role === 'ADMIN' || perms?.canAccessFinancials === true;
 
+    case 'CURRENCY_MANAGEMENT':
+      if (!canUserAccessTopSection(user, 'FINANCE')) return false;
+      if (perms?.cmsFinance?.financials !== undefined) {
+        return perms.cmsFinance.financials;
+      }
+      return user?.role === 'ADMIN' || perms?.canAccessFinancials === true;
+
     // System modules (blocked if cmsSystem.enabled === false)
     case 'CALENDAR_SLAS':
     case 'NOTIFICATIONS_MANAGEMENT':

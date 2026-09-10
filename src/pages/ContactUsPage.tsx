@@ -35,6 +35,8 @@ export const ContactUsPage: React.FC = () => {
   const [destinationInterest, setDestinationInterest] = useState('Japan');
   const [subject, setSubject] = useState('B2B Partnership & Ground Contract Inquiry');
   const [message, setMessage] = useState('');
+  const [agreedToPrivacy, setAgreedToPrivacy] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
   const [isSubmitted, setIsSubmitted] = useState(false);
 
   useEffect(() => {
@@ -45,9 +47,9 @@ export const ContactUsPage: React.FC = () => {
 
   const contactData = siteConfig.contact || {
     primaryEmail: 'sales@theunbound.in',
-    supportEmail: 'operations@theunbound.in',
-    primaryPhone: '+91 98765 43210',
-    emergencyPhone: '+81 3 555 0199',
+    supportEmail: 'business@theunbound.in',
+    primaryPhone: '+91-9811654959',
+    emergencyPhone: '011-41185542',
     officeAddress: 'A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi, India',
     businessHours: 'Monday - Saturday: 09:00 - 20:00 IST / 24x7 On-Tour Emergency'
   };
@@ -55,6 +57,12 @@ export const ContactUsPage: React.FC = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !email.trim()) return;
+
+    if (!agreedToPrivacy) {
+      setConsentError('Please confirm consent to data processing under our Privacy Policy to submit an inquiry.');
+      return;
+    }
+    setConsentError(null);
 
     const newLead: TravelLead = {
       id: `lead-contact-${Date.now()}`,
@@ -379,15 +387,47 @@ export const ContactUsPage: React.FC = () => {
                   />
                 </div>
 
-                <div className="pt-2 flex items-center justify-between">
-                  <div className="flex items-center space-x-1 text-[11px] text-slate-400">
-                    <ShieldCheck className="w-3.5 h-3.5 text-[#008972]" />
-                    <span>Instant CRM logging & 100% data privacy guarantee</span>
+                {/* Explicit Privacy & Data Processing Consent Checkbox (GDPR & DPDP Act 2023) */}
+                <div className="pt-1 space-y-1.5">
+                  <label className="flex items-start space-x-2.5 text-xs text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      id="contact-privacy-consent-checkbox"
+                      checked={agreedToPrivacy}
+                      onChange={(e) => {
+                        setAgreedToPrivacy(e.target.checked);
+                        if (e.target.checked) setConsentError(null);
+                      }}
+                      className="mt-0.5 w-4 h-4 rounded text-[#00C6A6] focus:ring-[#00C6A6] border-slate-300"
+                    />
+                    <span className="leading-snug">
+                      I consent to TheUnbound processing my contact information to respond to this travel proposal in accordance with the{' '}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent('theunbound_open_privacy_policy'));
+                        }}
+                        className="text-[#008972] font-semibold underline hover:text-[#00C6A6]"
+                      >
+                        Privacy Policy
+                      </button>
+                      . We never sell your personal data.
+                    </span>
+                  </label>
+                  {consentError && (
+                    <p className="text-[11px] font-semibold text-rose-600 pl-6.5">{consentError}</p>
+                  )}
+                </div>
+
+                <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                  <div className="flex items-center space-x-1.5 text-[11px] text-slate-500">
+                    <ShieldCheck className="w-4 h-4 text-[#008972] shrink-0" />
+                    <span>Instant CRM logging • Direct DMC operations desk response</span>
                   </div>
 
                   <button
                     type="submit"
-                    className="px-6 py-2.5 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold text-xs rounded-xl transition-all shadow-md flex items-center space-x-2 cursor-pointer active:scale-95"
+                    className="px-6 py-2.5 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold text-xs rounded-xl transition-all shadow-md flex items-center justify-center space-x-2 cursor-pointer active:scale-95"
                   >
                     <Send className="w-4 h-4" />
                     <span>Send Proposal Request</span>

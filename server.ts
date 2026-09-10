@@ -4,6 +4,7 @@ import fs from "fs";
 import { handleSitemapXml, handleRobotsTxt, injectSEOIntoHtml } from "./server/seoHandler";
 import { handleGeminiChat } from "./server/geminiChatHandler";
 import { createIntegrationsRouter } from "./server/integrationsService";
+import { createFXRouter } from "./server/fxService";
 
 // Prevent unexpected unhandled crashes
 process.on('unhandledRejection', (reason) => {
@@ -25,6 +26,9 @@ async function startServer() {
 
   // Secure Server-Side Integrations Router (Gmail, Google Sheets, Token Refresh)
   app.use("/api/integrations", createIntegrationsRouter());
+
+  // Centralized Live XE.com FX Currency Engine Router
+  app.use("/api/fx", createFXRouter());
 
   // TheUnbound Gemini AI Chatbot endpoint
   app.post("/api/gemini/chat", handleGeminiChat);

@@ -131,7 +131,7 @@ function base64UrlEncode(str: string): string {
 /**
  * Refreshes or retrieves a valid Google OAuth Access Token server-side
  */
-async function getServerAccessToken(clientProvidedToken?: string | null): Promise<{ token: string | null; error?: string; status: 'OK' | 'REFRESH_TOKEN_INVALID' | 'CONFIG_ERROR' | 'TEMPORARY_ERROR' | 'SIMULATED' }> {
+export async function getServerAccessToken(clientProvidedToken?: string | null): Promise<{ token: string | null; error?: string; status: 'OK' | 'REFRESH_TOKEN_INVALID' | 'CONFIG_ERROR' | 'TEMPORARY_ERROR' | 'SIMULATED' }> {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;

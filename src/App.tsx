@@ -11,6 +11,8 @@ import { ContactUsPage } from './pages/ContactUsPage';
 import { TermsOfPolicyPage } from './pages/TermsOfPolicyPage';
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { RefundPolicyPage } from './pages/RefundPolicyPage';
+import { CookiePolicyPage } from './pages/CookiePolicyPage';
+import { CookieConsentBanner } from './components/CookieConsentBanner';
 import { AccountPage } from './pages/AccountPage';
 import { VisaPage } from './pages/VisaPage';
 import { CustomPageView } from './pages/CustomPageView';
@@ -111,18 +113,28 @@ const MainAppContent: React.FC = () => {
           setActiveTab('PRIVACY');
         } else if (parsed.subTab === 'refund') {
           setActiveTab('REFUND');
+        } else if (parsed.subTab === 'cookies') {
+          setActiveTab('COOKIES');
         }
       }
+    };
+
+    const handleOpenPrivacy = () => {
+      setActiveTab('PRIVACY');
+      navigateTo('/privacy');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     window.addEventListener('popstate', handleLocationChange);
     window.addEventListener('hashchange', handleLocationChange);
     window.addEventListener('theunbound_route_changed', handleLocationChange);
+    window.addEventListener('theunbound_open_privacy_policy', handleOpenPrivacy);
 
     return () => {
       window.removeEventListener('popstate', handleLocationChange);
       window.removeEventListener('hashchange', handleLocationChange);
       window.removeEventListener('theunbound_route_changed', handleLocationChange);
+      window.removeEventListener('theunbound_open_privacy_policy', handleOpenPrivacy);
     };
   }, []);
 
@@ -481,6 +493,7 @@ const MainAppContent: React.FC = () => {
         {activeTab === 'TERMS' && <TermsOfPolicyPage />}
         {activeTab === 'PRIVACY' && <PrivacyPolicyPage />}
         {activeTab === 'REFUND' && <RefundPolicyPage />}
+        {activeTab === 'COOKIES' && <CookiePolicyPage />}
       </main>
 
       {/* Buyer Experience Footer */}
@@ -497,6 +510,7 @@ const MainAppContent: React.FC = () => {
             TERMS: '/terms',
             PRIVACY: '/privacy',
             REFUND: '/refund',
+            COOKIES: '/cookies',
             DASHBOARD: '/dashboard',
             ACCOUNT: '/account',
           };
@@ -592,6 +606,15 @@ const MainAppContent: React.FC = () => {
 
       {/* Global TheUnbound AI Travel Specialist Chatbot Launcher for Retail & Buyer Portals */}
       <ChatbotLauncher portal="BUYER" />
+
+      {/* Global GDPR & DPDP Cookie Consent Banner */}
+      <CookieConsentBanner
+        onNavigateToCookiePolicy={() => {
+          setActiveTab('COOKIES');
+          navigateTo('/cookies');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+      />
     </div>
   );
 };

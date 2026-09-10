@@ -576,6 +576,42 @@ export const MASTER_SHEETS_TAB_DEFINITIONS: MasterSheetTabDefinition[] = [
       ['PKGITEM-003', 'PKG-JPN-001', '2', 'HUB-TYO', 'product', 'PRD-TYO-001', '1', 'Tokyo Modern & Edo Heritage Full-Day Private Tour'],
       ['PKGITEM-004', 'PKG-JPN-001', '3', 'HUB-KYO', 'product', 'PRD-KYO-002', '1', 'Private Authentic Tea Ceremony in Gion, Kyoto']
     ]
+  },
+
+  // ----------------------------------------------------
+  // 17. FX_RATES TAB (=GOOGLEFINANCE Live Engine)
+  // ----------------------------------------------------
+  {
+    tabName: 'FX_RATES',
+    displayName: '17. Multi-Currency Live Rates (=GOOGLEFINANCE)',
+    description: 'Live institutional FX rates powered by native Google Sheets =GOOGLEFINANCE() formulas and read via official Google Sheets API.',
+    hierarchyLevel: 4,
+    primaryKey: 'pair_id',
+    columns: [
+      { name: 'pair_id', key: 'pair_id', type: 'string', required: true, sampleValue: 'USD_INR', description: 'Unique stable Currency Pair ID (e.g. USD_INR, USD_EUR)' },
+      { name: 'from_currency', key: 'from_currency', type: 'string', required: true, sampleValue: 'USD', description: 'Base ISO Currency Code' },
+      { name: 'to_currency', key: 'to_currency', type: 'string', required: true, sampleValue: 'INR', description: 'Target ISO Currency Code' },
+      { name: 'currency_name', key: 'currency_name', type: 'string', required: true, sampleValue: 'Indian Rupee', description: 'Currency Display Name' },
+      { name: 'googlefinance_formula', key: 'googlefinance_formula', type: 'string', required: true, sampleValue: '=GOOGLEFINANCE("CURRENCY:USDINR")', description: 'Official Google Sheets =GOOGLEFINANCE() formula for USD to Target' },
+      { name: 'live_rate', key: 'live_rate', type: 'number', required: true, sampleValue: '95.11', description: 'Evaluated live exchange rate returned by Google Finance' },
+      { name: 'inverse_formula', key: 'inverse_formula', type: 'string', required: false, sampleValue: '=GOOGLEFINANCE("CURRENCY:INRUSD")', description: 'Official Google Sheets =GOOGLEFINANCE() formula for Target to USD' },
+      { name: 'inverse_rate', key: 'inverse_rate', type: 'number', required: false, sampleValue: '0.0105', description: 'Evaluated live inverse rate' },
+      { name: 'manual_adjustment', key: 'manual_adjustment', type: 'number', required: false, sampleValue: '0.00', description: 'CMS manual spread adjustment (+/-)' },
+      { name: 'effective_rate', key: 'effective_rate', type: 'string', required: false, sampleValue: '=F10+I10', description: 'Formula or sum of live rate + manual adjustment' },
+      { name: 'last_synced_at', key: 'last_synced_at', type: 'string', required: false, sampleValue: '=NOW()', description: 'Last sync timestamp formula' }
+    ],
+    sampleRows: [
+      ['USD_EUR', 'USD', 'EUR', 'Euro', '=GOOGLEFINANCE("CURRENCY:USDEUR")', '0.8592', '=GOOGLEFINANCE("CURRENCY:EURUSD")', '1.1639', '0.00', '=F2+I2', '=NOW()'],
+      ['USD_GBP', 'USD', 'GBP', 'British Pound', '=GOOGLEFINANCE("CURRENCY:USDGBP")', '0.7378', '=GOOGLEFINANCE("CURRENCY:GBPUSD")', '1.3554', '0.00', '=F3+I3', '=NOW()'],
+      ['USD_JPY', 'USD', 'JPY', 'Japanese Yen', '=GOOGLEFINANCE("CURRENCY:USDJPY")', '153.24', '=GOOGLEFINANCE("CURRENCY:JPYUSD")', '0.0065', '0.00', '=F4+I4', '=NOW()'],
+      ['USD_AED', 'USD', 'AED', 'UAE Dirham', '=GOOGLEFINANCE("CURRENCY:USDAED")', '3.6725', '=GOOGLEFINANCE("CURRENCY:AEDUSD")', '0.2723', '0.00', '=F5+I5', '=NOW()'],
+      ['USD_THB', 'USD', 'THB', 'Thai Baht', '=GOOGLEFINANCE("CURRENCY:USDTHB")', '32.85', '=GOOGLEFINANCE("CURRENCY:THBUSD")', '0.0304', '0.00', '=F6+I6', '=NOW()'],
+      ['USD_AUD', 'USD', 'AUD', 'Australian Dollar', '=GOOGLEFINANCE("CURRENCY:USDAUD")', '1.3860', '=GOOGLEFINANCE("CURRENCY:AUDUSD")', '0.7215', '0.00', '=F7+I7', '=NOW()'],
+      ['USD_CAD', 'USD', 'CAD', 'Canadian Dollar', '=GOOGLEFINANCE("CURRENCY:USDCAD")', '1.3780', '=GOOGLEFINANCE("CURRENCY:CADUSD")', '0.7257', '0.00', '=F8+I8', '=NOW()'],
+      ['USD_SGD', 'USD', 'SGD', 'Singapore Dollar', '=GOOGLEFINANCE("CURRENCY:USDSGD")', '1.2640', '=GOOGLEFINANCE("CURRENCY:SGDUSD")', '0.7911', '0.00', '=F9+I9', '=NOW()'],
+      ['USD_INR', 'USD', 'INR', 'Indian Rupee', '=GOOGLEFINANCE("CURRENCY:USDINR")', '95.11', '=GOOGLEFINANCE("CURRENCY:INRUSD")', '0.0105', '0.00', '=F10+I10', '=NOW()'],
+      ['USD_CHF', 'USD', 'CHF', 'Swiss Franc', '=GOOGLEFINANCE("CURRENCY:USDCHF")', '0.8086', '=GOOGLEFINANCE("CURRENCY:CHFUSD")', '1.2367', '0.00', '=F11+I11', '=NOW()']
+    ]
   }
 ];
 
@@ -631,7 +667,8 @@ export const CANONICAL_SCHEMA_HEADERS: Record<MasterSheetTabName, string[]> = {
   TRANSFER_ROUTES: ['transfer_route_id', 'destination_id', 'from_hub_id', 'to_hub_id', 'route_name', 'distance_km', 'estimated_duration_minutes', 'status'],
   TRANSFER_RATES: ['transfer_rate_id', 'transfer_route_id', 'capacity', 'vehicle_model', 'currency', 'nett_cost', 'buyer_markup_pct', 'b2b_markup_pct', 'selling_price_override', 'valid_from', 'valid_to', 'status'],
   PACKAGES: ['package_id', 'destination_id', 'package_name', 'slug', 'duration_nights', 'duration_days', 'description', 'package_type', 'status', 'is_featured', 'seo_title', 'seo_description'],
-  PACKAGE_ITEMS: ['package_item_id', 'package_id', 'day_number', 'item_type', 'item_id', 'hub_id', 'sequence', 'notes', 'is_optional', 'status']
+  PACKAGE_ITEMS: ['package_item_id', 'package_id', 'day_number', 'item_type', 'item_id', 'hub_id', 'sequence', 'notes', 'is_optional', 'status'],
+  FX_RATES: ['pair_id', 'from_currency', 'to_currency', 'currency_name', 'googlefinance_formula', 'live_rate', 'inverse_formula', 'inverse_rate', 'manual_adjustment', 'effective_rate', 'last_synced_at']
 };
 
 /**
@@ -653,7 +690,8 @@ export const CANONICAL_TAB_PROCESSING_ORDER: MasterSheetTabName[] = [
   'TRANSFER_ROUTES',
   'TRANSFER_RATES',
   'PACKAGES',
-  'PACKAGE_ITEMS'
+  'PACKAGE_ITEMS',
+  'FX_RATES'
 ];
 
 /**

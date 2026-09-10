@@ -10,7 +10,9 @@ import {
   Lock, 
   RotateCcw, 
   ExternalLink,
-  ShieldCheck
+  ShieldCheck,
+  Cookie,
+  Sliders
 } from 'lucide-react';
 import { Destination } from '../../types';
 import { AppDatabase } from '../../services/db';
@@ -279,6 +281,30 @@ export const BuyerFooter: React.FC<BuyerFooterProps> = ({
                       >
                         <RotateCcw className="w-3 h-3 text-[#00C6A6]" />
                         <span>Refund Policy</span>
+                      </button>
+                    </li>
+                    <li>
+                      <button
+                        onClick={() => {
+                          onSelectTab('COOKIES');
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                      >
+                        <Cookie className="w-3 h-3 text-[#00C6A6]" />
+                        <span>Cookie Policy</span>
+                      </button>
+                    </li>
+                    <li>
+                      <button
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent('theunbound_open_cookie_preferences'));
+                        }}
+                        className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5 text-slate-400"
+                        title="Manage your cookie and local storage consent preferences"
+                      >
+                        <Sliders className="w-3 h-3 text-[#00C6A6]" />
+                        <span>Cookie Settings</span>
                       </button>
                     </li>
                   </ul>
