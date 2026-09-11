@@ -144,18 +144,24 @@ service cloud.firestore {
       );
     }
 
-    // 6. Quote Builder Access (B2B vs Buyer)
-    function canAccessB2BQuotes() {
+    // 6. B2B Wholesale Inventory & Quote Builder Access (Strict B2B Agent & Internal Staff Only)
+    function canAccessB2BInventory() {
       return isMasterAdmin() || (
         isApprovedUser() && (
           currentUserData().role == 'ADMIN' ||
           currentUserData().role == 'TEAM_MEMBER' ||
           currentUserData().role == 'DMC_STAFF' ||
           currentUserData().role == 'B2B_AGENT' ||
-          currentUserData().role == 'AGENT' ||
-          (hasPerms() && userPerms().b2bQuoteBuilderAccess == true)
+          currentUserData().role == 'AGENT'
+        ) && (
+          !('permissions' in currentUserData()) ||
+          currentUserData().permissions.b2bQuoteBuilderAccess != false
         )
       );
+    }
+
+    function canAccessB2BQuotes() {
+      return canAccessB2BInventory();
     }
 
     // 7. System Analysis Access (User Analytics & Complete Journey Tracking)
@@ -206,61 +212,62 @@ service cloud.firestore {
 
     // =========================================================================
     // CMS MASTER OPERATIONAL DATA (Products, Hotels, Tariffs, Packages, Visas)
-    // Read: Public Catalog | Write/Delete: Strictly Authorized Internal Users
+    // Read: Strictly Verified B2B Agents & Internal Operations | Write/Delete: Strictly Authorized Internal Users
+    // Unauthenticated visitors, public buyers, and pending accounts are DENIED access.
     // =========================================================================
 
     match /products/{document=**} {
-      allow read: if true;
+      allow read: if canAccessB2BInventory();
       allow write: if canAccessCMSOperations();
     }
 
     match /product_pricing_rates/{document=**} {
-      allow read: if true;
+      allow read: if canAccessB2BInventory();
       allow write: if canAccessCMSOperations();
     }
 
     match /product_capacities/{document=**} {
-      allow read: if true;
+      allow read: if canAccessB2BInventory();
       allow write: if canAccessCMSOperations();
     }
 
     match /hotels/{document=**} {
-      allow read: if true;
+      allow read: if canAccessB2BInventory();
       allow write: if canAccessCMSOperations();
     }
 
     match /hotel_rates/{document=**} {
-      allow read: if true;
+      allow read: if canAccessB2BInventory();
       allow write: if canAccessCMSOperations();
     }
 
     match /hotel_meal_plans/{document=**} {
-      allow read: if true;
+      allow read: if canAccessB2BInventory();
       allow write: if canAccessCMSOperations();
     }
 
     match /transfer_rates/{document=**} {
-      allow read: if true;
+      allow read: if canAccessB2BInventory();
       allow write: if canAccessCMSOperations();
     }
 
     match /b2b_packages/{document=**} {
-      allow read: if true;
+      allow read: if canAccessB2BInventory();
       allow write: if canAccessCMSOperations();
     }
 
     match /package_items/{document=**} {
-      allow read: if true;
+      allow read: if canAccessB2BInventory();
       allow write: if canAccessCMSOperations();
     }
 
     match /visas/{document=**} {
-      allow read: if true;
+      allow read: if canAccessB2BInventory();
       allow write: if canAccessCMSOperations();
     }
 
     match /visa_rates/{document=**} {
-      allow read: if true;
+      allow read: if canAccessB2BInventory();
       allow write: if canAccessCMSOperations();
     }
 

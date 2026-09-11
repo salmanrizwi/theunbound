@@ -6,6 +6,7 @@ import { AppDatabase } from './services/db';
 import { Product, Destination, Quotation, Booking, Hotel, FooterConfig } from './types';
 import { Navbar, MainNavTab } from './components/Navbar';
 import { DestinationPage } from './pages/DestinationPage';
+import { LoggedOutBuyerHomepage } from './pages/LoggedOutBuyerHomepage';
 import { B2BQuotationBuilderPage } from './pages/B2BQuotationBuilderPage';
 import { ContactUsPage } from './pages/ContactUsPage';
 import { TermsOfPolicyPage } from './pages/TermsOfPolicyPage';
@@ -44,7 +45,7 @@ import {
   setIntendedPath, 
   ParsedRoute 
 } from './services/portalRouter';
-import { canUserAccessCMS, canUserAccessQuoteBuilder } from './services/permissionEngine';
+import { canUserAccessCMS, canUserAccessQuoteBuilder, canUserAccessB2BInventory } from './services/permissionEngine';
 import { 
   Globe2, 
   ShieldCheck, 
@@ -145,6 +146,7 @@ const MainAppContent: React.FC = () => {
     }
   }, [isAuthenticated, currentRoute.pathname]);
 
+  const isB2BAuthorized = canUserAccessB2BInventory(user).allowed;
   const canAccessB2B = isAuthenticated && canUserAccessQuoteBuilder(user, 'B2B').allowed;
 
   const handleCustomizePackage = (pkg: any) => {
@@ -357,19 +359,39 @@ const MainAppContent: React.FC = () => {
       {/* Main Viewport Content Area */}
       <main className="flex-1 bg-[#F8FAFC]">
         {activeTab === 'DESTINATIONS' && (
-          <DestinationPage
-            destination={currentDestination}
-            allDestinations={destinations}
-            onSelectDestination={handleSelectDestination}
-            products={products}
-            onViewProduct={(p) => {
-              setInspectingProductHidePrice(false);
-              setInspectingProduct(p);
-            }}
-            onOpenCalculator={(p) => setCalculatorProduct(p)}
-            onInstantBook={(p) => handleOpenProductBooking(p)}
-            onCustomizePackage={handleCustomizePackage}
-          />
+          !isB2BAuthorized ? (
+            isAllDestinations ? (
+              <LoggedOutBuyerHomepage
+                allDestinations={destinations}
+                onSelectDestination={handleSelectDestination}
+              />
+            ) : (
+              <DestinationPage
+                destination={currentDestination}
+                allDestinations={destinations}
+                onSelectDestination={handleSelectDestination}
+                products={[]}
+                onViewProduct={() => {}}
+                onOpenCalculator={() => {}}
+                onInstantBook={() => {}}
+                onCustomizePackage={handleCustomizePackage}
+              />
+            )
+          ) : (
+            <DestinationPage
+              destination={currentDestination}
+              allDestinations={destinations}
+              onSelectDestination={handleSelectDestination}
+              products={products}
+              onViewProduct={(p) => {
+                setInspectingProductHidePrice(false);
+                setInspectingProduct(p);
+              }}
+              onOpenCalculator={(p) => setCalculatorProduct(p)}
+              onInstantBook={(p) => handleOpenProductBooking(p)}
+              onCustomizePackage={handleCustomizePackage}
+            />
+          )
         )}
 
         {activeTab === 'B2B_BUILDER' && (
@@ -521,8 +543,8 @@ const MainAppContent: React.FC = () => {
         onSelectCustomPage={handleSelectCustomPage}
       />
 
-      {/* Global Overlays & Modals */}
-      {inspectingProduct && (
+      {/* Global Overlays & Modals - RESTRICTED TO AUTHORIZED B2B AGENTS */}
+      {inspectingProduct && isB2BAuthorized && (
         <ProductDetailModal
           product={inspectingProduct}
           hidePrice={inspectingProductHidePrice}
@@ -535,7 +557,7 @@ const MainAppContent: React.FC = () => {
         />
       )}
 
-      {calculatorProduct && (
+      {calculatorProduct && isB2BAuthorized && (
         <PricingCalculatorModal
           product={calculatorProduct}
           onClose={() => setCalculatorProduct(null)}
@@ -546,7 +568,7 @@ const MainAppContent: React.FC = () => {
       )}
 
       {/* Booking Submission Modal */}
-      {(bookingProduct || bookingQuotation) && (
+      {(bookingProduct || bookingQuotation) && isB2BAuthorized && (
         <BookingModal
           product={bookingProduct || undefined}
           quotation={bookingQuotation || undefined}

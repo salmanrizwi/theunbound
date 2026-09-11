@@ -40,7 +40,7 @@ export const CookieConsentBanner: React.FC<CookieConsentBannerProps> = ({
 }) => {
   const [hasConsent, setHasConsent] = useState<boolean>(true); // Default true to avoid layout flicker
   const [isCustomizeOpen, setIsCustomizeOpen] = useState<boolean>(false);
-  const [functionalEnabled, setFunctionalEnabled] = useState<boolean>(true);
+  const [functionalEnabled, setFunctionalEnabled] = useState<boolean>(false);
   const [analyticsEnabled, setAnalyticsEnabled] = useState<boolean>(false);
 
   useEffect(() => {

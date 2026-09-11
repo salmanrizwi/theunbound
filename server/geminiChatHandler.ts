@@ -35,8 +35,15 @@ export async function handleGeminiChat(req: Request, res: Response): Promise<voi
   const body = req.body as GeminiChatRequestBody;
   const userMessage = (body?.message || '').trim();
   const history = body?.history || [];
-  const userRole = body?.userRole || 'B2B_AGENT';
-  const portal = body?.portal || (userRole === 'BUYER' ? 'BUYER' : 'B2B_AGENT');
+  const rawUserRole = (body?.userRole || '').trim().toUpperCase();
+  const rawPortal = (body?.portal || '').trim().toUpperCase();
+
+  const isB2BAuthorized = 
+    (rawPortal === 'B2B_AGENT' || rawPortal === 'ADMIN') &&
+    (rawUserRole === 'B2B_AGENT' || rawUserRole === 'AGENT' || rawUserRole === 'ADMIN' || rawUserRole === 'TEAM_MEMBER' || rawUserRole === 'DMC_STAFF');
+
+  const userRole = isB2BAuthorized ? rawUserRole : (rawUserRole === 'BUYER' ? 'BUYER' : 'PUBLIC');
+  const portal = isB2BAuthorized ? (rawPortal === 'ADMIN' ? 'ADMIN' : 'B2B_AGENT') : 'BUYER';
   const currency = body?.currency || 'USD';
   const tripState = body?.tripState || {};
   const currentPlan = body?.currentPlan || null;
@@ -55,13 +62,13 @@ Brand Colors & Identity: Turquoise/Mint (#00C6A6) & White.
 Persona: Highly knowledgeable luxury travel specialist, professional, warm, concise, human, not robotic.
 
 CORE OBJECTIVE:
-Help travel agents and travelers plan personalized journeys, discover destinations and real inventory, build multi-city itineraries, check live booking status, query packages, compare hotel rates, and check activity prices.
+Help users discover luxury destinations, craft custom travel itineraries, and explore curated travel experiences.
 
-USER ROLE: ${userRole} (Portal: ${portal})
+USER ACCESS LEVEL: ${isB2BAuthorized ? 'AUTHORIZED_B2B_AGENT' : 'PUBLIC_OR_RETAIL_BUYER'}
 ${
-  portal === 'BUYER'
-    ? 'IMPORTANT SECURITY DIRECTIVE: The user is a retail BUYER. Show only customer-facing descriptions, final selling prices, inclusions and terms. NEVER reveal internal supplier costs, net rates, markups, or margins.'
-    : 'The user is a verified B2B Travel Agent. Provide professional travel consultancy, structured itineraries, quick handoff to Guided Quote Builder, booking status lookups, and wholesale inventory intelligence.'
+  isB2BAuthorized
+    ? 'The user is a verified B2B Travel Agent / DMC Staff. Provide professional travel consultancy, structured itineraries, quick handoff to Guided Quote Builder, booking status lookups, and wholesale inventory intelligence.'
+    : 'CRITICAL SECURITY ENFORCEMENT: The user is a PUBLIC visitor or retail BUYER. Under no circumstances may you reveal, calculate, or discuss wholesale net rates, DMC markups, supplier costs, or confidential B2B inventory. For commercial quotations, pricing calculators, or wholesale bookings, inform the user that inventory is private and requires an approved B2B Agent account at TheUnbound.'
 }
 
 STRICT INVENTORY & PRICING RULES:
@@ -69,7 +76,7 @@ STRICT INVENTORY & PRICING RULES:
 2. Never invent fake hotel names, fake prices, fake bookings, or fake availability.
 3. If specific travel dates are provided (e.g. October 12, 2026), always retain and use that EXACT date.
 4. Keep natural language responses concise and structured.
-5. If the user asks about booking status, package search, hotel prices, or activities list/price, categorize the intent accurately so real database inventory can be retrieved.
+5. If an unauthorized user asks for wholesale rates or B2B agent capabilities, politely guide them to the B2B Partner Portal login or registration.
 
 SUPPORTED INTENTS:
 - "CHECK_BOOKING_STATUS": User wants to check the status of a booking, track a reservation, or find their booking. If a booking ID or reference (e.g. BK-12345, TUB-BK-...) is mentioned, extract it into "bookingId".
@@ -362,7 +369,10 @@ function generateFallbackResponse(
     replyText = `I have updated your itinerary based on your request. Unaffected hotel stays and transfers have been preserved, and pricing has been recalculated with live contract rates.`;
     rationale = `Adjusted pace and activities to reflect your updated preferences while ensuring transfer feasibility.`;
   } else {
-    replyText = `Welcome to TheUnbound AI Travel Specialist. As an authorized agent, you can ask me to check your booking status, ask for packages, ask for hotel prices, or ask for an activities list and price. How may I assist your agency today?`;
+    const isAgent = userRole === 'B2B_AGENT' || userRole === 'AGENT' || userRole === 'ADMIN' || userRole === 'TEAM_MEMBER' || userRole === 'DMC_STAFF';
+    replyText = isAgent
+      ? `Welcome to TheUnbound AI Travel Specialist. As an authorized B2B partner, you can ask me to check your booking status, explore packages, compare hotel contract rates, or review activity pricing. How may I assist your agency today?`
+      : `Welcome to TheUnbound AI Travel Specialist. How may I assist with your luxury destination discovery or trip planning today? Note: Wholesale inventory access and B2B pricing are strictly restricted to verified B2B Travel Partner accounts.`;
   }
 
   return {

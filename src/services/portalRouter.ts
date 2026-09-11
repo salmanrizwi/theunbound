@@ -1,5 +1,5 @@
 import { User } from '../types';
-import { canUserAccessQuoteBuilder, canUserAccessCMS } from './permissionEngine';
+import { canUserAccessQuoteBuilder, canUserAccessCMS, canUserAccessB2BInventory } from './permissionEngine';
 
 export type PortalNamespace = 'BUYER' | 'B2B' | 'ADMIN';
 
@@ -233,13 +233,13 @@ export function validateRouteAccess(user: User | null, pathString?: string): Rou
       };
     }
 
-    // Only B2B Agents (and permitted staff) can access
-    const isAgent = user.role === 'B2B_AGENT' || user.role === 'AGENT';
-    if (!isAgent) {
+    // Only verified, approved B2B Agents (and authorized operations staff) can access
+    const b2bAccess = canUserAccessB2BInventory(user);
+    if (!b2bAccess.allowed) {
       return {
         allowed: false,
         reason: 'ACCESS_RESTRICTED',
-        message: 'The B2B Agent Portal is restricted to verified travel partners and tour operators.',
+        message: b2bAccess.message || 'The B2B Agent Portal is restricted to verified travel partners and tour operators.',
         redirectPath: user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' ? '/admin' : '/'
       };
     }

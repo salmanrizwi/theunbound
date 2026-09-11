@@ -303,6 +303,83 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
 }
 
 /**
+ * Evaluates whether a user is an authenticated, active, approved, and authorised B2B Agent (or Admin/DMC Staff)
+ * eligible to access wholesale travel inventory (products, hotels, packages, visas, pricing, rates).
+ * 
+ * STRICT ACCESS CONTROL POLICY:
+ * Public visitors, unauthenticated users, Buyers, pending registrations, and rejected/suspended
+ * accounts MUST NEVER be granted access to B2B inventory data.
+ */
+export function canUserAccessB2BInventory(
+  user: User | null | undefined
+): { allowed: boolean; reason?: 'LOGGED_OUT' | 'NOT_B2B_AGENT' | 'APPROVAL_PENDING' | 'REJECTED' | 'PERMISSION_DENIED'; message?: string } {
+  if (!user) {
+    return {
+      allowed: false,
+      reason: 'LOGGED_OUT',
+      message: 'Authentication required. Only verified B2B travel partners can access inventory.'
+    };
+  }
+
+  // Master Admin & Administrators always have full operational inventory access
+  if (isMasterAdmin(user) || user.role === 'ADMIN') {
+    return { allowed: true };
+  }
+
+  // Internal Operations & Reservations staff
+  if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+    const approval = user.approvalStatus || 'APPROVED';
+    if (approval !== 'APPROVED') {
+      return {
+        allowed: false,
+        reason: 'APPROVAL_PENDING',
+        message: 'Internal staff account verification is pending.'
+      };
+    }
+    return { allowed: true };
+  }
+
+  // Verified B2B Travel Agent
+  const isAgent = user.role === 'B2B_AGENT' || user.role === 'AGENT';
+  if (!isAgent) {
+    return {
+      allowed: false,
+      reason: 'NOT_B2B_AGENT',
+      message: 'Access restricted. Wholesale inventory is accessible exclusively to registered B2B travel partners.'
+    };
+  }
+
+  // Check account verification status
+  const approvalStatus = user.approvalStatus || 'APPROVED';
+  if (approvalStatus === 'PENDING') {
+    return {
+      allowed: false,
+      reason: 'APPROVAL_PENDING',
+      message: 'Your agency account registration is pending Admin verification.'
+    };
+  }
+
+  if (approvalStatus === 'REJECTED') {
+    return {
+      allowed: false,
+      reason: 'REJECTED',
+      message: 'Your agency account access has been suspended or revoked.'
+    };
+  }
+
+  // Check explicit permission denial if present
+  if (user.permissions && user.permissions.b2bQuoteBuilderAccess === false && user.permissions.canAccessPricingCalculator === false) {
+    return {
+      allowed: false,
+      reason: 'PERMISSION_DENIED',
+      message: 'Inventory and pricing access has been disabled for your account.'
+    };
+  }
+
+  return { allowed: true };
+}
+
+/**
  * Checks if a user is the Master Administrator (safeguard)
  */
 export function isMasterAdmin(user: User | null | undefined): boolean {

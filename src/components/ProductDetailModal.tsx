@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { useRoster } from '../context/RosterContext';
 import { formatCurrency, convertCurrency } from '../services/pricingEngine';
+import { canUserAccessB2BInventory } from '../services/permissionEngine';
 import { RosterCalendarPicker } from './RosterCalendarPicker';
 import { WishlistButton } from './WishlistButton';
 import { 
@@ -48,7 +49,55 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   onBookProduct,
   hidePrice = false
 }) => {
-  const { isAuthenticated, openAuthModal, role } = useAuth();
+  const { user, isAuthenticated, openAuthModal, role } = useAuth();
+  const isAuthorized = canUserAccessB2BInventory(user).allowed;
+
+  if (!isAuthorized) {
+    return (
+      <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="relative bg-white rounded-3xl max-w-lg w-full p-8 text-center space-y-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
+          <button 
+            onClick={onClose}
+            className="absolute top-5 right-5 p-2 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-600 mx-auto">
+            <Lock className="w-7 h-7" />
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-xl font-black text-slate-900">Authorised B2B Agent Access Only</h3>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              This inventory is available exclusively to authorised B2B Agents. Please log in or register as a B2B Agent to continue.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+            <button
+              onClick={() => {
+                onClose();
+                openAuthModal('Sign in to access B2B inventory.');
+              }}
+              className="flex-1 py-3 px-4 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-xs shadow-md transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
+            >
+              <Lock className="w-4 h-4" />
+              <span>Login as B2B Agent</span>
+            </button>
+            <button
+              onClick={() => {
+                onClose();
+                openAuthModal('Register your agency to unlock wholesale inventory.');
+              }}
+              className="flex-1 py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-md transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
+            >
+              <Building2 className="w-4 h-4 text-[#00C6A6]" />
+              <span>Register Agency</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const { currency, setCurrency, addProductToQuote, items } = useQuotation();
   const { checkDateAvailability, getNextAvailableDate } = useRoster();
 

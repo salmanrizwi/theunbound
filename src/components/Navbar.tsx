@@ -21,7 +21,7 @@ import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { CurrencyCode, DestinationRegion, Destination, SUPPORTED_CURRENCIES, MenuItemConfig } from '../types';
 import { AppDatabase } from '../services/db';
-import { canUserAccessCMS, canUserAccessQuoteBuilder } from '../services/permissionEngine';
+import { canUserAccessCMS, canUserAccessQuoteBuilder, canUserAccessB2BInventory } from '../services/permissionEngine';
 
 export type MainNavTab = 'DESTINATIONS' | 'VISAS' | 'B2B_BUILDER' | 'DASHBOARD' | 'ADMIN' | 'ACCOUNT' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND' | 'COOKIES' | 'CUSTOM_PAGE' | 'ABOUT';
 
@@ -191,7 +191,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     return false;
   };
 
-  const isB2BAgentOrAdmin = role === 'B2B_AGENT' || role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF';
+  const isB2BAgentOrAdmin = canUserAccessB2BInventory(user).allowed;
 
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-xs">
@@ -265,8 +265,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             </select>
           </div>
 
-          {/* Quotation Cart in Upper Section */}
-          {(isB2BAgentOrAdmin || items.length > 0) && (
+          {/* Quotation Cart in Upper Section - ONLY FOR VERIFIED B2B AGENTS & ADMIN */}
+          {isB2BAgentOrAdmin && (
             <button
               id="quote-cart-btn"
               onClick={() => setIsQuoteDrawerOpen(true)}
@@ -411,8 +411,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Action Icons & Auth */}
           <div className="flex items-center space-x-3">
-            {/* Search Trigger */}
-            {onOpenSearch && (
+            {/* Search Trigger - ONLY FOR VERIFIED B2B AGENTS & ADMIN */}
+            {onOpenSearch && isB2BAgentOrAdmin && (
               <button
                 id="search-trigger-btn"
                 onClick={onOpenSearch}
@@ -540,6 +540,13 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             ) : (
               <div className="flex items-center space-x-1.5 sm:space-x-2">
+                <button
+                  id="nav-register-btn"
+                  onClick={() => openAuthModal('Create an account to access confidential trade markups, instant B2B quotes, and DMC operations.')}
+                  className="hidden sm:inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 hover:text-slate-950 hover:bg-slate-100 transition-colors cursor-pointer border border-slate-200"
+                >
+                  <span>Register Agency</span>
+                </button>
                 <button
                   id="nav-login-btn"
                   onClick={() => openAuthModal('Sign in to access B2B dynamic pricing, custom quotes, and ground bookings.')}

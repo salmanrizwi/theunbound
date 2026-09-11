@@ -3,6 +3,7 @@ import { Product } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { formatCurrency, calculateDeliveredPriceForUser } from '../services/pricingEngine';
+import { canUserAccessB2BInventory } from '../services/permissionEngine';
 import { WishlistButton } from './WishlistButton';
 import { 
   Star, 
@@ -34,6 +35,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 }) => {
   const { isAuthenticated, openAuthModal, role, user } = useAuth();
   const { currency, addProductToQuote, items } = useQuotation();
+
+  const isAuthorized = canUserAccessB2BInventory(user).allowed;
+  if (!isAuthorized) {
+    return null;
+  }
 
   const isB2BAgentOrAdmin = role === 'B2B_AGENT' || role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF';
   const isAlreadyInQuote = items.some(item => item.product.id === product.id);

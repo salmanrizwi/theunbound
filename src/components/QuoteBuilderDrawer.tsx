@@ -3,6 +3,7 @@ import { useQuotation } from '../context/QuotationContext';
 import { useAuth } from '../context/AuthContext';
 import { useRoster } from '../context/RosterContext';
 import { formatCurrency } from '../services/pricingEngine';
+import { canUserAccessB2BInventory } from '../services/permissionEngine';
 import { RosterCalendarPicker } from './RosterCalendarPicker';
 import { Quotation, Product, Hotel, CurrencyCode, SUPPORTED_CURRENCIES, Booking } from '../types';
 import { db } from '../services/db';
@@ -34,7 +35,8 @@ import {
   CheckCircle2, 
   Compass, 
   Clock,
-  Car
+  Car,
+  Lock
 } from 'lucide-react';
 
 interface QuoteBuilderDrawerProps {
@@ -64,7 +66,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
     totalSellingPrice
   } = useQuotation();
 
-  const { role } = useAuth();
+  const { role, user, openAuthModal } = useAuth();
   const { checkDateAvailability, getNextAvailableDate } = useRoster();
   const [calendarPickerItemId, setCalendarPickerItemId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'HOTELS' | 'PRODUCTS' | 'VISAS' | 'PACKAGES'>('ALL');
@@ -291,6 +293,72 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
   };
 
   if (!isQuoteDrawerOpen && !isSubmissionModalOpen && !confirmedBooking) return null;
+
+  const isAuthorized = canUserAccessB2BInventory(user).allowed;
+
+  if (!isAuthorized) {
+    if (!isQuoteDrawerOpen) return null;
+    return (
+      <div 
+        className="fixed inset-0 z-50 overflow-hidden bg-slate-950/60 backdrop-blur-xs flex justify-start animate-in fade-in duration-200"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            setIsQuoteDrawerOpen(false);
+          }
+        }}
+      >
+        <div className="w-full max-w-md bg-white h-full shadow-2xl flex flex-col justify-between p-6 sm:p-8 animate-in slide-in-from-left duration-300">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+            <h3 className="text-base font-bold text-slate-900">B2B Quotation Cart</h3>
+            <button 
+              onClick={() => setIsQuoteDrawerOpen(false)}
+              className="p-2 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="text-center space-y-6 my-auto py-8">
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-600 mx-auto">
+              <Lock className="w-7 h-7" />
+            </div>
+            <div className="space-y-2">
+              <h4 className="text-xl font-black text-slate-900">Authorised B2B Agent Access Only</h4>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                This inventory and quotation cart is available exclusively to authorised B2B Agents. Please log in or register as a B2B Agent to continue.
+              </p>
+            </div>
+            <div className="space-y-3 pt-2">
+              <button
+                onClick={() => {
+                  setIsQuoteDrawerOpen(false);
+                  openAuthModal('Sign in to access B2B inventory.');
+                }}
+                className="w-full py-3 px-4 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-xs shadow-md transition-all flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <Lock className="w-4 h-4" />
+                <span>Login as B2B Agent</span>
+              </button>
+              <button
+                onClick={() => {
+                  setIsQuoteDrawerOpen(false);
+                  openAuthModal('Register your agency to unlock wholesale inventory.');
+                }}
+                className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-md transition-all flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <Building2 className="w-4 h-4 text-[#00C6A6]" />
+                <span>Become a B2B Partner</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="text-center text-[11px] text-slate-400 pt-4 border-t border-slate-100">
+            Wholesale tariffs and supplier allocations are confidential trade materials.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>

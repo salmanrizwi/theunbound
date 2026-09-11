@@ -19,7 +19,9 @@ import { PublicReviewsCarousel } from '../components/PublicReviewsCarousel';
 import { PublicHappyCustomerGallery } from '../components/PublicHappyCustomerGallery';
 import { WhyTheUnbound } from '../components/WhyTheUnbound';
 import { FinalCTA } from '../components/FinalCTA';
-import { Sparkles, MapPin, Compass, ShieldCheck, HelpCircle, ChevronDown, ChevronUp, Globe2, Layers, CheckCircle2, Clock, Building2, FileText, Award } from 'lucide-react';
+import { Sparkles, MapPin, Compass, ShieldCheck, HelpCircle, ChevronDown, ChevronUp, Globe2, Layers, CheckCircle2, Clock, Building2, FileText, Award, Lock, ArrowRight } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { canUserAccessB2BInventory } from '../services/permissionEngine';
 
 interface DestinationPageProps {
   destination: Destination | null;
@@ -44,8 +46,160 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
 }) => {
   const { currency } = useQuotation();
   const db = AppDatabase.getInstance();
+  const { user, openAuthModal } = useAuth();
+  const isAuthorized = canUserAccessB2BInventory(user).allowed;
 
   const isAllDestinations = !destination || destination.slug === 'all';
+
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen bg-[#F8FAFC] pb-16 space-y-12 sm:space-y-16">
+        {/* Editorial Destination Header */}
+        <div className="relative bg-slate-950 text-white overflow-hidden py-16 sm:py-24 border-b border-slate-800">
+          <div
+            className="absolute inset-0 bg-cover bg-center opacity-25"
+            style={{
+              backgroundImage: `url(${destination?.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=1920&q=80'})`
+            }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent" />
+
+          <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4 text-left">
+            <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-[#00C6A6]/10 border border-[#00C6A6]/30 text-[#00E5C0] text-xs font-black uppercase tracking-wider">
+              <span>{destination ? destination.country : 'Global Ground Operations'}</span>
+            </div>
+            <h1 className="text-3xl sm:text-5xl font-black tracking-tight text-white uppercase">
+              {destination ? destination.name : 'Curated Global Destinations'}
+            </h1>
+            <p className="text-sm sm:text-base text-slate-300 max-w-2xl leading-relaxed">
+              {destination?.description || 'TheUnbound operates specialized destination management desks, direct supplier procurement, and bilingual local operations across our network.'}
+            </p>
+          </div>
+        </div>
+
+        {/* ACCESS RESTRICTED B2B NOTICE BANNER */}
+        <div className="max-w-4xl mx-auto px-4 sm:px-6">
+          <div className="bg-white rounded-3xl border border-slate-200 p-8 sm:p-10 shadow-lg text-center space-y-6">
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-600 mx-auto">
+              <Lock className="w-7 h-7" />
+            </div>
+
+            <div className="space-y-2">
+              <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+                Authorised B2B Agent Access Only
+              </h2>
+              <p className="text-sm text-slate-600 max-w-lg mx-auto leading-relaxed">
+                This inventory is available exclusively to authorised B2B Agents. Please log in or register as a B2B Agent to continue.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => openAuthModal('Sign in to access B2B inventory for this destination.')}
+                className="w-full sm:w-auto px-7 py-3 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 text-xs sm:text-sm font-black transition-all shadow-md flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <Lock className="w-4 h-4" />
+                <span>Login as B2B Agent</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => openAuthModal('Register your travel agency to unlock confidential wholesale rates.')}
+                className="w-full sm:w-auto px-6 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold transition-all shadow-sm flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <Building2 className="w-4 h-4 text-[#00C6A6]" />
+                <span>Become a B2B Partner</span>
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400 pt-2 border-t border-slate-100">
+              Contracted wholesale net rates, direct hotel allocations, and bespoke ground services are strictly protected for licensed travel trade partners.
+            </p>
+          </div>
+        </div>
+
+        {/* HIGH-LEVEL EDITORIAL DESTINATION HIGHLIGHTS (NON-COMMERCIAL) */}
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
+          <div className="text-left space-y-1">
+            <span className="text-[10px] font-black uppercase tracking-wider text-[#008972]">
+              Direct DMC Capabilities
+            </span>
+            <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+              Ground Management & Operational Infrastructure
+            </h3>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
+            <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-[#008972]/10 flex items-center justify-center text-[#008972]">
+                <Award className="w-5 h-5" />
+              </div>
+              <h4 className="text-base font-bold text-slate-900">Direct In-Country Contracting</h4>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Direct agreements with local providers, luxury ryokan and hotel allocations, and licensed bilingual guides without secondary wholesaler markups.
+              </p>
+            </div>
+
+            <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-[#008972]/10 flex items-center justify-center text-[#008972]">
+                <Clock className="w-5 h-5" />
+              </div>
+              <h4 className="text-base font-bold text-slate-900">24–48 Hour Proposal Delivery</h4>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Guaranteed turnaround for bespoke multi-city FIT quotes, with itemized wholesale net pricing and custom white-label proposal exports.
+              </p>
+            </div>
+
+            <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-[#008972]/10 flex items-center justify-center text-[#008972]">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <h4 className="text-base font-bold text-slate-900">24/7 On-Tour Ground Dispatch</h4>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Dedicated local duty managers coordinate chauffeur dispatches, monitor flight disruptions, and support your clients on the ground.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Public Reviews */}
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <PublicReviewsCarousel />
+        </div>
+
+        {/* Trade FAQs */}
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-10 shadow-xs space-y-6 text-left">
+            <div className="flex items-center space-x-3 pb-4 border-b border-slate-100">
+              <div className="w-10 h-10 rounded-xl bg-[#008972]/10 flex items-center justify-center text-[#008972]">
+                <HelpCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-lg font-bold text-slate-900">Destination Operations FAQ</h4>
+                <p className="text-xs text-slate-500">Commercial inquiries regarding our ground services</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+                <div className="text-xs font-bold text-slate-900">How do I access live rates and hotel allotments for this destination?</div>
+                <div className="text-xs text-slate-600 leading-relaxed">
+                  Registered B2B Agents can log in to view live contracted tariffs, check room and vehicle availability, and build customized client quotes.
+                </div>
+              </div>
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+                <div className="text-xs font-bold text-slate-900">Can our agency request custom multi-city bespoke itineraries?</div>
+                <div className="text-xs text-slate-600 leading-relaxed">
+                  Yes, our destination specialists prepare full multi-city FIT proposals within 24 to 48 hours, fully branded with your agency details.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Database state for Hubs, Hotels, and Homepage Config
   const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());

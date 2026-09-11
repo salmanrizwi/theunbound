@@ -604,153 +604,86 @@ export class AppDatabase {
     }
   }
 
+  /**
+   * Safe real-time Firestore listener with Zero Data Loss Guarantee:
+   * When snapshot is non-empty, updates local storage with authoritative cloud data.
+   * When snapshot is empty or during offline/transient state, strictly PRESERVES existing local records
+   * rather than overwriting with an empty array [].
+   */
+  private syncCollectionSafely<T>(
+    collectionName: string,
+    storageKey: string,
+    transformDoc?: (docData: any, docId: string) => T | null
+  ): void {
+    onSnapshot(collection(firestoreDb, collectionName), (snapshot) => {
+      if (!snapshot.empty) {
+        const list: T[] = [];
+        snapshot.forEach(docSnap => {
+          const item = transformDoc ? transformDoc(docSnap.data(), docSnap.id) : (docSnap.data() as T);
+          if (item) list.push(item);
+        });
+        this.setItem(storageKey, list, true);
+      }
+      // ZERO DATA LOSS GUARANTEE: Never overwrite local cache with [] when snapshot is empty!
+    }, (err) => {
+      console.debug(`Firestore ${collectionName} sync note (non-blocking):`, err?.message || err);
+    });
+  }
+
   private async initFirestoreSync(): Promise<void> {
     if (this.isFirestoreInitialized || typeof window === 'undefined') return;
     this.isFirestoreInitialized = true;
 
     try {
-      // 1. Sync Products (Live Catalog)
-      onSnapshot(collection(firestoreDb, 'products'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: Product[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as Product));
-          this.setItem('products', list, true);
-        } else {
-          this.setItem('products', [], true);
-        }
-      }, (err) => console.debug('Firestore products sync note:', err));
+      // 1. Core Inventory & Catalog Collections
+      this.syncCollectionSafely<Product>('products', 'products');
+      this.syncCollectionSafely<Destination>('destinations', 'destinations');
+      this.syncCollectionSafely<Hotel>('hotels', 'hotels');
+      this.syncCollectionSafely<CityHub>('city_hubs', 'city_hubs');
+      this.syncCollectionSafely<DestinationRegionItem>('regions', 'regions');
+      this.syncCollectionSafely<MasterRegion>('master_regions', 'master_regions');
+      this.syncCollectionSafely<DestinationFAQ>('faqs', 'destination_faqs');
+      this.syncCollectionSafely<B2BPackage>('b2b_packages', 'b2b_packages');
+      this.syncCollectionSafely<VisaProduct>('visas', 'visas');
+      this.syncCollectionSafely<Promotion>('promotions', 'promotions');
+      this.syncCollectionSafely<GalleryImage>('gallery_items', 'gallery');
+      this.syncCollectionSafely<GoogleReview>('google_reviews', 'reviews');
+      this.syncCollectionSafely<BlogArticle>('blog_articles', 'blogs');
 
-      // 2. Sync Destinations
-      onSnapshot(collection(firestoreDb, 'destinations'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: Destination[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as Destination));
-          this.setItem('destinations', list, true);
-        } else {
-          this.setItem('destinations', [], true);
-        }
-      }, (err) => console.debug('Firestore destinations sync note:', err));
+      // 2. User Accounts & Transactions (Preserved across all deployments)
+      this.syncCollectionSafely<User>('users', 'system_users');
+      this.syncCollectionSafely<Quotation>('quotations', 'saved_quotes');
+      this.syncCollectionSafely<Booking>('bookings', 'bookings');
+      this.syncCollectionSafely<TravelLead>('leads', 'leads');
+      this.syncCollectionSafely<B2BCustomer>('b2b_customers', 'b2b_customers');
+      this.syncCollectionSafely<B2BTask>('b2b_tasks', 'b2b_tasks');
+      this.syncCollectionSafely<CalendarTask>('calendar_tasks', 'calendar_tasks');
+      this.syncCollectionSafely<WishlistFolder>('wishlist_folders', 'wishlist_folders');
+      this.syncCollectionSafely<WishlistItem>('wishlist_items', 'wishlist_items');
 
-      // 3. Sync Quotations
-      onSnapshot(collection(firestoreDb, 'quotations'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: Quotation[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as Quotation));
-          this.setItem('saved_quotes', list, true);
-        } else {
-          this.setItem('saved_quotes', [], true);
-        }
-      }, (err) => console.debug('Firestore quotations sync note:', err));
+      // 3. Hotel & Transport Contracting Rates
+      this.syncCollectionSafely<HotelRoomType>('hotel_rooms', 'hotel_rooms');
+      this.syncCollectionSafely<HotelRate>('hotel_rates', 'hotel_rates');
+      this.syncCollectionSafely<HotelMealPlanItem>('hotel_meal_plans', 'hotel_meal_plans');
+      this.syncCollectionSafely<TransferRoute>('transfer_routes', 'transfer_routes');
+      this.syncCollectionSafely<TransferRate>('transfer_rates', 'transfer_rates');
+      this.syncCollectionSafely<ProductPricingRate>('product_pricing_rates', 'product_pricing_rates');
+      this.syncCollectionSafely<ProductCapacityItem>('product_capacities', 'product_capacities');
+      this.syncCollectionSafely<VisaRateItem>('visa_rates', 'visa_rates');
+      this.syncCollectionSafely<PackageItemRef>('package_items', 'package_items');
 
-      // 4. Sync Bookings
-      onSnapshot(collection(firestoreDb, 'bookings'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: Booking[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as Booking));
-          this.setItem('bookings', list, true);
-        } else {
-          this.setItem('bookings', [], true);
-        }
-      }, (err) => console.debug('Firestore bookings sync note:', err));
+      // 4. Operations, Financials & Logistics
+      this.syncCollectionSafely<BookingInvoice>('invoices', 'invoices');
+      this.syncCollectionSafely<BookingVoucher>('vouchers', 'vouchers');
+      this.syncCollectionSafely<JobSheet>('job_sheets', 'job_sheets');
+      this.syncCollectionSafely<RosterResource>('roster_resources', 'roster_resources');
+      this.syncCollectionSafely<SLAAutomationRule>('sla_automation_rules', 'sla_automation_rules');
+      this.syncCollectionSafely<AdminActivityRecord>('admin_activities', 'admin_activities');
+      this.syncCollectionSafely<CampaignEvent>('campaign_events', 'campaign_events');
+      this.syncCollectionSafely<EmailCampaignConfig>('campaigns', 'campaigns');
+      this.syncCollectionSafely<SEORedirect>('seo_redirects', 'seo_redirects');
 
-      // 5. Sync Hotels
-      onSnapshot(collection(firestoreDb, 'hotels'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: Hotel[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as Hotel));
-          this.setItem('hotels', list, true);
-        } else {
-          this.setItem('hotels', [], true);
-        }
-      }, (err) => console.debug('Firestore hotels sync note:', err));
-
-      // 6. Sync Leads
-      onSnapshot(collection(firestoreDb, 'leads'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: TravelLead[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as TravelLead));
-          this.setItem('leads', list, true);
-        } else {
-          this.setItem('leads', [], true);
-        }
-      }, (err) => console.debug('Firestore leads sync note:', err));
-
-      // 7. Sync Promotions
-      onSnapshot(collection(firestoreDb, 'promotions'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: Promotion[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as Promotion));
-          this.setItem('promotions', list, true);
-        } else {
-          this.setItem('promotions', [], true);
-        }
-      }, (err) => console.debug('Firestore promotions sync note:', err));
-
-      // 8. Sync Gallery
-      onSnapshot(collection(firestoreDb, 'gallery_items'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: GalleryImage[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as GalleryImage));
-          this.setItem('gallery', list, true);
-        } else {
-          this.setItem('gallery', [], true);
-        }
-      }, (err) => console.debug('Firestore gallery sync note:', err));
-
-      // 9. Sync Reviews
-      onSnapshot(collection(firestoreDb, 'google_reviews'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: GoogleReview[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as GoogleReview));
-          this.setItem('reviews', list, true);
-        } else {
-          this.setItem('reviews', [], true);
-        }
-      }, (err) => console.debug('Firestore reviews sync note:', err));
-
-      // 10. Sync Blogs
-      onSnapshot(collection(firestoreDb, 'blog_articles'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: BlogArticle[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as BlogArticle));
-          this.setItem('blogs', list, true);
-        } else {
-          this.setItem('blogs', [], true);
-        }
-      }, (err) => console.debug('Firestore blogs sync note:', err));
-
-      // 11. Sync Wishlist Folders
-      onSnapshot(collection(firestoreDb, 'wishlist_folders'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: WishlistFolder[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as WishlistFolder));
-          this.setItem('wishlist_folders', list, true);
-        } else {
-          this.setItem('wishlist_folders', [], true);
-        }
-      }, (err) => console.debug('Firestore wishlist folders sync note:', err));
-
-      // 12. Sync Wishlist Items
-      onSnapshot(collection(firestoreDb, 'wishlist_items'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: WishlistItem[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as WishlistItem));
-          this.setItem('wishlist_items', list, true);
-        } else {
-          this.setItem('wishlist_items', [], true);
-        }
-      }, (err) => console.debug('Firestore wishlist items sync note:', err));
-
-      // 13. Sync Users
-      onSnapshot(collection(firestoreDb, 'users'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: User[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as User));
-          this.setItem('system_users', list, true);
-        }
-      }, (err) => console.debug('Firestore users sync note:', err));
-
-      // 14. Sync Menu Items
+      // 5. Navigation & Institutional Content with Local Deleted Tombstone Handling
       onSnapshot(collection(firestoreDb, 'menu_items'), (snapshot) => {
         if (!snapshot.empty) {
           const deletedIds = this.getDeletedMenuItemIds();
@@ -763,9 +696,8 @@ export class AppDatabase {
           });
           this.setItem('menu_items', list, true);
         }
-      }, (err) => console.debug('Firestore menu_items sync note:', err));
+      }, (err) => console.debug('Firestore menu_items sync note:', err?.message || err));
 
-      // 15. Sync Custom Pages
       onSnapshot(collection(firestoreDb, 'custom_pages'), (snapshot) => {
         if (!snapshot.empty) {
           const deletedIds = this.getDeletedCustomPageIds();
@@ -778,128 +710,9 @@ export class AppDatabase {
           });
           this.setItem('custom_pages', list, true);
         }
-      }, (err) => console.debug('Firestore custom_pages sync note:', err));
+      }, (err) => console.debug('Firestore custom_pages sync note:', err?.message || err));
 
-      // 16. Sync City Hubs
-      onSnapshot(collection(firestoreDb, 'city_hubs'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: CityHub[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as CityHub));
-          this.setItem('city_hubs', list, true);
-        } else {
-          this.setItem('city_hubs', [], true);
-        }
-      }, (err) => console.debug('Firestore city_hubs sync note:', err));
-
-      // 17. Sync Destination FAQs
-      onSnapshot(collection(firestoreDb, 'faqs'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: DestinationFAQ[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as DestinationFAQ));
-          this.setItem('destination_faqs', list, true);
-        } else {
-          this.setItem('destination_faqs', [], true);
-        }
-      }, (err) => console.debug('Firestore faqs sync note:', err));
-
-      // 18. Sync Destination Regions
-      onSnapshot(collection(firestoreDb, 'regions'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: DestinationRegionItem[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as DestinationRegionItem));
-          this.setItem('regions', list, true);
-        } else {
-          this.setItem('regions', [], true);
-        }
-      }, (err) => console.debug('Firestore regions sync note:', err));
-
-      // 19. Sync Master Macro Regions
-      onSnapshot(collection(firestoreDb, 'master_regions'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: MasterRegion[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as MasterRegion));
-          this.setItem('master_regions', list, true);
-        } else {
-          this.setItem('master_regions', [], true);
-        }
-      }, (err) => console.debug('Firestore master_regions sync note:', err));
-
-      // 20. Sync Campaign Events
-      onSnapshot(collection(firestoreDb, 'campaign_events'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: CampaignEvent[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as CampaignEvent));
-          this.setItem('campaign_events', list, true);
-        } else {
-          this.setItem('campaign_events', [], true);
-        }
-      }, (err) => console.debug('Firestore campaign_events sync note:', err));
-
-      // 21. Sync B2B Packages & Circuits
-      onSnapshot(collection(firestoreDb, 'b2b_packages'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: B2BPackage[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as B2BPackage));
-          this.setItem('b2b_packages', list, true);
-        } else {
-          this.setItem('b2b_packages', [], true);
-        }
-      }, (err) => console.debug('Firestore b2b_packages sync note:', err));
-
-      // 22. Sync Visas & Requirements
-      onSnapshot(collection(firestoreDb, 'visas'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: VisaProduct[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as VisaProduct));
-          this.setItem('visas', list, true);
-        } else {
-          this.setItem('visas', [], true);
-        }
-      }, (err) => console.debug('Firestore visas sync note:', err));
-
-      // 23. Sync B2B Customers CRM
-      onSnapshot(collection(firestoreDb, 'b2b_customers'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: B2BCustomer[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as B2BCustomer));
-          this.setItem('b2b_customers', list, true);
-        } else {
-          this.setItem('b2b_customers', [], true);
-        }
-      }, (err) => console.debug('Firestore b2b_customers sync note:', err));
-
-      // 24. Sync B2B Tasks & Follow-ups
-      onSnapshot(collection(firestoreDb, 'b2b_tasks'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: B2BTask[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as B2BTask));
-          this.setItem('b2b_tasks', list, true);
-        } else {
-          this.setItem('b2b_tasks', [], true);
-        }
-      }, (err) => console.debug('Firestore b2b_tasks sync note:', err));
-
-      // 25. Sync Calendar Tasks
-      onSnapshot(collection(firestoreDb, 'calendar_tasks'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: CalendarTask[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as CalendarTask));
-          this.setItem('calendar_tasks', list, true);
-        } else {
-          this.setItem('calendar_tasks', [], true);
-        }
-      }, (err) => console.debug('Firestore calendar_tasks sync note:', err));
-
-      // 26. Sync SLA Automation Rules
-      onSnapshot(collection(firestoreDb, 'sla_automation_rules'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: SLAAutomationRule[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as SLAAutomationRule));
-          this.setItem('sla_automation_rules', list, true);
-        }
-      }, (err) => console.debug('Firestore sla_automation_rules sync note:', err));
-
-      // 27. Sync Footer Navigation Configuration
+      // 6. Singleton Config Documents
       onSnapshot(collection(firestoreDb, 'footer_config'), (snapshot) => {
         if (!snapshot.empty) {
           snapshot.forEach(docSnap => {
@@ -908,20 +721,8 @@ export class AppDatabase {
             }
           });
         }
-      }, (err) => console.debug('Firestore footer_config sync note:', err));
+      }, (err) => console.debug('Firestore footer_config sync note:', err?.message || err));
 
-      // 28. Sync SEO Redirects
-      onSnapshot(collection(firestoreDb, 'seo_redirects'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: SEORedirect[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as SEORedirect));
-          this.setItem('seo_redirects', list, true);
-        } else {
-          this.setItem('seo_redirects', [], true);
-        }
-      }, (err) => console.debug('Firestore seo_redirects sync note:', err));
-
-      // 29. Sync Global SEO Defaults & Settings
       onSnapshot(collection(firestoreDb, 'seo_settings'), (snapshot) => {
         if (!snapshot.empty) {
           snapshot.forEach(docSnap => {
@@ -930,170 +731,7 @@ export class AppDatabase {
             }
           });
         }
-      }, (err) => console.debug('Firestore seo_settings sync note:', err));
-
-      // 30. Sync Hotel Rooms
-      onSnapshot(collection(firestoreDb, 'hotel_rooms'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: HotelRoomType[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as HotelRoomType));
-          this.setItem('hotel_rooms', list, true);
-        } else {
-          this.setItem('hotel_rooms', [], true);
-        }
-      }, (err) => console.debug('Firestore hotel_rooms sync note:', err));
-
-      // 31. Sync Hotel Rates
-      onSnapshot(collection(firestoreDb, 'hotel_rates'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: HotelRate[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as HotelRate));
-          this.setItem('hotel_rates', list, true);
-        } else {
-          this.setItem('hotel_rates', [], true);
-        }
-      }, (err) => console.debug('Firestore hotel_rates sync note:', err));
-
-      // 32. Sync Hotel Meal Plans
-      onSnapshot(collection(firestoreDb, 'hotel_meal_plans'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: HotelMealPlanItem[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as HotelMealPlanItem));
-          this.setItem('hotel_meal_plans', list, true);
-        } else {
-          this.setItem('hotel_meal_plans', [], true);
-        }
-      }, (err) => console.debug('Firestore hotel_meal_plans sync note:', err));
-
-      // 33. Sync Transfer Routes
-      onSnapshot(collection(firestoreDb, 'transfer_routes'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: TransferRoute[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as TransferRoute));
-          this.setItem('transfer_routes', list, true);
-        } else {
-          this.setItem('transfer_routes', [], true);
-        }
-      }, (err) => console.debug('Firestore transfer_routes sync note:', err));
-
-      // 34. Sync Transfer Rates
-      onSnapshot(collection(firestoreDb, 'transfer_rates'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: TransferRate[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as TransferRate));
-          this.setItem('transfer_rates', list, true);
-        } else {
-          this.setItem('transfer_rates', [], true);
-        }
-      }, (err) => console.debug('Firestore transfer_rates sync note:', err));
-
-      // 35. Sync Product Pricing Rates
-      onSnapshot(collection(firestoreDb, 'product_pricing_rates'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: ProductPricingRate[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as ProductPricingRate));
-          this.setItem('product_pricing_rates', list, true);
-        } else {
-          this.setItem('product_pricing_rates', [], true);
-        }
-      }, (err) => console.debug('Firestore product_pricing_rates sync note:', err));
-
-      // 36. Sync Product Capacities
-      onSnapshot(collection(firestoreDb, 'product_capacities'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: ProductCapacityItem[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as ProductCapacityItem));
-          this.setItem('product_capacities', list, true);
-        } else {
-          this.setItem('product_capacities', [], true);
-        }
-      }, (err) => console.debug('Firestore product_capacities sync note:', err));
-
-      // 37. Sync Visa Rates
-      onSnapshot(collection(firestoreDb, 'visa_rates'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: VisaRateItem[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as VisaRateItem));
-          this.setItem('visa_rates', list, true);
-        } else {
-          this.setItem('visa_rates', [], true);
-        }
-      }, (err) => console.debug('Firestore visa_rates sync note:', err));
-
-      // 38. Sync Package Items
-      onSnapshot(collection(firestoreDb, 'package_items'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: PackageItemRef[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as PackageItemRef));
-          this.setItem('package_items', list, true);
-        } else {
-          this.setItem('package_items', [], true);
-        }
-      }, (err) => console.debug('Firestore package_items sync note:', err));
-
-      // 39. Sync Financial Invoices
-      onSnapshot(collection(firestoreDb, 'invoices'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: BookingInvoice[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as BookingInvoice));
-          this.setItem('invoices', list, true);
-        } else {
-          this.setItem('invoices', [], true);
-        }
-      }, (err) => console.debug('Firestore invoices sync note:', err));
-
-      // 40. Sync Financial Vouchers
-      onSnapshot(collection(firestoreDb, 'vouchers'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: BookingVoucher[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as BookingVoucher));
-          this.setItem('vouchers', list, true);
-        } else {
-          this.setItem('vouchers', [], true);
-        }
-      }, (err) => console.debug('Firestore vouchers sync note:', err));
-
-      // 41. Sync Job Sheets
-      onSnapshot(collection(firestoreDb, 'job_sheets'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: JobSheet[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as JobSheet));
-          this.setItem('job_sheets', list, true);
-        } else {
-          this.setItem('job_sheets', [], true);
-        }
-      }, (err) => console.debug('Firestore job_sheets sync note:', err));
-
-      // 42. Sync Operations Roster Resources
-      onSnapshot(collection(firestoreDb, 'roster_resources'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: RosterResource[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as RosterResource));
-          this.setItem('roster_resources', list, true);
-        } else {
-          this.setItem('roster_resources', [], true);
-        }
-      }, (err) => console.debug('Firestore roster_resources sync note:', err));
-
-      // 43. Sync Admin Activities & Alerts
-      onSnapshot(collection(firestoreDb, 'admin_activities'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: AdminActivityRecord[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as AdminActivityRecord));
-          this.setItem('admin_activities', list, true);
-        }
-      }, (err) => console.debug('Firestore admin_activities sync note:', err));
-
-      // 44. Sync Email Campaigns
-      onSnapshot(collection(firestoreDb, 'campaigns'), (snapshot) => {
-        if (!snapshot.empty) {
-          const list: EmailCampaignConfig[] = [];
-          snapshot.forEach(docSnap => list.push(docSnap.data() as EmailCampaignConfig));
-          this.setItem('campaigns', list, true);
-        } else {
-          this.setItem('campaigns', [], true);
-        }
-      }, (err) => console.debug('Firestore campaigns sync note:', err));
+      }, (err) => console.debug('Firestore seo_settings sync note:', err?.message || err));
 
     } catch (error) {
       console.warn('Firestore real-time listeners initialization note:', error);
@@ -1247,77 +885,9 @@ export class AppDatabase {
       this.setItem('seo_settings', DEFAULT_GLOBAL_SEO_DEFAULTS);
     }
 
-    // DATA INTEGRITY SANITATION:
-    // Ensure zero mock/demo users, bookings, leads, or quotes linger in localStorage
-    try {
-      // 1. Sanitize system_users
-      const storedUsers = this.getItem<User[]>('system_users', []);
-      const mockUserIds = new Set([
-        'usr-buyer-01', 'usr-buyer-02', 'usr-buyer-03', 'usr-buyer-04', 'usr-buyer-05',
-        'usr-agent-01', 'usr-agent-02', 'usr-agent-03', 'usr-agent-04', 'usr-agent-05',
-        'usr-agent-pending-02'
-      ]);
-      const mockNames = new Set([
-        'James Harrison', 'Elena Rostova', 'Aarav Sharma', 'Charlotte Dubois',
-        'David Sterling', 'Hiroshi Tanaka', 'Rajesh Malhotra', 'Sarah Jenkins',
-        'Matteo Rossi', 'Emily Watson', 'Aiden Dupont', 'Oliver Queen', 'Chloe Sullivan'
-      ]);
-      const hasMockUsers = storedUsers.some(u => mockUserIds.has(u.id) || mockNames.has(u.name));
-      if (hasMockUsers) {
-        const cleanedUsers = storedUsers.filter(u => !mockUserIds.has(u.id) && !mockNames.has(u.name));
-        this.setItem('system_users', cleanedUsers);
-      }
-
-      // 2. Sanitize bookings
-      const storedBookings = this.getItem<Booking[]>('bookings', []);
-      const hasMockBookings = storedBookings.some(b => 
-        b.id?.startsWith('booking-2026-') || 
-        b.bookingReference?.startsWith('TUB-BK-2026-') ||
-        b.customer?.leadTravelerName === 'Rajesh Malhotra' ||
-        b.customer?.leadTravelerName === 'Lord Arthur Wellesley' ||
-        b.customer?.leadTravelerName === 'Hiroshi Tanaka'
-      );
-      if (hasMockBookings) {
-        const cleanedBookings = storedBookings.filter(b => 
-          !b.id?.startsWith('booking-2026-') && 
-          !b.bookingReference?.startsWith('TUB-BK-2026-') &&
-          b.customer?.leadTravelerName !== 'Rajesh Malhotra' &&
-          b.customer?.leadTravelerName !== 'Lord Arthur Wellesley' &&
-          b.customer?.leadTravelerName !== 'Hiroshi Tanaka'
-        );
-        this.setItem('bookings', cleanedBookings);
-      }
-
-      // 3. Sanitize leads
-      const storedLeads = this.getItem<TravelLead[]>('leads', []);
-      const hasMockLeads = storedLeads.some(l =>
-        l.id === 'lead-01' || l.id === 'lead-02' || l.id === 'lead-03' || l.id === 'lead-2026-001' ||
-        l.contactName === 'Alistair Montgomery' || l.contactName === 'Elena Rostova' || l.contactName === 'Siddharth & Priya Mehta'
-      );
-      if (hasMockLeads) {
-        const cleanedLeads = storedLeads.filter(l =>
-          l.id !== 'lead-01' && l.id !== 'lead-02' && l.id !== 'lead-03' && l.id !== 'lead-2026-001' &&
-          l.contactName !== 'Alistair Montgomery' && l.contactName !== 'Elena Rostova' && l.contactName !== 'Siddharth & Priya Mehta'
-        );
-        this.setItem('leads', cleanedLeads);
-      }
-
-      // 4. Sanitize saved_quotes
-      const storedQuotes = this.getItem<Quotation[]>('saved_quotes', []);
-      const hasMockQuotes = storedQuotes.some(q => 
-        q.id === 'quote-sample-01' || q.id === 'quote-sample-02' ||
-        q.quoteNumber === 'UBQ-2026-9104' || q.quoteNumber === 'TUB-QT-2026-4421'
-      );
-      if (hasMockQuotes) {
-        const cleanedQuotes = storedQuotes.filter(q => 
-          q.id !== 'quote-sample-01' && q.id !== 'quote-sample-02' &&
-          q.quoteNumber !== 'UBQ-2026-9104' && q.quoteNumber !== 'TUB-QT-2026-4421'
-        );
-        this.setItem('saved_quotes', cleanedQuotes);
-      }
-    } catch (e) {
-      console.debug('Data integrity sanitation error:', e);
-    }
+    // MASTER PRODUCTION SAFETY:
+    // Strictly preserve all existing production users, bookings, leads, and quotations.
+    // Wildcard filtering, mass deletion, or wiping of real client records is strictly prohibited.
 
     // AUTOMATIC MIGRATION: 
     // 1. Rename 'Cruises' to 'Private Yacht' and enforce capacity-based vehicleConfig

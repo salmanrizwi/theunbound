@@ -20,15 +20,138 @@ import {
   Sparkles,
   HelpCircle,
   Plane,
-  Cpu
+  Cpu,
+  Lock,
+  Building2,
+  Award
 } from 'lucide-react';
 import { navigateTo } from '../services/portalRouter';
 import { HeroTrustStrip } from '../components/Hero/HeroTrustStrip';
 import { FinalCTA } from '../components/FinalCTA';
+import { canUserAccessB2BInventory } from '../services/permissionEngine';
 
 export const VisaPage: React.FC = () => {
   const db = AppDatabase.getInstance();
-  const { user } = useAuth();
+  const { user, openAuthModal } = useAuth();
+  const isAuthorized = canUserAccessB2BInventory(user).allowed;
+
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen bg-[#F8FAFC] pb-16 space-y-12 sm:space-y-16">
+        {/* Header */}
+        <div className="relative bg-slate-950 text-white overflow-hidden py-16 sm:py-24 border-b border-slate-800 text-left">
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent" />
+          <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
+            <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-[#00C6A6]/10 border border-[#00C6A6]/30 text-[#00E5C0] text-xs font-black uppercase tracking-wider">
+              <span>B2B Consular & Visa Facilitation</span>
+            </div>
+            <h1 className="text-3xl sm:text-5xl font-black tracking-tight text-white uppercase">
+              Trade Visa & Embassy Facilitation Desk
+            </h1>
+            <p className="text-sm sm:text-base text-slate-300 max-w-2xl leading-relaxed">
+              TheUnbound provides accredited travel agents and corporate tour operators with consular guidance, visa document verification, and official invitation support.
+            </p>
+          </div>
+        </div>
+
+        {/* ACCESS RESTRICTED B2B NOTICE BANNER */}
+        <div className="max-w-4xl mx-auto px-4 sm:px-6">
+          <div className="bg-white rounded-3xl border border-slate-200 p-8 sm:p-10 shadow-lg text-center space-y-6">
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-600 mx-auto">
+              <Lock className="w-7 h-7" />
+            </div>
+
+            <div className="space-y-2">
+              <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+                Authorised B2B Agent Access Only
+              </h2>
+              <p className="text-sm text-slate-600 max-w-lg mx-auto leading-relaxed">
+                This inventory is available exclusively to authorised B2B Agents. Please log in or register as a B2B Agent to continue.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => openAuthModal('Sign in to access B2B visa services and embassy checklists.')}
+                className="w-full sm:w-auto px-7 py-3 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 text-xs sm:text-sm font-black transition-all shadow-md flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <Lock className="w-4 h-4" />
+                <span>Login as B2B Agent</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => openAuthModal('Register your travel agency to unlock trade visa filing assistance.')}
+                className="w-full sm:w-auto px-6 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold transition-all shadow-sm flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <Building2 className="w-4 h-4 text-[#00C6A6]" />
+                <span>Become a B2B Partner</span>
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400 pt-2 border-t border-slate-100">
+              Official document checklists, government fee schedules, and consular processing timelines are confidential trade resources restricted to licensed travel advisors.
+            </p>
+          </div>
+        </div>
+
+        {/* High Level Trade Visa Highlights */}
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 text-left">
+          <div className="space-y-1">
+            <span className="text-[10px] font-black uppercase tracking-wider text-[#008972]">
+              Trade Capabilities
+            </span>
+            <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+              B2B Visa Operations & Consular Services
+            </h3>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-[#008972]/10 flex items-center justify-center text-[#008972]">
+                <FileText className="w-5 h-5" />
+              </div>
+              <h4 className="text-base font-bold text-slate-900">Pre-Filing Document Verification</h4>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Our visa compliance team reviews passport scans, bank statements, and tax paperwork prior to submission to prevent embassy rejection.
+              </p>
+            </div>
+
+            <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-[#008972]/10 flex items-center justify-center text-[#008972]">
+                <Clock className="w-5 h-5" />
+              </div>
+              <h4 className="text-base font-bold text-slate-900">Express Biometrics & Appointment Tracking</h4>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Direct booking support for VFS Global, TLScontact, and national visa appointment slots for individual VIPs and corporate groups.
+              </p>
+            </div>
+
+            <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-[#008972]/10 flex items-center justify-center text-[#008972]">
+                <Award className="w-5 h-5" />
+              </div>
+              <h4 className="text-base font-bold text-slate-900">DMC Invitation & Hotel Vouchers</h4>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Official contracted DMC hotel confirmations, travel itineraries, and ground handling letters accepted by global consulates.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Final CTA */}
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <FinalCTA
+            title="Need Consular Assistance for Your Travel Agency?"
+            subtitle="Apply for a verified B2B partner account to access visa checklists, consular fee tariffs, and express application filing."
+            primaryButtonText="Apply for B2B Access"
+            primaryButtonLink="/register"
+          />
+        </div>
+      </div>
+    );
+  }
   const [visas, setVisas] = useState<VisaProduct[]>(() => db.getVisas());
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCountry, setSelectedCountry] = useState<string>('all');

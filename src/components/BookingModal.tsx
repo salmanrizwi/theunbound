@@ -4,6 +4,7 @@ import { AppDatabase } from '../services/db';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { formatCurrency, calculateProductPrice, convertCurrency } from '../services/pricingEngine';
+import { canUserAccessB2BInventory } from '../services/permissionEngine';
 import { googleCalendarAutomation } from '../services/googleCalendarAutomationService';
 import { 
   X, 
@@ -23,7 +24,8 @@ import {
   CheckCircle2,
   Sparkles,
   Hotel,
-  Car
+  Car,
+  Lock
 } from 'lucide-react';
 
 interface BookingModalProps {
@@ -47,10 +49,60 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   currency: propCurrency,
   onBookingComplete
 }) => {
-  const { user: authUser } = useAuth();
+  const { user: authUser, openAuthModal } = useAuth();
   const { currency: quoteCurrency } = useQuotation();
   const currentUser = propUser || authUser;
   const currency = propCurrency || quotation?.currency || packageItem?.currency || quoteCurrency || 'USD';
+
+  const isAuthorized = canUserAccessB2BInventory(currentUser).allowed;
+
+  if (!isOpen) return null;
+
+  if (!isAuthorized) {
+    return (
+      <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="relative bg-white rounded-3xl max-w-lg w-full p-8 text-center space-y-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
+          <button 
+            onClick={onClose}
+            className="absolute top-5 right-5 p-2 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-600 mx-auto">
+            <Lock className="w-7 h-7" />
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-xl font-black text-slate-900">Commercial Booking Access Restricted</h3>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              Wholesale commercial bookings and supplier reservations are available exclusively to verified B2B travel partners.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+            <button
+              onClick={() => {
+                onClose();
+                openAuthModal('Sign in as a verified B2B Agent to create commercial bookings.');
+              }}
+              className="flex-1 py-3 px-4 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-xs shadow-md transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
+            >
+              <Lock className="w-4 h-4" />
+              <span>Login as B2B Agent</span>
+            </button>
+            <button
+              onClick={() => {
+                onClose();
+                openAuthModal('Register your agency to book wholesale DMC inventory.');
+              }}
+              className="flex-1 py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-md transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
+            >
+              <Building2 className="w-4 h-4 text-[#00C6A6]" />
+              <span>Register Agency</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const db = AppDatabase.getInstance();
 
