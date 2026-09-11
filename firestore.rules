@@ -236,12 +236,22 @@ service cloud.firestore {
       allow write: if canAccessCMSOperations();
     }
 
+    match /hotel_rooms/{document=**} {
+      allow read: if canAccessB2BInventory();
+      allow write: if canAccessCMSOperations();
+    }
+
     match /hotel_rates/{document=**} {
       allow read: if canAccessB2BInventory();
       allow write: if canAccessCMSOperations();
     }
 
     match /hotel_meal_plans/{document=**} {
+      allow read: if canAccessB2BInventory();
+      allow write: if canAccessCMSOperations();
+    }
+
+    match /transfer_routes/{document=**} {
       allow read: if canAccessB2BInventory();
       allow write: if canAccessCMSOperations();
     }
@@ -342,6 +352,11 @@ service cloud.firestore {
     }
 
     match /homepage_config/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent();
+    }
+
+    match /site_pages_config/{document=**} {
       allow read: if true;
       allow write: if canAccessCMSContent();
     }
@@ -605,8 +620,28 @@ service cloud.firestore {
       allow read, write: if canAccessCMSSystem();
     }
 
+    match /theunbound_communication_audit_logs/{id} {
+      allow read: if canAccessCMSSystem();
+      allow create: if true;
+      allow update, delete: if isMasterAdmin();
+    }
+
     match /sheets_sync_history/{id} {
       allow read, write: if canAccessCMSSystem();
+    }
+
+    match /system_settings/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSSystem();
+    }
+
+    match /notifications/{id} {
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || 
+        resource.data.agentId == request.auth.uid ||
+        canAccessCMSOperations()
+      );
+      allow write: if isAuthenticated();
     }
 
     match /test/{id} {
