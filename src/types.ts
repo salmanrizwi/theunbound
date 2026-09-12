@@ -218,6 +218,21 @@ export interface UserPermissionAccess {
   shareWhatsApp?: boolean; // Controls whether user can share quotation via WhatsApp
   canShareWhatsAppQuotes?: boolean; // Alias for permission matrix control
 
+  // Tasks & Follow-Ups Granular Permissions
+  tasksView?: boolean;
+  tasksCreate?: boolean;
+  tasksEdit?: boolean;
+  tasksAssign?: boolean;
+  tasksComplete?: boolean;
+  tasksDelete?: boolean;
+  tasksManageAutomaticFollowups?: boolean;
+  leadTasksView?: boolean;
+  leadTasksCreate?: boolean;
+  bookingTasksView?: boolean;
+  bookingTasksCreate?: boolean;
+  bookingItemTasksView?: boolean;
+  bookingItemTasksCreate?: boolean;
+
   // CMS Access & Hierarchical Modules
   canAccessCMS?: boolean;
   cmsOperations?: CMSOperationsPermissions;
@@ -394,20 +409,108 @@ export interface Destination {
   seo?: EntitySEO;
 }
 
+export type SupplierCategory = 
+  | 'HOTEL' 
+  | 'FLIGHT' 
+  | 'VISA' 
+  | 'SIGHTSEEING' 
+  | 'TRANSFER' 
+  | 'RAIL' 
+  | 'GUIDE' 
+  | 'YACHT' 
+  | 'INSURANCE' 
+  | 'ESIM' 
+  | 'DMC_GROUND' 
+  | 'OTHER';
+
+export interface SupplierContactPerson {
+  id: string;
+  name: string;
+  role?: string;
+  email: string;
+  phone: string;
+  isPrimary?: boolean;
+  emergencyPhone?: string;
+}
+
+export interface SupplierBankDetails {
+  bankName?: string;
+  accountName?: string;
+  accountNumber?: string;
+  swiftBic?: string;
+  iban?: string;
+  routingCode?: string;
+  branchAddress?: string;
+}
+
 export interface Supplier {
   id: string;
   name: string;
+  legalName?: string;
+  tradingName?: string;
   country: string;
   destination: string;
+  destinations?: string[];
+  categories?: SupplierCategory[];
   contactPerson: string;
+  contactPersons?: SupplierContactPerson[];
   email: string;
   phone: string;
+  emergencyPhone?: string;
   website: string;
   currency: CurrencyCode;
   contractStatus: 'ACTIVE' | 'PENDING_RENEWAL' | 'UNDER_REVIEW';
+  isPreferred?: boolean;
   paymentTerms: string;
   cancellationTerms: string;
+  bankDetails?: SupplierBankDetails; // Protected
+  performanceScore?: number; // 0-100
+  responseTimeAvgHours?: number;
+  confirmationRatePercent?: number;
+  cancellationRatePercent?: number;
+  onTimePaymentCompliancePercent?: number;
+  openRequestsCount?: number;
+  pendingConfirmationsCount?: number;
+  outstandingPayableAmount?: number;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
+
+export type SupplierRequestStatus = 
+  | 'DRAFT' 
+  | 'SENT' 
+  | 'SUPPLIER_ACKNOWLEDGED' 
+  | 'OFFER_RECEIVED' 
+  | 'CONFIRMED' 
+  | 'REJECTED' 
+  | 'CANCELLED';
+
+export interface SupplierRequest {
+  id: string;
+  bookingId: string;
+  bookingReference: string;
+  serviceItemId?: string;
+  serviceName: string;
+  category: SupplierCategory;
+  supplierId: string;
+  supplierName: string;
+  supplierEmail: string;
+  supplierPhone?: string;
+  requestDate: string;
+  deadlineDate: string;
+  status: SupplierRequestStatus;
+  sentVia?: 'EMAIL' | 'WHATSAPP' | 'PORTAL';
+  quoteReceivedAmount?: number;
+  quoteCurrency?: CurrencyCode;
+  confirmationReference?: string;
+  cancellationCutoffDate?: string;
+  paymentCutoffDate?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 
 export interface ProductAddon {
   id: string;
@@ -976,6 +1079,67 @@ export interface BookingItem {
   accommodationType?: AccommodationType;
   isManualHotel?: boolean;
   manualHotelDetails?: ManualHotelDetails;
+  
+  // Operational Workflow & Service Details
+  workflowStage?: 
+    | 'REQUESTED' 
+    | 'SOURCING_REQUIRED' 
+    | 'SUPPLIER_CONTACTED' 
+    | 'SUPPLIER_RESPONSE_PENDING' 
+    | 'OPTION_RECEIVED' 
+    | 'AWAITING_APPROVAL' 
+    | 'PAYMENT_REQUIRED' 
+    | 'PAYMENT_SENT' 
+    | 'CONFIRMED' 
+    | 'VOUCHER_RECEIVED' 
+    | 'VOUCHER_ISSUED' 
+    | 'COMPLETED' 
+    | 'CANCELLED';
+  serviceFlightDetails?: {
+    flightNumber?: string;
+    airline?: string;
+    pnr?: string;
+    departureAirport?: string;
+    arrivalAirport?: string;
+    departureTime?: string;
+    arrivalTime?: string;
+    baggageAllowance?: string;
+  };
+  serviceHotelDetails?: {
+    hotelName?: string;
+    roomType?: string;
+    mealPlan?: string;
+    checkInDate?: string;
+    checkOutDate?: string;
+    confirmationNumber?: string;
+    voucherCode?: string;
+  };
+  serviceVisaDetails?: {
+    visaType?: string;
+    country?: string;
+    submissionDate?: string;
+    appointmentDate?: string;
+    biometricDate?: string;
+    approvalStatus?: 'NOT_SUBMITTED' | 'SUBMITTED' | 'APPOINTMENT_BOOKED' | 'IN_REVIEW' | 'APPROVED' | 'REJECTED';
+    trackingNumber?: string;
+  };
+  serviceTransferDetails?: {
+    pickupPoint?: string;
+    dropoffPoint?: string;
+    pickupTime?: string;
+    vehicleType?: string;
+    driverName?: string;
+    driverPhone?: string;
+    licensePlate?: string;
+  };
+  serviceSightseeingDetails?: {
+    tourLanguage?: string;
+    guideName?: string;
+    guidePhone?: string;
+    meetingPoint?: string;
+    duration?: string;
+    voucherCode?: string;
+  };
 }
 
 export interface SentEmailRecord {
@@ -1069,9 +1233,11 @@ export interface BookingTimelineEvent {
   title: string;
   description?: string;
   timestamp: string;
-  type: 'CREATION' | 'PASSENGER' | 'DOCUMENT' | 'PAYMENT' | 'SUPPLIER' | 'STATUS_CHANGE' | 'COMMUNICATION' | 'SLA_REMINDER';
+  type: 'CREATION' | 'PASSENGER' | 'DOCUMENT' | 'PAYMENT' | 'SUPPLIER' | 'STATUS_CHANGE' | 'COMMUNICATION' | 'SLA_REMINDER' | string;
   actorName?: string;
   actorRole?: string;
+  performedBy?: string;
+  metadata?: any;
 }
 
 export interface BookingStatusHistoryItem {
@@ -1105,10 +1271,6 @@ export interface Booking {
   id: string;
   bookingReference: string; // e.g. TUB-BK-2026-8492
   sourceType: BookingSourceType;
-  leadId?: string;
-  leadNumber?: string;
-  quoteId?: string;
-  quoteNumber?: string;
   destination?: string;
   destinationName?: string;
   agentId?: string;
@@ -1132,6 +1294,29 @@ export interface Booking {
   missingDocuments?: string[];
   supplierAllocationStatus?: 'UNALLOCATED' | 'DISPATCHED_TO_SUPPLIERS' | 'PARTIALLY_CONFIRMED' | 'FULLY_CONFIRMED_BY_SUPPLIERS';
   supplierAllocations?: BookingSupplierAllocation[];
+  
+  // Customer-Facing 15-Stage Workflow & Tracking
+  customerProgressStage?: BookingProgressStage;
+  customerProgressHistory?: BookingProgressHistoryItem[];
+  trackingToken?: string; // Secure token for guest/buyer tracking lookup
+
+  // CRM & Agency Linkage
+  leadId?: string;
+  leadNumber?: string;
+  agencyId?: string;
+  quoteId?: string;
+  quoteNumber?: string;
+
+  // Supplier Requests & Sourcing
+  supplierRequests?: SupplierRequest[];
+
+  // Financial & Profitability Tracking
+  paymentSchedule?: PaymentSchedule;
+  excessPaymentAmount?: number;
+  pendingPaymentAmount?: number;
+  grossProfit?: number;
+  grossMarginPercent?: number;
+  supplierTotalCost?: number;
   
   // Passenger & Document Uploads (strictly up to totalPax)
   passengers?: BookingPassenger[];
@@ -2791,6 +2976,190 @@ export type LeadStatus =
   | 'LOST' 
   | 'ARCHIVED';
 
+export type LeadPipelineStageId = 
+  | 'NEW_ENQUIRY'
+  | 'CONTACTED'
+  | 'QUALIFICATION_REQUIRED'
+  | 'REQUIREMENTS_COLLECTED'
+  | 'PLANNING_IN_PROGRESS'
+  | 'QUOTE_DRAFTED'
+  | 'QUOTE_SENT'
+  | 'FOLLOW_UP_REQUIRED'
+  | 'NEGOTIATION'
+  | 'BOOKING_EXPECTED'
+  | 'BOOKING_CONFIRMED'
+  | 'WON'
+  | 'LOST'
+  | 'ON_HOLD'
+  | 'INVALID_OR_DUPLICATE';
+
+export interface LeadStageConfig {
+  id: LeadPipelineStageId | string;
+  name: string;
+  order: number;
+  color: string;
+  probability: number; // 0 - 100%
+  slaDurationHours?: number;
+  isActive: boolean;
+  isWon?: boolean;
+  isLost?: boolean;
+  defaultLeadStatus: LeadStatus;
+}
+
+export interface LeadScoreFactor {
+  factor: string;
+  points: number;
+  maxPoints: number;
+  explanation: string;
+}
+
+export type LeadActivityType = 
+  | 'USER_ACTION' 
+  | 'AUDIT_EVENT' 
+  | 'SYSTEM_EVENT' 
+  | 'NOTIFICATION' 
+  | 'TASK' 
+  | 'EMAIL' 
+  | 'CALL' 
+  | 'MEETING';
+
+export interface LeadActivityItem {
+  id: string;
+  type: LeadActivityType;
+  title: string;
+  description: string;
+  timestamp: string;
+  authorId?: string;
+  authorName: string;
+  authorRole?: string;
+  meta?: Record<string, any>;
+}
+
+export interface CustomerTravelRequirements {
+  destinationNames?: string[];
+  travelStartDate?: string;
+  travelEndDate?: string;
+  isDatesFlexible?: boolean;
+  numberOfNights?: number;
+  adults: number;
+  children: number;
+  infants?: number;
+  roomsCount?: number;
+  roomCategory?: string;
+  hotelCategory?: '3_STAR' | '4_STAR' | '5_STAR' | 'LUXURY_BOUTIQUE' | 'RESORT';
+  mealPlan?: 'ROOM_ONLY' | 'BED_AND_BREAKFAST' | 'HALF_BOARD' | 'FULL_BOARD' | 'ALL_INCLUSIVE';
+  transportType?: 'PRIVATE_CAR' | 'LUXURY_VAN' | 'COACH' | 'TRAIN_PASS' | 'SELF_DRIVE' | 'NONE';
+  activities?: string[];
+  visaRequired?: boolean;
+  flightsRequired?: boolean;
+  budgetAmount?: number;
+  budgetCurrency?: CurrencyCode;
+  specialRequests?: string;
+}
+
+// ----------------------------------------------------
+// CUSTOMER-FACING 15-STAGE BOOKING PROGRESS MODEL
+// ----------------------------------------------------
+export type BookingProgressStage = 
+  | 'ENQUIRY_RECEIVED'
+  | 'REQUIREMENTS_REVIEW'
+  | 'PROPOSAL_PREPARING'
+  | 'PROPOSAL_SENT'
+  | 'BOOKING_REQUEST_RECEIVED'
+  | 'BOOKING_PROCESSING'
+  | 'SUPPLIER_CONFIRMATION_IN_PROGRESS'
+  | 'PAYMENT_PENDING'
+  | 'DOCUMENTS_PENDING'
+  | 'PARTIALLY_CONFIRMED'
+  | 'BOOKING_CONFIRMED'
+  | 'VOUCHERS_READY'
+  | 'TRAVEL_SUPPORT_ACTIVE'
+  | 'TRIP_COMPLETED'
+  | 'CANCELLED';
+
+export interface BookingProgressHistoryItem {
+  id: string;
+  stage: BookingProgressStage;
+  stageName: string;
+  timestamp: string;
+  changedById?: string;
+  changedByName: string;
+  note?: string;
+  isPublicToBuyer: boolean;
+}
+
+// ----------------------------------------------------
+// FINANCIAL INSTALLMENTS & OPERATIONS CALENDAR
+// ----------------------------------------------------
+export interface PaymentInstallmentItem {
+  id: string;
+  title: string;
+  installmentNumber: number;
+  amount: number;
+  currency: CurrencyCode;
+  dueDate: string;
+  status: 'PENDING' | 'PAID' | 'OVERDUE' | 'PARTIAL';
+  paidAmount?: number;
+  paidDate?: string;
+  paymentMethod?: string;
+  paymentProofId?: string;
+  notes?: string;
+}
+
+export interface PaymentSchedule {
+  bookingId: string;
+  bookingReference: string;
+  totalAmount: number;
+  currency: CurrencyCode;
+  installments: PaymentInstallmentItem[];
+  totalPaid: number;
+  balanceDue: number;
+  excessAmount?: number;
+  paymentStatus: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'OVERDUE' | 'REFUNDED';
+  updatedAt: string;
+}
+
+export interface BookingFinancialProfitability {
+  bookingId: string;
+  bookingReference: string;
+  sellingPrice: number;
+  totalSupplierCost: number;
+  grossMarginAmount: number;
+  grossMarginPercent: number;
+  agencyCommissionAmount?: number;
+  netProfitAmount: number;
+  netProfitMarginPercent: number;
+  currency: CurrencyCode;
+}
+
+export interface OperationsCalendarEvent {
+  id: string;
+  type: 
+    | 'CHECK_IN' 
+    | 'CHECK_OUT' 
+    | 'FLIGHT' 
+    | 'VISA_DEADLINE' 
+    | 'PAYMENT_CUTOFF' 
+    | 'SUPPLIER_DEADLINE' 
+    | 'VOUCHER_DEADLINE' 
+    | 'SIGHTSEEING' 
+    | 'TRANSFER';
+  title: string;
+  description: string;
+  bookingId: string;
+  bookingReference: string;
+  customerName: string;
+  destination: string;
+  supplierName?: string;
+  date: string;
+  time?: string;
+  status: 'UPCOMING' | 'DUE_SOON' | 'OVERDUE' | 'COMPLETED' | 'CANCELLED';
+  priority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+  actionUrl?: string;
+  assignedStaffName?: string;
+}
+
+
 export type LeadPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
 
 export type LeadSource = 
@@ -2991,8 +3360,31 @@ export interface TravelLead {
 
   // Status & Priority
   status: LeadStatus;
+  stageId?: LeadPipelineStageId | string;
+  stageName?: string;
   priority?: LeadPriority;
   conversionStatus?: 'IN_PROGRESS' | 'CONVERTED' | 'LOST' | 'ARCHIVED';
+
+  // Odoo-Style Sales & Ops Ownership & Scoring
+  salesOwnerId?: string;
+  salesOwnerName?: string;
+  salesOwnerEmail?: string;
+  operationsOwnerId?: string;
+  operationsOwnerName?: string;
+  operationsOwnerEmail?: string;
+  accountManagerId?: string;
+  accountManagerName?: string;
+  probability?: number; // 0 - 100%
+  expectedRevenue?: number;
+  expectedMargin?: number;
+  score?: number; // 0 - 100
+  scoreBreakdown?: LeadScoreFactor[];
+  requirementsSummary?: CustomerTravelRequirements;
+  activitiesStream?: LeadActivityItem[];
+
+  // Agency & Contact Linkage
+  agencyId?: string;
+  contactId?: string;
 
   // Staff Assignment
   assignedStaffId: string;
@@ -3585,7 +3977,20 @@ export type SLAStatus =
   | 'COMPLETED_ON_TIME'
   | 'COMPLETED_BREACHED';
 
-export type TaskStatus = 'OPEN' | 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'DISMISSED' | 'SNOOZED' | 'OVERDUE' | 'CANCELLED';
+export type TaskStatus = 
+  | 'TO_DO'
+  | 'OPEN' 
+  | 'PENDING' 
+  | 'IN_PROGRESS' 
+  | 'WAITING_FOR_REPLY' 
+  | 'COMPLETED' 
+  | 'DISMISSED' 
+  | 'SNOOZED' 
+  | 'OVERDUE' 
+  | 'CANCELLED'
+  | 'ARCHIVED';
+
+export type TaskImportance = 'LOW' | 'NORMAL' | 'IMPORTANT' | 'URGENT';
 
 export type ActionCenterEntityType = 
   | 'BOOKING' 
@@ -3601,7 +4006,12 @@ export type ActionCenterEntityType =
   | 'PACKAGE' 
   | 'VISA' 
   | 'JOB'
-  | 'TASK';
+  | 'TASK'
+  | 'SUPPLIER'
+  | 'BUYER'
+  | 'B2B_AGENT'
+  | 'DOCUMENT'
+  | 'PASSENGER';
 
 export interface ActionTarget {
   entityType: ActionCenterEntityType;
@@ -3628,6 +4038,7 @@ export interface CalendarReminderOption {
 export interface CalendarTask {
   id: string;
   taskId?: string; // Action Center canonical taskId alias
+  taskName?: string; // Canonical business task name
   automationId?: string;
   taskType?: SLATaskType | string;
   title: string;
@@ -3642,6 +4053,9 @@ export interface CalendarTask {
   // Timestamps & SLA
   generatedAt?: string; // ISO 8601
   dueAt?: string; // ISO 8601 = generatedAt + slaHours
+  dueDate?: string; // YYYY-MM-DD
+  dueTime?: string; // HH:mm
+  reminderAt?: string; // ISO 8601
   slaHours?: number;
   slaStatus?: SLAStatus;
   snoozedUntil?: string; // ISO 8601
@@ -3654,9 +4068,19 @@ export interface CalendarTask {
   endDate?: string;
   endTime?: string;
   
-  // Relations & Action Center entity link
+  // Relations & Connected Entity links (Lead, Booking, Booking Item, etc.)
   entityType?: ActionCenterEntityType;
   entityId?: string;
+  relatedEntityType?: 'lead' | 'booking' | 'booking_item' | 'buyer' | 'b2b_agent' | 'supplier' | 'quote' | 'payment' | 'document' | ActionCenterEntityType | string;
+  relatedEntityId?: string;
+  relatedEntityReference?: string;
+  bookingItemId?: string;
+  bookingItemName?: string;
+  serviceCategory?: string;
+  buyerId?: string;
+  b2bAgentId?: string;
+  b2bAgentName?: string;
+  supplierId?: string;
   targetRoute?: string;
   bookingId?: string;
   bookingReference?: string;
@@ -3680,6 +4104,10 @@ export interface CalendarTask {
   requiredAction?: string;
   actionRequired?: string; // Alias for Action Center
   cmsLink?: string;
+  source?: 'lead_record' | 'booking_record' | 'booking_item_record' | 'tasks_central' | 'automatic' | 'payment_activity' | 'supplier_activity' | string;
+  isCustomerFacing?: boolean;
+  isInternal?: boolean;
+  autoTaskKey?: string; // Idempotency key to avoid duplicate automatic task creation
   
   // Google Calendar Sync
   googleCalendarId?: string;
@@ -3701,8 +4129,21 @@ export interface CalendarTask {
   completedBy?: string;
   completionNote?: string;
   completionSource?: string;
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancellationReason?: string;
   snoozedBy?: string;
   notes?: string;
+  importance?: TaskImportance;
+  repeat?: 'NONE' | 'DAILY' | 'WEEKLY' | 'MONTHLY';
+  reminderPreset?: 'NONE' | 'ON_DUE_DATE' | 'ONE_DAY_BEFORE' | 'TWO_DAYS_BEFORE' | 'CUSTOM';
+  timePreset?: 'NONE' | 'MORNING' | 'AFTERNOON' | 'EVENING' | 'CUSTOM';
+  isArchived?: boolean;
+  archivedAt?: string;
+  archivedBy?: string;
+  assignmentHistory?: Array<{ id: string; assignedToName: string; assignedToEmail: string; assignedByName: string; timestamp: string; note?: string; }>;
+  comments?: Array<{ id: string; authorName: string; authorEmail?: string; content: string; createdAt: string; }>;
+  auditMetadata?: Record<string, any>;
   
   createdAt: string;
   updatedAt: string;

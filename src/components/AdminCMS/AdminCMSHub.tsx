@@ -71,6 +71,7 @@ import {
   Megaphone, 
   BarChart3, 
   Bell, 
+  CheckSquare,
   Database, 
   FileSpreadsheet,
   FileText,
@@ -581,21 +582,21 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     {
       id: 'SYSTEM',
       label: 'System',
-      fullLabel: 'System & Audit',
+      fullLabel: 'System & Operations',
       icon: Database,
-      description: 'Google Calendar Task SLA automation, production Integrations Hub, Firestore diagnostics, and audit governance ledger.',
+      description: 'Tasks & follow-ups management, production Integrations Hub, Firestore diagnostics, and audit governance ledger.',
       defaultModule: 'CALENDAR_SLAS',
       modules: [
         {
           id: 'CALENDAR_SLAS',
-          label: 'Calendar & Ground SLAs',
-          shortLabel: 'Calendar & SLAs',
-          icon: Bell,
-          badge: pendingTasks > 0 ? `${pendingTasks} Tasks` : 'SLAs',
+          label: 'Tasks & Follow-Ups',
+          shortLabel: 'Tasks & Follow-Ups',
+          icon: CheckSquare,
+          badge: pendingTasks > 0 ? `${pendingTasks} Open` : 'Tasks',
           alertCount: pendingTasks,
-          description: 'Google Calendar Task SLA automation, 12h booking confirmation alerts, 24h quote follow-up triggers, and ground service deadlines.',
+          description: 'Manage your work, follow up with leads, coordinate booking activities, and keep every trip moving forward.',
           subTabs: [
-            { id: 'TASKS', label: 'Calendar & Ground SLAs', icon: Bell }
+            { id: 'TASKS', label: 'Tasks & Follow-Ups', icon: CheckSquare }
           ]
         },
         {
@@ -1346,13 +1347,14 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             <CurrencyManagementPanel currentUser={currentUser} />
           )}
 
-          {/* SECTION 5: SYSTEM & AUDIT */}
-          {/* 5.1 CALENDAR & GROUND SLAS */}
+          {/* SECTION 5: SYSTEM & OPERATIONS */}
+          {/* 5.1 TASKS & FOLLOW-UPS */}
           {(currentModuleConfig.id === 'CALENDAR_SLAS' || currentModuleConfig.id === 'NOTIFICATIONS_MANAGEMENT') && (
             <CMSCalendarTasksManager
               currentUser={currentUser}
               onNavigateToBooking={(id) => handleNavigate('BOOKING_MANAGEMENT', 'BOOKINGS', id)}
               onNavigateToLead={(id) => handleNavigate('LEAD_MANAGEMENT', 'LEADS', id)}
+              onNavigateToQuote={(id) => handleNavigate('LEAD_MANAGEMENT', 'QUOTES', id)}
             />
           )}
 

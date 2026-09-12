@@ -1,6 +1,6 @@
 {
   "name": "TheUnbound - DMC Travel Portal",
-  "description": "Scalable B2B/B2C Destination Management Company portal featuring an intelligent AI Planner, quotation engine, dynamic multi-product pricing calculators, and destination inventories for Europe, UK, and Japan.",
+  "description": "Enterprise Destination Management Company platform featuring an Odoo-style CRM and lead pipeline, centralized ground travel operations, supplier procurement, financial and margin tracking, B2B wholesale quotation engine, and buyer booking tracking.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

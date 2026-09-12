@@ -38,17 +38,21 @@ import {
   Check
 } from 'lucide-react';
 import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
+import { LeadTasksSection } from './tasks/LeadTasksSection';
+import { CheckSquare } from 'lucide-react';
 
 interface LeadDetailDrawerProps {
   lead: TravelLead | null;
   onClose: () => void;
   onUpdateLead: (updatedLead: TravelLead) => void;
+  onNavigateToTasks?: () => void;
 }
 
 export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   lead,
   onClose,
-  onUpdateLead
+  onUpdateLead,
+  onNavigateToTasks
 }) => {
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
@@ -302,7 +306,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
             { id: 'products', label: `Products (${lead.requestedProducts?.length || 0})`, icon: Package },
             { id: 'quotes', label: `Quote & Versions (${lead.quoteVersions?.length || (lead.quoteNumber ? 1 : 0)})`, icon: DollarSign },
             { id: 'timeline', label: `Timeline (${lead.timeline?.length || 0})`, icon: History },
-            { id: 'followups', label: `Follow-Ups (${lead.followUps?.length || 0})`, icon: Clock },
+            { id: 'followups', label: `Tasks & Follow-Ups (${db.getTasksForLead(lead.id).length})`, icon: CheckSquare },
             { id: 'notes', label: `Notes (${lead.notes?.length || 0})`, icon: FileText },
             { id: 'documents', label: `Documents (${lead.documents?.length || 0})`, icon: ShieldCheck }
           ].map(tab => {
@@ -692,151 +696,14 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
             </div>
           )}
 
-          {/* TAB: FOLLOW-UPS & GOOGLE CALENDAR SLAS */}
+          {/* TAB: TASKS & SALES FOLLOW-UPS */}
           {activeTab === 'followups' && (
             <div className="space-y-4">
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-[#00C6A6]" />
-                      <span>Follow-Up Tasks & SLA Automations</span>
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Syncs with Google Calendar to ensure zero missed client inquiries.
-                    </p>
-                  </div>
-                  <button
-                    id="add-followup-toggle-btn"
-                    onClick={() => setShowAddFollowUp(!showAddFollowUp)}
-                    className="bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold px-3 py-1.5 rounded-xl text-xs flex items-center gap-1 cursor-pointer transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Schedule Follow-Up</span>
-                  </button>
-                </div>
-
-                {/* Add Follow-Up Form */}
-                {showAddFollowUp && (
-                  <form onSubmit={handleAddFollowUp} className="p-4 bg-slate-50 rounded-xl border border-slate-200 mb-4 space-y-3">
-                    <h4 className="text-xs font-bold text-slate-800 uppercase">New Follow-Up Task</h4>
-                    <input
-                      type="text"
-                      placeholder="Task Title (e.g., Call client regarding ryokan allotment approval)..."
-                      value={newFollowUpTitle}
-                      onChange={e => setNewFollowUpTitle(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs focus:outline-none focus:border-[#00C6A6]"
-                      required
-                    />
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="text-[10px] text-slate-500 font-semibold block mb-1">Due Date & Time</label>
-                        <input
-                          type="datetime-local"
-                          value={newFollowUpDate}
-                          onChange={e => setNewFollowUpDate(e.target.value)}
-                          className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs focus:outline-none"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-500 font-semibold block mb-1">SLA Target (Hours)</label>
-                        <input
-                          type="number"
-                          value={newFollowUpSla}
-                          onChange={e => setNewFollowUpSla(Number(e.target.value))}
-                          className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs focus:outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-500 font-semibold block mb-1">Assignee</label>
-                        <input
-                          type="text"
-                          value={newFollowUpAssignee}
-                          onChange={e => setNewFollowUpAssignee(e.target.value)}
-                          className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs focus:outline-none"
-                        />
-                      </div>
-                    </div>
-                    <div className="flex justify-end gap-2 pt-2">
-                      <button
-                        type="button"
-                        onClick={() => setShowAddFollowUp(false)}
-                        className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="submit"
-                        className="px-3 py-1.5 text-xs font-bold bg-[#00C6A6] text-slate-950 rounded-lg hover:bg-[#00b094]"
-                      >
-                        Save Task
-                      </button>
-                    </div>
-                  </form>
-                )}
-
-                {/* Follow Ups List */}
-                {(!lead.followUps || lead.followUps.length === 0) ? (
-                  <div className="text-center py-6 text-slate-400 text-xs">
-                    No active follow-ups. Automated SLAs trigger on quote download (24h) and booking submission (12h).
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {lead.followUps.map(fu => {
-                      const isCompleted = fu.status === 'COMPLETED';
-                      return (
-                        <div
-                          key={fu.id}
-                          className={`p-4 rounded-xl border transition-all text-xs ${
-                            isCompleted ? 'bg-slate-50/60 border-slate-200 opacity-80' : 'bg-white border-amber-200 shadow-xs'
-                          }`}
-                        >
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                  isCompleted ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                                }`}>
-                                  {fu.status}
-                                </span>
-                                <span className="font-bold text-slate-900">{fu.title}</span>
-                              </div>
-                              <p className="text-slate-600">{fu.description}</p>
-                              <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 pt-1">
-                                <span>Due: <strong className="text-slate-800">{new Date(fu.dueAt).toLocaleString()}</strong></span>
-                                <span>Assigned to: <strong className="text-slate-800">{fu.assignedToName}</strong></span>
-                                {fu.googleCalendarLink && (
-                                  <a
-                                    href={fu.googleCalendarLink}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-blue-600 hover:underline flex items-center gap-1 font-semibold"
-                                  >
-                                    <ExternalLink className="w-3 h-3" />
-                                    Google Calendar Event
-                                  </a>
-                                )}
-                              </div>
-                            </div>
-
-                            {!isCompleted && (
-                              <button
-                                id={`complete-followup-${fu.id}`}
-                                onClick={() => handleCompleteFollowUp(fu.id)}
-                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1 cursor-pointer shrink-0"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                                <span>Mark Done</span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              <LeadTasksSection
+                lead={lead}
+                currentUser={user}
+                onNavigateToTasks={onNavigateToTasks}
+              />
             </div>
           )}
 

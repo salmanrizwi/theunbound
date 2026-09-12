@@ -103,8 +103,24 @@ import {
   EntitySEO,
   SEOAuditItem,
   SEOEntityType,
-  MasterGoogleSheetConfig
+  MasterGoogleSheetConfig,
+  Supplier,
+  SupplierRequest,
+  SupplierRequestStatus,
+  LeadStageConfig,
+  LeadPipelineStageId,
+  BookingProgressStage,
+  OperationsCalendarEvent,
+  PaymentSchedule,
+  BookingFinancialProfitability
 } from '../types';
+import {
+  DEFAULT_LEAD_STAGES,
+  CUSTOMER_PROGRESS_STAGES,
+  calculateTransparentLeadScore,
+  calculateBookingProfitability,
+  generateOperationsCalendarEvents
+} from './crmOperationsEngine';
 import {
   DEFAULT_GLOBAL_SEO_DEFAULTS,
   auditEntitySEO,
@@ -485,6 +501,7 @@ export class AppDatabase {
   private listeners: Set<() => void> = new Set();
   private bookingSaveListeners: BookingSaveListener[] = [];
   private quotationSaveListeners: QuotationSaveListener[] = [];
+  private leadSaveListeners: ((lead: TravelLead, user: User | null, isNew: boolean) => void)[] = [];
   private isFirestoreInitialized: boolean = false;
   private notifyTimer: any = null;
   private actionCenterHooks?: {
@@ -538,6 +555,13 @@ export class AppDatabase {
     this.quotationSaveListeners.push(listener);
     return () => {
       this.quotationSaveListeners = this.quotationSaveListeners.filter(l => l !== listener);
+    };
+  }
+
+  public onLeadSaved(listener: (lead: TravelLead, user: User | null, isNew: boolean) => void): () => void {
+    this.leadSaveListeners.push(listener);
+    return () => {
+      this.leadSaveListeners = this.leadSaveListeners.filter(l => l !== listener);
     };
   }
 
@@ -682,6 +706,9 @@ export class AppDatabase {
       this.syncCollectionSafely<CampaignEvent>('campaign_events', 'campaign_events');
       this.syncCollectionSafely<EmailCampaignConfig>('campaigns', 'campaigns');
       this.syncCollectionSafely<SEORedirect>('seo_redirects', 'seo_redirects');
+      this.syncCollectionSafely<Supplier>('suppliers', 'suppliers');
+      this.syncCollectionSafely<SupplierRequest>('supplier_requests', 'supplier_requests');
+      this.syncCollectionSafely<LeadStageConfig>('lead_stages', 'lead_stages');
 
       // 5. Navigation & Institutional Content with Local Deleted Tombstone Handling
       onSnapshot(collection(firestoreDb, 'menu_items'), (snapshot) => {
@@ -5833,6 +5860,18 @@ export class AppDatabase {
       // Non-blocking
     }
 
+    try {
+      this.leadSaveListeners.forEach(listener => {
+        try {
+          listener(savedLead, user, index < 0);
+        } catch (listenerErr) {
+          console.error('[DB] Error in leadSaveListener:', listenerErr);
+        }
+      });
+    } catch {
+      // Non-blocking
+    }
+
     return savedLead;
   }
 
@@ -6077,6 +6116,50 @@ export class AppDatabase {
     leads[index].lastActivityAt = timestamp;
     leads[index].lastActivitySummary = `Follow-Up Scheduled: ${fullTask.title}`;
 
+    // Unified CalendarTask creation so Lead follow-ups appear centrally
+    try {
+      const calendarTask: CalendarTask = {
+        id: fullTask.id,
+        taskId: fullTask.id,
+        title: fullTask.title,
+        taskName: fullTask.title,
+        description: fullTask.description || `Lead Follow-Up for ${leads[index].contactName}`,
+        assignedToEmail: fullTask.assignedToEmail || user?.email || 'sales@theunbound.in',
+        assignedToName: fullTask.assignedToName || user?.name || 'Sales Team',
+        assignedTo: fullTask.assignedToName,
+        createdBy: user?.name || 'Sales Specialist',
+        assignedDepartment: 'SALES',
+        category: 'CLIENT_FOLLOW_UP',
+        status: 'TO_DO',
+        priority: 'HIGH',
+        importance: 'IMPORTANT',
+        startDate: fullTask.dueAt ? fullTask.dueAt.split('T')[0] : new Date().toISOString().split('T')[0],
+        startTime: '10:00',
+        dueDate: fullTask.dueAt ? fullTask.dueAt.split('T')[0] : new Date().toISOString().split('T')[0],
+        dueTime: '10:00',
+        dueAt: fullTask.dueAt,
+        entityType: 'LEAD',
+        entityId: leads[index].id,
+        relatedEntityType: 'lead',
+        relatedEntityId: leads[index].id,
+        relatedEntityReference: leads[index].leadNumber,
+        leadId: leads[index].id,
+        leadNumber: leads[index].leadNumber,
+        customerName: leads[index].contactName,
+        destination: leads[index].destinationName || (leads[index] as any).destination,
+        targetRoute: `/admin/leads?id=${leads[index].id}`,
+        source: 'lead_record',
+        isCustomerFacing: false,
+        isInternal: true,
+        isSyncedToGoogleCalendar: false,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      this.saveCalendarTask(calendarTask, user);
+    } catch (taskErr) {
+      console.warn('[DB] Failed to sync follow-up to CalendarTask collection:', taskErr);
+    }
+
     leads[index].timeline = [
       {
         id: `tl-${Date.now()}`,
@@ -6124,6 +6207,22 @@ export class AppDatabase {
       this.setItem('leads', leads);
       this.syncFirestoreDoc('leads', leads[index].id, leads[index]);
       this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', leads[index].id, `Completed follow-up ${followUpId} on lead ${leads[index].leadNumber}`);
+      
+      // Complete corresponding CalendarTask
+      try {
+        const calTasks = this.getCalendarTasks();
+        const tIndex = calTasks.findIndex(t => t.id === followUpId || t.taskId === followUpId);
+        if (tIndex >= 0) {
+          calTasks[tIndex].status = 'COMPLETED';
+          calTasks[tIndex].completedAt = timestamp;
+          calTasks[tIndex].completedBy = user?.name || 'Staff';
+          calTasks[tIndex].updatedAt = timestamp;
+          this.setItem('calendar_tasks', calTasks);
+          this.syncFirestoreDoc('calendar_tasks', calTasks[tIndex].id, calTasks[tIndex]);
+        }
+      } catch {
+        // Non-blocking
+      }
     }
     return leads[index];
   }
@@ -8446,6 +8545,340 @@ export class AppDatabase {
     }
   }
 
+  public archiveCalendarTask(taskId: string, user?: User | null): CalendarTask | null {
+    const tasks = this.getCalendarTasks();
+    const index = tasks.findIndex(t => t.id === taskId);
+    if (index === -1) return null;
+    const task = tasks[index];
+    const now = new Date().toISOString();
+    const updated: CalendarTask = {
+      ...task,
+      isArchived: true,
+      archivedAt: now,
+      archivedBy: user?.name || user?.email || 'User',
+      status: 'ARCHIVED',
+      updatedAt: now
+    };
+    tasks[index] = updated;
+    this.setItem('calendar_tasks', tasks);
+    this.syncFirestoreDoc('calendar_tasks', taskId, updated);
+    this.logAudit(user || null, 'SETTINGS_UPDATED', 'CalendarTask', taskId, `Archived task: ${task.title}`);
+    return updated;
+  }
+
+  public unarchiveCalendarTask(taskId: string, user?: User | null): CalendarTask | null {
+    const tasks = this.getCalendarTasks();
+    const index = tasks.findIndex(t => t.id === taskId);
+    if (index === -1) return null;
+    const task = tasks[index];
+    const now = new Date().toISOString();
+    const updated: CalendarTask = {
+      ...task,
+      isArchived: false,
+      archivedAt: undefined,
+      archivedBy: undefined,
+      status: 'TO_DO',
+      updatedAt: now
+    };
+    tasks[index] = updated;
+    this.setItem('calendar_tasks', tasks);
+    this.syncFirestoreDoc('calendar_tasks', taskId, updated);
+    this.logAudit(user || null, 'SETTINGS_UPDATED', 'CalendarTask', taskId, `Unarchived task: ${task.title}`);
+    return updated;
+  }
+
+  // ==========================================
+  // UNIFIED CONNECTED TASK MANAGEMENT
+  // (LEADS, BOOKINGS, BOOKING ITEMS & CENTRAL)
+  // ==========================================
+
+  public getTasksForLead(leadId: string): CalendarTask[] {
+    if (!leadId) return [];
+    const tasks = this.getCalendarTasks();
+    return tasks.filter(t => 
+      !t.isArchived && (
+        t.leadId === leadId || 
+        (t.relatedEntityType?.toLowerCase() === 'lead' && t.relatedEntityId === leadId) ||
+        (t.entityType === 'LEAD' && t.entityId === leadId) ||
+        t.leadNumber === leadId
+      )
+    );
+  }
+
+  public getTasksForBooking(bookingId: string): CalendarTask[] {
+    if (!bookingId) return [];
+    const tasks = this.getCalendarTasks();
+    return tasks.filter(t => 
+      !t.isArchived && (
+        t.bookingId === bookingId || 
+        (t.relatedEntityType?.toLowerCase() === 'booking' && t.relatedEntityId === bookingId) ||
+        (t.entityType === 'BOOKING' && t.entityId === bookingId) ||
+        t.bookingReference === bookingId
+      )
+    );
+  }
+
+  public getTasksForBookingItem(bookingIdOrItemId: string, maybeItemId?: string): CalendarTask[] {
+    const targetItemId = maybeItemId || bookingIdOrItemId;
+    const targetBookingId = maybeItemId ? bookingIdOrItemId : undefined;
+    if (!targetItemId) return [];
+    const tasks = this.getCalendarTasks();
+    return tasks.filter(t => 
+      !t.isArchived && (
+        t.bookingItemId === targetItemId || 
+        (t.relatedEntityType?.toLowerCase() === 'booking_item' && t.relatedEntityId === targetItemId) ||
+        t.serviceId === targetItemId
+      ) && (
+        !targetBookingId || t.bookingId === targetBookingId || t.entityId === targetBookingId
+      )
+    );
+  }
+
+  public getLeadTaskSummary(leadId: string, currentUserEmailOrId?: string) {
+    const tasks = this.getTasksForLead(leadId);
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+
+    const openTasks = tasks.filter(t => t.status !== 'COMPLETED' && t.status !== 'ARCHIVED' && t.status !== 'CANCELLED');
+    const completedTasks = tasks.filter(t => t.status === 'COMPLETED');
+    
+    const dueToday = openTasks.filter(t => {
+      const d = t.dueDate || t.startDate || (t.dueAt ? t.dueAt.split('T')[0] : '');
+      return d === todayStr;
+    });
+
+    const overdueTasks = openTasks.filter(t => {
+      const d = t.dueDate || t.startDate || (t.dueAt ? t.dueAt.split('T')[0] : '');
+      return d && d < todayStr;
+    });
+
+    const myTasks = currentUserEmailOrId 
+      ? openTasks.filter(t => 
+          t.assignedToEmail?.toLowerCase() === currentUserEmailOrId.toLowerCase() ||
+          t.assignedTo === currentUserEmailOrId ||
+          t.userId === currentUserEmailOrId
+        )
+      : [];
+
+    // Next upcoming task (earliest open task by due date)
+    const sortedUpcoming = [...openTasks].sort((a, b) => {
+      const dateA = a.dueDate || a.startDate || a.dueAt || '9999';
+      const dateB = b.dueDate || b.startDate || b.dueAt || '9999';
+      return dateA.localeCompare(dateB);
+    });
+    const nextUpcomingTask = sortedUpcoming[0] || null;
+
+    // Last completed task
+    const sortedCompleted = [...completedTasks].sort((a, b) => {
+      const timeA = a.completedAt || a.updatedAt || '0000';
+      const timeB = b.completedAt || b.updatedAt || '0000';
+      return timeB.localeCompare(timeA);
+    });
+    const lastCompletedTask = sortedCompleted[0] || null;
+
+    return {
+      totalTasks: tasks.length,
+      openTasksCount: openTasks.length,
+      completedTasksCount: completedTasks.length,
+      dueTodayCount: dueToday.length,
+      overdueCount: overdueTasks.length,
+      myTasksCount: myTasks.length,
+      nextUpcomingTask,
+      lastCompletedTask,
+      tasks
+    };
+  }
+
+  public getBookingTaskSummary(bookingId: string, currentUserEmailOrId?: string) {
+    const tasks = this.getTasksForBooking(bookingId);
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+
+    const openTasks = tasks.filter(t => t.status !== 'COMPLETED' && t.status !== 'ARCHIVED' && t.status !== 'CANCELLED');
+    const completedTasks = tasks.filter(t => t.status === 'COMPLETED');
+    
+    const dueToday = openTasks.filter(t => {
+      const d = t.dueDate || t.startDate || (t.dueAt ? t.dueAt.split('T')[0] : '');
+      return d === todayStr;
+    });
+
+    const overdueTasks = openTasks.filter(t => {
+      const d = t.dueDate || t.startDate || (t.dueAt ? t.dueAt.split('T')[0] : '');
+      return d && d < todayStr;
+    });
+
+    const myTasks = currentUserEmailOrId 
+      ? openTasks.filter(t => 
+          t.assignedToEmail?.toLowerCase() === currentUserEmailOrId.toLowerCase() ||
+          t.assignedTo === currentUserEmailOrId ||
+          t.userId === currentUserEmailOrId
+        )
+      : [];
+
+    const sortedUpcoming = [...openTasks].sort((a, b) => {
+      const dateA = a.dueDate || a.startDate || a.dueAt || '9999';
+      const dateB = b.dueDate || b.startDate || b.dueAt || '9999';
+      return dateA.localeCompare(dateB);
+    });
+    const nextUpcomingTask = sortedUpcoming[0] || null;
+
+    const pendingOperationalActions = openTasks.filter(t => 
+      t.priority === 'URGENT' || 
+      t.priority === 'HIGH' || 
+      t.category === 'GROUND_DISPATCH' || 
+      t.category === 'SUPPLIER_CUTOFF' || 
+      t.category === 'PAYMENT_REMINDER'
+    );
+
+    return {
+      totalTasks: tasks.length,
+      openTasksCount: openTasks.length,
+      completedTasksCount: completedTasks.length,
+      dueTodayCount: dueToday.length,
+      overdueCount: overdueTasks.length,
+      myTasksCount: myTasks.length,
+      nextUpcomingTask,
+      pendingOperationalActionsCount: pendingOperationalActions.length,
+      pendingOperationalActions,
+      tasks
+    };
+  }
+
+  public completeTask(taskId: string, user?: User | null, note?: string): CalendarTask | null {
+    const tasks = this.getCalendarTasks();
+    const index = tasks.findIndex(t => t.id === taskId || (t.taskId && t.taskId === taskId));
+    if (index === -1) return null;
+
+    const task = tasks[index];
+    const now = new Date().toISOString();
+    const completedBy = user?.name || user?.email || 'Operational Staff';
+
+    const updated: CalendarTask = {
+      ...task,
+      status: 'COMPLETED',
+      completedAt: now,
+      completedBy,
+      completionNote: note || task.completionNote,
+      updatedAt: now
+    };
+
+    tasks[index] = updated;
+    this.setItem('calendar_tasks', tasks);
+    this.syncFirestoreDoc('calendar_tasks', taskId, updated);
+    this.logAudit(user || null, 'SETTINGS_UPDATED', 'CalendarTask', taskId, `Completed task: ${task.title || task.taskName}`);
+
+    // Update Lead timeline if linked
+    const leadId = task.leadId || (task.relatedEntityType?.toLowerCase() === 'lead' ? task.relatedEntityId : undefined);
+    if (leadId) {
+      this.addLeadTimelineEvent(leadId, {
+        type: 'FOLLOWUP_COMPLETED',
+        title: `Task Completed: ${task.title || task.taskName}`,
+        description: note ? `Note: ${note}` : `Completed by ${completedBy}`,
+        performedBy: completedBy,
+        performedByUserType: user?.role || 'STAFF'
+      }, user || null);
+    }
+
+    // Update Booking timeline if linked
+    const bookingId = task.bookingId || (task.relatedEntityType?.toLowerCase() === 'booking' ? task.relatedEntityId : undefined);
+    if (bookingId) {
+      this.addBookingTimelineEvent(bookingId, {
+        type: 'OPERATION',
+        title: `Task Completed: ${task.title || task.taskName}`,
+        description: note ? `Note: ${note}` : `Completed by ${completedBy}`,
+        performedBy: completedBy,
+        metadata: { taskId, completedAt: now }
+      }, user || null);
+    }
+
+    return updated;
+  }
+
+  public reopenTask(taskId: string, user?: User | null): CalendarTask | null {
+    const tasks = this.getCalendarTasks();
+    const index = tasks.findIndex(t => t.id === taskId || (t.taskId && t.taskId === taskId));
+    if (index === -1) return null;
+
+    const task = tasks[index];
+    const now = new Date().toISOString();
+    const reopenedBy = user?.name || user?.email || 'Staff';
+
+    const updated: CalendarTask = {
+      ...task,
+      status: 'TO_DO',
+      completedAt: undefined,
+      completedBy: undefined,
+      completionNote: undefined,
+      cancelledAt: undefined,
+      cancelledBy: undefined,
+      updatedAt: now
+    };
+
+    tasks[index] = updated;
+    this.setItem('calendar_tasks', tasks);
+    this.syncFirestoreDoc('calendar_tasks', taskId, updated);
+    this.logAudit(user || null, 'SETTINGS_UPDATED', 'CalendarTask', taskId, `Reopened task: ${task.title || task.taskName}`);
+
+    // Update Lead timeline if linked
+    const leadId = task.leadId || (task.relatedEntityType?.toLowerCase() === 'lead' ? task.relatedEntityId : undefined);
+    if (leadId) {
+      this.addLeadTimelineEvent(leadId, {
+        type: 'CUSTOM_ACTIVITY',
+        title: `Task Reopened: ${task.title || task.taskName}`,
+        description: `Reopened by ${reopenedBy}`,
+        performedBy: reopenedBy,
+        performedByUserType: user?.role || 'STAFF'
+      }, user || null);
+    }
+
+    return updated;
+  }
+
+  public cancelTask(taskId: string, user?: User | null, reason?: string): CalendarTask | null {
+    const tasks = this.getCalendarTasks();
+    const index = tasks.findIndex(t => t.id === taskId || (t.taskId && t.taskId === taskId));
+    if (index === -1) return null;
+
+    const task = tasks[index];
+    const now = new Date().toISOString();
+    const cancelledBy = user?.name || user?.email || 'Staff';
+
+    const updated: CalendarTask = {
+      ...task,
+      status: 'CANCELLED',
+      cancelledAt: now,
+      cancelledBy,
+      cancellationReason: reason,
+      updatedAt: now
+    };
+
+    tasks[index] = updated;
+    this.setItem('calendar_tasks', tasks);
+    this.syncFirestoreDoc('calendar_tasks', taskId, updated);
+    this.logAudit(user || null, 'SETTINGS_UPDATED', 'CalendarTask', taskId, `Cancelled task: ${task.title || task.taskName}`);
+    return updated;
+  }
+
+  public addBookingTimelineEvent(bookingId: string, event: { type: string; title: string; description?: string; performedBy?: string; metadata?: any }, user: User | null): void {
+    const bookings = this.getAllBookings();
+    const bIndex = bookings.findIndex(b => b.id === bookingId || b.bookingReference === bookingId);
+    if (bIndex === -1) return;
+    const booking = bookings[bIndex];
+    if (!booking.timeline) booking.timeline = [];
+    booking.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      timestamp: new Date().toISOString(),
+      type: event.type as any || 'OPERATION',
+      title: event.title,
+      description: event.description,
+      performedBy: event.performedBy || user?.name || 'Operations Staff',
+      metadata: event.metadata
+    });
+    booking.updatedAt = new Date().toISOString();
+    this.setItem('bookings', bookings);
+    this.syncFirestoreDoc('bookings', booking.id, booking);
+  }
+
   // SLA AUTOMATION RULES
   public getSLAAutomationRules(): SLAAutomationRule[] {
     const existing = this.getItem<SLAAutomationRule[]>('sla_automation_rules', []);
@@ -9472,7 +9905,565 @@ export class AppDatabase {
 
     return items;
   }
+
+  // =========================================================================
+  // SUPPLIERS & GROUND OPERATORS PROCUREMENT
+  // =========================================================================
+
+  public getSuppliers(): Supplier[] {
+    const list = this.getItem<Supplier[]>('suppliers', []);
+    // If empty in local cache and firestore hasn't populated, populate default trusted DMC ground partners
+    if (list.length === 0) {
+      const defaultSuppliers: Supplier[] = [
+        {
+          id: 'sup-1',
+          name: 'Alpine Vista Transfers & Coaches',
+          legalName: 'Alpine Vista Transport GmbH',
+          tradingName: 'Alpine Vista Transfers',
+          country: 'Switzerland',
+          destination: 'Switzerland',
+          destinations: ['Switzerland', 'France', 'Austria'],
+          categories: ['TRANSFER', 'RAIL'],
+          contactPerson: 'Marc Obermayer',
+          contactPersons: [
+            {
+              id: 'cp-1',
+              name: 'Marc Obermayer',
+              role: 'Dispatch & Fleet Director',
+              email: 'dispatch@alpinevistatransfers.ch',
+              phone: '+41 22 731 4500',
+              isPrimary: true,
+              emergencyPhone: '+41 79 401 2299'
+            }
+          ],
+          email: 'bookings@alpinevistatransfers.ch',
+          phone: '+41 22 731 4500',
+          emergencyPhone: '+41 79 401 2299',
+          website: 'https://alpinevistatransfers.ch',
+          currency: 'CHF',
+          contractStatus: 'ACTIVE',
+          isPreferred: true,
+          paymentTerms: 'Net 14 Days after voucher dispatch',
+          cancellationTerms: 'Free cancellation up to 48 hours prior to pickup',
+          performanceScore: 98,
+          responseTimeAvgHours: 1.5,
+          confirmationRatePercent: 99,
+          cancellationRatePercent: 1.2,
+          onTimePaymentCompliancePercent: 100,
+          openRequestsCount: 2,
+          pendingConfirmationsCount: 1,
+          outstandingPayableAmount: 1420,
+          notes: 'Premium Mercedes fleet and Zurich/Geneva airport tarmac passes.',
+          createdAt: new Date().toISOString()
+        },
+        {
+          id: 'sup-2',
+          name: 'Nippon Golden Route Ground Services',
+          legalName: 'Nippon Horizon Travel K.K.',
+          tradingName: 'Nippon Golden Route Services',
+          country: 'Japan',
+          destination: 'Japan',
+          destinations: ['Japan'],
+          categories: ['HOTEL', 'GUIDE', 'SIGHTSEEING', 'RAIL'],
+          contactPerson: 'Kenji Takahashi',
+          contactPersons: [
+            {
+              id: 'cp-2',
+              name: 'Kenji Takahashi',
+              role: 'Head of Inbound Procurement',
+              email: 'k.takahashi@nipponhorizon.jp',
+              phone: '+81 3 5555 0192',
+              isPrimary: true,
+              emergencyPhone: '+81 90 1234 5678'
+            }
+          ],
+          email: 'inbound-ops@nipponhorizon.jp',
+          phone: '+81 3 5555 0190',
+          emergencyPhone: '+81 90 1234 5678',
+          website: 'https://nipponhorizon.jp',
+          currency: 'JPY',
+          contractStatus: 'ACTIVE',
+          isPreferred: true,
+          paymentTerms: 'Prepayment 7 days prior to check-in',
+          cancellationTerms: 'Free cancellation up to 14 days prior',
+          performanceScore: 96,
+          responseTimeAvgHours: 2.1,
+          confirmationRatePercent: 97,
+          cancellationRatePercent: 2.0,
+          onTimePaymentCompliancePercent: 100,
+          openRequestsCount: 3,
+          pendingConfirmationsCount: 2,
+          outstandingPayableAmount: 485000,
+          notes: 'Direct contracted allotments with Tokyo & Kyoto luxury ryokans and JR Rail Pass fulfillment.',
+          createdAt: new Date().toISOString()
+        },
+        {
+          id: 'sup-3',
+          name: 'Mediterraneo Luxury Yachts & Transfers',
+          legalName: 'Mediterraneo Marine Operations S.r.l.',
+          tradingName: 'Mediterraneo Yacht Charters',
+          country: 'Italy',
+          destination: 'Italy',
+          destinations: ['Italy', 'Greece', 'France'],
+          categories: ['YACHT', 'TRANSFER', 'SIGHTSEEING'],
+          contactPerson: 'Chiara Rossi',
+          contactPersons: [
+            {
+              id: 'cp-3',
+              name: 'Chiara Rossi',
+              role: 'Charter Coordinator',
+              email: 'chiara@mediterraneoyachts.it',
+              phone: '+39 081 1930 2200',
+              isPrimary: true,
+              emergencyPhone: '+39 335 129 8811'
+            }
+          ],
+          email: 'charters@mediterraneoyachts.it',
+          phone: '+39 081 1930 2200',
+          emergencyPhone: '+39 335 129 8811',
+          website: 'https://mediterraneoyachts.it',
+          currency: 'EUR',
+          contractStatus: 'ACTIVE',
+          isPreferred: true,
+          paymentTerms: '50% deposit on booking, balance 14 days prior',
+          cancellationTerms: 'Strict weather-guaranteed rescheduling or 70% refund',
+          performanceScore: 95,
+          responseTimeAvgHours: 3.0,
+          confirmationRatePercent: 94,
+          cancellationRatePercent: 3.5,
+          onTimePaymentCompliancePercent: 98,
+          openRequestsCount: 1,
+          pendingConfirmationsCount: 0,
+          outstandingPayableAmount: 3200,
+          notes: 'Amalfi Coast, Capri, and Costa Smeralda private luxury boat tenders and day charters.',
+          createdAt: new Date().toISOString()
+        },
+        {
+          id: 'sup-4',
+          name: 'Global Schengen & UK Visa Concierge',
+          legalName: 'Apex Diplomatic Document Services Ltd',
+          tradingName: 'Global Visa Concierge',
+          country: 'United Kingdom',
+          destination: 'United Kingdom',
+          destinations: ['United Kingdom', 'France', 'Switzerland', 'Italy'],
+          categories: ['VISA'],
+          contactPerson: 'David Miller',
+          contactPersons: [
+            {
+              id: 'cp-4',
+              name: 'David Miller',
+              role: 'Operations Director',
+              email: 'david.miller@visaconcierge.co.uk',
+              phone: '+44 20 7946 0880',
+              isPrimary: true,
+              emergencyPhone: '+44 7700 900345'
+            }
+          ],
+          email: 'submissions@visaconcierge.co.uk',
+          phone: '+44 20 7946 0880',
+          emergencyPhone: '+44 7700 900345',
+          website: 'https://visaconcierge.co.uk',
+          currency: 'GBP',
+          contractStatus: 'ACTIVE',
+          isPreferred: true,
+          paymentTerms: 'Monthly invoice settlement',
+          cancellationTerms: 'Non-refundable once embassy appointment lodged',
+          performanceScore: 99,
+          responseTimeAvgHours: 0.8,
+          confirmationRatePercent: 100,
+          cancellationRatePercent: 0.5,
+          onTimePaymentCompliancePercent: 100,
+          openRequestsCount: 0,
+          pendingConfirmationsCount: 0,
+          outstandingPayableAmount: 850,
+          notes: 'Express VIP slots for VFS Global and TLScontact centers.',
+          createdAt: new Date().toISOString()
+        }
+      ];
+      this.setItem('suppliers', defaultSuppliers);
+      return defaultSuppliers;
+    }
+    return list;
+  }
+
+  public saveSupplier(supplier: Supplier, user: User | null): Supplier {
+    const list = this.getSuppliers();
+    const index = list.findIndex(s => s.id === supplier.id);
+    const timestamp = new Date().toISOString();
+    let saved: Supplier;
+
+    if (index >= 0) {
+      saved = {
+        ...list[index],
+        ...supplier,
+        updatedAt: timestamp
+      };
+      list[index] = saved;
+      this.logAudit(user, 'SETTINGS_UPDATED', 'Supplier', saved.id, `Updated supplier profile for ${saved.name} (${saved.destination})`);
+    } else {
+      saved = {
+        ...supplier,
+        id: supplier.id || `sup-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        performanceScore: supplier.performanceScore ?? 95,
+        openRequestsCount: supplier.openRequestsCount ?? 0,
+        pendingConfirmationsCount: supplier.pendingConfirmationsCount ?? 0,
+        outstandingPayableAmount: supplier.outstandingPayableAmount ?? 0
+      };
+      list.unshift(saved);
+      this.logAudit(user, 'BOOKING_CREATED', 'Supplier', saved.id, `Created supplier profile for ${saved.name}`);
+    }
+
+    this.setItem('suppliers', list);
+    this.syncFirestoreDoc('suppliers', saved.id, saved);
+    return saved;
+  }
+
+  public deleteSupplier(supplierId: string, user: User | null): boolean {
+    const list = this.getSuppliers();
+    const filtered = list.filter(s => s.id !== supplierId);
+    if (filtered.length === list.length) return false;
+
+    this.setItem('suppliers', filtered);
+    this.deleteFirestoreDoc('suppliers', supplierId);
+    this.logAudit(user, 'SETTINGS_UPDATED', 'Supplier', supplierId, `Removed supplier record ${supplierId}`);
+    return true;
+  }
+
+  // =========================================================================
+  // SUPPLIER PROCUREMENT REQUESTS WORKFLOW
+  // =========================================================================
+
+  public getSupplierRequests(): SupplierRequest[] {
+    return this.getItem<SupplierRequest[]>('supplier_requests', []);
+  }
+
+  public saveSupplierRequest(request: SupplierRequest, user: User | null): SupplierRequest {
+    const list = this.getSupplierRequests();
+    const index = list.findIndex(r => r.id === request.id);
+    const timestamp = new Date().toISOString();
+    let saved: SupplierRequest;
+
+    if (index >= 0) {
+      saved = {
+        ...list[index],
+        ...request,
+        updatedAt: timestamp
+      };
+      list[index] = saved;
+    } else {
+      saved = {
+        ...request,
+        id: request.id || `req-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      list.unshift(saved);
+    }
+
+    this.setItem('supplier_requests', list);
+    this.syncFirestoreDoc('supplier_requests', saved.id, saved);
+    this.logAudit(user, 'BOOKING_UPDATED', 'SupplierRequest', saved.id, `Supplier procurement request ${saved.status} for ${saved.supplierName} (${saved.bookingReference})`);
+    return saved;
+  }
+
+  // =========================================================================
+  // ODOO-STYLE LEAD PIPELINE STAGES
+  // =========================================================================
+
+  public getLeadStages(): LeadStageConfig[] {
+    const custom = this.getItem<LeadStageConfig[]>('lead_stages', []);
+    if (custom && custom.length > 0) {
+      return custom.sort((a, b) => a.order - b.order);
+    }
+    return DEFAULT_LEAD_STAGES;
+  }
+
+  public saveLeadStage(stage: LeadStageConfig, user: User | null): LeadStageConfig {
+    const stages = [...this.getLeadStages()];
+    const index = stages.findIndex(s => s.id === stage.id);
+    if (index >= 0) {
+      stages[index] = stage;
+    } else {
+      stages.push(stage);
+    }
+    stages.sort((a, b) => a.order - b.order);
+    this.setItem('lead_stages', stages);
+    this.syncFirestoreDoc('lead_stages', stage.id, stage);
+    this.logAudit(user, 'SETTINGS_UPDATED', 'LeadStageConfig', stage.id, `Updated lead stage configuration: ${stage.name}`);
+    return stage;
+  }
+
+  public reorderLeadStages(stages: LeadStageConfig[], user: User | null): LeadStageConfig[] {
+    const ordered = stages.map((st, i) => ({ ...st, order: i + 1 }));
+    this.setItem('lead_stages', ordered);
+    ordered.forEach(st => this.syncFirestoreDoc('lead_stages', st.id, st));
+    this.logAudit(user, 'SETTINGS_UPDATED', 'LeadStageConfig', 'reorder', 'Reordered CRM lead pipeline stages');
+    return ordered;
+  }
+
+  // =========================================================================
+  // BOOKING 15-STAGE CUSTOMER PROGRESS WORKFLOW
+  // =========================================================================
+
+  public updateBookingProgressStage(
+    bookingId: string, 
+    progressStage: BookingProgressStage, 
+    user: User | null, 
+    note?: string
+  ): Booking | null {
+    const bookings = this.getAllBookings();
+    const index = bookings.findIndex(b => b.id === bookingId || b.bookingReference === bookingId);
+    if (index === -1) return null;
+
+    const b = bookings[index];
+    const timestamp = new Date().toISOString();
+    const stageDef = CUSTOMER_PROGRESS_STAGES.find(s => s.stage === progressStage);
+    const stageName = stageDef?.label || progressStage;
+
+    b.customerProgressStage = progressStage;
+    b.customerFacingStatus = stageDef?.customerTitle || stageName;
+    b.updatedAt = timestamp;
+
+    if (!b.customerProgressHistory) {
+      b.customerProgressHistory = [];
+    }
+
+    b.customerProgressHistory.unshift({
+      id: `cph-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      stage: progressStage,
+      stageName,
+      timestamp,
+      changedById: user?.id,
+      changedByName: user?.name || 'Operations Lead',
+      note: note || stageDef?.customerDescription,
+      isPublicToBuyer: true
+    });
+
+    if (!b.timeline) b.timeline = [];
+    b.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      title: `Progress Stage → ${stageName}`,
+      description: note || stageDef?.customerDescription || `Workflow stage transitioned to ${stageName}`,
+      timestamp,
+      type: 'STATUS_CHANGE',
+      actorName: user?.name || 'Operations Team',
+      actorRole: user?.role || 'DMC_STAFF'
+    });
+
+    this.setItem('bookings', bookings);
+    this.syncFirestoreDoc('bookings', b.id, b);
+    this.logAudit(user, 'BOOKING_UPDATED', 'Booking', b.id, `Advanced booking progress stage to [${stageName}] for ${b.bookingReference}`);
+
+    return b;
+  }
+
+  public getBookingByTrackingRefOrToken(refOrToken: string): Booking | null {
+    if (!refOrToken) return null;
+    const clean = refOrToken.trim().toUpperCase();
+    const bookings = this.getAllBookings();
+    return bookings.find(b => 
+      b.bookingReference.toUpperCase() === clean || 
+      b.id === refOrToken || 
+      (b.trackingToken && b.trackingToken === refOrToken)
+    ) || null;
+  }
+
+  // =========================================================================
+  // OPERATIONS CALENDAR & UPCOMING TRIPS BOARD
+  // =========================================================================
+
+  public getOperationsEvents(): OperationsCalendarEvent[] {
+    const bookings = this.getAllBookings();
+    return generateOperationsCalendarEvents(bookings);
+  }
+
+  // =========================================================================
+  // FINANCIALS: SALES, PURCHASE, PROFITABILITY, PENDING & EXCESS
+  // =========================================================================
+
+  public getSalesDashboardSummary() {
+    const bookings = this.getAllBookings();
+    let totalSellingValue = 0;
+    let amountReceived = 0;
+    let amountPending = 0;
+    let amountOverdue = 0;
+    let excessPaymentsTotal = 0;
+    const byDestination: Record<string, number> = {};
+    const byMonth: Record<string, number> = {};
+    const byBuyerType: Record<string, number> = { 'B2B Agent': 0, 'Direct Buyer': 0 };
+
+    bookings.forEach(b => {
+      if (b.status === 'CANCELLED') return;
+      const amt = b.totalAmount || 0;
+      totalSellingValue += amt;
+
+      // Check payment proofs or status
+      let paidForBooking = 0;
+      if (b.paymentProofs && b.paymentProofs.length > 0) {
+        paidForBooking = b.paymentProofs.reduce((acc, p) => acc + (p.amount || 0), 0);
+      } else if (b.paymentStatus === 'PAID') {
+        paidForBooking = amt;
+      } else if (b.paymentStatus === 'PARTIALLY_PAID') {
+        paidForBooking = Math.round(amt * 0.5);
+      }
+
+      amountReceived += paidForBooking;
+      const balance = amt - paidForBooking;
+
+      if (balance > 0) {
+        amountPending += balance;
+        if (b.paymentCutoffDate && new Date(b.paymentCutoffDate) < new Date()) {
+          amountOverdue += balance;
+        }
+      } else if (balance < 0) {
+        excessPaymentsTotal += Math.abs(balance);
+      }
+
+      // Destinations
+      const dest = b.items?.[0]?.destinationName || 'Multi-Destination';
+      byDestination[dest] = (byDestination[dest] || 0) + amt;
+
+      // Month
+      const d = b.travelStartDate ? new Date(b.travelStartDate) : new Date(b.createdAt);
+      const monthKey = d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+      byMonth[monthKey] = (byMonth[monthKey] || 0) + amt;
+
+      // Buyer type
+      if (b.customer?.agencyName) {
+        byBuyerType['B2B Agent'] += amt;
+      } else {
+        byBuyerType['Direct Buyer'] += amt;
+      }
+    });
+
+    return {
+      totalSellingValue,
+      amountReceived,
+      amountPending,
+      amountOverdue,
+      excessPaymentsTotal,
+      byDestination,
+      byMonth,
+      byBuyerType
+    };
+  }
+
+  public getPurchaseDashboardSummary() {
+    const bookings = this.getAllBookings();
+    let totalSupplierCost = 0;
+    let supplierPaymentsMade = 0;
+    let supplierPaymentsPending = 0;
+    let cutoffRisksCount = 0;
+    const costByCategory: Record<string, number> = {};
+    const costBySupplier: Record<string, number> = {};
+
+    bookings.forEach(b => {
+      if (b.status === 'CANCELLED') return;
+      const prof = calculateBookingProfitability(b);
+      totalSupplierCost += prof.totalSupplierCost;
+
+      // Approximate supplier settlement status based on booking status
+      if (b.status === 'COMPLETED' || b.supplierAllocationStatus === 'FULLY_CONFIRMED_BY_SUPPLIERS') {
+        supplierPaymentsMade += Math.round(prof.totalSupplierCost * 0.7);
+        supplierPaymentsPending += Math.round(prof.totalSupplierCost * 0.3);
+      } else {
+        supplierPaymentsPending += prof.totalSupplierCost;
+      }
+
+      if (b.paymentCutoffDate && new Date(b.paymentCutoffDate) < new Date(Date.now() + 7 * 86400000)) {
+        cutoffRisksCount++;
+      }
+
+      if (b.items) {
+        b.items.forEach(item => {
+          const cat = item.category || 'General Operations';
+          const net = (item.unitNetPrice || (item.unitSellingPrice * 0.8)) * (item.totalPax || 1);
+          costByCategory[cat] = (costByCategory[cat] || 0) + net;
+          
+          const sup = item.supplierName || 'Alpine Vista / Nippon Horizon';
+          costBySupplier[sup] = (costBySupplier[sup] || 0) + net;
+        });
+      }
+    });
+
+    return {
+      totalSupplierCost,
+      supplierPaymentsMade,
+      supplierPaymentsPending,
+      cutoffRisksCount,
+      costByCategory,
+      costBySupplier
+    };
+  }
+
+  public getBookingProfitabilityList(): BookingFinancialProfitability[] {
+    const bookings = this.getAllBookings();
+    return bookings.map(b => calculateBookingProfitability(b));
+  }
+
+  public getPendingPaymentsList() {
+    const bookings = this.getAllBookings();
+    return bookings
+      .filter(b => b.status !== 'CANCELLED')
+      .map(b => {
+        let paid = 0;
+        if (b.paymentProofs && b.paymentProofs.length > 0) {
+          paid = b.paymentProofs.reduce((sum, p) => sum + (p.amount || 0), 0);
+        } else if (b.paymentStatus === 'PAID') {
+          paid = b.totalAmount;
+        } else if (b.paymentStatus === 'PARTIALLY_PAID') {
+          paid = Math.round(b.totalAmount * 0.5);
+        }
+
+        const balanceDue = Math.max(0, b.totalAmount - paid);
+        const isOverdue = b.paymentCutoffDate ? new Date(b.paymentCutoffDate) < new Date() : false;
+
+        return {
+          bookingId: b.id,
+          bookingReference: b.bookingReference,
+          customerName: b.customer?.leadTravelerName || b.customer?.bookerName || 'Guest',
+          agencyName: b.customer?.agencyName,
+          totalAmount: b.totalAmount,
+          paidAmount: paid,
+          balanceDue,
+          currency: b.currency || 'EUR',
+          dueDate: b.paymentCutoffDate || b.travelStartDate,
+          isOverdue,
+          travelStartDate: b.travelStartDate,
+          status: b.status
+        };
+      })
+      .filter(p => p.balanceDue > 0);
+  }
+
+  public getExcessPaymentsList() {
+    const bookings = this.getAllBookings();
+    return bookings
+      .filter(b => b.status !== 'CANCELLED')
+      .map(b => {
+        let paid = 0;
+        if (b.paymentProofs && b.paymentProofs.length > 0) {
+          paid = b.paymentProofs.reduce((sum, p) => sum + (p.amount || 0), 0);
+        }
+        const excess = paid > b.totalAmount ? paid - b.totalAmount : 0;
+        return {
+          bookingId: b.id,
+          bookingReference: b.bookingReference,
+          customerName: b.customer?.leadTravelerName || 'Guest',
+          agencyName: b.customer?.agencyName,
+          totalAmount: b.totalAmount,
+          paidAmount: paid,
+          excessAmount: excess,
+          currency: b.currency || 'EUR',
+          refundStatus: excess > 0 ? 'HELD_ON_ACCOUNT' : 'NONE'
+        };
+      })
+      .filter(e => e.excessAmount > 0);
+  }
 }
 
 export const db = AppDatabase.getInstance();
+
 

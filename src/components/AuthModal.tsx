@@ -23,7 +23,9 @@ import {
   FileCheck,
   ShieldAlert,
   ArrowLeft,
-  Loader2
+  Loader2,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 
 export const AuthModal: React.FC = () => {
@@ -41,6 +43,7 @@ export const AuthModal: React.FC = () => {
   // Form State (Default completely empty - no demo data)
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -83,13 +86,28 @@ export const AuthModal: React.FC = () => {
 
   React.useEffect(() => {
     if (isAuthModalOpen) {
-      if (authModalReason && (authModalReason.toLowerCase().includes('register') || authModalReason.toLowerCase().includes('create an account'))) {
+      if (authModalReason && (authModalReason.toLowerCase().includes('register') || authModalReason.toLowerCase().includes('create an account') || authModalReason.toLowerCase().includes('apply'))) {
         setAuthMode('REGISTER');
       } else {
         setAuthMode('LOGIN');
       }
+      if (authModalReason && (authModalReason.toLowerCase().includes('agent') || authModalReason.toLowerCase().includes('trade') || authModalReason.toLowerCase().includes('wholesale') || authModalReason.toLowerCase().includes('b2b'))) {
+        setUserCategory('EXTERNAL');
+        setSelectedExternalRole('B2B_AGENT');
+      }
     }
   }, [isAuthModalOpen, authModalReason]);
+
+  // Handle ESC key to dismiss modal
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isAuthModalOpen) {
+        closeAuthModal();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isAuthModalOpen, closeAuthModal]);
 
   if (!isAuthModalOpen) return null;
 
@@ -98,6 +116,7 @@ export const AuthModal: React.FC = () => {
   const resetForm = () => {
     setEmail('');
     setPassword('');
+    setShowPassword(false);
     setName('');
     setFirstName('');
     setLastName('');
@@ -246,299 +265,132 @@ export const AuthModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 sm:p-6 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6 animate-in fade-in duration-200">
+      {/* Click outside to close */}
+      <div className="fixed inset-0 -z-10" onClick={closeAuthModal} aria-hidden="true" />
+
       <div 
         id="auth-modal-dialog"
-        className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden flex flex-col animate-in zoom-in-95 duration-200"
+        className="relative bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 w-full max-w-md sm:max-w-lg max-h-[calc(100dvh-1.5rem)] sm:max-h-[min(92vh,740px)] overflow-hidden flex flex-col my-auto animate-in zoom-in-95 duration-200"
+        onClick={(e) => e.stopPropagation()}
       >
-        {/* Modal Top Header */}
-        <div className="bg-slate-900 text-white p-6 relative">
+        {/* Modal Top Header - Compact, Sticky, High Contrast */}
+        <div className="shrink-0 bg-slate-900 text-white px-4 py-3 sm:px-6 sm:py-3.5 relative border-b border-slate-800">
           <button
             id="close-auth-modal-btn"
             onClick={closeAuthModal}
-            className="absolute top-5 right-5 text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+            className="absolute top-2.5 right-2.5 sm:top-3 sm:right-3 text-slate-400 hover:text-white p-2 rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
 
-          <div className="flex items-center space-x-3 mb-2">
-            <div className="w-10 h-10 rounded-xl bg-[#00C6A6]/20 border border-[#00C6A6]/40 flex items-center justify-center text-[#00E5C0]">
-              <Lock className="w-5 h-5" />
+          <div className="flex items-center space-x-2.5 sm:space-x-3 pr-8">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#00C6A6]/20 border border-[#00C6A6]/40 flex items-center justify-center text-[#00E5C0] shrink-0">
+              <Lock className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
             </div>
-            <div>
-              <h2 className="text-xl font-extrabold font-sans text-white">
-                TheUnbound Portal Access
-              </h2>
-              <span className="text-[11px] text-[#00E5C0] font-semibold">
-                Multi-Role B2B & DMC Operations System
-              </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center space-x-2">
+                <h2 className="text-sm sm:text-base font-black font-sans text-white tracking-tight truncate">
+                  TheUnbound Portal Access
+                </h2>
+                <span className="text-[10px] bg-[#00C6A6]/20 text-[#00E5C0] font-bold px-2 py-0.5 rounded-md border border-[#00C6A6]/30 shrink-0">
+                  B2B DMC
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300 mt-0.5 truncate leading-tight">
+                {authModalReason || 'Sign in to access confidential trade pricing & operations.'}
+              </p>
             </div>
           </div>
-
-          <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-            {authModalReason || 'Sign in to access dynamic pricing calculators, custom proposals, or DMC operational hubs.'}
-          </p>
         </div>
 
-        {/* Modal Content */}
-        <div className="p-6 space-y-5">
-          {/* SCREEN: PENDING APPROVAL CONFIRMATION AFTER REGISTRATION */}
-          {pendingApprovalUser ? (
-            <div id="pending-approval-card" className="space-y-4 animate-in fade-in zoom-in-95 duration-200">
-              <div className="p-5 bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent border border-amber-300/80 rounded-2xl">
-                <div className="flex items-start space-x-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-600 shrink-0 mt-0.5">
-                    <Clock className="w-5 h-5 animate-pulse" />
-                  </div>
-                  <div className="space-y-1">
-                    <h3 className="text-sm font-extrabold text-slate-900 flex items-center space-x-2">
-                      <span>B2B Agent Application Submitted</span>
-                      <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-md border border-amber-200">
-                        Pending Admin Approval
-                      </span>
-                    </h3>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      Thank you, <strong className="text-slate-900 font-bold">{pendingApprovalUser.name}</strong>. Your agency profile for <strong className="text-slate-900 font-bold">{pendingApprovalUser.agencyName || pendingApprovalUser.companyName}</strong> has been registered.
-                    </p>
-                  </div>
+        {/* Modal Content / Screens */}
+        {pendingApprovalUser ? (
+          /* SCREEN: PENDING APPROVAL CONFIRMATION AFTER REGISTRATION */
+          <div id="pending-approval-card" className="flex-1 overflow-y-auto min-h-0 p-4 sm:p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200 custom-scrollbar">
+            <div className="p-4 sm:p-5 bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent border border-amber-300/80 rounded-2xl">
+              <div className="flex items-start space-x-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-600 shrink-0 mt-0.5">
+                  <Clock className="w-4 h-4 animate-pulse" />
                 </div>
-
-                {/* Details Summary */}
-                <div className="mt-4 pt-3.5 border-t border-amber-200/60 grid grid-cols-2 gap-2 text-[11px]">
-                  <div className="bg-white/80 p-2.5 rounded-xl border border-amber-100">
-                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Registered Email</span>
-                    <span className="font-semibold text-slate-800 truncate block">{pendingApprovalUser.email}</span>
-                  </div>
-                  <div className="bg-white/80 p-2.5 rounded-xl border border-amber-100">
-                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Agency Name</span>
-                    <span className="font-semibold text-slate-800 truncate block">{pendingApprovalUser.agencyName || 'N/A'}</span>
-                  </div>
-                  <div className="bg-white/80 p-2.5 rounded-xl border border-amber-100">
-                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Country / Region</span>
-                    <span className="font-semibold text-slate-800 truncate block">{pendingApprovalUser.country || 'Global'}</span>
-                  </div>
-                  <div className="bg-white/80 p-2.5 rounded-xl border border-amber-100">
-                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Approval Status</span>
-                    <span className="font-bold text-amber-700 block">Pending Review (24-48h SLA)</span>
-                  </div>
-                </div>
-
-                <div className="mt-3.5 p-3 bg-amber-100/60 rounded-xl text-amber-900 text-xs flex items-start space-x-2">
-                  <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-                  <p className="text-[11px] leading-relaxed">
-                    <strong>B2B Access Security:</strong> To protect confidential wholesale tariffs and B2B pricing, B2B Agent accounts can only log in once reviewed and approved by TheUnbound DMC Admin team. You will be able to log in with your email once approved.
+                <div className="space-y-1 min-w-0">
+                  <h3 className="text-xs sm:text-sm font-extrabold text-slate-900 flex flex-wrap items-center gap-1.5">
+                    <span>B2B Agent Application Submitted</span>
+                    <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-md border border-amber-200">
+                      Pending Admin Approval
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Thank you, <strong className="text-slate-900 font-bold">{pendingApprovalUser.name}</strong>. Your agency profile for <strong className="text-slate-900 font-bold">{pendingApprovalUser.agencyName || pendingApprovalUser.companyName}</strong> has been registered.
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center space-x-3 pt-2">
-                <button
-                  type="button"
-                  id="return-to-login-btn"
-                  onClick={() => {
-                    setPendingApprovalUser(null);
-                    setAuthMode('LOGIN');
-                    setEmail(pendingApprovalUser.email);
-                  }}
-                  className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  <span>Return to Sign In</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={closeAuthModal}
-                  className="px-4 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold rounded-xl text-xs transition-all cursor-pointer"
-                >
-                  Close Window
-                </button>
+              {/* Details Summary */}
+              <div className="mt-3 pt-3 border-t border-amber-200/60 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                <div className="bg-white/90 p-2.5 rounded-xl border border-amber-100">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Registered Email</span>
+                  <span className="font-semibold text-slate-800 truncate block">{pendingApprovalUser.email}</span>
+                </div>
+                <div className="bg-white/90 p-2.5 rounded-xl border border-amber-100">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Agency Name</span>
+                  <span className="font-semibold text-slate-800 truncate block">{pendingApprovalUser.agencyName || 'N/A'}</span>
+                </div>
+                <div className="bg-white/90 p-2.5 rounded-xl border border-amber-100">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Country / Region</span>
+                  <span className="font-semibold text-slate-800 truncate block">{pendingApprovalUser.country || 'Global'}</span>
+                </div>
+                <div className="bg-white/90 p-2.5 rounded-xl border border-amber-100">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Approval Status</span>
+                  <span className="font-bold text-amber-700 block">Pending Review (24-48h SLA)</span>
+                </div>
+              </div>
+
+              <div className="mt-3 p-2.5 bg-amber-100/60 rounded-xl text-amber-900 text-xs flex items-start space-x-2">
+                <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                <p className="text-[11px] leading-relaxed">
+                  <strong>B2B Access Security:</strong> To protect confidential wholesale tariffs and B2B pricing, B2B Agent accounts can only log in once reviewed and approved by TheUnbound DMC Admin team. You will be able to log in with your email once approved.
+                </p>
               </div>
             </div>
-          ) : (
-            <>
-              {/* User Category Selector: External User by default vs Internal User */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    1. Select Account Type
-                  </label>
-                  <span className="text-[10px] font-semibold text-[#008972] bg-emerald-50 px-2 py-0.5 rounded-md">
-                    {userCategory === 'EXTERNAL' ? 'External User (Default)' : 'Internal DMC Operations'}
-                  </span>
-                </div>
 
-                <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
-                  <button
-                    type="button"
-                    id="select-cat-external"
-                    onClick={() => {
-                      setUserCategory('EXTERNAL');
-                      setErrorMessage(null);
-                    }}
-                    className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center space-x-2 transition-all cursor-pointer ${
-                      userCategory === 'EXTERNAL'
-                        ? 'bg-white text-slate-900 shadow-xs border border-slate-200/80 font-extrabold'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <Globe2 className="w-4 h-4 text-[#008972]" />
-                    <span>External User</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    id="select-cat-internal"
-                    onClick={() => {
-                      setUserCategory('INTERNAL');
-                      setErrorMessage(null);
-                    }}
-                    className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center space-x-2 transition-all cursor-pointer ${
-                      userCategory === 'INTERNAL'
-                        ? 'bg-slate-900 text-white shadow-xs font-extrabold'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <ShieldCheck className="w-4 h-4 text-[#00C6A6]" />
-                    <span>Internal User</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Sub-Role Choice under Category */}
-              <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
-                  2. Select Specific Role
-                </label>
-
-                {userCategory === 'EXTERNAL' ? (
-                  <div className="grid grid-cols-2 gap-2.5">
-                    {/* 1. Buyer */}
-                    <button
-                      type="button"
-                      id="role-select-buyer"
-                      onClick={() => {
-                        setSelectedExternalRole('BUYER');
-                        setErrorMessage(null);
-                      }}
-                      className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
-                        selectedExternalRole === 'BUYER'
-                          ? 'border-[#00C6A6] bg-emerald-50/40 ring-1 ring-[#00C6A6]'
-                          : 'border-slate-200 bg-white hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-bold text-slate-900 flex items-center space-x-1.5">
-                          <UserIcon className="w-3.5 h-3.5 text-[#008972]" />
-                          <span>1. Buyer</span>
-                        </span>
-                        {selectedExternalRole === 'BUYER' && (
-                          <BadgeCheck className="w-4 h-4 text-[#00C6A6]" />
-                        )}
-                      </div>
-                      <p className="text-[11px] text-slate-500 leading-tight">
-                        Direct Client & Corporate Traveler. Standard proposal access.
-                      </p>
-                    </button>
-
-                    {/* 2. B2B Agent */}
-                    <button
-                      type="button"
-                      id="role-select-b2b-agent"
-                      onClick={() => {
-                        setSelectedExternalRole('B2B_AGENT');
-                        setErrorMessage(null);
-                      }}
-                      className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
-                        selectedExternalRole === 'B2B_AGENT'
-                          ? 'border-[#00C6A6] bg-emerald-50/40 ring-1 ring-[#00C6A6]'
-                          : 'border-slate-200 bg-white hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-bold text-slate-900 flex items-center space-x-1.5">
-                          <Briefcase className="w-3.5 h-3.5 text-[#008972]" />
-                          <span>2. B2B Agent</span>
-                        </span>
-                        {selectedExternalRole === 'B2B_AGENT' && (
-                          <BadgeCheck className="w-4 h-4 text-[#00C6A6]" />
-                        )}
-                      </div>
-                      <p className="text-[11px] text-slate-500 leading-tight">
-                        Travel Agent & Tour Operator. Wholesale tariffs (Admin approval required).
-                      </p>
-                    </button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2.5">
-                    {/* 1. Admin */}
-                    <button
-                      type="button"
-                      id="role-select-admin"
-                      onClick={() => {
-                        setSelectedInternalRole('ADMIN');
-                        setErrorMessage(null);
-                      }}
-                      className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
-                        selectedInternalRole === 'ADMIN'
-                          ? 'border-slate-900 bg-slate-900 text-white ring-1 ring-slate-900'
-                          : 'border-slate-200 bg-white hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className={`text-xs font-bold flex items-center space-x-1.5 ${selectedInternalRole === 'ADMIN' ? 'text-white' : 'text-slate-900'}`}>
-                          <ShieldCheck className="w-3.5 h-3.5 text-[#00C6A6]" />
-                          <span>1. Admin</span>
-                        </span>
-                        {selectedInternalRole === 'ADMIN' && (
-                          <BadgeCheck className="w-4 h-4 text-[#00C6A6]" />
-                        )}
-                      </div>
-                      <p className={`text-[11px] leading-tight ${selectedInternalRole === 'ADMIN' ? 'text-slate-300' : 'text-slate-500'}`}>
-                        DMC Master Admin. User Vetting & Approvals, System Control.
-                      </p>
-                    </button>
-
-                    {/* 2. Team Member */}
-                    <button
-                      type="button"
-                      id="role-select-team-member"
-                      onClick={() => {
-                        setSelectedInternalRole('TEAM_MEMBER');
-                        setErrorMessage(null);
-                      }}
-                      className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
-                        selectedInternalRole === 'TEAM_MEMBER'
-                          ? 'border-slate-900 bg-slate-900 text-white ring-1 ring-slate-900'
-                          : 'border-slate-200 bg-white hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className={`text-xs font-bold flex items-center space-x-1.5 ${selectedInternalRole === 'TEAM_MEMBER' ? 'text-white' : 'text-slate-900'}`}>
-                          <Users2 className="w-3.5 h-3.5 text-[#00C6A6]" />
-                          <span>2. Team Member</span>
-                        </span>
-                        {selectedInternalRole === 'TEAM_MEMBER' && (
-                          <BadgeCheck className="w-4 h-4 text-[#00C6A6]" />
-                        )}
-                      </div>
-                      <p className={`text-[11px] leading-tight ${selectedInternalRole === 'TEAM_MEMBER' ? 'text-slate-300' : 'text-slate-500'}`}>
-                        Operations & Reservations Ground Staff. Bookings dispatch.
-                      </p>
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Mode Selector Tabs (Sign In / Register / Forgot) */}
-              <div className="flex border-b border-slate-100 pb-1">
+            <div className="flex items-center space-x-2.5 pt-1">
+              <button
+                type="button"
+                id="return-to-login-btn"
+                onClick={() => {
+                  setPendingApprovalUser(null);
+                  setAuthMode('LOGIN');
+                  setEmail(pendingApprovalUser.email);
+                }}
+                className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-sm"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Return to Sign In</span>
+              </button>
+              <button
+                type="button"
+                onClick={closeAuthModal}
+                className="px-4 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold rounded-xl text-xs transition-all cursor-pointer"
+              >
+                Close Window
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+            {/* Sticky Navigation Tabs: Sign In / Register / Reset */}
+            <div className="shrink-0 bg-slate-50/90 border-b border-slate-200 px-4 py-2 sm:px-6 sm:py-2.5 flex items-center justify-between gap-2">
+              <div className="flex space-x-1 bg-slate-200/70 p-1 rounded-xl">
                 <button
                   type="button"
                   id="tab-auth-login"
                   onClick={() => handleTabSwitch('LOGIN')}
-                  className={`pb-2 text-xs font-bold transition-all mr-4 cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     authMode === 'LOGIN'
-                      ? 'text-slate-900 border-b-2 border-[#00C6A6]'
-                      : 'text-slate-400 hover:text-slate-600'
+                      ? 'bg-white text-slate-950 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   Sign In
@@ -547,34 +399,189 @@ export const AuthModal: React.FC = () => {
                   type="button"
                   id="tab-auth-register"
                   onClick={() => handleTabSwitch('REGISTER')}
-                  className={`pb-2 text-xs font-bold transition-all mr-4 cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     authMode === 'REGISTER'
-                      ? 'text-slate-900 border-b-2 border-[#00C6A6]'
-                      : 'text-slate-400 hover:text-slate-600'
+                      ? 'bg-white text-slate-950 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  {userCategory === 'EXTERNAL' ? 'Register New Profile' : 'Enroll Staff Officer'}
+                  {userCategory === 'EXTERNAL' ? 'Register Agency' : 'Enroll Staff'}
                 </button>
                 <button
                   type="button"
                   id="tab-auth-forgot"
                   onClick={() => handleTabSwitch('FORGOT')}
-                  className={`pb-2 text-xs font-bold transition-all cursor-pointer ${
+                  className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     authMode === 'FORGOT'
-                      ? 'text-slate-900 border-b-2 border-[#00C6A6]'
-                      : 'text-slate-400 hover:text-slate-600'
+                      ? 'bg-white text-slate-950 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  Forgot Password
+                  Forgot
                 </button>
+              </div>
+
+              <span className="text-[11px] font-semibold text-slate-500 shrink-0">
+                {activeRole === 'B2B_AGENT' ? '🏢 B2B Trade' : activeRole === 'BUYER' ? '👤 Buyer' : '🛡️ DMC Staff'}
+              </span>
+            </div>
+
+            {/* Scrollable Form Body */}
+            <div className="flex-1 overflow-y-auto min-h-0 px-4 py-3 sm:px-6 sm:py-3.5 space-y-3 custom-scrollbar">
+              
+              {/* Compact Account Type & Role Switcher */}
+              <div className="bg-slate-50/90 rounded-2xl border border-slate-200 p-2.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Account Profile
+                  </span>
+                  <div className="flex items-center space-x-1 bg-slate-200/80 p-0.5 rounded-lg text-[10px]">
+                    <button
+                      type="button"
+                      id="select-cat-external"
+                      onClick={() => {
+                        setUserCategory('EXTERNAL');
+                        setErrorMessage(null);
+                      }}
+                      className={`px-2 py-0.5 rounded-md font-bold transition-all cursor-pointer ${
+                        userCategory === 'EXTERNAL'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      External
+                    </button>
+                    <button
+                      type="button"
+                      id="select-cat-internal"
+                      onClick={() => {
+                        setUserCategory('INTERNAL');
+                        setErrorMessage(null);
+                      }}
+                      className={`px-2 py-0.5 rounded-md font-bold transition-all cursor-pointer ${
+                        userCategory === 'INTERNAL'
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Internal Staff
+                    </button>
+                  </div>
+                </div>
+
+                {userCategory === 'EXTERNAL' ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      id="role-select-b2b-agent"
+                      onClick={() => {
+                        setSelectedExternalRole('B2B_AGENT');
+                        setErrorMessage(null);
+                      }}
+                      className={`p-2 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                        selectedExternalRole === 'B2B_AGENT'
+                          ? 'border-[#00C6A6] bg-[#00C6A6]/10 ring-1 ring-[#00C6A6]'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="min-w-0 pr-1">
+                        <div className="flex items-center space-x-1.5">
+                          <Briefcase className="w-3.5 h-3.5 text-[#008972] shrink-0" />
+                          <span className="text-xs font-bold text-slate-900 truncate">B2B Agent</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 truncate mt-0.5">Wholesale rates</p>
+                      </div>
+                      {selectedExternalRole === 'B2B_AGENT' && (
+                        <BadgeCheck className="w-4 h-4 text-[#00C6A6] shrink-0" />
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      id="role-select-buyer"
+                      onClick={() => {
+                        setSelectedExternalRole('BUYER');
+                        setErrorMessage(null);
+                      }}
+                      className={`p-2 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                        selectedExternalRole === 'BUYER'
+                          ? 'border-[#00C6A6] bg-[#00C6A6]/10 ring-1 ring-[#00C6A6]'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="min-w-0 pr-1">
+                        <div className="flex items-center space-x-1.5">
+                          <UserIcon className="w-3.5 h-3.5 text-[#008972] shrink-0" />
+                          <span className="text-xs font-bold text-slate-900 truncate">Direct Buyer</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 truncate mt-0.5">Standard booking</p>
+                      </div>
+                      {selectedExternalRole === 'BUYER' && (
+                        <BadgeCheck className="w-4 h-4 text-[#00C6A6] shrink-0" />
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      id="role-select-admin"
+                      onClick={() => {
+                        setSelectedInternalRole('ADMIN');
+                        setErrorMessage(null);
+                      }}
+                      className={`p-2 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                        selectedInternalRole === 'ADMIN'
+                          ? 'border-slate-900 bg-slate-900 text-white ring-1 ring-slate-900'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="min-w-0 pr-1">
+                        <div className="flex items-center space-x-1.5">
+                          <ShieldCheck className="w-3.5 h-3.5 text-[#00C6A6] shrink-0" />
+                          <span className={`text-xs font-bold truncate ${selectedInternalRole === 'ADMIN' ? 'text-white' : 'text-slate-900'}`}>Admin</span>
+                        </div>
+                        <p className={`text-[10px] truncate mt-0.5 ${selectedInternalRole === 'ADMIN' ? 'text-slate-300' : 'text-slate-500'}`}>CMS Master</p>
+                      </div>
+                      {selectedInternalRole === 'ADMIN' && (
+                        <BadgeCheck className="w-4 h-4 text-[#00C6A6] shrink-0" />
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      id="role-select-team-member"
+                      onClick={() => {
+                        setSelectedInternalRole('TEAM_MEMBER');
+                        setErrorMessage(null);
+                      }}
+                      className={`p-2 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                        selectedInternalRole === 'TEAM_MEMBER'
+                          ? 'border-slate-900 bg-slate-900 text-white ring-1 ring-slate-900'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="min-w-0 pr-1">
+                        <div className="flex items-center space-x-1.5">
+                          <Users2 className="w-3.5 h-3.5 text-[#00C6A6] shrink-0" />
+                          <span className={`text-xs font-bold truncate ${selectedInternalRole === 'TEAM_MEMBER' ? 'text-white' : 'text-slate-900'}`}>Team Member</span>
+                        </div>
+                        <p className={`text-[10px] truncate mt-0.5 ${selectedInternalRole === 'TEAM_MEMBER' ? 'text-slate-300' : 'text-slate-500'}`}>Ground Ops</p>
+                      </div>
+                      {selectedInternalRole === 'TEAM_MEMBER' && (
+                        <BadgeCheck className="w-4 h-4 text-[#00C6A6] shrink-0" />
+                      )}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Error Message Banner */}
               {errorMessage && (
-                <div id="auth-error-banner" className="p-3.5 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-start space-x-2.5 animate-in fade-in">
+                <div id="auth-error-banner" className="p-2.5 sm:p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-start space-x-2 animate-in fade-in">
                   <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                   <div className="space-y-0.5">
-                    <span className="font-bold block text-rose-900">Access Notice</span>
+                    <span className="font-bold block text-rose-900 text-[11px]">Notice</span>
                     <p className="text-[11px] leading-relaxed">{errorMessage}</p>
                   </div>
                 </div>
@@ -582,289 +589,301 @@ export const AuthModal: React.FC = () => {
 
               {/* Status Message Banner */}
               {statusMessage && (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl flex items-center space-x-2 animate-in fade-in">
+                <div className="p-2.5 sm:p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl flex items-center space-x-2 animate-in fade-in">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span className="font-semibold">{statusMessage}</span>
+                  <span className="font-semibold text-[11px] sm:text-xs">{statusMessage}</span>
                 </div>
               )}
 
-              {/* Form */}
-              <form onSubmit={handleSubmit} className="space-y-3.5">
-                {authMode === 'REGISTER' && (
-                  <>
-                    {/* B2B Vetting Policy Notice for Agent Registrations */}
-                    {userCategory === 'EXTERNAL' && selectedExternalRole === 'B2B_AGENT' && (
-                      <div className="p-3 bg-emerald-50/70 border border-emerald-200/80 rounded-xl text-emerald-900 text-xs flex items-start space-x-2">
-                        <FileCheck className="w-4 h-4 text-[#008972] shrink-0 mt-0.5" />
-                        <p className="text-[11px] leading-relaxed">
-                          <strong>B2B Vetting Policy:</strong> Travel agent registrations undergo administrative review before wholesale rate access is granted. Please enter accurate agency details.
-                        </p>
-                      </div>
-                    )}
+              {/* REGISTRATION SPECIFIC FIELDS */}
+              {authMode === 'REGISTER' && (
+                <div className="space-y-2.5">
+                  {/* B2B Vetting Policy Notice for Agent Registrations */}
+                  {userCategory === 'EXTERNAL' && selectedExternalRole === 'B2B_AGENT' && (
+                    <div className="p-2.5 bg-emerald-50/70 border border-emerald-200/80 rounded-xl text-emerald-900 text-xs flex items-start space-x-2">
+                      <FileCheck className="w-4 h-4 text-[#008972] shrink-0 mt-0.5" />
+                      <p className="text-[11px] leading-relaxed">
+                        <strong>B2B Vetting Policy:</strong> Travel agent registrations undergo administrative review before wholesale rate access is granted.
+                      </p>
+                    </div>
+                  )}
 
-                    {/* First & Last Name Inputs */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          First Name <span className="text-rose-500">*</span>
-                        </label>
-                        <div className="relative">
-                          <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                          <input
-                            type="text"
-                            required
-                            id="register-input-firstname"
-                            placeholder="e.g. Alexander"
-                            value={firstName}
-                            onChange={(e) => {
-                              setFirstName(e.target.value);
-                              setName(`${e.target.value} ${lastName}`.trim());
-                            }}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                          Last Name <span className="text-rose-500">*</span>
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            required
-                            id="register-input-lastname"
-                            placeholder="e.g. Wright"
-                            value={lastName}
-                            onChange={(e) => {
-                              setLastName(e.target.value);
-                              setName(`${firstName} ${e.target.value}`.trim());
-                            }}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
-                          />
-                        </div>
+                  {/* First & Last Name Inputs */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                        First Name <span className="text-rose-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <UserIcon className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                        <input
+                          type="text"
+                          required
+                          id="register-input-firstname"
+                          placeholder="e.g. Alexander"
+                          value={firstName}
+                          onChange={(e) => {
+                            setFirstName(e.target.value);
+                            setName(`${e.target.value} ${lastName}`.trim());
+                          }}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8.5 pr-3 py-1.5 sm:py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
+                        />
                       </div>
                     </div>
-
-                    {/* Agency / Company Details for B2B Agents */}
-                    {userCategory === 'EXTERNAL' && selectedExternalRole === 'B2B_AGENT' && (
-                      <>
-                        <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                            Travel Agency / Company Legal Name <span className="text-rose-500">*</span>
-                          </label>
-                          <div className="relative">
-                            <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                            <input
-                              type="text"
-                              required
-                              id="register-input-agency"
-                              placeholder="e.g. Wright Luxury Journeys Ltd"
-                              value={agencyName}
-                              onChange={(e) => setAgencyName(e.target.value)}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Designation / Job Title</label>
-                            <input
-                              type="text"
-                              id="register-input-title"
-                              placeholder="e.g. Managing Director"
-                              value={jobTitle}
-                              onChange={(e) => setJobTitle(e.target.value)}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Country / Region</label>
-                            <input
-                              type="text"
-                              id="register-input-country"
-                              placeholder="e.g. United Kingdom"
-                              value={country}
-                              onChange={(e) => setCountry(e.target.value)}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">WhatsApp / Phone Contact</label>
-                            <div className="relative">
-                              <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                              <input
-                                type="text"
-                                id="register-input-phone"
-                                placeholder="e.g. +44 20 7946 0192"
-                                value={contactNumber}
-                                onChange={(e) => setContactNumber(e.target.value)}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
-                              />
-                            </div>
-                          </div>
-
-                          <div>
-                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">IATA / ABTA / Tax Code (Optional)</label>
-                            <input
-                              type="text"
-                              id="register-input-iata"
-                              placeholder="e.g. IATA 912384"
-                              value={iataOrAbtaNumber}
-                              onChange={(e) => setIataOrAbtaNumber(e.target.value)}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
-                            />
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </>
-                )}
-
-                {/* Email Address */}
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                    {userCategory === 'INTERNAL' ? 'TheUnbound Official Email' : 'Official Business Email'} <span className="text-rose-500">*</span>
-                  </label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                    <input
-                      type="email"
-                      required
-                      id="auth-input-email"
-                      placeholder={
-                        authMode === 'REGISTER'
-                          ? 'e.g. yourname@agencydomain.com'
-                          : userCategory === 'INTERNAL'
-                          ? 'officer@theunbound.in'
-                          : selectedExternalRole === 'BUYER'
-                          ? 'james.buyer@horizonventures.com'
-                          : 'elena@luxurydiscovery.com'
-                      }
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
-                    />
-                  </div>
-                </div>
-
-                {/* Password */}
-                {authMode !== 'FORGOT' && (
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Password <span className="text-rose-500">*</span>
-                    </label>
-                    <div className="relative">
-                      <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                        Last Name <span className="text-rose-500">*</span>
+                      </label>
                       <input
-                        type="password"
+                        type="text"
                         required
-                        id="auth-input-password"
-                        placeholder="••••••••••••"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
+                        id="register-input-lastname"
+                        placeholder="e.g. Wright"
+                        value={lastName}
+                        onChange={(e) => {
+                          setLastName(e.target.value);
+                          setName(`${firstName} ${e.target.value}`.trim());
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 sm:py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
                       />
                     </div>
                   </div>
-                )}
 
-                {/* Login Remember & Forgot Links */}
-                {authMode === 'LOGIN' && (
-                  <div className="flex items-center justify-between text-xs pt-1">
-                    <label className="flex items-center space-x-2 text-slate-600 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={rememberMe}
-                        onChange={(e) => setRememberMe(e.target.checked)}
-                        className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
-                      />
-                      <span>Remember session</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => handleTabSwitch('FORGOT')}
-                      className="text-xs text-[#008972] font-semibold hover:underline cursor-pointer"
-                    >
-                      Forgot Password?
-                    </button>
-                  </div>
-                )}
-
-                {/* Registration Explicit Legal Consent Checkbox (GDPR Article 7 & DPDP Act 2023) */}
-                {authMode === 'REGISTER' && (
-                  <div className="pt-2">
-                    <label className="flex items-start space-x-2.5 text-xs text-slate-600 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        id="register-terms-consent"
-                        checked={agreedToLegal}
-                        onChange={(e) => {
-                          setAgreedToLegal(e.target.checked);
-                          if (e.target.checked) setErrorMessage(null);
-                        }}
-                        className="mt-0.5 w-4 h-4 rounded text-[#00C6A6] focus:ring-[#00C6A6] border-slate-300"
-                      />
-                      <span className="leading-snug text-[11px]">
-                        I have read and agree to TheUnbound's{' '}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            window.open('/terms', '_blank');
-                          }}
-                          className="text-[#008972] font-bold underline hover:text-[#00C6A6]"
-                        >
-                          Terms of Service
-                        </button>{' '}
-                        and{' '}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            window.open('/privacy', '_blank');
-                          }}
-                          className="text-[#008972] font-bold underline hover:text-[#00C6A6]"
-                        >
-                          Privacy Policy
-                        </button>
-                        . We never sell your personal data.
-                      </span>
-                    </label>
-                  </div>
-                )}
-
-                {/* Submit Action Button */}
-                <button
-                  type="submit"
-                  id="auth-submit-btn"
-                  disabled={isSubmitting}
-                  className={`w-full bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold py-2.5 px-4 rounded-xl text-xs transition-all shadow-md shadow-[#00C6A6]/20 flex items-center justify-center space-x-2 mt-2 ${isSubmitting ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
-                >
-                  {isSubmitting ? (
+                  {/* Agency / Company Details for B2B Agents */}
+                  {userCategory === 'EXTERNAL' && selectedExternalRole === 'B2B_AGENT' && (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Verifying credentials...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>
-                        {authMode === 'LOGIN' && `Sign In as ${userCategory === 'EXTERNAL' ? (selectedExternalRole === 'BUYER' ? 'Buyer' : 'B2B Agent') : (selectedInternalRole === 'ADMIN' ? 'Admin' : 'Team Member')}`}
-                        {authMode === 'REGISTER' && (userCategory === 'EXTERNAL' && selectedExternalRole === 'B2B_AGENT' ? 'Submit B2B Agent Profile for Review' : 'Complete Profile Registration')}
-                        {authMode === 'FORGOT' && 'Send Password Reset'}
-                      </span>
-                      <ArrowRight className="w-4 h-4" />
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                          Agency / Company Legal Name <span className="text-rose-500">*</span>
+                        </label>
+                        <div className="relative">
+                          <Building2 className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                          <input
+                            type="text"
+                            required
+                            id="register-input-agency"
+                            placeholder="e.g. Wright Luxury Journeys Ltd"
+                            value={agencyName}
+                            onChange={(e) => setAgencyName(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8.5 pr-3 py-1.5 sm:py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">Designation / Title</label>
+                          <input
+                            type="text"
+                            id="register-input-title"
+                            placeholder="e.g. Managing Director"
+                            value={jobTitle}
+                            onChange={(e) => setJobTitle(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 sm:py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">Country / Region</label>
+                          <input
+                            type="text"
+                            id="register-input-country"
+                            placeholder="e.g. United Kingdom"
+                            value={country}
+                            onChange={(e) => setCountry(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 sm:py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">WhatsApp / Phone</label>
+                          <div className="relative">
+                            <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                            <input
+                              type="text"
+                              id="register-input-phone"
+                              placeholder="e.g. +44 20 7946 0192"
+                              value={contactNumber}
+                              onChange={(e) => setContactNumber(e.target.value)}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8.5 pr-3 py-1.5 sm:py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-700 mb-1">IATA / ABTA (Optional)</label>
+                          <input
+                            type="text"
+                            id="register-input-iata"
+                            placeholder="e.g. IATA 912384"
+                            value={iataOrAbtaNumber}
+                            onChange={(e) => setIataOrAbtaNumber(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 sm:py-2 text-xs font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
+                          />
+                        </div>
+                      </div>
                     </>
                   )}
-                </button>
-              </form>
-            </>
-          )}
-        </div>
+                </div>
+              )}
+
+              {/* Email Address */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  {userCategory === 'INTERNAL' ? 'TheUnbound Official Email' : 'Official Business Email'} <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 sm:top-3" />
+                  <input
+                    type="email"
+                    required
+                    id="auth-input-email"
+                    placeholder={
+                      authMode === 'REGISTER'
+                        ? 'e.g. yourname@agencydomain.com'
+                        : userCategory === 'INTERNAL'
+                        ? 'officer@theunbound.in'
+                        : selectedExternalRole === 'BUYER'
+                        ? 'buyer@agency.com'
+                        : 'partner@agency.com'
+                    }
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8.5 pr-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              {/* Password */}
+              {authMode !== 'FORGOT' && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Password <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <KeyRound className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 sm:top-3" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      id="auth-input-password"
+                      placeholder="••••••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8.5 pr-9 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-2.5 top-2 sm:top-2.5 text-slate-400 hover:text-slate-700 p-1 rounded-md transition-colors cursor-pointer"
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    >
+                      {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Login Remember & Forgot Links */}
+              {authMode === 'LOGIN' && (
+                <div className="flex items-center justify-between text-xs pt-0.5">
+                  <label className="flex items-center space-x-1.5 text-slate-600 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                      className="rounded text-[#00C6A6] focus:ring-[#00C6A6] w-3.5 h-3.5"
+                    />
+                    <span className="text-[11px]">Remember session</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => handleTabSwitch('FORGOT')}
+                    className="text-[11px] text-[#008972] font-semibold hover:underline cursor-pointer"
+                  >
+                    Forgot Password?
+                  </button>
+                </div>
+              )}
+
+              {/* Registration Terms Consent */}
+              {authMode === 'REGISTER' && (
+                <div className="pt-1">
+                  <label className="flex items-start space-x-2 text-xs text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      id="register-terms-consent"
+                      checked={agreedToLegal}
+                      onChange={(e) => {
+                        setAgreedToLegal(e.target.checked);
+                        if (e.target.checked) setErrorMessage(null);
+                      }}
+                      className="mt-0.5 w-3.5 h-3.5 rounded text-[#00C6A6] focus:ring-[#00C6A6] border-slate-300 shrink-0"
+                    />
+                    <span className="leading-snug text-[10px] sm:text-[11px]">
+                      I agree to TheUnbound's{' '}
+                      <button
+                        type="button"
+                        onClick={() => window.open('/terms', '_blank')}
+                        className="text-[#008972] font-bold underline hover:text-[#00C6A6]"
+                      >
+                        Terms of Service
+                      </button>{' '}
+                      and{' '}
+                      <button
+                        type="button"
+                        onClick={() => window.open('/privacy', '_blank')}
+                        className="text-[#008972] font-bold underline hover:text-[#00C6A6]"
+                      >
+                        Privacy Policy
+                      </button>
+                      . Confidential trade data is strictly guarded.
+                    </span>
+                  </label>
+                </div>
+              )}
+
+              {/* Forgot Password Guidance */}
+              {authMode === 'FORGOT' && (
+                <p className="text-[11px] text-slate-500 leading-relaxed pt-1">
+                  Enter your registered agency or buyer email above. An authorized password reset token and verification link will be dispatched to your inbox.
+                </p>
+              )}
+            </div>
+
+            {/* Sticky Action Footer */}
+            <div className="shrink-0 bg-slate-50 border-t border-slate-200 px-4 py-3 sm:px-6 sm:py-3.5">
+              <button
+                type="submit"
+                id="auth-submit-btn"
+                disabled={isSubmitting}
+                className={`w-full bg-[#00C6A6] hover:bg-[#00b094] active:bg-[#009b82] text-slate-950 font-black py-2.5 sm:py-3 px-4 rounded-xl text-xs sm:text-sm transition-all shadow-md shadow-[#00C6A6]/20 flex items-center justify-center space-x-2 cursor-pointer active:scale-[0.99] ${
+                  isSubmitting ? 'opacity-70 cursor-not-allowed' : ''
+                }`}
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Verifying credentials...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="truncate">
+                      {authMode === 'LOGIN' && `Sign In as ${userCategory === 'EXTERNAL' ? (selectedExternalRole === 'BUYER' ? 'Buyer' : 'B2B Agent') : (selectedInternalRole === 'ADMIN' ? 'Admin' : 'Team Member')}`}
+                      {authMode === 'REGISTER' && (userCategory === 'EXTERNAL' && selectedExternalRole === 'B2B_AGENT' ? 'Submit B2B Agent Profile for Review' : 'Complete Profile Registration')}
+                      {authMode === 'FORGOT' && 'Send Password Reset'}
+                    </span>
+                    <ArrowRight className="w-4 h-4 shrink-0" />
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );
 };
+
 

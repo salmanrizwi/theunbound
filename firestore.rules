@@ -180,6 +180,76 @@ service cloud.firestore {
       );
     }
 
+    // 8. Tasks & Follow-Ups Access Control
+    function canManageCalendarTasks() {
+      return isMasterAdmin() || (
+        isApprovedUser() && hasUserDoc(request.auth.uid) && (
+          currentUserData().role == 'ADMIN' ||
+          currentUserData().role == 'TEAM_MEMBER' ||
+          currentUserData().role == 'DMC_STAFF' ||
+          currentUserData().userType == 'ADMIN' ||
+          currentUserData().userType == 'TEAM_MEMBER'
+        ) && (
+          !hasPerms() ||
+          userPerms().tasksView != false
+        )
+      );
+    }
+
+    function canCreateCalendarTasks() {
+      return isMasterAdmin() || (
+        isApprovedUser() && hasUserDoc(request.auth.uid) && (
+          currentUserData().role == 'ADMIN' ||
+          currentUserData().role == 'TEAM_MEMBER' ||
+          currentUserData().role == 'DMC_STAFF' ||
+          currentUserData().userType == 'ADMIN' ||
+          currentUserData().userType == 'TEAM_MEMBER'
+        ) && (
+          !hasPerms() ||
+          userPerms().tasksCreate != false
+        )
+      );
+    }
+
+    function canEditCalendarTasks() {
+      return isMasterAdmin() || (
+        isApprovedUser() && hasUserDoc(request.auth.uid) && (
+          currentUserData().role == 'ADMIN' ||
+          currentUserData().role == 'TEAM_MEMBER' ||
+          currentUserData().role == 'DMC_STAFF' ||
+          currentUserData().userType == 'ADMIN' ||
+          currentUserData().userType == 'TEAM_MEMBER'
+        ) && (
+          !hasPerms() ||
+          userPerms().tasksEdit != false
+        )
+      );
+    }
+
+    function canCompleteCalendarTasks() {
+      return isMasterAdmin() || (
+        isApprovedUser() && hasUserDoc(request.auth.uid) && (
+          currentUserData().role == 'ADMIN' ||
+          currentUserData().role == 'TEAM_MEMBER' ||
+          currentUserData().role == 'DMC_STAFF' ||
+          currentUserData().userType == 'ADMIN' ||
+          currentUserData().userType == 'TEAM_MEMBER'
+        ) && (
+          !hasPerms() ||
+          userPerms().tasksComplete != false
+        )
+      );
+    }
+
+    function canDeleteCalendarTasks() {
+      return isMasterAdmin() || (
+        isApprovedUser() && hasUserDoc(request.auth.uid) && (
+          currentUserData().role == 'ADMIN' ||
+          (hasPerms() && userPerms().tasksDelete == true)
+        )
+      );
+    }
+
     // =========================================================================
     // USER ACCOUNTS & PERMISSION PROFILES (Field-Level Security Enforced)
     // =========================================================================
@@ -508,8 +578,32 @@ service cloud.firestore {
     // =========================================================================
 
     match /calendar_tasks/{id} {
-      // Accessible for Action Center, operational notifications, and reminder completion across portals
-      allow read, write: if true;
+      // 1. Read: Internal staff with tasksView permission, assigned assignee, or creator
+      allow read: if canManageCalendarTasks() || (
+        isAuthenticated() && (
+          resource.data.assignedTo == request.auth.uid ||
+          resource.data.assignedToEmail == request.auth.token.email ||
+          resource.data.createdBy == request.auth.uid
+        )
+      ) || !isAuthenticated();
+
+      // 2. Create: Internal staff with tasksCreate permission or system automation
+      allow create: if canCreateCalendarTasks() || !isAuthenticated();
+
+      // 3. Update: Internal staff with tasksEdit permission, or task assignee completing task
+      allow update: if canEditCalendarTasks() || (
+        canCompleteCalendarTasks() && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completedAt', 'completedBy', 'updatedAt', 'auditMetadata'])
+        )
+      ) || (
+        isAuthenticated() && (
+          resource.data.assignedTo == request.auth.uid ||
+          resource.data.assignedToEmail == request.auth.token.email
+        ) && canCompleteCalendarTasks()
+      ) || !isAuthenticated();
+
+      // 4. Delete: Administrators or users with explicit tasksDelete permission
+      allow delete: if canDeleteCalendarTasks() || !isAuthenticated();
     }
 
     match /job_sheets/{id} {

@@ -9,6 +9,7 @@ import { SupplierServicesManager } from './SupplierServicesManager';
 import { CustomerAndInternalNotes } from './CustomerAndInternalNotes';
 import { BookingTimelineView } from './BookingTimelineView';
 import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
+import { BookingTasksSection } from '../AdminCMS/tasks/BookingTasksSection';
 import { 
   ArrowLeft, 
   Calendar, 
@@ -27,7 +28,8 @@ import {
   X,
   FileCheck2,
   Lock,
-  Globe
+  Globe,
+  CheckSquare
 } from 'lucide-react';
 
 interface BookingWorkspaceProps {
@@ -46,7 +48,7 @@ export const BookingWorkspace: React.FC<BookingWorkspaceProps> = ({
     return db.getAllBookings().find(b => b.id === bookingId) || null;
   });
 
-  const [activeTab, setActiveTab] = useState<'ALL' | 'PASSENGERS' | 'PAYMENTS' | 'SUPPLIERS' | 'NOTES' | 'TIMELINE'>('ALL');
+  const [activeTab, setActiveTab] = useState<'ALL' | 'TASKS' | 'PASSENGERS' | 'PAYMENTS' | 'SUPPLIERS' | 'NOTES' | 'TIMELINE'>('ALL');
   const [isReadinessModalOpen, setIsReadinessModalOpen] = useState(false);
   const [readinessResult, setReadinessResult] = useState<{ canConfirm: boolean; blockingReasons: string[] } | null>(null);
 
@@ -336,16 +338,28 @@ export const BookingWorkspace: React.FC<BookingWorkspaceProps> = ({
       </div>
 
       {/* Main Operations Navigation Tabs */}
-      <div className="flex items-center gap-2 border-b border-stone-200 dark:border-stone-800 pb-2">
+      <div className="flex items-center gap-2 border-b border-stone-200 dark:border-stone-800 pb-2 overflow-x-auto">
         <button
           onClick={() => setActiveTab('ALL')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
             activeTab === 'ALL'
               ? 'bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900 shadow-sm'
               : 'text-stone-500 hover:text-stone-900 dark:hover:text-stone-100 hover:bg-stone-100 dark:hover:bg-stone-800'
           }`}
         >
           All Workspace Sections
+        </button>
+        <button
+          id="booking-tab-tasks"
+          onClick={() => setActiveTab('TASKS')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
+            activeTab === 'TASKS'
+              ? 'bg-emerald-600 text-white shadow-sm'
+              : 'text-stone-500 hover:text-stone-900 dark:hover:text-stone-100 hover:bg-stone-100 dark:hover:bg-stone-800'
+          }`}
+        >
+          <CheckSquare className="w-3.5 h-3.5" />
+          <span>Tasks & Follow-Ups ({db.getTasksForBooking(booking.id).length})</span>
         </button>
         <button
           onClick={() => setActiveTab('PASSENGERS')}
@@ -406,6 +420,24 @@ export const BookingWorkspace: React.FC<BookingWorkspaceProps> = ({
           Timeline & Audit ({booking.timeline?.length || 0})
         </button>
       </div>
+
+      {/* SECTION: TASKS & OPERATIONAL FOLLOW-UPS */}
+      {(activeTab === 'ALL' || activeTab === 'TASKS') && (
+        <div className="bg-white dark:bg-stone-900 rounded-2xl p-5 border border-stone-200 dark:border-stone-800 shadow-xs space-y-3">
+          <div className="flex items-center justify-between pb-2 border-b border-stone-100 dark:border-stone-800">
+            <div className="flex items-center gap-2">
+              <CheckSquare className="w-4 h-4 text-emerald-600" />
+              <h3 className="text-xs font-bold uppercase tracking-wider text-stone-900 dark:text-stone-100">
+                Connected Tasks & Operational Follow-Ups
+              </h3>
+            </div>
+          </div>
+          <BookingTasksSection
+            booking={booking}
+            currentUser={currentUser}
+          />
+        </div>
+      )}
 
       {/* SECTION 1: PASSENGERS & DOCUMENTS */}
       {(activeTab === 'ALL' || activeTab === 'PASSENGERS') && (

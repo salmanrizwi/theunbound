@@ -19,7 +19,8 @@ import {
   Send,
   X,
   FileCheck,
-  Tag
+  Tag,
+  CheckSquare
 } from 'lucide-react';
 
 interface SupplierServicesManagerProps {
@@ -200,6 +201,12 @@ export const SupplierServicesManager: React.FC<SupplierServicesManagerProps> = (
                     }`}>
                       {item.supplierStatus ? item.supplierStatus.replace(/_/g, ' ') : 'PENDING DISPATCH'}
                     </span>
+                    {item.id && db.getTasksForBookingItem(booking.id, item.id).length > 0 && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200 flex items-center gap-1">
+                        <CheckSquare className="w-3 h-3" />
+                        <span>{db.getTasksForBookingItem(booking.id, item.id).length} Task{db.getTasksForBookingItem(booking.id, item.id).length > 1 ? 's' : ''}</span>
+                      </span>
+                    )}
                   </div>
 
                   <h4 className="text-base font-bold text-stone-900 dark:text-stone-100 mb-2">
