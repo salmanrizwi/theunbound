@@ -168,7 +168,12 @@ export const UniversalHero: React.FC<UniversalHeroProps> = ({
   return (
     <div className={`w-full ${className}`} id="theunbound-universal-hero">
       {/* 1. Full-Width Digital Space Hero Container */}
-      <div className="w-full bg-[#061329] text-white relative overflow-hidden border-b border-slate-800/80">
+      <div 
+        className="w-full bg-[#061329] text-white relative overflow-hidden border-b border-slate-800/80 flex flex-col justify-center"
+        style={{
+          minHeight: context === 'HOMEPAGE' ? 'calc(100svh - var(--header-height, 94px))' : undefined
+        }}
+      >
         
         {/* MEDIA LAYER: Image or Video */}
         <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
@@ -222,7 +227,7 @@ export const UniversalHero: React.FC<UniversalHeroProps> = ({
         />
 
         {/* Compact Inner Hero Content (Strictly Above-the-Fold on 1366x768 & 1440x900) */}
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-7 sm:py-9 lg:py-11 relative z-10 text-center flex flex-col items-center justify-center w-full my-auto">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-7 lg:py-8 relative z-10 text-center flex flex-col items-center justify-center w-full my-auto">
           
           {/* 1. Active Campaign Promotion Banner (compact single-line badge) */}
           {promotionConfig?.enabled !== false && (
