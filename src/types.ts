@@ -1087,6 +1087,9 @@ export type QuoteItemSource = 'AI_PLANNER' | 'USER' | 'SYSTEM';
 export interface QuoteItem {
   id: string;
   product: Product;
+  title?: string;
+  productName?: string;
+  category?: string;
   pax: {
     adults: number;
     children: number;
@@ -1468,6 +1471,9 @@ export interface BookingCustomerInfo {
   emergencyContact?: string;
   emergencyPhone?: string;
   nationality?: string;
+  adults?: number;
+  children?: number;
+  infants?: number;
   totalAdults?: number;
   totalChildren?: number;
   totalInfants?: number;
@@ -1672,6 +1678,7 @@ export interface BookingItem {
   bookingId?: string;
   productId: string;
   productName: string;
+  title?: string;
   productSku?: string;
   destinationName?: string;
   destination?: string;
@@ -3824,6 +3831,7 @@ export interface LeadActivityItem {
 }
 
 export interface CustomerTravelRequirements {
+  preferredDestination?: string;
   destinationNames?: string[];
   travelStartDate?: string;
   travelEndDate?: string;
@@ -3900,6 +3908,7 @@ export interface PaymentSchedule {
   totalAmount: number;
   currency: CurrencyCode;
   installments: PaymentInstallmentItem[];
+  tranches?: any[];
   totalPaid: number;
   balanceDue: number;
   excessAmount?: number;
