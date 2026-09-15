@@ -99,39 +99,11 @@ async function startServer() {
     });
   }
 
-  const DEFAULT_PORT = 3000;
-  const cloudRunPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
+  const PORT = 3000;
 
-  // Primary bind: Port 3000 (required by internal proxy)
-  const server3000 = app.listen(DEFAULT_PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${DEFAULT_PORT}`);
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on port ${PORT}`);
   });
-  server3000.on("error", (err: any) => {
-    if (err.code === "EADDRINUSE") {
-      console.warn(`[SERVER] Port ${DEFAULT_PORT} already in use`);
-    } else {
-      console.error(`[SERVER] Port ${DEFAULT_PORT} error:`, err);
-    }
-  });
-
-  // Cloud Run direct traffic & health checks (bind to process.env.PORT, typically 8080)
-  if (cloudRunPort && cloudRunPort !== DEFAULT_PORT && !isNaN(cloudRunPort)) {
-    try {
-      const serverCloudRun = app.listen(cloudRunPort, "0.0.0.0", () => {
-        console.log(`Server also listening on Cloud Run port ${cloudRunPort}`);
-      });
-      serverCloudRun.on("error", (err: any) => {
-        if (err.code === "EADDRINUSE") {
-          // Expected in sandbox dev container where reverse proxy binds PORT 8080
-          console.log(`[SERVER] Cloud Run port ${cloudRunPort} is handled by reverse proxy`);
-        } else {
-          console.warn(`[SERVER] Cloud Run port ${cloudRunPort} error:`, err);
-        }
-      });
-    } catch (err) {
-      console.warn(`[SERVER] Could not bind to Cloud Run port ${cloudRunPort}:`, err);
-    }
-  }
 }
 
 startServer();

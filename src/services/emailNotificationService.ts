@@ -170,8 +170,8 @@ export class EmailNotificationService {
         <div style="background-color: #0f172a; padding: 28px 24px; text-align: left; border-bottom: 3px solid #00C6A6;">
           <div style="display: flex; align-items: center; justify-content: space-between;">
             <div>
-              <h1 style="margin: 0; font-size: 26px; font-weight: 900; letter-spacing: -0.5px; color: #ffffff; text-transform: lowercase;">theunbound</h1>
-              <p style="margin: 4px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #00E5C0;">Destination Management Company Ltd.</p>
+              <h1 style="margin: 0; font-size: 22px; font-weight: 900; letter-spacing: -0.5px; color: #ffffff; text-transform: uppercase;">Booking Confirmation</h1>
+              <p style="margin: 4px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #00E5C0;">Ground Operations Desk</p>
             </div>
             <div style="text-align: right; background: rgba(255,255,255,0.1); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15);">
               <span style="font-size: 10px; text-transform: uppercase; color: #94a3b8; display: block; font-weight: 700;">Booking Reference</span>
@@ -262,7 +262,7 @@ export class EmailNotificationService {
     const dmcHtml = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 640px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; color: #0f172a;">
         <div style="background-color: #0f172a; padding: 24px; border-bottom: 3px solid #e11d48;">
-          <h1 style="margin: 0; font-size: 20px; color: #ffffff; font-weight: 800;">theunbound &bull; Operations Dispatch Queue</h1>
+          <h1 style="margin: 0; font-size: 20px; color: #ffffff; font-weight: 800;">Operations Dispatch Queue</h1>
           <p style="margin: 4px 0 0 0; font-size: 12px; color: #fda4af; text-transform: uppercase; font-weight: 700;">Action Required: Supplier Allotment & Chauffeur Assignment</p>
         </div>
         <div style="padding: 24px;">
@@ -280,7 +280,7 @@ export class EmailNotificationService {
         recipient: clientEmail,
         recipientType: 'CLIENT_AGENT',
         subject: clientSubject,
-        bodySnippet: `Thank you for booking with TheUnbound DMC. Your booking reference is ${payload.bookingReference}. Your status will be updated in 24-48 Hrs.`,
+        bodySnippet: `Thank you for your booking. Your booking reference is ${payload.bookingReference}. Your status will be updated in 24-48 Hrs.`,
         fullHtml: clientHtml,
         sentAt,
         status: 'DELIVERED'

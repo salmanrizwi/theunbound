@@ -264,7 +264,11 @@ export function recordWhatsAppQuoteShare(
       paxChildren: quote.childrenCount || 0,
       paxInfants: quote.infantsCount || 0,
       totalPassengers: quote.totalPax || 2,
-      travelRequirements: quote.agentNotes || quote.title,
+      travelRequirements: (typeof quote.agentNotes === 'string'
+        ? quote.agentNotes
+        : Array.isArray(quote.agentNotes)
+          ? (quote.agentNotes as any[]).map(x => typeof x === 'string' ? x : x?.text || '').filter(Boolean).join('\n')
+          : '') || quote.title || 'Custom Travel Itinerary',
       estimatedBudget: quote.totalSellingPrice,
       currency: quote.currency || 'USD',
       quoteId: quote.id,

@@ -2,7 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { AppDatabase } from '../services/db';
 import { 
   ChevronRight,
-  AlertTriangle
+  AlertTriangle,
+  Bell,
+  Clock,
+  CheckCircle2,
+  ExternalLink,
+  Flame
 } from 'lucide-react';
 
 interface GlobalRemindersBarProps {
@@ -145,32 +150,32 @@ export const GlobalRemindersBar: React.FC<GlobalRemindersBarProps> = ({
   return (
     <div 
       id="global-reminders-bar"
-      className={`bg-slate-900 border-b border-slate-800 text-white px-3 sm:px-6 py-2 transition-all shadow-sm ${className}`}
+      className={`bg-white border-b border-slate-200 text-slate-800 px-3 sm:px-6 py-2 transition-all shadow-2xs ${className}`}
     >
       <div className="max-w-[1720px] mx-auto flex flex-wrap items-center justify-between gap-2.5 text-xs">
-        {/* Left Label */}
+        {/* Left Action Center Label Badge */}
         <button
           type="button"
           onClick={() => onOpenActionCenter ? onOpenActionCenter() : onNavigate?.('OPERATIONS', 'CALENDAR_TASKS')}
-          className="flex items-center space-x-2 shrink-0 hover:opacity-80 transition-opacity cursor-pointer group"
+          className="flex items-center space-x-2 shrink-0 hover:opacity-85 transition-opacity cursor-pointer group"
           title="Open Action Center Drawer"
         >
-          <div className="flex items-center justify-center w-5 h-5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
-            <AlertTriangle className="w-3 h-3 text-rose-400" />
+          <div className="flex items-center justify-center w-5 h-5 rounded-lg bg-[#00C6A6]/15 text-[#008f77] border border-[#00C6A6]/30">
+            <Bell className="w-3 h-3 text-[#00C6A6]" />
           </div>
-          <span className="font-bold text-slate-200 group-hover:text-[#00E5C0] uppercase tracking-wider text-[11px] transition-colors">
+          <span className="font-extrabold text-slate-800 group-hover:text-[#008f77] uppercase tracking-wider text-[11px] transition-colors">
             Action Center
           </span>
-          <span className="text-slate-500 hidden sm:inline">•</span>
+          <span className="text-slate-300 hidden sm:inline">•</span>
         </button>
 
         {/* Live Reminder Chips */}
         <div className="flex items-center flex-wrap gap-2 grow">
-          {/* Overdue / Critical Tasks (RED) */}
+          {/* Overdue / Critical Tasks (Light Rose Pill) */}
           {totalActionTasks > 0 && (
             <button
               onClick={handleTasksClick}
-              className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-[11px] font-bold transition-colors cursor-pointer group shadow-xs"
+              className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200/80 text-[11px] font-bold transition-colors cursor-pointer group shadow-2xs"
               title="Overdue and critical priority SLA tasks"
             >
               <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping shrink-0" />
@@ -183,12 +188,12 @@ export const GlobalRemindersBar: React.FC<GlobalRemindersBarProps> = ({
             </button>
           )}
 
-          {/* Pending Bookings (RED) */}
+          {/* Pending Bookings (Light Rose Pill) */}
           {pendingBookings.length > 0 && (
             <button
               onClick={handleBookingsClick}
-              className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-[11px] font-bold transition-colors cursor-pointer group shadow-xs"
-              title="Pending reservation confirmations needing 24-48h dispatch"
+              className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200/80 text-[11px] font-bold transition-colors cursor-pointer group shadow-2xs"
+              title="Pending reservation confirmations needing dispatch"
             >
               <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
               <span>
@@ -198,60 +203,60 @@ export const GlobalRemindersBar: React.FC<GlobalRemindersBarProps> = ({
             </button>
           )}
 
-          {/* Quotes Awaiting Follow-Up (AMBER) */}
+          {/* Quotes Awaiting Follow-Up (Light Amber Pill) */}
           {followUpQuotes.length > 0 && (
             <button
               onClick={handleQuotesClick}
-              className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-bold transition-colors cursor-pointer group"
+              className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 text-[11px] font-bold transition-colors cursor-pointer group shadow-2xs"
               title="Dispatched quotes awaiting client follow-up"
             >
-              <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+              <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
               <span>
                 {followUpQuotes.length === 1 ? '1 Quote Awaiting Follow-Up' : `${followUpQuotes.length} Quotes Awaiting Follow-Up`}
               </span>
-              <ChevronRight className="w-3 h-3 text-amber-400 group-hover:translate-x-0.5 transition-transform" />
+              <ChevronRight className="w-3 h-3 text-amber-500 group-hover:translate-x-0.5 transition-transform" />
             </button>
           )}
 
-          {/* Pending Documents / Proofs (AMBER) */}
+          {/* Pending Documents / Proofs (Light Amber Pill) */}
           {pendingDocBookings.length > 0 && (
             <button
               onClick={handleDocBookingsClick}
-              className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-bold transition-colors cursor-pointer group"
+              className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 text-[11px] font-bold transition-colors cursor-pointer group shadow-2xs"
               title="Payment proofs and travel documents awaiting verification"
             >
-              <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+              <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
               <span>
                 {pendingDocBookings.length === 1 ? '1 Document / Proof Pending' : `${pendingDocBookings.length} Documents / Proofs Pending`}
               </span>
-              <ChevronRight className="w-3 h-3 text-amber-400 group-hover:translate-x-0.5 transition-transform" />
+              <ChevronRight className="w-3 h-3 text-amber-500 group-hover:translate-x-0.5 transition-transform" />
             </button>
           )}
 
-          {/* Pending User Approvals (AMBER) */}
+          {/* Pending User Approvals (Light Amber Pill) */}
           {pendingUsers.length > 0 && variant !== 'b2b' && (
             <button
               onClick={handleUsersClick}
-              className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-bold transition-colors cursor-pointer group"
+              className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 text-[11px] font-bold transition-colors cursor-pointer group shadow-2xs"
               title="New travel agent registrations awaiting approval"
             >
-              <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+              <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
               <span>
                 {pendingUsers.length === 1 ? '1 Agent Registration Pending' : `${pendingUsers.length} Agent Registrations Pending`}
               </span>
-              <ChevronRight className="w-3 h-3 text-amber-400 group-hover:translate-x-0.5 transition-transform" />
+              <ChevronRight className="w-3 h-3 text-amber-500 group-hover:translate-x-0.5 transition-transform" />
             </button>
           )}
         </div>
 
-        {/* Action Center Drawer Trigger Button */}
+        {/* Action Center Trigger Button */}
         <div className="shrink-0 flex items-center space-x-2">
           <button
             onClick={() => onOpenActionCenter ? onOpenActionCenter() : onNavigate?.('OPERATIONS', 'CALENDAR_TASKS')}
-            className="px-3 py-1 bg-stone-800 hover:bg-stone-700 text-stone-200 hover:text-white rounded-xl text-[11px] font-bold transition-colors border border-stone-700/80 flex items-center space-x-1 cursor-pointer"
+            className="px-3.5 py-1.5 bg-[#00C6A6] hover:bg-[#00a88d] text-white rounded-xl text-xs font-extrabold transition-colors shadow-2xs flex items-center space-x-1.5 cursor-pointer"
           >
             <span>Open Tasks</span>
-            <ChevronRight className="w-3 h-3" />
+            <ChevronRight className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>

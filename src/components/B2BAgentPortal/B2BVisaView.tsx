@@ -737,7 +737,7 @@ Support: visa-operations@theunbound.in
                 </h4>
                 <ul className="space-y-1 text-[11px] text-amber-800 list-disc list-inside">
                   {selectedVisaDetails.importantNotes.map((note, idx) => (
-                    <li key={idx}>{note}</li>
+                    <li key={idx}>{typeof note === 'string' ? note : (note as any)?.text || JSON.stringify(note)}</li>
                   ))}
                 </ul>
               </div>

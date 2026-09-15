@@ -37,9 +37,17 @@ service cloud.firestore {
       );
     }
 
+    // Active authorized business user check (Direct Buyers are forbidden from active operations)
+    function isNotBuyer() {
+      return !hasUserDoc(request.auth.uid) || (
+        currentUserData().role != 'BUYER' &&
+        (!('userType' in currentUserData()) || currentUserData().userType != 'BUYER')
+      );
+    }
+
     // Active & approved user check
     function isApprovedUser() {
-      return isAuthenticated() && (
+      return isAuthenticated() && isNotBuyer() && (
         isMasterAdmin() ||
         (hasUserDoc(request.auth.uid) && (
           currentUserData().approvalStatus == 'APPROVED' || 
@@ -255,16 +263,19 @@ service cloud.firestore {
     // =========================================================================
 
     match /users/{userId} {
-      // Authenticated users can read profile directory
-      allow read: if isAuthenticated();
+      // Authenticated business users can read profile directory
+      allow read: if isAuthenticated() && isNotBuyer();
       
-      // User can create their own document on registration
-      allow create: if isAuthenticated() && request.auth.uid == userId;
+      // User can create their own document on registration - BUYER ROLE STRICTLY FORBIDDEN
+      allow create: if isAuthenticated() && request.auth.uid == userId && (
+        request.resource.data.role != 'BUYER' &&
+        (!('userType' in request.resource.data) || request.resource.data.userType != 'BUYER')
+      );
 
       // Update: Admin can update all fields (roles, permissions, approvals)
-      // Self-updates are allowed ONLY if privilege fields (role, permissions, approvalStatus) are unchanged
+      // Self-updates are allowed ONLY if privilege fields (role, permissions, approvalStatus) are unchanged, and role is not BUYER
       allow update: if canManageUserAccounts() || (
-        isAuthenticated() && request.auth.uid == userId && (
+        isAuthenticated() && request.auth.uid == userId && isNotBuyer() && (
           request.resource.data.role == resource.data.role &&
           (!('permissions' in request.resource.data) || request.resource.data.permissions == resource.data.permissions) &&
           (!('approvalStatus' in request.resource.data) || request.resource.data.approvalStatus == resource.data.approvalStatus)
@@ -448,30 +459,38 @@ service cloud.firestore {
     // =========================================================================
 
     match /leads/{leadId} {
-      // Guests / Public can submit inquiries
+      // Guests / Public can submit inquiries; authenticated users can create
       allow create: if true;
 
-      // Internal users can read all leads; External users can only read their own leads
+      // Internal team can read all leads; B2B Agents can ONLY read leads explicitly assigned to them
       allow read: if canAccessCMSOperations() || (
-        isAuthenticated() && (
-          (resource.data.userId == request.auth.uid) ||
-          (resource.data.agentId == request.auth.uid) ||
-          (resource.data.assignedAgentId == request.auth.uid) ||
-          (resource.data.email == request.auth.token.email)
+        isAuthenticated() && isNotBuyer() && (
+          resource.data.assignedAgentId == request.auth.uid
         )
       );
 
-      // Updates: Internal users have full update; External users can only update their own inquiry
+      // Updates: Internal team has full update; assigned agent can update without changing assignment ownership
       allow update: if canAccessCMSOperations() || (
-        isAuthenticated() && (
-          (resource.data.userId == request.auth.uid) ||
-          (resource.data.agentId == request.auth.uid) ||
-          (resource.data.assignedAgentId == request.auth.uid)
+        isAuthenticated() && isNotBuyer() && (
+          resource.data.assignedAgentId == request.auth.uid &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'assignedAgentId',
+            'assignedAgentNameSnapshot',
+            'assignedByUserId',
+            'assignedAt',
+            'leadVisibilityStatus'
+          ])
         )
       );
 
       // Deletion is strictly reserved for Authorized Internal Operations
       allow delete: if canAccessCMSOperations();
+    }
+
+    match /lead_stages/{stageId} {
+      // Internal operations can configure stages; authenticated internal users can read
+      allow read: if isAuthenticated();
+      allow write: if canAccessCMSOperations();
     }
 
     // =========================================================================
@@ -490,21 +509,34 @@ service cloud.firestore {
         )
       ) || resource.data.isPublicShare == true || resource.data.publicShareEnabled == true;
 
-      // Creation: Internal users, or authenticated agents/buyers creating their own quote
-      allow create: if canAccessB2BQuotes() || (
-        isAuthenticated() && (
+      // Creation: Internal users, or authenticated agents/buyers creating their own quote without internal commercial fields
+      allow create: if canAccessCMSOperations() || (
+        (canAccessB2BQuotes() || isAuthenticated()) && (
           request.resource.data.agentId == request.auth.uid ||
           request.resource.data.userId == request.auth.uid ||
           request.resource.data.buyerId == request.auth.uid
+        ) && (
+          !('internalNettCost' in request.resource.data) &&
+          !('supplierCost' in request.resource.data) &&
+          !('internalMarkup' in request.resource.data) &&
+          !('internalProfit' in request.resource.data)
         )
       );
 
-      // Update: Internal users, or owner
+      // Update: Internal users, or owner without tampering with internal commercial fields
       allow update: if canAccessCMSOperations() || (
         isAuthenticated() && (
           resource.data.agentId == request.auth.uid ||
           resource.data.userId == request.auth.uid ||
           resource.data.buyerId == request.auth.uid
+        ) && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'internalNettCost',
+            'supplierCost',
+            'internalMarkup',
+            'internalProfit',
+            'dmcMarginAmount'
+          ])
         )
       );
 
@@ -518,33 +550,76 @@ service cloud.firestore {
     }
 
     match /bookings/{bookingId} {
-      // Internal users read all; External users read own
+      // Internal users read all; B2B Agents read bookings they submitted OR bookings assigned to them
       allow read: if canAccessCMSOperations() || (
-        isAuthenticated() && (
-          resource.data.buyerId == request.auth.uid ||
+        isAuthenticated() && isNotBuyer() && (
+          resource.data.submittedByUserId == request.auth.uid ||
+          resource.data.submittingAgentId == request.auth.uid ||
+          resource.data.assignedAgentId == request.auth.uid ||
           resource.data.agentId == request.auth.uid ||
           resource.data.userId == request.auth.uid
         )
       );
 
-      // Create: Internal operations or authenticated booking author
+      // Create: Internal operations can create standard or INTERNAL_MANUAL bookings
+      // External agents can only create bookings tagged to themselves with customer-facing prices only
       allow create: if canAccessCMSOperations() || (
-        isAuthenticated() && (
-          request.resource.data.buyerId == request.auth.uid ||
+        isAuthenticated() && isNotBuyer() && (
+          request.resource.data.submittedByUserId == request.auth.uid ||
+          request.resource.data.submittingAgentId == request.auth.uid ||
           request.resource.data.agentId == request.auth.uid ||
           request.resource.data.userId == request.auth.uid
+        ) && (
+          request.resource.data.sourceType != 'INTERNAL_MANUAL' &&
+          request.resource.data.isInternalManualBooking != true &&
+          !('totalSupplierCost' in request.resource.data) &&
+          !('internalNettCost' in request.resource.data) &&
+          !('internalProfit' in request.resource.data) &&
+          !('supplierCost' in request.resource.data)
         )
       );
 
-      // Update: Internal operations or booking owner updating details
+      // Update: Internal operations can update all operational fields, supplier allocations, and pricing
+      // External booking owner / assigned agent can only update non-operational customer details
       allow update: if canAccessCMSOperations() || (
-        isAuthenticated() && (
-          resource.data.buyerId == request.auth.uid ||
+        isAuthenticated() && isNotBuyer() && (
+          resource.data.submittedByUserId == request.auth.uid ||
+          resource.data.submittingAgentId == request.auth.uid ||
+          resource.data.assignedAgentId == request.auth.uid ||
           resource.data.agentId == request.auth.uid
+        ) && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'sourceType', 
+            'isInternalManualBooking', 
+            'totalSupplierCost', 
+            'internalNettCost',
+            'internalProfit',
+            'supplierCost',
+            'supplierAllocationStatus', 
+            'operationalStatus',
+            'supplierConfirmationOverride',
+            'assignedAgentId',
+            'assignedByUserId',
+            'submittingAgentId'
+          ])
         )
       );
 
-      // Deletion: STRICTLY RESERVED for Internal Operations
+      // Deletion: STRICTLY RESERVED for Authorized Internal Operations
+      allow delete: if canAccessCMSOperations();
+
+      // Subcollection: Booking activity log and operational timeline
+      match /operations_history/{historyId} {
+        allow read, write: if canAccessCMSOperations();
+      }
+    }
+
+    match /agent_notifications/{notificationId} {
+      allow read: if isAuthenticated() && (
+        resource.data.agentUserId == request.auth.uid ||
+        canAccessCMSOperations()
+      );
+      allow create, update: if isAuthenticated();
       allow delete: if canAccessCMSOperations();
     }
 
@@ -658,6 +733,11 @@ service cloud.firestore {
       allow write: if canAccessCMSFinance() || canAccessCMSOperations();
     }
 
+    match /uploaded_invoices/{id} {
+      // Strictly internal operational & financial access - never exposed to buyers or agents
+      allow read, write: if canAccessCMSFinance() || canAccessCMSOperations() || isMasterAdmin();
+    }
+
     match /financial_ledgers/{id} {
       allow read, write: if canAccessCMSFinance();
     }
@@ -754,6 +834,52 @@ service cloud.firestore {
     match /seo_settings/{id} {
       allow read: if true;
       allow write: if canAccessCMSContent();
+    }
+
+    // =========================================================================
+    // SUPPLIER MANAGEMENT MASTER DIRECTORY & ALLOCATIONS
+    // Strictly Internal-Only: Admin & Authorized Internal Team Members
+    // External Buyers & B2B Agents have strictly NO access.
+    // =========================================================================
+
+    match /suppliers/{supplierId} {
+      allow read: if isInternalUser();
+      allow create, update: if isInternalUser();
+      allow delete: if isMasterAdmin();
+    }
+
+    match /supplier_rate_cards/{id} {
+      allow read: if isInternalUser();
+      allow create, update: if isInternalUser();
+      allow delete: if isMasterAdmin();
+    }
+
+    match /supplier_documents/{id} {
+      allow read: if isInternalUser();
+      allow create, update: if isInternalUser();
+      allow delete: if isMasterAdmin();
+    }
+
+    match /supplier_activity_history/{id} {
+      allow read: if isInternalUser();
+      allow create: if isInternalUser();
+      allow update, delete: if isMasterAdmin();
+    }
+
+    match /supplier_allocations/{id} {
+      allow read: if isInternalUser();
+      allow create, update: if isInternalUser();
+      allow delete: if isMasterAdmin();
+    }
+
+    match /supplier_price_records/{id} {
+      allow read: if isInternalUser();
+      allow create: if isInternalUser();
+      allow update, delete: if isMasterAdmin();
+    }
+
+    match /supplier_requests/{id} {
+      allow read, write: if isInternalUser();
     }
 
     // =========================================================================

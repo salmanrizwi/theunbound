@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useRecordReminder } from '../../hooks/useRecordReminder';
 import { ActionCenterEntityType, CalendarTask, User } from '../../types';
 import { 
@@ -7,13 +8,12 @@ import {
   AlertTriangle, 
   CheckCircle2, 
   Flame, 
-  ChevronRight, 
   X, 
   Moon, 
   ExternalLink,
-  ShieldAlert,
   Loader2
 } from 'lucide-react';
+import { toast } from '../../services/toastService';
 
 export interface RecordReminderIndicatorProps {
   entityType: ActionCenterEntityType;
@@ -51,52 +51,79 @@ export const RecordReminderIndicator: React.FC<RecordReminderIndicatorProps> = (
   const [snoozeMenuTaskId, setSnoozeMenuTaskId] = useState<string | null>(null);
   const [actionLoadingTaskId, setActionLoadingTaskId] = useState<string | null>(null);
   const [actionType, setActionType] = useState<'completing' | 'snoozing' | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [popoverCoords, setPopoverCoords] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 360 });
 
-  // Close popover when clicking outside
+  // Update coords when opening
+  const updateCoords = () => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const popoverWidth = Math.min(360, window.innerWidth - 32);
+    
+    let left = rect.left;
+    if (left + popoverWidth > window.innerWidth - 16) {
+      left = window.innerWidth - 16 - popoverWidth;
+    }
+    if (left < 16) left = 16;
+
+    let top = rect.bottom + 8;
+    // Flip above if near bottom
+    if (top + 340 > window.innerHeight && rect.top > 340) {
+      top = rect.top - 340;
+    }
+
+    setPopoverCoords({ top, left, width: popoverWidth });
+  };
+
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+    if (isOpen) {
+      updateCoords();
+      const handleResize = () => updateCoords();
+      window.addEventListener('resize', handleResize);
+      window.addEventListener('scroll', handleResize, true);
+      return () => {
+        window.removeEventListener('resize', handleResize);
+        window.removeEventListener('scroll', handleResize, true);
+      };
+    }
+  }, [isOpen]);
+
+  // Close popover when pressing Escape
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
         setIsOpen(false);
         setSnoozeMenuTaskId(null);
-        setActionError(null);
       }
     };
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen]);
 
   if (!hasActiveReminder || count === 0) {
     return null;
   }
 
-  // Priority-based color palettes
+  // Light Brand Priority Color Styles
   const colorStyles = isOverdue
     ? {
         dotBg: 'bg-rose-500',
         ringColor: 'bg-rose-400',
-        badgeBg: 'bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/60',
-        badgeBorder: 'border-rose-200 dark:border-rose-800',
-        badgeText: 'text-rose-700 dark:text-rose-300',
-        pulseClass: 'animate-record-urgent',
-        ringClass: 'animate-record-ring-urgent',
+        badgeBg: 'bg-rose-50 hover:bg-rose-100',
+        badgeBorder: 'border-rose-200',
+        badgeText: 'text-rose-700',
         icon: Flame,
-        label: isOverdue ? 'Overdue Action' : 'Action Required'
+        label: 'Overdue Action'
       }
     : highestPriority === 'CRITICAL' || highestPriority === 'URGENT'
     ? {
         dotBg: 'bg-rose-500',
         ringColor: 'bg-rose-400',
-        badgeBg: 'bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/60',
-        badgeBorder: 'border-rose-200 dark:border-rose-800',
-        badgeText: 'text-rose-700 dark:text-rose-300',
-        pulseClass: 'animate-record-pulse',
-        ringClass: 'animate-record-ring',
+        badgeBg: 'bg-rose-50 hover:bg-rose-100',
+        badgeBorder: 'border-rose-200',
+        badgeText: 'text-rose-700',
         icon: AlertTriangle,
         label: 'Critical SLA'
       }
@@ -104,22 +131,18 @@ export const RecordReminderIndicator: React.FC<RecordReminderIndicatorProps> = (
     ? {
         dotBg: 'bg-amber-500',
         ringColor: 'bg-amber-400',
-        badgeBg: 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/50 dark:hover:bg-amber-900/60',
-        badgeBorder: 'border-amber-200 dark:border-amber-800',
-        badgeText: 'text-amber-750 dark:text-amber-300',
-        pulseClass: 'animate-record-pulse',
-        ringClass: 'animate-record-ring',
+        badgeBg: 'bg-amber-50 hover:bg-amber-100',
+        badgeBorder: 'border-amber-200',
+        badgeText: 'text-amber-800',
         icon: Clock,
         label: 'Action Required'
       }
     : {
-        dotBg: 'bg-teal-500',
-        ringColor: 'bg-teal-400',
-        badgeBg: 'bg-teal-50 hover:bg-teal-100 dark:bg-teal-950/50 dark:hover:bg-teal-900/60',
-        badgeBorder: 'border-teal-200 dark:border-teal-800',
-        badgeText: 'text-teal-800 dark:text-teal-300',
-        pulseClass: 'animate-record-pulse',
-        ringClass: 'animate-record-ring',
+        dotBg: 'bg-[#00C6A6]',
+        ringColor: 'bg-[#00C6A6]/60',
+        badgeBg: 'bg-[#00C6A6]/10 hover:bg-[#00C6A6]/20',
+        badgeBorder: 'border-[#00C6A6]/30',
+        badgeText: 'text-[#008f77]',
         icon: Bell,
         label: 'Reminder'
       };
@@ -133,22 +156,22 @@ export const RecordReminderIndicator: React.FC<RecordReminderIndicatorProps> = (
 
   const handleComplete = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (actionLoadingTaskId) return; // Prevent duplicate clicks
+    if (actionLoadingTaskId) return;
     setActionLoadingTaskId(taskId);
     setActionType('completing');
-    setActionError(null);
 
     try {
       const result = await complete(taskId, 'Completed from Record Indicator');
-      if (!result.success) {
-        setActionError(result.error || 'Unable to complete this task. Your change was not saved. Please try again.');
-      } else {
+      if (result.success) {
+        toast.success('Task Completed', 'Item marked completed.');
         if (tasks.length <= 1) {
           setIsOpen(false);
         }
+      } else {
+        toast.error('Complete Failed', result.error || 'Unable to complete task');
       }
     } catch (err: any) {
-      setActionError(err?.message || 'Unable to complete this task. Your change was not saved. Please try again.');
+      toast.error('Action Error', err?.message || 'Unable to complete task');
     } finally {
       setActionLoadingTaskId(null);
       setActionType(null);
@@ -157,49 +180,54 @@ export const RecordReminderIndicator: React.FC<RecordReminderIndicatorProps> = (
 
   const handleSnooze = async (taskId: string, hours: number, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (actionLoadingTaskId) return; // Prevent duplicate clicks
+    if (actionLoadingTaskId) return;
     setActionLoadingTaskId(taskId);
     setActionType('snoozing');
-    setActionError(null);
     setSnoozeMenuTaskId(null);
 
     try {
       const result = await snooze(taskId, hours);
-      if (!result.success) {
-        setActionError(result.error || 'Unable to snooze this task. Your change was not saved. Please try again.');
-      } else {
+      if (result.success) {
+        toast.info('Task Snoozed', `Reminder postponed by ${hours} hours.`);
         if (tasks.length <= 1) {
           setIsOpen(false);
         }
+      } else {
+        toast.error('Snooze Failed', result.error || 'Unable to snooze task');
       }
     } catch (err: any) {
-      setActionError(err?.message || 'Unable to snooze this task. Your change was not saved. Please try again.');
+      toast.error('Action Error', err?.message || 'Unable to snooze task');
     } finally {
       setActionLoadingTaskId(null);
       setActionType(null);
     }
   };
 
+  const handleOpenActionCenter = (task: CalendarTask, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsOpen(false);
+    if (onOpenActionCenter) {
+      onOpenActionCenter(task);
+    }
+  };
+
   return (
-    <div 
-      ref={containerRef}
-      className={`relative inline-flex items-center align-middle select-none ${className}`}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {/* 1. DOT ONLY VARIANT */}
+    <div className={`relative inline-flex items-center ${className}`}>
+      {/* 1. DOT VARIANT */}
       {variant === 'dot' && (
         <button
+          ref={triggerRef}
           type="button"
           onClick={handleToggle}
           title={`${count} active reminder${count > 1 ? 's' : ''}: ${primaryTask?.title || 'Action Required'}`}
-          className="relative flex items-center justify-center p-1 rounded-full cursor-pointer hover:scale-110 transition-transform focus:outline-none"
+          className="relative flex items-center justify-center p-1 rounded-full cursor-pointer hover:scale-110 transition-transform focus:outline-hidden"
         >
           <span className="relative flex h-2.5 w-2.5">
-            <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${colorStyles.ringColor} ${colorStyles.ringClass}`} />
-            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${colorStyles.dotBg} ${colorStyles.pulseClass}`} />
+            <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping ${colorStyles.ringColor}`} />
+            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${colorStyles.dotBg}`} />
           </span>
           {showCount && count > 1 && (
-            <span className="ml-1 text-[9px] font-black font-mono leading-none text-slate-700 dark:text-slate-200">
+            <span className="ml-1 text-[9px] font-black font-mono leading-none text-slate-700">
               {count}
             </span>
           )}
@@ -209,44 +237,41 @@ export const RecordReminderIndicator: React.FC<RecordReminderIndicatorProps> = (
       {/* 2. BADGE VARIANT (Standard for Table Rows & Cards) */}
       {variant === 'badge' && (
         <button
+          ref={triggerRef}
           type="button"
           onClick={handleToggle}
-          className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer shadow-2xs whitespace-nowrap ${colorStyles.badgeBg} ${colorStyles.badgeBorder} ${colorStyles.badgeText}`}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all cursor-pointer shadow-2xs whitespace-nowrap ${colorStyles.badgeBg} ${colorStyles.badgeBorder} ${colorStyles.badgeText}`}
         >
-          {/* Animated Blinking Dot */}
           <span className="relative flex h-2 w-2 shrink-0">
-            <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${colorStyles.ringColor} ${colorStyles.ringClass}`} />
-            <span className={`relative inline-flex rounded-full h-2 w-2 ${colorStyles.dotBg} ${colorStyles.pulseClass}`} />
+            <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping ${colorStyles.ringColor}`} />
+            <span className={`relative inline-flex rounded-full h-2 w-2 ${colorStyles.dotBg}`} />
           </span>
-
-          <IconComponent className="w-2.5 h-2.5 shrink-0" />
-
+          <IconComponent className="w-3 h-3 shrink-0" />
           <span>
             {count > 1 ? `${count} Actions` : (primaryTask?.actionRequired || colorStyles.label)}
           </span>
         </button>
       )}
 
-      {/* 3. HEADER VARIANT (Prominent for Detail Drawers & Workspaces) */}
+      {/* 3. HEADER VARIANT */}
       {variant === 'header' && (
         <button
+          ref={triggerRef}
           type="button"
           onClick={handleToggle}
-          className={`inline-flex items-center gap-2 px-3 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-xs ${colorStyles.badgeBg} ${colorStyles.badgeBorder} ${colorStyles.badgeText}`}
+          className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-2xs ${colorStyles.badgeBg} ${colorStyles.badgeBorder} ${colorStyles.badgeText}`}
         >
           <span className="relative flex h-2.5 w-2.5 shrink-0">
-            <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${colorStyles.ringColor} ${colorStyles.ringClass}`} />
-            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${colorStyles.dotBg} ${colorStyles.pulseClass}`} />
+            <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping ${colorStyles.ringColor}`} />
+            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${colorStyles.dotBg}`} />
           </span>
-
           <IconComponent className="w-3.5 h-3.5 shrink-0" />
-
           <div className="flex items-center gap-1.5 text-left">
             <span className="font-extrabold">
               {isOverdue ? 'Action Overdue' : 'Action Required'}
             </span>
             {count > 1 && (
-              <span className="px-1.5 py-0.2 bg-white/70 dark:bg-black/30 rounded-md text-[10px] font-mono">
+              <span className="px-1.5 py-0.5 bg-white rounded-md text-[10px] font-mono border border-slate-200">
                 {count} tasks
               </span>
             )}
@@ -257,13 +282,14 @@ export const RecordReminderIndicator: React.FC<RecordReminderIndicatorProps> = (
       {/* 4. INLINE VARIANT */}
       {variant === 'inline' && (
         <button
+          ref={triggerRef}
           type="button"
           onClick={handleToggle}
-          className="inline-flex items-center gap-1 cursor-pointer group focus:outline-none"
+          className="inline-flex items-center gap-1.5 cursor-pointer group focus:outline-hidden"
         >
           <span className="relative flex h-2 w-2 shrink-0">
-            <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${colorStyles.ringColor} ${colorStyles.ringClass}`} />
-            <span className={`relative inline-flex rounded-full h-2 w-2 ${colorStyles.dotBg} ${colorStyles.pulseClass}`} />
+            <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping ${colorStyles.ringColor}`} />
+            <span className={`relative inline-flex rounded-full h-2 w-2 ${colorStyles.dotBg}`} />
           </span>
           <span className={`text-[10px] font-bold underline decoration-dotted group-hover:decoration-solid ${colorStyles.badgeText}`}>
             {count > 1 ? `${count} tasks` : (primaryTask?.actionRequired || 'Reminder')}
@@ -271,186 +297,168 @@ export const RecordReminderIndicator: React.FC<RecordReminderIndicatorProps> = (
         </button>
       )}
 
-      {/* POPUP / POPOVER CARD */}
-      {isOpen && (
-        <div 
-          className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 w-80 sm:w-96 bg-white dark:bg-stone-900 rounded-2xl shadow-xl border border-stone-200 dark:border-stone-800 p-3.5 z-50 animate-in fade-in zoom-in-95 duration-150 text-left"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-stone-100 dark:border-stone-800">
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${colorStyles.dotBg}`} />
-              </span>
-              <span className="text-xs font-extrabold text-stone-900 dark:text-stone-100">
-                Active Action Center Reminders
-              </span>
-              <span className="px-1.5 py-0.5 bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400 text-[10px] font-bold rounded-md font-mono">
-                {count}
-              </span>
-            </div>
+      {/* PORTAL-BASED POPOVER CARD */}
+      {isOpen && createPortal(
+        <>
+          {/* Subtle click-outside backdrop */}
+          <div
+            className="fixed inset-0 z-[9998] bg-transparent"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsOpen(false);
+              setSnoozeMenuTaskId(null);
+            }}
+          />
 
-            <button
-              onClick={() => setIsOpen(false)}
-              className="p-1 text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {/* Error Banner */}
-          {actionError && (
-            <div className="mb-2 p-2 rounded-xl bg-rose-50 dark:bg-rose-950/70 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-[11px] font-medium flex items-center justify-between gap-1.5">
-              <span>{actionError}</span>
-              <button 
-                onClick={() => setActionError(null)} 
-                className="text-rose-500 hover:text-rose-700 p-0.5"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          )}
-
-          {/* Task List */}
-          <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
-            {tasks.map((task) => {
-              const taskOverdue = (task.slaStatus === 'SLA_BREACHED' || (task.slaStatus as string) === 'OVERDUE' || task.status === 'OVERDUE') || 
-                (task.dueAt && new Date(task.dueAt).getTime() < Date.now());
-              const isTaskLoading = actionLoadingTaskId === task.id;
-
-              return (
-                <div
-                  key={task.id}
-                  className={`p-2.5 rounded-xl border text-xs transition-colors ${
-                    taskOverdue 
-                      ? 'bg-rose-50/70 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800/60' 
-                      : 'bg-stone-50 dark:bg-stone-850 border-stone-200/80 dark:border-stone-750'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="font-bold text-stone-900 dark:text-stone-100 leading-snug">
-                      {task.title}
-                    </div>
-                    {taskOverdue ? (
-                      <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300">
-                        OVERDUE
-                      </span>
-                    ) : (
-                      <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold bg-stone-200 dark:bg-stone-800 text-stone-700 dark:text-stone-300">
-                        {task.priority}
-                      </span>
-                    )}
-                  </div>
-
-                  {task.description && (
-                    <p className="text-[11px] text-stone-600 dark:text-stone-400 mt-1 line-clamp-2 leading-relaxed">
-                      {task.description}
-                    </p>
-                  )}
-
-                  <div className="flex items-center justify-between text-[10px] text-stone-500 dark:text-stone-400 mt-2 pt-2 border-t border-stone-200/60 dark:border-stone-800">
-                    <div className="flex items-center gap-1 font-medium">
-                      <Clock className="w-3 h-3 text-stone-400" />
-                      <span>
-                        Due: {task.dueAt ? new Date(task.dueAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : `${task.startDate} ${task.startTime}`}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      {/* Snooze Dropdown Trigger */}
-                      <div className="relative">
-                        <button
-                          type="button"
-                          disabled={!!actionLoadingTaskId}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSnoozeMenuTaskId(snoozeMenuTaskId === task.id ? null : task.id);
-                          }}
-                          className={`px-2 py-1 bg-white dark:bg-stone-800 hover:bg-stone-100 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-300 rounded-lg text-[10px] font-semibold border border-stone-200 dark:border-stone-700 flex items-center gap-1 ${
-                            actionLoadingTaskId ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                          }`}
-                        >
-                          {isTaskLoading && actionType === 'snoozing' ? (
-                            <Loader2 className="w-2.5 h-2.5 animate-spin text-teal-600" />
-                          ) : (
-                            <Moon className="w-2.5 h-2.5 text-stone-400" />
-                          )}
-                          <span>{isTaskLoading && actionType === 'snoozing' ? 'Snoozing...' : 'Snooze'}</span>
-                        </button>
-
-                        {/* Snooze Options */}
-                        {snoozeMenuTaskId === task.id && !actionLoadingTaskId && (
-                          <div 
-                            className="absolute right-0 bottom-full mb-1 w-28 bg-white dark:bg-stone-800 rounded-xl shadow-lg border border-stone-200 dark:border-stone-700 py-1 z-30"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <button
-                              type="button"
-                              onClick={(e) => handleSnooze(task.id, 1, e)}
-                              className="w-full text-left px-2.5 py-1 text-[10px] hover:bg-stone-100 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-200 font-medium"
-                            >
-                              1 Hour
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => handleSnooze(task.id, 4, e)}
-                              className="w-full text-left px-2.5 py-1 text-[10px] hover:bg-stone-100 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-200 font-medium"
-                            >
-                              4 Hours
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => handleSnooze(task.id, 24, e)}
-                              className="w-full text-left px-2.5 py-1 text-[10px] hover:bg-stone-100 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-200 font-medium"
-                            >
-                              24 Hours
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Complete Button */}
-                      <button
-                        type="button"
-                        disabled={!!actionLoadingTaskId}
-                        onClick={(e) => handleComplete(task.id, e)}
-                        className={`px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors shadow-2xs ${
-                          actionLoadingTaskId ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                        }`}
-                      >
-                        {isTaskLoading && actionType === 'completing' ? (
-                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                        ) : (
-                          <CheckCircle2 className="w-2.5 h-2.5" />
-                        )}
-                        <span>{isTaskLoading && actionType === 'completing' ? 'Saving...' : 'Done'}</span>
-                      </button>
-                    </div>
-                  </div>
+          <div
+            className="fixed z-[9999] bg-white rounded-2xl shadow-2xl border border-slate-200/90 p-4 animate-in fade-in zoom-in-95 duration-150 text-left text-slate-800"
+            style={{
+              top: `${popoverCoords.top}px`,
+              left: `${popoverCoords.left}px`,
+              width: `${popoverCoords.width}px`,
+              maxHeight: '380px',
+              overflowY: 'auto'
+            }}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+          >
+            {/* Popover Header */}
+            <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
+              <div className="flex items-center space-x-2">
+                <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${colorStyles.badgeBg} ${colorStyles.badgeText}`}>
+                  <IconComponent className="w-3.5 h-3.5" />
                 </div>
-              );
-            })}
-          </div>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900">
+                    {count > 1 ? `${count} Active Tasks` : 'Operational Task'}
+                  </h4>
+                  <p className="text-[10px] text-slate-500">
+                    {entityReference || entityType}
+                  </p>
+                </div>
+              </div>
 
-          {/* Action Center Footer Link */}
-          {onOpenActionCenter && primaryTask && (
-            <div className="mt-2.5 pt-2 border-t border-stone-100 dark:border-stone-800 text-right">
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   setIsOpen(false);
-                  onOpenActionCenter(primaryTask);
                 }}
-                className="text-[11px] text-teal-700 dark:text-teal-400 hover:underline font-bold inline-flex items-center gap-1 cursor-pointer"
+                className="w-6 h-6 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex items-center justify-center cursor-pointer"
               >
-                <span>Manage in Action Center</span>
-                <ChevronRight className="w-3 h-3" />
+                <X className="w-3.5 h-3.5" />
               </button>
             </div>
-          )}
-        </div>
+
+            {/* Task list */}
+            <div className="mt-2.5 space-y-2.5 divide-y divide-slate-100">
+              {tasks.map(task => {
+                const isTaskOverdue = task.dueAt ? new Date(task.dueAt).getTime() < Date.now() : false;
+                const isTaskLoading = actionLoadingTaskId === task.id;
+
+                return (
+                  <div key={task.id} className="pt-2 first:pt-0 space-y-2">
+                    <div>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs font-bold text-slate-900 leading-snug">
+                          {task.title}
+                        </span>
+                        {isTaskOverdue && (
+                          <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-200 uppercase">
+                            Overdue
+                          </span>
+                        )}
+                      </div>
+
+                      {task.actionRequired && (
+                        <div className="mt-1 text-[11px] font-semibold text-[#007a66] bg-[#00C6A6]/10 px-2 py-0.5 rounded-md border border-[#00C6A6]/20 inline-block">
+                          Action: {task.actionRequired}
+                        </div>
+                      )}
+
+                      <div className="flex items-center space-x-2 text-[10px] text-slate-500 mt-1">
+                        <Clock className="w-3 h-3 text-slate-400" />
+                        <span>Due: {task.dueAt ? new Date(task.dueAt).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : `${task.startDate} ${task.startTime}`}</span>
+                      </div>
+                    </div>
+
+                    {/* Quick Task Actions: Complete & Snooze */}
+                    <div className="flex items-center justify-between pt-1">
+                      <button
+                        type="button"
+                        onClick={(e) => handleOpenActionCenter(task, e)}
+                        className="text-[10px] font-bold text-slate-600 hover:text-[#008f77] flex items-center space-x-1 cursor-pointer"
+                      >
+                        <span>Action Center</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </button>
+
+                      <div className="flex items-center space-x-1.5">
+                        {/* Snooze button & dropdown */}
+                        <div className="relative">
+                          <button
+                            type="button"
+                            disabled={!!actionLoadingTaskId}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSnoozeMenuTaskId(snoozeMenuTaskId === task.id ? null : task.id);
+                            }}
+                            className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-semibold flex items-center space-x-1 cursor-pointer"
+                          >
+                            <Moon className="w-2.5 h-2.5 text-slate-500" />
+                            <span>Snooze</span>
+                          </button>
+
+                          {snoozeMenuTaskId === task.id && (
+                            <div className="absolute right-0 bottom-full mb-1 w-28 bg-white rounded-xl shadow-xl border border-slate-200 py-1 z-50 divide-y divide-slate-100">
+                              <button
+                                type="button"
+                                onClick={(e) => handleSnooze(task.id, 1, e)}
+                                className="w-full text-left px-2.5 py-1 text-[11px] hover:bg-[#00C6A6]/10 text-slate-700 font-medium cursor-pointer"
+                              >
+                                1 Hour
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => handleSnooze(task.id, 4, e)}
+                                className="w-full text-left px-2.5 py-1 text-[11px] hover:bg-[#00C6A6]/10 text-slate-700 font-medium cursor-pointer"
+                              >
+                                4 Hours
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => handleSnooze(task.id, 24, e)}
+                                className="w-full text-left px-2.5 py-1 text-[11px] hover:bg-[#00C6A6]/10 text-slate-700 font-medium cursor-pointer"
+                              >
+                                24 Hours
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Complete button */}
+                        <button
+                          type="button"
+                          disabled={!!actionLoadingTaskId}
+                          onClick={(e) => handleComplete(task.id, e)}
+                          className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold flex items-center space-x-1 cursor-pointer shadow-2xs"
+                        >
+                          {isTaskLoading && actionType === 'completing' ? (
+                            <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="w-2.5 h-2.5" />
+                          )}
+                          <span>Done</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>,
+        document.body
       )}
     </div>
   );

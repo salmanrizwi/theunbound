@@ -10,6 +10,7 @@ import {
   SLAAutomationAuditLog, ActionCenterEntityType 
 } from '../../types';
 import { db } from '../../services/db';
+import { toast } from '../../services/toastService';
 import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { TaskModal } from './tasks/TaskModal';
 import { AutomaticFollowUpModal } from './tasks/AutomaticFollowUpModal';
@@ -68,7 +69,6 @@ export const CMSCalendarTasksManager: React.FC<CMSCalendarTasksManagerProps> = (
   const [ruleToEdit, setRuleToEdit] = useState<SLAAutomationRule | null>(null);
 
   const [taskToDelete, setTaskToDelete] = useState<CalendarTask | null>(null);
-  const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
 
   // Sync listener with db
   const refreshData = () => {
@@ -86,10 +86,9 @@ export const CMSCalendarTasksManager: React.FC<CMSCalendarTasksManagerProps> = (
     return () => unsub();
   }, []);
 
-  // Flash toast notice helper
+  // Flash toast notice helper via global toast
   const showToast = (msg: string) => {
-    setNoticeMessage(msg);
-    setTimeout(() => setNoticeMessage(null), 4000);
+    toast.info('Task Notice', msg);
   };
 
   // Safe Record Navigation
@@ -231,14 +230,36 @@ export const CMSCalendarTasksManager: React.FC<CMSCalendarTasksManagerProps> = (
   // Task actions: Create / Edit
   const handleSaveTask = (taskPayload: Partial<CalendarTask>) => {
     let saved: CalendarTask;
+    const shouldSync = taskPayload.syncWithGoogleCalendar === true;
+
     if (taskToEdit) {
+      const wasExplicitlySynced = taskToEdit.syncWithGoogleCalendar && (taskToEdit.isSyncedToGoogleCalendar || taskToEdit.googleCalendarEventId);
+      const isStillSynced = taskPayload.syncWithGoogleCalendar ?? taskToEdit.syncWithGoogleCalendar ?? false;
+
       saved = {
         ...taskToEdit,
         ...taskPayload,
+        syncWithGoogleCalendar: isStillSynced,
         updatedAt: new Date().toISOString()
       };
-      db.saveCalendarTask(saved, currentUser);
+      saved = db.saveCalendarTask(saved, currentUser);
       showToast(`Updated task: "${saved.title}"`);
+
+      if (isStillSynced) {
+        googleCalendarAutomation.explicitSyncTaskToGoogleCalendar(saved.id, currentUser).then(res => {
+          if (res.success) {
+            showToast(`Synchronized "${saved.title}" with Google Calendar`);
+          } else {
+            showToast(`Calendar sync notice: ${res.error || 'Saved task locally'}`);
+          }
+          refreshData();
+        });
+      } else if (wasExplicitlySynced && !isStillSynced) {
+        googleCalendarAutomation.removeTaskFromGoogleCalendar(saved.id, currentUser).then(() => {
+          showToast(`Removed "${saved.title}" from Google Calendar`);
+          refreshData();
+        });
+      }
     } else {
       const nowIso = new Date().toISOString();
       const newTask: CalendarTask = {
@@ -265,15 +286,61 @@ export const CMSCalendarTasksManager: React.FC<CMSCalendarTasksManagerProps> = (
         leadId: taskPayload.leadId,
         leadNumber: taskPayload.leadNumber,
         customerName: taskPayload.customerName,
+        syncWithGoogleCalendar: shouldSync,
+        googleCalendarSyncStatus: shouldSync ? 'SYNCING' : 'NOT_SYNCED',
         isSyncedToGoogleCalendar: false,
         createdAt: nowIso,
         updatedAt: nowIso
       };
       saved = db.saveCalendarTask(newTask, currentUser);
       showToast(`Created task: "${saved.title}"`);
+
+      if (shouldSync) {
+        googleCalendarAutomation.explicitSyncTaskToGoogleCalendar(saved.id, currentUser).then(res => {
+          if (res.success) {
+            showToast(`Task "${saved.title}" synchronized with Google Calendar`);
+          } else {
+            showToast(`Task created. Calendar sync notice: ${res.error || 'Check Google connection'}`);
+          }
+          refreshData();
+        });
+      }
     }
 
     setTaskToEdit(null);
+    refreshData();
+  };
+
+  // Google Calendar Explicit Sync Handlers
+  const handleSyncTaskToGoogleCalendar = async (task: CalendarTask) => {
+    showToast(`Syncing "${task.title}" to Google Calendar...`);
+    const res = await googleCalendarAutomation.explicitSyncTaskToGoogleCalendar(task.id, currentUser);
+    if (res.success) {
+      showToast(`"${task.title}" synced to Google Calendar`);
+    } else {
+      showToast(`Sync failed: ${res.error || 'Check Google connection'}`);
+    }
+    refreshData();
+  };
+
+  const handleRemoveTaskFromGoogleCalendar = async (task: CalendarTask) => {
+    const res = await googleCalendarAutomation.removeTaskFromGoogleCalendar(task.id, currentUser);
+    if (res.success) {
+      showToast(`Removed "${task.title}" from Google Calendar`);
+    } else {
+      showToast(`Notice: ${res.error || 'Could not remove event'}`);
+    }
+    refreshData();
+  };
+
+  const handleRetryTaskGoogleCalendarSync = async (task: CalendarTask) => {
+    showToast(`Retrying Google Calendar sync for "${task.title}"...`);
+    const res = await googleCalendarAutomation.retryTaskCalendarSync(task.id, currentUser);
+    if (res.success) {
+      showToast(`"${task.title}" successfully synchronized`);
+    } else {
+      showToast(`Retry failed: ${res.error || 'Check Google connection'}`);
+    }
     refreshData();
   };
 
@@ -390,19 +457,11 @@ export const CMSCalendarTasksManager: React.FC<CMSCalendarTasksManagerProps> = (
 
   return (
     <div className="space-y-6">
-      {/* Toast Alert Notice */}
-      {noticeMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white text-xs font-bold px-4 py-3 rounded-2xl shadow-xl border border-slate-700 flex items-center space-x-2 animate-in fade-in slide-in-from-bottom-2">
-          <CheckCircle className="w-4 h-4 text-[#00E5C0]" />
-          <span>{noticeMessage}</span>
-        </div>
-      )}
-
       {/* Main Header */}
       <div className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center space-x-2 text-[#008972] text-xs font-bold uppercase tracking-wider mb-1">
-            <CheckSquare className="w-4 h-4" />
+          <div className="flex items-center space-x-2 text-[#008f77] text-xs font-bold uppercase tracking-wider mb-1">
+            <CheckSquare className="w-4 h-4 text-[#00C6A6]" />
             <span>Work Planner & Operations Dispatch</span>
           </div>
           <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900">
@@ -418,7 +477,7 @@ export const CMSCalendarTasksManager: React.FC<CMSCalendarTasksManagerProps> = (
             onClick={() => setShowTemplatesBar(prev => !prev)}
             className="px-3.5 py-2.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer flex items-center space-x-1.5"
           >
-            <Sparkles className="w-4 h-4 text-[#008972]" />
+            <Sparkles className="w-4 h-4 text-[#00C6A6]" />
             <span>{showTemplatesBar ? 'Hide Templates' : 'Templates'}</span>
           </button>
 
@@ -428,7 +487,7 @@ export const CMSCalendarTasksManager: React.FC<CMSCalendarTasksManagerProps> = (
               setInitialTaskDate(todayStr);
               setShowTaskModal(true);
             }}
-            className="px-5 py-2.5 text-xs font-bold text-white bg-[#008972] hover:bg-[#00705d] rounded-xl shadow-xs transition-all cursor-pointer flex items-center space-x-2"
+            className="px-5 py-2.5 text-xs font-bold text-white bg-[#00C6A6] hover:bg-[#00a88d] rounded-xl shadow-xs transition-all cursor-pointer flex items-center space-x-2"
           >
             <Plus className="w-4 h-4" />
             <span>+ Add Task</span>
@@ -710,6 +769,9 @@ export const CMSCalendarTasksManager: React.FC<CMSCalendarTasksManagerProps> = (
                 setShowTaskModal(true);
               }}
               onToggleComplete={handleToggleComplete}
+              onSyncTask={handleSyncTaskToGoogleCalendar}
+              onRemoveSync={handleRemoveTaskFromGoogleCalendar}
+              onRetrySync={handleRetryTaskGoogleCalendarSync}
             />
           </div>
         )}

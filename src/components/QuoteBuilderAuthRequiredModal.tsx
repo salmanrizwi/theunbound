@@ -63,7 +63,7 @@ export const QuoteBuilderAuthRequiredModal: React.FC<QuoteBuilderAuthRequiredMod
           </div>
 
           <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-            Please login to access the Quote Builder.
+            Please sign in with your authorized B2B Agent account to access the wholesale Quote Builder.
           </p>
         </div>
 
@@ -84,7 +84,7 @@ export const QuoteBuilderAuthRequiredModal: React.FC<QuoteBuilderAuthRequiredMod
               onClick={handleLoginClick}
               className="w-full bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold py-2.5 sm:py-3 px-4 rounded-xl text-xs transition-all shadow-md shadow-[#00C6A6]/20 flex items-center justify-center space-x-2 cursor-pointer"
             >
-              <span>Login</span>
+              <span>Agent Login</span>
               <ArrowRight className="w-4 h-4" />
             </button>
 
@@ -95,7 +95,7 @@ export const QuoteBuilderAuthRequiredModal: React.FC<QuoteBuilderAuthRequiredMod
               className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-2.5 sm:py-3 px-4 rounded-xl text-xs transition-colors flex items-center justify-center space-x-2 cursor-pointer border border-slate-200"
             >
               <UserCheck className="w-4 h-4 text-slate-600" />
-              <span>Create Account</span>
+              <span>Register Agency</span>
             </button>
 
             {/* Close Button */}

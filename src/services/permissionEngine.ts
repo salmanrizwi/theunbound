@@ -5,7 +5,9 @@ import {
   CMSOperationsPermissions, 
   CMSContentPermissions, 
   CMSFinancePermissions, 
-  CMSSystemPermissions 
+  CMSSystemPermissions,
+  SupplierPermissions,
+  BookingOperationsPermissions
 } from '../types';
 
 export const MASTER_ADMIN_EMAIL = 'business@theunbound.in';
@@ -118,6 +120,33 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
           activityAnalysis: true,
           transactionAnalysis: true,
           export: true
+        },
+        suppliers: {
+          view: true,
+          create: true,
+          edit: true,
+          archive: true,
+          restore: true,
+          manage_contacts: true,
+          manage_services: true,
+          view_financial_details: true,
+          manage_financial_details: true,
+          view_activity_history: true
+        },
+        bookingOperations: {
+          view: true,
+          create_manual: true,
+          edit: true,
+          manage_service_items: true,
+          allocate_supplier: true,
+          view_supplier_prices: true,
+          manage_supplier_prices: true,
+          confirm_service_items: true,
+          generate_vouchers: true,
+          upload_invoices: true,
+          view_internal_financials: true,
+          override_confirmation: true,
+          manage_supplier_records: true
         }
       };
 
@@ -224,6 +253,33 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
           activityAnalysis: true,
           transactionAnalysis: false,
           export: false
+        },
+        suppliers: {
+          view: true,
+          create: true,
+          edit: true,
+          archive: false,
+          restore: false,
+          manage_contacts: true,
+          manage_services: true,
+          view_financial_details: false,
+          manage_financial_details: false,
+          view_activity_history: true
+        },
+        bookingOperations: {
+          view: true,
+          create_manual: true,
+          edit: true,
+          manage_service_items: true,
+          allocate_supplier: true,
+          view_supplier_prices: true,
+          manage_supplier_prices: true,
+          confirm_service_items: true,
+          generate_vouchers: true,
+          upload_invoices: true,
+          view_internal_financials: false,
+          override_confirmation: false,
+          manage_supplier_records: true
         }
       };
 
@@ -250,7 +306,19 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
         cmsContent: { enabled: false },
         cmsFinance: { enabled: false },
         cmsSystem: { enabled: false },
-        cmsSystemAnalysis: { enabled: false, view: false, userAnalysis: false, activityAnalysis: false, transactionAnalysis: false, export: false }
+        cmsSystemAnalysis: { enabled: false, view: false, userAnalysis: false, activityAnalysis: false, transactionAnalysis: false, export: false },
+        suppliers: {
+          view: false,
+          create: false,
+          edit: false,
+          archive: false,
+          restore: false,
+          manage_contacts: false,
+          manage_services: false,
+          view_financial_details: false,
+          manage_financial_details: false,
+          view_activity_history: false
+        }
       };
 
     case 'BUYER':
@@ -273,7 +341,19 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
         cmsContent: { enabled: false },
         cmsFinance: { enabled: false },
         cmsSystem: { enabled: false },
-        cmsSystemAnalysis: { enabled: false, view: false, userAnalysis: false, activityAnalysis: false, transactionAnalysis: false, export: false }
+        cmsSystemAnalysis: { enabled: false, view: false, userAnalysis: false, activityAnalysis: false, transactionAnalysis: false, export: false },
+        suppliers: {
+          view: false,
+          create: false,
+          edit: false,
+          archive: false,
+          restore: false,
+          manage_contacts: false,
+          manage_services: false,
+          view_financial_details: false,
+          manage_financial_details: false,
+          view_activity_history: false
+        }
       };
 
     case 'VIEWER':
@@ -942,7 +1022,119 @@ export function canUserAccessCMSSubTab(
     }
   }
 
+  if (subTabId === 'SUPPLIERS') {
+    return hasSupplierPermission(user, 'view');
+  }
+
   return true;
+}
+
+/**
+ * Evaluates whether a user has a specific granular Supplier Management permission.
+ * Strictly internal-only: Admin and internal Team Members/DMC Staff.
+ * External buyers and B2B agents are ALWAYS denied.
+ */
+export function hasSupplierPermission(
+  user: User | null | undefined, 
+  permission: keyof SupplierPermissions
+): boolean {
+  if (!user) return false;
+  if ((user.approvalStatus || 'APPROVED') !== 'APPROVED') return false;
+  if (isMasterAdmin(user)) return true;
+  if (user.role === 'ADMIN') return true;
+
+  // External users strictly have NO access
+  if (
+    user.role === 'BUYER' || 
+    user.role === 'B2B_AGENT' || 
+    (user as any).role === 'AGENT' ||
+    user.userType === 'BUYER' || 
+    user.userType === 'B2B_AGENT'
+  ) {
+    return false;
+  }
+
+  // Internal users (TEAM_MEMBER, DMC_STAFF)
+  if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF' || user.userType === 'TEAM_MEMBER') {
+    const perm = user.permissions?.suppliers?.[permission];
+    if (perm !== undefined) return Boolean(perm);
+
+    // Fallbacks for standard internal staff if not explicitly configured
+    if (
+      permission === 'view' || 
+      permission === 'create' || 
+      permission === 'edit' || 
+      permission === 'manage_contacts' || 
+      permission === 'manage_services' || 
+      permission === 'view_activity_history'
+    ) {
+      return true;
+    }
+    // Financial details, archive, restore require explicit permission
+    return false;
+  }
+
+  return false;
+}
+
+/**
+ * Evaluates whether a user has a specific granular Booking Operations permission.
+ * Handles both plain key format (e.g. 'allocate_supplier') and prefixed format (e.g. 'booking_operations.allocate_supplier').
+ * Strictly internal-only: Master Admin, Admin, and authorized internal Team Members / DMC Staff.
+ * External buyers and B2B agents are ALWAYS denied.
+ */
+export function hasBookingOperationsPermission(
+  user: User | null | undefined,
+  permission: keyof BookingOperationsPermissions | string
+): boolean {
+  if (!user) return false;
+  if ((user.approvalStatus || 'APPROVED') !== 'APPROVED') return false;
+  if (isMasterAdmin(user)) return true;
+  if (user.role === 'ADMIN') return true;
+
+  // External users strictly have NO access to operational supplier allocation or costs
+  if (
+    user.role === 'BUYER' ||
+    user.role === 'B2B_AGENT' ||
+    (user as any).role === 'AGENT' ||
+    user.userType === 'BUYER' ||
+    user.userType === 'B2B_AGENT' ||
+    user.role === 'VIEWER' ||
+    user.role === 'PUBLIC'
+  ) {
+    return false;
+  }
+
+  // Normalize prefix if present: "booking_operations.allocate_supplier" -> "allocate_supplier"
+  const cleanKey = permission.replace(/^booking_operations\./, '') as keyof BookingOperationsPermissions;
+
+  // Internal users (TEAM_MEMBER, DMC_STAFF)
+  if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF' || user.userType === 'TEAM_MEMBER') {
+    const opsPerms = user.permissions?.bookingOperations;
+    if (opsPerms && (cleanKey in opsPerms)) {
+      return Boolean(opsPerms[cleanKey]);
+    }
+
+    // Default internal permissions if not explicitly configured or restricted
+    if (
+      cleanKey === 'view' ||
+      cleanKey === 'create_manual' ||
+      cleanKey === 'edit' ||
+      cleanKey === 'manage_service_items' ||
+      cleanKey === 'allocate_supplier' ||
+      cleanKey === 'view_supplier_prices' ||
+      cleanKey === 'manage_supplier_prices' ||
+      cleanKey === 'confirm_service_items' ||
+      cleanKey === 'generate_vouchers' ||
+      cleanKey === 'upload_invoices' ||
+      cleanKey === 'manage_supplier_records'
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  return false;
 }
 
 /**

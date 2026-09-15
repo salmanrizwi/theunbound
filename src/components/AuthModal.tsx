@@ -31,11 +31,11 @@ import {
 export const AuthModal: React.FC = () => {
   const { isAuthModalOpen, closeAuthModal, authModalReason, login, register } = useAuth();
   
-  // User Category: External User by default
+  // User Category: External User (B2B Agent) by default
   const [userCategory, setUserCategory] = useState<UserCategory>('EXTERNAL');
   
-  // Specific role under active category
-  const [selectedExternalRole, setSelectedExternalRole] = useState<'BUYER' | 'B2B_AGENT'>('B2B_AGENT');
+  // Specific role under active category (External is strictly B2B_AGENT, no Direct Buyer)
+  const selectedExternalRole = 'B2B_AGENT';
   const [selectedInternalRole, setSelectedInternalRole] = useState<'ADMIN' | 'TEAM_MEMBER'>('ADMIN');
   
   const [authMode, setAuthMode] = useState<'LOGIN' | 'REGISTER' | 'FORGOT'>('LOGIN');
@@ -93,7 +93,6 @@ export const AuthModal: React.FC = () => {
       }
       if (authModalReason && (authModalReason.toLowerCase().includes('agent') || authModalReason.toLowerCase().includes('trade') || authModalReason.toLowerCase().includes('wholesale') || authModalReason.toLowerCase().includes('b2b'))) {
         setUserCategory('EXTERNAL');
-        setSelectedExternalRole('B2B_AGENT');
       }
     }
   }, [isAuthModalOpen, authModalReason]);
@@ -422,7 +421,7 @@ export const AuthModal: React.FC = () => {
               </div>
 
               <span className="text-[11px] font-semibold text-slate-500 shrink-0">
-                {activeRole === 'B2B_AGENT' ? '🏢 B2B Trade' : activeRole === 'BUYER' ? '👤 Buyer' : '🛡️ DMC Staff'}
+                {activeRole === 'B2B_AGENT' ? '🏢 B2B Trade' : '🛡️ DMC Staff'}
               </span>
             </div>
 
@@ -449,7 +448,7 @@ export const AuthModal: React.FC = () => {
                           : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
-                      External
+                      External (B2B)
                     </button>
                     <button
                       type="button"
@@ -470,56 +469,18 @@ export const AuthModal: React.FC = () => {
                 </div>
 
                 {userCategory === 'EXTERNAL' ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      id="role-select-b2b-agent"
-                      onClick={() => {
-                        setSelectedExternalRole('B2B_AGENT');
-                        setErrorMessage(null);
-                      }}
-                      className={`p-2 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between ${
-                        selectedExternalRole === 'B2B_AGENT'
-                          ? 'border-[#00C6A6] bg-[#00C6A6]/10 ring-1 ring-[#00C6A6]'
-                          : 'border-slate-200 bg-white hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="min-w-0 pr-1">
-                        <div className="flex items-center space-x-1.5">
-                          <Briefcase className="w-3.5 h-3.5 text-[#008972] shrink-0" />
-                          <span className="text-xs font-bold text-slate-900 truncate">B2B Agent</span>
-                        </div>
-                        <p className="text-[10px] text-slate-500 truncate mt-0.5">Wholesale rates</p>
+                  <div className="p-2.5 rounded-xl border border-[#00C6A6] bg-[#00C6A6]/10 flex items-center justify-between">
+                    <div className="min-w-0 pr-2">
+                      <div className="flex items-center space-x-1.5">
+                        <Briefcase className="w-3.5 h-3.5 text-[#008972] shrink-0" />
+                        <span className="text-xs font-bold text-slate-900 truncate">B2B Travel Agent / Tour Operator</span>
                       </div>
-                      {selectedExternalRole === 'B2B_AGENT' && (
-                        <BadgeCheck className="w-4 h-4 text-[#00C6A6] shrink-0" />
-                      )}
-                    </button>
-
-                    <button
-                      type="button"
-                      id="role-select-buyer"
-                      onClick={() => {
-                        setSelectedExternalRole('BUYER');
-                        setErrorMessage(null);
-                      }}
-                      className={`p-2 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between ${
-                        selectedExternalRole === 'BUYER'
-                          ? 'border-[#00C6A6] bg-[#00C6A6]/10 ring-1 ring-[#00C6A6]'
-                          : 'border-slate-200 bg-white hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="min-w-0 pr-1">
-                        <div className="flex items-center space-x-1.5">
-                          <UserIcon className="w-3.5 h-3.5 text-[#008972] shrink-0" />
-                          <span className="text-xs font-bold text-slate-900 truncate">Direct Buyer</span>
-                        </div>
-                        <p className="text-[10px] text-slate-500 truncate mt-0.5">Standard booking</p>
-                      </div>
-                      {selectedExternalRole === 'BUYER' && (
-                        <BadgeCheck className="w-4 h-4 text-[#00C6A6] shrink-0" />
-                      )}
-                    </button>
+                      <p className="text-[10px] text-slate-600 truncate mt-0.5">Wholesale net rates & B2B quote builder access</p>
+                    </div>
+                    <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-[#00C6A6] text-slate-950 shrink-0">
+                      <BadgeCheck className="w-3 h-3" />
+                      <span>B2B Only</span>
+                    </span>
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
@@ -745,8 +706,6 @@ export const AuthModal: React.FC = () => {
                         ? 'e.g. yourname@agencydomain.com'
                         : userCategory === 'INTERNAL'
                         ? 'officer@theunbound.in'
-                        : selectedExternalRole === 'BUYER'
-                        ? 'buyer@agency.com'
                         : 'partner@agency.com'
                     }
                     value={email}
@@ -847,7 +806,7 @@ export const AuthModal: React.FC = () => {
               {/* Forgot Password Guidance */}
               {authMode === 'FORGOT' && (
                 <p className="text-[11px] text-slate-500 leading-relaxed pt-1">
-                  Enter your registered agency or buyer email above. An authorized password reset token and verification link will be dispatched to your inbox.
+                  Enter your registered agency or staff email above. An authorized password reset link will be dispatched to your inbox.
                 </p>
               )}
             </div>
@@ -870,8 +829,8 @@ export const AuthModal: React.FC = () => {
                 ) : (
                   <>
                     <span className="truncate">
-                      {authMode === 'LOGIN' && `Sign In as ${userCategory === 'EXTERNAL' ? (selectedExternalRole === 'BUYER' ? 'Buyer' : 'B2B Agent') : (selectedInternalRole === 'ADMIN' ? 'Admin' : 'Team Member')}`}
-                      {authMode === 'REGISTER' && (userCategory === 'EXTERNAL' && selectedExternalRole === 'B2B_AGENT' ? 'Submit B2B Agent Profile for Review' : 'Complete Profile Registration')}
+                      {authMode === 'LOGIN' && `Sign In as ${userCategory === 'EXTERNAL' ? 'B2B Agent' : (selectedInternalRole === 'ADMIN' ? 'Admin' : 'Team Member')}`}
+                      {authMode === 'REGISTER' && (userCategory === 'EXTERNAL' ? 'Submit B2B Agent Profile for Review' : 'Complete Profile Registration')}
                       {authMode === 'FORGOT' && 'Send Password Reset'}
                     </span>
                     <ArrowRight className="w-4 h-4 shrink-0" />

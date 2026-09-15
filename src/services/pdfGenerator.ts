@@ -183,7 +183,7 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(0, 229, 192);
-    doc.text('THEUNBOUND DMC • BESPOKE ITINERARY PROPOSAL', margin + 3, currentY + 5);
+    doc.text('TRAVEL OPERATIONS • BESPOKE ITINERARY PROPOSAL', margin + 3, currentY + 5);
     doc.setTextColor(255, 255, 255);
     const refText = `REF: ${quote.quoteNumber || 'UBQ-2026'}${effectiveLeadId ? ` • LEAD: ${effectiveLeadId}` : ''}`;
     doc.text(refText, pageWidth - margin - 3, currentY + 5, { align: 'right' });
@@ -219,14 +219,14 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
-  const mainHeaderTitle = effectiveAgency ? effectiveAgency.toUpperCase() : 'THEUNBOUND DMC';
+  const mainHeaderTitle = effectiveAgency ? effectiveAgency.toUpperCase() : 'DESTINATION MANAGEMENT & OPERATIONS';
   doc.text(mainHeaderTitle, textStartX, currentY + 9);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(0, 229, 192); // Teal
   const subTitle = effectiveAgency 
-    ? `Authorized Travel Partner • In Association with TheUnbound Wholesale DMC Network`
+    ? `Authorized Travel Partner • In Association with Wholesale Ground Network`
     : `Destination Management Company • Direct Ground Logistics & Wholesale Hub`;
   doc.text(subTitle, textStartX, currentY + 15);
 
@@ -281,7 +281,8 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
   doc.text(tripStats, margin + 4, currentY + 18);
 
   // Right: Price Per Person Block
-  const pricePerPerson = quote.totalSellingPrice / Math.max(1, totalPax);
+  const effectiveSellingPrice = quote.finalCustomerSellingPrice || quote.final_customer_selling_price || quote.totalSellingPrice;
+  const pricePerPerson = effectiveSellingPrice / Math.max(1, totalPax);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(6.5);
   doc.setTextColor(148, 163, 184);
@@ -640,7 +641,7 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7);
   doc.setTextColor(15, 23, 42);
-  doc.text('THEUNBOUND GROUND OPERATIONS SERVICE STANDARDS:', margin + 4, currentY + 5);
+  doc.text('GROUND OPERATIONS SERVICE STANDARDS:', margin + 4, currentY + 5);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(6.5);
@@ -679,7 +680,7 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
   doc.setTextColor(0, 229, 192);
-  doc.text(formatCurrency(quote.totalSellingPrice, quote.currency), pageWidth - margin - 5, currentY + 12, { align: 'right' });
+  doc.text(formatCurrency(effectiveSellingPrice, quote.currency), pageWidth - margin - 5, currentY + 12, { align: 'right' });
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7);
@@ -723,7 +724,7 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
     doc.line(margin, pageHeight - 9, pageWidth - margin, pageHeight - 9);
 
     // Left Footer
-    doc.text('TheUnbound DMC Global Operations • Confidential Client Itinerary Quotation', margin, pageHeight - 5.5);
+    doc.text('Ground Operations Desk • Confidential Client Itinerary Quotation', margin, pageHeight - 5.5);
 
     // Right Footer
     doc.text(`Page ${i} of ${totalPages}`, pageWidth - margin, pageHeight - 5.5, { align: 'right' });
@@ -734,7 +735,7 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
 
 export function downloadQuotationPDF(options: PDFExportOptions): void {
   const doc = generateQuotationPDF(options);
-  const filename = `TheUnbound-Itinerary-${options.quote.quoteNumber || 'Proposal'}.pdf`;
+  const filename = `Itinerary-${options.quote.quoteNumber || 'Proposal'}.pdf`;
   doc.save(filename);
 
   // Section 32 Mandate: Track QUOTE_PDF_GENERATED communication event

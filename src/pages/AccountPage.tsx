@@ -312,8 +312,6 @@ export const AccountPage: React.FC<AccountPageProps> = ({
       case 'B2B_AGENT':
       case 'AGENT':
         return 'bg-[#00C6A6]/20 text-[#008f77] border-[#00C6A6]/40 font-bold';
-      case 'BUYER':
-        return 'bg-amber-100 text-amber-900 border-amber-300';
       default:
         return 'bg-slate-100 text-slate-700 border-slate-300';
     }
@@ -473,35 +471,31 @@ export const AccountPage: React.FC<AccountPageProps> = ({
             <span>Profile Picture & Identity</span>
           </button>
 
-          {user.role !== 'BUYER' && (
-            <>
-              <button
-                id="tab-account-company"
-                onClick={() => setActiveTab('COMPANY')}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
-                  activeTab === 'COMPANY'
-                    ? 'bg-[#00C6A6] text-slate-950 shadow-xs'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
-                }`}
-              >
-                <Building2 className="w-4 h-4" />
-                <span>Company & Agency Details</span>
-              </button>
+          <button
+            id="tab-account-company"
+            onClick={() => setActiveTab('COMPANY')}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
+              activeTab === 'COMPANY'
+                ? 'bg-[#00C6A6] text-slate-950 shadow-xs'
+                : 'text-slate-400 hover:text-white hover:bg-slate-900'
+            }`}
+          >
+            <Building2 className="w-4 h-4" />
+            <span>Company & Agency Details</span>
+          </button>
 
-              <button
-                id="tab-account-preferences"
-                onClick={() => setActiveTab('PREFERENCES')}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
-                  activeTab === 'PREFERENCES'
-                    ? 'bg-[#00C6A6] text-slate-950 shadow-xs'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
-                }`}
-              >
-                <Sparkles className="w-4 h-4" />
-                <span>Branding & Preferences</span>
-              </button>
-            </>
-          )}
+          <button
+            id="tab-account-preferences"
+            onClick={() => setActiveTab('PREFERENCES')}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 ${
+              activeTab === 'PREFERENCES'
+                ? 'bg-[#00C6A6] text-slate-950 shadow-xs'
+                : 'text-slate-400 hover:text-white hover:bg-slate-900'
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>Branding & Preferences</span>
+          </button>
 
           <button
             id="tab-account-security"

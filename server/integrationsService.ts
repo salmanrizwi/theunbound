@@ -526,7 +526,11 @@ export function createIntegrationsRouter(): Router {
     }
 
     // 3. Construct RFC 2822 MIME message
-    const sender = process.env.GOOGLE_WORKSPACE_EMAIL || 'TheUnbound DMC <business@theunbound.in>';
+    const defaultSender = 'Travel Operations <business@theunbound.in>';
+    let sender = process.env.GOOGLE_WORKSPACE_EMAIL || defaultSender;
+    if (/the\s*unbound/i.test(sender)) {
+      sender = sender.replace(/the\s*unbound\s*(dmc)?/gi, 'Travel Operations').trim();
+    }
     const emailHeaders = [
       `To: ${to}`,
       `From: ${sender}`,

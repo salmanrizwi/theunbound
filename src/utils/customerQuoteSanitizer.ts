@@ -1,4 +1,13 @@
-import { Quotation, QuotationOption, TripRouteHub } from '../types';
+import { 
+  Quotation, 
+  QuotationOption, 
+  TripRouteHub, 
+  Product, 
+  QuoteItem, 
+  Booking, 
+  PricingCalculationResult, 
+  AgentPricingResponse 
+} from '../types';
 import { formatCurrency } from '../services/pricingEngine';
 
 export interface CustomerSanitizedQuote {
@@ -272,8 +281,8 @@ export function sanitizeQuoteForCustomer(
   }
 
   // Sender details
-  const senderName = userOverrideBranding?.name || quote.agentName || 'TheUnbound Travel Consultant';
-  const senderAgency = userOverrideBranding?.agency || quote.agentAgency || quote.agentCompany || 'TheUnbound Luxury DMC';
+  const senderName = userOverrideBranding?.name || quote.agentName || 'Travel Consultant';
+  const senderAgency = userOverrideBranding?.agency || quote.agentAgency || quote.agentCompany || 'Ground Operations Desk';
   const senderContact = userOverrideBranding?.phone || userOverrideBranding?.email || quote.agentPhone || quote.agentEmail || '';
 
   return {
@@ -356,4 +365,303 @@ export function verifyNoCommercialLeak(message: string): { isSafe: boolean; dete
     isSafe: detectedTerms.length === 0,
     detectedTerms
   };
+}
+
+/**
+ * Sanitizes a full PricingCalculationResult into an AgentPricingResponse.
+ * STRICT SECURITY: Completely strips all nett prices, wholesale markups,
+ * supplier costs, DMC margins, and vehicle net cost breakdowns.
+ */
+export function sanitizePricingResultForAgent(
+  calc: PricingCalculationResult | AgentPricingResponse
+): AgentPricingResponse {
+  if (!calc) {
+    return {
+      productId: '',
+      productName: '',
+      pricingTier: 'B2B',
+      pax: { adults: 1, children: 0, infants: 0, totalPax: 1 },
+      travelDate: '',
+      currency: 'USD',
+      adultsSubtotalSelling: 0,
+      childrenSubtotalSelling: 0,
+      infantsSubtotalSelling: 0,
+      addonsSubtotalSelling: 0,
+      adultPricePerPax: 0,
+      childPricePerPax: 0,
+      finalTotalSellingPrice: 0,
+      sellingPriceFinal: 0,
+      pricePerPerson: 0
+    };
+  }
+
+  // Safe vehicle details without net costs
+  let safeVehicleDetails: AgentPricingResponse['vehicleDetails'] = undefined;
+  if (calc.vehicleDetails) {
+    safeVehicleDetails = {
+      vehicleName: calc.vehicleDetails.vehicleName,
+      vehicleModel: calc.vehicleDetails.vehicleModel,
+      vehicleType: calc.vehicleDetails.vehicleType,
+      maxSeats: calc.vehicleDetails.maxSeats,
+      occupiedSeats: calc.vehicleDetails.occupiedSeats,
+      vehiclesAllocated: calc.vehicleDetails.vehiclesAllocated,
+      capacityExceeded: calc.vehicleDetails.capacityExceeded,
+      capacityErrorMessage: calc.vehicleDetails.capacityErrorMessage,
+      seatBreakdown: calc.vehicleDetails.seatBreakdown,
+      allowMultipleVehicles: calc.vehicleDetails.allowMultipleVehicles
+    };
+  }
+
+  return {
+    productId: calc.productId,
+    productName: calc.productName,
+    pricingTier: calc.pricingTier,
+    pax: {
+      adults: calc.pax?.adults || 0,
+      children: calc.pax?.children || 0,
+      infants: calc.pax?.infants || 0,
+      totalPax: calc.pax?.totalPax || (calc.pax?.adults || 0) + (calc.pax?.children || 0) + (calc.pax?.infants || 0)
+    },
+    travelDate: calc.travelDate || '',
+    currency: calc.currency || 'USD',
+
+    // Customer-facing Selling Prices ONLY
+    adultsSubtotalSelling: calc.adultsSubtotalSelling ?? 0,
+    childrenSubtotalSelling: calc.childrenSubtotalSelling ?? 0,
+    infantsSubtotalSelling: calc.infantsSubtotalSelling ?? 0,
+    addonsSubtotalSelling: calc.addonsSubtotalSelling ?? 0,
+    adultPricePerPax: calc.adultPricePerPax ?? 0,
+    childPricePerPax: calc.childPricePerPax ?? 0,
+
+    finalTotalSellingPrice: calc.finalTotalSellingPrice ?? calc.sellingPriceFinal ?? 0,
+    sellingPriceFinal: calc.sellingPriceFinal ?? calc.finalTotalSellingPrice ?? 0,
+    pricePerPerson: calc.pricePerPerson ?? 0,
+
+    taxAmount: (calc as any).taxAmount,
+    serviceFee: (calc as any).serviceFee,
+    discountAmount: (calc as any).discountAmount,
+
+    isCapacityBased: calc.isCapacityBased,
+    pricingMethod: calc.pricingMethod,
+    vehicleDetails: safeVehicleDetails,
+
+    rateEffectiveTo: calc.rateEffectiveTo,
+    isAuthoritative: calc.isAuthoritative ?? true,
+    calculatedAt: calc.calculatedAt || new Date().toISOString()
+  };
+}
+
+/**
+ * Sanitizes a Product object for B2B Agents.
+ * STRICT SECURITY: Removes supplier nett rates, supplier codes, and internal markups.
+ */
+export function sanitizeProductForAgent(product: Product): Product {
+  if (!product) return product;
+  const clone: Product = JSON.parse(JSON.stringify(product));
+
+  delete (clone as any).adultNetPrice;
+  delete (clone as any).adultNettCost;
+  delete (clone as any).childNetPrice;
+  delete (clone as any).childNettCost;
+  delete (clone as any).infantNetPrice;
+  delete (clone as any).infantNettCost;
+  delete (clone as any).defaultMarkupPercent;
+  delete (clone as any).b2bAgentMarkupPercent;
+  delete (clone as any).buyerMarkupPercent;
+  delete (clone as any).supplierProductCode;
+  delete (clone as any).supplierId;
+  delete (clone as any).supplierName;
+  delete (clone as any).supplierEmail;
+  delete (clone as any).supplierPhone;
+  delete (clone as any).supplierType;
+  delete (clone as any).unitVehicleNetCost;
+  delete (clone as any).internalNotes;
+
+  // Sanitize addons if present
+  if (clone.addons && Array.isArray(clone.addons)) {
+    clone.addons = clone.addons.map(addon => {
+      const a = { ...addon };
+      delete (a as any).netPrice;
+      delete (a as any).costPrice;
+      return a;
+    });
+  }
+
+  // Ensure selling price is the visible starting price
+  if ((clone as any).pricingTiers?.b2b?.adultSellingPrice) {
+    (clone as any).sellingPriceStartingFrom = (clone as any).pricingTiers.b2b.adultSellingPrice;
+  }
+
+  return clone;
+}
+
+/**
+ * Sanitizes an individual QuoteItem for B2B Agents.
+ */
+export function sanitizeQuoteItemForAgent(item: QuoteItem): QuoteItem {
+  if (!item) return item;
+  const clone: QuoteItem = JSON.parse(JSON.stringify(item));
+
+  if (clone.product) {
+    clone.product = sanitizeProductForAgent(clone.product);
+  }
+
+  if (clone.calculation) {
+    clone.calculation = sanitizePricingResultForAgent(clone.calculation);
+  }
+
+  if (clone.manualHotelDetails) {
+    delete (clone.manualHotelDetails as any).netRate;
+    delete (clone.manualHotelDetails as any).costPerNight;
+    delete (clone.manualHotelDetails as any).supplierCost;
+  }
+
+  return clone;
+}
+
+/**
+ * Sanitizes a Quotation object into a pure Agent-facing representation.
+ * STRICT SECURITY:
+ * - Deletes totalNetCost, totalMargin, internalNettCost, internalMarkup, agentMarkup, internalProfit.
+ * - Deletes private operational notes and rate snapshots.
+ * - Sanitizes all items and options to remove net costs.
+ */
+export function sanitizeQuoteForAgent(quote: Quotation): Quotation {
+  if (!quote) return quote;
+  const clone: Quotation = JSON.parse(JSON.stringify(quote));
+
+  // Authoritative Agent-Facing Pricing Preservation (Section 5 & 8)
+  const baseFinalSellingPrice = clone.baseFinalSellingPrice ?? clone.base_final_selling_price ?? clone.totalSellingPrice;
+  const agentMarginType = clone.agentMarginType ?? clone.agent_margin_type ?? 'PERCENTAGE';
+  const agentMarginValue = clone.agentMarginValue ?? clone.agent_margin_value ?? (clone.overallMarkupPercent ?? 0);
+  const agentMarginAmount = clone.agentMarginAmount ?? clone.agent_margin_amount ?? (
+    agentMarginType === 'PERCENTAGE'
+      ? Math.round(baseFinalSellingPrice * (agentMarginValue / 100))
+      : Math.round(agentMarginValue)
+  );
+  const finalCustomerSellingPrice = clone.finalCustomerSellingPrice ?? clone.final_customer_selling_price ?? (baseFinalSellingPrice + agentMarginAmount);
+
+  // Set Agent-facing fields explicitly
+  clone.baseFinalSellingPrice = baseFinalSellingPrice;
+  clone.base_final_selling_price = baseFinalSellingPrice;
+  clone.baseFinalSellingPriceCurrency = clone.baseFinalSellingPriceCurrency || clone.currency;
+  clone.base_final_selling_price_currency = clone.base_final_selling_price_currency || clone.currency;
+  clone.agentMarginType = agentMarginType;
+  clone.agent_margin_type = agentMarginType;
+  clone.agentMarginValue = agentMarginValue;
+  clone.agent_margin_value = agentMarginValue;
+  clone.agentMarginAmount = agentMarginAmount;
+  clone.agent_margin_amount = agentMarginAmount;
+  clone.finalCustomerSellingPrice = finalCustomerSellingPrice;
+  clone.final_customer_selling_price = finalCustomerSellingPrice;
+  clone.totalSellingPrice = finalCustomerSellingPrice;
+
+  // Strict Security Isolation: Strip internal commercial totals, rates, and supplier data (Section 5)
+  delete (clone as any).totalNetCost;
+  delete (clone as any).totalMargin;
+  delete (clone as any).internalNettCost;
+  delete (clone as any).internalMarkup;
+  delete (clone as any).agentMarkup;
+  delete (clone as any).internalProfit;
+  delete (clone as any).supplierCost;
+  delete (clone as any).rateSnapshot;
+  delete (clone as any).commercialNotes;
+  delete (clone as any).operationalRemarks;
+  delete (clone as any).customOperationalRemarks;
+  delete (clone as any).pricingFormulas;
+  delete (clone as any).supplierRates;
+
+  // Sanitize items
+  if (clone.items && Array.isArray(clone.items)) {
+    clone.items = clone.items.map(sanitizeQuoteItemForAgent);
+  }
+
+  // Sanitize quotation options if present
+  if (clone.options && Array.isArray(clone.options)) {
+    clone.options = clone.options.map(option => {
+      const optClone: QuotationOption = JSON.parse(JSON.stringify(option));
+      delete (optClone as any).totalNetCost;
+      delete (optClone as any).totalMargin;
+      delete (optClone as any).internalNettCost;
+      delete (optClone as any).internalMarkup;
+      delete (optClone as any).internalProfit;
+      delete (optClone as any).supplierCost;
+      if (optClone.items && Array.isArray(optClone.items)) {
+        optClone.items = optClone.items.map(sanitizeQuoteItemForAgent);
+      }
+      return optClone;
+    });
+  }
+
+  return clone;
+}
+
+/**
+ * Sanitizes a Booking object for B2B Agents.
+ * STRICT SECURITY:
+ * - Strips all totalNetCost, grossProfit, grossMarginPercent, internalNettCost, supplier allocations.
+ * - Strips all supplier/net fields from items.
+ * - Returns strictly final selling prices.
+ */
+export function sanitizeBookingForAgent(b: Booking): Booking {
+  if (!b) return b;
+  const clone: Booking = JSON.parse(JSON.stringify(b));
+
+  delete clone.totalNetCost;
+  delete clone.grossProfit;
+  delete clone.grossMarginPercent;
+  delete (clone as any).internalNettCost;
+  delete (clone as any).internalMarkup;
+  delete (clone as any).agentMarkup;
+  delete (clone as any).internalProfit;
+  delete (clone as any).adminMarkup;
+  delete (clone as any).supplierCost;
+  delete (clone as any).supplierTotalCost;
+  delete clone.supplierAllocations;
+  delete clone.supplierRequests;
+  delete clone.operationalConfirmationOverride;
+
+  if (clone.items && Array.isArray(clone.items)) {
+    clone.items = clone.items.map(it => {
+      delete it.supplierPrice;
+      delete it.supplierCurrency;
+      delete it.supplierPriceType;
+      delete it.supplierAdultPrice;
+      delete it.supplierChildPrice;
+      delete it.supplierInfantPrice;
+      delete it.supplierQuantity;
+      delete it.supplierTaxAmount;
+      delete it.supplierAdditionalFees;
+      delete it.supplierDiscount;
+      delete it.supplierTotalCost;
+      delete it.supplierPricingNotes;
+      delete it.supplierPriceLastUpdatedAt;
+      delete it.supplierPriceLastUpdatedBy;
+      delete it.supplierPriceChangeReason;
+      delete it.supplierPriceVersion;
+      delete it.supplierPriceHistory;
+      delete it.supplierPriceTax;
+      delete it.supplierPriceFee;
+      delete it.supplierPriceDiscount;
+      delete it.supplierPaymentCutoffDate;
+      delete it.supplierCancellationDeadline;
+      delete it.supplierPriceValidityDate;
+      delete it.supplierPriceSource;
+      delete it.internalPricingNotes;
+      delete it.internalNotes;
+      delete it.internalOpsNotes;
+      delete it.unitNetPrice;
+      delete (it as any).costPrice;
+      delete (it as any).netCost;
+      return it;
+    });
+  }
+
+  if (clone.uploadedInvoices && Array.isArray(clone.uploadedInvoices)) {
+    clone.uploadedInvoices = clone.uploadedInvoices.filter(
+      inv => inv.invoiceType !== 'Supplier Invoice'
+    );
+  }
+
+  return clone;
 }

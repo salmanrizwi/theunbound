@@ -19,127 +19,125 @@ export const DEFAULT_LEAD_STAGES: LeadStageConfig[] = [
   {
     id: 'NEW_ENQUIRY',
     name: 'New Enquiry',
+    description: 'Fresh inquiries from travelers, website forms, and partner inquiries',
     order: 1,
     color: '#6366F1', // Indigo
     probability: 10,
     slaDurationHours: 4,
     isActive: true,
+    isOpen: true,
     defaultLeadStatus: 'NEW'
   },
   {
     id: 'CONTACTED',
-    name: 'Contacted',
+    name: 'Contact Required',
+    description: 'Initial contact and traveler consultation needed',
     order: 2,
     color: '#3B82F6', // Blue
-    probability: 20,
+    probability: 25,
     slaDurationHours: 12,
     isActive: true,
+    isOpen: true,
+    autoTaskOnEnter: 'Contact new enquiry',
+    autoTaskHours: 2,
     defaultLeadStatus: 'CONTACTED'
   },
   {
-    id: 'QUALIFICATION_REQUIRED',
-    name: 'Qualification Required',
-    order: 3,
-    color: '#EC4899', // Pink
-    probability: 30,
-    slaDurationHours: 24,
-    isActive: true,
-    defaultLeadStatus: 'QUALIFIED'
-  },
-  {
     id: 'REQUIREMENTS_COLLECTED',
-    name: 'Requirements Collected',
-    order: 4,
+    name: 'Requirements Pending',
+    description: 'Detailed itinerary preferences, passenger counts, and travel dates required',
+    order: 3,
     color: '#8B5CF6', // Purple
-    probability: 40,
+    probability: 35,
     slaDurationHours: 24,
     isActive: true,
+    isOpen: true,
+    autoTaskOnEnter: 'Request missing travel requirements',
+    autoTaskHours: 4,
     defaultLeadStatus: 'QUALIFIED'
   },
   {
     id: 'PLANNING_IN_PROGRESS',
-    name: 'Planning in Progress',
-    order: 5,
-    color: '#14B8A6', // Teal
-    probability: 50,
-    slaDurationHours: 36,
-    isActive: true,
-    defaultLeadStatus: 'QUOTE_CREATED'
-  },
-  {
-    id: 'QUOTE_DRAFTED',
-    name: 'Quote Drafted',
-    order: 6,
+    name: 'Quote in Preparation',
+    description: 'Custom itinerary planning, accommodation sourcing, and quote drafting',
+    order: 4,
     color: '#06B6D4', // Cyan
-    probability: 60,
+    probability: 50,
     slaDurationHours: 24,
     isActive: true,
+    isOpen: true,
+    autoTaskOnEnter: 'Prepare quotation proposal',
+    autoTaskHours: 6,
     defaultLeadStatus: 'QUOTE_CREATED'
   },
   {
     id: 'QUOTE_SENT',
     name: 'Quote Sent',
-    order: 7,
+    description: 'Quotation published and delivered to buyer/agent for review',
+    order: 5,
     color: '#0EA5E9', // Sky
-    probability: 70,
+    probability: 65,
     slaDurationHours: 48,
     isActive: true,
+    isOpen: true,
     defaultLeadStatus: 'QUOTED'
   },
   {
     id: 'FOLLOW_UP_REQUIRED',
-    name: 'Follow-up Required',
-    order: 8,
+    name: 'Follow-Up Required',
+    description: 'Scheduled follow-up on sent proposal or downloaded quote',
+    order: 6,
     color: '#F59E0B', // Amber
     probability: 70,
     slaDurationHours: 48,
     isActive: true,
+    isOpen: true,
+    autoTaskOnEnter: 'Follow up on quotation',
+    autoTaskHours: 24,
     defaultLeadStatus: 'FOLLOW_UP'
   },
   {
     id: 'NEGOTIATION',
-    name: 'Negotiation',
-    order: 9,
+    name: 'Negotiation / Revision',
+    description: 'Itinerary adjustments, dates/hotel changes, or pricing revisions',
+    order: 7,
     color: '#D97706', // Warm Amber
     probability: 80,
     slaDurationHours: 72,
     isActive: true,
+    isOpen: true,
     defaultLeadStatus: 'FOLLOW_UP'
   },
   {
     id: 'BOOKING_EXPECTED',
-    name: 'Booking Expected',
-    order: 10,
+    name: 'Booking Pending',
+    description: 'Quote accepted; finalizing passenger details and booking deposit',
+    order: 8,
     color: '#10B981', // Emerald
     probability: 90,
     slaDurationHours: 48,
     isActive: true,
+    isOpen: true,
     defaultLeadStatus: 'BOOKING_SUBMITTED'
   },
   {
-    id: 'BOOKING_CONFIRMED',
-    name: 'Booking Confirmed',
-    order: 11,
-    color: '#059669', // Deep Emerald
-    probability: 95,
-    slaDurationHours: 24,
-    isActive: true,
-    defaultLeadStatus: 'CONFIRMED'
-  },
-  {
     id: 'WON',
-    name: 'Won',
-    order: 12,
-    color: '#047857', // Forest
+    name: 'Converted',
+    description: 'Booking confirmed and transferred to ground operations roster',
+    order: 9,
+    color: '#059669', // Deep Emerald
     probability: 100,
     isActive: true,
     isWon: true,
+    autoTaskOnEnter: 'Complete booking handover',
+    autoTaskHours: 12,
     defaultLeadStatus: 'WON'
   },
   {
     id: 'LOST',
     name: 'Lost',
-    order: 13,
+    description: 'Lead declined, trip postponed indefinitely, or unresponsive',
+    order: 10,
     color: '#EF4444', // Red
     probability: 0,
     isActive: true,
@@ -149,21 +147,13 @@ export const DEFAULT_LEAD_STAGES: LeadStageConfig[] = [
   {
     id: 'ON_HOLD',
     name: 'On Hold',
-    order: 14,
+    description: 'Awaiting delayed decision, visa clearance, or flexible dates',
+    order: 11,
     color: '#64748B', // Slate
-    probability: 25,
+    probability: 20,
     isActive: true,
+    isOnHold: true,
     defaultLeadStatus: 'FOLLOW_UP'
-  },
-  {
-    id: 'INVALID_OR_DUPLICATE',
-    name: 'Invalid or Duplicate',
-    order: 15,
-    color: '#94A3B8', // Muted Slate
-    probability: 0,
-    isActive: true,
-    isLost: true,
-    defaultLeadStatus: 'ARCHIVED'
   }
 ];
 
@@ -290,7 +280,7 @@ export const CUSTOMER_PROGRESS_STAGES: CustomerProgressStageDef[] = [
     stepNumber: 14,
     label: 'Trip Completed',
     customerTitle: 'Journey Completed',
-    customerDescription: 'Thank you for traveling with TheUnbound. We hope your travel memories were unforgettable.',
+    customerDescription: 'Thank you for traveling with us. We hope your travel memories were unforgettable.',
     color: '#0F766E',
     isTerminal: true
   },

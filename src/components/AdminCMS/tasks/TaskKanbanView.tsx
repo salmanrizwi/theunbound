@@ -114,7 +114,11 @@ export const TaskKanbanView: React.FC<TaskKanbanViewProps> = ({
                         </h4>
                         {(task.description || task.notes) && (
                           <p className="text-[11px] text-slate-500 line-clamp-2 mt-1">
-                            {task.description || task.notes}
+                            {typeof task.description === 'string'
+                              ? task.description
+                              : typeof task.notes === 'string'
+                                ? task.notes
+                                : ''}
                           </p>
                         )}
                       </div>

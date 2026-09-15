@@ -383,7 +383,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           <div className="flex items-center space-x-2 text-emerald-900 font-medium">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
             <span>
-              <strong>Automated Notification:</strong> An instant confirmation email will be sent to both you and TheUnbound DMC Team. Your confirmed travel voucher will be updated in <strong>24–48 hours</strong>.
+              <strong>Automated Notification:</strong> An instant confirmation email will be sent to both you and our Operations Team. Your confirmed travel voucher will be updated in <strong>24–48 hours</strong>.
             </span>
           </div>
         </div>
@@ -708,7 +708,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             <ShieldCheck className="w-5 h-5 text-[#008972] shrink-0 mt-0.5" />
             <div className="space-y-1">
               <span className="font-bold text-slate-900 block">
-                TheUnbound Direct DMC Operational Protocol
+                Direct Ground Operations Protocol
               </span>
               <p className="text-slate-600 text-[11px] leading-relaxed">
                 By submitting this booking request, our ground operations desk immediately reserves roster allotments. An automated confirmation receipt will be dispatched to <strong>{email || 'your email'}</strong> and <strong>sales@theunbound.in</strong>. Your official voucher and final status will be updated within 24–48 hours.
@@ -730,7 +730,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 className="mt-0.5 w-4 h-4 rounded text-[#00C6A6] focus:ring-[#00C6A6] border-slate-300"
               />
               <span className="leading-snug text-[11px]">
-                I confirm traveler logistics are accurate and agree to TheUnbound's{' '}
+                I confirm traveler logistics are accurate and agree to the{' '}
                 <a
                   href="/terms"
                   target="_blank"

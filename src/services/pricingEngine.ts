@@ -1,7 +1,8 @@
-import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, Product, User, UserRole, HotelRate, B2BPackage, FXRateDetails } from '../types';
+import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, AgentPricingResponse, Product, User, UserRole, HotelRate, B2BPackage, FXRateDetails } from '../types';
 import { currencyEngine, convertCurrency as engineConvert, formatCurrency as engineFormat, getExchangeRateInfo, BASELINE_USD_RATES } from './currencyEngine';
 import { AppDatabase } from './db';
 import { hotelToProduct } from '../utils/hotelHelpers';
+import { sanitizePricingResultForAgent } from '../utils/customerQuoteSanitizer';
 
 // Standardized exchange rate base: 1 USD
 export const EXCHANGE_RATES: Record<CurrencyCode, number> = {
@@ -630,6 +631,22 @@ export function calculateProductPrice(
     pricingRequestId: `PRQ-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
     calculatedAt: new Date().toISOString()
   };
+}
+
+/**
+ * Authoritative Customer-Facing Pricing for B2B Agents
+ * Returns sanitized AgentPricingResponse with ZERO internal net cost or commercial margin fields.
+ */
+export function calculateProductPriceForAgent(
+  product: Product,
+  request: PricingCalculationRequest
+): AgentPricingResponse {
+  const fullResult = calculateProductPrice(product, {
+    ...request,
+    userRole: 'B2B_AGENT',
+    pricingTier: 'B2B'
+  });
+  return sanitizePricingResultForAgent(fullResult);
 }
 
 /**

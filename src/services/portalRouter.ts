@@ -55,11 +55,24 @@ export function parseRoute(pathString?: string): ParsedRoute {
   // B2B Namespace
   if (normalized.startsWith('/b2b')) {
     const segments = normalized.replace(/^\/b2b\/?/, '').split('/').filter(Boolean);
+    let subTab = segments[0] || 'home';
+    let param = segments[1];
+
+    // Canonical redirect for Assigned Leads:
+    // Any legacy route (/b2b/leads, /b2b/assigned-leads) redirects to canonical /b2b/crm
+    if (subTab === 'leads' || subTab === 'assigned-leads') {
+      subTab = 'crm';
+      param = 'assigned-leads';
+    } else if (subTab === 'customers') {
+      subTab = 'crm';
+      param = 'clients';
+    }
+
     return {
       namespace: 'B2B',
-      pathname: normalized,
-      subTab: segments[0] || 'home',
-      param: segments[1],
+      pathname: (segments[0] === 'leads' || segments[0] === 'assigned-leads') ? '/b2b/crm' : normalized,
+      subTab,
+      param,
       rawPath: normalized
     };
   }
@@ -97,6 +110,15 @@ export function parseRoute(pathString?: string): ParsedRoute {
     subTab = 'account';
   } else if (first === 'dashboard') {
     subTab = 'dashboard';
+  } else if (first === 'assigned-leads' || first === 'leads') {
+    // Redirect standalone assigned leads route to canonical B2B CRM path
+    return {
+      namespace: 'B2B',
+      pathname: '/b2b/crm',
+      subTab: 'crm',
+      param: 'assigned-leads',
+      rawPath: normalized
+    };
   } else {
     subTab = first;
   }
@@ -174,10 +196,7 @@ export function resolvePostLoginDestination(user: User, intendedPath?: string | 
     return '/admin';
   }
 
-  // 3. BUYER LOGIN -> Buyer Portal only
-  if (target && !target.startsWith('/b2b') && !target.startsWith('/admin') && !target.startsWith('/cms')) {
-    return target;
-  }
+  // 3. LEGACY / UNSUPPORTED BUYER ACCESS -> Redirect to public home
   return '/';
 }
 
@@ -194,6 +213,16 @@ export interface RouteAccessResult {
 export function validateRouteAccess(user: User | null, pathString?: string): RouteAccessResult {
   const route = parseRoute(pathString);
   const isAuthenticated = !!user;
+
+  // Block any legacy or cached accounts with BUYER role across all routes
+  if (isAuthenticated && (user.role === 'BUYER' || (user as any).userType === 'BUYER')) {
+    return {
+      allowed: false,
+      reason: 'ACCESS_RESTRICTED',
+      message: 'Direct buyer accounts are not supported. TheUnbound operates exclusively for authorized B2B travel partners.',
+      redirectPath: '/'
+    };
+  }
 
   // 1. PUBLIC / UNPROTECTED ROUTES (Buyer portal public pages)
   if (route.namespace === 'BUYER') {
@@ -212,7 +241,7 @@ export function validateRouteAccess(user: User | null, pathString?: string): Rou
       return {
         allowed: false,
         reason: 'ACCESS_RESTRICTED',
-        message: 'Operations Officers and Administrators operate within the TheUnbound CMS Operations Engine.',
+        message: 'Operations Officers and Administrators operate within the CMS Operations Engine.',
         redirectPath: '/admin'
       };
     }

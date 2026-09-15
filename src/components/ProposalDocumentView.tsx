@@ -384,7 +384,7 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
               Package Rate per Person
             </span>
             <div className="text-2xl font-black font-mono text-[#00E5C0]">
-              {formatCurrency(quote.totalSellingPrice / Math.max(1, effectivePax), quote.currency)}
+              {formatCurrency((quote.finalCustomerSellingPrice || (quote as any).final_customer_selling_price || quote.totalSellingPrice) / Math.max(1, effectivePax), quote.currency)}
             </div>
             <span className="text-[10px] text-slate-400">Inclusive of all ground taxes</span>
           </div>
@@ -780,10 +780,10 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
 
         <div className="text-right shrink-0 space-y-1">
           <div className="text-3xl sm:text-4xl font-black font-mono text-[#00E5C0]">
-            {formatCurrency(quote.totalSellingPrice, quote.currency)}
+            {formatCurrency(quote.finalCustomerSellingPrice || (quote as any).final_customer_selling_price || quote.totalSellingPrice, quote.currency)}
           </div>
           <div className="text-xs text-slate-300 font-mono">
-            {formatCurrency(quote.totalSellingPrice / Math.max(1, effectivePax), quote.currency)} / Traveler ({effectivePax} Guests)
+            {formatCurrency((quote.finalCustomerSellingPrice || (quote as any).final_customer_selling_price || quote.totalSellingPrice) / Math.max(1, effectivePax), quote.currency)} / Traveler ({effectivePax} Guests)
           </div>
           <div className="text-[10px] text-slate-400 font-sans">
             Guaranteed in {quote.currency} • No Hidden Surcharges

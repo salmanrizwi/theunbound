@@ -86,9 +86,17 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
   const hotelsCount = db.getHotels().length;
   const visasCount = VISA_CATALOG.length;
   const quotesCount = user ? db.getQuotesForUser(user).length : db.getAllSavedQuotes().length;
-  const bookingsCount = user ? db.getBookingsForUser(user).length : db.getAllBookings().length;
-  const pendingBookingsCount = db.getAllBookings().filter(b => b.status === 'NEW' || b.status === 'TO_BE_PROCESSED' || b.status === 'PROCESSING' || b.status === 'WAITING_FOR_UPDATE').length;
+  const authorizedBookings = user ? db.getBookingsForUser(user) : [];
+  const bookingsCount = authorizedBookings.length;
+  const pendingBookingsCount = authorizedBookings.filter(b => b.status === 'NEW' || b.status === 'TO_BE_PROCESSED' || b.status === 'PROCESSING' || b.status === 'WAITING_FOR_UPDATE' || b.status === 'PENDING_CONFIRMATION').length;
   const customersCount = db.getB2BCustomers().length;
+
+  const authorizedLeads = user ? db.getLeadsAuthorized(user) : [];
+  const leadsCount = authorizedLeads.length;
+  const unquotedLeadsCount = authorizedLeads.filter(l => !l.quoteNumber && !l.bookingReference).length;
+
+  const agentNotifications = user ? db.getAgentNotifications(user.id) : [];
+  const unreadNotificationsCount = agentNotifications.filter(n => !n.isRead).length;
   
   // Real Tasks and Overdue Counts
   const allTasks = db.getB2BTasks(user?.id);
@@ -102,16 +110,20 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
   const actionItems = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     const overdue = allTasks.filter(t => t.status !== 'COMPLETED' && t.dueDate && t.dueDate < today);
-    const pendingBks = db.getAllBookings().filter(b => b.status === 'NEW' || b.status === 'TO_BE_PROCESSED' || b.status === 'PROCESSING' || b.status === 'WAITING_FOR_UPDATE');
+    const pendingBks = authorizedBookings.filter(b => b.status === 'NEW' || b.status === 'TO_BE_PROCESSED' || b.status === 'PROCESSING' || b.status === 'WAITING_FOR_UPDATE' || b.status === 'PENDING_CONFIRMATION');
     const sentQuotes = (user ? db.getQuotesForUser(user) : db.getAllSavedQuotes()).filter(q => q.status === 'SENT' || q.status === 'DRAFT');
+    const unquotedLeads = authorizedLeads.filter(l => !l.quoteNumber && !l.bookingReference);
+    const unreadNotifications = agentNotifications.filter(n => !n.isRead);
 
     return {
       overdueTasks: overdue,
       pendingBookings: pendingBks,
       activeQuotes: sentQuotes,
-      totalUrgent: overdue.length + pendingBks.length
+      assignedLeads: unquotedLeads,
+      notifications: unreadNotifications,
+      totalUrgent: overdue.length + pendingBks.length + unquotedLeads.length + unreadNotifications.length
     };
-  }, [allTasks, db, user]);
+  }, [allTasks, authorizedBookings, authorizedLeads, agentNotifications, db, user]);
 
   const navItems: { 
     id: B2BTabType; 
@@ -368,6 +380,74 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
                     </div>
                   )}
 
+                  {/* Assigned Leads Awaiting Quotation (TEAL / Qualified Opportunity) */}
+                  {actionItems.assignedLeads.length > 0 && (
+                    <div className="p-3 rounded-2xl bg-teal-50 border border-[#00C6A6]/30 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-[#008f77] flex items-center space-x-1.5">
+                          <Users className="w-3.5 h-3.5 text-[#00C6A6]" />
+                          <span>Assigned Leads ({actionItems.assignedLeads.length})</span>
+                        </span>
+                        <button
+                          onClick={() => {
+                            onSelectTab('crm');
+                            setIsNotificationsOpen(false);
+                          }}
+                          className="text-[11px] font-bold text-[#008f77] hover:underline cursor-pointer"
+                        >
+                          View in CRM →
+                        </button>
+                      </div>
+                      <div className="space-y-1">
+                        {actionItems.assignedLeads.slice(0, 2).map(lead => (
+                          <div key={lead.id} className="text-[11px] text-slate-800 flex items-center justify-between">
+                            <span className="font-medium truncate max-w-[190px]">{lead.leadNumber || 'Lead'}: {lead.contactName}</span>
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-200/70 text-[#006e5b]">Create Quote</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Agent Notifications (Assignment / Updates) */}
+                  {actionItems.notifications.length > 0 && (
+                    <div className="p-3 rounded-2xl bg-slate-900 text-white space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-white flex items-center space-x-1.5">
+                          <Bell className="w-3.5 h-3.5 text-[#00E5C0]" />
+                          <span>Team Assignments ({actionItems.notifications.length})</span>
+                        </span>
+                        <button
+                          onClick={() => {
+                            if (user?.id) {
+                              db.markAllNotificationsAsRead(user.id);
+                            }
+                          }}
+                          className="text-[10px] text-slate-300 hover:text-white hover:underline cursor-pointer"
+                        >
+                          Mark all read
+                        </button>
+                      </div>
+                      <div className="space-y-1.5">
+                        {actionItems.notifications.slice(0, 3).map(notif => (
+                          <div 
+                            key={notif.id} 
+                            onClick={() => {
+                              db.markNotificationAsRead(notif.id);
+                              if (notif.entityType === 'LEAD' || notif.deepLinkTab === 'leads') onSelectTab('crm');
+                              else if (notif.entityType === 'BOOKING' || notif.deepLinkTab === 'bookings') onSelectTab('bookings');
+                              setIsNotificationsOpen(false);
+                            }}
+                            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 transition-colors cursor-pointer text-[11px]"
+                          >
+                            <p className="font-bold text-white">{notif.title}</p>
+                            <p className="text-slate-300 text-[10px] line-clamp-1">{notif.message}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {actionItems.totalUrgent === 0 && actionItems.activeQuotes.length === 0 && (
                     <div className="p-4 text-center text-slate-400 space-y-1">
                       <ShieldCheck className="w-6 h-6 mx-auto text-[#00C6A6]" />
@@ -383,8 +463,10 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
           {/* Account Dropdown */}
           <div className="relative" ref={userMenuRef}>
             <button
+              id="b2b-accounts-dropdown-trigger"
               onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-              className="flex items-center space-x-2 p-1.5 rounded-2xl hover:bg-slate-100 text-slate-800 transition-colors cursor-pointer border border-slate-200"
+              className="flex items-center space-x-2 p-1.5 md:px-2.5 md:py-1.5 rounded-2xl bg-white hover:bg-slate-50 text-slate-800 transition-colors cursor-pointer border border-slate-200 shadow-xs"
+              aria-label="Accounts and profile menu"
             >
               <img
                 src={user?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=200&auto=format&fit=crop'}
@@ -392,19 +474,19 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
                 className="w-7 h-7 rounded-xl object-cover ring-1 ring-[#00C6A6]"
               />
               <span className="hidden md:inline text-xs font-bold text-slate-900 max-w-[110px] truncate">
-                {user?.name || 'Partner Agent'}
+                {user?.agencyName || user?.name || 'Partner Agent'}
               </span>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+              <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`} />
             </button>
 
             {isUserMenuOpen && (
               <div 
-                className="absolute right-0 mt-2 w-60 bg-white border border-slate-200 rounded-3xl shadow-2xl py-2 z-50 animate-in fade-in zoom-in-95 duration-150"
-                onClick={() => setIsUserMenuOpen(false)}
+                id="b2b-accounts-dropdown-menu"
+                className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-2xl shadow-2xl py-2 z-50 animate-in fade-in zoom-in-95 duration-150"
               >
                 <div className="px-4 py-3 border-b border-slate-100">
                   <p className="text-xs font-black text-slate-900">{user?.name || 'Partner Travel Agent'}</p>
-                  <p className="text-[11px] text-slate-400 truncate">{user?.email || 'agent@theunbound.in'}</p>
+                  <p className="text-[11px] text-slate-400 truncate">{user?.email || 'agent@partnerdesk.in'}</p>
                   <span className="inline-block mt-1.5 px-2 py-0.5 rounded-md text-[9px] font-bold bg-[#00C6A6]/20 text-[#008a73]">
                     {user?.agencyName || 'Wholesale Partner Agency'}
                   </span>
@@ -412,28 +494,52 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
 
                 <div className="py-1">
                   <button
-                    onClick={() => onSelectTab('dashboard')}
-                    className="w-full text-left px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2 font-bold"
+                    id="b2b-accounts-crm-menu-item"
+                    onClick={() => {
+                      onSelectTab('crm');
+                      setIsUserMenuOpen(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between hover:bg-slate-50 transition-colors cursor-pointer font-bold ${
+                      activeTab === 'crm' || activeTab === 'leads' || activeTab === 'customers'
+                        ? 'bg-teal-50 text-[#008f77]'
+                        : 'text-slate-800'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2.5">
+                      <Users className="w-4 h-4 text-[#00C6A6]" />
+                      <span>My Leads and Clients (CRM)</span>
+                    </div>
+                    {leadsCount > 0 && (
+                      <span className="px-2 py-0.5 text-[10px] font-black rounded-full bg-teal-100 text-[#008f77]">
+                        {leadsCount}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => {
+                      onSelectTab('dashboard');
+                      setIsUserMenuOpen(false);
+                    }}
+                    className="w-full text-left px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2 font-medium"
                   >
                     <TrendingUp className="w-3.5 h-3.5 text-indigo-500" />
                     <span>Performance Dashboard</span>
                   </button>
                   <button
-                    onClick={() => onSelectTab('my-quotes')}
+                    onClick={() => {
+                      onSelectTab('my-quotes');
+                      setIsUserMenuOpen(false);
+                    }}
                     className="w-full text-left px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2 font-medium"
                   >
                     <FileText className="w-3.5 h-3.5 text-slate-400" />
                     <span>My Quotes & Proposals</span>
                   </button>
                   <button
-                    onClick={() => onSelectTab('customers')}
-                    className="w-full text-left px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2 font-medium"
-                  >
-                    <Users className="w-3.5 h-3.5 text-slate-400" />
-                    <span>My Leads & Clients (CRM)</span>
-                  </button>
-                  <button
-                    onClick={() => onSelectTab('account')}
+                    onClick={() => {
+                      onSelectTab('account');
+                      setIsUserMenuOpen(false);
+                    }}
                     className="w-full text-left px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2 font-medium"
                   >
                     <UserIcon className="w-3.5 h-3.5 text-slate-400" />
@@ -526,6 +632,44 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
               </button>
             );
           })}
+
+          {/* Accounts Section in Mobile Drawer */}
+          <div className="pt-2 border-t border-slate-200">
+            <div className="px-4 py-1.5 text-[10px] font-black uppercase tracking-wider text-slate-400">
+              Accounts
+            </div>
+            <button
+              onClick={() => {
+                onSelectTab('crm');
+                setIsMobileMenuOpen(false);
+              }}
+              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-2xl text-xs font-bold cursor-pointer transition-all ${
+                activeTab === 'crm' || activeTab === 'leads' || activeTab === 'customers'
+                  ? 'bg-slate-950 text-white font-extrabold'
+                  : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <div className="flex items-center space-x-3">
+                <Users className="w-4 h-4 text-[#00C6A6]" />
+                <span>My Leads and Clients (CRM)</span>
+              </div>
+              {leadsCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-100 text-[#008f77]">
+                  {leadsCount}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => {
+                onSelectTab('account');
+                setIsMobileMenuOpen(false);
+              }}
+              className="w-full flex items-center space-x-3 px-4 py-2 rounded-2xl text-xs text-slate-600 hover:bg-slate-100 cursor-pointer"
+            >
+              <UserIcon className="w-4 h-4 text-slate-400" />
+              <span>Agency Account & Profile</span>
+            </button>
+          </div>
         </div>
       )}
     </header>

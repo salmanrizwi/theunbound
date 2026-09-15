@@ -103,6 +103,22 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
+  // Fetch saved B2B customers for instant autofill & CRM deduplication
+  const savedCustomers = useMemo(() => {
+    return user?.id ? db.getB2BCustomers(user.id) : [];
+  }, [user?.id, db]);
+
+  const handleSelectSavedCustomer = (customerId: string) => {
+    if (!customerId) return;
+    const found = savedCustomers.find(c => c.id === customerId);
+    if (found) {
+      handleLeadNameChange(found.name);
+      if (found.email) setEmail(found.email);
+      if (found.phone) setPhone(found.phone);
+      if (found.company) setAgencyName(found.company);
+    }
+  };
+
   // Calculate Aggregated Pax from Cart Items
   const { maxAdults, maxChildren, maxInfants, totalPaxCount, earliestDate, latestDate, destinationsList } = useMemo(() => {
     let adults = 2;
@@ -320,7 +336,7 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
           selectedAddonNames: item.selectedAddonIds?.map(aid => 
             item.product.addons?.find(a => a.id === aid)?.name || aid
           ),
-          unitNetPrice: item.calculation.totalNetCost,
+          unitNetPrice: 0,
           unitSellingPrice: item.calculation.finalTotalSellingPrice,
           totalPrice: item.calculation.finalTotalSellingPrice,
           currency,
@@ -662,6 +678,50 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
                   Enter the primary contact person for vouchers, updates, and on-ground coordination.
                 </p>
               </div>
+
+              {/* Authenticated Submitting Agent Attribution Banner */}
+              {user && (
+                <div className="p-3.5 rounded-2xl bg-teal-50/80 border border-teal-200/80 flex items-center justify-between text-xs">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 rounded-xl bg-[#008f77] text-white flex items-center justify-center font-bold shrink-0">
+                      <ShieldCheck className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-teal-950">
+                        Submitting Partner Agent: {user.name}
+                      </p>
+                      <p className="text-[11px] text-teal-700 font-medium">
+                        Agency: {user.agencyName || user.companyName || 'Independent Agent'} • Partner UID: <span className="font-mono">{user.id}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full bg-teal-100 text-teal-800 font-extrabold text-[10px] uppercase tracking-wider shrink-0">
+                    Auto-Linked Booker
+                  </span>
+                </div>
+              )}
+
+              {/* Instant Autofill from Saved CRM Customers (Prevents Duplicate Records) */}
+              {savedCustomers.length > 0 && (
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="text-xs text-slate-600">
+                    <span className="font-bold text-slate-800 block">Existing Client in CRM?</span>
+                    <span className="text-[11px] text-slate-500">Autofill to sync traveler record without creating duplicates</span>
+                  </div>
+                  <select
+                    onChange={(e) => handleSelectSavedCustomer(e.target.value)}
+                    defaultValue=""
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-800 focus:outline-hidden focus:border-[#00C6A6] shrink-0"
+                  >
+                    <option value="">-- Choose Existing Client --</option>
+                    {savedCustomers.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} {c.email ? `(${c.email})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>

@@ -41,6 +41,7 @@ import { IntegrationsManager } from './IntegrationsManager';
 import { DataSyncAuditViewer } from './DataSyncAuditViewer';
 import { SystemAnalysis } from './SystemAnalysis';
 import { SEOManager } from './SEOManager';
+import { SupplierManager } from './SupplierManager';
 import { GlobalRemindersBar } from '../GlobalRemindersBar';
 import { ActionCenterDrawer } from '../ActionCenter/ActionCenterDrawer';
 import { CalendarTask } from '../../types';
@@ -53,6 +54,7 @@ import {
 
 // Lucide Icons
 import { 
+  Building2,
   ShieldCheck, 
   Shield,
   Lock,
@@ -184,6 +186,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       if (initialTab === 'PAGES' || initialTab === 'PAGE_MANAGEMENT' || initialTab === 'MENU' || initialTab === 'NAVIGATION') return 'PAGE_MANAGEMENT';
       if (initialTab === 'MARKETING') return 'MARKETING_MANAGEMENT';
       if (initialTab === 'ACCOUNTS' || initialTab === 'USERS') return 'ACCOUNT_MANAGEMENT';
+      if (initialTab === 'SUPPLIERS') return 'ACCOUNT_MANAGEMENT';
       if (initialTab === 'ANALYTICS') return 'ANALYTICS_MANAGEMENT';
       if (initialTab === 'TASKS' || initialTab === 'SLAS') return 'NOTIFICATIONS_MANAGEMENT';
       if (initialTab === 'INTEGRATIONS' || initialTab === 'DATABASE') return 'DATABASE_MANAGEMENT';
@@ -207,6 +210,10 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       else if (initialTab === 'PAGES' || initialTab === 'PAGE_MANAGEMENT' || initialTab === 'MENU' || initialTab === 'NAVIGATION') targetSec = 'PAGE_MANAGEMENT';
       else if (initialTab === 'MARKETING') targetSec = 'MARKETING_MANAGEMENT';
       else if (initialTab === 'ACCOUNTS' || initialTab === 'USERS') targetSec = 'ACCOUNT_MANAGEMENT';
+      else if (initialTab === 'SUPPLIERS') {
+        targetSec = 'ACCOUNT_MANAGEMENT';
+        setActiveSubTab('SUPPLIERS');
+      }
       else if (initialTab === 'ANALYTICS') targetSec = 'ANALYTICS_MANAGEMENT';
       else if (initialTab === 'CURRENCY' || initialTab === 'CURRENCY_MANAGEMENT' || initialTab === 'FX') targetSec = 'CURRENCY_MANAGEMENT';
       else if (initialTab === 'TASKS' || initialTab === 'SLAS') targetSec = 'NOTIFICATIONS_MANAGEMENT';
@@ -550,7 +557,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           subTabs: [
             { id: 'PERMISSIONS', label: 'Access & Permissions', icon: Shield },
             { id: 'USERS_ACCESS', label: 'User Approval & Segregation', icon: UserCheck },
-            { id: 'ROSTER', label: 'Staff Roster & Ops Allocation', icon: Users }
+            { id: 'ROSTER', label: 'Staff Roster & Ops Allocation', icon: Users },
+            { id: 'SUPPLIERS', label: 'Suppliers', icon: Building2 }
           ]
         },
         {
@@ -1334,6 +1342,12 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
               {(!activeSubTab || activeSubTab === 'PERMISSIONS') && <UserApprovalAccessManager initialTab="PERMISSIONS" />}
               {activeSubTab === 'USERS_ACCESS' && <UserApprovalAccessManager initialTab="USERS_ACCESS" />}
               {activeSubTab === 'ROSTER' && <RosterAdminManager products={products} />}
+              {activeSubTab === 'SUPPLIERS' && (
+                <SupplierManager
+                  currentUser={currentUser}
+                  onNavigateToBooking={(bookingId) => handleNavigate('BOOKING_MANAGEMENT', 'OPERATIONS', bookingId)}
+                />
+              )}
             </>
           )}
 

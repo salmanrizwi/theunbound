@@ -123,29 +123,50 @@ export class GoogleCalendarSLAAutomationService {
 
   /**
    * AUTOMATIC SYNCHRONIZATION OF ALL PENDING CALENDAR TASKS
+   * Respects explicit user selection: ONLY synchronizes tasks where syncWithGoogleCalendar is explicitly true.
    */
   public async syncAllPendingTasksToGoogleCalendar(user?: User | null): Promise<{ total: number; synced: number; failed: number }> {
     const tasks = this.db.getCalendarTasks();
-    const pendingTasks = tasks.filter(t => !t.isSyncedToGoogleCalendar || t.calendarSyncStatus !== 'SYNCED');
+    // Only tasks where an authorised internal user explicitly chose to sync
+    const pendingTasks = tasks.filter(t => 
+      t.syncWithGoogleCalendar === true && 
+      (!t.isSyncedToGoogleCalendar || t.calendarSyncStatus !== 'SYNCED' || t.googleCalendarSyncStatus !== 'SYNCED')
+    );
     let synced = 0;
     let failed = 0;
 
     for (const task of pendingTasks) {
       try {
         const res = await this.syncTaskToGoogleCalendar(task);
+        const nowIso = new Date().toISOString();
         if (res.success) {
           const updated: CalendarTask = {
             ...task,
-            googleCalendarEventId: res.eventId || task.googleCalendarEventId,
-            googleCalendarLink: res.htmlLink || task.googleCalendarLink,
+            syncWithGoogleCalendar: true,
             isSyncedToGoogleCalendar: true,
             calendarSyncStatus: 'SYNCED',
+            googleCalendarSyncStatus: 'SYNCED',
+            googleCalendarEventId: res.eventId || task.googleCalendarEventId,
+            googleCalendarEventUrl: res.htmlLink || task.googleCalendarEventUrl || task.googleCalendarLink,
+            googleCalendarLink: res.htmlLink || task.googleCalendarLink,
+            googleCalendarLastSyncedAt: nowIso,
+            googleCalendarUpdatedAt: nowIso,
+            googleCalendarSyncError: undefined,
             syncError: undefined,
-            updatedAt: new Date().toISOString()
+            updatedAt: nowIso
           };
           this.db.saveCalendarTask(updated, user || null);
           synced++;
         } else {
+          const failedTask: CalendarTask = {
+            ...task,
+            calendarSyncStatus: 'FAILED',
+            googleCalendarSyncStatus: 'SYNC_FAILED',
+            googleCalendarSyncError: res.error,
+            syncError: res.error,
+            updatedAt: nowIso
+          };
+          this.db.saveCalendarTask(failedTask, user || null);
           failed++;
         }
       } catch (err: any) {
@@ -349,7 +370,7 @@ export class GoogleCalendarSLAAutomationService {
     const destination = booking.destinationName || 'Multi-Destination';
     const travelDate = booking.travelStartDate || 'To Be Confirmed';
     const bookingType = (booking.items || []).map(i => i.category || i.productName).filter(Boolean).join(', ') || 'Custom Ground Package';
-    const supplier = (booking.items || []).map(i => i.supplierName || i.productName).filter(Boolean).slice(0, 2).join(', ') || 'TheUnbound Ground Operations';
+    const supplier = (booking.items || []).map(i => i.supplierName || i.productName).filter(Boolean).slice(0, 2).join(', ') || 'Ground Operations Desk';
     const assignee = rule.defaultAssignee || { name: 'Operations Team', email: 'business@theunbound.in' };
 
     const title = `[SLA] Booking Confirmation — ${bookingRef}`;
@@ -936,7 +957,7 @@ CMS Portal: ${window.location.origin}/#cms-tasks`;
     const startG = this.formatGoogleCalendarUrlDate(startIso);
     const endG = this.formatGoogleCalendarUrlDate(endIso);
     const details = `${task.description || ''}\n\nTask ID: ${task.id}\nBooking Ref: ${task.bookingReference || 'N/A'}\nQuote No: ${task.quoteNumber || 'N/A'}\nAssigned: ${task.assignedToName || 'Ops Team'}\nSLA: ${task.slaHours || 12}h Ground Operations SLA`;
-    const loc = task.destination ? `${task.destination} (TheUnbound Ground Operations)` : 'TheUnbound Operations Hub';
+    const loc = task.destination ? `${task.destination} (Ground Operations)` : 'Operations Hub';
 
     return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(summary)}&dates=${startG}/${endG}&details=${encodeURIComponent(details)}&location=${encodeURIComponent(loc)}`;
   }
@@ -999,7 +1020,7 @@ CMS Portal: ${window.location.origin}/#cms-tasks`;
       const eventPayload: any = {
         summary: eventSummary,
         description: task.description,
-        location: task.destination ? `${task.destination} (TheUnbound Ground Ops)` : 'TheUnbound Operations Hub',
+        location: task.destination ? `${task.destination} (Ground Ops)` : 'Operations Hub',
         start: {
           dateTime: startDateTime,
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
@@ -1150,6 +1171,187 @@ CMS Portal: ${window.location.origin}/#cms-tasks`;
   }
 
   /**
+   * EXPLICIT SYNC TASK TO GOOGLE CALENDAR
+   * Explicitly triggered when an authorised internal user toggles or clicks "Sync with Google Calendar".
+   */
+  public async explicitSyncTaskToGoogleCalendar(taskId: string, user?: User | null): Promise<{ success: boolean; task: CalendarTask; error?: string }> {
+    const tasks = this.db.getCalendarTasks();
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    const nowIso = new Date().toISOString();
+    const authState = googleAuth.getAuthState();
+
+    // Mark status as SYNCING
+    const syncingTask: CalendarTask = {
+      ...task,
+      syncWithGoogleCalendar: true,
+      googleCalendarSyncStatus: 'SYNCING',
+      updatedAt: nowIso
+    };
+    this.db.saveCalendarTask(syncingTask, user || null);
+
+    const syncRes = await this.syncTaskToGoogleCalendar(syncingTask);
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata';
+
+    if (syncRes.success) {
+      const updatedTask: CalendarTask = {
+        ...syncingTask,
+        syncWithGoogleCalendar: true,
+        isSyncedToGoogleCalendar: true,
+        calendarSyncStatus: 'SYNCED',
+        googleCalendarSyncStatus: 'SYNCED',
+        googleCalendarId: task.googleCalendarId || 'primary',
+        googleCalendarEventId: syncRes.eventId || syncingTask.googleCalendarEventId,
+        googleCalendarEventUrl: syncRes.htmlLink || syncingTask.googleCalendarEventUrl || this.generateCalendarDayViewUrl(task),
+        googleCalendarLink: syncRes.htmlLink || syncingTask.googleCalendarLink || this.generateCalendarDayViewUrl(task),
+        googleCalendarAccount: authState.email || 'business@theunbound.in',
+        googleCalendarName: 'TheUnbound Operations Hub',
+        googleCalendarTimezone: timeZone,
+        googleCalendarLastSyncedAt: nowIso,
+        googleCalendarSyncVersion: (task.googleCalendarSyncVersion || 0) + 1,
+        googleCalendarSource: 'EXPLICIT_USER_SYNC',
+        googleCalendarCreatedAt: task.googleCalendarCreatedAt || nowIso,
+        googleCalendarUpdatedAt: nowIso,
+        googleCalendarSyncError: undefined,
+        syncError: undefined,
+        updatedAt: nowIso
+      };
+
+      const saved = this.db.saveCalendarTask(updatedTask, user || null);
+
+      this.logAudit({
+        triggerEvent: 'TASK_EXPLICIT_SYNCED',
+        automationRuleId: saved.automationId || 'manual-sync',
+        automationRuleName: 'Explicit Task Google Calendar Sync',
+        taskType: saved.taskType || 'CUSTOM',
+        taskId: saved.id,
+        bookingId: saved.bookingReference,
+        quoteId: saved.quoteNumber,
+        assignedUser: saved.assignedToName,
+        assignedEmail: saved.assignedToEmail,
+        googleCalendarId: saved.googleCalendarId || 'primary',
+        googleCalendarEventId: saved.googleCalendarEventId,
+        createdAt: nowIso,
+        slaDeadline: saved.dueAt || '',
+        slaStatus: saved.slaStatus || 'WITHIN_SLA',
+        calendarSyncStatus: 'SUCCESS',
+        retries: saved.syncRetries || 0,
+        action: 'Authorised user explicitly synced task with Google Calendar',
+        performedBy: user?.name || authState.displayName || 'Authorised User'
+      });
+
+      return { success: true, task: saved };
+    } else {
+      const failedTask: CalendarTask = {
+        ...syncingTask,
+        syncWithGoogleCalendar: true,
+        isSyncedToGoogleCalendar: false,
+        calendarSyncStatus: 'FAILED',
+        googleCalendarSyncStatus: 'SYNC_FAILED',
+        googleCalendarSyncError: syncRes.error || 'Failed to sync event to Google Calendar',
+        syncError: syncRes.error,
+        updatedAt: nowIso
+      };
+
+      const saved = this.db.saveCalendarTask(failedTask, user || null);
+
+      this.logAudit({
+        triggerEvent: 'TASK_EXPLICIT_SYNCED',
+        automationRuleId: saved.automationId || 'manual-sync',
+        automationRuleName: 'Explicit Task Google Calendar Sync',
+        taskType: saved.taskType || 'CUSTOM',
+        taskId: saved.id,
+        bookingId: saved.bookingReference,
+        quoteId: saved.quoteNumber,
+        assignedUser: saved.assignedToName,
+        assignedEmail: saved.assignedToEmail,
+        googleCalendarId: saved.googleCalendarId || 'primary',
+        googleCalendarEventId: saved.googleCalendarEventId,
+        createdAt: nowIso,
+        slaDeadline: saved.dueAt || '',
+        slaStatus: saved.slaStatus || 'WITHIN_SLA',
+        calendarSyncStatus: 'FAILED',
+        error: syncRes.error,
+        retries: saved.syncRetries || 0,
+        action: `Explicit Google Calendar sync failed: ${syncRes.error}`,
+        performedBy: user?.name || authState.displayName || 'Authorised User'
+      });
+
+      return { success: false, task: saved, error: syncRes.error };
+    }
+  }
+
+  /**
+   * REMOVE TASK FROM GOOGLE CALENDAR
+   * Explicitly removes a task event from Google Calendar and resets synchronization state.
+   */
+  public async removeTaskFromGoogleCalendar(taskId: string, user?: User | null): Promise<{ success: boolean; task: CalendarTask; error?: string }> {
+    const tasks = this.db.getCalendarTasks();
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    const accessToken = googleAuth.getAccessToken();
+    const calendarId = task.googleCalendarId || 'primary';
+    const eventId = task.googleCalendarEventId;
+
+    if (accessToken && eventId && !googleAuth.isSimulation(accessToken) && !eventId.startsWith('theunbound-cal-')) {
+      try {
+        await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+      } catch (e) {
+        console.warn('Could not delete event from Google Calendar API:', e);
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const updated: CalendarTask = {
+      ...task,
+      syncWithGoogleCalendar: false,
+      googleCalendarSyncStatus: 'NOT_SYNCED',
+      isSyncedToGoogleCalendar: false,
+      calendarSyncStatus: 'NOT_SYNCED',
+      googleCalendarEventId: undefined,
+      googleCalendarEventUrl: undefined,
+      googleCalendarLink: undefined,
+      googleCalendarDeletedAt: nowIso,
+      googleCalendarSyncError: undefined,
+      syncError: undefined,
+      updatedAt: nowIso
+    };
+
+    const saved = this.db.saveCalendarTask(updated, user || null);
+
+    this.logAudit({
+      triggerEvent: 'TASK_CALENDAR_UNLINKED',
+      automationRuleId: saved.automationId || 'manual-unlink',
+      automationRuleName: 'Remove Task from Google Calendar',
+      taskType: saved.taskType || 'CUSTOM',
+      taskId: saved.id,
+      bookingId: saved.bookingReference,
+      quoteId: saved.quoteNumber,
+      assignedUser: saved.assignedToName,
+      assignedEmail: saved.assignedToEmail,
+      googleCalendarId: calendarId,
+      createdAt: nowIso,
+      slaDeadline: saved.dueAt || '',
+      slaStatus: saved.slaStatus || 'WITHIN_SLA',
+      calendarSyncStatus: 'SUCCESS',
+      retries: 0,
+      action: 'Authorised user removed event synchronization with Google Calendar',
+      performedBy: user?.name || 'Authorised User'
+    });
+
+    return { success: true, task: saved };
+  }
+
+  /**
    * RETRY FAILED CALENDAR SYNC
    */
   public async retryTaskCalendarSync(taskId: string, user?: User | null): Promise<{ success: boolean; task: CalendarTask; error?: string }> {
@@ -1160,17 +1362,23 @@ CMS Portal: ${window.location.origin}/#cms-tasks`;
     }
 
     const retries = (task.syncRetries || 0) + 1;
+    const nowIso = new Date().toISOString();
     const syncRes = await this.syncTaskToGoogleCalendar(task);
 
     const updatedTask: CalendarTask = {
       ...task,
+      syncWithGoogleCalendar: true,
       googleCalendarEventId: syncRes.eventId || task.googleCalendarEventId,
+      googleCalendarEventUrl: syncRes.htmlLink || task.googleCalendarEventUrl || task.googleCalendarLink,
       googleCalendarLink: syncRes.htmlLink || task.googleCalendarLink,
       isSyncedToGoogleCalendar: syncRes.success,
       calendarSyncStatus: syncRes.success ? 'SYNCED' : 'FAILED',
+      googleCalendarSyncStatus: syncRes.success ? 'SYNCED' : 'SYNC_FAILED',
+      googleCalendarLastSyncedAt: syncRes.success ? nowIso : task.googleCalendarLastSyncedAt,
+      googleCalendarSyncError: syncRes.error,
       syncError: syncRes.error,
       syncRetries: retries,
-      updatedAt: new Date().toISOString()
+      updatedAt: nowIso
     };
 
     const saved = this.db.saveCalendarTask(updatedTask, user || null);

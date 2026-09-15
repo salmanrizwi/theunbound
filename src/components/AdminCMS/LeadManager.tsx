@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppDatabase } from '../../services/db';
-import { TravelLead, LeadStatus, LeadPriority, LeadSource } from '../../types';
+import { TravelLead, LeadStatus, LeadPriority, LeadSource, LeadStageConfig } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { 
   Users, 
@@ -27,12 +27,28 @@ import {
   Eye,
   RefreshCw,
   Building,
-  UserCheck
+  UserCheck,
+  Kanban,
+  LayoutGrid,
+  LayoutList,
+  CheckSquare,
+  Square,
+  X,
+  Sparkles
 } from 'lucide-react';
 import { LeadDetailDrawer } from './LeadDetailDrawer';
 import { LeadEditModal } from './LeadEditModal';
+import { LeadKanbanBoard } from './LeadKanbanBoard';
 import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
 import { CalendarTask } from '../../types';
+
+export const STAFF_SPECIALISTS = [
+  { id: 'staff-01', name: 'Marcus Vance', email: 'marcus.v@theunbound.in', department: 'SALES' as const },
+  { id: 'staff-02', name: 'Elena Rostova', email: 'elena.r@theunbound.in', department: 'SALES' as const },
+  { id: 'staff-03', name: 'Liam Chen', email: 'liam.c@theunbound.in', department: 'OPERATIONS' as const },
+  { id: 'staff-04', name: 'Sophia Sterling', email: 'sophia.s@theunbound.in', department: 'MANAGEMENT' as const },
+  { id: 'staff-05', name: 'Aria Tanaka', email: 'aria.t@theunbound.in', department: 'SALES' as const }
+];
 
 export interface LeadManagerProps {
   initialLeadId?: string | null;
@@ -47,11 +63,33 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
   const db = AppDatabase.getInstance();
 
   const [leads, setLeads] = useState<TravelLead[]>(db.getLeadsAuthorized(user));
+  const stages: LeadStageConfig[] = db.getLeadStages();
+  const [stageFilter, setStageFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
+  const [viewMode, setViewMode] = useState<'table' | 'cards' | 'kanban'>(() => {
+    try {
+      const saved = localStorage.getItem('unbound_lead_manager_view');
+      if (saved === 'kanban' || saved === 'table' || saved === 'cards') {
+        return saved;
+      }
+    } catch {}
+    return 'kanban';
+  });
+
+  const handleSelectViewMode = (mode: 'table' | 'cards' | 'kanban') => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem('unbound_lead_manager_view', mode);
+    } catch {}
+  };
+
+  // Bulk action selection
+  const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
+  const [bulkStaffId, setBulkStaffId] = useState<string>('');
+  const [bulkStageId, setBulkStageId] = useState<string>('');
 
   // Drawer / Modal states
   const [selectedLead, setSelectedLead] = useState<TravelLead | null>(null);
@@ -92,6 +130,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
 
   // Filtering
   const filteredLeads = leads.filter(l => {
+    const matchesStage = stageFilter === 'all' || l.stageId === stageFilter;
     const matchesStatus = statusFilter === 'all' || l.status === statusFilter;
     const matchesPriority = priorityFilter === 'all' || l.priority === priorityFilter;
     const matchesSource = sourceFilter === 'all' || l.source === sourceFilter;
@@ -106,8 +145,48 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
       (l.quoteNumber && l.quoteNumber.toLowerCase().includes(query)) ||
       (l.bookingReference && l.bookingReference.toLowerCase().includes(query));
 
-    return matchesStatus && matchesPriority && matchesSource && matchesSearch;
+    return matchesStage && matchesStatus && matchesPriority && matchesSource && matchesSearch;
   });
+
+  const handleStageChange = (leadId: string, stageId: string) => {
+    const res = db.updateLeadStage(leadId, stageId, user);
+    if (res?.lead) {
+      setLeads(db.getLeadsAuthorized(user));
+      if (selectedLead?.id === leadId) setSelectedLead(res.lead);
+    }
+  };
+
+  const handleToggleSelect = (leadId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedLeadIds(prev => 
+      prev.includes(leadId) ? prev.filter(id => id !== leadId) : [...prev, leadId]
+    );
+  };
+
+  const handleSelectAll = () => {
+    if (selectedLeadIds.length === filteredLeads.length) {
+      setSelectedLeadIds([]);
+    } else {
+      setSelectedLeadIds(filteredLeads.map(l => l.id));
+    }
+  };
+
+  const handleBulkAssign = (staffId: string) => {
+    const targetStaff = STAFF_SPECIALISTS.find(s => s.id === staffId);
+    if (!targetStaff || selectedLeadIds.length === 0) return;
+    db.bulkAssignLeads(selectedLeadIds, targetStaff, user);
+    setLeads(db.getLeadsAuthorized(user));
+    setSelectedLeadIds([]);
+    setBulkStaffId('');
+  };
+
+  const handleBulkStage = (targetStageId: string) => {
+    if (!targetStageId || selectedLeadIds.length === 0) return;
+    db.bulkUpdateLeadStage(selectedLeadIds, targetStageId, user);
+    setLeads(db.getLeadsAuthorized(user));
+    setSelectedLeadIds([]);
+    setBulkStageId('');
+  };
 
   const handleOpenAdd = () => {
     const randomNum = Math.floor(1000 + Math.random() * 9000);
@@ -302,6 +381,21 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
             <option value="LOST">Lost</option>
           </select>
 
+          {/* Pipeline Stage Filter */}
+          <select
+            id="lead-stage-filter"
+            value={stageFilter}
+            onChange={e => setStageFilter(e.target.value)}
+            className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700"
+          >
+            <option value="all">All Pipeline Stages ({stages.length})</option>
+            {stages.map(st => (
+              <option key={st.id} value={st.id}>
+                {st.name} ({leads.filter(l => l.stageId === st.id).length})
+              </option>
+            ))}
+          </select>
+
           {/* Priority Filter */}
           <select
             id="lead-priority-filter"
@@ -333,26 +427,122 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
           </select>
 
           {/* View Toggle */}
-          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200" role="tablist" aria-label="Lead Management Views">
             <button
-              onClick={() => setViewMode('table')}
-              className={`px-3 py-1 text-xs font-bold rounded-lg transition-colors ${
-                viewMode === 'table' ? 'bg-white shadow-xs text-slate-900' : 'text-slate-500 hover:text-slate-800'
+              id="lead-view-kanban-btn"
+              onClick={() => handleSelectViewMode('kanban')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer ${
+                viewMode === 'kanban' ? 'bg-white shadow-xs text-slate-900' : 'text-slate-500 hover:text-slate-800'
               }`}
+              title="Kanban Pipeline View"
             >
-              Table
+              <Kanban className="w-3.5 h-3.5 text-[#008f77]" />
+              <span>Kanban</span>
             </button>
             <button
-              onClick={() => setViewMode('cards')}
-              className={`px-3 py-1 text-xs font-bold rounded-lg transition-colors ${
+              id="lead-view-table-btn"
+              onClick={() => handleSelectViewMode('table')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer ${
+                viewMode === 'table' ? 'bg-white shadow-xs text-slate-900' : 'text-slate-500 hover:text-slate-800'
+              }`}
+              title="List View"
+            >
+              <LayoutList className="w-3.5 h-3.5 text-slate-500" />
+              <span>List</span>
+            </button>
+            <button
+              id="lead-view-cards-btn"
+              onClick={() => handleSelectViewMode('cards')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer ${
                 viewMode === 'cards' ? 'bg-white shadow-xs text-slate-900' : 'text-slate-500 hover:text-slate-800'
               }`}
+              title="Card View"
             >
-              Cards
+              <LayoutGrid className="w-3.5 h-3.5 text-slate-500" />
+              <span>Card</span>
             </button>
           </div>
         </div>
       </div>
+
+      {/* Floating Bulk Action Bar */}
+      {selectedLeadIds.length > 0 && (
+        <div className="sticky top-2 z-30 bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-xl border border-slate-800 flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-3">
+            <span className="bg-[#00C6A6] text-slate-950 font-black px-2.5 py-0.5 rounded-full text-xs">
+              {selectedLeadIds.length} Selected
+            </span>
+            <span className="text-xs text-slate-300">
+              Bulk actions for chosen pipeline opportunities:
+            </span>
+          </div>
+
+          <div className="flex items-center flex-wrap gap-2 text-xs">
+            {/* Bulk Assign */}
+            <div className="flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded-xl border border-slate-700">
+              <UserCheck className="w-3.5 h-3.5 text-[#00C6A6]" />
+              <select
+                id="bulk-assign-select"
+                value={bulkStaffId}
+                onChange={e => {
+                  setBulkStaffId(e.target.value);
+                  if (e.target.value) handleBulkAssign(e.target.value);
+                }}
+                className="bg-transparent text-xs text-white focus:outline-none cursor-pointer"
+              >
+                <option value="" className="text-slate-900">Assign Specialist...</option>
+                {STAFF_SPECIALISTS.map(st => (
+                  <option key={st.id} value={st.id} className="text-slate-900">
+                    {st.name} ({st.department})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Bulk Move Stage */}
+            <div className="flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded-xl border border-slate-700">
+              <Layers className="w-3.5 h-3.5 text-teal-400" />
+              <select
+                id="bulk-stage-select"
+                value={bulkStageId}
+                onChange={e => {
+                  setBulkStageId(e.target.value);
+                  if (e.target.value) handleBulkStage(e.target.value);
+                }}
+                className="bg-transparent text-xs text-white focus:outline-none cursor-pointer"
+              >
+                <option value="" className="text-slate-900">Move to Stage...</option>
+                {stages.map(st => (
+                  <option key={st.id} value={st.id} className="text-slate-900">
+                    {st.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Clear Selection */}
+            <button
+              onClick={() => setSelectedLeadIds([])}
+              className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors ml-2"
+              title="Clear selection"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* KANBAN PIPELINE VIEW */}
+      {viewMode === 'kanban' && (
+        <LeadKanbanBoard
+          leads={filteredLeads}
+          stages={stages}
+          onOpenDetail={handleOpenDetail}
+          onOpenEdit={handleOpenEdit}
+          onStageChange={handleStageChange}
+          onOpenActionCenter={onOpenActionCenter}
+        />
+      )}
 
       {/* TABLE VIEW */}
       {viewMode === 'table' && (
@@ -361,7 +551,15 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider">
-                  <th className="py-3.5 px-4">Lead # & Status</th>
+                  <th className="py-3.5 px-3 w-10 text-center">
+                    <input
+                      type="checkbox"
+                      checked={selectedLeadIds.length > 0 && selectedLeadIds.length === filteredLeads.length}
+                      onChange={handleSelectAll}
+                      className="rounded border-slate-300 text-[#008f77] focus:ring-[#008f77] cursor-pointer"
+                    />
+                  </th>
+                  <th className="py-3.5 px-4">Lead # & Stage</th>
                   <th className="py-3.5 px-4">Contact & Agency</th>
                   <th className="py-3.5 px-4">Destination & Dates</th>
                   <th className="py-3.5 px-4">Deal Value</th>
@@ -374,38 +572,63 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
               <tbody className="divide-y divide-slate-100">
                 {filteredLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-12 text-center text-slate-400">
+                    <td colSpan={9} className="py-12 text-center text-slate-400">
                       No leads match the specified filter criteria.
                     </td>
                   </tr>
                 ) : (
-                  filteredLeads.map(lead => (
-                    <tr
-                      key={lead.id}
-                      onClick={() => handleOpenDetail(lead)}
-                      className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
-                    >
-                      {/* Lead # and Status */}
-                      <td className="py-3.5 px-4">
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-mono text-xs font-bold text-slate-900">
-                              {lead.leadNumber}
-                            </span>
-                            <RecordReminderIndicator
-                              entityType="LEAD"
-                              entityId={lead.id}
-                              entityReference={lead.leadNumber}
-                              currentUser={user}
-                              variant="badge"
-                              onOpenActionCenter={onOpenActionCenter}
-                            />
+                  filteredLeads.map(lead => {
+                    const isSelected = selectedLeadIds.includes(lead.id);
+                    const leadStage = stages.find(s => s.id === lead.stageId);
+                    return (
+                      <tr
+                        key={lead.id}
+                        onClick={() => handleOpenDetail(lead)}
+                        className={`hover:bg-slate-50/80 transition-colors cursor-pointer group ${
+                          isSelected ? 'bg-teal-50/40' : ''
+                        }`}
+                      >
+                        {/* Checkbox */}
+                        <td className="py-3.5 px-3 w-10 text-center" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={e => handleToggleSelect(lead.id)}
+                            className="rounded border-slate-300 text-[#008f77] focus:ring-[#008f77] cursor-pointer"
+                          />
+                        </td>
+
+                        {/* Lead # and Stage */}
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-mono text-xs font-bold text-slate-900">
+                                {lead.leadNumber}
+                              </span>
+                              <RecordReminderIndicator
+                                entityType="LEAD"
+                                entityId={lead.id}
+                                entityReference={lead.leadNumber}
+                                currentUser={user}
+                                variant="badge"
+                                onOpenActionCenter={onOpenActionCenter}
+                              />
+                            </div>
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {leadStage && (
+                                <span 
+                                  className="text-[10px] font-bold px-2 py-0.5 rounded-full border text-slate-800"
+                                  style={{ backgroundColor: `${leadStage.color}15`, borderColor: `${leadStage.color}40` }}
+                                >
+                                  {leadStage.name}
+                                </span>
+                              )}
+                              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${getStatusColor(lead.status)}`}>
+                                {lead.status ? lead.status.replace(/_/g, ' ') : 'NEW'}
+                              </span>
+                            </div>
                           </div>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border w-fit ${getStatusColor(lead.status)}`}>
-                            {lead.status ? lead.status.replace(/_/g, ' ') : 'NEW'}
-                          </span>
-                        </div>
-                      </td>
+                        </td>
 
                       {/* Contact & Agency */}
                       <td className="py-3.5 px-4">
@@ -513,8 +736,8 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                         </div>
                       </td>
                     </tr>
-                  ))
-                )}
+                  );
+                }))}
               </tbody>
             </table>
           </div>
@@ -524,74 +747,115 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
       {/* CARDS VIEW */}
       {viewMode === 'cards' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredLeads.map(lead => (
-            <div
-              key={lead.id}
-              onClick={() => handleOpenDetail(lead)}
-              className="bg-white rounded-3xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col justify-between space-y-4"
-            >
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded-md">
-                      {lead.leadNumber}
-                    </span>
-                    <RecordReminderIndicator
-                      entityType="LEAD"
-                      entityId={lead.id}
-                      entityReference={lead.leadNumber}
-                      currentUser={user}
-                      variant="badge"
-                      onOpenActionCenter={onOpenActionCenter}
-                    />
+          {filteredLeads.map(lead => {
+            const isSelected = selectedLeadIds.includes(lead.id);
+            const leadStage = stages.find(s => s.id === lead.stageId);
+            return (
+              <div
+                key={lead.id}
+                onClick={() => handleOpenDetail(lead)}
+                className={`bg-white rounded-3xl border p-5 shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col justify-between space-y-4 relative ${
+                  isSelected ? 'border-[#008f77] ring-2 ring-[#008f77]/20 bg-teal-50/10' : 'border-slate-200'
+                }`}
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleSelect(lead.id)}
+                          className="rounded border-slate-300 text-[#008f77] focus:ring-[#008f77] cursor-pointer"
+                        />
+                      </div>
+                      <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded-md">
+                        {lead.leadNumber}
+                      </span>
+                      <RecordReminderIndicator
+                        entityType="LEAD"
+                        entityId={lead.id}
+                        entityReference={lead.leadNumber}
+                        currentUser={user}
+                        variant="badge"
+                        onOpenActionCenter={onOpenActionCenter}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {getPriorityBadge(lead.priority)}
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${getStatusColor(lead.status)}`}>
+                        {lead.status ? lead.status.replace(/_/g, ' ') : 'NEW'}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    {getPriorityBadge(lead.priority)}
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${getStatusColor(lead.status)}`}>
-                      {lead.status ? lead.status.replace(/_/g, ' ') : 'NEW'}
-                    </span>
+
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">{lead.contactName}</h3>
+                    {lead.agencyName && (
+                      <span className="text-xs font-semibold text-[#008f77] block">{lead.agencyName}</span>
+                    )}
+                    <span className="text-xs text-slate-400 block mt-0.5">{lead.email}</span>
                   </div>
+
+                  {/* Stage Badge & Quick Stage Selector */}
+                  <div className="flex items-center justify-between gap-2 pt-1" onClick={e => e.stopPropagation()}>
+                    {leadStage ? (
+                      <span 
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-full border text-slate-800"
+                        style={{ backgroundColor: `${leadStage.color}15`, borderColor: `${leadStage.color}40` }}
+                      >
+                        {leadStage.name}
+                      </span>
+                    ) : <span />}
+                    <select
+                      value={lead.stageId || 'inquiry-received'}
+                      onChange={e => handleStageChange(lead.id, e.target.value)}
+                      className="text-[11px] bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-slate-700 font-medium focus:outline-none"
+                    >
+                      {stages.map(st => (
+                        <option key={st.id} value={st.id}>
+                          Move: {st.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 rounded-xl text-xs space-y-1">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Destination:</span>
+                      <span className="font-bold text-slate-800">{lead.destinationName}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Travel Dates:</span>
+                      <span className="font-bold text-slate-800">{lead.travelDates || 'Flexible'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Budget / Value:</span>
+                      <span className="font-mono font-bold text-[#008f77]">
+                        {lead.currency || 'USD'} {(Number(lead.estimatedBudget || lead.bookingValue || 0)).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-600 line-clamp-2">
+                    {typeof lead.travelRequirements === 'string'
+                      ? lead.travelRequirements
+                      : Array.isArray(lead.travelRequirements)
+                        ? (lead.travelRequirements as any[]).map(r => typeof r === 'string' ? r : r?.text || '').filter(Boolean).join(', ')
+                        : 'VIP ground arrangements requested.'}
+                  </p>
                 </div>
 
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">{lead.contactName}</h3>
-                  {lead.agencyName && (
-                    <span className="text-xs font-semibold text-[#008f77] block">{lead.agencyName}</span>
-                  )}
-                  <span className="text-xs text-slate-400 block mt-0.5">{lead.email}</span>
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                  <span>Assigned: <strong className="text-slate-700">{lead.assignedStaffName || 'Desk'}</strong></span>
+                  <span className="text-[#008f77] font-bold flex items-center gap-1">
+                    <span>View Details</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </span>
                 </div>
-
-                <div className="p-3 bg-slate-50 rounded-xl text-xs space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Destination:</span>
-                    <span className="font-bold text-slate-800">{lead.destinationName}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Travel Dates:</span>
-                    <span className="font-bold text-slate-800">{lead.travelDates || 'Flexible'}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Budget / Value:</span>
-                    <span className="font-mono font-bold text-[#008f77]">
-                      {lead.currency || 'USD'} {(Number(lead.estimatedBudget || lead.bookingValue || 0)).toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-
-                <p className="text-xs text-slate-600 line-clamp-2">
-                  {lead.travelRequirements || 'VIP ground arrangements requested.'}
-                </p>
               </div>
-
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                <span>Assigned: <strong className="text-slate-700">{lead.assignedStaffName || 'Desk'}</strong></span>
-                <span className="text-[#008f77] font-bold flex items-center gap-1">
-                  <span>View Details</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

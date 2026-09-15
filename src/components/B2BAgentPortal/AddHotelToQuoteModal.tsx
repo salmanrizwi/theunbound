@@ -465,11 +465,7 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
             <div className="space-y-2">
               {roomTypes.map((room) => {
                 const isSelected = room.id === selectedRoomId;
-                const markupMultiplier = 1 + ((room.rates?.[0]?.markupPercent || 18) / 100);
-                const taxMultiplier = 1 + ((room.rates?.[0]?.taxPercent || 10) / 100);
-                const feeMultiplier = 1 + ((room.rates?.[0]?.feePercent || 2.5) / 100);
-                const rawNettUSD = room.rates?.[0]?.adultNettCost || room.rates?.[0]?.doubleNetRate || 380;
-                const sellingRateUSD = Math.round(rawNettUSD * markupMultiplier * taxMultiplier * feeMultiplier);
+                const sellingRateUSD = (room as any).startingSellingRateUSD || (room.rates?.[0] as any)?.sellingRateUSD || Math.round(((room.rates?.[0]?.adultNettCost || room.rates?.[0]?.doubleNetRate || 380) * 1.3));
                 return (
                   <div
                     key={room.id}

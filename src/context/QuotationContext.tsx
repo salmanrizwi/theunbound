@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { CurrencyCode, Product, QuoteItem, Quotation, TravelLead, B2BPackage, TripRouteHub, QuoteBuilderHandoffPayload, QuoteItemSource } from '../types';
-import { calculateProductPrice } from '../services/pricingEngine';
+import { calculateProductPrice, calculateProductPriceForAgent } from '../services/pricingEngine';
+import { sanitizeProductForAgent } from '../utils/customerQuoteSanitizer';
 import { AppDatabase } from '../services/db';
 import { campaignAnalytics } from '../services/campaignAnalyticsService';
 import { useAuth } from './AuthContext';
@@ -183,7 +184,15 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (company) setClientCompany(company);
   };
 
+  const isAgent = user?.role === 'B2B_AGENT';
   const pricingTier = user && user.role !== 'PUBLIC' ? 'B2B' : 'B2C';
+
+  const calculateItemPrice = (prod: Product, params: any) => {
+    if (isAgent) {
+      return calculateProductPriceForAgent(prod, params) as any;
+    }
+    return calculateProductPrice(prod, params);
+  };
 
   const [savedQuotes, setSavedQuotes] = useState<Quotation[]>(() => {
     const db = AppDatabase.getInstance();
@@ -207,7 +216,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     setItems(prevItems =>
       prevItems.map(item => {
-        const calculation = calculateProductPrice(item.product, {
+        const calculation = calculateItemPrice(item.product, {
           productId: item.product.id,
           pricingTier,
           adults: item.pax.adults,
@@ -223,7 +232,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         };
       })
     );
-  }, [currency, pricingTier]);
+  }, [currency, pricingTier, isAgent]);
 
   const addProductToQuote = (
     product: Product,
@@ -248,8 +257,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const serviceTime = options?.serviceTime;
     const notes = options?.notes;
 
-    const calculation = calculateProductPrice(product, {
-      productId: product.id,
+    const effectiveProduct = isAgent ? sanitizeProductForAgent(product) : product;
+    const calculation = calculateItemPrice(effectiveProduct, {
+      productId: effectiveProduct.id,
       pricingTier,
       adults,
       children,
@@ -261,7 +271,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const newItem: QuoteItem = {
       id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-      product,
+      product: effectiveProduct,
       pax: { adults, children, infants },
       travelDate,
       serviceTime,
@@ -286,7 +296,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setItems(prev =>
       prev.map(item => {
         if (item.id !== itemId) return item;
-        const calculation = calculateProductPrice(item.product, {
+        const calculation = calculateItemPrice(item.product, {
           productId: item.product.id,
           pricingTier,
           adults: pax.adults,
@@ -311,7 +321,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setItems(prev =>
       prev.map(item => {
         if (item.id !== itemId) return item;
-        const calculation = calculateProductPrice(item.product, {
+        const calculation = calculateItemPrice(item.product, {
           productId: item.product.id,
           pricingTier,
           adults: item.pax.adults,
@@ -358,7 +368,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const nextServiceTime = updates.serviceTime !== undefined ? updates.serviceTime : item.serviceTime;
         const nextNotes = updates.notes !== undefined ? updates.notes : item.notes;
 
-        const calculation = calculateProductPrice(item.product, {
+        const calculation = calculateItemPrice(item.product, {
           productId: item.product.id,
           pricingTier,
           adults: nextPax.adults,
@@ -397,6 +407,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       selectedAddonIds?: string[];
     }
   ) => {
+    const effectiveProduct = isAgent ? sanitizeProductForAgent(updatedProduct) : updatedProduct;
     setItems(prev =>
       prev.map(item => {
         if (item.id !== itemId) return item;
@@ -408,8 +419,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const notes = options.notes !== undefined ? options.notes : item.notes;
         const selectedAddonIds = options.selectedAddonIds ?? item.selectedAddonIds;
 
-        const calculation = calculateProductPrice(updatedProduct, {
-          productId: updatedProduct.id,
+        const calculation = calculateItemPrice(effectiveProduct, {
+          productId: effectiveProduct.id,
           pricingTier,
           adults,
           children,
@@ -421,7 +432,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         return {
           ...item,
-          product: updatedProduct,
+          product: effectiveProduct,
           pax: { adults, children, infants },
           travelDate,
           serviceTime,
@@ -444,7 +455,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           ? currentAddons.filter(id => id !== addonId)
           : [...currentAddons, addonId];
 
-        const calculation = calculateProductPrice(item.product, {
+        const calculation = calculateItemPrice(item.product, {
           productId: item.product.id,
           pricingTier,
           adults: item.pax.adults,
@@ -609,31 +620,35 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     let totalPax = 0;
 
     for (const item of items) {
-      net += item.calculation.totalNetCost;
-      gross += item.calculation.grossBeforeTax;
-      taxes += item.calculation.taxAmount;
-      fees += item.calculation.serviceFee;
-      selling += item.calculation.finalTotalSellingPrice;
-      margin += item.calculation.dmcMarginAmount;
+      if (!isAgent) {
+        net += (item.calculation as any).totalNetCost || 0;
+        gross += (item.calculation as any).grossBeforeTax || 0;
+        margin += (item.calculation as any).dmcMarginAmount || 0;
+      }
+      taxes += item.calculation.taxAmount || 0;
+      fees += item.calculation.serviceFee || 0;
+      selling += item.calculation.finalTotalSellingPrice || 0;
       totalPax += item.pax.adults + item.pax.children;
     }
 
     if (overallDiscountPercent > 0) {
       const discountVal = selling * (overallDiscountPercent / 100);
       selling -= discountVal;
-      margin -= discountVal;
+      if (!isAgent) {
+        margin -= discountVal;
+      }
     }
 
     return {
-      totalNetCost: net,
-      totalGrossBeforeTax: gross,
+      totalNetCost: isAgent ? 0 : net,
+      totalGrossBeforeTax: isAgent ? selling : gross,
       totalTaxes: taxes,
       totalServiceFees: fees,
       totalSellingPrice: selling,
-      totalMarginAmount: margin,
+      totalMarginAmount: isAgent ? 0 : margin,
       totalPaxAcrossItems: totalPax
     };
-  }, [items, overallDiscountPercent]);
+  }, [items, overallDiscountPercent, isAgent]);
 
   const saveCurrentQuote = (): Quotation | null => {
     if (items.length === 0) return null;
@@ -668,10 +683,10 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       createdAt: existingQuote?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       validUntil: new Date(Date.now() + 86400000 * 14).toISOString(),
-      totalNetCost: totals.totalNetCost,
+      totalNetCost: isAgent ? 0 : totals.totalNetCost,
       totalSellingPrice: totals.totalSellingPrice,
       totalTaxes: totals.totalTaxes,
-      totalMargin: totals.totalMarginAmount
+      totalMargin: isAgent ? 0 : totals.totalMarginAmount
     };
 
     // Save to AppDatabase (which persists and notifies subscribers)

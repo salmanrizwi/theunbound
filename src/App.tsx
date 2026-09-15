@@ -14,6 +14,7 @@ import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { RefundPolicyPage } from './pages/RefundPolicyPage';
 import { CookiePolicyPage } from './pages/CookiePolicyPage';
 import { CookieConsentBanner } from './components/CookieConsentBanner';
+import { GlobalToastContainer } from './components/common/GlobalToastContainer';
 import { AccountPage } from './pages/AccountPage';
 import { VisaPage } from './pages/VisaPage';
 import { CustomPageView } from './pages/CustomPageView';
@@ -256,9 +257,18 @@ const MainAppContent: React.FC = () => {
       );
     }
 
+    // Map legacy standalone lead routes to canonical CRM route
+    const isLegacyLeadRoute = currentRoute.subTab === 'leads' || currentRoute.subTab === 'assigned-leads';
     const b2bTab = (currentRoute.subTab === 'quote-builder' || currentRoute.subTab === 'create-quote')
       ? 'create-quote'
-      : (currentRoute.subTab as any) || 'home';
+      : (isLegacyLeadRoute || currentRoute.subTab === 'customers' || currentRoute.subTab === 'crm')
+        ? 'crm'
+        : (currentRoute.subTab as any) || 'home';
+
+    // Canonical URL synchronization: if visited /b2b/leads or /b2b/assigned-leads, update URL to /b2b/crm without reload
+    if (isLegacyLeadRoute && typeof window !== 'undefined' && window.location.pathname !== '/b2b/crm') {
+      window.history.replaceState(null, '', '/b2b/crm');
+    }
 
     return (
       <B2BAgentPortal
@@ -268,7 +278,13 @@ const MainAppContent: React.FC = () => {
         onOpenBookingModal={handleOpenQuotationBooking}
         initialTab={b2bTab}
         onTabChange={(tab) => {
-          const path = tab === 'create-quote' ? '/b2b/quote-builder' : tab === 'home' ? '/b2b' : `/b2b/${tab}`;
+          const path = tab === 'create-quote' 
+            ? '/b2b/quote-builder' 
+            : tab === 'home' 
+              ? '/b2b' 
+              : (tab === 'crm' || tab === 'leads' || tab === 'customers') 
+                ? '/b2b/crm' 
+                : `/b2b/${tab}`;
           navigateTo(path);
         }}
       />
@@ -637,6 +653,9 @@ const MainAppContent: React.FC = () => {
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
       />
+
+      {/* Standard Light TheUnbound Global Toast Notifications */}
+      <GlobalToastContainer />
     </div>
   );
 };

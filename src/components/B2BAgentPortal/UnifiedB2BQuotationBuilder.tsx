@@ -65,7 +65,8 @@ import {
   MealPlanCode,
   ManualHotelDetails,
   B2BPackage,
-  PackageItineraryDay
+  PackageItineraryDay,
+  AgentMarginType
 } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
@@ -223,8 +224,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     clearQuote
   } = useQuotation();
 
-  // Local agent markup state
-  const [agentMarkupPercent, setAgentMarkupPercent] = useState<number>(12);
+  // Local agent markup & margin state (Section 2 & Step 9)
+  const [agentMarginType, setAgentMarginType] = useState<AgentMarginType>('PERCENTAGE');
+  const [agentMarginValue, setAgentMarginValue] = useState<number>(10);
+  const [agentMarkupPercent, setAgentMarkupPercent] = useState<number>(10);
 
   // Top-Level View State (Itinerary Builder vs Official Proposal Preview)
   const [activeViewTab, setActiveViewTab] = useState<'BUILDER' | 'PROPOSAL_PREVIEW'>('BUILDER');
@@ -683,7 +686,17 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       setClientEmail(lead.email || '');
       setClientCompany(lead.agencyName || '');
       if (lead.phone) setClientPhone(lead.phone);
-      if (lead.notes) setAgentNotes(lead.notes);
+      if (lead.notes) {
+        if (typeof lead.notes === 'string') {
+          setAgentNotes(lead.notes);
+        } else if (Array.isArray(lead.notes)) {
+          const notesText = (lead.notes as any[])
+            .map((n: any) => typeof n === 'string' ? n : n?.text || '')
+            .filter(Boolean)
+            .join('\n');
+          setAgentNotes(notesText);
+        }
+      }
     }
   };
 
@@ -884,7 +897,6 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       const dayHotelItems = dayItems.filter(isHotelQuoteItem);
       const dayProductItems = dayItems.filter(it => !isHotelQuoteItem(it) && !isVisaQuoteItem(it));
 
-      const dayNetCost = dayItems.reduce((sum, it) => sum + (it.calculation?.totalNetCost || 0), 0);
       const daySellingPrice = dayItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
 
       return {
@@ -897,7 +909,6 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         prevHub,
         hotelItems: dayHotelItems,
         productItems: dayProductItems,
-        dayNetCost,
         daySellingPrice
       };
     });
@@ -1018,9 +1029,22 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const visaTotalSelling = useMemo(() => visaItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [visaItems]);
   const experienceTotalSelling = useMemo(() => experienceItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [experienceItems]);
 
-  const finalClientPrice = useMemo(() => {
-    return totalSellingPrice * (1 + (agentMarkupPercent || 0) / 100);
-  }, [totalSellingPrice, agentMarkupPercent]);
+  const baseFinalSellingPrice = useMemo(() => {
+    return totalSellingPrice;
+  }, [totalSellingPrice]);
+
+  const additionalMarginAmount = useMemo(() => {
+    if (agentMarginType === 'PERCENTAGE') {
+      return Math.round(baseFinalSellingPrice * ((agentMarginValue || 0) / 100));
+    }
+    return Math.round(agentMarginValue || 0);
+  }, [baseFinalSellingPrice, agentMarginType, agentMarginValue]);
+
+  const finalCustomerSellingPrice = useMemo(() => {
+    return baseFinalSellingPrice + additionalMarginAmount;
+  }, [baseFinalSellingPrice, additionalMarginAmount]);
+
+  const finalClientPrice = finalCustomerSellingPrice;
 
   // Dynamic 3-Option Calculations Engine
   const computedQuotationOptions: QuotationOption[] = useMemo(() => {
@@ -1046,9 +1070,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           };
 
       const optItems = optState.items;
-      const net = optItems.reduce((acc, it) => acc + (it.calculation?.totalNetCost || it.product.priceB2B * (it.pax.adults + it.pax.children)), 0);
       const selling = optItems.reduce((acc, it) => acc + (it.calculation?.finalTotalSellingPrice || it.product.priceSelling * (it.pax.adults + it.pax.children)), 0);
-      const margin = selling - net;
+      const optMarkupAmount = Math.round(selling * ((optState.agentMarkupPercent || 12) / 100));
+      const optFinalClientPrice = Math.round((selling + optMarkupAmount) * (1 - (optState.overallDiscountPercent || 0) / 100));
 
       return {
         id: `opt-${optNum}`,
@@ -1058,10 +1082,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         hotelTier: optState.hotelTier,
         items: optItems,
         routeHubs: optState.routeHubs,
-        totalNetCost: net,
-        totalSellingPrice: selling,
-        totalMargin: margin,
-        totalTaxes: selling * 0.05
+        totalNetCost: 0,
+        totalSellingPrice: optFinalClientPrice,
+        totalMargin: optMarkupAmount,
+        totalTaxes: 0
       };
     });
   }, [items, routeHubs, agentMarkupPercent, overallDiscountPercent, optionsData, activeOptionTab]);
@@ -1078,12 +1102,52 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         destination: currentDestination.name,
         items,
         currency,
-        overallMarkupPercent: agentMarkupPercent,
+        overallMarkupPercent: agentMarginType === 'PERCENTAGE' ? agentMarginValue : 0,
         overallDiscountPercent: overallDiscountPercent || 0,
-        totalNetCost,
-        totalSellingPrice: finalClientPrice,
+        totalNetCost: 0,
+        totalSellingPrice: finalCustomerSellingPrice,
         totalTaxes: 0,
-        totalMargin: totalMarginAmount + (finalClientPrice - totalSellingPrice),
+        totalMargin: additionalMarginAmount,
+        baseFinalSellingPrice,
+        base_final_selling_price: baseFinalSellingPrice,
+        baseFinalSellingPriceCurrency: currency,
+        base_final_selling_price_currency: currency,
+        agentMarginType,
+        agent_margin_type: agentMarginType,
+        agentMarginValue,
+        agent_margin_value: agentMarginValue,
+        agentMarginAmount: additionalMarginAmount,
+        agent_margin_amount: additionalMarginAmount,
+        finalCustomerSellingPrice,
+        final_customer_selling_price: finalCustomerSellingPrice,
+        pricingCalculatedAt: new Date().toISOString(),
+        pricing_calculated_at: new Date().toISOString(),
+        pricingVersion: quoteVersion || 1,
+        pricing_version: quoteVersion || 1,
+        pricingSnapshot: {
+          baseFinalSellingPrice,
+          currency,
+          agentMarginType,
+          agentMarginValue,
+          agentMarginAmount: additionalMarginAmount,
+          finalCustomerSellingPrice,
+          calculatedAt: new Date().toISOString(),
+          pricingVersion: quoteVersion || 1,
+          itemsCount: items.length,
+          totalPax: (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0)
+        },
+        pricing_snapshot: {
+          baseFinalSellingPrice,
+          currency,
+          agentMarginType,
+          agentMarginValue,
+          agentMarginAmount: additionalMarginAmount,
+          finalCustomerSellingPrice,
+          calculatedAt: new Date().toISOString(),
+          pricingVersion: quoteVersion || 1,
+          itemsCount: items.length,
+          totalPax: (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0)
+        },
         clientName: clientName || 'Client Name Pending',
         clientEmail: clientEmail || 'client@example.com',
         clientPhone: clientPhone || '',
@@ -1603,20 +1667,23 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
   };
 
-  // Convert to Confirmed Booking Action
+  // Convert to Confirmed Booking Action (Idempotent)
   const handleConvertBooking = () => {
     const saved = handleSaveDraft();
     if (!saved) return;
 
     try {
       db.updateQuotationStatus(saved.id, 'APPROVED', user);
+      const booking = db.convertQuotationToBooking(saved, user);
       if (onConvertToBooking) {
         onConvertToBooking(saved);
       } else if (onBookQuotation) {
         onBookQuotation(saved);
       }
-    } catch (err) {
+      showBuilderToast(`Quotation converted to Booking (${booking?.bookingReference || booking?.id || 'Confirmed'})!`, 'SUCCESS');
+    } catch (err: any) {
       console.error('Booking conversion error:', err);
+      showBuilderToast(err?.message || 'Booking conversion encountered an issue.', 'WARNING');
     }
   };
 
@@ -1715,7 +1782,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       productIds: allProdIds,
       pricingConfiguration: {
         pricingMode: packageFormData.pricingMode,
-        baseNetCostUSD: totalNetCost || 2500,
+        baseNetCostUSD: 0,
         suggestedSellingPriceUSD: finalClientPrice || 3250,
         b2bMarkupPercent: agentMarkupPercent || 12,
         currency
@@ -1734,7 +1801,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         'International airfare & visas',
         'Personal travel insurance & gratuities'
       ],
-      baseNetCostUSD: totalNetCost || 2500,
+      baseNetCostUSD: 0,
       suggestedSellingPriceUSD: finalClientPrice || 3250,
       currency,
       tags: ['Featured', 'Bestseller', currentDestination.name],
@@ -1991,10 +2058,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               currency,
               overallMarkupPercent: agentMarkupPercent,
               overallDiscountPercent: overallDiscountPercent || 0,
-              totalNetCost,
+              totalNetCost: 0,
               totalSellingPrice: finalClientPrice,
               totalTaxes: 0,
-              totalMargin: totalMarginAmount + (finalClientPrice - totalSellingPrice),
+              totalMargin: Math.round(finalClientPrice - totalSellingPrice),
               clientName: clientName || 'Valued Guest',
               clientEmail: clientEmail || 'client@example.com',
               clientPhone: clientPhone || '',
@@ -2141,13 +2208,30 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               updateItemTravelDate={updateItemTravelDate}
               updateItemServiceTime={updateItemServiceTime}
               updateItemNotes={updateItemNotes}
-              agentMarkupPercent={agentMarkupPercent}
-              setAgentMarkupPercent={setAgentMarkupPercent}
+              baseFinalSellingPrice={baseFinalSellingPrice}
+              agentMarginType={agentMarginType}
+              setAgentMarginType={(t) => {
+                setAgentMarginType(t);
+                if (t === 'PERCENTAGE') setAgentMarkupPercent(agentMarginValue);
+              }}
+              agentMarginValue={agentMarginValue}
+              setAgentMarginValue={(val) => {
+                setAgentMarginValue(val);
+                if (agentMarginType === 'PERCENTAGE') setAgentMarkupPercent(val);
+              }}
+              agentMarginAmount={additionalMarginAmount}
+              finalCustomerSellingPrice={finalCustomerSellingPrice}
+              agentMarkupPercent={agentMarginType === 'PERCENTAGE' ? agentMarginValue : 0}
+              setAgentMarkupPercent={(val) => {
+                setAgentMarginType('PERCENTAGE');
+                setAgentMarginValue(val);
+                setAgentMarkupPercent(val);
+              }}
               overallDiscountPercent={overallDiscountPercent}
               setOverallDiscountPercent={setOverallDiscountPercent}
               totalNetCost={totalNetCost}
               totalSellingPrice={totalSellingPrice}
-              finalClientPrice={finalClientPrice}
+              finalClientPrice={finalCustomerSellingPrice}
               totalMarginAmount={totalMarginAmount}
               quotationOptions={computedQuotationOptions}
               activeOptionTab={activeOptionTab}

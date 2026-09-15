@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   CheckSquare, 
   Plus, 
@@ -19,6 +20,7 @@ import {
 import { B2BTask } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
+import { toast } from '../../services/toastService';
 
 export const B2BTasksManagerView: React.FC = () => {
   const { user } = useAuth();
@@ -83,12 +85,18 @@ export const B2BTasksManagerView: React.FC = () => {
   }, [activeTab, overdueTasks, todayTasks, upcomingTasks, completedTasks, searchQuery]);
 
   const toggleTaskStatus = (task: B2BTask) => {
+    const isCompleted = task.status === 'COMPLETED';
     const updated: B2BTask = {
       ...task,
-      status: task.status === 'COMPLETED' ? 'PENDING' : 'COMPLETED',
+      status: isCompleted ? 'PENDING' : 'COMPLETED',
       updatedAt: new Date().toISOString()
     };
     db.saveB2BTask(updated);
+    if (!isCompleted) {
+      toast.success('Task Completed', `"${task.title}" marked as complete.`);
+    } else {
+      toast.info('Task Reopened', `"${task.title}" reopened.`);
+    }
     setRefreshTrigger(prev => prev + 1);
   };
 
@@ -116,6 +124,17 @@ export const B2BTasksManagerView: React.FC = () => {
     setIsModalOpen(true);
   };
 
+  // Close on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isModalOpen) {
+        setIsModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isModalOpen]);
+
   const handleSaveTask = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.title) return;
@@ -131,6 +150,7 @@ export const B2BTasksManagerView: React.FC = () => {
         updatedAt: new Date().toISOString()
       };
       db.saveB2BTask(updated);
+      toast.success('Reminder Updated', `"${formData.title}" updated.`);
     } else {
       const newTask: B2BTask = {
         id: `task-${Date.now()}`,
@@ -145,6 +165,7 @@ export const B2BTasksManagerView: React.FC = () => {
         updatedAt: new Date().toISOString()
       };
       db.saveB2BTask(newTask);
+      toast.success('Reminder Created', `"${formData.title}" saved.`);
     }
 
     setIsModalOpen(false);
@@ -152,7 +173,9 @@ export const B2BTasksManagerView: React.FC = () => {
   };
 
   const handleDeleteTask = (id: string) => {
+    const task = tasks.find(t => t.id === id);
     db.deleteB2BTask(id);
+    toast.info('Reminder Deleted', task ? `"${task.title}" deleted.` : 'Task removed.');
     setRefreshTrigger(prev => prev + 1);
   };
 
@@ -363,14 +386,14 @@ export const B2BTasksManagerView: React.FC = () => {
         )}
       </div>
 
-      {/* Add / Edit Task Modal (Fits Viewport, Fixed Header/Footer, Scrollable) */}
-      {isModalOpen && (
+      {/* Add / Edit Task Modal (Fits Viewport, Fixed Header/Footer, Scrollable via Portal) */}
+      {isModalOpen && typeof document !== 'undefined' && createPortal(
         <div 
-          className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-hidden"
+          className="fixed inset-0 z-[9999] bg-slate-900/30 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-hidden"
           onClick={() => setIsModalOpen(false)}
         >
           <div 
-            className="bg-white w-full max-w-lg rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-pop-in"
+            className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200/80 flex flex-col max-h-[90vh] overflow-hidden animate-pop-in"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Fixed Header */}
@@ -380,7 +403,7 @@ export const B2BTasksManagerView: React.FC = () => {
               </h2>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors"
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -461,13 +484,14 @@ export const B2BTasksManagerView: React.FC = () => {
               <button
                 type="submit"
                 form="taskForm"
-                className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white font-bold text-xs transition-all cursor-pointer"
+                className="px-5 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00a88d] text-white font-bold text-xs transition-all cursor-pointer shadow-xs"
               >
                 {editingTask ? 'Update Reminder' : 'Save Reminder'}
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -200,6 +200,37 @@ export interface CMSSystemAnalysisPermissions {
   export?: boolean;
 }
 
+export interface BookingOperationsPermissions {
+  view?: boolean;
+  create_manual?: boolean;
+  edit?: boolean;
+  manage_service_items?: boolean;
+  allocate_supplier?: boolean;
+  view_supplier_prices?: boolean;
+  manage_supplier_prices?: boolean;
+  confirm_service_items?: boolean;
+  generate_vouchers?: boolean;
+  upload_invoices?: boolean;
+  view_internal_financials?: boolean;
+  override_confirmation?: boolean;
+  manage_supplier_records?: boolean;
+}
+
+export interface SupplierPermissions {
+  view?: boolean;
+  create?: boolean;
+  edit?: boolean;
+  archive?: boolean;
+  restore?: boolean;
+  manage_contacts?: boolean;
+  manage_services?: boolean;
+  view_financial_details?: boolean;
+  manage_financial_details?: boolean;
+  view_activity_history?: boolean;
+  manage_rates?: boolean;
+  upload_documents?: boolean;
+}
+
 export interface UserPermissionAccess {
   // Quote Builder & AI Planner Access
   b2bQuoteBuilderAccess?: boolean;
@@ -217,6 +248,12 @@ export interface UserPermissionAccess {
   canManagePackages?: boolean;
   shareWhatsApp?: boolean; // Controls whether user can share quotation via WhatsApp
   canShareWhatsAppQuotes?: boolean; // Alias for permission matrix control
+
+  // Booking Operations & Supplier Allocation Desk Granular Permissions
+  bookingOperations?: BookingOperationsPermissions;
+
+  // Supplier Management Master Directory Granular Permissions
+  suppliers?: SupplierPermissions;
 
   // Tasks & Follow-Ups Granular Permissions
   tasksView?: boolean;
@@ -289,6 +326,8 @@ export interface ManualHotelDetails {
 export interface User {
   id: string;
   name: string;
+  displayName?: string;
+  userType?: string;
   firstName?: string;
   lastName?: string;
   email: string;
@@ -411,26 +450,39 @@ export interface Destination {
 
 export type SupplierCategory = 
   | 'HOTEL' 
-  | 'FLIGHT' 
-  | 'VISA' 
-  | 'SIGHTSEEING' 
   | 'TRANSFER' 
+  | 'ACTIVITY' 
+  | 'TOUR' 
   | 'RAIL' 
   | 'GUIDE' 
+  | 'VISA' 
   | 'YACHT' 
+  | 'CRUISE' 
+  | 'TRANSPORT' 
+  | 'RESTAURANT' 
+  | 'EVENT' 
+  | 'FLIGHT' 
+  | 'SIGHTSEEING' 
   | 'INSURANCE' 
   | 'ESIM' 
   | 'DMC_GROUND' 
   | 'OTHER';
 
+export type SupplierStatus = 'ACTIVE' | 'INACTIVE' | 'UNDER_REVIEW' | 'SUSPENDED' | 'ARCHIVED';
+
 export interface SupplierContactPerson {
   id: string;
   name: string;
   role?: string;
+  designation?: string;
   email: string;
   phone: string;
+  whatsapp?: string;
   isPrimary?: boolean;
+  isSecondary?: boolean;
+  isEmergency?: boolean;
   emergencyPhone?: string;
+  notes?: string;
 }
 
 export interface SupplierBankDetails {
@@ -443,26 +495,176 @@ export interface SupplierBankDetails {
   branchAddress?: string;
 }
 
+export interface SupplierServiceCoverage {
+  regionsServed: string[];
+  destinationsServed: string[];
+  hubsServed: string[];
+  cityHubsServed?: string[];
+  supportedCategories: SupplierCategory[];
+  serviceCategories?: SupplierCategory[];
+  languagesSupported?: string[];
+  has24x7Support?: boolean;
+  serviceAvailability: 'ALL_YEAR' | 'SEASONAL' | 'CUSTOM';
+  seasonalMonths?: string[];
+  operatingDays?: string[];
+  operatingHours?: string;
+  emergencySupport24x7?: boolean;
+  emergencySupportDetails?: string;
+}
+
+export interface SupplierCommercialDetails {
+  defaultCurrency: CurrencyCode;
+  paymentTerms: string;
+  standardPaymentTerms?: string;
+  paymentMethod?: string;
+  creditPeriodDays?: number;
+  creditDays?: number;
+  cancellationPolicy?: string;
+  cancellationPolicyTerms?: string;
+  contractReference?: string;
+  contractStartDate?: string;
+  contractEndDate?: string;
+  taxTreatment?: string;
+  internalCommercialNotes?: string;
+  bankDetails?: SupplierBankDetails;
+}
+
+export interface SupplierRateCard {
+  id: string;
+  supplierId: string;
+  serviceName: string;
+  serviceCategory: SupplierCategory;
+  destination: string;
+  hub?: string;
+  rateAdult: number;
+  rateChild?: number;
+  rateInfant?: number;
+  rateUnit?: 'PER_PERSON' | 'PER_VEHICLE' | 'PER_GROUP' | 'PER_UNIT';
+  unitType?: string;
+  capacity?: number;
+  currency: CurrencyCode;
+  validFrom: string;
+  validTo: string;
+  inclusions?: string;
+  exclusions?: string;
+  terms?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupplierDocument {
+  id: string;
+  supplierId: string;
+  title: string;
+  documentType: 'CONTRACT' | 'RATE_SHEET' | 'INVOICE' | 'AGREEMENT' | 'COMPLIANCE' | 'INSURANCE' | 'OTHER';
+  fileUrl?: string;
+  fileName: string;
+  fileSize?: string;
+  notes?: string;
+  uploadedBy: string;
+  uploadedByName: string;
+  uploadedAt: string;
+}
+
+export interface SupplierActivityHistory {
+  id: string;
+  supplierId: string;
+  action: 
+    | 'CREATED' 
+    | 'EDITED' 
+    | 'STATUS_CHANGED' 
+    | 'ARCHIVED' 
+    | 'RESTORED' 
+    | 'CONTACT_UPDATED' 
+    | 'COVERAGE_UPDATED' 
+    | 'COMMERCIAL_UPDATED' 
+    | 'RATE_CARD_ADDED' 
+    | 'RATE_CARD_UPDATED' 
+    | 'DOCUMENT_UPLOADED' 
+    | 'DOCUMENT_DELETED' 
+    | 'ALLOCATION_LINKED' 
+    | 'ALLOCATION_UNLINKED'
+    | 'NOTE_ADDED';
+  summary: string;
+  details?: string;
+  performedBy: string;
+  performedByName: string;
+  performedByEmail: string;
+  timestamp: string;
+}
+
+export interface SupplierAllocationRecord {
+  id: string;
+  supplierId: string;
+  supplierNameSnapshot: string;
+  supplierCategory: string;
+  supplierDestination?: string;
+  bookingId: string;
+  bookingReference: string;
+  serviceItemId: string;
+  serviceName: string;
+  customerName?: string;
+  serviceDate?: string;
+  status: 'ALLOCATED' | 'CONFIRMED' | 'REJECTED' | 'CHANGED' | 'REMOVED';
+  allocatedBy: string;
+  allocatedByName: string;
+  allocatedAt: string;
+  previousSupplierId?: string;
+  previousSupplierName?: string;
+  changeReason?: string;
+}
+
+export interface SupplierPriceRecord {
+  id: string;
+  supplierId: string;
+  bookingId: string;
+  bookingReference: string;
+  serviceItemId: string;
+  serviceName: string;
+  supplierPrice: number;
+  currency: CurrencyCode;
+  priceType: string;
+  previousPrice?: number;
+  effectiveDate: string;
+  updatedBy: string;
+  updatedByName: string;
+  changeReason?: string;
+  timestamp: string;
+}
+
 export interface Supplier {
   id: string;
+  supplierCode?: string; // Stable immutable unique ID (e.g. SUP-00101)
   name: string;
   legalName?: string;
   tradingName?: string;
+  supplierType?: string;
   country: string;
+  state?: string;
+  city?: string;
+  address?: string;
   destination: string;
   destinations?: string[];
+  hubs?: string[];
   categories?: SupplierCategory[];
+  status?: SupplierStatus;
   contactPerson: string;
   contactPersons?: SupplierContactPerson[];
   email: string;
   phone: string;
+  whatsapp?: string;
   emergencyPhone?: string;
   website: string;
+  taxRegistrationNumber?: string;
+  description?: string;
   currency: CurrencyCode;
-  contractStatus: 'ACTIVE' | 'PENDING_RENEWAL' | 'UNDER_REVIEW';
+  contractStatus?: 'ACTIVE' | 'PENDING_RENEWAL' | 'UNDER_REVIEW';
   isPreferred?: boolean;
   paymentTerms: string;
   cancellationTerms: string;
+  serviceCoverage?: SupplierServiceCoverage;
+  commercialDetails?: SupplierCommercialDetails;
   bankDetails?: SupplierBankDetails; // Protected
   performanceScore?: number; // 0-100
   responseTimeAvgHours?: number;
@@ -472,9 +674,18 @@ export interface Supplier {
   openRequestsCount?: number;
   pendingConfirmationsCount?: number;
   outstandingPayableAmount?: number;
+  linkedServiceItemsCount?: number;
+  activeBookingsCount?: number;
   notes?: string;
+  createdBy?: string;
+  createdByName?: string;
   createdAt?: string;
+  updatedBy?: string;
+  updatedByName?: string;
   updatedAt?: string;
+  archivedAt?: string;
+  archivedBy?: string;
+  archivedReason?: string;
 }
 
 export type SupplierRequestStatus = 
@@ -790,6 +1001,85 @@ export interface PricingCalculationResult {
   sourceCollection?: string;
   pricingRequestId?: string;
   calculatedAt?: string;
+
+  // Protected Internal Commercial Fields (CMS/Admin Only)
+  internalNettCost?: number;
+  internalMarkup?: number;
+  agentMarkup?: number;
+  internalProfit?: number;
+  supplierCost?: number;
+  rateSnapshot?: any;
+  pricingVersion?: number | string;
+  commercialNotes?: string;
+}
+
+/**
+ * Internal Commercial Pricing Response (CMS/Admin Only)
+ * Contains private supplier costs, margins, and wholesale markups.
+ */
+export type InternalPricingResponse = PricingCalculationResult;
+
+/**
+ * Sanitized Customer-Facing Pricing Response for B2B Agents
+ * STRICT GUARANTEE: Never contains internal nett price, supplier cost,
+ * dmc margin, or wholesale markup calculations.
+ */
+export interface AgentPricingResponse {
+  productId: string;
+  productName: string;
+  pricingTier: PricingTier;
+  pax: {
+    adults: number;
+    children: number;
+    infants: number;
+    totalPax: number;
+  };
+  travelDate: string;
+  currency: CurrencyCode;
+
+  // Final Quoted Breakdown (Selling Price)
+  adultsSubtotalSelling: number;
+  childrenSubtotalSelling: number;
+  infantsSubtotalSelling: number;
+  addonsSubtotalSelling: number;
+  adultPricePerPax: number;
+  childPricePerPax: number;
+
+  // Final Customer-Facing Results
+  finalTotalSellingPrice: number;
+  sellingPriceFinal: number;
+  pricePerPerson: number;
+
+  // Customer-Facing Taxes and Fees (Without internal cost breakdowns)
+  taxAmount?: number;
+  serviceFee?: number;
+  discountAmount?: number;
+
+  // Safe Vehicle Details (Without unitVehicleNetCost or totalVehicleNetCost)
+  isCapacityBased?: boolean;
+  pricingMethod?: 'per_person' | 'capacity_based' | 'fixed_stay';
+  vehicleDetails?: {
+    vehicleName?: string;
+    vehicleModel: string;
+    vehicleType: string;
+    maxSeats: number;
+    occupiedSeats: number;
+    vehiclesAllocated: number;
+    capacityExceeded?: boolean;
+    capacityErrorMessage?: string;
+    seatBreakdown?: {
+      adultSeats: number;
+      childSeats: number;
+      infantSeats: number;
+      totalSeats: number;
+    };
+    allowMultipleVehicles?: boolean;
+  };
+
+  // Safe Metadata
+  rateEffectiveTo?: string;
+  isAuthoritative?: boolean;
+  calculatedAt?: string;
 }
 
 export type QuoteItemSource = 'AI_PLANNER' | 'USER' | 'SYSTEM';
@@ -806,7 +1096,7 @@ export interface QuoteItem {
   serviceTime?: string;
   notes?: string;
   selectedAddonIds: string[];
-  calculation: PricingCalculationResult;
+  calculation: PricingCalculationResult | AgentPricingResponse;
   accommodationType?: AccommodationType;
   isManualHotel?: boolean;
   manualHotelDetails?: ManualHotelDetails;
@@ -832,6 +1122,7 @@ export type QuoteStatus =
   | 'EXPIRED' 
   | 'IN_PROGRESS'
   | 'CONVERTED'
+  | 'BOOKED'
   | 'BOOKING_SUBMITTED' 
   | 'ARCHIVED';
 
@@ -841,6 +1132,28 @@ export interface QuoteVersionRecord {
   updatedBy: string;
   changesSummary: string;
   totalSellingPrice: number;
+}
+
+export type AgentMarginType = 'PERCENTAGE' | 'FIXED';
+
+export interface PricingSnapshot {
+  baseFinalSellingPrice: number;
+  currency: CurrencyCode;
+  agentMarginType: AgentMarginType;
+  agentMarginValue: number;
+  agentMarginAmount: number;
+  finalCustomerSellingPrice: number;
+  calculatedAt: string;
+  pricingVersion: number | string;
+  itemsCount: number;
+  totalPax: number;
+  categoryBreakdown?: {
+    hotels: number;
+    activities: number;
+    transfers: number;
+    visas: number;
+    others: number;
+  };
 }
 
 export interface QuoteActivityRecord {
@@ -867,6 +1180,31 @@ export interface QuoteActivityRecord {
   userRole?: string;
   userType?: 'ADMIN' | 'TEAM_MEMBER' | 'B2B_AGENT' | 'DMC_STAFF' | 'BUYER' | 'PUBLIC';
   details: string;
+
+  // Audit Fields (Section 13 Compliance)
+  quoteId?: string;
+  quote_id?: string;
+  leadId?: string;
+  lead_id?: string;
+  bookingId?: string;
+  booking_id?: string;
+  userId?: string;
+  user_id?: string;
+  action_type?: string;
+  previousMarginType?: AgentMarginType;
+  previous_margin_type?: AgentMarginType;
+  previousMarginValue?: number;
+  previous_margin_value?: number;
+  newMarginType?: AgentMarginType;
+  new_margin_type?: AgentMarginType;
+  newMarginValue?: number;
+  new_margin_value?: number;
+  previousFinalCustomerSellingPrice?: number;
+  previous_final_customer_selling_price?: number;
+  newFinalCustomerSellingPrice?: number;
+  new_final_customer_selling_price?: number;
+  pricingVersion?: number | string;
+  pricing_version?: number | string;
 }
 
 export interface Quotation {
@@ -876,6 +1214,10 @@ export interface Quotation {
   parentQuoteId?: string;
   isLocked?: boolean;
   leadId?: string;
+  linkedLeadId?: string;
+  customerId?: string;
+  bookingId?: string;
+  linkedBookingIds?: string[];
   
   // Ownership & Creation Attribution
   createdBy?: string;
@@ -965,6 +1307,113 @@ export interface Quotation {
   totalSellingPrice: number;
   totalTaxes: number;
   totalMargin: number;
+
+  // Authoritative Commercial & Agent Margin Architecture (Section 8 Compliance)
+  baseFinalSellingPrice?: number;
+  base_final_selling_price?: number;
+  baseFinalSellingPriceCurrency?: CurrencyCode;
+  base_final_selling_price_currency?: CurrencyCode;
+  agentMarginType?: AgentMarginType;
+  agent_margin_type?: AgentMarginType;
+  agentMarginValue?: number;
+  agent_margin_value?: number;
+  agentMarginAmount?: number;
+  agent_margin_amount?: number;
+  finalCustomerSellingPrice?: number;
+  final_customer_selling_price?: number;
+  pricingCalculatedAt?: string;
+  pricing_calculated_at?: string;
+  pricingVersion?: number | string;
+  pricing_version?: number | string;
+  pricingSnapshot?: PricingSnapshot;
+  pricing_snapshot?: PricingSnapshot;
+  updatedBy?: string;
+  updated_by?: string;
+
+  // Protected Internal Commercial Fields (CMS/Admin Only)
+  internalNettCost?: number;
+  internalMarkup?: number;
+  agentMarkup?: number;
+  internalProfit?: number;
+  supplierCost?: number;
+  rateSnapshot?: any;
+  commercialNotes?: string;
+}
+
+/**
+ * Sanitized Quotation DTO for B2B Agents
+ * STRICT GUARANTEE: Never exposes internal nett costs, supplier margins, or commercial markups.
+ */
+export interface AgentQuotationResponse {
+  id: string;
+  quoteNumber: string;
+  version?: number;
+  parentQuoteId?: string;
+  isLocked?: boolean;
+  leadId?: string;
+
+  // Agent Details
+  agentId: string;
+  agentName: string;
+  agentEmail?: string;
+  agentAgency?: string;
+  agentCompany?: string;
+  agentLogoUrl?: string;
+  agentPhone?: string;
+
+  // Client Details
+  clientUserId?: string;
+  clientName: string;
+  clientEmail?: string;
+  clientPhone?: string;
+  clientCompany?: string;
+
+  // Itinerary
+  title: string;
+  destination: string;
+  currency: CurrencyCode;
+  items: QuoteItem[];
+  overallDiscountPercent: number;
+  agentNotes: string;
+  termsAndConditions: string;
+  status: QuoteStatus;
+  travelStartDate?: string;
+  travelEndDate?: string;
+  totalPax?: number;
+  adultsCount?: number;
+  childrenCount?: number;
+  infantsCount?: number;
+  options?: QuotationOption[];
+  activeOptionId?: string;
+  routeHubs?: TripRouteHub[];
+  dayThemes?: Record<number, string>;
+  createdAt: string;
+  updatedAt: string;
+  validUntil: string;
+
+  // Authoritative Agent-Facing Commercial Fields (Section 5 & 8 Compliance)
+  baseFinalSellingPrice?: number;
+  base_final_selling_price?: number;
+  baseFinalSellingPriceCurrency?: CurrencyCode;
+  base_final_selling_price_currency?: CurrencyCode;
+  agentMarginType?: AgentMarginType;
+  agent_margin_type?: AgentMarginType;
+  agentMarginValue?: number;
+  agent_margin_value?: number;
+  agentMarginAmount?: number;
+  agent_margin_amount?: number;
+  finalCustomerSellingPrice?: number;
+  final_customer_selling_price?: number;
+  pricingCalculatedAt?: string;
+  pricing_calculated_at?: string;
+  pricingVersion?: number | string;
+  pricing_version?: number | string;
+  pricingSnapshot?: PricingSnapshot;
+  pricing_snapshot?: PricingSnapshot;
+
+  // Customer-Facing Totals ONLY
+  totalSellingPrice: number;
+  totalTaxes: number;
 }
 
 // ----------------------------------------------------
@@ -988,7 +1437,8 @@ export type BookingPaymentStatus =
   | 'OVERDUE' 
   | 'REFUND_PENDING' 
   | 'REFUNDED' 
-  | 'FAILED';
+  | 'FAILED'
+  | 'UNPAID';
 
 export type BookingDocumentStatus = 'DOCUMENTS_COMPLETE' | 'DOCUMENTS_PENDING';
 
@@ -1001,11 +1451,12 @@ export type BookingSupplierStatus =
   | 'ALTERNATIVE_REQUIRED' 
   | 'CANCELLED';
 
-export type BookingSourceType = 'QUOTATION' | 'PRODUCT_DIRECT' | 'PACKAGE' | 'B2B_PORTAL' | 'MANUAL';
+export type BookingSourceType = 'QUOTATION' | 'PRODUCT_DIRECT' | 'PACKAGE' | 'B2B_PORTAL' | 'MANUAL' | 'INTERNAL_MANUAL';
 
 export interface BookingCustomerInfo {
   leadTravelerName: string;
   bookerName?: string;
+  name?: string;
   email: string;
   phone: string;
   agencyName?: string;
@@ -1013,12 +1464,14 @@ export interface BookingCustomerInfo {
   specialRequests?: string;
   flightDetails?: string;
   pickupLocation?: string;
+  dropoffLocation?: string;
   emergencyContact?: string;
   emergencyPhone?: string;
   nationality?: string;
   totalAdults?: number;
   totalChildren?: number;
   totalInfants?: number;
+  totalPax?: number;
 }
 
 export interface BookingSupplierAllocation {
@@ -1044,19 +1497,195 @@ export interface BookingSupplierAllocation {
   costCurrency?: CurrencyCode;
 }
 
+export type SupplierPriceType = 
+  | 'Per Person'
+  | 'Per Vehicle'
+  | 'Per Room'
+  | 'Per Service'
+  | 'Per Group'
+  | 'Per Night'
+  | 'Per Ticket'
+  | 'Per Yacht'
+  | 'Total Service Price'
+  | 'Per Passenger'
+  | 'Per Unit';
+
+export type SupplierAllocationStatus = 
+  | 'Not Allocated'
+  | 'Allocation Pending'
+  | 'Allocated'
+  | 'Supplier Changed'
+  | 'Supplier Reconfirmation Required'
+  | 'Supplier Cancelled';
+
+export type ServiceItemConfirmationStatus = 
+  | 'Not Confirmed'
+  | 'Confirmation Requested'
+  | 'Confirmation Pending'
+  | 'Confirmed'
+  | 'Reconfirmation Required'
+  | 'Cancelled'
+  | 'Not Processed'
+  | 'Supplier Not Allocated'
+  | 'Price Pending'
+  | 'Supplier Reconfirmation Required';
+
+export type ServiceItemOperationalStatus = 
+  | 'Not Processed'
+  | 'Processing'
+  | 'Supplier Not Allocated'
+  | 'Price Pending'
+  | 'Confirmation Pending'
+  | 'Confirmed'
+  | 'Supplier Reconfirmation Required'
+  | 'Cancelled'
+  | 'Completed'
+  | 'Not Started'
+  | 'Allocation Pending'
+  | 'In Progress';
+
+export type ServiceItemVoucherStatus = 
+  | 'Not Ready'
+  | 'Ready to Generate'
+  | 'Generated'
+  | 'Outdated'
+  | 'Reissued';
+
+export type ServiceItemInvoiceStatus = 
+  | 'Not Uploaded'
+  | 'Uploaded'
+  | 'Verified'
+  | 'Replaced'
+  | 'Archived';
+
+export interface SupplierPriceHistoryEntry {
+  previousPrice?: number;
+  newPrice: number;
+  currency: CurrencyCode;
+  priceType: SupplierPriceType;
+  changeReason?: string;
+  updatedBy: string;
+  updatedByName?: string;
+  updatedAt: string;
+  version: number;
+}
+
+export type UploadedInvoiceType = 
+  | 'Supplier Invoice'
+  | 'Proforma Invoice'
+  | 'Tax Invoice'
+  | 'Commercial Invoice'
+  | 'Other authorised invoice type';
+
+export type InvoiceAssociationType = 
+  | 'BOOKING'
+  | 'SERVICE_ITEM'
+  | 'SUPPLIER'
+  | 'PAYMENT';
+
+export interface BookingUploadedInvoice {
+  id: string;
+  invoiceId: string;
+  bookingId: string;
+  bookingReference: string;
+  bookingItemId?: string;
+  serviceItemName?: string;
+  supplierId?: string;
+  supplierName?: string;
+  associationType: InvoiceAssociationType;
+  invoiceType: UploadedInvoiceType;
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate?: string;
+  currency: CurrencyCode;
+  amount: number;
+  uploadedFile?: string;
+  uploadedFileName: string;
+  fileSize?: string;
+  mimeType?: string;
+  storagePath?: string;
+  uploadedBy: string;
+  uploadedByName?: string;
+  uploadedAt: string;
+  status: 'ACTIVE' | 'VERIFIED' | 'REPLACED' | 'ARCHIVED';
+  notes?: string;
+  history?: {
+    action: 'UPLOAD' | 'REPLACE' | 'ARCHIVE' | 'NOTE_ADDED' | 'STATUS_CHANGE';
+    timestamp: string;
+    actor: string;
+    note?: string;
+    previousFile?: string;
+  }[];
+}
+
+export type BookingActivityEventType = 
+  | 'BOOKING_CREATED'
+  | 'SERVICE_ITEM_CREATED'
+  | 'SERVICE_ITEM_ADDED'
+  | 'SERVICE_ITEM_EDITED'
+  | 'SERVICE_ITEM_REMOVED'
+  | 'SERVICE_ITEM_CANCELLED'
+  | 'SERVICE_ITEM_RESTORED'
+  | 'SUPPLIER_ALLOCATED'
+  | 'SUPPLIER_CHANGED'
+  | 'SUPPLIER_PRICE_ADDED'
+  | 'SUPPLIER_PRICE_EDITED'
+  | 'SUPPLIER_PRICE_CHANGE_REASON_ADDED'
+  | 'SUPPLIER_CONFIRMATION_REQUESTED'
+  | 'SUPPLIER_CONFIRMATION_RECEIVED'
+  | 'SERVICE_ITEM_CONFIRMED'
+  | 'SERVICE_ITEM_RECONFIRMATION_REQUIRED'
+  | 'CONFIRMATION_OVERRIDDEN'
+  | 'VOUCHER_ELIGIBILITY_REACHED'
+  | 'VOUCHER_GENERATED'
+  | 'VOUCHER_DOWNLOADED'
+  | 'VOUCHER_REGENERATED'
+  | 'INVOICE_UPLOADED'
+  | 'INVOICE_REPLACED'
+  | 'INVOICE_ARCHIVED'
+  | 'INVOICE_DOWNLOADED'
+  | 'BOOKING_STATUS_CHANGED'
+  | 'OTHER';
+
+export interface BookingActivityTimelineEvent {
+  eventId: string;
+  bookingId: string;
+  bookingItemId?: string;
+  serviceItemName?: string;
+  supplierId?: string;
+  supplierName?: string;
+  eventType: BookingActivityEventType;
+  previousValue?: any;
+  newValue?: any;
+  actorId: string;
+  actorRole: string;
+  actorName?: string;
+  timestamp: string;
+  relatedDocumentId?: string;
+  relatedVoucherId?: string;
+  metadata?: Record<string, any>;
+  description?: string;
+}
+
 export interface BookingItem {
   id: string;
+  bookingId?: string;
   productId: string;
   productName: string;
-  productSku: string;
-  destinationName: string;
-  city: string;
+  productSku?: string;
+  destinationName?: string;
+  destination?: string;
+  city?: string;
+  hub?: string;
   category: string;
   travelDate: string;
   adults: number;
   children: number;
   infants: number;
   totalPax: number;
+  passengerDetails?: string;
+  assignedTeamMember?: string;
+  assignedTeamMemberId?: string;
   selectedAddonNames?: string[];
   unitNetPrice?: number;
   unitSellingPrice: number;
@@ -1064,18 +1693,73 @@ export interface BookingItem {
   currency: CurrencyCode;
   supplierId?: string;
   supplierName?: string;
+  supplierNameSnapshot?: string;
   supplierType?: 'HOTEL' | 'TRANSPORT' | 'GUIDE' | 'ACTIVITY' | 'DMC_PARTNER' | 'RESTAURANT' | 'TICKET_PARTNER' | 'GROUND_RESOURCE';
   supplierContact?: string;
   supplierPhone?: string;
   supplierEmail?: string;
   supplierStatus?: 'PENDING_DISPATCH' | 'SENT_TO_SUPPLIER' | 'WAITING_FOR_SUPPLIER' | 'CONFIRMED_BY_SUPPLIER' | 'REJECTED_BY_SUPPLIER' | 'ALTERNATIVE_REQUIRED' | 'AMENDMENT_REQUESTED' | 'CANCELLED';
   supplierConfirmationRef?: string;
+  supplierAllocationStatus?: SupplierAllocationStatus;
+  supplierAllocatedAt?: string;
+  supplierAllocatedBy?: string;
   paymentCutoffDate?: string;
   serviceDate?: string;
   serviceTime?: string;
   serviceTimezone?: string;
   supplierNotes?: string;
   internalOpsNotes?: string;
+  internalNotes?: string;
+
+  // Authoritative Supplier Price (Separate from Customer Selling Price / Margin)
+  supplierPrice?: number;
+  supplierCurrency?: CurrencyCode;
+  supplierPriceType?: SupplierPriceType;
+  supplierAdultPrice?: number;
+  supplierChildPrice?: number;
+  supplierInfantPrice?: number;
+  supplierQuantity?: number;
+  supplierTaxAmount?: number;
+  supplierAdditionalFees?: number;
+  supplierDiscount?: number;
+  supplierTotalCost?: number;
+  supplierPricingNotes?: string;
+  supplierPriceLastUpdatedAt?: string;
+  supplierPriceLastUpdatedBy?: string;
+  supplierPriceChangeReason?: string;
+  supplierPriceVersion?: number;
+  supplierPriceHistory?: SupplierPriceHistoryEntry[];
+
+  // Connected Operational & Workflow Statuses
+  isManualServiceItem?: boolean;
+  customerFacingNotes?: string;
+  operationalInstructions?: string;
+  passengerAssignment?: string[];
+  supplierPriceTax?: number;
+  supplierPriceFee?: number;
+  supplierPriceDiscount?: number;
+  supplierPaymentCutoffDate?: string;
+  supplierCancellationDeadline?: string;
+  supplierPriceValidityDate?: string;
+  supplierPriceSource?: string;
+  internalPricingNotes?: string;
+  quantity?: number;
+  serviceEndDate?: string;
+  duration?: string;
+  isCancelled?: boolean;
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelReason?: string;
+
+  supplierConfirmationStatus?: ServiceItemConfirmationStatus;
+  operationalStatus?: ServiceItemOperationalStatus;
+  voucherStatus?: ServiceItemVoucherStatus;
+  invoiceStatus?: ServiceItemInvoiceStatus;
+  confirmedAt?: string;
+  confirmedBy?: string;
+  confirmedByName?: string;
+  reconfirmationReason?: string;
+
   accommodationType?: AccommodationType;
   isManualHotel?: boolean;
   manualHotelDetails?: ManualHotelDetails;
@@ -1268,6 +1952,26 @@ export interface BookingDocumentItem {
 }
 
 export interface Booking {
+  // B2B Agent Connection & Ownership Architecture
+  bookingId?: string;
+  source?: BookingSourceType | string;
+  submittedByUserId?: string;
+  submittedByUserRole?: UserRole | string;
+  submittingAgentId?: string;
+  submittingAgentNameSnapshot?: string;
+  submittingAgentAgencySnapshot?: string;
+  submittedAt?: string;
+  assignedAgentId?: string;
+  assignedAgentNameSnapshot?: string;
+  assignedAgentAgencySnapshot?: string;
+  assignedByUserId?: string;
+  assignedByUserNameSnapshot?: string;
+  assignedAt?: string;
+  agentVisibilityStatus?: 'VISIBLE' | 'HIDDEN' | 'PENDING_ASSIGNMENT';
+  linkedLeadId?: string;
+  linkedQuoteId?: string;
+  customerId?: string;
+
   id: string;
   bookingReference: string; // e.g. TUB-BK-2026-8492
   sourceType: BookingSourceType;
@@ -1307,6 +2011,17 @@ export interface Booking {
   quoteId?: string;
   quoteNumber?: string;
 
+  // Operational & Desk Specific Fields
+  isInternalManualBooking?: boolean;
+  manualBookingReference?: string;
+  operationalProcessingStatus?: ServiceItemOperationalStatus;
+  operationalConfirmationOverride?: {
+    overridden: boolean;
+    reason: string;
+    overriddenBy: string;
+    overriddenAt: string;
+  };
+
   // Supplier Requests & Sourcing
   supplierRequests?: SupplierRequest[];
 
@@ -1340,15 +2055,79 @@ export interface Booking {
   supplierConfirmationRef?: string;
   internalNotes?: string;
   
-  // Financial Invoices & Service Vouchers
+  // Financial Invoices & Service Vouchers (Connected Booking Operations)
   proformaInvoiceUrl?: string;
   taxInvoiceUrl?: string;
   voucherUrl?: string;
+  uploadedInvoices?: BookingUploadedInvoice[];
+  vouchersList?: BookingVoucher[];
+  serviceItemActivities?: BookingActivityTimelineEvent[];
   
   createdAt: string;
   updatedAt: string;
-  confirmationNotice: string; // "Your booking has been submitted and will be updated in 24-48 Hrs."
-  notificationEmailsSent: SentEmailRecord[];
+  confirmationNotice?: string; // "Your booking has been submitted and will be updated in 24-48 Hrs."
+  notificationEmailsSent?: SentEmailRecord[];
+
+  // Protected Internal Commercial Fields (CMS/Admin Only)
+  internalNettCost?: number;
+  internalMarkup?: number;
+  agentMarkup?: number;
+  internalProfit?: number;
+  supplierCost?: number;
+  rateSnapshot?: any;
+  pricingVersion?: number | string;
+  commercialNotes?: string;
+
+  // Authoritative Commercial & Agent Margin Architecture
+  baseFinalSellingPrice?: number;
+  base_final_selling_price?: number;
+  agentMarginType?: AgentMarginType;
+  agent_margin_type?: AgentMarginType;
+  agentMarginValue?: number;
+  agent_margin_value?: number;
+  agentMarginAmount?: number;
+  agent_margin_amount?: number;
+  finalCustomerSellingPrice?: number;
+  final_customer_selling_price?: number;
+  pricingSnapshot?: PricingSnapshot;
+  pricing_snapshot?: PricingSnapshot;
+}
+
+/**
+ * Sanitized Booking Response DTO for B2B Agents
+ * STRICT GUARANTEE: Never exposes internal supplier cost, net prices, or gross profit.
+ */
+export interface AgentBookingResponse {
+  id: string;
+  bookingId: string;
+  bookingReference: string;
+  sourceType: BookingSourceType;
+  source: string;
+  submittingAgentId?: string;
+  submittingAgentNameSnapshot?: string;
+  submittingAgentAgencySnapshot?: string;
+  submittedAt: string;
+  destinationName?: string;
+  customer: BookingCustomerInfo;
+  items: BookingItem[]; // Sanitized items (without unitNetPrice, supplierPrice, etc.)
+  passengers?: BookingPassenger[];
+  currency: CurrencyCode;
+  totalAmount: number; // ONLY final selling price
+  travelStartDate: string;
+  travelEndDate: string;
+  status: BookingStatus;
+  customerFacingStatus?: string;
+  paymentStatus?: BookingPaymentStatus;
+  documentStatus?: BookingDocumentStatus;
+  missingDocuments?: string[];
+  quoteId?: string;
+  quoteNumber?: string;
+  leadId?: string;
+  timeline?: BookingTimelineEvent[];
+  createdAt: string;
+  updatedAt: string;
+  confirmationNotice?: string;
+  notificationEmailsSent?: SentEmailRecord[];
 }
 
 export interface GoogleSheetsSyncStatus {
@@ -1900,7 +2679,9 @@ export type AuditAction =
   | 'BOOKING_EMAIL_DISPATCHED'
   // General & Settings
   | 'STATUS_UPDATED'
-  | 'SETTINGS_UPDATED';
+  | 'SETTINGS_UPDATED'
+  | 'LEAD_MOVED_KANBAN'
+  | 'BULK_ACTION_PERFORMED';
 
 export type CMSDeletableEntityType =
   | 'Product'
@@ -2970,6 +3751,7 @@ export type LeadStatus =
   | 'QUOTE_DOWNLOADED' 
   | 'FOLLOW_UP' 
   | 'BOOKING_SUBMITTED' 
+  | 'BOOKED'
   | 'CONFIRMED' 
   | 'COMPLETED' 
   | 'WON' 
@@ -2996,13 +3778,19 @@ export type LeadPipelineStageId =
 export interface LeadStageConfig {
   id: LeadPipelineStageId | string;
   name: string;
+  description?: string;
   order: number;
   color: string;
   probability: number; // 0 - 100%
   slaDurationHours?: number;
   isActive: boolean;
+  isOpen?: boolean;
   isWon?: boolean;
   isLost?: boolean;
+  isOnHold?: boolean;
+  autoTaskOnEnter?: string;
+  autoTaskOnLeave?: string;
+  autoTaskHours?: number;
   defaultLeadStatus: LeadStatus;
 }
 
@@ -3265,6 +4053,7 @@ export interface LeadTimelineEvent {
     | 'QUOTE_DOWNLOADED' 
     | 'BOOKING_SUBMITTED' 
     | 'BOOKING_CONFIRMED' 
+    | 'BOOKING_CONVERTED'
     | 'STATUS_CHANGED' 
     | 'ASSIGNMENT_CHANGED' 
     | 'PRIORITY_CHANGED'
@@ -3385,6 +4174,22 @@ export interface TravelLead {
   // Agency & Contact Linkage
   agencyId?: string;
   contactId?: string;
+
+  // B2B Agent Connection & Authoritative Assignment
+  leadId?: string;
+  createdByUserId?: string;
+  createdByUserRole?: UserRole | string;
+  assignedAgentId?: string;
+  assignedAgentNameSnapshot?: string;
+  assignedAgentEmailSnapshot?: string;
+  assignedAgentAgencySnapshot?: string;
+  assignedByUserId?: string;
+  assignedByUserNameSnapshot?: string;
+  assignedAt?: string;
+  leadVisibilityStatus?: 'ASSIGNED' | 'UNASSIGNED' | 'INTERNAL_ONLY';
+  linkedQuoteIds?: string[];
+  linkedBookingIds?: string[];
+  customerId?: string;
 
   // Staff Assignment
   assignedStaffId: string;
@@ -3510,11 +4315,13 @@ export interface BookingInvoice {
 
 export interface BookingVoucher {
   id: string;
+  voucherId?: string; // explicit voucher ID
   voucherNumber: string; // e.g. TUB-VOU-2026-9021
+  version?: number;
   bookingId: string;
   bookingReference: string;
-  serviceItemId: string;
-  customerName: string;
+  serviceItemId?: string;
+  customerName?: string;
   leadPaxName: string;
   totalPax: number;
   destination: string;
@@ -3524,12 +4331,31 @@ export interface BookingVoucher {
   serviceTime: string;
   supplierName: string;
   supplierContact: string;
+  supplierConfirmationRef?: string;
   meetingPoint: string;
   pickupInfo: string;
+  dropoffInfo?: string;
+  hotelAddress?: string;
+  roomDetails?: string;
+  mealPlan?: string;
   emergencyContact: string;
   passengerBreakdown: string;
   specialInstructions: string;
-  status: 'ISSUED' | 'REDEEMED' | 'CANCELLED';
+  termsAndConditions?: string;
+  status: 'ISSUED' | 'REDEEMED' | 'CANCELLED' | 'OUTDATED' | 'REISSUED';
+  generatedAt?: string;
+  generatedBy?: string;
+  generatedByName?: string;
+  documentUrl?: string;
+  storagePath?: string;
+  bookingSnapshot?: any;
+  serviceItemsSnapshot?: any[];
+  supplierAllocationSnapshot?: any[];
+  confirmationSnapshot?: any;
+  templateVersion?: string;
+  isOutdated?: boolean;
+  outdatedReason?: string;
+  previousVoucherId?: string;
   issuedAt: string;
 }
 
@@ -4110,9 +4936,22 @@ export interface CalendarTask {
   autoTaskKey?: string; // Idempotency key to avoid duplicate automatic task creation
   
   // Google Calendar Sync
+  syncWithGoogleCalendar?: boolean;
+  googleCalendarSyncStatus?: 'NOT_SYNCED' | 'SYNCED' | 'SYNC_FAILED' | 'SYNCING' | 'DISCONNECTED';
   googleCalendarId?: string;
   googleCalendarEventId?: string;
+  googleCalendarEventUrl?: string;
   googleCalendarLink?: string;
+  googleCalendarAccount?: string;
+  googleCalendarName?: string;
+  googleCalendarTimezone?: string;
+  googleCalendarLastSyncedAt?: string;
+  googleCalendarSyncError?: string;
+  googleCalendarSyncVersion?: number;
+  googleCalendarSource?: string;
+  googleCalendarCreatedAt?: string;
+  googleCalendarUpdatedAt?: string;
+  googleCalendarDeletedAt?: string;
   isSyncedToGoogleCalendar: boolean;
   calendarSyncStatus?: 'SYNCED' | 'FAILED' | 'NOT_SYNCED' | 'PENDING_RETRY';
   syncError?: string;
@@ -4442,12 +5281,32 @@ export type B2BTabType =
   | 'hotels' 
   | 'visa'
   | 'my-quotes' 
+  | 'crm'
+  | 'leads'
   | 'bookings' 
   | 'customers' 
   | 'tasks' 
   | 'account';
 
 export type B2BNavTab = B2BTabType;
+
+export interface AgentAssignmentNotification {
+  id: string;
+  deduplicationKey: string;
+  entityType: 'LEAD' | 'BOOKING';
+  entityId: string;
+  entityReference: string;
+  agentUserId: string;
+  assignedByUserId: string;
+  assignedByName: string;
+  customerName?: string;
+  destination?: string;
+  title: string;
+  message: string;
+  isRead: boolean;
+  createdAt: string;
+  deepLinkTab: 'leads' | 'bookings';
+}
 
 // ----------------------------------------------------
 // B2B TRAVEL QUOTATION & PACKAGE ENGINE UPGRADE TYPES

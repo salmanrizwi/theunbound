@@ -338,7 +338,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
             children: q.childrenCount || 0,
             infants: q.infantsCount || 0,
             totalPax: q.totalPax || 2,
-            unitNetPrice: item.calculation?.totalNetCost ? (item.calculation.totalNetCost / (q.totalPax || 1)) : 100,
+            unitNetPrice: (item.calculation as any)?.totalNetCost ? ((item.calculation as any).totalNetCost / (q.totalPax || 1)) : 100,
             unitSellingPrice: item.calculation?.finalTotalSellingPrice ? (item.calculation.finalTotalSellingPrice / (q.totalPax || 1)) : 120,
             totalPrice: item.calculation?.finalTotalSellingPrice || 120,
             currency: (q.currency || 'USD') as any,

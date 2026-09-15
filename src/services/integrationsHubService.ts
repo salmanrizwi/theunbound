@@ -1380,24 +1380,24 @@ export class IntegrationsHubService {
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     const emailService = EmailNotificationService.getInstance();
     const cleanTo = toEmail.trim();
-    const cleanSubject = subject.trim() || `[Test Verification] TheUnbound DMC Operations Hub - ${new Date().toLocaleTimeString()}`;
+    const cleanSubject = subject.trim() || `[Test Verification] Operations Hub - ${new Date().toLocaleTimeString()}`;
 
     const htmlBody = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden;">
         <div style="background-color: #0f172a; padding: 24px; border-bottom: 3px solid #008972;">
-          <h1 style="margin: 0; font-size: 22px; color: #ffffff; font-weight: 800;">theunbound</h1>
+          <h1 style="margin: 0; font-size: 22px; color: #ffffff; font-weight: 800;">Operations Hub</h1>
           <p style="margin: 4px 0 0 0; font-size: 11px; color: #00E5C0; text-transform: uppercase; font-weight: 700; letter-spacing: 1.5px;">Integration Verification Engine</p>
         </div>
         <div style="padding: 24px; color: #1e293b; line-height: 1.6;">
           <h2 style="font-size: 18px; font-weight: 700; color: #0f172a; margin-top: 0;">Google Workspace Gmail API Dispatch Verified</h2>
-          <p>This is a live diagnostic verification email dispatched from <strong>TheUnbound Admin Integrations Hub</strong>.</p>
+          <p>This is a live diagnostic verification email dispatched from <strong>Admin Integrations Hub</strong>.</p>
           <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin: 20px 0; font-size: 13px;">
             <p style="margin: 0 0 8px 0;"><strong>Timestamp:</strong> ${new Date().toISOString()}</p>
             <p style="margin: 0 0 8px 0;"><strong>Recipient:</strong> ${cleanTo}</p>
             <p style="margin: 0 0 8px 0;"><strong>Template:</strong> ${templateType}</p>
             <p style="margin: 0;"><strong>Status:</strong> Live Dispatched via Google Workspace API v1</p>
           </div>
-          <p style="font-size: 12px; color: #64748b;">TheUnbound Destination Management Company Ltd. &bull; Ground Logistics & Wholesale Tariffs</p>
+          <p style="font-size: 12px; color: #64748b;">Destination Management & Ground Operations &bull; Ground Logistics & Tariffs</p>
         </div>
       </div>
     `;
@@ -1425,7 +1425,7 @@ export class IntegrationsHubService {
     notes: string,
     user: User | null
   ): Promise<{ success: boolean; eventId?: string; htmlLink?: string; details: string }> {
-    const cleanTitle = title.trim() || `[Test SLA Task] TheUnbound Ops Verification - ${new Date().toLocaleTimeString()}`;
+    const cleanTitle = title.trim() || `[Test SLA Task] Ops Verification - ${new Date().toLocaleTimeString()}`;
     const db = AppDatabase.getInstance();
     const now = new Date().toISOString();
     const dueAt = date ? new Date(date).toISOString() : new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();

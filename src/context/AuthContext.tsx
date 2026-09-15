@@ -44,6 +44,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (saved) {
       try {
         const parsed: User = JSON.parse(saved);
+        if (parsed && (parsed.role === 'BUYER' || (parsed as any).userType === 'BUYER')) {
+          localStorage.removeItem(STORAGE_KEY_AUTH);
+          return null;
+        }
         return parsed;
       } catch (e) {
         console.error('[AUTH] Error parsing cached auth state:', e);
@@ -115,6 +119,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * Authenticates against Firebase Authentication, then resolves Firestore /users/{uid} profile.
    */
   const login = async (email: string, role: UserRole = 'B2B_AGENT', password?: string): Promise<AuthResult> => {
+    if (role === 'BUYER') {
+      return {
+        success: false,
+        error: 'Direct consumer login is not supported on TheUnbound. Please contact business@theunbound.in or sign in with an authorized B2B travel partner account.'
+      };
+    }
+
     const cleanEmail = normalizeEmail(email);
 
     if (!cleanEmail) {

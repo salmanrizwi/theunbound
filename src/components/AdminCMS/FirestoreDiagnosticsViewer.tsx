@@ -270,7 +270,7 @@ export const FirestoreDiagnosticsViewer: React.FC = () => {
             {(report.notes || []).map((note, idx) => (
               <div key={idx} className="leading-relaxed">
                 <span className="text-slate-500 mr-2">&gt;</span>
-                {note}
+                {typeof note === 'string' ? note : (note as any)?.text || JSON.stringify(note)}
               </div>
             ))}
           </div>

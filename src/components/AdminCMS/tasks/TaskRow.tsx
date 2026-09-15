@@ -82,9 +82,35 @@ export const TaskRow: React.FC<TaskRowProps> = ({
             </span>
 
             {/* Google Calendar Sync Indicator */}
-            {task.isSyncedToGoogleCalendar && (
-              <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-semibold">
-                Calendar Synced
+            {task.syncWithGoogleCalendar && (task.isSyncedToGoogleCalendar || task.googleCalendarSyncStatus === 'SYNCED') && (
+              <a
+                href={task.googleCalendarEventUrl || task.googleCalendarLink || '#'}
+                target={task.googleCalendarEventUrl || task.googleCalendarLink ? "_blank" : undefined}
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                  if (!task.googleCalendarEventUrl && !task.googleCalendarLink) e.preventDefault();
+                  e.stopPropagation();
+                }}
+                className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-semibold flex items-center space-x-1 hover:bg-emerald-100 transition-colors"
+                title="Synced with Google Calendar (Click to view)"
+              >
+                <Calendar className="w-2.5 h-2.5 text-emerald-600" />
+                <span>Google Calendar</span>
+              </a>
+            )}
+            {task.syncWithGoogleCalendar && task.googleCalendarSyncStatus === 'SYNC_FAILED' && (
+              <span 
+                className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-800 border border-rose-200 text-[10px] font-semibold flex items-center space-x-1"
+                title={`Sync failed: ${task.googleCalendarSyncError || 'Click to edit or retry'}`}
+              >
+                <AlertTriangle className="w-2.5 h-2.5 text-rose-600" />
+                <span>Sync Failed</span>
+              </span>
+            )}
+            {task.googleCalendarSyncStatus === 'SYNCING' && (
+              <span className="px-1.5 py-0.5 rounded bg-teal-50 text-[#008972] border border-teal-200 text-[10px] font-semibold flex items-center space-x-1">
+                <Clock className="w-2.5 h-2.5 animate-spin" />
+                <span>Syncing...</span>
               </span>
             )}
           </div>
@@ -102,7 +128,11 @@ export const TaskRow: React.FC<TaskRowProps> = ({
 
             {(task.description || task.notes) && (
               <p className="text-xs text-slate-500 line-clamp-1 mt-0.5">
-                {task.description || task.notes}
+                {typeof task.description === 'string'
+                  ? task.description
+                  : typeof task.notes === 'string'
+                    ? task.notes
+                    : ''}
               </p>
             )}
           </div>

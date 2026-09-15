@@ -7,6 +7,7 @@ import {
   ActionCenterPriority 
 } from '../../../types';
 import { AppDatabase } from '../../../services/db';
+import { googleCalendarAutomation } from '../../../services/googleCalendarAutomationService';
 import { 
   CheckSquare, 
   Plus, 
@@ -26,6 +27,7 @@ import {
   FileCheck
 } from 'lucide-react';
 import { TaskModal } from './TaskModal';
+import { toast } from '../../../services/toastService';
 
 interface BookingTasksSectionProps {
   booking: Booking;
@@ -171,8 +173,10 @@ export const BookingTasksSection: React.FC<BookingTasksSectionProps> = ({
   const handleToggleComplete = (task: CalendarTask) => {
     if (task.status === 'COMPLETED') {
       db.reopenTask(task.id, currentUser);
+      toast.info('Task Reopened', `"${task.title}" has been moved back to Open.`);
     } else {
       db.completeTask(task.id, currentUser);
+      toast.success('Task Completed', `"${task.title}" marked as complete.`);
     }
   };
 
@@ -232,9 +236,13 @@ export const BookingTasksSection: React.FC<BookingTasksSectionProps> = ({
     };
 
     db.saveCalendarTask(newTask as CalendarTask, currentUser);
+    toast.success('Task Created', `"${taskTitle}" added to booking schedule.`);
   };
 
   const handleSaveModalTask = (taskData: Partial<CalendarTask>) => {
+    const shouldSync = taskData.syncWithGoogleCalendar === true;
+    const wasSynced = taskToEdit?.syncWithGoogleCalendar && taskToEdit?.isSyncedToGoogleCalendar;
+
     const updatedTask: CalendarTask = {
       ...(taskToEdit || {}),
       ...taskData,
@@ -260,12 +268,23 @@ export const BookingTasksSection: React.FC<BookingTasksSectionProps> = ({
       source: modalItemContext ? 'booking_item_record' : 'booking_record',
       isInternal: true,
       isCustomerFacing: false,
-      isSyncedToGoogleCalendar: false,
+      syncWithGoogleCalendar: shouldSync,
+      isSyncedToGoogleCalendar: shouldSync ? (taskData.isSyncedToGoogleCalendar ?? taskToEdit?.isSyncedToGoogleCalendar ?? false) : false,
       createdAt: taskToEdit?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
     } as CalendarTask;
 
-    db.saveCalendarTask(updatedTask, currentUser);
+    const saved = db.saveCalendarTask(updatedTask, currentUser);
+    toast.success(taskToEdit ? 'Task Updated' : 'Task Created', `"${saved.title}" has been saved.`);
+    if (shouldSync) {
+      googleCalendarAutomation.explicitSyncTaskToGoogleCalendar(saved.id, currentUser).then(() => {
+        setTasks(db.getTasksForBooking(booking.id));
+      });
+    } else if (wasSynced && !shouldSync) {
+      googleCalendarAutomation.removeTaskFromGoogleCalendar(saved.id, currentUser).then(() => {
+        setTasks(db.getTasksForBooking(booking.id));
+      });
+    }
     setIsModalOpen(false);
     setTaskToEdit(null);
     setModalItemContext(null);
@@ -588,6 +607,28 @@ export const BookingTasksSection: React.FC<BookingTasksSectionProps> = ({
                           <span className="text-[10px] bg-slate-100 text-slate-600 font-medium px-2 py-0.5 rounded-md">
                             {task.category.replace('_', ' ')}
                           </span>
+                        )}
+
+                        {/* Google Calendar Sync Indicator */}
+                        {task.syncWithGoogleCalendar && (task.isSyncedToGoogleCalendar || task.googleCalendarSyncStatus === 'SYNCED') ? (
+                          <span className="text-[10px] bg-teal-50 text-teal-800 border border-teal-200 font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
+                            <Calendar className="w-2.5 h-2.5 text-teal-600" />
+                            <span>Google Cal Synced</span>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              await googleCalendarAutomation.explicitSyncTaskToGoogleCalendar(task.id, currentUser);
+                              setTasks(db.getTasksForBooking(booking.id));
+                            }}
+                            className="text-[10px] bg-slate-50 hover:bg-teal-50 text-slate-500 hover:text-teal-700 border border-slate-200 hover:border-teal-200 font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 cursor-pointer transition-colors"
+                            title="Click to sync this specific task to Google Calendar"
+                          >
+                            <Calendar className="w-2.5 h-2.5" />
+                            <span>Sync to Google Cal</span>
+                          </button>
                         )}
 
                         {isOverdue && (

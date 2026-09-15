@@ -35,7 +35,8 @@ import {
   Award,
   Users,
   Compass,
-  Check
+  Check,
+  BookmarkCheck
 } from 'lucide-react';
 import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
 import { LeadTasksSection } from './tasks/LeadTasksSection';
@@ -79,7 +80,39 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
     { id: 'staff-04', name: 'Aarav Patel (Client Success)', email: 'aarav@theunbound.in', dept: 'MANAGEMENT' as const }
   ];
 
+  // B2B Partner Agent Assignment
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [assignmentNote, setAssignmentNote] = useState('');
+  const [isAssigningAgent, setIsAssigningAgent] = useState(false);
+
+  const b2bAgents = React.useMemo(() => {
+    return db.getUsers().filter(u => u.role === 'B2B_AGENT' && u.approvalStatus === 'APPROVED');
+  }, [db]);
+
   if (!lead) return null;
+
+  const handleAssignAgent = () => {
+    if (!selectedAgentId) return;
+    try {
+      const updated = db.assignLeadToAgent(lead.id, selectedAgentId, user, assignmentNote.trim() || undefined);
+      if (updated) {
+        onUpdateLead(updated);
+        setSelectedAgentId('');
+        setAssignmentNote('');
+        setIsAssigningAgent(false);
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Failed to assign agent');
+    }
+  };
+
+  const handleUnassignAgent = () => {
+    if (!window.confirm('Are you sure you want to unassign this B2B Agent? The lead will immediately be hidden from the agent portal.')) return;
+    const updated = db.unassignLead(lead.id, user, 'Unassigned via CMS Lead Drawer');
+    if (updated) {
+      onUpdateLead(updated);
+    }
+  };
 
   const handleStatusChange = (newStatus: LeadStatus) => {
     const updated = db.updateLeadStatus(lead.id, newStatus, user);
@@ -370,6 +403,118 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                     </div>
                   </div>
                 </div>
+
+                {/* B2B Partner Agent Assignment & Portal Visibility */}
+                <div className="mt-4 pt-4 border-t border-slate-100">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Building className="w-3.5 h-3.5 text-[#00C6A6]" />
+                      <span>B2B Partner Agent Assignment</span>
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${
+                      lead.assignedAgentId 
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                        : 'bg-slate-100 text-slate-600 border border-slate-200'
+                    }`}>
+                      {lead.assignedAgentId ? 'Visible in Agent Portal' : 'Internal Only (Hidden from Agents)'}
+                    </span>
+                  </div>
+
+                  {lead.assignedAgentId ? (
+                    <div className="p-3.5 rounded-xl bg-emerald-50/50 border border-emerald-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-emerald-950">
+                            {lead.assignedAgentNameSnapshot || 'Partner Agent'}
+                          </span>
+                          {lead.assignedAgentAgencySnapshot && (
+                            <span className="text-xs px-2 py-0.5 rounded bg-emerald-100/70 text-emerald-800 font-medium">
+                              {lead.assignedAgentAgencySnapshot}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-emerald-700 mt-0.5">
+                          Assigned by {lead.assignedByUserNameSnapshot || 'Operations'} • {lead.assignedAt ? new Date(lead.assignedAt).toLocaleDateString() : 'Recently'}
+                          {lead.assignedAgentEmailSnapshot && ` • ${lead.assignedAgentEmailSnapshot}`}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleUnassignAgent}
+                        className="px-3 py-1.5 rounded-lg border border-rose-200 bg-white text-rose-600 hover:bg-rose-50 text-xs font-bold transition-colors cursor-pointer shrink-0"
+                      >
+                        Unassign Agent
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-slate-500">
+                        Assign this lead to an approved B2B Agent to grant them visibility and fulfillment permissions in their portal.
+                      </p>
+                      {!isAssigningAgent ? (
+                        <button
+                          type="button"
+                          onClick={() => setIsAssigningAgent(true)}
+                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Assign to B2B Partner Agent</span>
+                        </button>
+                      ) : (
+                        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-500 block mb-1">Select Approved Agent</label>
+                              <select
+                                value={selectedAgentId}
+                                onChange={(e) => setSelectedAgentId(e.target.value)}
+                                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-800 focus:outline-none focus:border-[#00C6A6]"
+                              >
+                                <option value="">-- Choose B2B Agent --</option>
+                                {b2bAgents.map(ag => (
+                                  <option key={ag.id} value={ag.id}>
+                                    {ag.name} ({ag.agencyName || ag.companyName || 'Independent'}) - {ag.email}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-500 block mb-1">Assignment Note (Optional)</label>
+                              <input
+                                type="text"
+                                value={assignmentNote}
+                                onChange={(e) => setAssignmentNote(e.target.value)}
+                                placeholder="e.g. VIP client requesting high-end Ryokan"
+                                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-[#00C6A6]"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-end gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsAssigningAgent(false);
+                                setSelectedAgentId('');
+                                setAssignmentNote('');
+                              }}
+                              className="px-3 py-1 text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!selectedAgentId}
+                              onClick={handleAssignAgent}
+                              className="px-3.5 py-1 rounded-lg bg-[#00C6A6] hover:bg-[#00b094] text-white text-xs font-bold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              Confirm & Notify Agent
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Commercial Summary Banner */}
@@ -405,17 +550,76 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                 </div>
               </div>
 
+              {/* Linked Commercial Records (Quotations & Bookings) */}
+              {(lead.quoteNumber || lead.bookingReference || (lead.linkedBookingIds && lead.linkedBookingIds.length > 0)) && (
+                <div className="bg-white p-5 rounded-2xl border border-teal-200/80 bg-teal-50/20 shadow-xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                      <BookmarkCheck className="w-4 h-4 text-[#00C6A6]" />
+                      <span>Linked Commercial Transactions</span>
+                    </h3>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#00C6A6]/10 text-[#008f77]">
+                      Bi-directional Link Active
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    {lead.quoteNumber && (
+                      <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[10px] uppercase font-bold text-slate-400">Proposal</span>
+                          <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-sky-50 text-sky-700">
+                            {lead.quoteSnapshot?.status || 'Active'}
+                          </span>
+                        </div>
+                        <p className="font-mono font-bold text-slate-900 text-sm">#{lead.quoteNumber}</p>
+                        {lead.quoteSnapshot?.totalSellingPrice && (
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            Value: {lead.quoteSnapshot.currency || 'USD'} {Number(lead.quoteSnapshot.totalSellingPrice).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {(lead.bookingReference || lead.bookingId) && (
+                      <div className="p-3 bg-white rounded-xl border border-emerald-200 shadow-2xs">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[10px] uppercase font-bold text-slate-400">Confirmed Booking</span>
+                          <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                            {lead.conversionStatus || 'CONVERTED'}
+                          </span>
+                        </div>
+                        <p className="font-mono font-bold text-emerald-800 text-sm">#{lead.bookingReference || lead.bookingId}</p>
+                        {lead.bookingValue && (
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            Gross Booking Value: {lead.currency || 'USD'} {Number(lead.bookingValue).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Brief Travel Requirements Overview */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
                 <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-2">Travel Requirements Summary</h3>
                 <p className="text-xs text-slate-700 leading-relaxed bg-slate-50 p-3.5 rounded-xl border border-slate-100">
-                  {lead.travelRequirements || 'Standard VIP ground arrangements requested.'}
+                  {typeof lead.travelRequirements === 'string'
+                    ? lead.travelRequirements
+                    : Array.isArray(lead.travelRequirements)
+                      ? (lead.travelRequirements as any[]).map((r: any) => typeof r === 'string' ? r : r?.text || '').filter(Boolean).join('\n')
+                      : 'Standard VIP ground arrangements requested.'}
                 </p>
                 {lead.specialRequests && (
                   <div className="mt-3">
                     <span className="text-xs font-bold text-amber-800 uppercase block mb-1">Special Dietary / VIP Requests:</span>
                     <p className="text-xs text-slate-700 bg-amber-50/60 p-2.5 rounded-xl border border-amber-200">
-                      {lead.specialRequests}
+                      {typeof lead.specialRequests === 'string'
+                        ? lead.specialRequests
+                        : Array.isArray(lead.specialRequests)
+                          ? (lead.specialRequests as any[]).map((s: any) => typeof s === 'string' ? s : s?.text || '').filter(Boolean).join('\n')
+                          : JSON.stringify(lead.specialRequests)}
                     </p>
                   </div>
                 )}
@@ -750,19 +954,28 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                   <div className="text-center py-6 text-slate-400 text-xs">No notes recorded yet.</div>
                 ) : (
                   <div className="space-y-3">
-                    {lead.notes.map(note => (
-                      <div key={note.id} className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="font-bold text-slate-800">
-                            {note.authorName} {note.authorRole ? `(${note.authorRole})` : ''}
-                          </span>
-                          <span className="text-[10px] text-slate-400">
-                            {new Date(note.timestamp).toLocaleString()}
-                          </span>
+                    {lead.notes.map((note: any, idx: number) => {
+                      const noteId = note?.id || `note-${idx}`;
+                      const author = typeof note === 'object' && note ? (note.authorName || 'Staff') : 'Staff';
+                      const role = typeof note === 'object' && note ? note.authorRole : undefined;
+                      const time = typeof note === 'object' && note?.timestamp ? new Date(note.timestamp).toLocaleString() : '';
+                      const content = typeof note === 'object' && note ? (note.text || '') : String(note || '');
+                      return (
+                        <div key={noteId} className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-bold text-slate-800">
+                              {author} {role ? `(${role})` : ''}
+                            </span>
+                            {time && (
+                              <span className="text-[10px] text-slate-400">
+                                {time}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-slate-700 whitespace-pre-wrap">{content}</p>
                         </div>
-                        <p className="text-slate-700 whitespace-pre-wrap">{note.text}</p>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

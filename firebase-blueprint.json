@@ -135,6 +135,18 @@
         "bookingNumber": { "type": "string", "required": true },
         "quoteId": { "type": "string", "required": false },
         "userId": { "type": "string", "required": true },
+        "submittedByUserId": { "type": "string", "required": false },
+        "submittedByUserRole": { "type": "string", "required": false },
+        "submittingAgentId": { "type": "string", "required": false },
+        "submittingAgentNameSnapshot": { "type": "string", "required": false },
+        "assignedAgentId": { "type": "string", "required": false },
+        "assignedAgentNameSnapshot": { "type": "string", "required": false },
+        "assignedByUserId": { "type": "string", "required": false },
+        "assignedAt": { "type": "string", "required": false },
+        "agentVisibilityStatus": { "type": "string", "required": false, "enum": ["VISIBLE", "HIDDEN", "PENDING_ASSIGNMENT"] },
+        "linkedLeadId": { "type": "string", "required": false },
+        "linkedQuoteId": { "type": "string", "required": false },
+        "customerId": { "type": "string", "required": false },
         "customerName": { "type": "string", "required": true },
         "customerEmail": { "type": "string", "required": true },
         "customerPhone": { "type": "string", "required": false },
@@ -211,6 +223,16 @@
         "quoteValue": { "type": "number", "required": false },
         "status": { "type": "string", "required": true },
         "source": { "type": "string", "required": true },
+        "assignedAgentId": { "type": "string", "required": false },
+        "assignedAgentNameSnapshot": { "type": "string", "required": false },
+        "assignedByUserId": { "type": "string", "required": false },
+        "assignedAt": { "type": "string", "required": false },
+        "leadVisibilityStatus": { "type": "string", "required": false, "enum": ["ASSIGNED", "UNASSIGNED", "INTERNAL_ONLY"] },
+        "createdByUserId": { "type": "string", "required": false },
+        "createdByUserRole": { "type": "string", "required": false },
+        "linkedQuoteIds": { "type": "array", "required": false },
+        "linkedBookingIds": { "type": "array", "required": false },
+        "customerId": { "type": "string", "required": false },
         "createdAt": { "type": "string", "required": true }
       }
     },
@@ -419,6 +441,117 @@
         "status": { "type": "string", "required": true },
         "category": { "type": "string", "required": true },
         "createdAt": { "type": "string", "required": true }
+      }
+    },
+    "BookingUploadedInvoice": {
+      "collection": "uploaded_invoices",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "bookingId": { "type": "string", "required": true },
+        "bookingReference": { "type": "string", "required": true },
+        "itemId": { "type": "string", "required": false },
+        "itemTitle": { "type": "string", "required": false },
+        "invoiceNumber": { "type": "string", "required": true },
+        "invoiceType": { "type": "string", "required": true },
+        "associationType": { "type": "string", "required": true },
+        "supplierId": { "type": "string", "required": false },
+        "supplierName": { "type": "string", "required": false },
+        "amount": { "type": "number", "required": true },
+        "currency": { "type": "string", "required": true },
+        "taxAmount": { "type": "number", "required": false },
+        "invoiceDate": { "type": "string", "required": true },
+        "dueDate": { "type": "string", "required": false },
+        "status": { "type": "string", "required": true },
+        "uploadedFile": { "type": "string", "required": false },
+        "uploadedFileName": { "type": "string", "required": false },
+        "uploadedBy": { "type": "string", "required": true },
+        "uploadedByName": { "type": "string", "required": true },
+        "uploadedAt": { "type": "string", "required": true }
+      }
+    },
+    "Supplier": {
+      "collection": "suppliers",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "supplierCode": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "legalName": { "type": "string", "required": false },
+        "tradingName": { "type": "string", "required": false },
+        "country": { "type": "string", "required": true },
+        "destination": { "type": "string", "required": true },
+        "destinations": { "type": "array", "required": false },
+        "hubs": { "type": "array", "required": false },
+        "categories": { "type": "array", "required": true },
+        "status": { "type": "string", "required": true, "enum": ["ACTIVE", "INACTIVE", "UNDER_REVIEW", "SUSPENDED", "ARCHIVED"] },
+        "contactPerson": { "type": "string", "required": true },
+        "contactPersons": { "type": "array", "required": false },
+        "email": { "type": "string", "required": true },
+        "phone": { "type": "string", "required": true },
+        "emergencyPhone": { "type": "string", "required": false },
+        "website": { "type": "string", "required": false },
+        "taxRegistrationNumber": { "type": "string", "required": false },
+        "currency": { "type": "string", "required": true },
+        "paymentTerms": { "type": "string", "required": true },
+        "cancellationTerms": { "type": "string", "required": false },
+        "serviceCoverage": { "type": "object", "required": false },
+        "commercialDetails": { "type": "object", "required": false },
+        "bankDetails": { "type": "object", "required": false },
+        "performanceScore": { "type": "number", "required": false },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": true }
+      }
+    },
+    "SupplierRateCard": {
+      "collection": "supplier_rate_cards",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "supplierId": { "type": "string", "required": true },
+        "serviceName": { "type": "string", "required": true },
+        "serviceCategory": { "type": "string", "required": true },
+        "destination": { "type": "string", "required": true },
+        "rateAdult": { "type": "number", "required": true },
+        "currency": { "type": "string", "required": true },
+        "validFrom": { "type": "string", "required": true },
+        "validTo": { "type": "string", "required": true },
+        "isActive": { "type": "boolean", "required": true }
+      }
+    },
+    "SupplierDocument": {
+      "collection": "supplier_documents",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "supplierId": { "type": "string", "required": true },
+        "title": { "type": "string", "required": true },
+        "documentType": { "type": "string", "required": true },
+        "fileName": { "type": "string", "required": true },
+        "uploadedBy": { "type": "string", "required": true },
+        "uploadedAt": { "type": "string", "required": true }
+      }
+    },
+    "SupplierActivityHistory": {
+      "collection": "supplier_activity_history",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "supplierId": { "type": "string", "required": true },
+        "action": { "type": "string", "required": true },
+        "summary": { "type": "string", "required": true },
+        "performedBy": { "type": "string", "required": true },
+        "timestamp": { "type": "string", "required": true }
+      }
+    },
+    "SupplierAllocationRecord": {
+      "collection": "supplier_allocations",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "supplierId": { "type": "string", "required": true },
+        "supplierNameSnapshot": { "type": "string", "required": true },
+        "bookingId": { "type": "string", "required": true },
+        "bookingReference": { "type": "string", "required": true },
+        "serviceItemId": { "type": "string", "required": true },
+        "serviceName": { "type": "string", "required": true },
+        "status": { "type": "string", "required": true },
+        "allocatedBy": { "type": "string", "required": true },
+        "allocatedAt": { "type": "string", "required": true }
       }
     }
   }

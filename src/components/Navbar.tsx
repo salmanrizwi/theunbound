@@ -741,7 +741,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                       className="w-full bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm flex items-center justify-center space-x-2 cursor-pointer"
                     >
                       <UserIcon className="w-4 h-4" />
-                      <span>Agent / Buyer Sign In</span>
+                      <span>B2B Agent Sign In</span>
                     </button>
                   </div>
                 )}

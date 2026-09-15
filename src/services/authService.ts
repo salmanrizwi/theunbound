@@ -118,6 +118,26 @@ class AuthService {
         try {
           const profile = await this.resolveOrCreateUserProfile(fbUser);
           if (profile) {
+            // Direct Buyer Login Prevention: Never issue an active session for legacy or direct buyers
+            if (profile.role === 'BUYER' || (profile as any).userType === 'BUYER') {
+              console.warn(`[AUTH] Direct consumer account detected for ${profile.email}. Blocking login session.`);
+              try {
+                await signOut(auth);
+              } catch (e) {
+                // Ignore signOut error
+              }
+              if (typeof window !== 'undefined') {
+                localStorage.removeItem('theunbound_auth_user');
+              }
+              this.currentFirebaseUser = null;
+              this.currentUserProfile = null;
+              this.authState = 'UNAUTHENTICATED';
+              this.authError = 'Direct consumer accounts are not supported on TheUnbound. Please contact business@theunbound.in or use an authorized B2B travel partner account.';
+              inactivityTracker.clear();
+              this.notifyListeners();
+              return;
+            }
+
             this.currentUserProfile = profile;
             this.authState = 'AUTHENTICATED_READY';
             this.authError = null;
@@ -152,7 +172,10 @@ class AuthService {
             const cachedUserJson = localStorage.getItem('theunbound_auth_user');
             if (cachedUserJson) {
               const cachedUser: User = JSON.parse(cachedUserJson);
-              if (cachedUser && cachedUser.email) {
+              if (cachedUser && (cachedUser.role === 'BUYER' || (cachedUser as any).userType === 'BUYER')) {
+                // Reject legacy consumer cache
+                localStorage.removeItem('theunbound_auth_user');
+              } else if (cachedUser && cachedUser.email) {
                 // Check if user was inactive for >= 24 hours
                 if (inactivityTracker.isInactive()) {
                   console.warn('[AUTH] Inactivity timeout reached for stored session. Clearing.');
@@ -329,21 +352,30 @@ class AuthService {
     // 4. Case B Fallback: Reconstruct minimal required profile from Firebase Auth information
     console.log(`[AUTH] Case B Reconstruct: Creating minimal verified profile for users/${uid}`);
     const isAdminEmail = ['admin@theunbound.com', 'business@theunbound.in', 'marcus@theunbound.in'].includes(cleanEmail);
-    const role: UserRole = isAdminEmail ? 'ADMIN' : 'BUYER';
+    // Never fallback to BUYER. External accounts must be B2B_AGENT (with PENDING approval status)
+    const role: UserRole = isAdminEmail ? 'ADMIN' : 'B2B_AGENT';
     const category: UserCategory = isAdminEmail ? 'INTERNAL' : 'EXTERNAL';
+    const approvalStatus: UserApprovalStatus = isAdminEmail ? 'APPROVED' : 'PENDING';
 
     const reconstructedUser: User = {
       id: uid,
-      name: fbUser.displayName || (cleanEmail ? cleanEmail.split('@')[0] : 'Client Member'),
+      name: fbUser.displayName || (cleanEmail ? cleanEmail.split('@')[0] : 'Trade Partner'),
       email: cleanEmail,
       role,
       category,
-      agencyName: isAdminEmail ? 'TheUnbound DMC Global Headquarters' : undefined,
+      agencyName: isAdminEmail ? 'TheUnbound DMC Global Headquarters' : 'Pending Agency Verification',
       country: 'Global',
-      approvalStatus: 'APPROVED',
+      approvalStatus,
       customBuyerMarginPercent: 25,
       customAgentMarginPercent: 10,
-      permissions: getDefaultPermissionsForRole(role),
+      permissions: approvalStatus === 'APPROVED' ? getDefaultPermissionsForRole(role) : {
+        ...getDefaultPermissionsForRole(role),
+        b2bQuoteBuilderAccess: false,
+        canAccessPricingCalculator: false,
+        canCreateBookings: false,
+        canExportPDF: false,
+        canViewWholesaleNetRates: false
+      },
       createdAt: new Date().toISOString().split('T')[0]
     };
 
@@ -478,6 +510,26 @@ class AuthService {
       };
     }
 
+    // Step 2.5: Reject Direct Buyer login attempts
+    if (profile.role === 'BUYER' || (profile as any).userType === 'BUYER' || requestedRole === 'BUYER') {
+      try {
+        await signOut(auth);
+      } catch (e) {
+        // Ignore
+      }
+      this.currentFirebaseUser = null;
+      this.currentUserProfile = null;
+      this.authState = 'UNAUTHENTICATED';
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('theunbound_auth_user');
+      }
+      return {
+        success: false,
+        error: 'Direct consumer login is not supported on TheUnbound. TheUnbound is exclusively a B2B DMC platform for verified travel agents and tour operators. Please contact business@theunbound.in or use an authorized B2B partner account.',
+        status: 'REJECTED'
+      };
+    }
+
     // Step 3: Validate account status for B2B Agents
     if (profile.role === 'B2B_AGENT' || profile.role === 'AGENT') {
       const approval = profile.approvalStatus || 'APPROVED';
@@ -599,6 +651,15 @@ class AuthService {
       };
     }
 
+    // 4.5. Reject Direct Buyer accounts
+    if (profile.role === 'BUYER' || (profile as any).userType === 'BUYER' || requestedRole === 'BUYER') {
+      return {
+        success: false,
+        error: 'Direct consumer login is not supported on TheUnbound. TheUnbound is exclusively a B2B DMC platform for verified travel agents and tour operators. Please contact business@theunbound.in or use an authorized B2B partner account.',
+        status: 'REJECTED'
+      };
+    }
+
     // 5. Verify B2B Agent approval status
     if (profile.role === 'B2B_AGENT' || profile.role === 'AGENT') {
       const approval = profile.approvalStatus || 'APPROVED';
@@ -664,6 +725,14 @@ class AuthService {
     const trimmedAgency = (profileData.agencyName || profileData.companyName || '').trim();
 
     console.log('[AUTH] Initiating registration for:', normalizedEmail);
+
+    // Reject Direct Buyer registration
+    if (profileData.role === 'BUYER' || (profileData as any).userType === 'BUYER') {
+      return {
+        success: false,
+        error: 'Direct consumer registration is not supported. TheUnbound is exclusively a B2B DMC platform for authorized travel agents, tour operators, and internal operations.'
+      };
+    }
 
     if (!trimmedName || trimmedName.length < 2) {
       return { success: false, error: 'Please enter your full legal name (minimum 2 characters).' };

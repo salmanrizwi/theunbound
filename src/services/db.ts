@@ -11,6 +11,8 @@ import {
   Quotation, 
   Booking,
   BookingStatus,
+  AgentMarginType,
+  PricingSnapshot,
   AuditLog, 
   AuditAction,
   DynamicPricingRecord, 
@@ -73,9 +75,23 @@ import {
   BookingTimelineEvent,
   BookingInternalNote,
   BookingCustomerUpdate,
+  SupplierPriceType,
+  SupplierAllocationStatus,
+  BookingOperationsPermissions,
+  ServiceItemConfirmationStatus,
+  ServiceItemOperationalStatus,
+  ServiceItemVoucherStatus,
+  ServiceItemInvoiceStatus,
+  SupplierPriceHistoryEntry,
+  UploadedInvoiceType,
+  InvoiceAssociationType,
+  BookingUploadedInvoice,
+  BookingActivityEventType,
+  BookingActivityTimelineEvent,
   B2BPackage,
   B2BCustomer,
   B2BTask,
+  AgentAssignmentNotification,
   QuoteStatus,
   BookingSourceType,
   CMSDeletableEntityType,
@@ -105,6 +121,12 @@ import {
   SEOEntityType,
   MasterGoogleSheetConfig,
   Supplier,
+  SupplierStatus,
+  SupplierRateCard,
+  SupplierDocument,
+  SupplierActivityHistory,
+  SupplierAllocationRecord,
+  SupplierPriceRecord,
   SupplierRequest,
   SupplierRequestStatus,
   LeadStageConfig,
@@ -143,6 +165,7 @@ import { INITIAL_ROSTER_RESOURCES } from '../data/initialRoster';
 import { INITIAL_VISAS } from '../data/initialVisas';
 import { INITIAL_FOOTER_CONFIG } from '../data/initialFooter';
 import { INITIAL_B2B_PACKAGES } from '../data/initialPackages';
+import { INITIAL_LEADS } from '../data/initialLeads';
 import { EmailNotificationService } from './emailNotificationService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { googleBusinessService } from './googleBusinessService';
@@ -163,6 +186,11 @@ import {
   canRevokeAdminPermissions, 
   isMasterAdmin 
 } from './permissionEngine';
+import { 
+  sanitizeQuoteForAgent, 
+  sanitizeBookingForAgent, 
+  sanitizeProductForAgent 
+} from '../utils/customerQuoteSanitizer';
 
 function cleanForFirestore(data: any): any {
   if (data === undefined) {
@@ -698,6 +726,7 @@ export class AppDatabase {
 
       // 4. Operations, Financials & Logistics
       this.syncCollectionSafely<BookingInvoice>('invoices', 'invoices');
+      this.syncCollectionSafely<BookingUploadedInvoice>('uploaded_invoices', 'uploaded_invoices');
       this.syncCollectionSafely<BookingVoucher>('vouchers', 'vouchers');
       this.syncCollectionSafely<JobSheet>('job_sheets', 'job_sheets');
       this.syncCollectionSafely<RosterResource>('roster_resources', 'roster_resources');
@@ -854,7 +883,7 @@ export class AppDatabase {
       this.setItem('user_activities', []);
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'leads')) {
-      this.setItem('leads', []);
+      this.setItem('leads', INITIAL_LEADS);
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'bookings')) {
       this.setItem('bookings', []);
@@ -3769,32 +3798,58 @@ export class AppDatabase {
    * - B2B_AGENT: Can view quotes created by them, quotes where they are assigned as agent, or assignedTo.
    * - BUYER / REGISTERED USER: Can view quotes where clientUserId matches user.id OR clientEmail matches user.email.
    */
+  /**
+   * Sanitizes a Quotation for external users (B2B Agents, Buyers, Guests).
+   * Strips all internal nett prices, markups, supplier costs, and margins.
+   */
+  public sanitizeQuotationForExternalUser(q: Quotation): Quotation {
+    return sanitizeQuoteForAgent(q);
+  }
+
+  /**
+   * Authoritative raw quote retrieval (for server-side/internal commercial recalculation)
+   */
+  public getRawQuoteById(quoteId: string): Quotation | null {
+    const all = this.getAllSavedQuotes();
+    return all.find(q => q.id === quoteId || q.quoteNumber === quoteId) || null;
+  }
+
+  /**
+   * Enforces role authorization and strict commercial net price protection:
+   * - ADMIN / TEAM_MEMBER / DMC_STAFF: Can view full commercial quotes across the organization.
+   * - B2B_AGENT: Can view quotes created by or assigned to them, with ALL internal commercial
+   *   details (nett costs, markups, DMC margins) strictly stripped before returning.
+   * - BUYER / REGISTERED USER: Can view quotes where clientUserId matches user.id OR clientEmail matches user.email,
+   *   with all commercial internals stripped.
+   */
   public getQuotesForUser(user: User | null): Quotation[] {
     const all = this.getAllSavedQuotes();
     if (!user) return [];
 
-    // 1. Admin & Internal Staff see ALL quotes
+    // 1. Admin & Internal Staff see ALL quotes with internal pricing
     if (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
       return all;
     }
 
-    // 2. B2B Agents see their own created quotes or assigned quotes
+    // 2. B2B Agents see their own created quotes or assigned quotes (STRICTLY SANITIZED)
     if (user.role === 'B2B_AGENT') {
-      return all.filter(q => 
+      const agentQuotes = all.filter(q => 
         q.createdBy === user.id || 
         q.agentId === user.id || 
         q.b2bAgentId === user.id || 
         q.assignedTo === user.id ||
         (user.email && q.agentEmail?.toLowerCase().trim() === user.email.toLowerCase().trim())
       );
+      return agentQuotes.map(q => sanitizeQuoteForAgent(q));
     }
 
-    // 3. Buyers / Registered Users see quotes created for their account or email
+    // 3. Buyers / Registered Users see quotes created for their account or email (STRICTLY SANITIZED)
     const userEmail = user.email ? user.email.toLowerCase().trim() : '';
-    return all.filter(q => 
+    const buyerQuotes = all.filter(q => 
       (q.clientUserId && q.clientUserId === user.id) ||
       (userEmail && q.clientEmail && q.clientEmail.toLowerCase().trim() === userEmail)
     );
+    return buyerQuotes.map(q => sanitizeQuoteForAgent(q));
   }
 
   public getAllSavedQuotesForUser(user: User | null): Quotation[] {
@@ -3812,7 +3867,7 @@ export class AppDatabase {
       return found;
     }
 
-    // 2. B2B Agent
+    // 2. B2B Agent (STRICT SANITIZATION)
     if (user.role === 'B2B_AGENT') {
       if (
         found.createdBy === user.id ||
@@ -3821,17 +3876,17 @@ export class AppDatabase {
         found.assignedTo === user.id ||
         (user.email && found.agentEmail?.toLowerCase().trim() === user.email.toLowerCase().trim())
       ) {
-        return found;
+        return sanitizeQuoteForAgent(found);
       }
     }
 
-    // 3. Buyer / User
+    // 3. Buyer / User (STRICT SANITIZATION)
     const userEmail = user.email ? user.email.toLowerCase().trim() : '';
     if (
       (found.clientUserId && found.clientUserId === user.id) ||
       (userEmail && found.clientEmail && found.clientEmail.toLowerCase().trim() === userEmail)
     ) {
-      return found;
+      return sanitizeQuoteForAgent(found);
     }
 
     // Access denied
@@ -3942,6 +3997,30 @@ export class AppDatabase {
         defaultActionDetails = customDetails || `Saved changes to quote ${quote.quoteNumber} (v${currentVersion})`;
     }
 
+    // Authoritative Agent Margin & Commercial Pricing Architecture (Section 5 & 8)
+    const baseFinalSellingPrice = quote.baseFinalSellingPrice 
+      ?? quote.base_final_selling_price 
+      ?? existingQuote?.baseFinalSellingPrice 
+      ?? existingQuote?.base_final_selling_price
+      ?? quote.totalSellingPrice
+      ?? 0;
+
+    const agentMarginType: AgentMarginType = (quote.agentMarginType ?? quote.agent_margin_type ?? existingQuote?.agentMarginType ?? 'PERCENTAGE') as AgentMarginType;
+    const rawMarginValue = quote.agentMarginValue ?? quote.agent_margin_value ?? existingQuote?.agentMarginValue ?? (quote.overallMarkupPercent ?? 12);
+    
+    // Server-side bounds validation: reject negative, cap percentage at 100%
+    const validatedMarginValue = Math.max(0, agentMarginType === 'PERCENTAGE' 
+      ? Math.min(100, isNaN(Number(rawMarginValue)) ? 0 : Number(rawMarginValue))
+      : Math.min(baseFinalSellingPrice * 5, isNaN(Number(rawMarginValue)) ? 0 : Number(rawMarginValue))
+    );
+
+    const agentMarginAmount = agentMarginType === 'PERCENTAGE'
+      ? Math.round(baseFinalSellingPrice * (validatedMarginValue / 100))
+      : Math.round(validatedMarginValue);
+
+    const finalCustomerSellingPrice = baseFinalSellingPrice + agentMarginAmount;
+    const pricingCalculatedAt = quote.pricingCalculatedAt || timestamp;
+
     activityLog.push({
       id: `act-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       action: actionType,
@@ -3949,11 +4028,81 @@ export class AppDatabase {
       userName,
       userRole,
       userType: createdByUserType,
-      details: customDetails || defaultActionDetails
+      details: customDetails || defaultActionDetails,
+      quoteId: quote.id,
+      quote_id: quote.id,
+      leadId: quote.leadId,
+      lead_id: quote.leadId,
+      userId: user?.id,
+      user_id: user?.id,
+      action_type: actionType,
+      previousMarginType: existingQuote?.agentMarginType,
+      previous_margin_type: existingQuote?.agentMarginType,
+      previousMarginValue: existingQuote?.agentMarginValue,
+      previous_margin_value: existingQuote?.agentMarginValue,
+      newMarginType: agentMarginType,
+      new_margin_type: agentMarginType,
+      newMarginValue: validatedMarginValue,
+      new_margin_value: validatedMarginValue,
+      previousFinalCustomerSellingPrice: existingQuote?.finalCustomerSellingPrice,
+      previous_final_customer_selling_price: existingQuote?.finalCustomerSellingPrice,
+      newFinalCustomerSellingPrice: finalCustomerSellingPrice,
+      new_final_customer_selling_price: finalCustomerSellingPrice,
+      pricingVersion: currentVersion,
+      pricing_version: currentVersion
     });
+
+    // Internal authoritative commercial preservation
+    const authoritativeNetCost = existingQuote?.totalNetCost ?? existingQuote?.internalNettCost ?? quote.totalNetCost ?? 0;
+    const internalNettCost = authoritativeNetCost;
+    const supplierCost = existingQuote?.supplierCost ?? authoritativeNetCost;
+    const internalMarkup = existingQuote?.internalMarkup ?? 0;
+    const agentMarkup = agentMarginAmount;
+    const internalProfit = Math.max(0, finalCustomerSellingPrice - authoritativeNetCost);
+
+    const pricingSnapshot: PricingSnapshot = {
+      baseFinalSellingPrice,
+      currency: quote.currency,
+      agentMarginType,
+      agentMarginValue: validatedMarginValue,
+      agentMarginAmount,
+      finalCustomerSellingPrice,
+      calculatedAt: timestamp,
+      pricingVersion: currentVersion,
+      itemsCount: (quote.items || []).length,
+      totalPax: quote.totalPax || ((quote.adultsCount || 2) + (quote.childrenCount || 0) + (quote.infantsCount || 0))
+    };
 
     const updatedQuote: Quotation = {
       ...quote,
+      overallMarkupPercent: agentMarginType === 'PERCENTAGE' ? validatedMarginValue : quote.overallMarkupPercent,
+      baseFinalSellingPrice,
+      base_final_selling_price: baseFinalSellingPrice,
+      baseFinalSellingPriceCurrency: quote.currency,
+      base_final_selling_price_currency: quote.currency,
+      agentMarginType,
+      agent_margin_type: agentMarginType,
+      agentMarginValue: validatedMarginValue,
+      agent_margin_value: validatedMarginValue,
+      agentMarginAmount,
+      agent_margin_amount: agentMarginAmount,
+      finalCustomerSellingPrice,
+      final_customer_selling_price: finalCustomerSellingPrice,
+      totalSellingPrice: finalCustomerSellingPrice,
+      pricingCalculatedAt,
+      pricing_calculated_at: pricingCalculatedAt,
+      pricingVersion: currentVersion,
+      pricing_version: currentVersion,
+      pricingSnapshot,
+      pricing_snapshot: pricingSnapshot,
+      updatedBy: userName,
+      updated_by: userName,
+      totalNetCost: authoritativeNetCost,
+      internalNettCost,
+      supplierCost,
+      internalMarkup,
+      agentMarkup,
+      internalProfit,
       version: currentVersion,
       createdBy,
       createdByName,
@@ -3983,6 +4132,23 @@ export class AppDatabase {
       `${actionType} quote ${quote.quoteNumber} v${currentVersion} (${quote.title}) for client ${quote.clientName} (Created by ${createdByName})`
     );
 
+    // Authoritative Customer Record deduplication & linking
+    if (updatedQuote.clientEmail || (updatedQuote.clientName && updatedQuote.clientName !== 'Client Name Pending')) {
+      const customerRecord = this.findOrCreateCustomerRecord({
+        agentId: createdByUserType === 'B2B_AGENT' ? (user?.id || updatedQuote.agentId) : undefined,
+        name: updatedQuote.clientName,
+        email: updatedQuote.clientEmail,
+        phone: updatedQuote.clientPhone,
+        company: updatedQuote.clientCompany || user?.agencyName,
+        source: 'B2B_QUOTE_CREATION',
+        notes: typeof updatedQuote.agentNotes === 'string' ? updatedQuote.agentNotes : undefined,
+        isQuote: true
+      });
+      if (customerRecord) {
+        updatedQuote.customerId = customerRecord.id;
+      }
+    }
+
     // Auto-capture or update CRM Lead for this client
     if (updatedQuote.clientEmail || (updatedQuote.clientName && updatedQuote.clientName !== 'Client Name Pending')) {
       const mappedProducts: LeadProductItem[] = (updatedQuote.items || []).map((item, idx) => ({
@@ -3997,11 +4163,11 @@ export class AppDatabase {
         adults: item.pax?.adults || 2,
         children: item.pax?.children || 0,
         infants: item.pax?.infants || 0,
-        unitNetCost: item.calculation?.totalNetCost || 0,
-        unitSellingPrice: item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || 0,
-        totalNetCost: item.calculation?.totalNetCost || 0,
-        totalSellingPrice: item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || 0,
-        marginPercent: item.calculation?.markupRate ? Math.round(item.calculation.markupRate * 100) : 15,
+        unitNetCost: (item.calculation as any)?.totalNetCost || 0,
+        unitSellingPrice: item.calculation?.finalTotalSellingPrice || (item.calculation as any)?.sellingPriceFinal || 0,
+        totalNetCost: (item.calculation as any)?.totalNetCost || 0,
+        totalSellingPrice: item.calculation?.finalTotalSellingPrice || (item.calculation as any)?.sellingPriceFinal || 0,
+        marginPercent: (item.calculation as any)?.markupRate ? Math.round((item.calculation as any).markupRate * 100) : 15,
         currency: updatedQuote.currency || 'USD',
         status: 'CONFIRMED',
         selectedAddonNames: item.selectedAddonIds || []
@@ -4053,7 +4219,11 @@ export class AppDatabase {
         travelEndDate: updatedQuote.travelEndDate,
         paxAdults: updatedQuote.adultsCount || updatedQuote.totalPax || 2,
         paxChildren: updatedQuote.childrenCount || 0,
-        travelRequirements: updatedQuote.agentNotes || updatedQuote.title,
+        travelRequirements: (typeof updatedQuote.agentNotes === 'string'
+          ? updatedQuote.agentNotes
+          : Array.isArray(updatedQuote.agentNotes)
+            ? (updatedQuote.agentNotes as any[]).map(x => typeof x === 'string' ? x : x?.text || '').filter(Boolean).join('\n')
+            : '') || updatedQuote.title || 'Quotation customized for client',
         estimatedBudget: updatedQuote.totalSellingPrice,
         currency: updatedQuote.currency,
         quoteId: updatedQuote.id,
@@ -4107,7 +4277,9 @@ export class AppDatabase {
       // Non-blocking
     }
 
-    return updatedQuote;
+    return (user?.role === 'B2B_AGENT' || user?.role === 'BUYER')
+      ? sanitizeQuoteForAgent(updatedQuote)
+      : updatedQuote;
   }
 
   public deleteQuote(quoteId: string, user: User | null): boolean {
@@ -4328,35 +4500,121 @@ export class AppDatabase {
   /**
    * Direct Conversion of Quotation to Booking by Buyer or Admin
    */
-  public convertQuotationToBooking(quoteId: string, user: User | null, specialNotes?: string): Booking | null {
-    const quote = this.getQuoteByIdAuthorized(quoteId, user);
+  public convertQuotationToBooking(quoteOrId: string | Quotation, user: User | null, specialNotes?: string): Booking | null {
+    const quote = typeof quoteOrId === 'string' ? this.getQuoteByIdAuthorized(quoteOrId, user) : quoteOrId;
     if (!quote) return null;
 
+    // Idempotency: Prevent duplicate bookings for the same quote
+    const bookings = this.getAllBookings();
+    const existingBooking = bookings.find(b => b.quoteId === quote.id);
+    if (existingBooking) {
+      return existingBooking;
+    }
+
     const timestamp = new Date().toISOString();
-    const bookingRef = `TUB-BK-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const randomRef = Math.floor(1000 + Math.random() * 9000);
+    const bookingRef = `TUB-BK-${new Date().getFullYear()}-${randomRef}`;
+    const newBookingId = `bk-${Date.now()}-${randomRef}`;
+
+    const effectiveTotalAmount = quote.finalCustomerSellingPrice 
+      || quote.final_customer_selling_price 
+      || quote.totalSellingPrice;
+
+    const isAgent = user?.role === 'B2B_AGENT';
+    const submittedByUserId = user?.id || quote.agentId || quote.createdBy || 'usr-b2b';
+    const submittedByUserRole = user?.role || (isAgent ? 'B2B_AGENT' : 'BUYER');
+    const submittingAgentId = isAgent ? user?.id : (quote.agentId || quote.createdBy);
+    const submittingAgentNameSnapshot = isAgent ? user?.name : (quote.agentName || 'Partner Agent');
+    const submittingAgentAgencySnapshot = isAgent ? (user?.agencyName || quote.agentAgency) : quote.agentAgency;
+
+    // Reuse or create customer record to prevent redundant duplication
+    const customerRecord = this.findOrCreateCustomerRecord({
+      agentId: submittingAgentId,
+      name: quote.clientName || 'Lead Traveler',
+      email: quote.clientEmail,
+      phone: quote.clientPhone,
+      company: quote.clientCompany || submittingAgentAgencySnapshot,
+      source: 'B2B_QUOTE_CONVERSION',
+      notes: specialNotes || quote.agentNotes,
+      isBooking: true
+    });
+
+    const initialTimeline: BookingTimelineEvent[] = [
+      {
+        id: `tl-${Date.now()}-01`,
+        title: 'Booking Created from Quotation',
+        description: `Quotation ${quote.quoteNumber} converted to Booking ${bookingRef} for client ${quote.clientName}.${isAgent ? ` Submitted by B2B Agent ${user?.name} (${user?.agencyName || 'Partner Agent'}).` : ''}`,
+        timestamp,
+        type: 'CREATION',
+        actorName: user?.name || quote.clientName,
+        actorRole: user?.role || 'B2B_AGENT'
+      }
+    ];
+
+    const authoritativeNetCost = quote.totalNetCost ?? quote.internalNettCost ?? 0;
+    const internalNettCost = authoritativeNetCost;
+    const supplierCost = quote.supplierCost ?? authoritativeNetCost;
+    const internalMarkup = quote.internalMarkup ?? 0;
+    const agentMarkup = quote.agentMarginAmount ?? 0;
+    const internalProfit = Math.max(0, effectiveTotalAmount - authoritativeNetCost);
 
     const newBookingDraft: Booking = {
-      id: `bk-${Date.now()}`,
+      id: newBookingId,
+      bookingId: newBookingId,
       bookingReference: bookingRef,
       quoteId: quote.id,
       quoteNumber: quote.quoteNumber,
+      linkedQuoteId: quote.id,
+      linkedLeadId: quote.leadId,
+      leadId: quote.leadId,
+      customerId: customerRecord?.id || quote.customerId,
       sourceType: 'QUOTATION',
+      source: 'B2B_QUOTE_CONVERSION',
+      submittedByUserId,
+      submittedByUserRole,
+      submittingAgentId,
+      submittingAgentNameSnapshot,
+      submittingAgentAgencySnapshot,
+      submittedAt: timestamp,
+      agentVisibilityStatus: 'VISIBLE',
       destination: quote.destination,
+      destinationName: quote.destination,
       travelStartDate: quote.travelStartDate || new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
       travelEndDate: quote.travelEndDate || new Date(Date.now() + 24 * 86400000).toISOString().split('T')[0],
-      totalAmount: quote.totalSellingPrice,
+      totalAmount: effectiveTotalAmount,
+      totalNetCost: authoritativeNetCost,
+      internalNettCost,
+      supplierCost,
+      supplierTotalCost: supplierCost,
+      internalMarkup,
+      agentMarkup,
+      internalProfit,
+      grossProfit: internalProfit,
+      grossMarginPercent: effectiveTotalAmount > 0 ? (internalProfit / effectiveTotalAmount) * 100 : 0,
       currency: quote.currency,
       status: 'PENDING_CONFIRMATION',
+      customerFacingStatus: 'Booking Received',
+      paymentStatus: 'PENDING_PAYMENT',
+      documentStatus: 'DOCUMENTS_PENDING',
+      missingDocuments: [],
+      supplierAllocationStatus: 'UNALLOCATED',
+      passengers: [],
+      paymentProofs: [],
+      internalNotesList: [],
+      customerUpdates: [],
+      timeline: initialTimeline,
       createdAt: timestamp,
       updatedAt: timestamp,
       userId: quote.clientUserId || user?.id || 'usr-guest',
-      agentId: quote.agentId || quote.createdBy,
-      agentName: quote.agentName,
-      agentAgency: quote.agentAgency,
+      agentId: submittingAgentId,
+      agentName: submittingAgentNameSnapshot,
+      agentAgency: submittingAgentAgencySnapshot,
       customer: {
         leadTravelerName: quote.clientName,
+        bookerName: submittingAgentNameSnapshot || quote.clientName,
         email: quote.clientEmail || user?.email || 'sales@theunbound.in',
         phone: quote.clientPhone || user?.contactNumber || '+1 415 555 2671',
+        agencyName: submittingAgentAgencySnapshot || quote.clientCompany,
         nationality: 'International',
         totalAdults: quote.adultsCount || quote.totalPax || 2,
         totalChildren: quote.childrenCount || 0,
@@ -4364,6 +4622,12 @@ export class AppDatabase {
         specialRequests: specialNotes || quote.agentNotes || 'Proposal accepted by client. Automatic booking reservation initiated.'
       },
       confirmationNotice: 'Your booking has been submitted and ground allocation is underway with a 24-48h confirmation SLA.',
+      pricingSnapshot: quote.pricingSnapshot || quote.pricing_snapshot,
+      baseFinalSellingPrice: quote.baseFinalSellingPrice || quote.base_final_selling_price,
+      agentMarginType: quote.agentMarginType || quote.agent_margin_type,
+      agentMarginValue: quote.agentMarginValue || quote.agent_margin_value,
+      agentMarginAmount: quote.agentMarginAmount || quote.agent_margin_amount,
+      finalCustomerSellingPrice: effectiveTotalAmount,
       notificationEmailsSent: [
         {
           recipient: quote.clientEmail || 'client@theunbound.in',
@@ -4389,9 +4653,9 @@ export class AppDatabase {
         infants: item.pax?.infants ?? 0,
         totalPax: (item.pax?.adults ?? 2) + (item.pax?.children ?? 0) + (item.pax?.infants ?? 0),
         selectedAddonNames: [],
-        unitNetPrice: item.calculation?.totalNetCost || 0,
-        unitSellingPrice: item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || item.product?.sellingPriceStartingFrom || 0,
-        totalPrice: item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || item.product?.sellingPriceStartingFrom || 0,
+        unitNetPrice: (item.calculation as any)?.totalNetCost || 0,
+        unitSellingPrice: item.calculation?.finalTotalSellingPrice || (item.calculation as any)?.sellingPriceFinal || item.product?.sellingPriceStartingFrom || 0,
+        totalPrice: item.calculation?.finalTotalSellingPrice || (item.calculation as any)?.sellingPriceFinal || item.product?.sellingPriceStartingFrom || 0,
         currency: quote.currency || 'USD',
         supplierStatus: 'PENDING_DISPATCH' as const,
         supplierNotes: item.notes
@@ -4399,16 +4663,17 @@ export class AppDatabase {
     };
 
     // Save Booking
-    const bookings = this.getAllBookings();
     bookings.unshift(newBookingDraft);
     this.setItem('bookings', bookings);
     this.syncFirestoreDoc('bookings', newBookingDraft.id, newBookingDraft);
 
-    // Update Quotation status and log activity
+    // Update Quotation status and bidirectional linkage
     const quotes = this.getAllSavedQuotes();
     const qIdx = quotes.findIndex(q => q.id === quote.id);
     if (qIdx >= 0) {
-      quotes[qIdx].status = 'BOOKING_REQUESTED';
+      quotes[qIdx].status = 'BOOKED';
+      quotes[qIdx].linkedBookingIds = Array.from(new Set([...(quotes[qIdx].linkedBookingIds || []), newBookingDraft.id]));
+      quotes[qIdx].customerId = customerRecord?.id || quotes[qIdx].customerId;
       quotes[qIdx].updatedAt = timestamp;
       quotes[qIdx].lastActivityAt = timestamp;
       quotes[qIdx].activityLog = [
@@ -4420,11 +4685,44 @@ export class AppDatabase {
           userName: user?.name || quote.clientName,
           userRole: user?.role,
           userType: (user?.role as any) || 'BUYER',
-          details: `Client accepted quotation and requested booking reservation (Ref: ${bookingRef})`
+          details: `Client accepted quotation and converted to booking reservation (Ref: ${bookingRef})`
         }
       ];
       this.setItem('saved_quotes', quotes);
       this.syncFirestoreDoc('quotations', quote.id, quotes[qIdx]);
+    }
+
+    // Bidirectionally update Lead if linked to this quote
+    const leadId = quote.leadId || quote.linkedLeadId;
+    if (leadId) {
+      const leads = this.getLeads();
+      const leadIdx = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
+      if (leadIdx >= 0) {
+        const lead = leads[leadIdx];
+        lead.linkedBookingIds = Array.from(new Set([...(lead.linkedBookingIds || []), newBookingDraft.id]));
+        lead.bookingIds = Array.from(new Set([...(lead.bookingIds || []), newBookingDraft.id]));
+        lead.bookingId = newBookingDraft.id;
+        lead.bookingReference = newBookingDraft.bookingReference;
+        lead.bookingValue = effectiveTotalAmount;
+        lead.conversionStatus = 'CONVERTED';
+        lead.status = 'BOOKED';
+        lead.updatedAt = timestamp;
+        lead.lastActivityAt = timestamp;
+        lead.timeline = [
+          ...(lead.timeline || []),
+          {
+            id: `tl-${Date.now()}-bk`,
+            type: 'BOOKING_CONVERTED',
+            title: 'Quote Converted to Booking',
+            description: `Quote ${quote.quoteNumber} converted to Booking ${newBookingDraft.bookingReference} (${newBookingDraft.currency} ${effectiveTotalAmount.toLocaleString()}). Submitted by ${submittingAgentNameSnapshot || 'Agent'}.`,
+            timestamp,
+            performedBy: user?.name || submittingAgentNameSnapshot || 'Partner Agent',
+            performedByUserType: (user?.role as any) || 'B2B_AGENT'
+          }
+        ];
+        this.setItem('leads', leads);
+        this.syncFirestoreDoc('leads', lead.id, lead);
+      }
     }
 
     this.logAudit(
@@ -4432,8 +4730,34 @@ export class AppDatabase {
       'BOOKING_CREATED',
       'Booking',
       newBookingDraft.id,
-      `Quotation ${quote.quoteNumber} converted to Booking ${bookingRef} for client ${quote.clientName}`
+      `Quotation ${quote.quoteNumber} converted to Booking ${bookingRef} for client ${quote.clientName} by ${submittingAgentNameSnapshot} (${submittingAgentAgencySnapshot || 'Partner'})`
     );
+
+    // Live Admin Activity Stream notification
+    try {
+      this.recordAdminActivity({
+        entityId: newBookingDraft.id,
+        category: 'BOOKING',
+        activityType: 'BOOKING_CREATED',
+        actorName: submittingAgentNameSnapshot || user?.name || 'B2B Agent',
+        actorType: isAgent ? 'B2B_AGENT' : 'TEAM_MEMBER',
+        severity: 'INFO',
+        actionRequired: true,
+        actionLabel: 'View in Operations Desk',
+        summary: `New Booking Converted: [${bookingRef}] for ${quote.clientName} (${quote.currency} ${effectiveTotalAmount.toLocaleString()}) via Agent ${submittingAgentNameSnapshot}`,
+        details: {
+          bookingReference: bookingRef,
+          customerName: quote.clientName,
+          agentName: submittingAgentNameSnapshot,
+          agencyName: submittingAgentAgencySnapshot,
+          totalAmount: effectiveTotalAmount,
+          currency: quote.currency
+        },
+        targetSection: 'OPERATIONS_DESK'
+      });
+    } catch (e) {
+      console.warn('Admin activity logging for converted booking:', e);
+    }
 
     // Auto-trigger SLA & Google Calendar dispatch listeners
     this.bookingSaveListeners.forEach(listener => {
@@ -4444,7 +4768,9 @@ export class AppDatabase {
       }
     });
 
-    return newBookingDraft;
+    return (user?.role === 'B2B_AGENT' || user?.role === 'BUYER')
+      ? this.sanitizeBookingForExternalUser(newBookingDraft)
+      : newBookingDraft;
   }
 
   // ==========================================
@@ -4573,6 +4899,69 @@ export class AppDatabase {
     return all.filter(c => c.agentId === agentId);
   }
 
+  /**
+   * Reuses customer details across Quotes, Leads, and Bookings without duplicating records.
+   * Matches existing customer records by agentId and email/name.
+   */
+  public findOrCreateCustomerRecord(params: {
+    agentId?: string;
+    name: string;
+    email?: string;
+    phone?: string;
+    company?: string;
+    source?: string;
+    notes?: string;
+    isQuote?: boolean;
+    isBooking?: boolean;
+  }): B2BCustomer {
+    const all = this.getB2BCustomers();
+    const cleanEmail = params.email?.trim().toLowerCase();
+    const cleanName = params.name?.trim().toLowerCase();
+    
+    let existing = all.find(c => {
+      if (params.agentId && c.agentId === params.agentId) {
+        if (cleanEmail && c.email && c.email.toLowerCase() === cleanEmail) return true;
+        if (cleanName && c.name.toLowerCase() === cleanName) return true;
+      } else if (!params.agentId) {
+        if (cleanEmail && c.email && c.email.toLowerCase() === cleanEmail) return true;
+      }
+      return false;
+    });
+
+    const now = new Date().toISOString();
+
+    if (existing) {
+      const updated: B2BCustomer = {
+        ...existing,
+        name: (params.name && params.name !== 'Client Name Pending') ? params.name : existing.name,
+        phone: params.phone || existing.phone,
+        company: params.company || existing.company,
+        notes: params.notes ? `${existing.notes ? existing.notes + '\n' : ''}${params.notes}` : existing.notes,
+        totalQuotesCount: (existing.totalQuotesCount || 0) + (params.isQuote ? 1 : 0),
+        totalBookingsCount: (existing.totalBookingsCount || 0) + (params.isBooking ? 1 : 0),
+        lastContactDate: now
+      };
+      return this.saveB2BCustomer(updated);
+    } else {
+      const newCustomer: B2BCustomer = {
+        id: `cust-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        agentId: params.agentId || 'direct-client',
+        name: params.name || 'Client',
+        email: params.email || '',
+        phone: params.phone || '',
+        company: params.company || '',
+        country: 'India',
+        notes: params.notes || '',
+        totalQuotesCount: params.isQuote ? 1 : 0,
+        totalBookingsCount: params.isBooking ? 1 : 0,
+        tags: [params.source || 'Quote/Booking'].filter(Boolean),
+        lastContactDate: now,
+        createdAt: now
+      };
+      return this.saveB2BCustomer(newCustomer);
+    }
+  }
+
   public saveB2BCustomer(customer: B2BCustomer): B2BCustomer {
     const customers = this.getB2BCustomers();
     const idx = customers.findIndex(c => c.id === customer.id);
@@ -4635,27 +5024,113 @@ export class AppDatabase {
   }
 
   /**
+   * Granular Booking Operations Permission Check
+   * - Admin: always true
+   * - Team Members: true if not explicitly disabled in user.permissions.bookingOperations
+   * - External users (BUYER, B2B_AGENT, GUEST, etc.): STRICTLY FALSE
+   */
+  public hasBookingOperationPermission(
+    user: User | null,
+    permission: keyof BookingOperationsPermissions
+  ): boolean {
+    if (!user) return false;
+    if (user.role === 'ADMIN') return true;
+    if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+      const opsPerms = user.permissions?.bookingOperations;
+      if (!opsPerms) return true; // Default allow for internal staff unless configured
+      return opsPerms[permission] !== false;
+    }
+    return false; // Buyers, B2B Agents, external users never have booking operations access
+  }
+
+  /**
+   * Sanitizes Booking data for external users (Buyers, B2B Agents, Guests).
+   * Strips out supplier prices, nett costs, margins, profits, supplier allocations,
+   * internal notes, internal pricing history, and supplier invoices.
+   */
+  public sanitizeBookingForExternalUser(b: Booking): Booking {
+    const clone: Booking = JSON.parse(JSON.stringify(b));
+    delete clone.totalNetCost;
+    delete clone.grossProfit;
+    delete clone.grossMarginPercent;
+    delete clone.supplierAllocations;
+    delete clone.supplierRequests;
+    delete clone.operationalConfirmationOverride;
+
+    if (clone.items && Array.isArray(clone.items)) {
+      clone.items = clone.items.map(it => {
+        delete it.supplierPrice;
+        delete it.supplierCurrency;
+        delete it.supplierPriceType;
+        delete it.supplierPriceTax;
+        delete it.supplierPriceFee;
+        delete it.supplierPriceDiscount;
+        delete it.supplierPaymentCutoffDate;
+        delete it.supplierCancellationDeadline;
+        delete it.supplierPriceValidityDate;
+        delete it.supplierPriceSource;
+        delete it.supplierPriceHistory;
+        delete it.supplierPriceLastUpdatedAt;
+        delete it.supplierPriceLastUpdatedBy;
+        delete it.internalPricingNotes;
+        delete it.internalNotes;
+        delete it.internalOpsNotes;
+        delete it.unitNetPrice;
+        delete (it as any).costPrice;
+        delete (it as any).netCost;
+        return it;
+      });
+    }
+
+    if (clone.uploadedInvoices && Array.isArray(clone.uploadedInvoices)) {
+      clone.uploadedInvoices = clone.uploadedInvoices.filter(
+        inv => inv.invoiceType !== 'Supplier Invoice'
+      );
+    }
+
+    return clone;
+  }
+
+  /**
    * Enforces role authorization:
    * - ADMIN / TEAM_MEMBER / DMC_STAFF: can view all bookings across the company
-   * - BUYER / B2B_AGENT: can only view bookings associated with their userId or email/agency
+   * - BUYER / B2B_AGENT: can only view bookings associated with their userId or email/agency,
+   *   with all supplier costs and internal financials strictly excluded from the returned records.
    */
   public getBookingsForUser(user: User | null): Booking[] {
     const all = this.getAllBookings();
-    if (!user) return all;
+    if (!user) return all.map(b => this.sanitizeBookingForExternalUser(b));
+    // Internal operational staff retain complete visibility
     if (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
       return all;
     }
-    return all.filter(b => 
+    // B2B Agent visibility: submitted by this agent OR assigned to this agent
+    if (user.role === 'B2B_AGENT') {
+      const matching = all.filter(b => 
+        b.submittedByUserId === user.id ||
+        b.submittingAgentId === user.id ||
+        b.assignedAgentId === user.id ||
+        b.agentId === user.id ||
+        b.userId === user.id
+      );
+      return matching.map(b => this.sanitizeBookingForExternalUser(b));
+    }
+    const matching = all.filter(b => 
       b.userId === user.id || 
-      (b.agentId && b.agentId === user.id) ||
       (user.email && b.customer?.email && b.customer.email.toLowerCase() === user.email.toLowerCase()) ||
       (user.name && b.customer?.bookerName && b.customer.bookerName.toLowerCase().includes(user.name.toLowerCase()))
     );
+    return matching.map(b => this.sanitizeBookingForExternalUser(b));
   }
 
-  public getBookingById(bookingId: string): Booking | null {
+  public getBookingById(bookingId: string, user?: User | null): Booking | null {
     const all = this.getAllBookings();
-    return all.find(b => b.id === bookingId || b.bookingReference === bookingId) || null;
+    const found = all.find(b => b.id === bookingId || b.bookingReference === bookingId) || null;
+    if (!found) return null;
+    if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER' && user.role !== 'DMC_STAFF') {
+      return this.sanitizeBookingForExternalUser(found);
+    }
+    return found;
   }
 
   public calculateBookingDocumentStatus(booking: Booking): { 
@@ -4797,17 +5272,82 @@ export class AppDatabase {
     },
     user: User | null
   ): Booking {
+    if (!user) {
+      throw new Error('Authentication required to submit booking.');
+    }
+
     const existing = this.getAllBookings();
+
+    // Idempotency Guard: prevent duplicate submissions within 30-second window
+    const thirtySecsAgo = Date.now() - 30 * 1000;
+    const duplicate = existing.find(b => {
+      if (!b.createdAt) return false;
+      const bTime = new Date(b.createdAt).getTime();
+      if (bTime >= thirtySecsAgo && b.submittedByUserId === user.id) {
+        if (data.quoteId && b.quoteId === data.quoteId) return true;
+        if (b.customer?.email && b.customer.email === data.customer?.email && b.totalAmount === data.totalAmount) return true;
+      }
+      return false;
+    });
+
+    if (duplicate) {
+      console.warn(`SECURITY/IDEMPOTENCY: Duplicate booking submission detected within 30s window. Returning existing booking ${duplicate.bookingReference}.`);
+      return (user.role === 'B2B_AGENT' || user.role === 'BUYER') 
+        ? this.sanitizeBookingForExternalUser(duplicate) 
+        : duplicate;
+    }
+
+    // Authoritative pricing check & internal commercial preservation from quote
+    let internalNettCost = data.totalNetCost || 0;
+    let internalMarkup = 0;
+    let agentMarkup = 0;
+    let internalProfit = 0;
+    let supplierCost = 0;
+
+    if (data.quoteId) {
+      const rawQuote = this.getRawQuoteById(data.quoteId);
+      if (rawQuote) {
+        internalNettCost = rawQuote.totalNetCost || rawQuote.internalNettCost || internalNettCost;
+        internalMarkup = rawQuote.internalMarkup || 0;
+        agentMarkup = rawQuote.agentMarkup || 0;
+        internalProfit = Math.max(0, (data.totalAmount || 0) - (internalNettCost || 0));
+        supplierCost = rawQuote.supplierCost || internalNettCost;
+      }
+    } else {
+      internalProfit = Math.max(0, (data.totalAmount || 0) - (internalNettCost || 0));
+      supplierCost = internalNettCost;
+    }
+
     const randomRef = Math.floor(1000 + Math.random() * 9000);
     const bookingReference = `TUB-BK-2026-${randomRef}`;
     const id = `booking-${Date.now()}-${randomRef}`;
     const timestamp = new Date().toISOString();
 
+    const isAgent = user?.role === 'B2B_AGENT';
+    const submittedByUserId = user?.id;
+    const submittedByUserRole = user?.role || (isAgent ? 'B2B_AGENT' : 'BUYER');
+    const submittingAgentId = isAgent ? user?.id : undefined;
+    const submittingAgentNameSnapshot = isAgent ? user?.name : undefined;
+    const submittingAgentAgencySnapshot = isAgent ? (user?.agencyName || data.customer.agencyName) : undefined;
+    const agentVisibilityStatus = isAgent ? 'VISIBLE' : undefined;
+
+    // Reuse or create customer record to avoid duplicate data
+    const customerRecord = this.findOrCreateCustomerRecord({
+      agentId: user?.id,
+      name: data.customer.leadTravelerName || data.customer.bookerName || 'Lead Traveler',
+      email: data.customer.email,
+      phone: data.customer.phone,
+      company: data.customer.agencyName || user?.agencyName,
+      source: 'BOOKING_SUBMISSION',
+      notes: data.customer.specialRequests,
+      isBooking: true
+    });
+
     const initialTimeline: BookingTimelineEvent[] = [
       {
         id: `tl-${Date.now()}-01`,
         title: 'Booking Submitted',
-        description: `Booking ${bookingReference} initiated for ${data.customer.leadTravelerName}.`,
+        description: `Booking ${bookingReference} initiated for ${data.customer.leadTravelerName}.${isAgent ? ` Submitted by B2B Agent ${user?.name} (${user?.agencyName || 'Agent'}).` : ''}`,
         timestamp,
         type: 'CREATION',
         actorName: user?.name || data.customer.leadTravelerName,
@@ -4817,10 +5357,24 @@ export class AppDatabase {
 
     const newBookingDraft: Booking = {
       id,
+      bookingId: id,
       bookingReference,
       sourceType: data.sourceType,
+      source: isAgent ? 'B2B_PORTAL' : (data.sourceType || 'B2B_PORTAL'),
+      submittedByUserId,
+      submittedByUserRole,
+      submittingAgentId,
+      submittingAgentNameSnapshot,
+      submittingAgentAgencySnapshot,
+      submittedAt: timestamp,
+      agentVisibilityStatus: agentVisibilityStatus as any,
+      agentId: isAgent ? user.id : undefined,
+      agentName: isAgent ? user.name : undefined,
+      agentAgency: isAgent ? (user.agencyName || data.customer.agencyName) : undefined,
       quoteId: data.quoteId,
       quoteNumber: data.quoteNumber,
+      linkedQuoteId: data.quoteId,
+      customerId: customerRecord?.id,
       destinationName: data.destinationName,
       userId: user?.id,
       userRole: user?.role || 'BUYER',
@@ -4828,7 +5382,15 @@ export class AppDatabase {
       items: data.items,
       currency: data.currency,
       totalAmount: data.totalAmount,
-      totalNetCost: data.totalNetCost,
+      totalNetCost: internalNettCost,
+      internalNettCost,
+      supplierCost,
+      supplierTotalCost: supplierCost,
+      internalMarkup,
+      agentMarkup,
+      internalProfit,
+      grossProfit: internalProfit,
+      grossMarginPercent: data.totalAmount > 0 ? (internalProfit / data.totalAmount) * 100 : 0,
       travelStartDate: data.travelStartDate,
       travelEndDate: data.travelEndDate,
       status: 'NEW',
@@ -4898,6 +5460,48 @@ export class AppDatabase {
       }
     }
 
+    // Sync into CRM Lead without duplication
+    try {
+      const linkedLead = this.captureLeadFromSource({
+        contactName: data.customer.leadTravelerName || data.customer.bookerName || 'Lead Traveler',
+        email: data.customer.email,
+        phone: data.customer.phone,
+        agencyName: data.customer.agencyName || user?.agencyName,
+        companyName: data.customer.agencyName || user?.agencyName,
+        userId: user?.id,
+        userType: isAgent ? 'B2B_AGENT' : 'BUYER',
+        b2bAgentId: isAgent ? user?.id : undefined,
+        source: 'BOOKING_SUBMISSION',
+        destinationName: data.destinationName,
+        travelDates: `${data.travelStartDate} to ${data.travelEndDate}`,
+        travelStartDate: data.travelStartDate,
+        travelEndDate: data.travelEndDate,
+        paxAdults: data.customer.totalAdults || 2,
+        paxChildren: data.customer.totalChildren || 0,
+        specialRequests: data.customer.specialRequests,
+        estimatedBudget: data.totalAmount,
+        currency: data.currency,
+        quoteId: data.quoteId,
+        quoteNumber: data.quoteNumber,
+        bookingId: newBookingDraft.id,
+        bookingReference: newBookingDraft.bookingReference,
+        bookingValue: data.totalAmount
+      }, user);
+      if (linkedLead) {
+        newBookingDraft.linkedLeadId = linkedLead.id;
+        newBookingDraft.leadId = linkedLead.id;
+        newBookingDraft.leadNumber = linkedLead.leadNumber;
+        this.setItem('bookings', existing);
+        this.syncFirestoreDoc('bookings', newBookingDraft.id, {
+          linkedLeadId: linkedLead.id,
+          leadId: linkedLead.id,
+          leadNumber: linkedLead.leadNumber
+        });
+      }
+    } catch (e) {
+      console.warn('CRM lead sync notice on booking creation:', e);
+    }
+
     this.logAudit(
       user, 
       'BOOKING_CREATED', 
@@ -4906,7 +5510,35 @@ export class AppDatabase {
       `Submitted new booking ${bookingReference} for ${data.customer.leadTravelerName} (${data.items?.length || 0} services, ${data.currency} ${data.totalAmount}). Confirmation email dispatched.`
     );
 
-    return newBookingDraft;
+    // Live Admin Activity Stream notification
+    try {
+      this.recordAdminActivity({
+        entityId: newBookingDraft.id,
+        category: 'BOOKING',
+        activityType: 'BOOKING_CREATED',
+        actorName: submittingAgentNameSnapshot || user?.name || 'B2B Agent',
+        actorType: isAgent ? 'B2B_AGENT' : 'TEAM_MEMBER',
+        severity: 'INFO',
+        actionRequired: true,
+        actionLabel: 'View in Operations Desk',
+        summary: `New Booking Submitted: [${bookingReference}] for ${data.customer.leadTravelerName} (${data.currency} ${data.totalAmount.toLocaleString()}) via ${submittingAgentNameSnapshot || user?.name || 'Direct'}`,
+        details: {
+          bookingReference,
+          customerName: data.customer.leadTravelerName,
+          agentName: submittingAgentNameSnapshot || user?.name,
+          agencyName: submittingAgentAgencySnapshot || user?.agencyName,
+          totalAmount: data.totalAmount,
+          currency: data.currency
+        },
+        targetSection: 'OPERATIONS_DESK'
+      });
+    } catch (e) {
+      console.warn('Admin activity log for booking create:', e);
+    }
+
+    return (user.role === 'B2B_AGENT' || user.role === 'BUYER')
+      ? this.sanitizeBookingForExternalUser(newBookingDraft)
+      : newBookingDraft;
   }
 
   public updateBookingStatus(bookingId: string, status: BookingStatus, user: User | null, reason?: string): Booking | null {
@@ -5433,6 +6065,1801 @@ export class AppDatabase {
     this.saveBooking(b, user);
   }
 
+  // =========================================================================
+  // CONNECTED BOOKING OPERATIONS & RESERVATIONS ENGINE
+  // SERVICE ITEMS & SUPPLIER OPERATIONS PROCESSING
+  // =========================================================================
+
+  /**
+   * Authoritative Service Item normalization to ensure real operational fields exist
+   */
+  public normalizeServiceItems(items: BookingItem[], booking: Booking): BookingItem[] {
+    return (items || []).map((item) => {
+      const isConfirmed = item.supplierConfirmationStatus === 'Confirmed' || item.supplierStatus === 'CONFIRMED_BY_SUPPLIER';
+      const hasSupplier = Boolean(item.supplierId || item.supplierName);
+      const hasPrice = typeof item.supplierPrice === 'number' && item.supplierPrice >= 0;
+
+      let confirmationStatus: ServiceItemConfirmationStatus = item.supplierConfirmationStatus || 'Not Processed';
+      if (!item.supplierConfirmationStatus) {
+        if (isConfirmed) confirmationStatus = 'Confirmed';
+        else if (hasSupplier && hasPrice) confirmationStatus = 'Confirmation Pending';
+        else if (hasSupplier && !hasPrice) confirmationStatus = 'Price Pending';
+        else confirmationStatus = 'Supplier Not Allocated';
+      }
+
+      let operationalStatus: ServiceItemOperationalStatus = item.operationalStatus || 'Not Started';
+      if (!item.operationalStatus) {
+        if (confirmationStatus === 'Confirmed') operationalStatus = 'Confirmed';
+        else if (!hasSupplier) operationalStatus = 'Allocation Pending';
+        else if (!hasPrice) operationalStatus = 'Price Pending';
+        else operationalStatus = 'Confirmation Pending';
+      }
+
+      return {
+        ...item,
+        bookingId: item.bookingId || booking.id,
+        destination: item.destination || item.destinationName || booking.destinationName || 'Destination',
+        hub: item.hub || item.city || 'Central Hub',
+        passengerDetails: item.passengerDetails || `${item.adults || 2} Adults${item.children ? `, ${item.children} Children` : ''}`,
+        assignedTeamMember: item.assignedTeamMember || booking.assignedTeamMemberName || 'Operations DMC Desk',
+        supplierPrice: hasPrice ? item.supplierPrice : (item.unitNetPrice ? Math.round(item.unitNetPrice * item.totalPax) : Math.round(item.totalPrice * 0.82)),
+        supplierCurrency: item.supplierCurrency || item.currency || booking.currency || 'USD',
+        supplierPriceType: item.supplierPriceType || 'Total Service Price',
+        supplierPriceVersion: item.supplierPriceVersion || 1,
+        supplierConfirmationStatus: confirmationStatus,
+        operationalStatus,
+        voucherStatus: item.voucherStatus || (confirmationStatus === 'Confirmed' ? 'Ready to Generate' : 'Not Ready'),
+        invoiceStatus: item.invoiceStatus || 'Not Uploaded'
+      };
+    });
+  }
+
+  /**
+   * Record audited event across Service Items, Suppliers, Pricing, Vouchers, Invoices
+   */
+  public recordBookingActivity(event: BookingActivityTimelineEvent, user?: User | null): void {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === event.bookingId || item.bookingReference === event.bookingId);
+    if (!b) return;
+
+    if (!b.serviceItemActivities) b.serviceItemActivities = [];
+    b.serviceItemActivities.unshift(event);
+
+    // Also add to timeline for unified audit
+    if (!b.timeline) b.timeline = [];
+    b.timeline.unshift({
+      id: event.eventId,
+      title: event.description || `Event: ${event.eventType.replace(/_/g, ' ')}`,
+      description: `Actor: ${event.actorName || user?.name || 'Operations Lead'} (${event.actorRole || 'INTERNAL'}) | Service: ${event.serviceItemName || 'Booking Level'}`,
+      timestamp: event.timestamp,
+      type: 'SUPPLIER',
+      actorName: event.actorName || user?.name || 'Operations Lead'
+    });
+
+    b.updatedAt = event.timestamp;
+    this.saveBooking(b, user || null);
+  }
+
+  public getBookingActivities(bookingId: string): BookingActivityTimelineEvent[] {
+    const b = this.getBookingById(bookingId);
+    if (!b) return [];
+    return b.serviceItemActivities || [];
+  }
+
+  /**
+   * Dedicated Supplier Allocation
+   */
+  public allocateServiceItemSupplier(
+    bookingId: string,
+    serviceItemId: string,
+    allocation: {
+      supplierId?: string;
+      supplierName?: string;
+      supplierType?: BookingItem['supplierType'];
+      supplierContact?: string;
+      supplierPhone?: string;
+      supplierEmail?: string;
+      supplierConfirmationRef?: string;
+      paymentCutoffDate?: string;
+      serviceDate?: string;
+      serviceTime?: string;
+      serviceTimezone?: string;
+      supplierNotes?: string;
+      internalNotes?: string;
+    } | null,
+    user: User | null
+  ): { success: boolean; item?: BookingItem; error?: string } {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.items) return { success: false, error: 'Booking not found' };
+
+    const itemIdx = b.items.findIndex(it => it.id === serviceItemId);
+    if (itemIdx === -1) return { success: false, error: 'Service item not found in booking' };
+
+    const currentItem = b.items[itemIdx];
+    const previousSupplier = currentItem.supplierName;
+    const isUnallocating = !allocation || (!allocation.supplierId && !allocation.supplierName);
+    const allocData = allocation || {};
+    const isReallocation = Boolean(!isUnallocating && previousSupplier && previousSupplier !== allocData.supplierName);
+    const now = new Date().toISOString();
+
+    const updatedItem: BookingItem = {
+      ...currentItem,
+      supplierId: isUnallocating ? undefined : allocData.supplierId,
+      supplierName: isUnallocating ? undefined : allocData.supplierName,
+      supplierNameSnapshot: isUnallocating ? undefined : allocData.supplierName,
+      supplierType: isUnallocating ? undefined : (allocData.supplierType || currentItem.supplierType || 'GROUND_RESOURCE'),
+      supplierContact: isUnallocating ? undefined : (allocData.supplierContact || `${allocData.supplierPhone || ''} ${allocData.supplierEmail || ''}`.trim()),
+      supplierPhone: isUnallocating ? undefined : allocData.supplierPhone,
+      supplierEmail: isUnallocating ? undefined : allocData.supplierEmail,
+      supplierConfirmationRef: isUnallocating ? undefined : allocData.supplierConfirmationRef,
+      supplierAllocationStatus: isUnallocating ? 'Not Allocated' : 'Allocated',
+      supplierAllocatedAt: isUnallocating ? undefined : now,
+      supplierAllocatedBy: isUnallocating ? undefined : (user?.displayName || user?.name || user?.email || 'Operations Lead'),
+      paymentCutoffDate: isUnallocating ? undefined : allocData.paymentCutoffDate,
+      serviceDate: allocData.serviceDate || currentItem.serviceDate || currentItem.travelDate,
+      serviceTime: allocData.serviceTime || currentItem.serviceTime,
+      serviceTimezone: allocData.serviceTimezone || currentItem.serviceTimezone,
+      supplierNotes: isUnallocating ? undefined : allocData.supplierNotes,
+      internalNotes: allocData.internalNotes !== undefined ? allocData.internalNotes : currentItem.internalNotes,
+      supplierStatus: isUnallocating ? 'PENDING_DISPATCH' : 'SENT_TO_SUPPLIER',
+      supplierConfirmationStatus: isUnallocating 
+        ? 'Not Confirmed' 
+        : (currentItem.supplierConfirmationStatus === 'Confirmed' 
+          ? 'Supplier Reconfirmation Required' 
+          : (currentItem.supplierPrice !== undefined ? 'Confirmation Pending' : 'Price Pending')),
+      operationalStatus: isUnallocating 
+        ? 'Supplier Not Allocated' 
+        : (currentItem.supplierPrice !== undefined ? 'Confirmation Pending' : 'Price Pending')
+    };
+
+    b.items[itemIdx] = updatedItem;
+    b.updatedAt = now;
+    b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    // If a voucher was previously issued for this booking, mark it as outdated due to supplier change
+    if (b.vouchersList && b.vouchersList.length > 0) {
+      b.vouchersList = b.vouchersList.map(v => ({
+        ...v,
+        isOutdated: true,
+        outdatedReason: isUnallocating 
+          ? `Supplier removed on Service Item: "${updatedItem.productName}". Re-generation required.`
+          : `Supplier changed on Service Item: "${updatedItem.productName}". Re-generation required.`
+      }));
+    }
+
+    const eventId = `act-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+    this.recordBookingActivity({
+      eventId,
+      bookingId: b.id,
+      bookingItemId: updatedItem.id,
+      serviceItemName: updatedItem.productName,
+      supplierId: isUnallocating ? undefined : allocData.supplierId,
+      supplierName: isUnallocating ? undefined : allocData.supplierName,
+      eventType: isUnallocating ? 'SUPPLIER_CHANGED' : (isReallocation ? 'SUPPLIER_CHANGED' : 'SUPPLIER_ALLOCATED'),
+      previousValue: previousSupplier || 'Unallocated',
+      newValue: isUnallocating ? 'Unallocated' : allocData.supplierName,
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.displayName || user?.name || 'Operations Lead',
+      timestamp: now,
+      description: isUnallocating
+        ? `Supplier De-allocated: Removed "${previousSupplier}" from ${updatedItem.productName}`
+        : (isReallocation 
+          ? `Supplier Reallocated: Changed from "${previousSupplier}" to "${allocData.supplierName}" for ${updatedItem.productName}`
+          : `Supplier Allocated: "${allocData.supplierName}" assigned to ${updatedItem.productName}`)
+    }, user);
+
+    if (!isUnallocating && allocData.supplierId) {
+      this.logSupplierAllocation({
+        supplierId: allocData.supplierId,
+        supplierNameSnapshot: allocData.supplierName || '',
+        supplierCategory: updatedItem.category || 'General',
+        bookingId: b.id,
+        bookingReference: b.bookingReference,
+        serviceItemId: updatedItem.id,
+        serviceName: updatedItem.productName,
+        customerName: (b as any).customerName || b.customer?.name || (b as any).buyerName || 'Valued Guest',
+        serviceDate: updatedItem.serviceDate || updatedItem.travelDate,
+        status: isReallocation ? 'CHANGED' : 'ALLOCATED',
+        allocatedBy: user?.id || 'system',
+        allocatedByName: user?.displayName || user?.name || 'Operations Lead',
+        previousSupplierId: currentItem.supplierId,
+        previousSupplierName: previousSupplier,
+        changeReason: isReallocation ? `Reallocated from ${previousSupplier}` : undefined
+      }, user);
+    }
+
+    this.saveBooking(b, user);
+    return { success: true, item: updatedItem };
+  }
+
+  /**
+   * Authoritative Editable Supplier Price with Versioning and Audit
+   */
+  public updateServiceItemSupplierPrice(
+    bookingId: string,
+    serviceItemId: string,
+    pricing: {
+      supplierPrice: number;
+      supplierCurrency: CurrencyCode;
+      supplierPriceType: SupplierPriceType;
+      supplierAdultPrice?: number;
+      supplierChildPrice?: number;
+      supplierInfantPrice?: number;
+      supplierQuantity?: number;
+      supplierTaxAmount?: number;
+      supplierAdditionalFees?: number;
+      supplierDiscount?: number;
+      supplierTotalCost?: number;
+      supplierPaymentCutoffDate?: string;
+      supplierCancellationDeadline?: string;
+      supplierPricingNotes?: string;
+      changeReason?: string;
+      forceAfterConfirmation?: boolean;
+    },
+    user: User | null
+  ): { success: boolean; requiresReconfirmation?: boolean; error?: string; item?: BookingItem } {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.items) return { success: false, error: 'Booking not found' };
+
+    const itemIdx = b.items.findIndex(it => it.id === serviceItemId);
+    if (itemIdx === -1) return { success: false, error: 'Service item not found' };
+
+    const currentItem = b.items[itemIdx];
+    const previousPrice = currentItem.supplierPrice;
+    const isMaterialChange = previousPrice !== undefined && previousPrice !== pricing.supplierPrice;
+
+    // Validation
+    if (typeof pricing.supplierPrice !== 'number' || isNaN(pricing.supplierPrice) || pricing.supplierPrice < 0) {
+      return { success: false, error: 'Supplier Price must be a valid non-negative number.' };
+    }
+    if (!pricing.supplierCurrency) {
+      return { success: false, error: 'Supplier Currency is required.' };
+    }
+    if (!pricing.supplierPriceType) {
+      return { success: false, error: 'Supplier Price Type is required.' };
+    }
+
+    const wasConfirmed = currentItem.supplierConfirmationStatus === 'Confirmed';
+    if (wasConfirmed && isMaterialChange && !pricing.forceAfterConfirmation) {
+      return {
+        success: false,
+        requiresReconfirmation: true,
+        error: `This service item is currently CONFIRMED. Altering the supplier price from ${currentItem.supplierCurrency || 'USD'} ${previousPrice} to ${pricing.supplierCurrency} ${pricing.supplierPrice} will invalidate the confirmation and require explicit reconfirmation.`
+      };
+    }
+
+    const newVersion = (currentItem.supplierPriceVersion || 1) + (isMaterialChange ? 1 : 0);
+    const now = new Date().toISOString();
+
+    const historyEntry: SupplierPriceHistoryEntry = {
+      previousPrice,
+      newPrice: pricing.supplierPrice,
+      currency: pricing.supplierCurrency,
+      priceType: pricing.supplierPriceType,
+      changeReason: pricing.changeReason || (isMaterialChange ? 'Price adjustment by operations' : 'Initial supplier rate entry'),
+      updatedBy: user?.id || 'admin',
+      updatedByName: user?.displayName || user?.name || 'Operations Lead',
+      updatedAt: now,
+      version: newVersion
+    };
+
+    const qty = pricing.supplierQuantity !== undefined ? Number(pricing.supplierQuantity) : (currentItem.supplierQuantity || currentItem.quantity || currentItem.totalPax || 1);
+    const unitPrice = Number(pricing.supplierPrice);
+    const tax = Number(pricing.supplierTaxAmount || 0);
+    const fees = Number(pricing.supplierAdditionalFees || 0);
+    const disc = Number(pricing.supplierDiscount || 0);
+    const computedTotalCost = pricing.supplierTotalCost !== undefined ? Number(pricing.supplierTotalCost) : ((unitPrice * qty) + tax + fees - disc);
+
+    const updatedItem: BookingItem = {
+      ...currentItem,
+      supplierPrice: Math.round(pricing.supplierPrice * 100) / 100,
+      supplierCurrency: pricing.supplierCurrency,
+      supplierPriceType: pricing.supplierPriceType,
+      supplierAdultPrice: pricing.supplierAdultPrice !== undefined ? Number(pricing.supplierAdultPrice) : currentItem.supplierAdultPrice,
+      supplierChildPrice: pricing.supplierChildPrice !== undefined ? Number(pricing.supplierChildPrice) : currentItem.supplierChildPrice,
+      supplierInfantPrice: pricing.supplierInfantPrice !== undefined ? Number(pricing.supplierInfantPrice) : currentItem.supplierInfantPrice,
+      supplierQuantity: qty,
+      supplierTaxAmount: tax,
+      supplierAdditionalFees: fees,
+      supplierDiscount: disc,
+      supplierTotalCost: Math.round(computedTotalCost * 100) / 100,
+      supplierPaymentCutoffDate: pricing.supplierPaymentCutoffDate || currentItem.supplierPaymentCutoffDate,
+      supplierCancellationDeadline: pricing.supplierCancellationDeadline || currentItem.supplierCancellationDeadline,
+      supplierPricingNotes: pricing.supplierPricingNotes !== undefined ? pricing.supplierPricingNotes : currentItem.supplierPricingNotes,
+      supplierPriceLastUpdatedAt: now,
+      supplierPriceLastUpdatedBy: user?.displayName || user?.name || user?.email || 'Operations Lead',
+      supplierPriceChangeReason: pricing.changeReason,
+      supplierPriceVersion: newVersion,
+      supplierPriceHistory: [historyEntry, ...(currentItem.supplierPriceHistory || [])],
+      supplierConfirmationStatus: (wasConfirmed && isMaterialChange) 
+        ? 'Supplier Reconfirmation Required' 
+        : (currentItem.supplierConfirmationStatus === 'Price Pending' ? 'Confirmation Pending' : currentItem.supplierConfirmationStatus),
+      operationalStatus: (wasConfirmed && isMaterialChange) ? 'Confirmation Pending' : currentItem.operationalStatus
+    };
+
+    b.items[itemIdx] = updatedItem;
+    b.updatedAt = now;
+    b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    // Invalidate vouchers if price materially changed after confirmation
+    if (wasConfirmed && isMaterialChange && b.vouchersList) {
+      b.vouchersList = b.vouchersList.map(v => ({
+        ...v,
+        isOutdated: true,
+        outdatedReason: `Supplier price modified after confirmation for ${updatedItem.productName}`
+      }));
+    }
+
+    this.recordBookingActivity({
+      eventId: `act-price-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: b.id,
+      bookingItemId: updatedItem.id,
+      serviceItemName: updatedItem.productName,
+      supplierId: updatedItem.supplierId,
+      supplierName: updatedItem.supplierName,
+      eventType: previousPrice === undefined ? 'SUPPLIER_PRICE_ADDED' : 'SUPPLIER_PRICE_EDITED',
+      previousValue: previousPrice !== undefined ? `${currentItem.supplierCurrency || 'USD'} ${previousPrice}` : 'None',
+      newValue: `${pricing.supplierCurrency} ${pricing.supplierPrice} (${pricing.supplierPriceType})`,
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.displayName || user?.name || 'Operations Lead',
+      timestamp: now,
+      metadata: { reason: pricing.changeReason, version: newVersion },
+      description: `Supplier Price updated to ${pricing.supplierCurrency} ${pricing.supplierPrice} (${pricing.supplierPriceType}). ${pricing.changeReason ? `Reason: ${pricing.changeReason}` : ''}`
+    }, user);
+
+    if (updatedItem.supplierId) {
+      this.logSupplierPriceRecord({
+        supplierId: updatedItem.supplierId,
+        bookingId: b.id,
+        bookingReference: b.bookingReference,
+        serviceItemId: updatedItem.id,
+        serviceName: updatedItem.productName,
+        supplierPrice: pricing.supplierPrice,
+        currency: pricing.supplierCurrency,
+        priceType: pricing.supplierPriceType,
+        previousPrice,
+        effectiveDate: updatedItem.serviceDate || updatedItem.travelDate || now,
+        updatedBy: user?.id || 'admin',
+        updatedByName: user?.displayName || user?.name || 'Operations Lead',
+        changeReason: pricing.changeReason
+      }, user);
+    }
+
+    this.saveBooking(b, user);
+    return { success: true, item: updatedItem };
+  }
+
+  /**
+   * Service Item Confirmation Workflow
+   */
+  public confirmServiceItem(
+    bookingId: string,
+    serviceItemId: string,
+    user: User | null
+  ): { success: boolean; errors?: string[] } {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.items) return { success: false, errors: ['Booking not found'] };
+
+    const itemIdx = b.items.findIndex(it => it.id === serviceItemId);
+    if (itemIdx === -1) return { success: false, errors: ['Service item not found'] };
+
+    const item = b.items[itemIdx];
+    const errors: string[] = [];
+
+    // Validation checklist
+    if (!item.supplierId && !item.supplierName) {
+      errors.push('A supplier must be allocated before confirming this service item.');
+    }
+    if (item.supplierPrice === undefined || item.supplierPrice === null || item.supplierPrice < 0) {
+      errors.push('An authoritative Supplier Price must be entered.');
+    }
+    if (!item.supplierCurrency) {
+      errors.push('Supplier Currency must be specified.');
+    }
+    if (!item.serviceDate && !item.travelDate) {
+      errors.push('A valid Service Date must be recorded.');
+    }
+
+    if (errors.length > 0) {
+      return { success: false, errors };
+    }
+
+    const now = new Date().toISOString();
+    const updatedItem: BookingItem = {
+      ...item,
+      supplierStatus: 'CONFIRMED_BY_SUPPLIER',
+      supplierConfirmationStatus: 'Confirmed',
+      operationalStatus: 'Confirmed',
+      voucherStatus: 'Ready to Generate',
+      confirmedAt: now,
+      confirmedBy: user?.id || 'admin',
+      confirmedByName: user?.displayName || user?.name || 'Operations Lead',
+      reconfirmationReason: undefined
+    };
+
+    b.items[itemIdx] = updatedItem;
+    b.updatedAt = now;
+    b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    // Check if parent booking needs supplierAllocationStatus update
+    const allItems = b.items;
+    const confirmedCount = allItems.filter(it => it.supplierConfirmationStatus === 'Confirmed').length;
+    if (confirmedCount === allItems.length) {
+      b.supplierAllocationStatus = 'FULLY_CONFIRMED_BY_SUPPLIERS';
+    } else {
+      b.supplierAllocationStatus = 'PARTIALLY_CONFIRMED';
+    }
+
+    this.recordBookingActivity({
+      eventId: `act-conf-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: b.id,
+      bookingItemId: updatedItem.id,
+      serviceItemName: updatedItem.productName,
+      supplierId: updatedItem.supplierId,
+      supplierName: updatedItem.supplierName,
+      eventType: 'SERVICE_ITEM_CONFIRMED',
+      previousValue: item.supplierConfirmationStatus || 'Pending',
+      newValue: 'Confirmed',
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.displayName || user?.name || 'Operations Lead',
+      timestamp: now,
+      description: `Service Item "${updatedItem.productName}" marked as CONFIRMED with supplier "${updatedItem.supplierName}". Reference: ${updatedItem.supplierConfirmationRef || 'Ground Ops Locked'}.`
+    }, user);
+
+    this.saveBooking(b, user);
+    return { success: true };
+  }
+
+  public requestServiceItemReconfirmation(
+    bookingId: string,
+    serviceItemId: string,
+    reason: string,
+    user: User | null
+  ): void {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.items) return;
+
+    const itemIdx = b.items.findIndex(it => it.id === serviceItemId);
+    if (itemIdx === -1) return;
+
+    const item = b.items[itemIdx];
+    const now = new Date().toISOString();
+
+    const updatedItem: BookingItem = {
+      ...item,
+      supplierConfirmationStatus: 'Supplier Reconfirmation Required',
+      operationalStatus: 'Confirmation Pending',
+      voucherStatus: 'Not Ready',
+      reconfirmationReason: reason
+    };
+
+    b.items[itemIdx] = updatedItem;
+    b.updatedAt = now;
+    b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    this.recordBookingActivity({
+      eventId: `act-reconf-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: b.id,
+      bookingItemId: updatedItem.id,
+      serviceItemName: updatedItem.productName,
+      supplierId: updatedItem.supplierId,
+      supplierName: updatedItem.supplierName,
+      eventType: 'SERVICE_ITEM_RECONFIRMATION_REQUIRED',
+      previousValue: item.supplierConfirmationStatus,
+      newValue: 'Supplier Reconfirmation Required',
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.displayName || user?.name || 'Operations Lead',
+      timestamp: now,
+      metadata: { reason },
+      description: `Reconfirmation requested for "${updatedItem.productName}". Reason: ${reason}`
+    }, user);
+
+    this.saveBooking(b, user);
+  }
+
+  /**
+   * Calculates Booking-level operational status from individual Service Items
+   */
+  public calculateBookingOperationalStatus(booking: Booking): ServiceItemOperationalStatus {
+    const items = booking.items || [];
+    if (items.length === 0) return 'Not Processed';
+
+    const activeItems = items.filter(it => !it.isCancelled && it.supplierConfirmationStatus !== 'Cancelled');
+    if (activeItems.length === 0) return 'Cancelled';
+
+    const allCompleted = activeItems.every(it => it.operationalStatus === 'Completed');
+    if (allCompleted) return 'Completed';
+
+    const anyReconfRequired = activeItems.some(
+      it => it.supplierConfirmationStatus === 'Supplier Reconfirmation Required' || 
+            it.supplierConfirmationStatus === 'Reconfirmation Required'
+    );
+    if (anyReconfRequired) return 'Supplier Reconfirmation Required';
+
+    const allNotProcessed = activeItems.every(
+      it => !it.operationalStatus || it.operationalStatus === 'Not Processed' || it.operationalStatus === 'Not Started'
+    );
+    if (allNotProcessed) return 'Not Processed';
+
+    const anyUnallocated = activeItems.some(it => !it.supplierId && !it.supplierName);
+    if (anyUnallocated) return 'Supplier Not Allocated';
+
+    const anyPricePending = activeItems.some(it => it.supplierPrice === undefined || it.supplierPrice === null);
+    if (anyPricePending) return 'Price Pending';
+
+    const anyConfirmationPending = activeItems.some(
+      it => it.supplierConfirmationStatus !== 'Confirmed'
+    );
+    if (anyConfirmationPending) return 'Confirmation Pending';
+
+    const allConfirmed = activeItems.every(it => it.supplierConfirmationStatus === 'Confirmed');
+    if (allConfirmed) return 'Confirmed';
+
+    return 'Processing';
+  }
+
+  /**
+   * Add Service Item directly to a booking (Master Inventory Item or Manual Service Item)
+   */
+  public addServiceItemToBooking(
+    bookingId: string,
+    itemData: Partial<BookingItem>,
+    user: User | null
+  ): { success: boolean; item?: BookingItem; error?: string } {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b) return { success: false, error: 'Booking not found' };
+
+    const now = new Date().toISOString();
+    const itemId = itemData.id || `item-ops-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+    const isManual = itemData.isManualServiceItem ?? false;
+    const unitSelling = Number(itemData.unitSellingPrice) || 0;
+    const pax = Number(itemData.totalPax) || (b.customer?.totalPax || 1);
+    const totalPrice = Number(itemData.totalPrice) || (unitSelling * pax);
+
+    const newItem: BookingItem = {
+      id: itemId,
+      bookingId: b.id,
+      productId: itemData.productId || `prod-ops-${Date.now()}`,
+      productName: itemData.productName || 'Service Item',
+      destination: itemData.destination || b.destination || 'Bali',
+      hub: itemData.hub,
+      category: itemData.category || 'Other approved travel service',
+      travelDate: itemData.serviceDate || itemData.travelDate || b.travelStartDate,
+      serviceDate: itemData.serviceDate || itemData.travelDate || b.travelStartDate,
+      serviceTime: itemData.serviceTime || '09:00',
+      serviceEndDate: itemData.serviceEndDate,
+      duration: itemData.duration,
+      adults: itemData.adults || b.customer?.totalAdults || 1,
+      children: itemData.children || b.customer?.totalChildren || 0,
+      infants: itemData.infants || b.customer?.totalInfants || 0,
+      totalPax: pax,
+      passengerAssignment: itemData.passengerAssignment || [],
+      unitSellingPrice: unitSelling,
+      totalPrice: totalPrice,
+      currency: itemData.currency || b.currency || 'USD',
+      isManualServiceItem: isManual,
+      customerFacingNotes: itemData.customerFacingNotes || '',
+      operationalInstructions: itemData.operationalInstructions || '',
+      internalNotes: itemData.internalNotes || '',
+      supplierId: itemData.supplierId,
+      supplierName: itemData.supplierName,
+      supplierContact: itemData.supplierContact,
+      supplierPhone: itemData.supplierPhone,
+      supplierEmail: itemData.supplierEmail,
+      supplierConfirmationRef: itemData.supplierConfirmationRef,
+      supplierAllocationStatus: itemData.supplierId ? 'Allocated' : 'Not Allocated',
+      supplierPrice: itemData.supplierPrice,
+      supplierCurrency: itemData.supplierCurrency || 'USD',
+      supplierPriceType: itemData.supplierPriceType || 'Per Person',
+      supplierConfirmationStatus: itemData.supplierConfirmationStatus || 'Not Confirmed',
+      operationalStatus: itemData.operationalStatus || (itemData.supplierId ? 'Confirmation Pending' : 'Supplier Not Allocated'),
+      voucherStatus: 'Not Ready',
+      invoiceStatus: 'Not Uploaded'
+    };
+
+    if (!b.items) b.items = [];
+    b.items.push(newItem);
+    b.updatedAt = now;
+    b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    this.recordBookingActivity({
+      eventId: `act-add-item-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: b.id,
+      bookingItemId: newItem.id,
+      serviceItemName: newItem.productName,
+      eventType: 'SERVICE_ITEM_ADDED',
+      newValue: newItem.productName,
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.name || 'Operations Lead',
+      timestamp: now,
+      description: `Service Item added: "${newItem.productName}" (${isManual ? 'Manual Service Item' : 'Master Inventory Item'}). Category: ${newItem.category}.`
+    }, user);
+
+    this.saveBooking(b, user);
+    return { success: true, item: newItem };
+  }
+
+  /**
+   * Edit an existing Service Item (service details, allocated supplier, and commercial pricing)
+   */
+  public updateServiceItem(
+    bookingId: string,
+    serviceItemId: string,
+    updates: Partial<BookingItem> & { 
+      changeReason?: string; 
+      forceAfterConfirmation?: boolean;
+    },
+    user: User | null
+  ): { success: boolean; error?: string; item?: BookingItem } {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.items) return { success: false, error: 'Booking not found' };
+
+    const itemIdx = b.items.findIndex(it => it.id === serviceItemId);
+    if (itemIdx === -1) return { success: false, error: 'Service item not found' };
+
+    const currentItem = b.items[itemIdx];
+    const now = new Date().toISOString();
+    const actorName = user?.displayName || user?.name || user?.email || 'Operations Lead';
+
+    // 1. Supplier Allocation Checks & Tracking
+    const hasSupplierAllocationUpdate = updates.supplierId !== undefined || updates.supplierName !== undefined;
+    const isUnallocatingSupplier = hasSupplierAllocationUpdate && !updates.supplierId && !updates.supplierName;
+    const targetSupplierName = isUnallocatingSupplier ? undefined : (updates.supplierName || currentItem.supplierName);
+    const targetSupplierId = isUnallocatingSupplier ? undefined : (updates.supplierId || currentItem.supplierId);
+    const isSupplierChanged = Boolean(
+      hasSupplierAllocationUpdate && 
+      !isUnallocatingSupplier && 
+      currentItem.supplierName && 
+      currentItem.supplierName !== targetSupplierName
+    );
+
+    // 2. Commercial Pricing Checks & Tracking
+    const hasPriceUpdate = updates.supplierPrice !== undefined;
+    let newPriceVersion = currentItem.supplierPriceVersion || 1;
+    let updatedPriceHistory = currentItem.supplierPriceHistory ? [...currentItem.supplierPriceHistory] : [];
+    let isMaterialPriceChange = false;
+
+    if (hasPriceUpdate) {
+      const parsedNewPrice = Number(updates.supplierPrice);
+      if (isNaN(parsedNewPrice) || parsedNewPrice < 0) {
+        return { success: false, error: 'Supplier Commercial Price must be a valid non-negative number.' };
+      }
+      isMaterialPriceChange = currentItem.supplierPrice !== undefined && currentItem.supplierPrice !== parsedNewPrice;
+      if (isMaterialPriceChange) {
+        newPriceVersion += 1;
+        const historyEntry: SupplierPriceHistoryEntry = {
+          previousPrice: currentItem.supplierPrice,
+          newPrice: parsedNewPrice,
+          currency: updates.supplierCurrency || currentItem.supplierCurrency || 'USD',
+          priceType: updates.supplierPriceType || currentItem.supplierPriceType || 'Total Service Price',
+          changeReason: updates.changeReason || updates.supplierPriceChangeReason || 'Commercial price updated in Service Item edit',
+          updatedBy: user?.id || 'admin',
+          updatedByName: actorName,
+          updatedAt: now,
+          version: newPriceVersion
+        };
+        updatedPriceHistory.unshift(historyEntry);
+      }
+    }
+
+    // Confirmation impact: If previously confirmed, supplier reallocation or material price change triggers reconfirmation
+    const wasConfirmed = currentItem.supplierConfirmationStatus === 'Confirmed';
+    const triggersReconfirmation = wasConfirmed && (isSupplierChanged || isMaterialPriceChange || isUnallocatingSupplier) && !updates.forceAfterConfirmation;
+
+    // Quantity and Cost Calculations
+    const targetQty = updates.supplierQuantity !== undefined 
+      ? Number(updates.supplierQuantity) 
+      : (currentItem.supplierQuantity || updates.totalPax || currentItem.totalPax || 1);
+    const targetUnitPrice = hasPriceUpdate ? Number(updates.supplierPrice) : (currentItem.supplierPrice !== undefined ? currentItem.supplierPrice : 0);
+    const targetTax = updates.supplierTaxAmount !== undefined ? Number(updates.supplierTaxAmount) : (currentItem.supplierTaxAmount || 0);
+    const targetFees = updates.supplierAdditionalFees !== undefined ? Number(updates.supplierAdditionalFees) : (currentItem.supplierAdditionalFees || 0);
+    const targetDisc = updates.supplierDiscount !== undefined ? Number(updates.supplierDiscount) : (currentItem.supplierDiscount || 0);
+    const computedTotalCost = updates.supplierTotalCost !== undefined 
+      ? Number(updates.supplierTotalCost) 
+      : ((targetUnitPrice * targetQty) + targetTax + targetFees - targetDisc);
+
+    // Build the consolidated updated item
+    const updatedItem: BookingItem = {
+      ...currentItem,
+      // Operational & descriptive attributes
+      productName: updates.productName !== undefined ? updates.productName : currentItem.productName,
+      category: updates.category !== undefined ? updates.category : currentItem.category,
+      destination: updates.destination !== undefined ? updates.destination : currentItem.destination,
+      hub: updates.hub !== undefined ? updates.hub : currentItem.hub,
+      serviceDate: updates.serviceDate !== undefined ? updates.serviceDate : currentItem.serviceDate,
+      travelDate: updates.serviceDate !== undefined ? updates.serviceDate : currentItem.travelDate,
+      serviceTime: updates.serviceTime !== undefined ? updates.serviceTime : currentItem.serviceTime,
+      serviceEndDate: updates.serviceEndDate !== undefined ? updates.serviceEndDate : currentItem.serviceEndDate,
+      duration: updates.duration !== undefined ? updates.duration : currentItem.duration,
+      adults: updates.adults !== undefined ? Number(updates.adults) : currentItem.adults,
+      children: updates.children !== undefined ? Number(updates.children) : currentItem.children,
+      infants: updates.infants !== undefined ? Number(updates.infants) : currentItem.infants,
+      totalPax: updates.totalPax !== undefined ? Number(updates.totalPax) : currentItem.totalPax,
+      passengerAssignment: updates.passengerAssignment !== undefined ? updates.passengerAssignment : currentItem.passengerAssignment,
+      customerFacingNotes: updates.customerFacingNotes !== undefined ? updates.customerFacingNotes : currentItem.customerFacingNotes,
+      operationalInstructions: updates.operationalInstructions !== undefined ? updates.operationalInstructions : currentItem.operationalInstructions,
+      internalNotes: updates.internalNotes !== undefined ? updates.internalNotes : currentItem.internalNotes,
+      internalOpsNotes: updates.internalOpsNotes !== undefined ? updates.internalOpsNotes : currentItem.internalOpsNotes,
+      
+      // Customer selling price (strictly preserved or updated with authorized permissions)
+      unitSellingPrice: updates.unitSellingPrice !== undefined ? Number(updates.unitSellingPrice) : currentItem.unitSellingPrice,
+      totalPrice: updates.totalPrice !== undefined ? Number(updates.totalPrice) : currentItem.totalPrice,
+      currency: updates.currency || currentItem.currency,
+
+      // Authoritative Allocated Supplier
+      supplierId: isUnallocatingSupplier ? undefined : (updates.supplierId !== undefined ? updates.supplierId : currentItem.supplierId),
+      supplierName: isUnallocatingSupplier ? undefined : (updates.supplierName !== undefined ? updates.supplierName : currentItem.supplierName),
+      supplierNameSnapshot: isUnallocatingSupplier ? undefined : (updates.supplierNameSnapshot || updates.supplierName || currentItem.supplierNameSnapshot || currentItem.supplierName),
+      supplierType: isUnallocatingSupplier ? undefined : (updates.supplierType !== undefined ? updates.supplierType : currentItem.supplierType),
+      supplierContact: isUnallocatingSupplier ? undefined : (updates.supplierContact !== undefined ? updates.supplierContact : currentItem.supplierContact),
+      supplierPhone: isUnallocatingSupplier ? undefined : (updates.supplierPhone !== undefined ? updates.supplierPhone : currentItem.supplierPhone),
+      supplierEmail: isUnallocatingSupplier ? undefined : (updates.supplierEmail !== undefined ? updates.supplierEmail : currentItem.supplierEmail),
+      supplierConfirmationRef: isUnallocatingSupplier ? undefined : (updates.supplierConfirmationRef !== undefined ? updates.supplierConfirmationRef : currentItem.supplierConfirmationRef),
+      supplierAllocationStatus: isUnallocatingSupplier 
+        ? 'Not Allocated' 
+        : (targetSupplierId || targetSupplierName ? 'Allocated' : currentItem.supplierAllocationStatus || 'Not Allocated'),
+      supplierAllocatedAt: isUnallocatingSupplier ? undefined : (hasSupplierAllocationUpdate ? now : currentItem.supplierAllocatedAt),
+      supplierAllocatedBy: isUnallocatingSupplier ? undefined : (hasSupplierAllocationUpdate ? actorName : currentItem.supplierAllocatedBy),
+      paymentCutoffDate: isUnallocatingSupplier ? undefined : (updates.paymentCutoffDate !== undefined ? updates.paymentCutoffDate : currentItem.paymentCutoffDate),
+      supplierNotes: isUnallocatingSupplier ? undefined : (updates.supplierNotes !== undefined ? updates.supplierNotes : currentItem.supplierNotes),
+      supplierStatus: isUnallocatingSupplier ? 'PENDING_DISPATCH' : (updates.supplierStatus || currentItem.supplierStatus || 'SENT_TO_SUPPLIER'),
+
+      // Authoritative Supplier Commercial Price
+      supplierPrice: hasPriceUpdate ? Math.round(Number(updates.supplierPrice) * 100) / 100 : currentItem.supplierPrice,
+      supplierCurrency: updates.supplierCurrency || currentItem.supplierCurrency || 'USD',
+      supplierPriceType: updates.supplierPriceType || currentItem.supplierPriceType || 'Total Service Price',
+      supplierAdultPrice: updates.supplierAdultPrice !== undefined ? Number(updates.supplierAdultPrice) : currentItem.supplierAdultPrice,
+      supplierChildPrice: updates.supplierChildPrice !== undefined ? Number(updates.supplierChildPrice) : currentItem.supplierChildPrice,
+      supplierInfantPrice: updates.supplierInfantPrice !== undefined ? Number(updates.supplierInfantPrice) : currentItem.supplierInfantPrice,
+      supplierQuantity: targetQty,
+      supplierTaxAmount: targetTax,
+      supplierAdditionalFees: targetFees,
+      supplierDiscount: targetDisc,
+      supplierTotalCost: Math.round(computedTotalCost * 100) / 100,
+      supplierPaymentCutoffDate: updates.supplierPaymentCutoffDate !== undefined ? updates.supplierPaymentCutoffDate : currentItem.supplierPaymentCutoffDate,
+      supplierCancellationDeadline: updates.supplierCancellationDeadline !== undefined ? updates.supplierCancellationDeadline : currentItem.supplierCancellationDeadline,
+      supplierPricingNotes: updates.supplierPricingNotes !== undefined ? updates.supplierPricingNotes : currentItem.supplierPricingNotes,
+      supplierPriceLastUpdatedAt: hasPriceUpdate ? now : currentItem.supplierPriceLastUpdatedAt,
+      supplierPriceLastUpdatedBy: hasPriceUpdate ? actorName : currentItem.supplierPriceLastUpdatedBy,
+      supplierPriceChangeReason: updates.supplierPriceChangeReason || updates.changeReason || currentItem.supplierPriceChangeReason,
+      supplierPriceVersion: newPriceVersion,
+      supplierPriceHistory: updatedPriceHistory,
+
+      // Workflow & Confirmation Statuses
+      supplierConfirmationStatus: triggersReconfirmation
+        ? 'Supplier Reconfirmation Required'
+        : (isUnallocatingSupplier 
+          ? 'Not Confirmed' 
+          : (updates.supplierConfirmationStatus || currentItem.supplierConfirmationStatus)),
+      operationalStatus: triggersReconfirmation
+        ? 'Confirmation Pending'
+        : (isUnallocatingSupplier 
+          ? 'Supplier Not Allocated' 
+          : (updates.operationalStatus || currentItem.operationalStatus || (targetSupplierId ? 'Confirmation Pending' : 'Supplier Not Allocated'))),
+      voucherStatus: (triggersReconfirmation || isUnallocatingSupplier) ? 'Not Ready' : (updates.voucherStatus || currentItem.voucherStatus)
+    };
+
+    b.items[itemIdx] = updatedItem;
+    b.updatedAt = now;
+    b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    // If vouchers exist and item became reconfirmation required, mark them outdated
+    if (triggersReconfirmation && b.vouchersList && b.vouchersList.length > 0) {
+      b.vouchersList = b.vouchersList.map(v => ({
+        ...v,
+        isOutdated: true,
+        outdatedReason: `Service item "${updatedItem.productName}" updated (Supplier or Commercial Price modified). Re-generation required.`
+      }));
+    }
+
+    // Activity Logging for Supplier Allocation changes
+    if (hasSupplierAllocationUpdate) {
+      const eventId = `act-alloc-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+      this.recordBookingActivity({
+        eventId,
+        bookingId: b.id,
+        bookingItemId: updatedItem.id,
+        serviceItemName: updatedItem.productName,
+        supplierId: updatedItem.supplierId,
+        supplierName: updatedItem.supplierName,
+        eventType: isUnallocatingSupplier ? 'SUPPLIER_CHANGED' : (isSupplierChanged ? 'SUPPLIER_CHANGED' : 'SUPPLIER_ALLOCATED'),
+        previousValue: currentItem.supplierName || 'Unallocated',
+        newValue: isUnallocatingSupplier ? 'Unallocated' : (updatedItem.supplierName || 'Unallocated'),
+        actorId: user?.id || 'admin',
+        actorRole: user?.role || 'TEAM_MEMBER',
+        actorName,
+        timestamp: now,
+        description: isUnallocatingSupplier
+          ? `Supplier Unallocated: Removed "${currentItem.supplierName}" from ${updatedItem.productName}`
+          : (isSupplierChanged 
+            ? `Supplier Reallocated: Changed from "${currentItem.supplierName}" to "${updatedItem.supplierName}" for ${updatedItem.productName}`
+            : `Supplier Allocated: "${updatedItem.supplierName}" assigned to ${updatedItem.productName}`)
+      }, user);
+
+      if (!isUnallocatingSupplier && updatedItem.supplierId) {
+        this.logSupplierAllocation({
+          supplierId: updatedItem.supplierId,
+          supplierNameSnapshot: updatedItem.supplierName || '',
+          supplierCategory: updatedItem.category || 'General',
+          bookingId: b.id,
+          bookingReference: b.bookingReference,
+          serviceItemId: updatedItem.id,
+          serviceName: updatedItem.productName,
+          customerName: (b as any).customerName || b.customer?.name || (b as any).buyerName || 'Valued Guest',
+          serviceDate: updatedItem.serviceDate || updatedItem.travelDate,
+          status: isSupplierChanged ? 'CHANGED' : 'ALLOCATED',
+          allocatedBy: user?.id || 'system',
+          allocatedByName: actorName,
+          previousSupplierId: currentItem.supplierId,
+          previousSupplierName: currentItem.supplierName,
+          changeReason: isSupplierChanged ? `Reallocated from ${currentItem.supplierName}` : undefined
+        }, user);
+      }
+    }
+
+    // Activity Logging for Commercial Pricing changes
+    if (hasPriceUpdate && isMaterialPriceChange) {
+      const eventId = `act-price-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+      this.recordBookingActivity({
+        eventId,
+        bookingId: b.id,
+        bookingItemId: updatedItem.id,
+        serviceItemName: updatedItem.productName,
+        supplierId: updatedItem.supplierId,
+        supplierName: updatedItem.supplierName,
+        eventType: currentItem.supplierPrice === undefined ? 'SUPPLIER_PRICE_ADDED' : 'SUPPLIER_PRICE_EDITED',
+        previousValue: currentItem.supplierPrice !== undefined ? `${currentItem.supplierCurrency || 'USD'} ${currentItem.supplierPrice}` : 'None',
+        newValue: `${updatedItem.supplierCurrency} ${updatedItem.supplierPrice} (${updatedItem.supplierPriceType})`,
+        actorId: user?.id || 'admin',
+        actorRole: user?.role || 'TEAM_MEMBER',
+        actorName,
+        timestamp: now,
+        metadata: { reason: updates.changeReason || updates.supplierPriceChangeReason, version: newPriceVersion },
+        description: `Supplier Commercial Price updated to ${updatedItem.supplierCurrency} ${updatedItem.supplierPrice} (${updatedItem.supplierPriceType}) for ${updatedItem.productName}.`
+      }, user);
+
+      if (updatedItem.supplierId) {
+        this.logSupplierPriceRecord({
+          supplierId: updatedItem.supplierId,
+          bookingId: b.id,
+          bookingReference: b.bookingReference,
+          serviceItemId: updatedItem.id,
+          serviceName: updatedItem.productName,
+          supplierPrice: updatedItem.supplierPrice || 0,
+          currency: updatedItem.supplierCurrency || 'USD',
+          priceType: updatedItem.supplierPriceType || 'Total Service Price',
+          previousPrice: currentItem.supplierPrice,
+          effectiveDate: updatedItem.serviceDate || updatedItem.travelDate || now,
+          updatedBy: user?.id || 'admin',
+          updatedByName: actorName,
+          changeReason: updates.changeReason || updates.supplierPriceChangeReason
+        }, user);
+      }
+    }
+
+    // General Service Item Activity Logging
+    this.recordBookingActivity({
+      eventId: `act-edit-item-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: b.id,
+      bookingItemId: updatedItem.id,
+      serviceItemName: updatedItem.productName,
+      eventType: 'SERVICE_ITEM_EDITED',
+      previousValue: currentItem.productName,
+      newValue: updatedItem.productName,
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName,
+      timestamp: now,
+      description: `Service Item "${updatedItem.productName}" updated in Booking Operations Desk.`
+    }, user);
+
+    // Save and commit to Firestore and local cache
+    this.saveBooking(b, user);
+    return { success: true, item: updatedItem };
+  }
+
+  /**
+   * Duplicate a Service Item
+   */
+  public duplicateServiceItem(
+    bookingId: string,
+    serviceItemId: string,
+    user: User | null
+  ): { success: boolean; item?: BookingItem; error?: string } {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.items) return { success: false, error: 'Booking not found' };
+
+    const currentItem = b.items.find(it => it.id === serviceItemId);
+    if (!currentItem) return { success: false, error: 'Service item not found' };
+
+    const now = new Date().toISOString();
+    const newItemId = `item-dup-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+
+    const duplicatedItem: BookingItem = {
+      ...currentItem,
+      id: newItemId,
+      productName: `${currentItem.productName} (Copy)`,
+      supplierConfirmationStatus: 'Not Confirmed',
+      operationalStatus: currentItem.supplierId ? 'Confirmation Pending' : 'Supplier Not Allocated',
+      voucherStatus: 'Not Ready',
+      invoiceStatus: 'Not Uploaded',
+      confirmedAt: undefined,
+      confirmedBy: undefined,
+      confirmedByName: undefined,
+      supplierConfirmationRef: undefined,
+      reconfirmationReason: undefined
+    };
+
+    b.items.push(duplicatedItem);
+    b.updatedAt = now;
+    b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    this.recordBookingActivity({
+      eventId: `act-dup-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: b.id,
+      bookingItemId: duplicatedItem.id,
+      serviceItemName: duplicatedItem.productName,
+      eventType: 'SERVICE_ITEM_ADDED',
+      newValue: duplicatedItem.productName,
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.name || 'Operations Lead',
+      timestamp: now,
+      description: `Service Item duplicated: "${duplicatedItem.productName}" cloned from original item #${serviceItemId}.`
+    }, user);
+
+    this.saveBooking(b, user);
+    return { success: true, item: duplicatedItem };
+  }
+
+  /**
+   * Replace Product on a Service Item
+   */
+  public replaceServiceItemProduct(
+    bookingId: string,
+    serviceItemId: string,
+    newProductData: {
+      productId: string;
+      productName: string;
+      category?: string;
+      destination?: string;
+      hub?: string;
+      isManualServiceItem?: boolean;
+    },
+    user: User | null,
+    reason?: string
+  ): { success: boolean; error?: string } {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.items) return { success: false, error: 'Booking not found' };
+
+    const itemIdx = b.items.findIndex(it => it.id === serviceItemId);
+    if (itemIdx === -1) return { success: false, error: 'Service item not found' };
+
+    const currentItem = b.items[itemIdx];
+    const previousName = currentItem.productName;
+    const now = new Date().toISOString();
+
+    const updatedItem: BookingItem = {
+      ...currentItem,
+      productId: newProductData.productId,
+      productName: newProductData.productName,
+      category: newProductData.category || currentItem.category,
+      destination: newProductData.destination || currentItem.destination,
+      hub: newProductData.hub || currentItem.hub,
+      isManualServiceItem: newProductData.isManualServiceItem ?? currentItem.isManualServiceItem,
+      // If was confirmed, invalidate confirmation since product changed
+      supplierConfirmationStatus: currentItem.supplierConfirmationStatus === 'Confirmed' 
+        ? 'Supplier Reconfirmation Required' 
+        : currentItem.supplierConfirmationStatus,
+      operationalStatus: 'Confirmation Pending',
+      voucherStatus: 'Not Ready'
+    };
+
+    b.items[itemIdx] = updatedItem;
+    b.updatedAt = now;
+    b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    this.recordBookingActivity({
+      eventId: `act-repl-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: b.id,
+      bookingItemId: updatedItem.id,
+      serviceItemName: updatedItem.productName,
+      eventType: 'SERVICE_ITEM_EDITED',
+      previousValue: previousName,
+      newValue: updatedItem.productName,
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.name || 'Operations Lead',
+      timestamp: now,
+      metadata: { reason },
+      description: `Product replaced: "${previousName}" was replaced with "${updatedItem.productName}". ${reason ? `Reason: ${reason}` : ''}`
+    }, user);
+
+    this.saveBooking(b, user);
+    return { success: true };
+  }
+
+  /**
+   * Cancel Service Item (with mandatory cancellation reason)
+   */
+  public cancelServiceItem(
+    bookingId: string,
+    serviceItemId: string,
+    cancelReason: string,
+    user: User | null
+  ): { success: boolean; error?: string } {
+    if (!cancelReason || !cancelReason.trim()) {
+      return { success: false, error: 'A mandatory cancellation reason must be provided.' };
+    }
+
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.items) return { success: false, error: 'Booking not found' };
+
+    const itemIdx = b.items.findIndex(it => it.id === serviceItemId);
+    if (itemIdx === -1) return { success: false, error: 'Service item not found' };
+
+    const currentItem = b.items[itemIdx];
+    const now = new Date().toISOString();
+
+    const updatedItem: BookingItem = {
+      ...currentItem,
+      isCancelled: true,
+      cancelledAt: now,
+      cancelledBy: user?.name || 'Operations Lead',
+      cancelReason: cancelReason.trim(),
+      supplierConfirmationStatus: 'Cancelled',
+      operationalStatus: 'Cancelled',
+      voucherStatus: 'Not Ready'
+    };
+
+    b.items[itemIdx] = updatedItem;
+    b.updatedAt = now;
+    b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    this.recordBookingActivity({
+      eventId: `act-cancel-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: b.id,
+      bookingItemId: updatedItem.id,
+      serviceItemName: updatedItem.productName,
+      eventType: 'SERVICE_ITEM_CANCELLED',
+      previousValue: currentItem.supplierConfirmationStatus || 'Active',
+      newValue: 'Cancelled',
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.name || 'Operations Lead',
+      timestamp: now,
+      metadata: { reason: cancelReason },
+      description: `Service Item "${updatedItem.productName}" CANCELLED. Reason: ${cancelReason}`
+    }, user);
+
+    this.saveBooking(b, user);
+    return { success: true };
+  }
+
+  /**
+   * Restore a Cancelled Service Item
+   */
+  public restoreServiceItem(
+    bookingId: string,
+    serviceItemId: string,
+    user: User | null
+  ): { success: boolean; error?: string } {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.items) return { success: false, error: 'Booking not found' };
+
+    const itemIdx = b.items.findIndex(it => it.id === serviceItemId);
+    if (itemIdx === -1) return { success: false, error: 'Service item not found' };
+
+    const currentItem = b.items[itemIdx];
+    const now = new Date().toISOString();
+
+    const updatedItem: BookingItem = {
+      ...currentItem,
+      isCancelled: false,
+      cancelledAt: undefined,
+      cancelledBy: undefined,
+      cancelReason: undefined,
+      supplierConfirmationStatus: 'Confirmation Pending',
+      operationalStatus: currentItem.supplierId ? 'Confirmation Pending' : 'Supplier Not Allocated',
+      voucherStatus: 'Not Ready'
+    };
+
+    b.items[itemIdx] = updatedItem;
+    b.updatedAt = now;
+    b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    this.recordBookingActivity({
+      eventId: `act-restore-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: b.id,
+      bookingItemId: updatedItem.id,
+      serviceItemName: updatedItem.productName,
+      eventType: 'SERVICE_ITEM_RESTORED',
+      previousValue: 'Cancelled',
+      newValue: 'Restored (Confirmation Pending)',
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.name || 'Operations Lead',
+      timestamp: now,
+      description: `Service Item "${updatedItem.productName}" restored from cancellation.`
+    }, user);
+
+    this.saveBooking(b, user);
+    return { success: true };
+  }
+
+  /**
+   * Remove a Service Item from a Booking
+   */
+  public removeServiceItem(
+    bookingId: string,
+    serviceItemId: string,
+    user: User | null
+  ): { success: boolean; error?: string } {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.items) return { success: false, error: 'Booking not found' };
+
+    const itemIdx = b.items.findIndex(it => it.id === serviceItemId);
+    if (itemIdx === -1) return { success: false, error: 'Service item not found' };
+
+    const removedItem = b.items[itemIdx];
+    const now = new Date().toISOString();
+
+    b.items.splice(itemIdx, 1);
+    b.updatedAt = now;
+    b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    this.recordBookingActivity({
+      eventId: `act-rem-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: b.id,
+      bookingItemId: removedItem.id,
+      serviceItemName: removedItem.productName,
+      eventType: 'SERVICE_ITEM_REMOVED',
+      previousValue: removedItem.productName,
+      newValue: 'Removed',
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.name || 'Operations Lead',
+      timestamp: now,
+      description: `Service Item removed: "${removedItem.productName}".`
+    }, user);
+
+    this.saveBooking(b, user);
+    return { success: true };
+  }
+
+  /**
+   * Authorised Override for Booking Operational Confirmation
+   */
+  public overrideBookingConfirmation(
+    bookingId: string,
+    reason: string,
+    user: User | null
+  ): { success: boolean; error?: string } {
+    if (!reason || !reason.trim()) {
+      return { success: false, error: 'A mandatory override reason must be recorded.' };
+    }
+
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b) return { success: false, error: 'Booking not found' };
+
+    const now = new Date().toISOString();
+
+    b.operationalConfirmationOverride = {
+      overridden: true,
+      reason: reason.trim(),
+      overriddenBy: user?.name || 'Operations Lead',
+      overriddenAt: now
+    };
+    b.operationalProcessingStatus = 'Confirmed';
+    b.status = 'CONFIRMED';
+    b.updatedAt = now;
+
+    this.recordBookingActivity({
+      eventId: `act-over-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: b.id,
+      eventType: 'CONFIRMATION_OVERRIDDEN',
+      previousValue: 'Unconfirmed Service Items Pending',
+      newValue: 'Operationally Confirmed (Override)',
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'ADMIN',
+      actorName: user?.name || 'Operations Lead',
+      timestamp: now,
+      metadata: { reason },
+      description: `Authorised Confirmation Override applied. Mandatory reason: ${reason}`
+    }, user);
+
+    this.saveBooking(b, user);
+    return { success: true };
+  }
+
+  /**
+   * Create Manual Operational Booking (stored as Internal Manual Booking without fake users or fake leads)
+   */
+  public createManualOperationalBooking(
+    data: {
+      bookingReference?: string;
+      leadId?: string;
+      userId?: string;
+      agentId?: string;
+      agentName?: string;
+      agentAgency?: string;
+      customerName: string;
+      leadPassengerName: string;
+      email?: string;
+      phone?: string;
+      travelStartDate: string;
+      travelEndDate: string;
+      destination: string;
+      destinationName?: string;
+      hub?: string;
+      adults: number;
+      children?: number;
+      infants?: number;
+      specialRequirements?: string;
+      internalNotes?: string;
+      customerFacingNotes?: string;
+      serviceItems?: Partial<BookingItem>[];
+      passengers?: Partial<BookingPassenger>[];
+    },
+    user: User | null
+  ): Booking {
+    const now = new Date().toISOString();
+    const id = `bkm-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const bookingRef = data.bookingReference || `TUB-MAN-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    const totalAdults = Number(data.adults) || 1;
+    const totalChildren = Number(data.children) || 0;
+    const totalInfants = Number(data.infants) || 0;
+    const totalPax = totalAdults + totalChildren + totalInfants;
+
+    const initialItems: BookingItem[] = (data.serviceItems || []).map((it, idx) => {
+      const itemId = it.id || `item-man-${Date.now()}-${idx + 1}`;
+      const isManual = it.isManualServiceItem ?? true;
+      const unitSelling = Number(it.unitSellingPrice) || 0;
+      const pax = Number(it.totalPax) || totalPax;
+      const totalPrice = Number(it.totalPrice) || (unitSelling * pax);
+
+      return {
+        id: itemId,
+        bookingId: id,
+        productId: it.productId || `prod-man-${Date.now()}-${idx + 1}`,
+        productName: it.productName || 'Operational Service Item',
+        destination: it.destination || data.destination,
+        hub: it.hub || data.hub,
+        category: it.category || 'Private transfer',
+        travelDate: it.travelDate || it.serviceDate || data.travelStartDate,
+        serviceDate: it.serviceDate || it.travelDate || data.travelStartDate,
+        serviceTime: it.serviceTime || '09:00',
+        serviceEndDate: it.serviceEndDate,
+        duration: it.duration,
+        adults: it.adults || totalAdults,
+        children: it.children || totalChildren,
+        infants: it.infants || totalInfants,
+        totalPax: pax,
+        passengerAssignment: it.passengerAssignment || [],
+        unitSellingPrice: unitSelling,
+        totalPrice: totalPrice,
+        currency: it.currency || (data as any).currency || 'USD',
+        isManualServiceItem: isManual,
+        customerFacingNotes: it.customerFacingNotes || '',
+        operationalInstructions: it.operationalInstructions || '',
+        internalNotes: it.internalNotes || '',
+        supplierId: it.supplierId,
+        supplierName: it.supplierName,
+        supplierContact: it.supplierContact,
+        supplierPhone: it.supplierPhone,
+        supplierEmail: it.supplierEmail,
+        supplierConfirmationRef: it.supplierConfirmationRef,
+        supplierAllocationStatus: it.supplierId ? 'Allocated' : 'Not Allocated',
+        supplierPrice: it.supplierPrice,
+        supplierCurrency: it.supplierCurrency || 'USD',
+        supplierPriceType: it.supplierPriceType || 'Per Person',
+        supplierConfirmationStatus: it.supplierConfirmationStatus || 'Not Confirmed',
+        operationalStatus: it.operationalStatus || 'Not Processed',
+        voucherStatus: it.voucherStatus || 'Not Ready',
+        invoiceStatus: it.invoiceStatus || 'Not Uploaded'
+      };
+    });
+
+    const initialPassengers: BookingPassenger[] = (data.passengers && data.passengers.length > 0)
+      ? data.passengers.map((p, idx) => ({
+          id: p.id || `pax-${Date.now()}-${idx + 1}`,
+          passengerNumber: idx + 1,
+          firstName: p.firstName || (idx === 0 ? data.leadPassengerName || data.customerName : `Guest ${idx + 1}`),
+          lastName: p.lastName || '',
+          fullName: p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim(),
+          isLeadPax: idx === 0,
+          dateOfBirth: p.dateOfBirth,
+          passportNumber: p.passportNumber,
+          passportExpiryDate: p.passportExpiryDate,
+          nationality: p.nationality || 'Indian',
+          specialRequests: p.specialRequests
+        }))
+      : [{
+          id: `pax-lead-${Date.now()}`,
+          passengerNumber: 1,
+          firstName: data.leadPassengerName || data.customerName,
+          lastName: '',
+          fullName: data.leadPassengerName || data.customerName,
+          isLeadPax: true,
+          phone: data.phone,
+          email: data.email,
+          specialRequests: data.specialRequirements
+        }];
+
+    const totalSellingPrice = initialItems.reduce((sum, it) => sum + (it.totalPrice || 0), 0);
+
+    const newBooking: Booking = {
+      id,
+      bookingReference: bookingRef,
+      manualBookingReference: bookingRef,
+      sourceType: 'INTERNAL_MANUAL',
+      isInternalManualBooking: true,
+      leadId: data.leadId,
+      agentId: data.agentId,
+      agentName: data.agentName,
+      agentAgency: data.agentAgency,
+      userId: data.userId || user?.id,
+      destination: data.destination,
+      destinationName: data.destinationName || data.destination,
+      customer: {
+        leadTravelerName: data.leadPassengerName || data.customerName,
+        bookerName: data.customerName,
+        email: data.email || 'internal-ops@theunbound.in',
+        phone: data.phone || '',
+        totalAdults,
+        totalChildren,
+        totalInfants,
+        totalPax,
+        specialRequests: data.specialRequirements
+      },
+      items: initialItems,
+      passengers: initialPassengers,
+      currency: (initialItems[0]?.currency as CurrencyCode) || 'USD',
+      totalAmount: totalSellingPrice,
+      travelStartDate: data.travelStartDate,
+      travelEndDate: data.travelEndDate,
+      status: 'TO_BE_PROCESSED',
+      paymentStatus: 'UNPAID',
+      documentStatus: 'DOCUMENTS_PENDING',
+      supplierAllocationStatus: initialItems.some(it => it.supplierId) ? 'DISPATCHED_TO_SUPPLIERS' : 'UNALLOCATED',
+      internalNotes: data.internalNotes || '',
+      internalNotesList: data.internalNotes ? [{
+        id: `note-${Date.now()}`,
+        authorId: user?.id || 'admin',
+        authorName: user?.name || 'Operations Lead',
+        text: data.internalNotes,
+        timestamp: now
+      }] : [],
+      customerUpdates: data.customerFacingNotes ? [{
+        id: `cust-note-${Date.now()}`,
+        authorId: user?.id || 'admin',
+        authorName: user?.name || 'Operations Lead',
+        title: 'Booking Created',
+        message: data.customerFacingNotes,
+        timestamp: now,
+        isPublished: true
+      }] : [],
+      createdAt: now,
+      updatedAt: now,
+      confirmationNotice: 'Manual operational booking created internally by Operations Team.',
+      notificationEmailsSent: []
+    };
+
+    newBooking.operationalProcessingStatus = this.calculateBookingOperationalStatus(newBooking);
+
+    this.saveBooking(newBooking, user);
+
+    this.recordBookingActivity({
+      eventId: `act-create-man-${Date.now()}`,
+      bookingId: id,
+      eventType: 'BOOKING_CREATED',
+      previousValue: 'None',
+      newValue: `Manual Booking Ref: ${bookingRef}`,
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.name || 'Operations Lead',
+      timestamp: now,
+      description: `Internal Manual Booking created with reference ${bookingRef}. Marked as Internal Manual Booking.`
+    }, user);
+
+    return newBooking;
+  }
+
+  /**
+   * Booking-Level Voucher Eligibility Gate
+   */
+  public checkBookingVoucherEligibility(booking: Booking): {
+    isEligible: boolean;
+    totalItems: number;
+    confirmedItems: number;
+    pendingItems: number;
+    reconfirmationRequiredItems: number;
+    cancelledItems: number;
+    missingReasons: { itemId: string; itemName: string; reasons: string[] }[];
+  } {
+    const items = booking.items || [];
+    const totalItems = items.length;
+    const confirmedItems = items.filter(it => it.supplierConfirmationStatus === 'Confirmed').length;
+    const reconfirmationRequiredItems = items.filter(it => it.supplierConfirmationStatus === 'Supplier Reconfirmation Required').length;
+    const cancelledItems = items.filter(it => it.supplierConfirmationStatus === 'Cancelled' || it.supplierStatus === 'CANCELLED').length;
+    const activeItems = totalItems - cancelledItems;
+    const pendingItems = activeItems - confirmedItems;
+
+    const missingReasons: { itemId: string; itemName: string; reasons: string[] }[] = [];
+
+    items.forEach(it => {
+      if (it.supplierConfirmationStatus === 'Cancelled' || it.supplierStatus === 'CANCELLED') return;
+      const reasons: string[] = [];
+      if (it.supplierConfirmationStatus !== 'Confirmed') {
+        if (!it.supplierId && !it.supplierName) reasons.push('Supplier not allocated');
+        if (it.supplierPrice === undefined || it.supplierPrice === null) reasons.push('Supplier price not set');
+        if (it.supplierConfirmationStatus === 'Supplier Reconfirmation Required') {
+          reasons.push(`Supplier reconfirmation required: ${it.reconfirmationReason || 'Pending update'}`);
+        } else {
+          reasons.push('Service item confirmation pending');
+        }
+      }
+      if (reasons.length > 0) {
+        missingReasons.push({
+          itemId: it.id,
+          itemName: it.productName,
+          reasons
+        });
+      }
+    });
+
+    const isEligible = activeItems > 0 && confirmedItems === activeItems && reconfirmationRequiredItems === 0;
+
+    return {
+      isEligible,
+      totalItems,
+      confirmedItems,
+      pendingItems: Math.max(0, pendingItems),
+      reconfirmationRequiredItems,
+      cancelledItems,
+      missingReasons
+    };
+  }
+
+  /**
+   * Authoritative Voucher Generation using strictly Confirmed Service Items & Snapshots
+   */
+  public generateBookingVoucher(
+    bookingId: string,
+    user: User | null,
+    forceRegenerate: boolean = false
+  ): { success: boolean; voucher?: BookingVoucher; error?: string } {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b) return { success: false, error: 'Booking not found' };
+
+    const eligibility = this.checkBookingVoucherEligibility(b);
+    if (!eligibility.isEligible && !forceRegenerate) {
+      return {
+        success: false,
+        error: `Voucher cannot be generated: ${eligibility.pendingItems} service item(s) are pending confirmation.`
+      };
+    }
+
+    const existingVouchers = b.vouchersList || [];
+    const newVersion = existingVouchers.length + 1;
+    const now = new Date().toISOString();
+    const voucherNumber = `TUB-VOU-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const confirmedItems = (b.items || []).filter(it => it.supplierConfirmationStatus === 'Confirmed' || forceRegenerate);
+    const primaryItem = confirmedItems[0] || b.items?.[0];
+
+    // Build authoritative customer/partner snapshot WITHOUT internal costs or markups
+    const bookingSnapshot = {
+      bookingId: b.id,
+      bookingReference: b.bookingReference,
+      customerName: b.customer?.leadTravelerName || 'Guest',
+      email: b.customer?.email,
+      phone: b.customer?.phone,
+      totalAdults: b.customer?.totalAdults || 1,
+      totalChildren: b.customer?.totalChildren || 0,
+      totalPax: (b.customer?.totalAdults || 1) + (b.customer?.totalChildren || 0),
+      travelStartDate: b.travelStartDate,
+      travelEndDate: b.travelEndDate,
+      destinationName: b.destinationName,
+      pickupLocation: b.customer?.pickupLocation,
+      dropoffLocation: b.customer?.dropoffLocation,
+      specialRequests: b.customer?.specialRequests,
+      generatedAt: now
+    };
+
+    const serviceItemsSnapshot = confirmedItems.map(it => ({
+      itemId: it.id,
+      productName: it.productName,
+      category: it.category,
+      destination: it.destination || it.destinationName,
+      city: it.city,
+      serviceDate: it.serviceDate || it.travelDate,
+      serviceTime: it.serviceTime || '09:00 AM',
+      supplierName: it.supplierName,
+      supplierContact: it.supplierContact || it.supplierPhone,
+      supplierConfirmationRef: it.supplierConfirmationRef || 'Ground Locked',
+      adults: it.adults,
+      children: it.children,
+      totalPax: it.totalPax,
+      passengerDetails: it.passengerDetails,
+      meetingPoint: (it as any).meetingPoint || b.customer?.pickupLocation || 'Hotel Lobby / Terminal Arrival Point'
+    }));
+
+    const supplierAllocationSnapshot = confirmedItems.map(it => ({
+      serviceItemId: it.id,
+      serviceName: it.productName,
+      supplierName: it.supplierName,
+      supplierType: it.supplierType,
+      supplierContact: it.supplierContact,
+      supplierConfirmationRef: it.supplierConfirmationRef,
+      paymentCutoffDate: it.paymentCutoffDate
+    }));
+
+    const newVoucher: BookingVoucher = {
+      id: `vch-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      voucherId: `vch-${Date.now()}`,
+      voucherNumber,
+      version: newVersion,
+      bookingId: b.id,
+      bookingReference: b.bookingReference,
+      serviceItemId: primaryItem?.id || 'all-services',
+      customerName: b.customer?.leadTravelerName || 'Guest',
+      leadPaxName: b.customer?.leadTravelerName || 'Lead Traveler',
+      totalPax: bookingSnapshot.totalPax,
+      destination: b.destinationName || 'Destination',
+      city: primaryItem?.city || 'Tokyo / Kyoto',
+      serviceName: confirmedItems.length > 1 ? `${confirmedItems.length} Confirmed Ground Services Package` : (primaryItem?.productName || 'Ground Travel Service'),
+      serviceDate: b.travelStartDate || primaryItem?.serviceDate || primaryItem?.travelDate || now.split('T')[0],
+      serviceTime: primaryItem?.serviceTime || '09:00 AM',
+      supplierName: confirmedItems.map(i => i.supplierName).filter(Boolean).join(', ') || 'TheUnbound Authorized Ground Network',
+      supplierContact: '+91 9811654959 (TheUnbound 24/7 Dispatch)',
+      supplierConfirmationRef: confirmedItems.map(i => i.supplierConfirmationRef).filter(Boolean).join(', ') || 'GROUND-OPS-OK',
+      meetingPoint: b.customer?.pickupLocation || 'Hotel Lobby or Arrival Airport Terminal',
+      pickupInfo: b.customer?.pickupLocation ? `Pick up at ${b.customer.pickupLocation}. Please be ready 15 mins prior.` : 'Check individual service itinerary instructions.',
+      dropoffInfo: b.customer?.dropoffLocation,
+      emergencyContact: '+91 9811654959 / 24-Hour Emergency Ground Operations Desk',
+      passengerBreakdown: `${b.customer?.totalAdults || 1} Adults${b.customer?.totalChildren ? `, ${b.customer.totalChildren} Children` : ''}`,
+      specialInstructions: 'Present this digital or printed voucher upon boarding or hotel check-in. Valid government photo identification matching passport name is required.',
+      termsAndConditions: 'Voucher issued by TheUnbound DMC. Non-transferable. Valid only for specified dates and confirmed services.',
+      status: 'ISSUED',
+      generatedAt: now,
+      generatedBy: user?.id || 'admin',
+      generatedByName: user?.name || 'Operations Lead',
+      templateVersion: 'v2.4-Authoritative-DMC',
+      bookingSnapshot,
+      serviceItemsSnapshot,
+      supplierAllocationSnapshot,
+      confirmationSnapshot: { confirmedCount: confirmedItems.length, timestamp: now },
+      isOutdated: false,
+      issuedAt: now
+    };
+
+    // Update parent booking
+    if (!b.vouchersList) b.vouchersList = [];
+    b.vouchersList.unshift(newVoucher);
+    b.voucherUrl = `/vouchers/${newVoucher.id}`;
+    b.updatedAt = now;
+
+    // Also persist in global vouchers collection for audit
+    this.saveVoucher(newVoucher, user);
+
+    this.recordBookingActivity({
+      eventId: `act-vou-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: b.id,
+      eventType: existingVouchers.length > 0 ? 'VOUCHER_REGENERATED' : 'VOUCHER_GENERATED',
+      previousValue: existingVouchers.length > 0 ? `Version ${existingVouchers[0].version || 1}` : 'None',
+      newValue: `Version ${newVersion} (${voucherNumber})`,
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.name || 'Operations Lead',
+      timestamp: now,
+      relatedVoucherId: newVoucher.id,
+      metadata: { voucherNumber, version: newVersion, itemsCount: confirmedItems.length },
+      description: existingVouchers.length > 0 
+        ? `Service Voucher RE-GENERATED: Version ${newVersion} (#${voucherNumber}) with ${confirmedItems.length} confirmed services.`
+        : `Service Voucher GENERATED: Version ${newVersion} (#${voucherNumber}) with ${confirmedItems.length} confirmed services.`
+    }, user);
+
+    this.saveBooking(b, user);
+    return { success: true, voucher: newVoucher };
+  }
+
+  public getBookingVouchers(bookingId: string): BookingVoucher[] {
+    const b = this.getBookingById(bookingId);
+    if (!b) return [];
+    return b.vouchersList || [];
+  }
+
+  // =========================================================================
+  // MANUAL INVOICE UPLOAD & DOCUMENT ASSOCIATION
+  // (Strictly Manual Upload ONLY - Never generated automatically)
+  // =========================================================================
+
+  public getUploadedInvoices(bookingId?: string): BookingUploadedInvoice[] {
+    const all = this.getItem<BookingUploadedInvoice[]>('uploaded_invoices', []);
+    if (bookingId) {
+      return all.filter(inv => inv.bookingId === bookingId || inv.bookingReference === bookingId);
+    }
+    return all;
+  }
+
+  public getUploadedInvoiceById(id: string): BookingUploadedInvoice | undefined {
+    return this.getUploadedInvoices().find(i => i.id === id || i.invoiceId === id);
+  }
+
+  public saveUploadedInvoice(invoice: BookingUploadedInvoice, user: User | null): void {
+    const all = this.getUploadedInvoices();
+    const existingIdx = all.findIndex(i => i.id === invoice.id);
+    const now = new Date().toISOString();
+
+    if (existingIdx >= 0) {
+      all[existingIdx] = invoice;
+    } else {
+      all.unshift(invoice);
+    }
+    this.setItem('uploaded_invoices', all);
+    this.syncFirestoreDoc('uploaded_invoices', invoice.id, invoice);
+
+    // Link to booking
+    const b = this.getBookingById(invoice.bookingId);
+    if (b) {
+      if (!b.uploadedInvoices) b.uploadedInvoices = [];
+      const bIdx = b.uploadedInvoices.findIndex(i => i.id === invoice.id);
+      if (bIdx >= 0) b.uploadedInvoices[bIdx] = invoice;
+      else b.uploadedInvoices.unshift(invoice);
+
+      // If associated with a specific service item, update item status
+      if (invoice.bookingItemId && b.items) {
+        const it = b.items.find(item => item.id === invoice.bookingItemId);
+        if (it) it.invoiceStatus = 'Uploaded';
+      }
+
+      b.updatedAt = now;
+      this.saveBooking(b, user);
+
+      this.recordBookingActivity({
+        eventId: `act-inv-up-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+        bookingId: b.id,
+        bookingItemId: invoice.bookingItemId,
+        supplierId: invoice.supplierId,
+        eventType: 'INVOICE_UPLOADED',
+        newValue: `${invoice.invoiceType} #${invoice.invoiceNumber} (${invoice.currency} ${invoice.amount})`,
+        actorId: user?.id || 'admin',
+        actorRole: user?.role || 'TEAM_MEMBER',
+        actorName: user?.name || 'Operations Staff',
+        timestamp: now,
+        relatedDocumentId: invoice.id,
+        metadata: { invoiceNumber: invoice.invoiceNumber, fileName: invoice.uploadedFileName, association: invoice.associationType },
+        description: `Manual Invoice Uploaded: ${invoice.invoiceType} #${invoice.invoiceNumber} (${invoice.currency} ${invoice.amount}) uploaded by ${user?.name || 'Operations'}. File: ${invoice.uploadedFileName}`
+      }, user);
+    }
+  }
+
+  public replaceUploadedInvoice(
+    invoiceId: string,
+    updates: Partial<BookingUploadedInvoice>,
+    user: User | null
+  ): void {
+    const all = this.getUploadedInvoices();
+    const target = all.find(i => i.id === invoiceId);
+    if (!target) return;
+
+    const now = new Date().toISOString();
+    const historyEntry = {
+      action: 'REPLACE' as const,
+      timestamp: now,
+      actor: user?.name || 'Operations Lead',
+      note: updates.notes || 'Replaced invoice document version',
+      previousFile: target.uploadedFileName
+    };
+
+    const updated: BookingUploadedInvoice = {
+      ...target,
+      ...updates,
+      uploadedAt: now,
+      uploadedBy: user?.id || 'admin',
+      uploadedByName: user?.name || 'Operations Lead',
+      status: 'REPLACED',
+      history: [historyEntry, ...(target.history || [])]
+    };
+
+    this.saveUploadedInvoice(updated, user);
+
+    this.recordBookingActivity({
+      eventId: `act-inv-rep-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: target.bookingId,
+      bookingItemId: target.bookingItemId,
+      supplierId: target.supplierId,
+      eventType: 'INVOICE_REPLACED',
+      previousValue: target.uploadedFileName,
+      newValue: updates.uploadedFileName || 'New Document File',
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.name || 'Operations Lead',
+      timestamp: now,
+      relatedDocumentId: target.id,
+      description: `Invoice ${target.invoiceNumber} replaced with new file: ${updates.uploadedFileName || 'Updated version'}`
+    }, user);
+  }
+
+  public archiveUploadedInvoice(invoiceId: string, reason: string, user: User | null): void {
+    const all = this.getUploadedInvoices();
+    const target = all.find(i => i.id === invoiceId);
+    if (!target) return;
+
+    const now = new Date().toISOString();
+    const updated: BookingUploadedInvoice = {
+      ...target,
+      status: 'ARCHIVED',
+      history: [
+        {
+          action: 'ARCHIVE' as const,
+          timestamp: now,
+          actor: user?.name || 'Operations Lead',
+          note: reason || 'Archived by operational authority'
+        },
+        ...(target.history || [])
+      ]
+    };
+
+    this.saveUploadedInvoice(updated, user);
+
+    this.recordBookingActivity({
+      eventId: `act-inv-arc-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: target.bookingId,
+      bookingItemId: target.bookingItemId,
+      supplierId: target.supplierId,
+      eventType: 'INVOICE_ARCHIVED',
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.name || 'Operations Lead',
+      timestamp: now,
+      relatedDocumentId: target.id,
+      description: `Invoice ${target.invoiceNumber} was ARCHIVED. Reason: ${reason}`
+    }, user);
+  }
+
+  public addInvoiceNote(invoiceId: string, note: string, user: User | null): void {
+    const all = this.getUploadedInvoices();
+    const target = all.find(i => i.id === invoiceId);
+    if (!target) return;
+
+    const now = new Date().toISOString();
+    const updated: BookingUploadedInvoice = {
+      ...target,
+      notes: target.notes ? `${target.notes}\n[${now.split('T')[0]} - ${user?.name || 'Staff'}]: ${note}` : `[${now.split('T')[0]} - ${user?.name || 'Staff'}]: ${note}`,
+      history: [
+        {
+          action: 'NOTE_ADDED' as const,
+          timestamp: now,
+          actor: user?.name || 'Operations Staff',
+          note
+        },
+        ...(target.history || [])
+      ]
+    };
+
+    this.saveUploadedInvoice(updated, user);
+  }
+
   // ==========================================
   // GOOGLE SHEETS SYNC WITH VERIFICATION REPORT
   // ==========================================
@@ -5730,44 +8157,130 @@ export class AppDatabase {
   // INTERNAL CRM: LEADS & CUSTOMER JOURNEY ENGINE
   // ==========================================
   public getLeads(): TravelLead[] {
-    const raw = this.getItem<TravelLead[]>('leads', []);
-    // Ensure all leads have required CRM arrays and valid defaults
-    return raw.map(l => ({
-      ...l,
-      priority: l.priority || 'NORMAL',
-      notes: l.notes || [],
-      timeline: l.timeline || [],
-      followUps: l.followUps || [],
-      requestedProducts: l.requestedProducts || [],
-      assignmentHistory: l.assignmentHistory || [],
-      documents: l.documents || [],
-      quoteIds: l.quoteIds || (l.quoteId ? [l.quoteId] : []),
-      bookingIds: l.bookingIds || (l.bookingId ? [l.bookingId] : []),
-      totalPassengers: l.totalPassengers || (Number(l.paxAdults || 0) + Number(l.paxChildren || 0) + Number(l.paxInfants || 0)) || 1
-    }));
+    let raw = this.getItem<TravelLead[]>('leads', []);
+    if (!raw || raw.length === 0) {
+      raw = INITIAL_LEADS;
+      this.setItem('leads', raw);
+    }
+
+    // Ensure all leads have required CRM arrays and valid safe primitive types
+    return raw.map(l => {
+      // 1. Sanitize travelRequirements so it is ALWAYS safely a primitive string
+      let sanitizedTravelRequirements = '';
+      if (typeof l.travelRequirements === 'string') {
+        sanitizedTravelRequirements = l.travelRequirements;
+      } else if (Array.isArray(l.travelRequirements)) {
+        sanitizedTravelRequirements = (l.travelRequirements as any[])
+          .map(item => typeof item === 'string' ? item : item?.text || '')
+          .filter(Boolean)
+          .join('\n');
+      } else if (l.travelRequirements && typeof l.travelRequirements === 'object') {
+        sanitizedTravelRequirements = (l.travelRequirements as any).text || '';
+      }
+
+      // 2. Sanitize specialRequests
+      let sanitizedSpecialRequests = '';
+      if (typeof l.specialRequests === 'string') {
+        sanitizedSpecialRequests = l.specialRequests;
+      } else if (Array.isArray(l.specialRequests)) {
+        sanitizedSpecialRequests = (l.specialRequests as any[])
+          .map(item => typeof item === 'string' ? item : item?.text || '')
+          .filter(Boolean)
+          .join('\n');
+      } else if (l.specialRequests && typeof l.specialRequests === 'object') {
+        sanitizedSpecialRequests = (l.specialRequests as any).text || '';
+      }
+
+      // 3. Sanitize notes array
+      let sanitizedNotes: LeadNote[] = [];
+      if (Array.isArray(l.notes)) {
+        sanitizedNotes = l.notes.map((n: any, idx: number) => {
+          if (typeof n === 'string') {
+            return {
+              id: `note-${idx}-${Date.now()}`,
+              authorName: 'Operations Staff',
+              text: n,
+              timestamp: new Date().toISOString()
+            };
+          } else if (n && typeof n === 'object') {
+            return {
+              ...n,
+              id: n.id || `note-${idx}`,
+              authorName: typeof n.authorName === 'string' ? n.authorName : 'Operations Staff',
+              authorRole: typeof n.authorRole === 'string' ? n.authorRole : undefined,
+              text: typeof n.text === 'string' ? n.text : (typeof n.message === 'string' ? n.message : ''),
+              timestamp: typeof n.timestamp === 'string' ? n.timestamp : new Date().toISOString()
+            };
+          }
+          return {
+            id: `note-${idx}`,
+            authorName: 'Operations Staff',
+            text: String(n || ''),
+            timestamp: new Date().toISOString()
+          };
+        });
+      }
+
+      // 4. Sanitize timeline array
+      const sanitizedTimeline = (l.timeline || []).map((evt: any, eIdx: number) => ({
+        ...evt,
+        id: evt?.id || `tl-${eIdx}`,
+        title: typeof evt?.title === 'string' ? evt.title : 'Activity Event',
+        description: typeof evt?.description === 'string' ? evt.description : (evt?.description ? JSON.stringify(evt.description) : ''),
+        performedBy: typeof evt?.performedBy === 'string' ? evt.performedBy : 'Staff',
+        timestamp: typeof evt?.timestamp === 'string' ? evt.timestamp : new Date().toISOString()
+      }));
+
+      return {
+        ...l,
+        travelRequirements: sanitizedTravelRequirements || 'Standard VIP ground arrangements requested.',
+        specialRequests: sanitizedSpecialRequests,
+        priority: l.priority || 'NORMAL',
+        notes: sanitizedNotes,
+        timeline: sanitizedTimeline,
+        followUps: l.followUps || [],
+        requestedProducts: l.requestedProducts || [],
+        assignmentHistory: l.assignmentHistory || [],
+        documents: l.documents || [],
+        quoteIds: l.quoteIds || (l.quoteId ? [l.quoteId] : []),
+        bookingIds: l.bookingIds || (l.bookingId ? [l.bookingId] : []),
+        totalPassengers: l.totalPassengers || (Number(l.paxAdults || 0) + Number(l.paxChildren || 0) + Number(l.paxInfants || 0)) || 1
+      };
+    });
   }
 
   public getLeadById(id: string): TravelLead | undefined {
     return this.getLeads().find(l => l.id === id || l.leadNumber === id);
   }
 
+  /**
+   * Sanitizes lead data for B2B Agents:
+   * Strips internal-only notes, confidential margin projections, and private operations comments.
+   */
+  public sanitizeLeadForAgent(lead: TravelLead): TravelLead {
+    const clone: TravelLead = JSON.parse(JSON.stringify(lead));
+    // Strip internal-only notes
+    if (clone.notes && Array.isArray(clone.notes)) {
+      clone.notes = clone.notes.filter(n => !n.isInternal);
+    }
+    delete clone.expectedMargin;
+    return clone;
+  }
+
   public getLeadsAuthorized(user: User | null): TravelLead[] {
     const allLeads = this.getLeads();
     if (!user) return [];
 
-    // Admins and DMC internal staff see all leads
+    // Internal operations team retains complete visibility across all leads
     if (user.role === 'ADMIN' || user.role === 'DMC_STAFF' || user.role === 'TEAM_MEMBER') {
       return allLeads;
     }
 
-    // B2B Agent sees their own company / agency leads
+    // B2B Agent visibility rule: Visible ONLY when assigned to this agent
     if (user.role === 'B2B_AGENT') {
-      return allLeads.filter(l => 
-        l.b2bAgentId === user.id || 
-        l.userId === user.id ||
-        (user.email && l.email.toLowerCase() === user.email.toLowerCase()) ||
-        (user.agencyName && l.agencyName?.toLowerCase() === user.agencyName.toLowerCase())
-      );
+      return allLeads
+        .filter(l => l.assignedAgentId === user.id)
+        .map(l => this.sanitizeLeadForAgent(l));
     }
 
     // Buyer sees only their own inquiries
@@ -5775,6 +8288,372 @@ export class AppDatabase {
       l.userId === user.id || 
       (user.email && l.email.toLowerCase() === user.email.toLowerCase())
     );
+  }
+
+  // =========================================================================
+  // B2B AGENT ASSIGNMENT & NOTIFICATION ENGINE
+  // =========================================================================
+
+  /**
+   * Assigns a Lead to an approved B2B Agent.
+   * Records assignment snapshots, updates visibility, appends history, and emits deduplicated notification.
+   */
+  public assignLeadToAgent(
+    leadId: string, 
+    agentUserId: string, 
+    assignedByUser: User | null, 
+    notes?: string
+  ): TravelLead | null {
+    const leads = this.getLeads();
+    const idx = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
+    if (idx === -1) return null;
+
+    const allUsers = this.getUsers();
+    const agent = allUsers.find(u => u.id === agentUserId);
+    if (!agent) {
+      throw new Error(`Target agent with UID ${agentUserId} was not found.`);
+    }
+    if (agent.role !== 'B2B_AGENT' || agent.approvalStatus !== 'APPROVED') {
+      throw new Error(`Agent ${agent.name} is not an approved B2B partner agent.`);
+    }
+
+    const lead = leads[idx];
+    const timestamp = new Date().toISOString();
+    const previousAgentName = lead.assignedAgentNameSnapshot || 'Unassigned';
+
+    lead.assignedAgentId = agent.id;
+    lead.assignedAgentNameSnapshot = agent.name;
+    lead.assignedAgentEmailSnapshot = agent.email;
+    lead.assignedAgentAgencySnapshot = agent.agencyName || agent.companyName;
+    lead.assignedByUserId = assignedByUser?.id || 'admin';
+    lead.assignedByUserNameSnapshot = assignedByUser?.name || 'Operations Desk';
+    lead.assignedAt = timestamp;
+    lead.leadVisibilityStatus = 'ASSIGNED';
+    lead.updatedAt = timestamp;
+    lead.lastActivityAt = timestamp;
+
+    // Append to assignment history
+    lead.assignmentHistory = lead.assignmentHistory || [];
+    lead.assignmentHistory.unshift({
+      id: `asg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      assignedStaffId: agent.id,
+      assignedStaffName: `${agent.name} (${agent.agencyName || 'Agent'})`,
+      assignedStaffEmail: agent.email,
+      assignedDepartment: 'SALES',
+      assignedBy: assignedByUser?.name || 'Internal Operations',
+      assignedAt: timestamp,
+      notes: notes || 'Assigned to B2B Agent partner for fulfillment'
+    });
+
+    // Append to timeline
+    lead.timeline = lead.timeline || [];
+    lead.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      type: 'CUSTOM_ACTIVITY',
+      title: 'Lead Assigned to B2B Agent',
+      description: `Assigned to ${agent.name} (${agent.agencyName || 'Agent'}) by ${assignedByUser?.name || 'Internal Team'}.${notes ? ' Note: ' + notes : ''}`,
+      timestamp,
+      performedBy: assignedByUser?.name || 'Operations Desk',
+      performedByUserType: assignedByUser?.role || 'ADMIN'
+    });
+
+    // Save lead
+    leads[idx] = lead;
+    this.setItem('leads', leads);
+    this.syncFirestoreDoc('leads', lead.id, lead);
+
+    // Emit deduplicated Agent assignment notification
+    this.createAssignmentNotification({
+      entityType: 'LEAD',
+      entityId: lead.id,
+      entityReference: lead.leadNumber,
+      agentUserId: agent.id,
+      assignedByUserId: assignedByUser?.id || 'admin',
+      assignedByName: assignedByUser?.name || 'TheUnbound Operations',
+      customerName: lead.contactName,
+      destination: lead.destinationName,
+      title: `Lead Assigned: ${lead.leadNumber}`,
+      message: `Travel lead for ${lead.contactName} (${lead.destinationName || 'Destination'}) has been assigned to you.`,
+      deepLinkTab: 'leads'
+    });
+
+    this.logAudit(
+      assignedByUser, 
+      'SETTINGS_UPDATED', 
+      'TravelLead', 
+      lead.id, 
+      `Assigned lead ${lead.leadNumber} (${lead.contactName}) to B2B Agent ${agent.name} (${agent.agencyName})`
+    );
+
+    return lead;
+  }
+
+  /**
+   * Unassigns a Lead from a B2B Agent.
+   * Removes Agent visibility immediately without deleting or duplicating customer or lead records.
+   */
+  public unassignLead(
+    leadId: string, 
+    unassignedByUser: User | null, 
+    reason?: string
+  ): TravelLead | null {
+    const leads = this.getLeads();
+    const idx = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
+    if (idx === -1) return null;
+
+    const lead = leads[idx];
+    const previousAgentName = lead.assignedAgentNameSnapshot || 'Previous Agent';
+    const timestamp = new Date().toISOString();
+
+    lead.assignedAgentId = undefined;
+    lead.assignedAgentNameSnapshot = undefined;
+    lead.assignedAgentEmailSnapshot = undefined;
+    lead.assignedAgentAgencySnapshot = undefined;
+    lead.leadVisibilityStatus = 'UNASSIGNED';
+    lead.updatedAt = timestamp;
+    lead.lastActivityAt = timestamp;
+
+    lead.assignmentHistory = lead.assignmentHistory || [];
+    lead.assignmentHistory.unshift({
+      id: `asg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      assignedStaffId: '',
+      assignedStaffName: 'Unassigned',
+      assignedDepartment: 'SALES',
+      assignedBy: unassignedByUser?.name || 'Internal Operations',
+      assignedAt: timestamp,
+      notes: reason || 'Unassigned by operations team'
+    });
+
+    lead.timeline = lead.timeline || [];
+    lead.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      type: 'CUSTOM_ACTIVITY',
+      title: 'B2B Agent Unassigned',
+      description: `Unassigned from ${previousAgentName} by ${unassignedByUser?.name || 'Internal Team'}.${reason ? ' Reason: ' + reason : ''}`,
+      timestamp,
+      performedBy: unassignedByUser?.name || 'Operations Desk',
+      performedByUserType: unassignedByUser?.role || 'ADMIN'
+    });
+
+    leads[idx] = lead;
+    this.setItem('leads', leads);
+    this.syncFirestoreDoc('leads', lead.id, lead);
+
+    this.logAudit(
+      unassignedByUser, 
+      'SETTINGS_UPDATED', 
+      'TravelLead', 
+      lead.id, 
+      `Unassigned lead ${lead.leadNumber} from B2B Agent ${previousAgentName}`
+    );
+
+    return lead;
+  }
+
+  /**
+   * Assigns a Booking to an approved B2B Agent.
+   * Records assignment snapshots, updates visibility, appends history, and emits deduplicated notification.
+   */
+  public assignBookingToAgent(
+    bookingId: string, 
+    agentUserId: string, 
+    assignedByUser: User | null, 
+    notes?: string
+  ): Booking | null {
+    const all = this.getAllBookings();
+    const idx = all.findIndex(b => b.id === bookingId || b.bookingReference === bookingId);
+    if (idx === -1) return null;
+
+    const allUsers = this.getUsers();
+    const agent = allUsers.find(u => u.id === agentUserId);
+    if (!agent) {
+      throw new Error(`Target agent with UID ${agentUserId} was not found.`);
+    }
+    if (agent.role !== 'B2B_AGENT' || agent.approvalStatus !== 'APPROVED') {
+      throw new Error(`Agent ${agent.name} is not an approved B2B partner agent.`);
+    }
+
+    const booking = all[idx];
+    const timestamp = new Date().toISOString();
+
+    booking.assignedAgentId = agent.id;
+    booking.assignedAgentNameSnapshot = agent.name;
+    booking.assignedAgentAgencySnapshot = agent.agencyName || agent.companyName;
+    booking.assignedByUserId = assignedByUser?.id || 'admin';
+    booking.assignedByUserNameSnapshot = assignedByUser?.name || 'Operations Desk';
+    booking.assignedAt = timestamp;
+    booking.agentVisibilityStatus = 'VISIBLE';
+    booking.updatedAt = timestamp;
+
+    booking.timeline = booking.timeline || [];
+    booking.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      title: 'Booking Assigned to B2B Agent',
+      description: `Assigned to ${agent.name} (${agent.agencyName || 'Agent'}) by ${assignedByUser?.name || 'Operations Desk'}.${notes ? ' Note: ' + notes : ''}`,
+      timestamp,
+      type: 'STATUS_CHANGE',
+      actorName: assignedByUser?.name || 'Operations Desk',
+      actorRole: assignedByUser?.role || 'ADMIN'
+    });
+
+    all[idx] = booking;
+    this.setItem('bookings', all);
+    this.syncFirestoreDoc('bookings', booking.id, booking);
+
+    // Emit deduplicated Agent assignment notification
+    this.createAssignmentNotification({
+      entityType: 'BOOKING',
+      entityId: booking.id,
+      entityReference: booking.bookingReference,
+      agentUserId: agent.id,
+      assignedByUserId: assignedByUser?.id || 'admin',
+      assignedByName: assignedByUser?.name || 'TheUnbound Operations',
+      customerName: booking.customer?.leadTravelerName,
+      destination: booking.destinationName,
+      title: `Booking Assigned: ${booking.bookingReference}`,
+      message: `Booking ${booking.bookingReference} for ${booking.customer?.leadTravelerName || 'Traveler'} has been assigned to your agency account.`,
+      deepLinkTab: 'bookings'
+    });
+
+    this.logAudit(
+      assignedByUser, 
+      'BOOKING_UPDATED', 
+      'Booking', 
+      booking.id, 
+      `Assigned booking ${booking.bookingReference} to B2B Agent ${agent.name} (${agent.agencyName})`
+    );
+
+    return booking;
+  }
+
+  /**
+   * Unassigns a Booking from a B2B Agent.
+   */
+  public unassignBooking(
+    bookingId: string, 
+    unassignedByUser: User | null, 
+    reason?: string
+  ): Booking | null {
+    const all = this.getAllBookings();
+    const idx = all.findIndex(b => b.id === bookingId || b.bookingReference === bookingId);
+    if (idx === -1) return null;
+
+    const booking = all[idx];
+    const previousAgentName = booking.assignedAgentNameSnapshot || 'Previous Agent';
+    const timestamp = new Date().toISOString();
+
+    booking.assignedAgentId = undefined;
+    booking.assignedAgentNameSnapshot = undefined;
+    booking.assignedAgentAgencySnapshot = undefined;
+    // If the booking was submitted by an agent, keep visibility VISIBLE for the submitter
+    booking.agentVisibilityStatus = booking.submittedByUserId ? 'VISIBLE' : 'PENDING_ASSIGNMENT';
+    booking.updatedAt = timestamp;
+
+    booking.timeline = booking.timeline || [];
+    booking.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      title: 'Booking Unassigned from B2B Agent',
+      description: `Unassigned from ${previousAgentName} by ${unassignedByUser?.name || 'Operations Desk'}.${reason ? ' Reason: ' + reason : ''}`,
+      timestamp,
+      type: 'STATUS_CHANGE',
+      actorName: unassignedByUser?.name || 'Operations Desk',
+      actorRole: unassignedByUser?.role || 'ADMIN'
+    });
+
+    all[idx] = booking;
+    this.setItem('bookings', all);
+    this.syncFirestoreDoc('bookings', booking.id, booking);
+
+    this.logAudit(
+      unassignedByUser, 
+      'BOOKING_UPDATED', 
+      'Booking', 
+      booking.id, 
+      `Unassigned booking ${booking.bookingReference} from B2B Agent ${previousAgentName}`
+    );
+
+    return booking;
+  }
+
+  // =========================================================================
+  // NOTIFICATIONS & ACTION CENTER (With Deduplication)
+  // =========================================================================
+
+  public getAgentNotifications(agentUserId?: string): AgentAssignmentNotification[] {
+    const all = this.getItem<AgentAssignmentNotification[]>('agent_notifications', []);
+    if (!agentUserId) return all;
+    return all.filter(n => n.agentUserId === agentUserId);
+  }
+
+  public createAssignmentNotification(params: {
+    entityType: 'LEAD' | 'BOOKING';
+    entityId: string;
+    entityReference: string;
+    agentUserId: string;
+    assignedByUserId: string;
+    assignedByName: string;
+    customerName?: string;
+    destination?: string;
+    title: string;
+    message: string;
+    deepLinkTab: 'leads' | 'bookings';
+  }): AgentAssignmentNotification | null {
+    const all = this.getAgentNotifications();
+    const dateHour = new Date().toISOString().slice(0, 13); // Hourly deduplication window
+    const deduplicationKey = `assignment-${params.entityType.toLowerCase()}-${params.entityId}-${params.agentUserId}-${dateHour}`;
+
+    const existing = all.find(n => n.deduplicationKey === deduplicationKey);
+    if (existing) {
+      return existing; // Prevents duplicate notification entries on retries or re-renders
+    }
+
+    const notification: AgentAssignmentNotification = {
+      id: `notif-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      deduplicationKey,
+      entityType: params.entityType,
+      entityId: params.entityId,
+      entityReference: params.entityReference,
+      agentUserId: params.agentUserId,
+      assignedByUserId: params.assignedByUserId,
+      assignedByName: params.assignedByName,
+      customerName: params.customerName,
+      destination: params.destination,
+      title: params.title,
+      message: params.message,
+      isRead: false,
+      createdAt: new Date().toISOString(),
+      deepLinkTab: params.deepLinkTab
+    };
+
+    all.unshift(notification);
+    this.setItem('agent_notifications', all);
+    this.syncFirestoreDoc('agent_notifications', notification.id, notification);
+    return notification;
+  }
+
+  public markNotificationAsRead(notificationId: string): void {
+    const all = this.getAgentNotifications();
+    const idx = all.findIndex(n => n.id === notificationId);
+    if (idx >= 0) {
+      all[idx].isRead = true;
+      this.setItem('agent_notifications', all);
+      this.syncFirestoreDoc('agent_notifications', notificationId, { isRead: true });
+    }
+  }
+
+  public markAllNotificationsAsRead(agentUserId: string): void {
+    const all = this.getAgentNotifications();
+    let changed = false;
+    all.forEach(n => {
+      if (n.agentUserId === agentUserId && !n.isRead) {
+        n.isRead = true;
+        changed = true;
+        this.syncFirestoreDoc('agent_notifications', n.id, { isRead: true });
+      }
+    });
+    if (changed) {
+      this.setItem('agent_notifications', all);
+    }
   }
 
   public saveLead(lead: TravelLead, user: User | null): TravelLead {
@@ -5821,6 +8700,26 @@ export class AppDatabase {
       };
       leads.unshift(savedLead);
       this.logAudit(user, 'BOOKING_CREATED', 'TravelLead', savedLead.id, `Captured new CRM lead ${savedLead.leadNumber} for ${savedLead.contactName} (${savedLead.destinationName})`);
+    }
+
+    // Defensive guarantee: ensure travelRequirements and specialRequests are strings
+    if (typeof savedLead.travelRequirements !== 'string') {
+      if (Array.isArray(savedLead.travelRequirements)) {
+        savedLead.travelRequirements = (savedLead.travelRequirements as any[]).map(x => typeof x === 'string' ? x : x?.text || '').filter(Boolean).join('\n');
+      } else if (savedLead.travelRequirements && typeof savedLead.travelRequirements === 'object') {
+        savedLead.travelRequirements = (savedLead.travelRequirements as any).text || '';
+      } else {
+        savedLead.travelRequirements = 'Standard VIP ground arrangements requested.';
+      }
+    }
+    if (typeof savedLead.specialRequests !== 'string') {
+      if (Array.isArray(savedLead.specialRequests)) {
+        savedLead.specialRequests = (savedLead.specialRequests as any[]).map(x => typeof x === 'string' ? x : x?.text || '').filter(Boolean).join('\n');
+      } else if (savedLead.specialRequests && typeof savedLead.specialRequests === 'object') {
+        savedLead.specialRequests = (savedLead.specialRequests as any).text || '';
+      } else {
+        savedLead.specialRequests = '';
+      }
     }
 
     this.setItem('leads', leads);
@@ -5957,6 +8856,210 @@ export class AppDatabase {
     }
 
     return leads[index];
+  }
+
+  public updateLeadStage(
+    leadId: string, 
+    stageId: string, 
+    user: User | null, 
+    reason?: string
+  ): { lead: TravelLead; autoTaskCreated?: CalendarTask } | null {
+    const leads = this.getLeads();
+    const index = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
+    if (index === -1) return null;
+
+    const stages = this.getLeadStages();
+    const targetStage = stages.find(s => s.id === stageId) || stages[0];
+    if (!targetStage) return null;
+
+    const timestamp = new Date().toISOString();
+    const prevStageId = leads[index].stageId || leads[index].status;
+    const prevStageObj = stages.find(s => s.id === prevStageId);
+    const prevStageName = leads[index].stageName || prevStageObj?.name || prevStageId;
+
+    leads[index].stageId = targetStage.id;
+    leads[index].stageName = targetStage.name;
+    const prevStatus = leads[index].status;
+    
+    if (targetStage.defaultLeadStatus) {
+      leads[index].status = targetStage.defaultLeadStatus;
+    }
+    if (targetStage.isWon) {
+      leads[index].status = 'WON';
+      leads[index].conversionStatus = 'CONVERTED';
+    } else if (targetStage.isLost) {
+      leads[index].status = 'LOST';
+      leads[index].conversionStatus = 'LOST';
+    }
+
+    leads[index].updatedAt = timestamp;
+    leads[index].lastActivityAt = timestamp;
+    leads[index].lastActivitySummary = `Pipeline stage moved to ${targetStage.name}`;
+
+    // Timeline event
+    const newTimelineEvent: LeadTimelineEvent = {
+      id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      type: 'STATUS_CHANGED',
+      title: `Pipeline Stage: ${targetStage.name}`,
+      description: reason 
+        ? `Stage moved from "${prevStageName}" to "${targetStage.name}": ${reason}` 
+        : `Moved from "${prevStageName}" to "${targetStage.name}" via Kanban`,
+      timestamp,
+      performedBy: user?.name || 'CRM Specialist',
+      performedByUserType: user?.role || 'DMC_STAFF'
+    };
+    leads[index].timeline = [newTimelineEvent, ...(leads[index].timeline || [])];
+
+    // Check automatic follow-up task creation
+    let autoTaskCreated: CalendarTask | undefined;
+    const autoTaskTitle = targetStage.autoTaskOnEnter || (
+      targetStage.id === 'CONTACTED' ? 'Contact new enquiry' :
+      targetStage.id === 'REQUIREMENTS_COLLECTED' ? 'Request missing travel requirements' :
+      targetStage.id === 'FOLLOW_UP_REQUIRED' ? 'Follow up on quotation' :
+      targetStage.id === 'WON' ? 'Complete booking handover' : undefined
+    );
+
+    if (autoTaskTitle) {
+      const existingTasks = this.getCalendarTasks();
+      const normLeadId = (leads[index].id || '').toLowerCase();
+      const normLeadNum = (leads[index].leadNumber || '').toLowerCase();
+      const hasDuplicate = existingTasks.some(t => {
+        const tLeadId = (t.leadId || t.entityId || '').toLowerCase();
+        const tLeadNum = (t.leadNumber || '').toLowerCase();
+        const matchesLead = (tLeadId && tLeadId === normLeadId) || (tLeadNum && tLeadNum === normLeadNum);
+        return matchesLead && t.title.toLowerCase() === autoTaskTitle.toLowerCase() && (t.status === 'PENDING' || t.status === 'OPEN');
+      });
+
+      if (!hasDuplicate) {
+        const hoursAhead = targetStage.autoTaskHours || 24;
+        const dueDateObj = new Date(Date.now() + hoursAhead * 60 * 60 * 1000);
+        const autoTask: CalendarTask = {
+          id: `task-lead-${leads[index].id}-${Date.now()}`,
+          title: autoTaskTitle,
+          description: `Automatic follow-up task created upon moving lead ${leads[index].leadNumber} to stage "${targetStage.name}".`,
+          taskType: 'LEAD_FOLLOW_UP',
+          priority: targetStage.isWon ? 'URGENT' : (targetStage.slaDurationHours && targetStage.slaDurationHours <= 12 ? 'HIGH' : 'MEDIUM'),
+          importance: targetStage.isWon ? 'URGENT' : 'IMPORTANT',
+          status: 'PENDING',
+          category: 'CLIENT_FOLLOW_UP',
+          assignedTo: leads[index].assignedStaffId || user?.id || 'staff-01',
+          assignedToName: leads[index].assignedStaffName || user?.name || 'Marcus Vance',
+          assignedToEmail: leads[index].assignedStaffEmail || user?.email || 'business@theunbound.in',
+          entityType: 'LEAD',
+          entityId: leads[index].id,
+          relatedEntityReference: leads[index].leadNumber,
+          leadId: leads[index].id,
+          leadNumber: leads[index].leadNumber,
+          startDate: timestamp.split('T')[0],
+          startTime: '09:00',
+          targetRoute: `/admin/leads/${leads[index].id}`,
+          actionRequired: autoTaskTitle,
+          dueAt: dueDateObj.toISOString(),
+          dueDate: dueDateObj.toISOString().split('T')[0],
+          dueTime: dueDateObj.toTimeString().slice(0, 5),
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          isSyncedToGoogleCalendar: false,
+          source: 'STAGE_AUTOMATION',
+          auditMetadata: {
+            actorId: user?.id,
+            actorName: user?.name,
+            triggerEvent: 'LEAD_STAGE_CHANGED',
+            stageId: targetStage.id,
+            stageName: targetStage.name
+          }
+        };
+
+        this.saveCalendarTask(autoTask);
+        autoTaskCreated = autoTask;
+      }
+    }
+
+    this.setItem('leads', leads);
+    this.syncFirestoreDoc('leads', leads[index].id, leads[index]);
+
+    // Audit log
+    this.logAudit(
+      user, 
+      'LEAD_MOVED_KANBAN', 
+      'TravelLead', 
+      leads[index].id, 
+      `Stage transitioned: ${prevStageName} ➔ ${targetStage.name} for ${leads[index].leadNumber} (${leads[index].contactName})`
+    );
+
+    // Activity Stream
+    try {
+      this.recordAdminActivity({
+        category: 'LEAD',
+        activityType: 'LEAD_STATUS_CHANGED',
+        actorName: user?.name || 'CRM Specialist',
+        actorType: user?.role === 'ADMIN' ? 'ADMIN' : 'TEAM_MEMBER',
+        severity: 'INFO',
+        actionRequired: targetStage.id === 'NEW_ENQUIRY' || targetStage.id === 'CONTACTED',
+        actionLabel: 'View Lead Details',
+        summary: `Pipeline Stage Changed: [${leads[index].leadNumber}] ${leads[index].contactName} (${prevStageName} ➔ ${targetStage.name})`,
+        details: {
+          customerName: leads[index].contactName,
+          destinationName: leads[index].destinationName,
+          leadNumber: leads[index].leadNumber,
+          previousValue: prevStageName,
+          newValue: targetStage.name,
+          stageId: targetStage.id,
+          status: leads[index].status
+        },
+        targetSection: 'LEAD_MANAGEMENT',
+        targetSubTab: 'LEADS',
+        recordId: leads[index].id,
+        leadId: leads[index].id,
+        entityId: leads[index].id,
+        entityType: 'TravelLead'
+      });
+    } catch {
+      // Non-blocking
+    }
+
+    if (this.actionCenterHooks?.onLeadStatusChanged && leads[index].status !== prevStatus) {
+      try {
+        this.actionCenterHooks.onLeadStatusChanged(leads[index].id, leads[index].leadNumber, leads[index].status, user);
+      } catch (err) {
+        console.warn('Action center lead hook error:', err);
+      }
+    }
+
+    this.notify();
+    return { lead: leads[index], autoTaskCreated };
+  }
+
+  public bulkAssignLeads(
+    leadIds: string[], 
+    staff: { id: string; name: string; email?: string; department?: 'SALES' | 'OPERATIONS' | 'MANAGEMENT' }, 
+    user: User | null
+  ): number {
+    let updatedCount = 0;
+    for (const id of leadIds) {
+      const res = this.assignLead(id, staff, user, 'Bulk reassignment from Lead Management');
+      if (res) updatedCount++;
+    }
+    if (updatedCount > 0) {
+      this.logAudit(user, 'BULK_ACTION_PERFORMED', 'TravelLead', 'bulk-assign', `Assigned ${updatedCount} leads to ${staff.name}`);
+    }
+    return updatedCount;
+  }
+
+  public bulkUpdateLeadStage(
+    leadIds: string[], 
+    stageId: string, 
+    user: User | null
+  ): number {
+    let updatedCount = 0;
+    for (const id of leadIds) {
+      const res = this.updateLeadStage(id, stageId, user, 'Bulk stage update from Lead Management');
+      if (res) updatedCount++;
+    }
+    if (updatedCount > 0) {
+      this.logAudit(user, 'BULK_ACTION_PERFORMED', 'TravelLead', 'bulk-stage', `Updated stage for ${updatedCount} leads to ${stageId}`);
+    }
+    return updatedCount;
   }
 
   public updateLeadPriority(leadId: string, priority: LeadPriority, user: User | null): TravelLead | null {
@@ -9910,41 +13013,135 @@ export class AppDatabase {
   // SUPPLIERS & GROUND OPERATORS PROCUREMENT
   // =========================================================================
 
-  public getSuppliers(): Supplier[] {
+  public generateSupplierCode(): string {
+    const list = this.getItem<Supplier[]>('suppliers', []);
+    const existingCodes = new Set(list.map(s => s.supplierCode).filter(Boolean));
+    let nextNum = 101;
+    while (existingCodes.has(`SUP-${String(nextNum).padStart(5, '0')}`)) {
+      nextNum++;
+    }
+    return `SUP-${String(nextNum).padStart(5, '0')}`;
+  }
+
+  public checkSupplierDuplicate(supplier: Partial<Supplier>, excludeId?: string): {
+    isDuplicate: boolean;
+    matchedField?: string;
+    existingSupplier?: Supplier;
+    reason?: string;
+  } {
+    const list = this.getSuppliers();
+    const candidateName = supplier.name?.trim().toLowerCase();
+    const candidateLegalName = supplier.legalName?.trim().toLowerCase();
+    const candidateEmail = supplier.email?.trim().toLowerCase();
+    const candidatePhone = supplier.phone?.replace(/[\s\-\+\(\)]/g, '');
+    const candidateWebsite = supplier.website?.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+    const candidateCode = supplier.supplierCode?.trim().toUpperCase();
+
+    for (const s of list) {
+      if (excludeId && s.id === excludeId) continue;
+
+      if (candidateCode && s.supplierCode && s.supplierCode.toUpperCase() === candidateCode) {
+        return { isDuplicate: true, matchedField: 'Supplier ID', existingSupplier: s, reason: `Supplier Code ${candidateCode} matches existing record ${s.name}.` };
+      }
+      if (candidateName && s.name && s.name.trim().toLowerCase() === candidateName) {
+        return { isDuplicate: true, matchedField: 'Supplier Name', existingSupplier: s, reason: `Supplier Name "${s.name}" already registered.` };
+      }
+      if (candidateLegalName && s.legalName && s.legalName.trim().toLowerCase() === candidateLegalName) {
+        return { isDuplicate: true, matchedField: 'Legal Company Name', existingSupplier: s, reason: `Legal Company Name "${s.legalName}" matches existing record.` };
+      }
+      if (candidateEmail && s.email && s.email.trim().toLowerCase() === candidateEmail) {
+        return { isDuplicate: true, matchedField: 'Email Address', existingSupplier: s, reason: `Email ${s.email} already linked to supplier ${s.name}.` };
+      }
+      if (candidatePhone && s.phone) {
+        const existingDigits = s.phone.replace(/[\s\-\+\(\)]/g, '');
+        if (existingDigits.length >= 7 && existingDigits === candidatePhone) {
+          return { isDuplicate: true, matchedField: 'Phone Number', existingSupplier: s };
+        }
+      }
+      if (candidateWebsite && s.website) {
+        const existingCleanWeb = s.website.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+        if (existingCleanWeb.length > 3 && existingCleanWeb === candidateWebsite) {
+          return { isDuplicate: true, matchedField: 'Website', existingSupplier: s };
+        }
+      }
+    }
+    return { isDuplicate: false };
+  }
+
+  public getSuppliers(includeArchived: boolean = true): Supplier[] {
     const list = this.getItem<Supplier[]>('suppliers', []);
     // If empty in local cache and firestore hasn't populated, populate default trusted DMC ground partners
     if (list.length === 0) {
       const defaultSuppliers: Supplier[] = [
         {
           id: 'sup-1',
+          supplierCode: 'SUP-00101',
           name: 'Alpine Vista Transfers & Coaches',
           legalName: 'Alpine Vista Transport GmbH',
           tradingName: 'Alpine Vista Transfers',
           country: 'Switzerland',
           destination: 'Switzerland',
           destinations: ['Switzerland', 'France', 'Austria'],
+          hubs: ['Zurich', 'Geneva', 'Interlaken', 'Zermatt'],
           categories: ['TRANSFER', 'RAIL'],
+          status: 'ACTIVE',
           contactPerson: 'Marc Obermayer',
           contactPersons: [
             {
               id: 'cp-1',
               name: 'Marc Obermayer',
               role: 'Dispatch & Fleet Director',
+              designation: 'Managing Director',
               email: 'dispatch@alpinevistatransfers.ch',
               phone: '+41 22 731 4500',
+              whatsapp: '+41 79 401 2299',
               isPrimary: true,
-              emergencyPhone: '+41 79 401 2299'
+              emergencyPhone: '+41 79 401 2299',
+              notes: 'Primary liaison for VIP private transfers and rail station luggage transfers.'
             }
           ],
           email: 'bookings@alpinevistatransfers.ch',
           phone: '+41 22 731 4500',
+          whatsapp: '+41 79 401 2299',
           emergencyPhone: '+41 79 401 2299',
           website: 'https://alpinevistatransfers.ch',
+          taxRegistrationNumber: 'CHE-114.892.402 TVA',
+          description: 'Premium Mercedes fleet and licensed Alpine transfer provider across Swiss, French, and Austrian cantons.',
           currency: 'CHF',
           contractStatus: 'ACTIVE',
           isPreferred: true,
           paymentTerms: 'Net 14 Days after voucher dispatch',
           cancellationTerms: 'Free cancellation up to 48 hours prior to pickup',
+          serviceCoverage: {
+            regionsServed: ['Europe', 'Alps'],
+            destinationsServed: ['Switzerland', 'France', 'Austria'],
+            hubsServed: ['Zurich', 'Geneva', 'Interlaken', 'Zermatt', 'Lucerne'],
+            supportedCategories: ['TRANSFER', 'RAIL'],
+            serviceAvailability: 'ALL_YEAR',
+            operatingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+            operatingHours: '06:00 - 23:00 CET',
+            emergencySupport24x7: true,
+            emergencySupportDetails: '24/7 airport tarmac duty officer on WhatsApp'
+          },
+          commercialDetails: {
+            defaultCurrency: 'CHF',
+            paymentTerms: 'Net 14 Days after voucher dispatch',
+            paymentMethod: 'Bank Transfer (SEPA / Swiss IBAN)',
+            creditPeriodDays: 14,
+            cancellationPolicy: 'Free cancellation up to 48 hours prior to pickup; 50% thereafter.',
+            contractReference: 'CTR-CH-2026-AVT',
+            contractStartDate: '2025-01-01',
+            contractEndDate: '2027-12-31',
+            taxTreatment: 'Standard Swiss VAT 8.1% included in net wholesale rates.'
+          },
+          bankDetails: {
+            bankName: 'UBS Switzerland AG',
+            accountName: 'Alpine Vista Transport GmbH',
+            accountNumber: 'CH89 0023 0230 1234 5678 9',
+            swiftBic: 'UBSWCHZH80A',
+            iban: 'CH8900230230123456789',
+            branchAddress: 'Bahnhofstrasse 45, 8001 Zurich'
+          },
           performanceScore: 98,
           responseTimeAvgHours: 1.5,
           confirmationRatePercent: 99,
@@ -9954,38 +13151,70 @@ export class AppDatabase {
           pendingConfirmationsCount: 1,
           outstandingPayableAmount: 1420,
           notes: 'Premium Mercedes fleet and Zurich/Geneva airport tarmac passes.',
-          createdAt: new Date().toISOString()
+          createdBy: 'system-init',
+          createdByName: 'TheUnbound Operations',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         },
         {
           id: 'sup-2',
+          supplierCode: 'SUP-00102',
           name: 'Nippon Golden Route Ground Services',
           legalName: 'Nippon Horizon Travel K.K.',
           tradingName: 'Nippon Golden Route Services',
           country: 'Japan',
           destination: 'Japan',
           destinations: ['Japan'],
-          categories: ['HOTEL', 'GUIDE', 'SIGHTSEEING', 'RAIL'],
+          hubs: ['Tokyo', 'Kyoto', 'Osaka', 'Hakone', 'Hiroshima'],
+          categories: ['HOTEL', 'GUIDE', 'SIGHTSEEING', 'RAIL', 'TOUR'],
+          status: 'ACTIVE',
           contactPerson: 'Kenji Takahashi',
           contactPersons: [
             {
               id: 'cp-2',
               name: 'Kenji Takahashi',
               role: 'Head of Inbound Procurement',
+              designation: 'General Manager Inbound',
               email: 'k.takahashi@nipponhorizon.jp',
               phone: '+81 3 5555 0192',
+              whatsapp: '+81 90 1234 5678',
               isPrimary: true,
               emergencyPhone: '+81 90 1234 5678'
             }
           ],
           email: 'inbound-ops@nipponhorizon.jp',
           phone: '+81 3 5555 0190',
+          whatsapp: '+81 90 1234 5678',
           emergencyPhone: '+81 90 1234 5678',
           website: 'https://nipponhorizon.jp',
+          taxRegistrationNumber: 'T1010001089241',
+          description: 'Official inbound DMC partner for Japan. Luxury ryokan allotments, licensed national guides, and JR bullet train ticketing.',
           currency: 'JPY',
           contractStatus: 'ACTIVE',
           isPreferred: true,
           paymentTerms: 'Prepayment 7 days prior to check-in',
           cancellationTerms: 'Free cancellation up to 14 days prior',
+          serviceCoverage: {
+            regionsServed: ['East Asia', 'Japan'],
+            destinationsServed: ['Japan'],
+            hubsServed: ['Tokyo', 'Kyoto', 'Osaka', 'Hakone', 'Hiroshima', 'Kanazawa', 'Nara'],
+            supportedCategories: ['HOTEL', 'GUIDE', 'SIGHTSEEING', 'RAIL', 'TOUR'],
+            serviceAvailability: 'ALL_YEAR',
+            operatingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+            operatingHours: '08:00 - 20:00 JST',
+            emergencySupport24x7: true,
+            emergencySupportDetails: '24/7 English & Japanese ground line for active tour groups'
+          },
+          commercialDetails: {
+            defaultCurrency: 'JPY',
+            paymentTerms: 'Prepayment 7 days prior to check-in',
+            paymentMethod: 'Wire Transfer / SWIFT',
+            creditPeriodDays: 7,
+            cancellationPolicy: 'Free cancellation up to 14 days prior; 30% up to 7 days; 100% within 48h.',
+            contractReference: 'CTR-JP-2025-NIPPON',
+            contractStartDate: '2024-04-01',
+            contractEndDate: '2027-03-31'
+          },
           performanceScore: 96,
           responseTimeAvgHours: 2.1,
           confirmationRatePercent: 97,
@@ -9995,38 +13224,68 @@ export class AppDatabase {
           pendingConfirmationsCount: 2,
           outstandingPayableAmount: 485000,
           notes: 'Direct contracted allotments with Tokyo & Kyoto luxury ryokans and JR Rail Pass fulfillment.',
-          createdAt: new Date().toISOString()
+          createdBy: 'system-init',
+          createdByName: 'TheUnbound Operations',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         },
         {
           id: 'sup-3',
+          supplierCode: 'SUP-00103',
           name: 'Mediterraneo Luxury Yachts & Transfers',
           legalName: 'Mediterraneo Marine Operations S.r.l.',
           tradingName: 'Mediterraneo Yacht Charters',
           country: 'Italy',
           destination: 'Italy',
           destinations: ['Italy', 'Greece', 'France'],
-          categories: ['YACHT', 'TRANSFER', 'SIGHTSEEING'],
+          hubs: ['Naples', 'Capri', 'Amalfi', 'Positano', 'Costa Smeralda', 'Nice'],
+          categories: ['YACHT', 'TRANSFER', 'SIGHTSEEING', 'ACTIVITY'],
+          status: 'ACTIVE',
           contactPerson: 'Chiara Rossi',
           contactPersons: [
             {
               id: 'cp-3',
               name: 'Chiara Rossi',
               role: 'Charter Coordinator',
+              designation: 'Operations Coordinator',
               email: 'chiara@mediterraneoyachts.it',
               phone: '+39 081 1930 2200',
+              whatsapp: '+39 335 129 8811',
               isPrimary: true,
               emergencyPhone: '+39 335 129 8811'
             }
           ],
           email: 'charters@mediterraneoyachts.it',
           phone: '+39 081 1930 2200',
+          whatsapp: '+39 335 129 8811',
           emergencyPhone: '+39 335 129 8811',
           website: 'https://mediterraneoyachts.it',
+          taxRegistrationNumber: 'IT08239100632',
+          description: 'Amalfi Coast, Capri, and Costa Smeralda private luxury boat tenders and day charters.',
           currency: 'EUR',
           contractStatus: 'ACTIVE',
           isPreferred: true,
           paymentTerms: '50% deposit on booking, balance 14 days prior',
           cancellationTerms: 'Strict weather-guaranteed rescheduling or 70% refund',
+          serviceCoverage: {
+            regionsServed: ['Mediterranean', 'Southern Europe'],
+            destinationsServed: ['Italy', 'Greece', 'France'],
+            hubsServed: ['Naples', 'Capri', 'Amalfi', 'Positano', 'Sorrento', 'Portofino'],
+            supportedCategories: ['YACHT', 'TRANSFER', 'SIGHTSEEING', 'ACTIVITY'],
+            serviceAvailability: 'SEASONAL',
+            seasonalMonths: ['April', 'May', 'June', 'July', 'August', 'September', 'October'],
+            operatingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+            operatingHours: '08:00 - 21:00 CET',
+            emergencySupport24x7: true,
+            emergencySupportDetails: 'Skipper emergency line provided upon charter confirmation'
+          },
+          commercialDetails: {
+            defaultCurrency: 'EUR',
+            paymentTerms: '50% deposit on booking, balance 14 days prior',
+            paymentMethod: 'Bank Wire (IBAN) / Credit Card',
+            creditPeriodDays: 14,
+            cancellationPolicy: 'Weather-guaranteed rescheduling or 70% refund; 100% retention for client no-show.'
+          },
           performanceScore: 95,
           responseTimeAvgHours: 3.0,
           confirmationRatePercent: 94,
@@ -10036,38 +13295,66 @@ export class AppDatabase {
           pendingConfirmationsCount: 0,
           outstandingPayableAmount: 3200,
           notes: 'Amalfi Coast, Capri, and Costa Smeralda private luxury boat tenders and day charters.',
-          createdAt: new Date().toISOString()
+          createdBy: 'system-init',
+          createdByName: 'TheUnbound Operations',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         },
         {
           id: 'sup-4',
+          supplierCode: 'SUP-00104',
           name: 'Global Schengen & UK Visa Concierge',
           legalName: 'Apex Diplomatic Document Services Ltd',
           tradingName: 'Global Visa Concierge',
           country: 'United Kingdom',
           destination: 'United Kingdom',
-          destinations: ['United Kingdom', 'France', 'Switzerland', 'Italy'],
+          destinations: ['United Kingdom', 'France', 'Switzerland', 'Italy', 'Japan'],
+          hubs: ['London', 'Paris', 'Dubai', 'Mumbai', 'New Delhi'],
           categories: ['VISA'],
+          status: 'ACTIVE',
           contactPerson: 'David Miller',
           contactPersons: [
             {
               id: 'cp-4',
               name: 'David Miller',
               role: 'Operations Director',
+              designation: 'Director of Consular Affairs',
               email: 'david.miller@visaconcierge.co.uk',
               phone: '+44 20 7946 0880',
+              whatsapp: '+44 7700 900345',
               isPrimary: true,
               emergencyPhone: '+44 7700 900345'
             }
           ],
           email: 'submissions@visaconcierge.co.uk',
           phone: '+44 20 7946 0880',
+          whatsapp: '+44 7700 900345',
           emergencyPhone: '+44 7700 900345',
           website: 'https://visaconcierge.co.uk',
+          taxRegistrationNumber: 'GB892341829',
+          description: 'Diplomatic document and consular appointment slots for Schengen, UK, and Japan e-visas.',
           currency: 'GBP',
           contractStatus: 'ACTIVE',
           isPreferred: true,
           paymentTerms: 'Monthly invoice settlement',
           cancellationTerms: 'Non-refundable once embassy appointment lodged',
+          serviceCoverage: {
+            regionsServed: ['Global Consular Hubs'],
+            destinationsServed: ['United Kingdom', 'France', 'Switzerland', 'Italy', 'Japan'],
+            hubsServed: ['London', 'Paris', 'Dubai', 'Mumbai', 'New Delhi'],
+            supportedCategories: ['VISA'],
+            serviceAvailability: 'ALL_YEAR',
+            operatingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+            operatingHours: '08:30 - 18:00 GMT',
+            emergencySupport24x7: false
+          },
+          commercialDetails: {
+            defaultCurrency: 'GBP',
+            paymentTerms: 'Monthly invoice settlement',
+            paymentMethod: 'BACS / Wire Transfer',
+            creditPeriodDays: 30,
+            cancellationPolicy: 'Non-refundable once embassy appointment lodged'
+          },
           performanceScore: 99,
           responseTimeAvgHours: 0.8,
           confirmationRatePercent: 100,
@@ -10077,51 +13364,234 @@ export class AppDatabase {
           pendingConfirmationsCount: 0,
           outstandingPayableAmount: 850,
           notes: 'Express VIP slots for VFS Global and TLScontact centers.',
-          createdAt: new Date().toISOString()
+          createdBy: 'system-init',
+          createdByName: 'TheUnbound Operations',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         }
       ];
       this.setItem('suppliers', defaultSuppliers);
       return defaultSuppliers;
     }
-    return list;
+
+    // Dynamic stats enrichment: calculate linked service items and active bookings
+    const bookings = this.getAllBookings();
+    const enrichedList = list.map(sup => {
+      let linkedItems = 0;
+      let activeBookings = 0;
+      bookings.forEach(b => {
+        let hasItem = false;
+        b.items?.forEach(it => {
+          if (it.supplierId === sup.id || (it.supplierName && it.supplierName.trim().toLowerCase() === sup.name.trim().toLowerCase())) {
+            linkedItems++;
+            hasItem = true;
+          }
+        });
+        if (hasItem && b.status !== ('Cancelled' as any) && b.status !== 'CANCELLED') {
+          activeBookings++;
+        }
+      });
+      return {
+        ...sup,
+        supplierCode: sup.supplierCode || `SUP-${sup.id.replace(/\D/g, '').padStart(5, '0') || '00100'}`,
+        status: sup.status || (sup.archivedAt ? 'ARCHIVED' : 'ACTIVE'),
+        linkedServiceItemsCount: linkedItems,
+        activeBookingsCount: activeBookings
+      };
+    });
+
+    if (!includeArchived) {
+      return enrichedList.filter(s => s.status !== 'ARCHIVED');
+    }
+    return enrichedList;
   }
 
-  public saveSupplier(supplier: Supplier, user: User | null): Supplier {
-    const list = this.getSuppliers();
+  public getActiveSuppliers(): Supplier[] {
+    return this.getSuppliers(false).filter(s => s.status === 'ACTIVE');
+  }
+
+  public getSupplierById(idOrCode: string): Supplier | undefined {
+    const list = this.getSuppliers(true);
+    return list.find(s => s.id === idOrCode || s.supplierCode === idOrCode);
+  }
+
+  public saveSupplier(supplier: Supplier, user: User | null): { success: boolean; supplier: Supplier; error?: string } {
+    const list = this.getItem<Supplier[]>('suppliers', []);
     const index = list.findIndex(s => s.id === supplier.id);
     const timestamp = new Date().toISOString();
     let saved: Supplier;
+    const isNew = index === -1;
 
-    if (index >= 0) {
+    // Stable Supplier Code: Preserve existing or generate a new unique code
+    const supplierCode = supplier.supplierCode || (index >= 0 && list[index].supplierCode) || this.generateSupplierCode();
+
+    if (!isNew) {
+      const prev = list[index];
       saved = {
-        ...list[index],
+        ...prev,
         ...supplier,
-        updatedAt: timestamp
+        supplierCode, // Never change supplier code once assigned
+        updatedAt: timestamp,
+        updatedBy: user?.id || 'system',
+        updatedByName: user?.displayName || user?.email || 'Authorized User'
       };
       list[index] = saved;
-      this.logAudit(user, 'SETTINGS_UPDATED', 'Supplier', saved.id, `Updated supplier profile for ${saved.name} (${saved.destination})`);
+
+      // Log activity
+      this.logSupplierActivity({
+        supplierId: saved.id,
+        action: 'EDITED',
+        summary: `Supplier profile updated by ${user?.displayName || user?.email || 'Operations'}`,
+        details: `Updated parameters for ${saved.name} (${saved.supplierCode})`,
+        performedBy: user?.id || 'system',
+        performedByName: user?.displayName || 'Operations',
+        performedByEmail: user?.email || 'operations@theunbound.in'
+      });
+
+      this.logAudit(user, 'SETTINGS_UPDATED', 'Supplier', saved.id, `Updated supplier profile for ${saved.name} (${saved.supplierCode})`);
     } else {
+      const generatedId = supplier.id || `sup-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       saved = {
         ...supplier,
-        id: supplier.id || `sup-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        id: generatedId,
+        supplierCode,
+        status: supplier.status || 'ACTIVE',
+        categories: supplier.categories || ['OTHER'],
+        destinations: supplier.destinations || [supplier.destination || 'Global'],
+        contactPersons: supplier.contactPersons || [
+          {
+            id: `cp-${Date.now()}`,
+            name: supplier.contactPerson || 'Primary Contact',
+            email: supplier.email,
+            phone: supplier.phone,
+            isPrimary: true
+          }
+        ],
         createdAt: timestamp,
         updatedAt: timestamp,
+        createdBy: user?.id || 'system',
+        createdByName: user?.displayName || user?.email || 'Operations',
         performanceScore: supplier.performanceScore ?? 95,
         openRequestsCount: supplier.openRequestsCount ?? 0,
         pendingConfirmationsCount: supplier.pendingConfirmationsCount ?? 0,
         outstandingPayableAmount: supplier.outstandingPayableAmount ?? 0
       };
       list.unshift(saved);
-      this.logAudit(user, 'BOOKING_CREATED', 'Supplier', saved.id, `Created supplier profile for ${saved.name}`);
+
+      // Log activity
+      this.logSupplierActivity({
+        supplierId: saved.id,
+        action: 'CREATED',
+        summary: `Supplier master profile created (${saved.supplierCode})`,
+        details: `Created new supplier ${saved.name} in ${saved.destination}`,
+        performedBy: user?.id || 'system',
+        performedByName: user?.displayName || 'Operations',
+        performedByEmail: user?.email || 'operations@theunbound.in'
+      });
+
+      this.logAudit(user, 'BOOKING_CREATED', 'Supplier', saved.id, `Created supplier profile for ${saved.name} (${saved.supplierCode})`);
     }
 
     this.setItem('suppliers', list);
     this.syncFirestoreDoc('suppliers', saved.id, saved);
-    return saved;
+    return { success: true, supplier: saved };
+  }
+
+  public archiveSupplier(supplierId: string, reason: string, user: User | null): { success: boolean; error?: string } {
+    const list = this.getItem<Supplier[]>('suppliers', []);
+    const idx = list.findIndex(s => s.id === supplierId);
+    if (idx === -1) return { success: false, error: 'Supplier not found' };
+
+    const timestamp = new Date().toISOString();
+    list[idx] = {
+      ...list[idx],
+      status: 'ARCHIVED',
+      archivedAt: timestamp,
+      archivedBy: user?.displayName || user?.email || 'Internal User',
+      archivedReason: reason.trim(),
+      updatedAt: timestamp
+    };
+
+    this.setItem('suppliers', list);
+    this.syncFirestoreDoc('suppliers', supplierId, list[idx]);
+
+    this.logSupplierActivity({
+      supplierId,
+      action: 'ARCHIVED',
+      summary: `Supplier archived: ${reason.trim()}`,
+      details: `Supplier archived by ${user?.displayName || 'Operations'}. Historical bookings preserved.`,
+      performedBy: user?.id || 'system',
+      performedByName: user?.displayName || 'Operations',
+      performedByEmail: user?.email || 'operations@theunbound.in'
+    });
+
+    this.logAudit(user, 'SETTINGS_UPDATED', 'Supplier', supplierId, `Archived supplier ${list[idx].name} (${reason.trim()})`);
+    return { success: true };
+  }
+
+  public restoreSupplier(supplierId: string, user: User | null): { success: boolean; error?: string } {
+    const list = this.getItem<Supplier[]>('suppliers', []);
+    const idx = list.findIndex(s => s.id === supplierId);
+    if (idx === -1) return { success: false, error: 'Supplier not found' };
+
+    const timestamp = new Date().toISOString();
+    list[idx] = {
+      ...list[idx],
+      status: 'ACTIVE',
+      archivedAt: undefined,
+      archivedBy: undefined,
+      archivedReason: undefined,
+      updatedAt: timestamp
+    };
+
+    this.setItem('suppliers', list);
+    this.syncFirestoreDoc('suppliers', supplierId, list[idx]);
+
+    this.logSupplierActivity({
+      supplierId,
+      action: 'RESTORED',
+      summary: 'Supplier restored to Active directory',
+      details: `Restored by ${user?.displayName || 'Operations'}`,
+      performedBy: user?.id || 'system',
+      performedByName: user?.displayName || 'Operations',
+      performedByEmail: user?.email || 'operations@theunbound.in'
+    });
+
+    this.logAudit(user, 'SETTINGS_UPDATED', 'Supplier', supplierId, `Restored supplier ${list[idx].name} to Active`);
+    return { success: true };
+  }
+
+  public changeSupplierStatus(supplierId: string, newStatus: SupplierStatus, user: User | null): { success: boolean; error?: string } {
+    const list = this.getItem<Supplier[]>('suppliers', []);
+    const idx = list.findIndex(s => s.id === supplierId);
+    if (idx === -1) return { success: false, error: 'Supplier not found' };
+
+    const prevStatus = list[idx].status || 'ACTIVE';
+    const timestamp = new Date().toISOString();
+    list[idx] = {
+      ...list[idx],
+      status: newStatus,
+      updatedAt: timestamp
+    };
+
+    this.setItem('suppliers', list);
+    this.syncFirestoreDoc('suppliers', supplierId, list[idx]);
+
+    this.logSupplierActivity({
+      supplierId,
+      action: 'STATUS_CHANGED',
+      summary: `Status changed from ${prevStatus} to ${newStatus}`,
+      details: `Changed by ${user?.displayName || 'Operations'}`,
+      performedBy: user?.id || 'system',
+      performedByName: user?.displayName || 'Operations',
+      performedByEmail: user?.email || 'operations@theunbound.in'
+    });
+
+    return { success: true };
   }
 
   public deleteSupplier(supplierId: string, user: User | null): boolean {
-    const list = this.getSuppliers();
+    const list = this.getItem<Supplier[]>('suppliers', []);
     const filtered = list.filter(s => s.id !== supplierId);
     if (filtered.length === list.length) return false;
 
@@ -10129,6 +13599,352 @@ export class AppDatabase {
     this.deleteFirestoreDoc('suppliers', supplierId);
     this.logAudit(user, 'SETTINGS_UPDATED', 'Supplier', supplierId, `Removed supplier record ${supplierId}`);
     return true;
+  }
+
+  // =========================================================================
+  // SUPPLIER RATE CARDS
+  // =========================================================================
+
+  public getSupplierRateCards(supplierId?: string): SupplierRateCard[] {
+    const all = this.getItem<SupplierRateCard[]>('supplier_rate_cards', []);
+    if (supplierId) {
+      return all.filter(c => c.supplierId === supplierId);
+    }
+    return all;
+  }
+
+  public saveSupplierRateCard(rateCard: SupplierRateCard, user: User | null): SupplierRateCard {
+    const list = this.getItem<SupplierRateCard[]>('supplier_rate_cards', []);
+    const index = list.findIndex(r => r.id === rateCard.id);
+    const timestamp = new Date().toISOString();
+    let saved: SupplierRateCard;
+
+    if (index >= 0) {
+      saved = {
+        ...list[index],
+        ...rateCard,
+        updatedAt: timestamp
+      };
+      list[index] = saved;
+      this.logSupplierActivity({
+        supplierId: saved.supplierId,
+        action: 'RATE_CARD_UPDATED',
+        summary: `Rate card updated for ${saved.serviceName}`,
+        details: `Adult Rate: ${saved.currency} ${saved.rateAdult}`,
+        performedBy: user?.id || 'system',
+        performedByName: user?.displayName || 'Operations',
+        performedByEmail: user?.email || 'operations@theunbound.in'
+      });
+    } else {
+      saved = {
+        ...rateCard,
+        id: rateCard.id || `rc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      list.unshift(saved);
+      this.logSupplierActivity({
+        supplierId: saved.supplierId,
+        action: 'RATE_CARD_ADDED',
+        summary: `New rate card added for ${saved.serviceName}`,
+        details: `Adult Rate: ${saved.currency} ${saved.rateAdult}`,
+        performedBy: user?.id || 'system',
+        performedByName: user?.displayName || 'Operations',
+        performedByEmail: user?.email || 'operations@theunbound.in'
+      });
+    }
+
+    this.setItem('supplier_rate_cards', list);
+    this.syncFirestoreDoc('supplier_rate_cards', saved.id, saved);
+    return saved;
+  }
+
+  public deleteSupplierRateCard(rateCardId: string, user: User | null): boolean {
+    const list = this.getItem<SupplierRateCard[]>('supplier_rate_cards', []);
+    const found = list.find(r => r.id === rateCardId);
+    if (!found) return false;
+
+    const filtered = list.filter(r => r.id !== rateCardId);
+    this.setItem('supplier_rate_cards', filtered);
+    this.deleteFirestoreDoc('supplier_rate_cards', rateCardId);
+
+    this.logSupplierActivity({
+      supplierId: found.supplierId,
+      action: 'RATE_CARD_UPDATED',
+      summary: `Rate card deleted: ${found.serviceName}`,
+      performedBy: user?.id || 'system',
+      performedByName: user?.displayName || 'Operations',
+      performedByEmail: user?.email || 'operations@theunbound.in'
+    });
+    return true;
+  }
+
+  // =========================================================================
+  // SUPPLIER DOCUMENTS
+  // =========================================================================
+
+  public getSupplierDocuments(supplierId: string): SupplierDocument[] {
+    const all = this.getItem<SupplierDocument[]>('supplier_documents', []);
+    return all.filter(d => d.supplierId === supplierId);
+  }
+
+  public saveSupplierDocument(doc: SupplierDocument, user: User | null): SupplierDocument {
+    const list = this.getItem<SupplierDocument[]>('supplier_documents', []);
+    const index = list.findIndex(d => d.id === doc.id);
+    const timestamp = new Date().toISOString();
+    let saved: SupplierDocument;
+
+    if (index >= 0) {
+      saved = {
+        ...list[index],
+        ...doc
+      };
+      list[index] = saved;
+    } else {
+      saved = {
+        ...doc,
+        id: doc.id || `doc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        uploadedAt: timestamp,
+        uploadedBy: user?.id || 'system',
+        uploadedByName: user?.displayName || user?.email || 'Operations'
+      };
+      list.unshift(saved);
+      this.logSupplierActivity({
+        supplierId: saved.supplierId,
+        action: 'DOCUMENT_UPLOADED',
+        summary: `Document uploaded: ${saved.title} (${saved.documentType})`,
+        details: `File: ${saved.fileName}`,
+        performedBy: user?.id || 'system',
+        performedByName: user?.displayName || 'Operations',
+        performedByEmail: user?.email || 'operations@theunbound.in'
+      });
+    }
+
+    this.setItem('supplier_documents', list);
+    this.syncFirestoreDoc('supplier_documents', saved.id, saved);
+    return saved;
+  }
+
+  public deleteSupplierDocument(docId: string, user: User | null): boolean {
+    const list = this.getItem<SupplierDocument[]>('supplier_documents', []);
+    const found = list.find(d => d.id === docId);
+    if (!found) return false;
+
+    const filtered = list.filter(d => d.id !== docId);
+    this.setItem('supplier_documents', filtered);
+    this.deleteFirestoreDoc('supplier_documents', docId);
+
+    this.logSupplierActivity({
+      supplierId: found.supplierId,
+      action: 'DOCUMENT_DELETED',
+      summary: `Document deleted: ${found.title}`,
+      performedBy: user?.id || 'system',
+      performedByName: user?.displayName || 'Operations',
+      performedByEmail: user?.email || 'operations@theunbound.in'
+    });
+    return true;
+  }
+
+  // =========================================================================
+  // SUPPLIER ACTIVITY HISTORY
+  // =========================================================================
+
+  public getSupplierActivityHistory(supplierId: string): SupplierActivityHistory[] {
+    const all = this.getItem<SupplierActivityHistory[]>('supplier_activity_history', []);
+    return all
+      .filter(h => h.supplierId === supplierId)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }
+
+  public getSupplierActivity(supplierId: string): SupplierActivityHistory[] {
+    return this.getSupplierActivityHistory(supplierId);
+  }
+
+  public createSupplier(supplier: Supplier, user: User | null): { success: boolean; supplier: Supplier; error?: string } {
+    return this.saveSupplier(supplier, user);
+  }
+
+  public updateSupplier(supplier: Supplier, user: User | null): { success: boolean; supplier: Supplier; error?: string } {
+    return this.saveSupplier(supplier, user);
+  }
+
+  public setSupplierStatus(supplierId: string, status: SupplierStatus, user: User | null, _reason?: string): { success: boolean; error?: string } {
+    return this.changeSupplierStatus(supplierId, status, user);
+  }
+
+  public createSupplierRateCard(rateCard: SupplierRateCard, user: User | null): SupplierRateCard {
+    return this.saveSupplierRateCard(rateCard, user);
+  }
+
+  public createSupplierDocument(doc: SupplierDocument, user: User | null): SupplierDocument {
+    return this.saveSupplierDocument(doc, user);
+  }
+
+  public logSupplierActivity(entry: Omit<SupplierActivityHistory, 'id' | 'timestamp'>): SupplierActivityHistory {
+    const all = this.getItem<SupplierActivityHistory[]>('supplier_activity_history', []);
+    const record: SupplierActivityHistory = {
+      ...entry,
+      id: `act-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      timestamp: new Date().toISOString()
+    };
+    all.unshift(record);
+    // Keep max 1000 activity items in local memory
+    if (all.length > 1000) all.length = 1000;
+    this.setItem('supplier_activity_history', all);
+    this.syncFirestoreDoc('supplier_activity_history', record.id, record);
+    return record;
+  }
+
+  // =========================================================================
+  // SUPPLIER ALLOCATIONS & LINKED BOOKINGS
+  // =========================================================================
+
+  public getSupplierAllocations(supplierId?: string): SupplierAllocationRecord[] {
+    const all = this.getItem<SupplierAllocationRecord[]>('supplier_allocations', []);
+    if (supplierId) {
+      return all
+        .filter(a => a.supplierId === supplierId)
+        .sort((a, b) => new Date(b.allocatedAt).getTime() - new Date(a.allocatedAt).getTime());
+    }
+    return all.sort((a, b) => new Date(b.allocatedAt).getTime() - new Date(a.allocatedAt).getTime());
+  }
+
+  public logSupplierAllocation(
+    record: Omit<SupplierAllocationRecord, 'id' | 'allocatedAt'>, 
+    user: User | null
+  ): SupplierAllocationRecord {
+    const all = this.getItem<SupplierAllocationRecord[]>('supplier_allocations', []);
+    const entry: SupplierAllocationRecord = {
+      ...record,
+      id: `alc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      allocatedAt: new Date().toISOString()
+    };
+    all.unshift(entry);
+    this.setItem('supplier_allocations', all);
+    this.syncFirestoreDoc('supplier_allocations', entry.id, entry);
+
+    // Also log to supplier activity history
+    this.logSupplierActivity({
+      supplierId: entry.supplierId,
+      action: entry.status === 'REMOVED' ? 'ALLOCATION_UNLINKED' : 'ALLOCATION_LINKED',
+      summary: `Booking service item allocated: ${entry.serviceName} (${entry.bookingReference})`,
+      details: `Customer: ${entry.customerName || 'Direct Booking'} | Status: ${entry.status}`,
+      performedBy: user?.id || 'system',
+      performedByName: user?.displayName || 'Operations',
+      performedByEmail: user?.email || 'operations@theunbound.in'
+    });
+
+    return entry;
+  }
+
+  public getSupplierLinkedBookings(supplierId: string): {
+    booking: Booking;
+    serviceItems: BookingItem[];
+  }[] {
+    const all = this.getAllBookings();
+    const sup = this.getSupplierById(supplierId);
+    const results: { booking: Booking; serviceItems: BookingItem[] }[] = [];
+
+    for (const b of all) {
+      if (!b.items) continue;
+      const matchedItems = b.items.filter(it => 
+        it.supplierId === supplierId || 
+        (sup && it.supplierName && it.supplierName.trim().toLowerCase() === sup.name.trim().toLowerCase())
+      );
+      if (matchedItems.length > 0) {
+        results.push({
+          booking: b,
+          serviceItems: matchedItems
+        });
+      }
+    }
+    return results;
+  }
+
+  // =========================================================================
+  // SUPPLIER PRICE RECORDS
+  // =========================================================================
+
+  public getSupplierPriceRecords(supplierId?: string): SupplierPriceRecord[] {
+    const all = this.getItem<SupplierPriceRecord[]>('supplier_price_records', []);
+    if (supplierId) {
+      return all
+        .filter(p => p.supplierId === supplierId)
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    }
+    return all.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }
+
+  public logSupplierPriceRecord(
+    record: Omit<SupplierPriceRecord, 'id' | 'timestamp'>, 
+    user: User | null
+  ): SupplierPriceRecord {
+    const all = this.getItem<SupplierPriceRecord[]>('supplier_price_records', []);
+    const entry: SupplierPriceRecord = {
+      ...record,
+      id: `prc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      timestamp: new Date().toISOString()
+    };
+    all.unshift(entry);
+    this.setItem('supplier_price_records', all);
+    this.syncFirestoreDoc('supplier_price_records', entry.id, entry);
+    return entry;
+  }
+
+  public removeServiceItemSupplier(
+    bookingId: string, 
+    serviceItemId: string, 
+    reason: string, 
+    user: User | null
+  ): { success: boolean; error?: string } {
+    const all = this.getAllBookings();
+    const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
+    if (!b || !b.items) return { success: false, error: 'Booking not found' };
+
+    const itemIdx = b.items.findIndex(it => it.id === serviceItemId);
+    if (itemIdx === -1) return { success: false, error: 'Service item not found' };
+
+    const currentItem = b.items[itemIdx];
+    const prevSupplierId = currentItem.supplierId;
+    const prevSupplierName = currentItem.supplierName;
+
+    b.items[itemIdx] = {
+      ...currentItem,
+      supplierId: undefined,
+      supplierName: undefined,
+      supplierPhone: undefined,
+      supplierEmail: undefined,
+      supplierConfirmationRef: undefined,
+      supplierStatus: 'PENDING_DISPATCH',
+      supplierConfirmationStatus: 'Supplier Not Allocated',
+      operationalStatus: 'Supplier Not Allocated'
+    };
+    b.updatedAt = new Date().toISOString();
+
+    this.saveBooking(b, user);
+
+    if (prevSupplierId) {
+      this.logSupplierAllocation({
+        supplierId: prevSupplierId,
+        supplierNameSnapshot: prevSupplierName || 'Supplier',
+        supplierCategory: currentItem.category || 'General',
+        bookingId: b.id,
+        bookingReference: b.bookingReference,
+        serviceItemId: currentItem.id,
+        serviceName: currentItem.productName,
+        customerName: (b as any).customerName || b.customer?.name || (b as any).buyerName || 'Valued Guest',
+        serviceDate: currentItem.serviceDate || currentItem.travelDate,
+        status: 'REMOVED',
+        allocatedBy: user?.id || 'system',
+        allocatedByName: user?.displayName || 'Operations',
+        previousSupplierId: prevSupplierId,
+        previousSupplierName: prevSupplierName,
+        changeReason: reason
+      }, user);
+    }
+
+    this.logAudit(user, 'BOOKING_UPDATED', 'Booking', b.id, `Removed supplier from service item ${currentItem.productName}: ${reason}`);
+    return { success: true };
   }
 
   // =========================================================================
@@ -10465,5 +14281,11 @@ export class AppDatabase {
 }
 
 export const db = AppDatabase.getInstance();
+
+export const hasBookingOperationPermission = (
+  user: User | null,
+  permission: keyof BookingOperationsPermissions
+): boolean => AppDatabase.getInstance().hasBookingOperationPermission(user, permission);
+
 
 

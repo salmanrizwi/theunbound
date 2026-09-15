@@ -51,31 +51,31 @@ export const BookingDashboardCards: React.FC<BookingDashboardCardsProps> = ({
       label: 'Total Bookings',
       count: total,
       icon: ClipboardList,
-      color: 'bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-300',
-      activeBorder: 'border-stone-800 dark:border-stone-200'
+      color: 'bg-slate-100 text-slate-700',
+      activeBorder: 'border-slate-900'
     },
     {
       id: 'STATUS_NEW',
       label: 'New Bookings',
       count: newBookings,
       icon: Sparkles,
-      color: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300',
-      activeBorder: 'border-amber-500'
+      color: 'bg-teal-50 text-[#008f77]',
+      activeBorder: 'border-[#00C6A6]'
     },
     {
       id: 'STATUS_TO_BE_PROCESSED',
       label: 'To Be Processed',
       count: toBeProcessed,
       icon: Clock,
-      color: 'bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300',
-      activeBorder: 'border-orange-500'
+      color: 'bg-amber-50 text-amber-700',
+      activeBorder: 'border-amber-500'
     },
     {
       id: 'STATUS_PROCESSING',
       label: 'Processing',
       count: processing,
       icon: RefreshCw,
-      color: 'bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300',
+      color: 'bg-blue-50 text-blue-700',
       activeBorder: 'border-blue-500'
     },
     {
@@ -83,7 +83,7 @@ export const BookingDashboardCards: React.FC<BookingDashboardCardsProps> = ({
       label: 'Waiting for Update',
       count: waitingForUpdate,
       icon: HelpCircle,
-      color: 'bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300',
+      color: 'bg-purple-50 text-purple-700',
       activeBorder: 'border-purple-500'
     },
     {
@@ -91,7 +91,7 @@ export const BookingDashboardCards: React.FC<BookingDashboardCardsProps> = ({
       label: 'Payment Pending',
       count: paymentPending,
       icon: AlertCircle,
-      color: 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300',
+      color: 'bg-rose-50 text-rose-700',
       activeBorder: 'border-rose-500'
     },
     {
@@ -99,15 +99,15 @@ export const BookingDashboardCards: React.FC<BookingDashboardCardsProps> = ({
       label: 'Partially Paid',
       count: paymentPartially,
       icon: Coins,
-      color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950/40 dark:text-yellow-300',
-      activeBorder: 'border-yellow-500'
+      color: 'bg-amber-50 text-amber-700',
+      activeBorder: 'border-amber-500'
     },
     {
       id: 'PAY_PAID',
       label: 'Payment Completed',
       count: paymentCompleted,
       icon: CheckCircle2,
-      color: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300',
+      color: 'bg-emerald-50 text-emerald-700',
       activeBorder: 'border-emerald-500'
     },
     {
@@ -115,15 +115,15 @@ export const BookingDashboardCards: React.FC<BookingDashboardCardsProps> = ({
       label: 'Documents Pending',
       count: documentsPending,
       icon: FileWarning,
-      color: 'bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200',
-      activeBorder: 'border-amber-600'
+      color: 'bg-orange-50 text-orange-700',
+      activeBorder: 'border-orange-500'
     },
     {
       id: 'SUPPLIER_PENDING',
       label: 'Supplier Pending',
       count: supplierPending,
       icon: Building2,
-      color: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300',
+      color: 'bg-indigo-50 text-indigo-700',
       activeBorder: 'border-indigo-500'
     },
     {
@@ -131,7 +131,7 @@ export const BookingDashboardCards: React.FC<BookingDashboardCardsProps> = ({
       label: 'Confirmed',
       count: confirmed,
       icon: CheckCheck,
-      color: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-200',
+      color: 'bg-emerald-100 text-emerald-800',
       activeBorder: 'border-emerald-600'
     },
     {
@@ -139,16 +139,16 @@ export const BookingDashboardCards: React.FC<BookingDashboardCardsProps> = ({
       label: 'Cancelled',
       count: cancelled,
       icon: XCircle,
-      color: 'bg-stone-200 text-stone-800 dark:bg-stone-800 dark:text-stone-300',
-      activeBorder: 'border-stone-500'
+      color: 'bg-slate-100 text-slate-600',
+      activeBorder: 'border-slate-500'
     },
     {
       id: 'STATUS_COMPLETED',
       label: 'Completed',
       count: completed,
       icon: Archive,
-      color: 'bg-teal-100 text-teal-800 dark:bg-teal-950/40 dark:text-teal-300',
-      activeBorder: 'border-teal-500'
+      color: 'bg-teal-100 text-teal-800',
+      activeBorder: 'border-[#008f77]'
     }
   ];
 
@@ -162,21 +162,21 @@ export const BookingDashboardCards: React.FC<BookingDashboardCardsProps> = ({
             key={card.id}
             id={`filter-btn-${card.id.toLowerCase()}`}
             onClick={() => onSelectFilter(card.id)}
-            className={`p-3 rounded-xl border text-left transition-all relative overflow-hidden flex flex-col justify-between ${
+            className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between cursor-pointer ${
               isActive 
-                ? `${card.activeBorder} ring-2 ring-amber-500/20 bg-white dark:bg-stone-900 shadow-sm` 
-                : 'border-stone-200 dark:border-stone-800 bg-white/70 dark:bg-stone-900/70 hover:border-stone-300 dark:hover:border-stone-700'
+                ? `${card.activeBorder} ring-2 ring-[#00C6A6]/20 bg-teal-50/30 shadow-xs` 
+                : 'border-slate-200 bg-white hover:border-slate-300 shadow-xs'
             }`}
           >
             <div className="flex items-center justify-between gap-1 mb-2">
-              <span className={`p-1.5 rounded-lg ${card.color}`}>
+              <span className={`p-1.5 rounded-xl ${card.color}`}>
                 <Icon className="w-4 h-4" />
               </span>
-              <span className={`text-xl font-bold font-mono ${card.count > 0 ? 'text-stone-900 dark:text-stone-100' : 'text-stone-400 dark:text-stone-600'}`}>
+              <span className={`text-xl font-black font-mono ${card.count > 0 ? 'text-slate-900' : 'text-slate-400'}`}>
                 {card.count}
               </span>
             </div>
-            <p className="text-xs font-medium text-stone-600 dark:text-stone-400 truncate">
+            <p className="text-xs font-semibold text-slate-600 truncate">
               {card.label}
             </p>
           </button>

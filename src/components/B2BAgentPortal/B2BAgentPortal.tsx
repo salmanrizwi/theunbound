@@ -10,7 +10,9 @@ import { B2BHotelsCatalogView } from './B2BHotelsCatalogView';
 import { B2BVisaView } from './B2BVisaView';
 import { B2BQuotesManagerView } from './B2BQuotesManagerView';
 import { B2BBookingsManagerView } from './B2BBookingsManagerView';
+import { B2BLeadsManagerView } from './B2BLeadsManagerView';
 import { B2BCustomersCRMView } from './B2BCustomersCRMView';
+import { B2BMyLeadsAndClientsCRMView } from './B2BMyLeadsAndClientsCRMView';
 import { B2BTasksManagerView } from './B2BTasksManagerView';
 import { B2BAccountView } from './B2BAccountView';
 import { HotelDetailModal } from '../HotelDetailModal';
@@ -21,7 +23,7 @@ import { BookingModal } from '../BookingModal';
 import { BookingConfirmationModal } from '../BookingConfirmationModal';
 import { QuoteBuilderDrawer } from '../QuoteBuilderDrawer';
 import { ChatbotLauncher } from '../Chatbot/ChatbotLauncher';
-import { Destination, Hotel, Product, B2BPackage, Quotation, B2BCustomer, CityHub, Booking, HotelRoomType, HotelRate, AiPlannerOptionPlan, AiPlannerStructuredRequirements, QuoteBuilderHandoffPayload } from '../../types';
+import { Destination, Hotel, Product, B2BPackage, Quotation, B2BCustomer, CityHub, Booking, HotelRoomType, HotelRate, AiPlannerOptionPlan, AiPlannerStructuredRequirements, QuoteBuilderHandoffPayload, TravelLead } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
 import { AppDatabase } from '../../services/db';
@@ -102,6 +104,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
     loadSavedQuote,
     setIsQuoteDrawerOpen,
     loadAiPlannerPayload,
+    setLeadId,
     currency
   } = useQuotation();
 
@@ -137,8 +140,13 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
       'my-quotes': 'my-quotes',
       'BOOKINGS': 'bookings',
       'bookings': 'bookings',
-      'CUSTOMERS': 'customers',
-      'customers': 'customers',
+      'CRM': 'crm',
+      'crm': 'crm',
+      'LEADS': 'crm',
+      'leads': 'crm',
+      'assigned-leads': 'crm',
+      'CUSTOMERS': 'crm',
+      'customers': 'crm',
       'TASKS': 'tasks',
       'tasks': 'tasks',
       'ACCOUNT': 'account',
@@ -262,6 +270,23 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
     if (customer.preferredDestination) {
       setDestination(customer.preferredDestination);
     }
+    setActiveTab('create-quote');
+  };
+
+  const handleCreateQuoteForLead = (lead: TravelLead) => {
+    setClientDetails(
+      lead.contactName || '',
+      lead.email || '',
+      lead.phone || '',
+      lead.companyName || lead.agencyName || ''
+    );
+    if (lead.destinationName || lead.destinationId) {
+      setDestination(lead.destinationName || lead.destinationId || '');
+    }
+    if (lead.id) {
+      setLeadId(lead.id);
+    }
+    showToast('Quote Builder Ready', `Prepopulated from assigned Lead ${lead.leadNumber || lead.contactName}`);
     setActiveTab('create-quote');
   };
 
@@ -451,9 +476,14 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
           />
         )}
 
-        {activeTab === 'customers' && (
-          <B2BCustomersCRMView
+        {(activeTab === 'crm' || activeTab === 'leads' || activeTab === 'customers') && (
+          <B2BMyLeadsAndClientsCRMView
+            initialSubView={activeTab === 'customers' ? 'clients' : 'assigned-leads'}
+            onCreateQuoteFromLead={handleCreateQuoteForLead}
             onCreateQuoteForCustomer={handleCreateQuoteForCustomer}
+            onNavigateToBooking={() => {
+              setActiveTab('bookings');
+            }}
           />
         )}
 

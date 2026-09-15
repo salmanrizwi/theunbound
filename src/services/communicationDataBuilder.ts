@@ -586,7 +586,7 @@ export function buildQuoteCommunicationPayload(
   const effectiveHubs = activeOption?.routeHubs || quote.routeHubs || [];
   const effectiveSellingPrice = activeOption?.totalSellingPrice !== undefined
     ? activeOption.totalSellingPrice
-    : (quote.totalSellingPrice || 0);
+    : (quote.finalCustomerSellingPrice || quote.final_customer_selling_price || quote.totalSellingPrice || 0);
 
   // 2. Passenger info
   const adultsCount = quote.adultsCount || quote.passengerBreakdown?.adults || 2;
@@ -734,7 +734,7 @@ export function buildQuoteCommunicationPayload(
 
   // 7. Inclusions & Exclusions
   const inclusions: string[] = [
-    `${durationText} bespoke itinerary management by TheUnbound Destination Management Company`,
+    `${durationText} bespoke itinerary management by Destination Management & Ground Operations`,
     `Hand-picked accommodation across ${effectiveHubs.map(h => h.hubName).join(', ') || quote.destination}`,
     `All contracted private transfers and airport ground logistics as specified in Day-Wise Plan`,
     `All listed sightseeing experiences, entrance tickets, and licensed local guide services`,
@@ -800,8 +800,8 @@ export function buildQuoteCommunicationPayload(
 
   // Sender branding
   const preparedBy = {
-    name: options?.senderBranding?.name || quote.agentName || 'TheUnbound Travel Specialist',
-    agency: options?.senderBranding?.agency || quote.agentAgency || quote.agentCompany || 'TheUnbound Luxury DMC Network',
+    name: options?.senderBranding?.name || quote.agentName || 'Travel Specialist',
+    agency: options?.senderBranding?.agency || quote.agentAgency || quote.agentCompany || 'Ground Operations Team',
     email: options?.senderBranding?.email || quote.agentEmail || 'sales@theunbound.in',
     phone: options?.senderBranding?.phone || quote.agentPhone || '+91-9811654959',
     role: quote.agentAgency ? 'Authorised Travel Partner' : 'Ground Operations Lead',
@@ -1073,7 +1073,7 @@ export function generateContextualEmailSubject(
     case 'OPERATIONAL_ALERT':
       return `Action Required — ${data.serviceType || 'Service'} Confirmation — ${data.bookingRef || 'Ground Ops'}`;
     default:
-      return `TheUnbound DMC Communication — ${data.bookingRef || data.quoteRef || 'Official Update'}`;
+      return `Booking & Travel Communication — ${data.bookingRef || data.quoteRef || 'Official Update'}`;
   }
 }
 
@@ -1106,7 +1106,7 @@ export function formatWhatsAppQuoteFromPayload(
   const headerLines: string[] = [];
   if (useEmojis) {
     headerLines.push(
-      `✨ *THEUNBOUND — LUXURY TRAVEL PROPOSAL* ✨`,
+      `✨ *LUXURY TRAVEL PROPOSAL* ✨`,
       `📋 *Quote Reference:* *#${payload.quoteId}*`,
       `👋 *Prepared for:* *${payload.preparedFor.name}*`,
       ``,
@@ -1123,7 +1123,7 @@ export function formatWhatsAppQuoteFromPayload(
     }
   } else {
     headerLines.push(
-      `*THEUNBOUND — TRAVEL PROPOSAL*`,
+      `*TRAVEL PROPOSAL*`,
       `Quote ID: *#${payload.quoteId}*`,
       `Prepared for: *${payload.preparedFor.name}*`,
       ``,
@@ -1398,16 +1398,16 @@ export function formatWhatsAppQuoteFromPayload(
     closingLines.push(
       `🛎️ *DEDICATED TRAVEL CONCIERGE*`,
       `👤 *${payload.preparedBy.name}*`,
-      `🏢 ${payload.preparedBy.agency || 'TheUnbound Luxury DMC'}`,
+      `🏢 ${payload.preparedBy.agency || 'Ground Operations Team'}`,
       payload.preparedBy.phone ? `📞 WhatsApp / Direct: ${payload.preparedBy.phone}` : '📞 WhatsApp: +91-9811654959',
       payload.preparedBy.email ? `✉️ Email: ${payload.preparedBy.email}` : '✉️ Email: concierge@theunbound.in',
-      `🌐 *TheUnbound Global Partner Network*`
+      `🌐 *Global Ground Partner Network*`
     );
   } else {
     closingLines.push(
       `*TRAVEL CONCIERGE & DESK*`,
       `Prepared by: *${payload.preparedBy.name}*`,
-      `Agency: ${payload.preparedBy.agency || 'TheUnbound Luxury DMC'}`,
+      `Agency: ${payload.preparedBy.agency || 'Ground Operations Team'}`,
       payload.preparedBy.phone ? `WhatsApp / Tel: ${payload.preparedBy.phone}` : 'WhatsApp: +91-9811654959',
       payload.preparedBy.email ? `Email: ${payload.preparedBy.email}` : 'Email: concierge@theunbound.in'
     );
@@ -1457,7 +1457,7 @@ ${payload.transfers.map(t => `• Transfer: ${t.serviceName} (${t.pickupLocation
 TOTAL TRIP PRICE: ${payload.pricing.formattedPrice}
 Quote Valid Until: ${payload.pricing.validUntilText}
 
-Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'TheUnbound Partner Network'})
+Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground Operations Team'})
   `.trim();
 
   const htmlBody = `
@@ -1466,8 +1466,8 @@ Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'TheUnbo
       <div style="background-color: #0f172a; padding: 28px 24px; text-align: left; border-bottom: 3px solid #00C6A6;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <div>
-            <h1 style="margin: 0; font-size: 26px; font-weight: 900; letter-spacing: -0.5px; color: #ffffff; text-transform: lowercase;">theunbound</h1>
-            <p style="margin: 4px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #00E5C0;">Bespoke Travel Proposal</p>
+            <h1 style="margin: 0; font-size: 22px; font-weight: 900; letter-spacing: -0.5px; color: #ffffff; text-transform: uppercase;">Travel Proposal</h1>
+            <p style="margin: 4px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #00E5C0;">Bespoke Ground Itinerary</p>
           </div>
           <div style="text-align: right; background: rgba(255,255,255,0.08); padding: 8px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15);">
             <span style="font-size: 10px; text-transform: uppercase; color: #94a3b8; display: block; font-weight: 700;">Quote Reference</span>
@@ -1637,7 +1637,7 @@ Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'TheUnbo
         <!-- Prepared By Section -->
         <div style="border-top: 1px solid #e2e8f0; padding-top: 18px; font-size: 12px; color: #64748b;">
           <p style="margin: 0 0 4px 0;">
-            Prepared by: <strong>${payload.preparedBy.name}</strong> • ${payload.preparedBy.agency || 'TheUnbound DMC Partner'}
+            Prepared by: <strong>${payload.preparedBy.name}</strong> • ${payload.preparedBy.agency || 'Ground Operations Team'}
           </p>
           <p style="margin: 0;">
             Contact: <a href="mailto:${payload.preparedBy.email}" style="color: #008972; text-decoration: none;">${payload.preparedBy.email}</a> • ${payload.preparedBy.phone || '+91-9811654959'}
@@ -1647,7 +1647,7 @@ Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'TheUnbo
 
       <!-- Footer -->
       <div style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 16px 24px; text-align: center; font-size: 11px; color: #94a3b8;">
-        TheUnbound Destination Management Company Ltd. • Global Ground Operations & Tailor-Made Luxury Tariffs
+        Destination Management & Ground Operations • Bespoke Travel & Itinerary Services
       </div>
     </div>
   `;

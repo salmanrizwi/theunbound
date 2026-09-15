@@ -45,7 +45,7 @@ export const GmailManagementPanel: React.FC<GmailManagementPanelProps> = ({
 
   // Test Email State
   const [testEmail, setTestEmail] = useState<string>('business@theunbound.in');
-  const [testSubject, setTestSubject] = useState<string>('[Live Test] TheUnbound DMC Operations Dispatch');
+  const [testSubject, setTestSubject] = useState<string>('[Live Test] Operations Dispatch');
   const [templateType, setTemplateType] = useState<'BOOKING' | 'QUOTE' | 'SYSTEM_ALERT'>('BOOKING');
   const [isSendingTest, setIsSendingTest] = useState(false);
   const [testSendResult, setTestSendResult] = useState<{ success: boolean; messageId?: string; error?: string } | null>(null);

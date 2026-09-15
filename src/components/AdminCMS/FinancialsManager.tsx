@@ -1,323 +1,510 @@
 import React, { useState, useEffect } from 'react';
 import { AppDatabase } from '../../services/db';
-import { BookingInvoice, BookingVoucher, JobSheet, Booking } from '../../types';
+import { BookingInvoice, BookingVoucher, JobSheet, Booking, BookingUploadedInvoice } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { BookingOperationsEngine } from '../Bookings/BookingOperationsEngine';
+import { VoucherDocumentView } from '../Bookings/VoucherDocumentView';
+import { formatCurrency } from '../../services/pricingEngine';
 import { 
   FileText, 
   DollarSign, 
   Receipt, 
-  ClipboardCheck, 
-  Plus, 
-  Search, 
-  Printer, 
-  Download, 
-  CheckCircle2, 
-  Clock, 
-  ShieldCheck, 
+  UploadCloud, 
+  FileCheck, 
   Building2,
   Calendar,
   X,
-  FileSpreadsheet
+  Layers,
+  ArrowRight,
+  ShieldCheck,
+  AlertTriangle,
+  Eye,
+  Download,
+  Search,
+  CheckCircle2,
+  Clock,
+  ExternalLink
 } from 'lucide-react';
 
 export const FinancialsManager: React.FC = () => {
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
-  const [activeTab, setActiveTab] = useState<'INVOICES' | 'VOUCHERS' | 'JOBSHEETS' | 'MARGINS'>('INVOICES');
+  const [activeTab, setActiveTab] = useState<'CONNECTED_OPS' | 'INVOICES' | 'VOUCHERS' | 'MARGINS'>('CONNECTED_OPS');
   
-  const [invoices, setInvoices] = useState<BookingInvoice[]>(db.getInvoices());
-  const [vouchers, setVouchers] = useState<BookingVoucher[]>(db.getVouchers());
-  const [jobSheets, setJobSheets] = useState<JobSheet[]>(db.getJobSheets());
   const [bookings, setBookings] = useState<Booking[]>(db.getAllBookings());
+  const [vouchers, setVouchers] = useState<BookingVoucher[]>(db.getVouchers());
+  const [uploadedInvoices, setUploadedInvoices] = useState<BookingUploadedInvoice[]>(db.getUploadedInvoices());
   
-  const [selectedInvoice, setSelectedInvoice] = useState<BookingInvoice | null>(null);
-  const [selectedVoucher, setSelectedVoucher] = useState<BookingVoucher | null>(null);
-  const [selectedJobSheet, setSelectedJobSheet] = useState<JobSheet | null>(null);
+  const [selectedBookingForOps, setSelectedBookingForOps] = useState<Booking | null>(null);
+  const [selectedVoucherForView, setSelectedVoucherForView] = useState<BookingVoucher | null>(null);
+  const [selectedInvoiceForView, setSelectedInvoiceForView] = useState<BookingUploadedInvoice | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const refreshData = () => {
+    setBookings(db.getAllBookings());
+    setVouchers(db.getVouchers());
+    setUploadedInvoices(db.getUploadedInvoices());
+    if (selectedBookingForOps) {
+      const refreshed = db.getAllBookings().find(b => b.id === selectedBookingForOps.id);
+      if (refreshed) setSelectedBookingForOps(refreshed);
+    }
+  };
 
   useEffect(() => {
     return db.subscribe(() => {
-      setInvoices(db.getInvoices());
-      setVouchers(db.getVouchers());
-      setJobSheets(db.getJobSheets());
-      setBookings(db.getAllBookings());
+      refreshData();
     });
-  }, []);
+  }, [selectedBookingForOps?.id]);
 
-  // Quick generators from existing bookings
-  const handleGenerateInvoiceForBooking = (booking: Booking) => {
-    const totalPax = booking.items.reduce((sum, item) => sum + item.totalPax, 0) || 2;
-    const taxAmt = Math.round(booking.totalAmount * 0.05);
-    const subtotalAmt = booking.totalAmount - taxAmt;
+  // Filter bookings
+  const filteredBookings = bookings.filter(b => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      b.bookingReference.toLowerCase().includes(q) ||
+      b.customer?.leadTravelerName?.toLowerCase().includes(q) ||
+      b.destinationName?.toLowerCase().includes(q)
+    );
+  });
 
-    const newInvoice: BookingInvoice = {
-      id: `inv-${Date.now()}`,
-      invoiceNumber: `INV-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-      bookingId: booking.id,
-      bookingReference: booking.bookingReference,
-      customerName: booking.customer.leadTravelerName,
-      customerEmail: booking.customer.email,
-      customerPhone: booking.customer.phone,
-      agencyName: booking.customer.agencyName || 'Direct Client',
-      companyName: 'Unbound Experiences India Pvt Ltd',
-      companyAddress: 'A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi',
-      companyTaxNumber: 'GSTIN07AAACU9821K1Z2',
-      currency: booking.currency,
-      subtotal: subtotalAmt,
-      taxTotal: taxAmt,
-      serviceFeeTotal: 0,
-      discountTotal: 0,
-      totalAmount: booking.totalAmount,
-      amountPaid: booking.totalAmount,
-      balanceDue: 0,
-      paymentStatus: 'PAID',
-      paymentMethod: 'Corporate Wire Transfer / Stripe Direct',
-      dueDate: new Date().toISOString().split('T')[0],
-      invoiceDate: new Date().toISOString().split('T')[0],
-      services: booking.items.map((item, idx) => ({
-        id: `srv-${idx}-${Date.now()}`,
-        serviceName: item.productName,
-        category: item.category,
-        travelDate: item.travelDate,
-        quantity: item.totalPax,
-        unitPrice: item.unitSellingPrice,
-        taxAmount: Math.round(item.totalPrice * 0.05),
-        totalPrice: item.totalPrice,
-        currency: item.currency
-      })),
-      notes: 'Thank you for choosing TheUnbound DMC.',
-      terms: 'Non-refundable within 7 days of scheduled departure. 24/7 emergency dispatch included.',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    db.saveInvoice(newInvoice, user);
-    setSelectedInvoice(newInvoice);
-  };
-
-  const handleGenerateVoucherForBooking = (booking: Booking) => {
-    const primaryItem = booking.items[0];
-    const newVoucher: BookingVoucher = {
-      id: `vch-${Date.now()}`,
-      voucherNumber: `VCH-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-      bookingId: booking.id,
-      bookingReference: booking.bookingReference,
-      serviceItemId: primaryItem ? primaryItem.id : 'srv-default',
-      serviceName: primaryItem ? primaryItem.productName : 'Ground Package Service',
-      destination: primaryItem ? primaryItem.destinationName : 'Japan',
-      city: primaryItem ? primaryItem.city : 'Tokyo',
-      customerName: booking.customer.leadTravelerName,
-      leadPaxName: booking.customer.leadTravelerName,
-      totalPax: primaryItem ? primaryItem.totalPax : 2,
-      serviceDate: booking.travelStartDate || new Date().toISOString().split('T')[0],
-      serviceTime: '08:30 AM',
-      supplierName: 'TheUnbound Ground Operations Network',
-      supplierContact: '+81 3 5555 0192 (TheUnbound 24/7 Operations Desk)',
-      meetingPoint: booking.customer.pickupLocation || 'Hotel Lobby / Airport Arrival Terminal',
-      pickupInfo: 'Chauffeur / Guide will hold digital name board with guest surname.',
-      emergencyContact: '+91 9811654959 (TheUnbound 24/7 Agent Dispatch)',
-      passengerBreakdown: `${primaryItem ? primaryItem.adults : 2} Adults`,
-      specialInstructions: 'Luggage assistance included. Blue badge guide assigned.',
-      status: 'ISSUED',
-      issuedAt: new Date().toISOString()
-    };
-    db.saveVoucher(newVoucher, user);
-    setSelectedVoucher(newVoucher);
-  };
-
-  // Financial summary metrics
-  const totalRevenue = invoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-  const totalTax = invoices.reduce((sum, inv) => sum + inv.taxTotal, 0);
-  const estimatedCost = totalRevenue * 0.72; // 28% margin model
-  const grossMargin = totalRevenue - estimatedCost;
+  // Calculate high-level financial operations overview
+  const totalClientTurnover = bookings.reduce((sum, b) => sum + (b.totalAmount || 0), 0);
+  const totalSupplierPayable = bookings.reduce((sum, b) => {
+    const items = db.normalizeServiceItems(b.items || [], b);
+    return sum + items.reduce((iSum, it) => iSum + (it.supplierPrice || 0), 0);
+  }, 0);
+  const totalGrossMargin = totalClientTurnover - totalSupplierPayable;
+  const overallMarginPercent = totalClientTurnover > 0 ? Math.round((totalGrossMargin / totalClientTurnover) * 100) : 0;
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center space-x-2 text-[#00C6A6] font-bold text-xs uppercase tracking-wider mb-1">
+          <div className="flex items-center space-x-2 text-teal-700 font-bold text-xs uppercase tracking-wider mb-1">
             <DollarSign className="w-4 h-4" />
-            <span>Unbound Experiences India Pvt Ltd • Financials</span>
+            <span>Connected Financial Operations & Reservations Engine</span>
           </div>
-          <h2 className="text-xl font-bold text-slate-900">Financial Operations & Dispatch Documents</h2>
-          <p className="text-sm text-slate-500">
-            Generate GST / VAT Tax Invoices, Ground Service Vouchers, Chauffeur/Guide Job Sheets, and track real-time operational margins.
+          <h2 className="text-xl font-black text-slate-900 tracking-tight">
+            Financial Operations & Dispatch Documents
+          </h2>
+          <p className="text-xs text-slate-500 max-w-2xl mt-0.5">
+            Unified operational workflow merging service item review, supplier allocation, commercial rate tracking, validation-gated ground vouchers, and strictly manual invoice processing.
           </p>
         </div>
 
         {/* Tab switcher */}
-        <div className="flex items-center space-x-1 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
+        <div className="flex items-center space-x-1 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 overflow-x-auto">
           <button
-            onClick={() => setActiveTab('INVOICES')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-              activeTab === 'INVOICES' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            onClick={() => {
+              setActiveTab('CONNECTED_OPS');
+              setSelectedBookingForOps(null);
+            }}
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === 'CONNECTED_OPS' ? 'bg-[#008f77] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Invoices ({invoices.length})
+            Booking Operations Engine
+          </button>
+          <button
+            onClick={() => setActiveTab('INVOICES')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === 'INVOICES' ? 'bg-[#008f77] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Manual Invoices ({uploadedInvoices.length})
           </button>
           <button
             onClick={() => setActiveTab('VOUCHERS')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-              activeTab === 'VOUCHERS' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === 'VOUCHERS' ? 'bg-[#008f77] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Vouchers ({vouchers.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('JOBSHEETS')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-              activeTab === 'JOBSHEETS' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Job Sheets ({jobSheets.length})
+            Confirmed Vouchers ({vouchers.length})
           </button>
           <button
             onClick={() => setActiveTab('MARGINS')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-              activeTab === 'MARGINS' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === 'MARGINS' ? 'bg-[#008f77] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Margin Dashboard
+            Supplier Margin Analysis
           </button>
         </div>
       </div>
 
-      {/* TAB 1: INVOICES */}
+      {/* TAB 1: CONNECTED OPERATIONS ENGINE (Primary Merged View) */}
+      {activeTab === 'CONNECTED_OPS' && (
+        <div className="space-y-6">
+          {selectedBookingForOps ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200">
+                <button
+                  onClick={() => setSelectedBookingForOps(null)}
+                  className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  ← Back to Bookings Overview
+                </button>
+                <div className="text-xs text-slate-600 font-bold">
+                  Managing Booking: <span className="text-teal-700">{selectedBookingForOps.bookingReference}</span>
+                </div>
+              </div>
+
+              <BookingOperationsEngine
+                booking={selectedBookingForOps}
+                currentUser={user}
+                onRefresh={refreshData}
+              />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Search & Filter */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200">
+                <div className="relative flex-1 max-w-md">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Search by Booking Reference, Traveler, Destination..."
+                    className="w-full pl-10 pr-4 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800 focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+                <div className="text-xs text-slate-500">
+                  Select a booking to enter its <strong>Booking Operations & Reservations Engine</strong>.
+                </div>
+              </div>
+
+              {/* Bookings Operations Matrix */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredBookings.map(b => {
+                  const items = db.normalizeServiceItems(b.items || [], b);
+                  const eligibility = db.checkBookingVoucherEligibility(b);
+                  const invCount = db.getUploadedInvoices(b.id).length;
+                  const supplierCost = items.reduce((s, it) => s + (it.supplierPrice || 0), 0);
+                  const marginPct = b.totalAmount > 0 ? Math.round(((b.totalAmount - supplierCost) / b.totalAmount) * 100) : 0;
+
+                  return (
+                    <div 
+                      key={b.id}
+                      className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xs hover:shadow-md transition-all space-y-4 flex flex-col justify-between"
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="px-2.5 py-1 rounded-full text-xs font-black bg-teal-50 text-teal-800 border border-teal-200">
+                            {b.bookingReference}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            b.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'
+                          }`}>
+                            {b.status}
+                          </span>
+                        </div>
+
+                        <div>
+                          <h3 className="text-sm font-black text-slate-900 line-clamp-1">
+                            {b.customer?.leadTravelerName || 'Direct Guest'}
+                          </h3>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {b.destinationName || 'Destination'} • {b.travelStartDate || 'Flexible Dates'}
+                          </p>
+                        </div>
+
+                        {/* Operational Stats Grid */}
+                        <div className="grid grid-cols-3 gap-2 text-center text-xs py-1 bg-slate-50 rounded-2xl p-2 border border-slate-100">
+                          <div>
+                            <div className="text-[10px] uppercase font-bold text-slate-400">Services</div>
+                            <div className="font-black text-slate-900 mt-0.5">
+                              {eligibility.confirmedItems}/{eligibility.totalItems}
+                            </div>
+                            <div className="text-[9px] text-emerald-600 font-bold">Confirmed</div>
+                          </div>
+
+                          <div>
+                            <div className="text-[10px] uppercase font-bold text-slate-400">Voucher</div>
+                            <div className="font-black text-slate-900 mt-0.5">
+                              {b.vouchersList && b.vouchersList.length > 0 ? `v${b.vouchersList[0].version || 1}` : (eligibility.isEligible ? 'Ready' : 'Pending')}
+                            </div>
+                            <div className="text-[9px] text-slate-500">Dispatch</div>
+                          </div>
+
+                          <div>
+                            <div className="text-[10px] uppercase font-bold text-slate-400">Invoices</div>
+                            <div className="font-black text-slate-900 mt-0.5">
+                              {invCount}
+                            </div>
+                            <div className="text-[9px] text-blue-600 font-bold">Uploaded</div>
+                          </div>
+                        </div>
+
+                        {/* Commercial Pricing Summary */}
+                        <div className="text-xs space-y-1 pt-1">
+                          <div className="flex items-center justify-between text-slate-500">
+                            <span>Selling Price:</span>
+                            <span className="font-bold text-slate-800">{b.currency} {b.totalAmount?.toLocaleString()}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-slate-500">
+                            <span>Supplier Cost:</span>
+                            <span className="font-bold text-teal-800">{b.currency} {supplierCost.toLocaleString()}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px] text-slate-400">
+                            <span>Est. Margin:</span>
+                            <span className="font-bold text-emerald-700">~{marginPct}%</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => setSelectedBookingForOps(b)}
+                        className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        <Layers className="w-3.5 h-3.5 text-teal-400" />
+                        Open Booking Operations Desk
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 2: MANUAL INVOICES OVERVIEW */}
       {activeTab === 'INVOICES' && (
-        <div className="space-y-4">
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900">Tax Invoices (Unbound Experiences India Pvt Ltd)</h3>
-              <span className="text-xs text-slate-500">Auto-generated from B2B & B2C Bookings</span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase">
-                  <tr>
-                    <th className="p-3">Invoice #</th>
-                    <th className="p-3">Booking Ref</th>
-                    <th className="p-3">Issued To</th>
-                    <th className="p-3">Total Amount</th>
-                    <th className="p-3">Tax / GST</th>
-                    <th className="p-3">Status</th>
-                    <th className="p-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {invoices.map(inv => (
-                    <tr key={inv.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-mono font-bold text-slate-900">{inv.invoiceNumber}</td>
-                      <td className="p-3 font-mono text-slate-600">{inv.bookingReference}</td>
-                      <td className="p-3 font-medium text-slate-800">{inv.customerName}</td>
-                      <td className="p-3 font-mono font-bold text-[#008f77]">{inv.currency || 'USD'} {(Number(inv.totalAmount) || 0).toLocaleString()}</td>
-                      <td className="p-3 font-mono text-slate-500">{inv.currency} {inv.taxTotal}</td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          inv.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                        }`}>
-                          {inv.paymentStatus}
-                        </span>
-                      </td>
-                      <td className="p-3 text-right">
-                        <button
-                          onClick={() => setSelectedInvoice(inv)}
-                          className="px-3 py-1 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800 cursor-pointer"
-                        >
-                          View / Print
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 2: SERVICE VOUCHERS */}
-      {activeTab === 'VOUCHERS' && (
-        <div className="space-y-4">
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900">Ground Service Vouchers (Client & Supplier Confirmation)</h3>
-              <span className="text-xs text-slate-500">Official dispatch ticket for drivers, guides, and hotels</span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase">
-                  <tr>
-                    <th className="p-3">Voucher #</th>
-                    <th className="p-3">Service Name</th>
-                    <th className="p-3">Lead Traveler</th>
-                    <th className="p-3">Service Date</th>
-                    <th className="p-3">Pickup Time</th>
-                    <th className="p-3">Status</th>
-                    <th className="p-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {vouchers.map(vch => (
-                    <tr key={vch.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-mono font-bold text-slate-900">{vch.voucherNumber}</td>
-                      <td className="p-3 font-semibold text-slate-800">{vch.serviceName}</td>
-                      <td className="p-3 text-slate-700">{vch.leadPaxName} ({vch.totalPax} Pax)</td>
-                      <td className="p-3 font-medium text-slate-600">{vch.serviceDate}</td>
-                      <td className="p-3 font-mono text-[#008f77] font-bold">{vch.serviceTime}</td>
-                      <td className="p-3">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                          {vch.status}
-                        </span>
-                      </td>
-                      <td className="p-3 text-right">
-                        <button
-                          onClick={() => setSelectedVoucher(vch)}
-                          className="px-3 py-1 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800 cursor-pointer"
-                        >
-                          View / Print
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Available Bookings for Dispatch Quick Actions */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
-          Quick Dispatch Generator from Active Bookings
-        </h4>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {bookings.map(b => (
-            <div key={b.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="font-mono font-bold text-xs text-slate-900">{b.bookingReference}</span>
-                <span className="text-[10px] font-bold bg-[#00C6A6]/20 text-slate-900 px-2 py-0.5 rounded">
-                  {b.currency} {b.totalAmount}
+        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-black text-slate-900 tracking-tight">
+                  Authorised Manual Invoices Repository
+                </h3>
+                <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold">
+                  Zero Automated Invoicing Policy
                 </span>
               </div>
-              <p className="text-xs text-slate-600 line-clamp-1">{b.customer.leadTravelerName} • {b.items[0]?.productName}</p>
-              <div className="flex items-center space-x-2 pt-1">
-                <button
-                  onClick={() => handleGenerateInvoiceForBooking(b)}
-                  className="flex-1 text-[11px] font-bold py-1 px-2 bg-white border border-slate-300 hover:bg-slate-100 rounded text-slate-800 cursor-pointer"
-                >
-                  + Generate Invoice
-                </button>
-                <button
-                  onClick={() => handleGenerateVoucherForBooking(b)}
-                  className="flex-1 text-[11px] font-bold py-1 px-2 bg-[#00C6A6] hover:bg-[#00b094] rounded text-slate-950 cursor-pointer"
-                >
-                  + Issue Voucher
-                </button>
-              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Every invoice in this repository was manually uploaded, verified, and linked to a verified booking or service item.
+              </p>
             </div>
-          ))}
+            <div className="text-xs text-slate-600 bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-200">
+              Total Invoices: <strong>{uploadedInvoices.length}</strong>
+            </div>
+          </div>
+
+          {uploadedInvoices.length === 0 ? (
+            <div className="p-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300 space-y-2">
+              <UploadCloud className="w-8 h-8 text-slate-400 mx-auto" />
+              <p className="text-xs font-bold text-slate-700">No manual invoices uploaded yet</p>
+              <p className="text-[11px] text-slate-400">
+                To upload invoices, open any booking from the Booking Operations Engine tab and use the Manual Invoice Upload Desk.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-2xl border border-slate-200">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[10px]">
+                  <tr>
+                    <th className="px-4 py-3">Invoice Number</th>
+                    <th className="px-4 py-3">Booking Ref</th>
+                    <th className="px-4 py-3">Type & Scope</th>
+                    <th className="px-4 py-3">Amount</th>
+                    <th className="px-4 py-3">Uploaded By & Date</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {uploadedInvoices.map(inv => (
+                    <tr key={inv.id} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="px-4 py-3.5 font-bold font-mono text-slate-900">
+                        {inv.invoiceNumber}
+                      </td>
+                      <td className="px-4 py-3.5 font-mono text-teal-800 font-bold">
+                        {inv.bookingReference}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="font-bold text-slate-800">{inv.invoiceType}</div>
+                        <div className="text-[10px] text-slate-400">{inv.associationType}</div>
+                      </td>
+                      <td className="px-4 py-3.5 font-bold text-slate-900">
+                        {inv.currency} {inv.amount?.toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-600">
+                        <div>{inv.uploadedByName}</div>
+                        <div className="text-[10px] text-slate-400">{new Date(inv.uploadedAt).toLocaleDateString()}</div>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          {inv.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {inv.uploadedFile && (
+                            <a
+                              href={inv.uploadedFile}
+                              download={inv.uploadedFileName}
+                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
+                              title="Download File"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                          <button
+                            onClick={() => {
+                              const b = bookings.find(item => item.id === inv.bookingId);
+                              if (b) {
+                                setSelectedBookingForOps(b);
+                                setActiveTab('CONNECTED_OPS');
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                          >
+                            <span>Open Booking</span>
+                            <ArrowRight className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-      </div>
+      )}
+
+      {/* TAB 3: CONFIRMED VOUCHERS OVERVIEW */}
+      {activeTab === 'VOUCHERS' && (
+        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <div>
+              <h3 className="text-base font-black text-slate-900 tracking-tight">
+                Confirmed Ground Service Vouchers
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Authoritative vouchers generated exclusively after all required service items have been confirmed.
+              </p>
+            </div>
+            <div className="text-xs text-slate-600 bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-200">
+              Total Vouchers: <strong>{vouchers.length}</strong>
+            </div>
+          </div>
+
+          {vouchers.length === 0 ? (
+            <div className="p-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300 space-y-2">
+              <FileCheck className="w-8 h-8 text-slate-400 mx-auto" />
+              <p className="text-xs font-bold text-slate-700">No vouchers generated yet</p>
+              <p className="text-[11px] text-slate-400">
+                Confirm all service items within a booking to unlock official ground voucher generation.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-2xl border border-slate-200">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[10px]">
+                  <tr>
+                    <th className="px-4 py-3">Voucher #</th>
+                    <th className="px-4 py-3">Booking Ref</th>
+                    <th className="px-4 py-3">Traveler</th>
+                    <th className="px-4 py-3">Service Date</th>
+                    <th className="px-4 py-3">Version & Issued</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {vouchers.map(v => (
+                    <tr key={v.id} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="px-4 py-3.5 font-bold font-mono text-slate-900">
+                        {v.voucherNumber}
+                      </td>
+                      <td className="px-4 py-3.5 font-mono text-teal-800 font-bold">
+                        {v.bookingReference}
+                      </td>
+                      <td className="px-4 py-3.5 font-bold text-slate-800">
+                        {v.leadPaxName || v.customerName} ({v.totalPax} Pax)
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-600">
+                        {v.serviceDate}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-50 text-teal-800 border border-teal-200">
+                          v{v.version || 1}
+                        </span>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          {new Date(v.issuedAt || v.generatedAt!).toLocaleDateString()}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3.5 text-right">
+                        <button
+                          onClick={() => setSelectedVoucherForView(v)}
+                          className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center gap-1.5 ml-auto cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" /> View Voucher
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 4: MARGIN ANALYSIS */}
+      {activeTab === 'MARGINS' && (
+        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-6">
+          <div className="pb-4 border-b border-slate-100">
+            <h3 className="text-base font-black text-slate-900 tracking-tight">
+              Operational Gross Margin Analysis
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Calculated dynamically from real customer selling prices and internal supplier rates.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-400">Total Client Turnover</span>
+              <div className="text-2xl font-black text-slate-900">
+                USD {totalClientTurnover.toLocaleString()}
+              </div>
+              <p className="text-[11px] text-slate-500">Across {bookings.length} reservations</p>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-400">Total Supplier Payable</span>
+              <div className="text-2xl font-black text-teal-800">
+                USD {totalSupplierPayable.toLocaleString()}
+              </div>
+              <p className="text-[11px] text-slate-500">Allocated ground partners & hotels</p>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-emerald-50 border border-emerald-200 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-emerald-800">Operational Margin</span>
+              <div className="text-2xl font-black text-emerald-900">
+                USD {totalGrossMargin.toLocaleString()} ({overallMarginPercent}%)
+              </div>
+              <p className="text-[11px] text-emerald-700">Authoritative DMC margin</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: VOUCHER VIEWER */}
+      {selectedVoucherForView && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="max-w-4xl w-full my-8">
+            <VoucherDocumentView
+              voucher={selectedVoucherForView}
+              isOutdated={selectedVoucherForView.isOutdated}
+              onClose={() => setSelectedVoucherForView(null)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

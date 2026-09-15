@@ -41,7 +41,10 @@ import {
   Plane,
   FileCheck,
   Eye,
-  MessageCircle
+  MessageCircle,
+  Lock,
+  Save,
+  Percent
 } from 'lucide-react';
 import { 
   QuoteItem, 
@@ -57,7 +60,8 @@ import {
   CRMLead,
   QuotationScope,
   VisaProduct,
-  FeasibilityCheckResult
+  FeasibilityCheckResult,
+  AgentMarginType
 } from '../../types';
 import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
 import { TransferSuggestion } from '../../utils/b2bQuotationHelpers';
@@ -165,6 +169,13 @@ export interface StepByStepQuotationWorkspaceProps {
   setDayThemes?: React.Dispatch<React.SetStateAction<Record<number, string>>>;
 
   // Pricing & Margins
+  baseFinalSellingPrice?: number;
+  agentMarginType?: AgentMarginType;
+  setAgentMarginType?: (type: AgentMarginType) => void;
+  agentMarginValue?: number;
+  setAgentMarginValue?: (val: number) => void;
+  agentMarginAmount?: number;
+  finalCustomerSellingPrice?: number;
   agentMarkupPercent: number;
   setAgentMarkupPercent: (m: number) => void;
   overallDiscountPercent: number;
@@ -277,6 +288,13 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   onOpenEditItem,
   dayThemes = {},
   setDayThemes,
+  baseFinalSellingPrice,
+  agentMarginType: propAgentMarginType,
+  setAgentMarginType: propSetAgentMarginType,
+  agentMarginValue: propAgentMarginValue,
+  setAgentMarginValue: propSetAgentMarginValue,
+  agentMarginAmount: propAgentMarginAmount,
+  finalCustomerSellingPrice: propFinalCustomerSellingPrice,
   agentMarkupPercent,
   setAgentMarkupPercent,
   overallDiscountPercent,
@@ -309,6 +327,43 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   autoSaveStatus,
   lastSavedTimestamp
 }) => {
+  // Local fallback margin state if not provided externally
+  const [internalMarginType, setInternalMarginType] = useState<AgentMarginType>(propAgentMarginType || 'PERCENTAGE');
+  const [internalMarginValue, setInternalMarginValue] = useState<number>(
+    propAgentMarginValue !== undefined ? propAgentMarginValue : (agentMarkupPercent || 10)
+  );
+
+  const effectiveMarginType = propAgentMarginType || internalMarginType;
+  const effectiveMarginValue = propAgentMarginValue !== undefined ? propAgentMarginValue : internalMarginValue;
+
+  const handleUpdateMarginType = (newType: AgentMarginType) => {
+    setInternalMarginType(newType);
+    if (propSetAgentMarginType) {
+      propSetAgentMarginType(newType);
+    }
+  };
+
+  const handleUpdateMarginValue = (val: number) => {
+    setInternalMarginValue(val);
+    if (propSetAgentMarginValue) {
+      propSetAgentMarginValue(val);
+    }
+    if (effectiveMarginType === 'PERCENTAGE') {
+      setAgentMarkupPercent(val);
+    }
+  };
+
+  const effectiveBasePrice = baseFinalSellingPrice !== undefined ? baseFinalSellingPrice : totalSellingPrice;
+  const effectiveMarginAmount = propAgentMarginAmount !== undefined
+    ? propAgentMarginAmount
+    : effectiveMarginType === 'PERCENTAGE'
+      ? Math.round(effectiveBasePrice * ((effectiveMarginValue || 0) / 100))
+      : Math.round(effectiveMarginValue || 0);
+
+  const effectiveFinalPrice = propFinalCustomerSellingPrice !== undefined
+    ? propFinalCustomerSellingPrice
+    : (effectiveBasePrice + effectiveMarginAmount);
+
   // Filter items by category
   const hotelItems = useMemo(() => items.filter(it => 
     (it.product.category || '').toLowerCase().includes('hotel') ||
@@ -582,22 +637,30 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       s6Status = 'NOT_STARTED';
     }
 
-    // 7. Review & Feasibility
-    let s7Status: 'COMPLETED' | 'WARNING' | 'NOT_STARTED' = 'NOT_STARTED';
-    if (feasibility.score >= 8.5) {
+    // 7. Day-by-Day Master Schedule
+    let s7Status: 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED' = 'NOT_STARTED';
+    if (calendarDays.length > 0 && items.length > 0) {
       s7Status = 'COMPLETED';
-    } else if (feasibility.warnings.length > 0) {
-      s7Status = 'WARNING';
-    } else {
-      s7Status = 'COMPLETED';
+    } else if (calendarDays.length > 0) {
+      s7Status = 'IN_PROGRESS';
     }
 
-    // 8. Pricing & Margin
-    let s8Status: 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED' = 'NOT_STARTED';
-    if (items.length > 0 && finalClientPrice > 0) {
+    // 8. Review & Feasibility
+    let s8Status: 'COMPLETED' | 'WARNING' | 'NOT_STARTED' = 'NOT_STARTED';
+    if (feasibility.score >= 8.5) {
       s8Status = 'COMPLETED';
+    } else if (feasibility.warnings.length > 0) {
+      s8Status = 'WARNING';
     } else {
-      s8Status = 'NOT_STARTED';
+      s8Status = 'COMPLETED';
+    }
+
+    // 9. Pricing & Margin
+    let s9Status: 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED' = 'NOT_STARTED';
+    if (items.length > 0 && effectiveFinalPrice > 0) {
+      s9Status = 'COMPLETED';
+    } else {
+      s9Status = 'NOT_STARTED';
     }
 
     return {
@@ -608,7 +671,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       step5: s5Status,
       step6: s6Status,
       step7: s7Status,
-      step8: s8Status
+      step8: s8Status,
+      step9: s9Status
     };
   }, [
     clientName, 
@@ -624,12 +688,13 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     activityItems, 
     addonItems, 
     visaItems, 
+    calendarDays.length,
     feasibility, 
     items.length, 
-    finalClientPrice
+    effectiveFinalPrice
   ]);
 
-  // Overall Quote Completeness Calculation
+  // Overall Quote Completeness Calculation (9 Steps)
   const quoteCompleteness = useMemo(() => {
     let completedSteps = 0;
     if (stepStatuses.step1 === 'COMPLETED') completedSteps++;
@@ -640,12 +705,13 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     if (stepStatuses.step6 === 'COMPLETED') completedSteps++;
     if (stepStatuses.step7 === 'COMPLETED') completedSteps++;
     if (stepStatuses.step8 === 'COMPLETED') completedSteps++;
+    if (stepStatuses.step9 === 'COMPLETED') completedSteps++;
 
-    const percent = Math.round((completedSteps / 8) * 100);
+    const percent = Math.round((completedSteps / 9) * 100);
     return { completedSteps, percent };
   }, [stepStatuses]);
 
-  // Step definitions array
+  // Step definitions array (1 to 9)
   const stepsList = [
     {
       id: 1,
@@ -697,18 +763,26 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     },
     {
       id: 7,
+      name: 'Day-by-Day Itinerary',
+      shortDesc: 'Chronological Master Schedule & Timeline',
+      status: stepStatuses.step7,
+      summary: `${calendarDays.length} Days • ${items.length} Services`,
+      icon: Calendar
+    },
+    {
+      id: 8,
       name: 'Review & Feasibility',
       shortDesc: 'Operational Diagnostics & Check',
-      status: stepStatuses.step7,
+      status: stepStatuses.step8,
       summary: `Score ${feasibility.score}/10 (${feasibility.status})`,
       icon: CheckCircle2
     },
     {
-      id: 8,
+      id: 9,
       name: 'Pricing & Margin',
       shortDesc: 'Commercial Calculations & Export',
-      status: stepStatuses.step8,
-      summary: `${currency} ${finalClientPrice.toLocaleString()}`,
+      status: stepStatuses.step9,
+      summary: `${currency} ${effectiveFinalPrice.toLocaleString()}`,
       icon: DollarSign
     }
   ];
@@ -774,7 +848,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
               Quote Completeness:
             </span>
             <span className="text-xs font-black text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-200">
-              {quoteCompleteness.percent}% Complete ({quoteCompleteness.completedSteps} of 8 Steps)
+              {quoteCompleteness.percent}% Complete ({quoteCompleteness.completedSteps} of 9 Steps)
             </span>
             <span className="text-[11px] text-slate-400 font-medium">
               • Auto-Saved {lastSavedTimestamp}
@@ -823,7 +897,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 Quotation Workflow
               </span>
               <span className="text-[11px] font-bold text-slate-400">
-                Step {activeStepId} of 8
+                Step {activeStepId} of 9
               </span>
             </div>
 
@@ -928,7 +1002,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   </div>
                 </div>
                 <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                  Step 1 of 8
+                  Step 1 of 9
                 </span>
               </div>
 
@@ -1252,7 +1326,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   </div>
                 </div>
                 <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                  Step 2 of 8
+                  Step 2 of 9
                 </span>
               </div>
 
@@ -1461,7 +1535,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     {quotationScope === 'LAND_ONLY' ? '✓ Land-Only Package' : 'Land-Only Mode'}
                   </button>
                   <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                    Step 3 of 8
+                    Step 3 of 9
                   </span>
                 </div>
               </div>
@@ -1527,14 +1601,14 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
                   const nightlyInQuoteCurrency = selectedHotel 
                     ? convertCurrency(
-                        selectedRate?.doubleNetRate || selectedRate?.singleNetRate || selectedHotel.startingNetPrice || 200, 
+                        (selectedRate as any)?.startingSellingRateUSD || (selectedRate as any)?.sellingRateUSD || selectedHotel.startingPriceB2B || Math.round(((selectedRate?.doubleNetRate || selectedRate?.singleNetRate || selectedHotel.startingNetPrice || 200) * 1.3)), 
                         selectedRate?.currency || selectedHotel.currency || 'USD', 
                         currency
                       )
                     : 0;
 
-                  const totalStayNet = nightlyInQuoteCurrency * currentNights * currentRoomsCount;
-                  const finalSellingStayPrice = totalStayNet * (1 + (agentMarkupPercent || 0) / 100);
+                  const totalStaySelling = nightlyInQuoteCurrency * currentNights * currentRoomsCount;
+                  const finalSellingStayPrice = totalStaySelling * (1 + (agentMarkupPercent || 0) / 100);
 
                   const occupancy = validateRoomOccupancy(selectedRoom, currentRoomsCount, adultsCount, childrenCount, infantsCount);
 
@@ -1771,7 +1845,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                 >
                                   {(selectedHotel.roomTypes || []).map(r => {
                                     const rRate = r.rates?.[0];
-                                    const rPrice = rRate?.doubleNetRate || selectedHotel.startingNetPrice || 200;
+                                    const rPrice = (rRate as any)?.startingSellingRateUSD || (rRate as any)?.sellingRateUSD || selectedHotel.startingPriceB2B || Math.round(((rRate?.doubleNetRate || selectedHotel.startingNetPrice || 200) * 1.3));
                                     const rCurr = rRate?.currency || selectedHotel.currency || 'USD';
                                     const rConverted = convertCurrency(rPrice, rCurr, currency);
                                     const mealName = rRate?.mealPlanName || 'Bed & Breakfast';
@@ -1947,7 +2021,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   </div>
                 </div>
                 <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                  Step 4 of 8
+                  Step 4 of 9
                 </span>
               </div>
 
@@ -2061,7 +2135,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 </div>
                 <div className="flex items-center space-x-2">
                   <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                    Step 5 of 8
+                    Step 5 of 9
                   </span>
                 </div>
               </div>
@@ -2356,8 +2430,184 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             </div>
           )}
 
-          {/* STEP 7: REVIEW & FEASIBILITY */}
+          {/* STEP 7: DAY-BY-DAY MASTER SCHEDULE & TIMELINE */}
           {activeStepId === 7 && (
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
+                    <Calendar className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-black text-slate-900">Step 7: Day-by-Day Itinerary & Schedule</h2>
+                    <p className="text-xs text-slate-500">Chronological service itinerary, transit connections, daily service agendas, and custom day themes.</p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                    Step 7 of 9
+                  </span>
+                </div>
+              </div>
+
+              {/* Hub Filter Tabs */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-100">
+                <div className="flex items-center flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedHubFilter('ALL')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      selectedHubFilter === 'ALL'
+                        ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    All Days ({calendarDays.length})
+                  </button>
+                  {routeHubs.map(h => (
+                    <button
+                      key={h.id}
+                      type="button"
+                      onClick={() => setSelectedHubFilter(h.hubName)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        selectedHubFilter === h.hubName
+                          ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      📍 {h.hubName} ({h.nights}n)
+                    </button>
+                  ))}
+                </div>
+
+                <div className="text-xs text-slate-500 font-medium">
+                  {items.length} Total Services Scheduled
+                </div>
+              </div>
+
+              {/* Day Cards */}
+              <div className="space-y-4">
+                {daySlots
+                  .filter(slot => selectedHubFilter === 'ALL' || slot.hub?.hubName === selectedHubFilter)
+                  .map(slot => {
+                    const dayItems = items.filter(it => it.travelDate === slot.dateString);
+                    const dayAccommodations = dayItems.filter(it => (it.product.category || '').toLowerCase().includes('hotel') || (it.product.category || '').toLowerCase().includes('accommodation') || it.isManualHotel);
+                    const dayTransfers = dayItems.filter(it => (it.product as any).isTransfer || (it.product.category || '').toLowerCase().includes('transfer') || (it.product.category || '').toLowerCase().includes('transport'));
+                    const dayActivities = dayItems.filter(it => (it.product.category || '').toLowerCase().includes('tour') || (it.product.category || '').toLowerCase().includes('activit') || (it.product.category || '').toLowerCase().includes('attraction'));
+                    const dayFacilitations = dayItems.filter(it => !dayAccommodations.includes(it) && !dayTransfers.includes(it) && !dayActivities.includes(it));
+                    const dayTotalSelling = dayItems.reduce((acc, it) => acc + (it.calculation?.finalTotalSellingPrice || 0), 0);
+
+                    return (
+                      <div key={slot.dayNumber} className="bg-slate-50/70 rounded-2xl border border-slate-200 p-4 space-y-3">
+                        {/* Day Header */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-200/80">
+                          <div className="flex items-center space-x-2.5">
+                            <span className="w-8 h-8 rounded-xl bg-slate-900 text-white font-black text-xs flex items-center justify-center font-mono">
+                              D{slot.dayNumber}
+                            </span>
+                            <div>
+                              <div className="flex items-center space-x-2">
+                                <span className="font-bold text-xs text-slate-900">{slot.weekday}, {slot.formattedDate}</span>
+                                {slot.hub && (
+                                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                                    📍 {slot.hub.hubName}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center space-x-3">
+                            {dayTotalSelling > 0 && (
+                              <span className="text-xs font-mono font-bold text-slate-700">
+                                Day Total: {formatCurrency(dayTotalSelling, currency)}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => onOpenQuickAddProductModal(slot)}
+                              className="px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 shadow-2xs"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Add Experience</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Day Theme Input */}
+                        <div className="flex items-center space-x-2">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                          <input
+                            type="text"
+                            value={dayThemes[slot.dayNumber] || ''}
+                            onChange={(e) => setDayThemes?.(prev => ({ ...prev, [slot.dayNumber]: e.target.value }))}
+                            placeholder={`Day ${slot.dayNumber} Theme / Highlights (e.g. Arrival & Marina Sunset Dhow Cruise)`}
+                            className="w-full text-xs font-medium text-slate-800 placeholder-slate-400 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-teal-500 transition-colors"
+                          />
+                        </div>
+
+                        {/* Scheduled Items in Day */}
+                        {dayItems.length === 0 ? (
+                          <div className="p-3 rounded-xl bg-white border border-dashed border-slate-200 text-center text-xs text-slate-400">
+                            No activities or services scheduled for this day yet. Click "+ Add Experience" above to attach tours or excursions.
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                            {dayAccommodations.map((it, idx) => (
+                              <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                                <div className="flex items-center space-x-2 truncate">
+                                  <Building2 className="w-4 h-4 text-teal-600 shrink-0" />
+                                  <span className="font-bold text-slate-900 truncate">{it.product.name}</span>
+                                </div>
+                                <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
+                                  {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
+                                </span>
+                              </div>
+                            ))}
+                            {dayTransfers.map((it, idx) => (
+                              <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                                <div className="flex items-center space-x-2 truncate">
+                                  <Car className="w-4 h-4 text-teal-600 shrink-0" />
+                                  <span className="font-bold text-slate-900 truncate">{it.product.name}</span>
+                                </div>
+                                <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
+                                  {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
+                                </span>
+                              </div>
+                            ))}
+                            {dayActivities.map((it, idx) => (
+                              <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                                <div className="flex items-center space-x-2 truncate">
+                                  <Compass className="w-4 h-4 text-teal-600 shrink-0" />
+                                  <span className="font-bold text-slate-900 truncate">{it.product.name}</span>
+                                </div>
+                                <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
+                                  {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
+                                </span>
+                              </div>
+                            ))}
+                            {dayFacilitations.map((it, idx) => (
+                              <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                                <div className="flex items-center space-x-2 truncate">
+                                  <ShieldCheck className="w-4 h-4 text-teal-600 shrink-0" />
+                                  <span className="font-bold text-slate-900 truncate">{it.product.name}</span>
+                                </div>
+                                <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
+                                  {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+
+          {/* STEP 8: REVIEW & OPERATIONAL FEASIBILITY */}
+          {activeStepId === 8 && (
             <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
               <div className="flex items-center justify-between pb-4 border-b border-slate-100">
                 <div className="flex items-center space-x-3">
@@ -2365,12 +2615,12 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <CheckCircle2 className="w-5 h-5" />
                   </div>
                   <div>
-                    <h2 className="text-base font-black text-slate-900">Step 7: Review & Operational Feasibility</h2>
+                    <h2 className="text-base font-black text-slate-900">Step 8: Review & Operational Feasibility</h2>
                     <p className="text-xs text-slate-500">Live feasibility diagnostics, route coherence, and timeline validation.</p>
                   </div>
                 </div>
                 <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                  Step 7 of 8
+                  Step 8 of 9
                 </span>
               </div>
 
@@ -2456,211 +2706,369 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             </div>
           )}
 
-          {/* STEP 8: PRICING & MARGIN */}
-          {activeStepId === 8 && (() => {
+          {/* STEP 9: PRICING & MARGIN */}
+          {activeStepId === 9 && (() => {
             const hotelsTotalSelling = items
-              .filter(it => it.product.category === 'Hotels & Stays' || it.product.category === 'Accommodation')
+              .filter(it => it.product.category === 'Hotels & Stays' || it.product.category === 'Accommodation' || it.isManualHotel)
               .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
             const activitiesTotalSelling = items
               .filter(it => it.product.category === 'Activities & Tours' || it.product.category === 'Attractions' || it.product.category === 'Activity')
               .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
             const transfersTotalSelling = items
-              .filter(it => it.product.category === 'Transfers' || it.product.category === 'Transport')
+              .filter(it => it.product.category === 'Transfers' || it.product.category === 'Transport' || (it.product as any).isTransfer)
               .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
             const visaTotalSelling = items
-              .filter(it => it.product.category === 'Travel Services' || it.product.sku?.startsWith('VSA-') || it.product.name.toLowerCase().includes('visa'))
+              .filter(it => it.product.category === 'Travel Services' || it.product.sku?.startsWith('VSA-') || it.product.name.toLowerCase().includes('visa') || (it.product as any).isVisa)
               .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
             const otherTotalSelling = items
-              .filter(it => !['Hotels & Stays', 'Accommodation', 'Activities & Tours', 'Attractions', 'Activity', 'Transfers', 'Transport', 'Travel Services'].includes(it.product.category) && !it.product.sku?.startsWith('VSA-') && !it.product.name.toLowerCase().includes('visa'))
+              .filter(it => !['Hotels & Stays', 'Accommodation', 'Activities & Tours', 'Attractions', 'Activity', 'Transfers', 'Transport', 'Travel Services'].includes(it.product.category) && !it.isManualHotel && !it.product.sku?.startsWith('VSA-') && !it.product.name.toLowerCase().includes('visa') && !(it.product as any).isTransfer && !(it.product as any).isVisa)
               .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+
+            const totalPax = Math.max(1, adultsCount + childrenCount + infantsCount);
+            const marginPercentageValue = effectiveMarginType === 'PERCENTAGE' 
+              ? effectiveMarginValue 
+              : effectiveBasePrice > 0 
+                ? Number(((effectiveMarginAmount / effectiveBasePrice) * 100).toFixed(1)) 
+                : 0;
+
+            const isNegativeMargin = (effectiveMarginValue || 0) < 0;
+            const isHighMargin = effectiveMarginType === 'PERCENTAGE' && (effectiveMarginValue || 0) > 100;
 
             return (
               <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
-                <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+                {/* Step Header */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
                   <div className="flex items-center space-x-3">
                     <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
                       <DollarSign className="w-5 h-5" />
                     </div>
                     <div>
-                      <h2 className="text-base font-black text-slate-900">Step 8: Commercial Pricing & Export</h2>
-                      <p className="text-xs text-slate-500">Commercial margins, passenger tariff breakdown, PDF generation, and client email.</p>
+                      <h2 className="text-base font-black text-slate-900">Step 9: Pricing & Margin</h2>
+                      <p className="text-xs text-slate-500">Authoritative system base pricing, partner agent margin controls, and quotation dispatch actions.</p>
                     </div>
                   </div>
-                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                    Step 8 of 8
-                  </span>
+                  <div className="flex items-center space-x-2">
+                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                      Step 9 of 9
+                    </span>
+                    {lastSavedTimestamp && (
+                      <span className="text-[11px] font-medium text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
+                        Auto-saved {lastSavedTimestamp}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                {/* Commercial Breakdown */}
-                <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black text-slate-700 uppercase tracking-wider">
-                      Quotation Tariff & Currency
-                    </span>
-                    <div className="flex items-center space-x-2">
-                      <span className="text-xs text-slate-500 font-bold">Currency:</span>
-                      <select
-                        value={currency}
-                        onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                        className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 text-xs font-bold text-slate-900 outline-none cursor-pointer"
-                      >
-                        <option value="USD">USD ($)</option>
-                        <option value="INR">INR (₹)</option>
-                        <option value="EUR">EUR (€)</option>
-                        <option value="GBP">GBP (£)</option>
-                        <option value="AED">AED (AED)</option>
-                        <option value="JPY">JPY (¥)</option>
-                      </select>
-                    </div>
-                  </div>
+                {/* 3 Core Commercial Architecture Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  {/* CARD 1: SYSTEM BASE SELLING PRICE (AUTHORITATIVE) */}
+                  <div className="bg-slate-50/80 rounded-2xl border border-slate-200 p-5 space-y-3.5 flex flex-col justify-between">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-slate-200 text-slate-800">
+                          <Lock className="w-3 h-3 text-slate-600" />
+                          <span>Authoritative System Base</span>
+                        </span>
 
-                  {/* Category Final Price Summary */}
-                  <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-2.5">
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
-                      Service Final Selling Prices
-                    </span>
-                    <div className="space-y-2 text-xs">
+                        {/* Currency Selector */}
+                        <select
+                          value={currency}
+                          onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
+                          className="px-2 py-0.5 rounded-md bg-white border border-slate-300 text-xs font-bold text-slate-900 outline-none cursor-pointer"
+                        >
+                          <option value="USD">USD ($)</option>
+                          <option value="INR">INR (₹)</option>
+                          <option value="EUR">EUR (€)</option>
+                          <option value="GBP">GBP (£)</option>
+                          <option value="AED">AED (AED)</option>
+                          <option value="JPY">JPY (¥)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <span className="text-[11px] font-bold text-slate-500 block">
+                          Contracted Wholesale Base
+                        </span>
+                        <span className="text-2xl font-black font-mono text-slate-900">
+                          {formatCurrency(effectiveBasePrice, currency)}
+                        </span>
+                      </div>
+
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        Calculated from wholesale inventory supplier tariffs, platform commercial markups, and taxes. Protected unmodifiable baseline.
+                      </p>
+                    </div>
+
+                    {/* Breakdown List */}
+                    <div className="pt-2 border-t border-slate-200/80 space-y-1 text-[11px] text-slate-600">
                       {hotelsTotalSelling > 0 && (
-                        <div className="flex items-center justify-between text-slate-700">
-                          <span className="flex items-center space-x-2">
-                            <Building2 className="w-3.5 h-3.5 text-teal-600" />
-                            <span>Hotels & Accommodations:</span>
-                          </span>
-                          <span className="font-mono font-bold text-slate-900">
-                            {formatCurrency(hotelsTotalSelling, currency)}
-                          </span>
+                        <div className="flex justify-between">
+                          <span>🏨 Accommodations:</span>
+                          <span className="font-mono font-bold text-slate-800">{formatCurrency(hotelsTotalSelling, currency)}</span>
                         </div>
                       )}
                       {activitiesTotalSelling > 0 && (
-                        <div className="flex items-center justify-between text-slate-700">
-                          <span className="flex items-center space-x-2">
-                            <Compass className="w-3.5 h-3.5 text-teal-600" />
-                            <span>Activities & Excursions:</span>
-                          </span>
-                          <span className="font-mono font-bold text-slate-900">
-                            {formatCurrency(activitiesTotalSelling, currency)}
-                          </span>
+                        <div className="flex justify-between">
+                          <span>🎡 Activities & Tours:</span>
+                          <span className="font-mono font-bold text-slate-800">{formatCurrency(activitiesTotalSelling, currency)}</span>
                         </div>
                       )}
                       {transfersTotalSelling > 0 && (
-                        <div className="flex items-center justify-between text-slate-700">
-                          <span className="flex items-center space-x-2">
-                            <Car className="w-3.5 h-3.5 text-teal-600" />
-                            <span>Transfers & Transport:</span>
-                          </span>
-                          <span className="font-mono font-bold text-slate-900">
-                            {formatCurrency(transfersTotalSelling, currency)}
-                          </span>
+                        <div className="flex justify-between">
+                          <span>🚗 Transfers:</span>
+                          <span className="font-mono font-bold text-slate-800">{formatCurrency(transfersTotalSelling, currency)}</span>
                         </div>
                       )}
-                      {visaTotalSelling > 0 && (
-                        <div className="flex items-center justify-between text-slate-700">
-                          <span className="flex items-center space-x-2">
-                            <FileText className="w-3.5 h-3.5 text-teal-600" />
-                            <span>Visa Processing & Clearances:</span>
-                          </span>
-                          <span className="font-mono font-bold text-slate-900">
-                            {formatCurrency(visaTotalSelling, currency)}
-                          </span>
-                        </div>
-                      )}
-                      {otherTotalSelling > 0 && (
-                        <div className="flex items-center justify-between text-slate-700">
-                          <span className="flex items-center space-x-2">
-                            <Sparkles className="w-3.5 h-3.5 text-teal-600" />
-                            <span>Add-ons & VIP Services:</span>
-                          </span>
-                          <span className="font-mono font-bold text-slate-900">
-                            {formatCurrency(otherTotalSelling, currency)}
-                          </span>
+                      {(visaTotalSelling > 0 || otherTotalSelling > 0) && (
+                        <div className="flex justify-between">
+                          <span>📋 Visa & Add-ons:</span>
+                          <span className="font-mono font-bold text-slate-800">{formatCurrency(visaTotalSelling + otherTotalSelling, currency)}</span>
                         </div>
                       )}
                     </div>
                   </div>
 
-                {/* Price Totals */}
-                <div className="bg-slate-900 text-white p-5 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between text-xs text-slate-300">
-                    <span>Quoted Services Count:</span>
-                    <span className="font-mono font-bold">{items.length} Confirmed Services</span>
-                  </div>
-                  <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] text-slate-400 block uppercase tracking-wider font-bold">
-                        Final Selling Price
-                      </span>
-                      <span className="text-2xl font-black font-mono text-[#00E5C0]">
-                        {formatCurrency(finalClientPrice, currency)}
+                  {/* CARD 2: ADDITIONAL AGENT MARGIN (CONTROLS) */}
+                  <div className="bg-white rounded-2xl border-2 border-teal-200/80 p-5 space-y-3.5 shadow-2xs flex flex-col justify-between">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-teal-50 text-teal-800 border border-teal-200">
+                          <Percent className="w-3 h-3 text-teal-600" />
+                          <span>Partner Margin Controls</span>
+                        </span>
+
+                        {/* Mode Switcher */}
+                        <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[11px]">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateMarginType('PERCENTAGE')}
+                            className={`px-2 py-1 rounded-md font-bold transition-all cursor-pointer ${
+                              effectiveMarginType === 'PERCENTAGE'
+                                ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            %
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateMarginType('FIXED')}
+                            className={`px-2 py-1 rounded-md font-bold transition-all cursor-pointer ${
+                              effectiveMarginType === 'FIXED'
+                                ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            {currency}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Margin Input Field */}
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-slate-600 block">
+                          {effectiveMarginType === 'PERCENTAGE' ? 'Agency Markup Percentage (%)' : `Fixed Margin Amount (${currency})`}
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min="0"
+                            step={effectiveMarginType === 'PERCENTAGE' ? '0.5' : '10'}
+                            value={effectiveMarginValue}
+                            onChange={(e) => handleUpdateMarginValue(parseFloat(e.target.value) || 0)}
+                            className={`w-full text-base font-black font-mono text-slate-900 bg-slate-50 border rounded-xl px-3 py-2 outline-none transition-all ${
+                              isNegativeMargin ? 'border-rose-400 bg-rose-50' : 'border-slate-300 focus:border-teal-500 focus:bg-white'
+                            }`}
+                            placeholder="0"
+                          />
+                          <span className="absolute right-3 top-2.5 text-xs font-bold text-slate-400 font-mono">
+                            {effectiveMarginType === 'PERCENTAGE' ? '%' : currency}
+                          </span>
+                        </div>
+                        {isNegativeMargin && (
+                          <p className="text-[10px] font-bold text-rose-600">Margin value cannot be negative.</p>
+                        )}
+                        {isHighMargin && (
+                          <p className="text-[10px] font-bold text-amber-600">Markup exceeds 100% of base wholesale price.</p>
+                        )}
+                      </div>
+
+                      {/* Quick Presets */}
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Quick Presets</span>
+                        <div className="flex flex-wrap gap-1">
+                          {effectiveMarginType === 'PERCENTAGE' ? (
+                            [5, 10, 12, 15, 20].map(pct => (
+                              <button
+                                key={pct}
+                                type="button"
+                                onClick={() => handleUpdateMarginValue(pct)}
+                                className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition-colors cursor-pointer ${
+                                  effectiveMarginValue === pct
+                                    ? 'bg-teal-600 text-white'
+                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                                }`}
+                              >
+                                +{pct}%
+                              </button>
+                            ))
+                          ) : (
+                            [100, 250, 500, 1000].map(amt => (
+                              <button
+                                key={amt}
+                                type="button"
+                                onClick={() => handleUpdateMarginValue(amt)}
+                                className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition-colors cursor-pointer ${
+                                  effectiveMarginValue === amt
+                                    ? 'bg-teal-600 text-white'
+                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                                }`}
+                              >
+                                +{formatCurrency(amt, currency)}
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Calculated Margin Subtotal */}
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                      <span className="text-slate-500 font-medium">Net Retained Margin:</span>
+                      <span className="font-mono font-black text-emerald-700">
+                        + {formatCurrency(effectiveMarginAmount, currency)} ({marginPercentageValue}%)
                       </span>
                     </div>
-                    <span className="text-xs text-slate-400 font-medium text-right">
-                      All Taxes, Fees & Gratuities Included
-                    </span>
+                  </div>
+
+                  {/* CARD 3: FINAL CUSTOMER SELLING PRICE (CLIENT-FACING) */}
+                  <div className="bg-slate-900 text-white rounded-2xl border border-slate-800 p-5 space-y-3.5 shadow-lg flex flex-col justify-between relative overflow-hidden">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-[#00E5C0] border border-[#00E5C0]/30">
+                          <Check className="w-3 h-3 text-[#00E5C0]" />
+                          <span>Final Customer Selling Price</span>
+                        </span>
+                        <span className="text-[10px] font-mono text-slate-400">
+                          {totalPax} Guests
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-[11px] font-bold text-slate-400 block">
+                          Client-Facing Total Proposal Price
+                        </span>
+                        <span className="text-3xl font-black font-mono text-[#00E5C0] block">
+                          {formatCurrency(effectiveFinalPrice, currency)}
+                        </span>
+                        <span className="text-xs font-mono text-slate-300 font-medium mt-0.5 block">
+                          {formatCurrency(Math.round(effectiveFinalPrice / totalPax), currency)} / Traveler
+                        </span>
+                      </div>
+
+                      <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60 text-[11px] text-slate-300 space-y-1 font-mono">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Base Selling:</span>
+                          <span>{formatCurrency(effectiveBasePrice, currency)}</span>
+                        </div>
+                        <div className="flex justify-between text-[#00E5C0]">
+                          <span>Partner Margin:</span>
+                          <span>+ {formatCurrency(effectiveMarginAmount, currency)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+                      <span>✓ Synchronized with Itinerary</span>
+                      <span>All Inclusions Confirmed</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* QUOTATION ACTIONS & DISPATCH BAR */}
+                <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                        Quotation Actions & Client Dispatch
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        Distribute, export, or convert this quotation proposal.
+                      </p>
+                    </div>
+                    {lastSavedTimestamp && (
+                      <span className="text-[11px] text-slate-400 font-medium">
+                        Last saved: {lastSavedTimestamp}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-1">
+                    {/* Action 1: Save Draft */}
+                    <button
+                      type="button"
+                      onClick={onSaveDraft}
+                      className="px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-800 text-xs font-bold border border-slate-200 transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
+                    >
+                      <Save className="w-3.5 h-3.5 text-slate-600" />
+                      <span>{autoSaveStatus === 'SAVING' ? 'Saving...' : 'Save Draft'}</span>
+                    </button>
+
+                    {/* Action 2: Preview Proposal */}
+                    <button
+                      type="button"
+                      onClick={onPreviewQuotation}
+                      className="px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
+                    >
+                      <Eye className="w-3.5 h-3.5 text-[#00E5C0]" />
+                      <span>Preview Proposal</span>
+                    </button>
+
+                    {/* Action 3: Download PDF */}
+                    <button
+                      type="button"
+                      onClick={onDownloadPDF}
+                      className="px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-800 text-xs font-bold border border-slate-200 transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
+                    >
+                      <Download className="w-3.5 h-3.5 text-teal-600" />
+                      <span>Download PDF</span>
+                    </button>
+
+                    {/* Action 4: Share on WhatsApp */}
+                    <button
+                      type="button"
+                      onClick={onShareWhatsApp}
+                      className="px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
+                      title="Share customer quotation summary directly on WhatsApp"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5 text-emerald-200" />
+                      <span>WhatsApp</span>
+                    </button>
+
+                    {/* Action 5: Email Client */}
+                    <button
+                      type="button"
+                      onClick={onOpenEmailModal}
+                      className="px-3.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
+                    >
+                      <Mail className="w-3.5 h-3.5" />
+                      <span>Email Client</span>
+                    </button>
+
+                    {/* Action 6: Convert to Booking */}
+                    <button
+                      type="button"
+                      onClick={onConvertBooking}
+                      className="px-3.5 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-md"
+                    >
+                      <BookmarkCheck className="w-4 h-4" />
+                      <span>Convert Booking</span>
+                    </button>
                   </div>
                 </div>
               </div>
-
-              {/* Primary Action Buttons */}
-              <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={onSaveDraft}
-                  className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-all cursor-pointer shadow-xs"
-                >
-                  Save Draft
-                </button>
-
-                <button
-                  type="button"
-                  onClick={onPreviewQuotation}
-                  className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-xs"
-                >
-                  <FileText className="w-3.5 h-3.5 text-[#00E5C0]" />
-                  <span>Preview Proposal (Client View)</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={onDownloadPDF}
-                  className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold border border-slate-200 transition-all cursor-pointer flex items-center space-x-1.5 shadow-xs"
-                >
-                  <Download className="w-3.5 h-3.5 text-teal-600" />
-                  <span>Download PDF</span>
-                </button>
-
-                {onShareWhatsApp && (
-                  <button
-                    type="button"
-                    onClick={onShareWhatsApp}
-                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-xs"
-                    title="Share customer quotation summary directly on WhatsApp"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5 text-emerald-200" />
-                    <span>Share on WhatsApp</span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  onClick={onOpenEmailModal}
-                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-xs"
-                >
-                  <Mail className="w-3.5 h-3.5" />
-                  <span>Email Client</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={onConvertBooking}
-                  className="px-5 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 shadow-md ml-auto"
-                >
-                  <BookmarkCheck className="w-4 h-4" />
-                  <span>Convert to Booking</span>
-                </button>
-              </div>
-            </div>
-          );
-        })()}
+            );
+          })()}
 
           {/* Navigation Controls: Previous / Next Step */}
           <div className="flex items-center justify-between pt-4 border-t border-slate-200">
@@ -2675,10 +3083,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             </button>
 
             <span className="text-xs font-bold text-slate-400 hidden sm:inline">
-              Step {activeStepId} of 8: {stepsList.find(s => s.id === activeStepId)?.name}
+              Step {activeStepId} of 9: {stepsList.find(s => s.id === activeStepId)?.name}
             </span>
 
-            {activeStepId < 8 ? (
+            {activeStepId < 9 ? (
               <button
                 type="button"
                 onClick={() => setActiveStepId(activeStepId + 1)}
@@ -2713,7 +3121,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 Total Client Price ({currency})
               </span>
               <span className="text-xl font-black font-mono text-white">
-                {formatCurrency(finalClientPrice, currency)}
+                {formatCurrency(effectiveFinalPrice, currency)}
               </span>
             </div>
 

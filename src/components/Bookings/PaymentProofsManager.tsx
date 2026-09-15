@@ -140,26 +140,28 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
   };
 
   return (
-    <div id="booking-payment-proofs-section" className="bg-white dark:bg-stone-900 rounded-2xl p-6 border border-stone-200 dark:border-stone-800 shadow-sm mb-6">
+    <div id="booking-payment-proofs-section" className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs mb-6">
       {/* Section Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-100 dark:border-stone-800 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 mb-6">
         <div>
           <div className="flex items-center gap-2">
-            <CreditCard className="w-5 h-5 text-amber-600" />
-            <h3 className="text-lg font-bold text-stone-900 dark:text-stone-100">
+            <div className="p-1.5 rounded-xl bg-teal-50 text-[#008f77]">
+              <CreditCard className="w-5 h-5 text-[#008f77]" />
+            </div>
+            <h3 className="text-lg font-black text-slate-900">
               Payment Management & Multi-Tranche Verification
             </h3>
-            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
               booking.paymentStatus === 'PAID'
-                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
                 : booking.paymentStatus === 'PARTIALLY_PAID'
-                ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950/40 dark:text-yellow-300'
-                : 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300'
+                ? 'bg-amber-50 text-amber-900 border-amber-300'
+                : 'bg-rose-50 text-rose-900 border-rose-300'
             }`}>
               {booking.paymentStatus ? booking.paymentStatus.replace(/_/g, ' ') : 'PENDING PAYMENT'}
             </span>
           </div>
-          <p className="text-xs text-stone-500 dark:text-stone-400 mt-1">
+          <p className="text-xs text-slate-500 mt-1">
             Supports unlimited payment tranches, currency receipts, wire advices, and financial verification audit trail.
           </p>
         </div>
@@ -167,36 +169,36 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
         <button
           id="btn-add-payment-tranche"
           onClick={openAddTrancheModal}
-          className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all active:scale-95"
+          className="flex items-center gap-1.5 px-4 py-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 rounded-xl text-xs font-bold shadow-md shadow-[#00C6A6]/20 transition-all cursor-pointer"
         >
           <Plus className="w-4 h-4" />
-          Add Payment Tranche / Proof
+          <span>Add Payment Tranche / Proof</span>
         </button>
       </div>
 
       {/* Financial Overview Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-6">
-        <div className="p-3.5 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50/70 dark:bg-stone-800/40">
-          <span className="text-[11px] font-semibold text-stone-500 uppercase block">Total Booking Value</span>
-          <span className="text-lg font-bold font-mono text-stone-900 dark:text-stone-100">
+        <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
+          <span className="text-[11px] font-bold text-slate-500 uppercase block tracking-wider">Total Booking Value</span>
+          <span className="text-lg font-black font-mono text-slate-900 mt-1 block">
             {formatCurrency(paymentSummary.totalAmount, booking.currency)}
           </span>
         </div>
-        <div className="p-3.5 rounded-xl border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/40 dark:bg-emerald-950/20">
-          <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase block">Verified Paid</span>
-          <span className="text-lg font-bold font-mono text-emerald-800 dark:text-emerald-300">
+        <div className="p-4 rounded-2xl border border-emerald-200 bg-emerald-50/50">
+          <span className="text-[11px] font-bold text-emerald-800 uppercase block tracking-wider">Verified Paid</span>
+          <span className="text-lg font-black font-mono text-emerald-900 mt-1 block">
             {formatCurrency(paymentSummary.verifiedPaidAmount, booking.currency)}
           </span>
         </div>
-        <div className="p-3.5 rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50/40 dark:bg-amber-950/20">
-          <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400 uppercase block">Pending Verification</span>
-          <span className="text-lg font-bold font-mono text-amber-800 dark:text-amber-300">
+        <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/50">
+          <span className="text-[11px] font-bold text-amber-800 uppercase block tracking-wider">Pending Verification</span>
+          <span className="text-lg font-black font-mono text-amber-900 mt-1 block">
             {formatCurrency(Math.max(0, paymentSummary.paidAmount - paymentSummary.verifiedPaidAmount), booking.currency)}
           </span>
         </div>
-        <div className="p-3.5 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/40 dark:bg-rose-950/20">
-          <span className="text-[11px] font-semibold text-rose-700 dark:text-rose-400 uppercase block">Outstanding Balance</span>
-          <span className="text-lg font-bold font-mono text-rose-800 dark:text-rose-300">
+        <div className="p-4 rounded-2xl border border-rose-200 bg-rose-50/50">
+          <span className="text-[11px] font-bold text-rose-800 uppercase block tracking-wider">Outstanding Balance</span>
+          <span className="text-lg font-black font-mono text-rose-900 mt-1 block">
             {formatCurrency(paymentSummary.pendingAmount, booking.currency)}
           </span>
         </div>
@@ -204,20 +206,22 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
 
       {/* Tranches List */}
       {proofs.length === 0 ? (
-        <div className="p-8 text-center border-2 border-dashed border-stone-200 dark:border-stone-800 rounded-xl bg-stone-50/50 dark:bg-stone-900/30">
-          <CreditCard className="w-8 h-8 text-stone-400 mx-auto mb-2" />
-          <p className="text-sm font-semibold text-stone-700 dark:text-stone-300">
+        <div className="p-8 text-center border-2 border-dashed border-slate-200 rounded-3xl bg-slate-50/50">
+          <div className="p-2.5 rounded-2xl bg-teal-50 text-[#008f77] w-fit mx-auto mb-2">
+            <CreditCard className="w-8 h-8 text-[#008f77]" />
+          </div>
+          <p className="text-sm font-bold text-slate-800">
             No Payment Proofs Uploaded
           </p>
-          <p className="text-xs text-stone-500 max-w-md mx-auto mt-1 mb-4">
+          <p className="text-xs text-slate-500 max-w-md mx-auto mt-1 mb-4">
             Upload the advance deposit or bank payment advice to initiate processing.
           </p>
           <button
             onClick={openAddTrancheModal}
-            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-sm inline-flex items-center gap-1.5"
+            className="px-4 py-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 rounded-xl text-xs font-bold shadow-md shadow-[#00C6A6]/20 inline-flex items-center gap-1.5 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            Upload Advance Deposit Proof
+            <span>Upload Advance Deposit Proof</span>
           </button>
         </div>
       ) : (
@@ -230,49 +234,49 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
 
             return (
               <div 
-                key={proof.id}
+                key={proof.id} 
                 id={`payment-tranche-row-${proof.id}`}
-                className="p-4 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50/70 dark:bg-stone-900/60 flex flex-col md:flex-row md:items-center justify-between gap-4"
+                className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-slate-300 transition-all"
               >
                 <div className="flex items-start gap-3">
-                  <div className={`p-2 rounded-xl mt-0.5 ${
-                    isVerified ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' :
-                    isRejected ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300' :
-                    isReplacement ? 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300' :
-                    'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                  <div className={`p-2.5 rounded-xl mt-0.5 ${
+                    isVerified ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' :
+                    isRejected ? 'bg-rose-50 text-rose-800 border border-rose-200' :
+                    isReplacement ? 'bg-orange-50 text-orange-800 border border-orange-200' :
+                    'bg-amber-50 text-amber-800 border border-amber-200'
                   }`}>
-                    {isVerified ? <CheckCircle2 className="w-5 h-5" /> :
-                     isRejected ? <XCircle className="w-5 h-5" /> :
-                     isReplacement ? <RotateCcw className="w-5 h-5" /> :
-                     <Clock className="w-5 h-5" />}
+                    {isVerified ? <CheckCircle2 className="w-5 h-5 text-emerald-600" /> :
+                     isRejected ? <XCircle className="w-5 h-5 text-rose-600" /> :
+                     isReplacement ? <RotateCcw className="w-5 h-5 text-orange-600" /> :
+                     <Clock className="w-5 h-5 text-amber-600" />}
                   </div>
 
                   <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-sm font-bold text-stone-900 dark:text-stone-100">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-sm font-black text-slate-900">
                         {proof.trancheLabel || `Tranche #${idx + 1}`}
                       </h4>
-                      <span className="text-base font-extrabold font-mono text-stone-900 dark:text-stone-100">
+                      <span className="text-base font-black font-mono text-slate-900">
                         {formatCurrency(proof.amount, proof.currency || booking.currency)}
                       </span>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        isVerified ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200' :
-                        isRejected ? 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200' :
-                        isReplacement ? 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-200' :
-                        'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                        isVerified ? 'bg-emerald-50 text-emerald-900 border-emerald-300' :
+                        isRejected ? 'bg-rose-50 text-rose-900 border-rose-300' :
+                        isReplacement ? 'bg-orange-50 text-orange-900 border-orange-300' :
+                        'bg-amber-50 text-amber-900 border-amber-300'
                       }`}>
                         {proof.verificationStatus ? proof.verificationStatus.replace(/_/g, ' ') : 'PENDING VERIFICATION'}
                       </span>
                     </div>
 
-                    <div className="text-xs text-stone-500 font-mono mt-1 space-x-3">
-                      <span>Method: <strong className="text-stone-700 dark:text-stone-300">{proof.paymentMethod?.replace(/_/g, ' ')}</strong></span>
-                      <span>Ref: <strong className="text-stone-700 dark:text-stone-300">{proof.transactionRef}</strong></span>
-                      <span>Date: <strong className="text-stone-700 dark:text-stone-300">{proof.paymentDate}</strong></span>
+                    <div className="text-xs text-slate-500 font-mono mt-1 space-x-3">
+                      <span>Method: <strong className="text-slate-800">{proof.paymentMethod?.replace(/_/g, ' ')}</strong></span>
+                      <span>Ref: <strong className="text-slate-800">{proof.transactionRef}</strong></span>
+                      <span>Date: <strong className="text-slate-800">{proof.paymentDate}</strong></span>
                     </div>
 
                     {proof.verificationNotes && (
-                      <p className="text-xs text-stone-600 dark:text-stone-400 mt-1 italic bg-white dark:bg-stone-800 p-2 rounded-lg border border-stone-200 dark:border-stone-700">
+                      <p className="text-xs text-slate-600 mt-1 italic bg-slate-50 p-2.5 rounded-xl border border-slate-200">
                         Verification Notes: {proof.verificationNotes}
                         {proof.verifiedByName && ` — verified by ${proof.verifiedByName}`}
                       </p>
@@ -284,43 +288,43 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
                   {proof.proofFileUrl && (
                     <button
                       onClick={() => setActiveProofPreview({ url: proof.proofFileUrl!, title: `Payment Proof: ${proof.trancheLabel} (${proof.transactionRef})` })}
-                      className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
                     >
                       <Eye className="w-3.5 h-3.5" />
-                      View Advice / Receipt
+                      <span>View Advice / Receipt</span>
                     </button>
                   )}
 
                   {isAdminOrOps && (
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1.5">
                       {!isVerified && (
                         <button
                           onClick={() => setVerifyingProof({ proof, action: 'VERIFIED' })}
-                          className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
                           title="Approve and Mark Verified"
                         >
                           <CheckCircle2 className="w-3.5 h-3.5" />
-                          Approve
+                          <span>Approve</span>
                         </button>
                       )}
                       {!isReplacement && (
                         <button
                           onClick={() => setVerifyingProof({ proof, action: 'REPLACEMENT_REQUIRED' })}
-                          className="px-2.5 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+                          className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
                           title="Request Replacement Document"
                         >
                           <RotateCcw className="w-3.5 h-3.5" />
-                          Req Replacement
+                          <span>Req Replacement</span>
                         </button>
                       )}
                       {!isRejected && (
                         <button
                           onClick={() => setVerifyingProof({ proof, action: 'REJECTED' })}
-                          className="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+                          className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
                           title="Reject Payment Advice"
                         >
                           <XCircle className="w-3.5 h-3.5" />
-                          Reject
+                          <span>Reject</span>
                         </button>
                       )}
                     </div>
@@ -334,25 +338,27 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
 
       {/* Add Payment Tranche Modal */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-stone-900 rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto border border-stone-200 dark:border-stone-800 shadow-2xl p-6">
-            <div className="flex items-center justify-between pb-4 border-b border-stone-100 dark:border-stone-800 mb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto border border-slate-200 shadow-2xl p-6">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
               <div className="flex items-center gap-2">
-                <CreditCard className="w-5 h-5 text-amber-600" />
-                <h3 className="text-lg font-bold text-stone-900 dark:text-stone-100">
+                <div className="p-1.5 rounded-xl bg-teal-50 text-[#008f77]">
+                  <CreditCard className="w-5 h-5 text-[#008f77]" />
+                </div>
+                <h3 className="text-lg font-black text-slate-900">
                   Upload Payment Tranche Proof
                 </h3>
               </div>
               <button 
                 onClick={() => setIsAddModalOpen(false)}
-                className="p-1 rounded-lg text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {formError && (
-              <div className="p-3 mb-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
+              <div className="p-3 mb-4 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0" />
                 {formError}
               </div>
@@ -360,20 +366,20 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
 
             <form onSubmit={handleSaveTranche} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Tranche Name / Label *</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Tranche Name / Label *</label>
                 <input
                   type="text"
                   required
                   value={trancheLabel}
                   onChange={(e) => setTrancheLabel(e.target.value)}
                   placeholder="e.g. Tranche 1 (50% Advance Deposit)"
-                  className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Amount *</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Amount *</label>
                   <input
                     type="number"
                     step="0.01"
@@ -381,27 +387,27 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     placeholder="e.g. 1810"
-                    className="w-full px-3 py-2 rounded-xl text-xs font-mono font-bold bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                    className="w-full px-3 py-2 rounded-xl text-xs font-mono font-bold bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Currency</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Currency</label>
                   <input
                     type="text"
                     value={currency}
                     onChange={(e) => setCurrency(e.target.value.toUpperCase())}
-                    className="w-full px-3 py-2 rounded-xl text-xs font-mono uppercase bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                    className="w-full px-3 py-2 rounded-xl text-xs font-mono uppercase bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Payment Method</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Payment Method</label>
                   <select
                     value={paymentMethod}
                     onChange={(e: any) => setPaymentMethod(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20 cursor-pointer"
                   >
                     <option value="WIRE_TRANSFER">Wire Transfer (SWIFT)</option>
                     <option value="CREDIT_CARD">Credit / Debit Card</option>
@@ -411,18 +417,18 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Payment Date</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Payment Date</label>
                   <input
                     type="date"
                     value={paymentDate}
                     onChange={(e) => setPaymentDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">
+                <label className="block text-xs font-bold text-slate-700 mb-1">
                   Transaction Reference Number / UTR / Auth Code *
                 </label>
                 <input
@@ -431,22 +437,22 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
                   value={transactionRef}
                   onChange={(e) => setTransactionRef(e.target.value)}
                   placeholder="e.g. HDFC-WIRE-JP-849201"
-                  className="w-full px-3 py-2 rounded-xl text-xs font-mono uppercase bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                  className="w-full px-3 py-2 rounded-xl text-xs font-mono uppercase bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20"
                 />
               </div>
 
               {/* Upload Proof Document */}
-              <div className="p-3.5 rounded-xl border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800/50 space-y-2">
-                <span className="text-xs font-semibold text-stone-800 dark:text-stone-200 block">
+              <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50 space-y-2">
+                <span className="text-xs font-bold text-slate-800 block">
                   Payment Proof / Transfer Advice File (PDF / JPG / PNG) *
                 </span>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] text-stone-500 font-mono truncate">
+                  <span className="text-[11px] text-slate-500 font-mono truncate">
                     {proofFile ? proofFile.name : 'No file chosen (A standard wire proof will be linked)'}
                   </span>
-                  <label className="cursor-pointer px-3 py-1.5 bg-stone-200 dark:bg-stone-700 hover:bg-stone-300 dark:hover:bg-stone-600 text-stone-800 dark:text-stone-200 rounded-lg text-xs font-semibold flex items-center gap-1 shrink-0">
+                  <label className="cursor-pointer px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 transition-colors">
                     <Upload className="w-3.5 h-3.5" />
-                    Browse File
+                    <span>Browse File</span>
                     <input
                       type="file"
                       accept="image/*,application/pdf"
@@ -458,27 +464,27 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">Notes (Optional)</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Notes (Optional)</label>
                 <textarea
                   rows={2}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Add any details regarding the remit currency, bank fees, or exchange rate."
-                  className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-stone-100 dark:border-stone-800">
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setIsAddModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-medium text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm"
+                  className="px-5 py-2.5 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 rounded-xl text-xs font-black shadow-md shadow-[#00C6A6]/20 cursor-pointer transition-colors"
                 >
                   Submit Payment Tranche
                 </button>
@@ -490,18 +496,20 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
 
       {/* Verification Action Modal */}
       {verifyingProof && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-white dark:bg-stone-900 rounded-2xl max-w-md w-full border border-stone-200 dark:border-stone-800 shadow-2xl p-6">
-            <h3 className="text-base font-bold text-stone-900 dark:text-stone-100 mb-2 flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-amber-600" />
-              Verify Payment: {verifyingProof.action ? verifyingProof.action.replace(/_/g, ' ') : 'VERIFY'}
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl max-w-md w-full border border-slate-200 shadow-2xl p-6">
+            <h3 className="text-base font-black text-slate-900 mb-2 flex items-center gap-2">
+              <div className="p-1 rounded-lg bg-teal-50 text-[#008f77]">
+                <ShieldCheck className="w-5 h-5 text-[#008f77]" />
+              </div>
+              <span>Verify Payment: {verifyingProof.action ? verifyingProof.action.replace(/_/g, ' ') : 'VERIFY'}</span>
             </h3>
-            <p className="text-xs text-stone-500 mb-4">
+            <p className="text-xs text-slate-500 mb-4">
               Updating {verifyingProof.proof.trancheLabel} for {formatCurrency(verifyingProof.proof.amount, verifyingProof.proof.currency)} (Ref: {verifyingProof.proof.transactionRef}).
             </p>
 
             <div className="mb-4">
-              <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">
+              <label className="block text-xs font-bold text-slate-700 mb-1">
                 Verification Notes / Remittance Reference *
               </label>
               <textarea
@@ -509,7 +517,7 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
                 value={verificationNotes}
                 onChange={(e) => setVerificationNotes(e.target.value)}
                 placeholder="e.g. Funds verified in DMC corporate bank account. Value date 2026-08-30."
-                className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-900 dark:text-stone-100"
+                className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 border border-slate-200 text-slate-900 focus:outline-none focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20"
               />
             </div>
 
@@ -517,14 +525,14 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
               <button
                 type="button"
                 onClick={() => setVerifyingProof(null)}
-                className="px-4 py-2 rounded-xl text-xs font-medium text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer transition-colors"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleConfirmVerification}
-                className={`px-5 py-2 rounded-xl text-xs font-bold text-white shadow-sm ${
+                className={`px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-sm cursor-pointer transition-colors ${
                   verifyingProof.action === 'VERIFIED' ? 'bg-emerald-600 hover:bg-emerald-700' :
                   verifyingProof.action === 'REJECTED' ? 'bg-rose-600 hover:bg-rose-700' :
                   'bg-orange-600 hover:bg-orange-700'
@@ -539,24 +547,24 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
 
       {/* Proof Preview Modal */}
       {activeProofPreview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="bg-white dark:bg-stone-900 rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col border border-stone-200 dark:border-stone-800 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between p-4 border-b border-stone-100 dark:border-stone-800 bg-stone-50 dark:bg-stone-800/50">
-              <h4 className="text-sm font-bold text-stone-900 dark:text-stone-100">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl max-w-3xl w-full max-h-[85vh] flex flex-col border border-slate-200 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50">
+              <h4 className="text-sm font-black text-slate-900">
                 {activeProofPreview.title}
               </h4>
               <button
                 onClick={() => setActiveProofPreview(null)}
-                className="p-1 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
+                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-6 flex-1 overflow-auto flex items-center justify-center bg-stone-100 dark:bg-stone-950">
+            <div className="p-6 flex-1 overflow-auto flex items-center justify-center bg-slate-100">
               <img 
                 src={activeProofPreview.url} 
                 alt="Payment Proof Advice" 
-                className="max-h-[60vh] max-w-full object-contain rounded-lg shadow-md"
+                className="max-h-[60vh] max-w-full object-contain rounded-2xl shadow-md"
                 referrerPolicy="no-referrer"
               />
             </div>
