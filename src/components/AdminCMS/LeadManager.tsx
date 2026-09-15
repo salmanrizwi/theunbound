@@ -270,197 +270,282 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
     }
   };
 
+  const hasActiveFilters = stageFilter !== 'all' || statusFilter !== 'all' || priorityFilter !== 'all' || sourceFilter !== 'all' || !!searchQuery.trim();
+
+  const handleResetFilters = () => {
+    setStageFilter('all');
+    setStatusFilter('all');
+    setPriorityFilter('all');
+    setSourceFilter('all');
+    setSearchQuery('');
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-7xl mx-auto pb-12">
       {/* Header Banner */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-        <div>
-          <div className="flex items-center space-x-2 text-[#00C6A6] font-bold text-xs uppercase tracking-wider mb-1">
-            <Users className="w-4 h-4" />
-            <span>Company Management System • CRM Engine</span>
+      <div className="relative overflow-hidden bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-xs">
+        <div className="absolute right-0 top-0 bottom-0 w-96 bg-gradient-to-l from-teal-50/50 via-teal-50/20 to-transparent pointer-events-none" />
+        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          <div className="space-y-2">
+            <div className="flex items-center space-x-2.5">
+              <span className="px-3 py-1 rounded-full bg-teal-50 border border-[#00C6A6]/30 text-[#008f77] text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5 text-[#00C6A6]" />
+                <span>CRM & Lead Engine</span>
+              </span>
+              <span className="text-xs text-slate-400 font-medium">Enterprise Pipeline Workspace</span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-950 tracking-tight">
+              Lead & Customer Journey Management
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-600 max-w-3xl leading-relaxed">
+              Unified commercial hub for traveler inquiries, proposal saves, PDF quote downloads, direct bookings, SLA calendar tracking, and multi-version quotation histories.
+            </p>
           </div>
-          <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Lead & Customer Journey Management</h2>
-          <p className="text-sm text-slate-500 max-w-3xl mt-1">
-            Unified single source of truth for traveler inquiries, proposal saves, PDF quote downloads, direct bookings, Google Calendar SLA follow-ups, and quotation versions.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            id="create-new-lead-btn"
-            onClick={handleOpenAdd}
-            className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold px-5 py-2.5 rounded-2xl transition-all cursor-pointer shadow-md shadow-[#00C6A6]/20 text-sm"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Capture New Lead</span>
-          </button>
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              id="create-new-lead-btn"
+              onClick={handleOpenAdd}
+              className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-black px-6 py-3 rounded-2xl transition-all cursor-pointer shadow-md shadow-[#00C6A6]/20 text-xs sm:text-sm hover:scale-[1.01] active:scale-[0.99]"
+            >
+              <Plus className="w-4 h-4 text-slate-950 stroke-[3]" />
+              <span>Capture New Lead</span>
+            </button>
+          </div>
         </div>
       </div>
 
       {/* KPI Ribbon Strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-          <span className="text-[11px] font-semibold uppercase text-slate-400 block">Total Active Leads</span>
-          <div className="flex items-baseline justify-between mt-1">
-            <span className="text-2xl font-black text-slate-900">{totalLeads}</span>
-            <span className="text-xs font-mono font-bold text-slate-500">${(totalPipelineValue / 1000).toFixed(0)}k Pipeline</span>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between space-y-2 transition-all hover:border-slate-300">
+          <div className="flex items-center justify-between text-slate-400">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Leads</span>
+            <Users className="w-4 h-4 text-slate-400" />
+          </div>
+          <div>
+            <div className="text-2xl sm:text-3xl font-black text-slate-950">{totalLeads}</div>
+            <p className="text-[11px] font-mono font-semibold text-[#008f77] mt-0.5">
+              ${(totalPipelineValue / 1000).toFixed(0)}k Pipeline
+            </p>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-purple-200/80 shadow-xs">
-          <span className="text-[11px] font-semibold uppercase text-purple-700 block">Proposals Saved</span>
-          <div className="flex items-baseline justify-between mt-1">
-            <span className="text-2xl font-black text-purple-900">{proposalSavedLeads}</span>
-            <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-bold">Inquiry</span>
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-purple-200/90 shadow-xs flex flex-col justify-between space-y-2 transition-all hover:border-purple-300">
+          <div className="flex items-center justify-between text-purple-600">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-purple-700">Proposals Saved</span>
+            <FileText className="w-4 h-4 text-purple-500" />
+          </div>
+          <div>
+            <div className="text-2xl sm:text-3xl font-black text-purple-950">{proposalSavedLeads}</div>
+            <span className="inline-block mt-1 text-[10px] bg-purple-50 text-purple-800 border border-purple-200 px-2 py-0.5 rounded-md font-bold">
+              Inquiry Phase
+            </span>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-amber-200/80 shadow-xs">
-          <span className="text-[11px] font-semibold uppercase text-amber-700 block">PDF Downloaded</span>
-          <div className="flex items-baseline justify-between mt-1">
-            <span className="text-2xl font-black text-amber-900">{quoteDownloadedLeads}</span>
-            <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">24h SLA</span>
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-amber-200/90 shadow-xs flex flex-col justify-between space-y-2 transition-all hover:border-amber-300">
+          <div className="flex items-center justify-between text-amber-600">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700">PDF Downloaded</span>
+            <Clock className="w-4 h-4 text-amber-500" />
+          </div>
+          <div>
+            <div className="text-2xl sm:text-3xl font-black text-amber-950">{quoteDownloadedLeads}</div>
+            <span className="inline-block mt-1 text-[10px] bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-md font-bold">
+              24h Follow-up SLA
+            </span>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-emerald-200/80 shadow-xs">
-          <span className="text-[11px] font-semibold uppercase text-emerald-700 block">Bookings Submitted</span>
-          <div className="flex items-baseline justify-between mt-1">
-            <span className="text-2xl font-black text-emerald-900">{bookingSubmittedLeads}</span>
-            <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">12h SLA</span>
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-emerald-200/90 shadow-xs flex flex-col justify-between space-y-2 transition-all hover:border-emerald-300">
+          <div className="flex items-center justify-between text-emerald-600">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">Bookings Sub.</span>
+            <Package className="w-4 h-4 text-emerald-500" />
+          </div>
+          <div>
+            <div className="text-2xl sm:text-3xl font-black text-emerald-950">{bookingSubmittedLeads}</div>
+            <span className="inline-block mt-1 text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md font-bold">
+              12h SLA Priority
+            </span>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-teal-200/80 shadow-xs">
-          <span className="text-[11px] font-semibold uppercase text-teal-700 block">Won / Converted</span>
-          <div className="flex items-baseline justify-between mt-1">
-            <span className="text-2xl font-black text-teal-900">{wonLeads}</span>
-            <span className="text-[10px] bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full font-bold">Closed</span>
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-teal-200/90 shadow-xs flex flex-col justify-between space-y-2 transition-all hover:border-[#00C6A6]/60">
+          <div className="flex items-center justify-between text-teal-600">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#008f77]">Won / Converted</span>
+            <CheckCircle2 className="w-4 h-4 text-[#00C6A6]" />
+          </div>
+          <div>
+            <div className="text-2xl sm:text-3xl font-black text-slate-950">{wonLeads}</div>
+            <span className="inline-block mt-1 text-[10px] bg-teal-50 text-[#008f77] border border-[#00C6A6]/30 px-2 py-0.5 rounded-md font-bold">
+              Converted
+            </span>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-red-200/80 shadow-xs">
-          <span className="text-[11px] font-semibold uppercase text-red-700 block">Urgent Action</span>
-          <div className="flex items-baseline justify-between mt-1">
-            <span className="text-2xl font-black text-red-900">{urgentLeads}</span>
-            <span className="text-[10px] bg-red-100 text-red-800 px-2 py-0.5 rounded-full font-bold">Attention</span>
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-rose-200/90 shadow-xs flex flex-col justify-between space-y-2 transition-all hover:border-rose-300">
+          <div className="flex items-center justify-between text-rose-600">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-rose-700">Urgent SLA</span>
+            <AlertTriangle className="w-4 h-4 text-rose-500" />
+          </div>
+          <div>
+            <div className="text-2xl sm:text-3xl font-black text-rose-950">{urgentLeads}</div>
+            <span className="inline-block mt-1 text-[10px] bg-rose-50 text-rose-800 border border-rose-200 px-2 py-0.5 rounded-md font-bold">
+              Immediate SLA
+            </span>
           </div>
         </div>
       </div>
 
       {/* Filter Controls & Search */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row gap-3 items-center justify-between">
-        <div className="w-full md:flex-1 relative">
-          <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
-          <input
-            id="lead-search-input"
-            type="text"
-            placeholder="Search by client name, email, phone, agency, lead #, quote #, booking #..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50/50 text-xs focus:bg-white focus:outline-none focus:border-[#00C6A6]"
-          />
+      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+        <div className="flex flex-col lg:flex-row gap-3 items-center justify-between">
+          {/* Search bar */}
+          <div className="w-full lg:flex-1 relative">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+              id="lead-search-input"
+              type="text"
+              placeholder="Search by client name, email, phone, agency, lead #, quote #, booking #..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-slate-200 bg-slate-50/50 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:border-[#00C6A6] transition-colors"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-md cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* View mode switcher */}
+          <div className="flex items-center justify-between w-full lg:w-auto gap-3">
+            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200" role="tablist" aria-label="Lead Management Views">
+              <button
+                id="lead-view-kanban-btn"
+                onClick={() => handleSelectViewMode('kanban')}
+                className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                  viewMode === 'kanban' ? 'bg-white shadow-xs text-slate-950 font-black' : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Kanban Pipeline View"
+              >
+                <Kanban className={`w-3.5 h-3.5 ${viewMode === 'kanban' ? 'text-[#008f77]' : 'text-slate-400'}`} />
+                <span>Kanban</span>
+              </button>
+              <button
+                id="lead-view-table-btn"
+                onClick={() => handleSelectViewMode('table')}
+                className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                  viewMode === 'table' ? 'bg-white shadow-xs text-slate-950 font-black' : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="List View"
+              >
+                <LayoutList className={`w-3.5 h-3.5 ${viewMode === 'table' ? 'text-[#008f77]' : 'text-slate-400'}`} />
+                <span>List</span>
+              </button>
+              <button
+                id="lead-view-cards-btn"
+                onClick={() => handleSelectViewMode('cards')}
+                className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                  viewMode === 'cards' ? 'bg-white shadow-xs text-slate-950 font-black' : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Card View"
+              >
+                <LayoutGrid className={`w-3.5 h-3.5 ${viewMode === 'cards' ? 'text-[#008f77]' : 'text-slate-400'}`} />
+                <span>Card</span>
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-          {/* Status Filter */}
-          <select
-            id="lead-status-filter"
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
-            className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700"
-          >
-            <option value="all">All Statuses ({leads.length})</option>
-            <option value="NEW">New Inquiries</option>
-            <option value="PROPOSAL_SAVED">Proposal Saved</option>
-            <option value="QUOTE_DOWNLOADED">Quote Downloaded</option>
-            <option value="BOOKING_SUBMITTED">Booking Submitted</option>
-            <option value="CONTACTED">Contacted</option>
-            <option value="QUALIFIED">Qualified</option>
-            <option value="QUOTED">Quoted</option>
-            <option value="WON">Won (Converted)</option>
-            <option value="LOST">Lost</option>
-          </select>
+        {/* Secondary Filter Row */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-slate-100">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 text-xs text-slate-500 mr-1">
+              <Filter className="w-3.5 h-3.5 text-slate-400" />
+              <span className="font-bold">Filters:</span>
+            </div>
 
-          {/* Pipeline Stage Filter */}
-          <select
-            id="lead-stage-filter"
-            value={stageFilter}
-            onChange={e => setStageFilter(e.target.value)}
-            className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700"
-          >
-            <option value="all">All Pipeline Stages ({stages.length})</option>
-            {stages.map(st => (
-              <option key={st.id} value={st.id}>
-                {st.name} ({leads.filter(l => l.stageId === st.id).length})
-              </option>
-            ))}
-          </select>
-
-          {/* Priority Filter */}
-          <select
-            id="lead-priority-filter"
-            value={priorityFilter}
-            onChange={e => setPriorityFilter(e.target.value)}
-            className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700"
-          >
-            <option value="all">All Priorities</option>
-            <option value="URGENT">Urgent SLA</option>
-            <option value="HIGH">High Priority</option>
-            <option value="NORMAL">Normal</option>
-            <option value="LOW">Low</option>
-          </select>
-
-          {/* Source Filter */}
-          <select
-            id="lead-source-filter"
-            value={sourceFilter}
-            onChange={e => setSourceFilter(e.target.value)}
-            className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700"
-          >
-            <option value="all">All Sources</option>
-            <option value="PROPOSAL_DOWNLOADED">PDF Quote Download</option>
-            <option value="QUOTATION_SAVED">Proposal Saved</option>
-            <option value="BOOKING_SUBMISSION">Direct Booking</option>
-            <option value="B2B_PARTNER">B2B Partner</option>
-            <option value="WEBSITE">Website Form</option>
-            <option value="MARKETING_CAMPAIGN">Campaign</option>
-          </select>
-
-          {/* View Toggle */}
-          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200" role="tablist" aria-label="Lead Management Views">
-            <button
-              id="lead-view-kanban-btn"
-              onClick={() => handleSelectViewMode('kanban')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer ${
-                viewMode === 'kanban' ? 'bg-white shadow-xs text-slate-900' : 'text-slate-500 hover:text-slate-800'
-              }`}
-              title="Kanban Pipeline View"
+            {/* Status Filter */}
+            <select
+              id="lead-status-filter"
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value)}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 focus:bg-white focus:outline-none focus:border-[#00C6A6] cursor-pointer"
             >
-              <Kanban className="w-3.5 h-3.5 text-[#008f77]" />
-              <span>Kanban</span>
-            </button>
-            <button
-              id="lead-view-table-btn"
-              onClick={() => handleSelectViewMode('table')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer ${
-                viewMode === 'table' ? 'bg-white shadow-xs text-slate-900' : 'text-slate-500 hover:text-slate-800'
-              }`}
-              title="List View"
+              <option value="all">All Statuses ({leads.length})</option>
+              <option value="NEW">New Inquiries</option>
+              <option value="PROPOSAL_SAVED">Proposal Saved</option>
+              <option value="QUOTE_DOWNLOADED">Quote Downloaded</option>
+              <option value="BOOKING_SUBMISSION">Booking Submitted</option>
+              <option value="CONTACTED">Contacted</option>
+              <option value="QUALIFIED">Qualified</option>
+              <option value="QUOTED">Quoted</option>
+              <option value="WON">Won (Converted)</option>
+              <option value="LOST">Lost</option>
+            </select>
+
+            {/* Pipeline Stage Filter */}
+            <select
+              id="lead-stage-filter"
+              value={stageFilter}
+              onChange={e => setStageFilter(e.target.value)}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 focus:bg-white focus:outline-none focus:border-[#00C6A6] cursor-pointer"
             >
-              <LayoutList className="w-3.5 h-3.5 text-slate-500" />
-              <span>List</span>
-            </button>
-            <button
-              id="lead-view-cards-btn"
-              onClick={() => handleSelectViewMode('cards')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer ${
-                viewMode === 'cards' ? 'bg-white shadow-xs text-slate-900' : 'text-slate-500 hover:text-slate-800'
-              }`}
-              title="Card View"
+              <option value="all">All Pipeline Stages ({stages.length})</option>
+              {stages.map(st => (
+                <option key={st.id} value={st.id}>
+                  {st.name} ({leads.filter(l => l.stageId === st.id).length})
+                </option>
+              ))}
+            </select>
+
+            {/* Priority Filter */}
+            <select
+              id="lead-priority-filter"
+              value={priorityFilter}
+              onChange={e => setPriorityFilter(e.target.value)}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 focus:bg-white focus:outline-none focus:border-[#00C6A6] cursor-pointer"
             >
-              <LayoutGrid className="w-3.5 h-3.5 text-slate-500" />
-              <span>Card</span>
-            </button>
+              <option value="all">All Priorities</option>
+              <option value="URGENT">Urgent SLA</option>
+              <option value="HIGH">High Priority</option>
+              <option value="NORMAL">Normal</option>
+              <option value="LOW">Low</option>
+            </select>
+
+            {/* Source Filter */}
+            <select
+              id="lead-source-filter"
+              value={sourceFilter}
+              onChange={e => setSourceFilter(e.target.value)}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 focus:bg-white focus:outline-none focus:border-[#00C6A6] cursor-pointer"
+            >
+              <option value="all">All Sources</option>
+              <option value="PROPOSAL_DOWNLOADED">PDF Quote Download</option>
+              <option value="QUOTATION_SAVED">Proposal Saved</option>
+              <option value="BOOKING_SUBMISSION">Direct Booking</option>
+              <option value="B2B_PARTNER">B2B Partner</option>
+              <option value="WEBSITE">Website Form</option>
+              <option value="MARKETING_CAMPAIGN">Campaign</option>
+            </select>
+
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer flex items-center gap-1"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Reset Filters</span>
+              </button>
+            )}
+          </div>
+
+          <div className="text-xs text-slate-500 font-medium">
+            Showing <strong className="text-slate-900">{filteredLeads.length}</strong> of <span className="font-semibold">{leads.length}</span> leads
           </div>
         </div>
       </div>
@@ -546,12 +631,12 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
 
       {/* TABLE VIEW */}
       {viewMode === 'table' && (
-        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
-                <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider">
-                  <th className="py-3.5 px-3 w-10 text-center">
+                <tr className="bg-slate-50/90 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider text-[11px]">
+                  <th className="py-4 px-3 w-10 text-center">
                     <input
                       type="checkbox"
                       checked={selectedLeadIds.length > 0 && selectedLeadIds.length === filteredLeads.length}
@@ -559,21 +644,39 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                       className="rounded border-slate-300 text-[#008f77] focus:ring-[#008f77] cursor-pointer"
                     />
                   </th>
-                  <th className="py-3.5 px-4">Lead # & Stage</th>
-                  <th className="py-3.5 px-4">Contact & Agency</th>
-                  <th className="py-3.5 px-4">Destination & Dates</th>
-                  <th className="py-3.5 px-4">Deal Value</th>
-                  <th className="py-3.5 px-4">Source & Campaign</th>
-                  <th className="py-3.5 px-4">Assigned Staff</th>
-                  <th className="py-3.5 px-4">Priority</th>
-                  <th className="py-3.5 px-4 text-right">Actions</th>
+                  <th className="py-4 px-4">Lead # & Stage</th>
+                  <th className="py-4 px-4">Client Contact & Agency</th>
+                  <th className="py-4 px-4">Destination & Timeline</th>
+                  <th className="py-4 px-4">Pipeline Deal Value</th>
+                  <th className="py-4 px-4">Inquiry Origin</th>
+                  <th className="py-4 px-4">Specialist Assigned</th>
+                  <th className="py-4 px-4">SLA Priority</th>
+                  <th className="py-4 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-12 text-center text-slate-400">
-                      No leads match the specified filter criteria.
+                    <td colSpan={9} className="py-16 text-center">
+                      <div className="max-w-sm mx-auto space-y-3">
+                        <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                          <Search className="w-6 h-6" />
+                        </div>
+                        <h4 className="text-sm font-bold text-slate-800">No matching leads found</h4>
+                        <p className="text-xs text-slate-500">
+                          Try adjusting your search criteria, clearing filter chips, or capturing a new inquiry.
+                        </p>
+                        {hasActiveFilters && (
+                          <button
+                            type="button"
+                            onClick={handleResetFilters}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-colors"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            <span>Clear all filters</span>
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ) : (
@@ -584,25 +687,25 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                       <tr
                         key={lead.id}
                         onClick={() => handleOpenDetail(lead)}
-                        className={`hover:bg-slate-50/80 transition-colors cursor-pointer group ${
+                        className={`hover:bg-slate-50/90 transition-colors cursor-pointer group ${
                           isSelected ? 'bg-teal-50/40' : ''
                         }`}
                       >
                         {/* Checkbox */}
-                        <td className="py-3.5 px-3 w-10 text-center" onClick={e => e.stopPropagation()}>
+                        <td className="py-4 px-3 w-10 text-center" onClick={e => e.stopPropagation()}>
                           <input
                             type="checkbox"
                             checked={isSelected}
-                            onChange={e => handleToggleSelect(lead.id)}
+                            onChange={() => handleToggleSelect(lead.id)}
                             className="rounded border-slate-300 text-[#008f77] focus:ring-[#008f77] cursor-pointer"
                           />
                         </td>
 
                         {/* Lead # and Stage */}
-                        <td className="py-3.5 px-4">
-                          <div className="flex flex-col gap-1">
+                        <td className="py-4 px-4">
+                          <div className="flex flex-col gap-1.5">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-mono text-xs font-bold text-slate-900">
+                              <span className="font-mono text-xs font-black text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md">
                                 {lead.leadNumber}
                               </span>
                               <RecordReminderIndicator
@@ -614,7 +717,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                                 onOpenActionCenter={onOpenActionCenter}
                               />
                             </div>
-                            <div className="flex items-center gap-1 flex-wrap">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               {leadStage && (
                                 <span 
                                   className="text-[10px] font-bold px-2 py-0.5 rounded-full border text-slate-800"
@@ -623,121 +726,125 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                                   {leadStage.name}
                                 </span>
                               )}
-                              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${getStatusColor(lead.status)}`}>
+                              <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${getStatusColor(lead.status)}`}>
                                 {lead.status ? lead.status.replace(/_/g, ' ') : 'NEW'}
                               </span>
                             </div>
                           </div>
                         </td>
 
-                      {/* Contact & Agency */}
-                      <td className="py-3.5 px-4">
-                        <div>
-                          <span className="font-bold text-slate-900 block group-hover:text-[#008f77] transition-colors">
-                            {lead.contactName}
-                          </span>
-                          {lead.agencyName && (
-                            <span className="text-[11px] font-semibold text-[#008f77] block">
-                              {lead.agencyName}
+                        {/* Contact & Agency */}
+                        <td className="py-4 px-4">
+                          <div className="space-y-0.5">
+                            <span className="font-bold text-slate-900 block group-hover:text-[#008f77] transition-colors text-sm">
+                              {lead.contactName}
                             </span>
-                          )}
-                          <span className="text-[11px] text-slate-400 block">{lead.email}</span>
-                        </div>
-                      </td>
+                            {lead.agencyName && (
+                              <span className="text-xs font-semibold text-[#008f77] block flex items-center gap-1">
+                                <Building className="w-3 h-3 text-[#00C6A6]" />
+                                <span>{lead.agencyName}</span>
+                              </span>
+                            )}
+                            <span className="text-[11px] text-slate-400 block truncate max-w-[200px]">{lead.email}</span>
+                          </div>
+                        </td>
 
-                      {/* Destination & Dates */}
-                      <td className="py-3.5 px-4">
-                        <div>
-                          <span className="font-semibold text-slate-800 block">{lead.destinationName}</span>
-                          <span className="text-[11px] text-slate-500 block truncate max-w-[150px]">
-                            {lead.travelDates || 'Upcoming 2026'}
-                          </span>
-                          <span className="text-[10px] text-slate-400">
-                            {lead.paxAdults || 2}A {lead.paxChildren ? `• ${lead.paxChildren}C` : ''}
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Deal Value */}
-                      <td className="py-3.5 px-4">
-                        <div>
-                          <span className="font-mono font-bold text-slate-900 block">
-                            {lead.currency || 'USD'} {(Number(lead.estimatedBudget || lead.bookingValue || 0)).toLocaleString()}
-                          </span>
-                          {lead.quoteNumber && (
-                            <span className="text-[10px] text-purple-700 font-semibold block">
-                              Quote #{lead.quoteNumber}
+                        {/* Destination & Dates */}
+                        <td className="py-4 px-4">
+                          <div className="space-y-0.5">
+                            <span className="font-bold text-slate-800 block text-xs">{lead.destinationName}</span>
+                            <span className="text-[11px] text-slate-500 block truncate max-w-[160px]">
+                              {lead.travelDates || 'Upcoming 2026'}
                             </span>
-                          )}
-                          {lead.bookingReference && (
-                            <span className="text-[10px] text-emerald-700 font-bold block">
-                              Booking #{lead.bookingReference}
+                            <span className="text-[10px] text-slate-400 font-medium block">
+                              {lead.paxAdults || 2} Adults {lead.paxChildren ? `• ${lead.paxChildren} Children` : ''}
                             </span>
-                          )}
-                        </div>
-                      </td>
+                          </div>
+                        </td>
 
-                      {/* Source & Campaign */}
-                      <td className="py-3.5 px-4">
-                        <div>
-                          <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded block w-fit">
-                            {lead.source}
-                          </span>
-                          {lead.campaignName && (
-                            <span className="text-[10px] text-slate-500 mt-0.5 block truncate max-w-[130px]">
-                              {lead.campaignName}
+                        {/* Deal Value */}
+                        <td className="py-4 px-4">
+                          <div className="space-y-1">
+                            <span className="font-mono text-sm font-black text-slate-950 block">
+                              {lead.currency || 'USD'} {(Number(lead.estimatedBudget || lead.bookingValue || 0)).toLocaleString()}
                             </span>
-                          )}
-                        </div>
-                      </td>
+                            {lead.quoteNumber && (
+                              <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 font-bold px-2 py-0.5 rounded block w-fit">
+                                Quote #{lead.quoteNumber}
+                              </span>
+                            )}
+                            {lead.bookingReference && (
+                              <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 font-bold px-2 py-0.5 rounded block w-fit">
+                                Booking #{lead.bookingReference}
+                              </span>
+                            )}
+                          </div>
+                        </td>
 
-                      {/* Assigned Staff */}
-                      <td className="py-3.5 px-4">
-                        <span className="text-xs text-slate-700 font-medium block">
-                          {lead.assignedStaffName || 'Unassigned'}
-                        </span>
-                        <span className="text-[10px] text-slate-400">
-                          {lead.assignedDepartment || 'SALES'}
-                        </span>
-                      </td>
+                        {/* Source & Campaign */}
+                        <td className="py-4 px-4">
+                          <div className="space-y-1">
+                            <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded-md block w-fit border border-slate-200">
+                              {lead.source}
+                            </span>
+                            {lead.campaignName && (
+                              <span className="text-[10px] text-slate-500 block truncate max-w-[130px]">
+                                {lead.campaignName}
+                              </span>
+                            )}
+                          </div>
+                        </td>
 
-                      {/* Priority */}
-                      <td className="py-3.5 px-4">
-                        {getPriorityBadge(lead.priority)}
-                      </td>
+                        {/* Assigned Staff */}
+                        <td className="py-4 px-4">
+                          <div>
+                            <span className="text-xs text-slate-900 font-bold block">
+                              {lead.assignedStaffName || 'Unassigned'}
+                            </span>
+                            <span className="text-[10px] text-slate-400 block font-medium">
+                              {lead.assignedDepartment || 'SALES'}
+                            </span>
+                          </div>
+                        </td>
 
-                      {/* Quick Actions */}
-                      <td className="py-3.5 px-4 text-right" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            id={`view-lead-btn-${lead.id}`}
-                            onClick={() => handleOpenDetail(lead)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors"
-                            title="Open Profile & Timeline"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
-                          <button
-                            id={`edit-lead-btn-${lead.id}`}
-                            onClick={e => handleOpenEdit(lead, e)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors"
-                            title="Edit Lead"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </button>
-                          <button
-                            id={`delete-lead-btn-${lead.id}`}
-                            onClick={e => handleDelete(lead.id, e)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                            title="Delete Lead"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                }))}
+                        {/* Priority */}
+                        <td className="py-4 px-4">
+                          {getPriorityBadge(lead.priority)}
+                        </td>
+
+                        {/* Quick Actions */}
+                        <td className="py-4 px-4 text-right" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              id={`view-lead-btn-${lead.id}`}
+                              onClick={() => handleOpenDetail(lead)}
+                              className="p-2 rounded-xl text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+                              title="Open Profile & Timeline"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button
+                              id={`edit-lead-btn-${lead.id}`}
+                              onClick={e => handleOpenEdit(lead, e)}
+                              className="p-2 rounded-xl text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+                              title="Edit Lead"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                            <button
+                              id={`delete-lead-btn-${lead.id}`}
+                              onClick={e => handleDelete(lead.id, e)}
+                              className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                              title="Delete Lead"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -746,116 +853,167 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
 
       {/* CARDS VIEW */}
       {viewMode === 'cards' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredLeads.map(lead => {
-            const isSelected = selectedLeadIds.includes(lead.id);
-            const leadStage = stages.find(s => s.id === lead.stageId);
-            return (
-              <div
-                key={lead.id}
-                onClick={() => handleOpenDetail(lead)}
-                className={`bg-white rounded-3xl border p-5 shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col justify-between space-y-4 relative ${
-                  isSelected ? 'border-[#008f77] ring-2 ring-[#008f77]/20 bg-teal-50/10' : 'border-slate-200'
-                }`}
-              >
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <div onClick={e => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => handleToggleSelect(lead.id)}
-                          className="rounded border-slate-300 text-[#008f77] focus:ring-[#008f77] cursor-pointer"
-                        />
-                      </div>
-                      <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded-md">
-                        {lead.leadNumber}
-                      </span>
-                      <RecordReminderIndicator
-                        entityType="LEAD"
-                        entityId={lead.id}
-                        entityReference={lead.leadNumber}
-                        currentUser={user}
-                        variant="badge"
-                        onOpenActionCenter={onOpenActionCenter}
-                      />
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      {getPriorityBadge(lead.priority)}
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${getStatusColor(lead.status)}`}>
-                        {lead.status ? lead.status.replace(/_/g, ' ') : 'NEW'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900">{lead.contactName}</h3>
-                    {lead.agencyName && (
-                      <span className="text-xs font-semibold text-[#008f77] block">{lead.agencyName}</span>
-                    )}
-                    <span className="text-xs text-slate-400 block mt-0.5">{lead.email}</span>
-                  </div>
-
-                  {/* Stage Badge & Quick Stage Selector */}
-                  <div className="flex items-center justify-between gap-2 pt-1" onClick={e => e.stopPropagation()}>
-                    {leadStage ? (
-                      <span 
-                        className="text-[10px] font-bold px-2 py-0.5 rounded-full border text-slate-800"
-                        style={{ backgroundColor: `${leadStage.color}15`, borderColor: `${leadStage.color}40` }}
-                      >
-                        {leadStage.name}
-                      </span>
-                    ) : <span />}
-                    <select
-                      value={lead.stageId || 'inquiry-received'}
-                      onChange={e => handleStageChange(lead.id, e.target.value)}
-                      className="text-[11px] bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-slate-700 font-medium focus:outline-none"
-                    >
-                      {stages.map(st => (
-                        <option key={st.id} value={st.id}>
-                          Move: {st.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="p-3 bg-slate-50 rounded-xl text-xs space-y-1">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Destination:</span>
-                      <span className="font-bold text-slate-800">{lead.destinationName}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Travel Dates:</span>
-                      <span className="font-bold text-slate-800">{lead.travelDates || 'Flexible'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Budget / Value:</span>
-                      <span className="font-mono font-bold text-[#008f77]">
-                        {lead.currency || 'USD'} {(Number(lead.estimatedBudget || lead.bookingValue || 0)).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-slate-600 line-clamp-2">
-                    {typeof lead.travelRequirements === 'string'
-                      ? lead.travelRequirements
-                      : Array.isArray(lead.travelRequirements)
-                        ? (lead.travelRequirements as any[]).map(r => typeof r === 'string' ? r : r?.text || '').filter(Boolean).join(', ')
-                        : 'VIP ground arrangements requested.'}
-                  </p>
-                </div>
-
-                <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                  <span>Assigned: <strong className="text-slate-700">{lead.assignedStaffName || 'Desk'}</strong></span>
-                  <span className="text-[#008f77] font-bold flex items-center gap-1">
-                    <span>View Details</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </span>
-                </div>
+        <div>
+          {filteredLeads.length === 0 ? (
+            <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center max-w-md mx-auto shadow-xs space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                <Search className="w-6 h-6" />
               </div>
-            );
-          })}
+              <h4 className="text-sm font-bold text-slate-800">No matching leads found</h4>
+              <p className="text-xs text-slate-500">
+                Try adjusting your search criteria, clearing filter chips, or capturing a new inquiry.
+              </p>
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={handleResetFilters}
+                  className="inline-flex items-center gap-1 px-3.5 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Clear all filters</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {filteredLeads.map(lead => {
+                const isSelected = selectedLeadIds.includes(lead.id);
+                const leadStage = stages.find(s => s.id === lead.stageId);
+                return (
+                  <div
+                    key={lead.id}
+                    onClick={() => handleOpenDetail(lead)}
+                    className={`bg-white rounded-3xl border p-6 shadow-xs hover:shadow-md transition-all cursor-pointer flex flex-col justify-between space-y-5 relative ${
+                      isSelected ? 'border-[#008f77] ring-2 ring-[#008f77]/20 bg-teal-50/10' : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="space-y-4">
+                      {/* Top bar: Select checkbox, Lead reference, Reminder, Priority & Status */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div onClick={e => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleToggleSelect(lead.id)}
+                              className="rounded border-slate-300 text-[#008f77] focus:ring-[#008f77] cursor-pointer"
+                            />
+                          </div>
+                          <span className="font-mono text-xs font-black text-slate-900 bg-slate-100 px-2.5 py-1 rounded-lg">
+                            {lead.leadNumber}
+                          </span>
+                          <RecordReminderIndicator
+                            entityType="LEAD"
+                            entityId={lead.id}
+                            entityReference={lead.leadNumber}
+                            currentUser={user}
+                            variant="badge"
+                            onOpenActionCenter={onOpenActionCenter}
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {getPriorityBadge(lead.priority)}
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${getStatusColor(lead.status)}`}>
+                            {lead.status ? lead.status.replace(/_/g, ' ') : 'NEW'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Contact & Agency info */}
+                      <div>
+                        <h3 className="text-base font-black text-slate-950 group-hover:text-[#008f77] transition-colors">
+                          {lead.contactName}
+                        </h3>
+                        {lead.agencyName && (
+                          <span className="text-xs font-bold text-[#008f77] block mt-0.5 flex items-center gap-1">
+                            <Building className="w-3 h-3 text-[#00C6A6]" />
+                            <span>{lead.agencyName}</span>
+                          </span>
+                        )}
+                        <span className="text-xs text-slate-400 block mt-0.5">{lead.email}</span>
+                      </div>
+
+                      {/* Stage Badge & Quick Stage Selector */}
+                      <div className="flex items-center justify-between gap-2 pt-1" onClick={e => e.stopPropagation()}>
+                        {leadStage ? (
+                          <span 
+                            className="text-[10px] font-bold px-2.5 py-1 rounded-full border text-slate-800"
+                            style={{ backgroundColor: `${leadStage.color}15`, borderColor: `${leadStage.color}40` }}
+                          >
+                            {leadStage.name}
+                          </span>
+                        ) : <span />}
+                        <select
+                          value={lead.stageId || 'inquiry-received'}
+                          onChange={e => handleStageChange(lead.id, e.target.value)}
+                          className="text-xs bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1 text-slate-700 font-bold focus:outline-none cursor-pointer"
+                        >
+                          {stages.map(st => (
+                            <option key={st.id} value={st.id}>
+                              Move: {st.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Spec summary box */}
+                      <div className="p-4 bg-slate-50/80 rounded-2xl text-xs space-y-2 border border-slate-100">
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-400 font-medium">Destination:</span>
+                          <span className="font-bold text-slate-900">{lead.destinationName}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-400 font-medium">Travel Dates:</span>
+                          <span className="font-semibold text-slate-800">{lead.travelDates || 'Flexible 2026'}</span>
+                        </div>
+                        <div className="flex justify-between items-center pt-1 border-t border-slate-200/60">
+                          <span className="text-slate-400 font-medium">Deal Pipeline:</span>
+                          <span className="font-mono text-sm font-black text-[#008f77]">
+                            {lead.currency || 'USD'} {(Number(lead.estimatedBudget || lead.bookingValue || 0)).toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Requirements teaser */}
+                      <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                        {typeof lead.travelRequirements === 'string'
+                          ? lead.travelRequirements
+                          : Array.isArray(lead.travelRequirements)
+                            ? (lead.travelRequirements as any[]).map(r => typeof r === 'string' ? r : r?.text || '').filter(Boolean).join(', ')
+                            : 'VIP bespoke travel preferences requested.'}
+                      </p>
+                    </div>
+
+                    {/* Footer */}
+                    <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                      <div>
+                        <span className="text-slate-400">Assigned:</span>{' '}
+                        <strong className="text-slate-800 font-bold">{lead.assignedStaffName?.split(' ')[0] || 'Unassigned'}</strong>
+                      </div>
+                      <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDetail(lead)}
+                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer flex items-center gap-1"
+                        >
+                          <span>Details</span>
+                          <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={e => handleOpenEdit(lead, e)}
+                          className="p-1.5 rounded-xl text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors"
+                          title="Edit Lead"
+                        >
+                          <Edit className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

@@ -5099,7 +5099,7 @@ export class AppDatabase {
    */
   public getBookingsForUser(user: User | null): Booking[] {
     const all = this.getAllBookings();
-    if (!user) return all.map(b => this.sanitizeBookingForExternalUser(b));
+    if (!user) return [];
     // Internal operational staff retain complete visibility
     if (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
       return all;
@@ -5127,10 +5127,34 @@ export class AppDatabase {
     const all = this.getAllBookings();
     const found = all.find(b => b.id === bookingId || b.bookingReference === bookingId) || null;
     if (!found) return null;
-    if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER' && user.role !== 'DMC_STAFF') {
+    if (!user) return null; // Logged-out users cannot access bookings
+    
+    // Internal operational staff retain full visibility
+    if (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+      return found;
+    }
+
+    // B2B Agent authorization check
+    if (user.role === 'B2B_AGENT') {
+      const isAuthorized = 
+        found.submittedByUserId === user.id ||
+        found.submittingAgentId === user.id ||
+        found.assignedAgentId === user.id ||
+        found.agentId === user.id ||
+        found.userId === user.id;
+      if (!isAuthorized) return null;
       return this.sanitizeBookingForExternalUser(found);
     }
-    return found;
+
+    // Buyer authorization check
+    const userEmail = user.email ? user.email.toLowerCase().trim() : '';
+    const isAuthorized = 
+      found.userId === user.id || 
+      (userEmail && found.customer?.email && found.customer.email.toLowerCase().trim() === userEmail) ||
+      (user.name && found.customer?.bookerName && found.customer.bookerName.toLowerCase().includes(user.name.toLowerCase()));
+    if (!isAuthorized) return null;
+
+    return this.sanitizeBookingForExternalUser(found);
   }
 
   public calculateBookingDocumentStatus(booking: Booking): { 

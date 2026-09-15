@@ -112,8 +112,8 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
   };
 
   return (
-    <div className="w-full overflow-x-auto pb-4 pt-1">
-      <div className="flex gap-4 min-w-max items-start">
+    <div className="w-full overflow-x-auto pb-6 pt-1">
+      <div className="flex gap-5 min-w-max items-start">
         {activeStages.map(stage => {
           const stageLeads = getLeadsForStage(stage);
           const stageValue = stageLeads.reduce(
@@ -129,42 +129,44 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
               onDragOver={e => handleDragOver(e, stage.id)}
               onDragLeave={() => handleDragLeave(stage.id)}
               onDrop={e => handleDrop(e, stage.id)}
-              className={`w-72 bg-slate-100/90 rounded-2xl border transition-all flex flex-col max-h-[calc(100vh-280px)] ${
+              className={`w-[320px] bg-slate-100/80 rounded-3xl border transition-all flex flex-col max-h-[calc(100vh-270px)] ${
                 isOver 
-                  ? 'border-[#008f77] ring-2 ring-[#008f77]/20 bg-teal-50/40' 
-                  : 'border-slate-200 shadow-xs'
+                  ? 'border-[#008f77] ring-4 ring-[#008f77]/20 bg-teal-50/50' 
+                  : 'border-slate-200/90 shadow-xs'
               }`}
             >
               {/* Column Header */}
-              <div className="p-3 border-b border-slate-200 bg-white rounded-t-2xl">
-                <div className="flex items-center justify-between gap-1 mb-1">
+              <div className="p-4 border-b border-slate-200 bg-white rounded-t-3xl space-y-2">
+                <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <span 
-                      className="w-2.5 h-2.5 rounded-full shrink-0" 
+                      className="w-3 h-3 rounded-full shrink-0 shadow-xs" 
                       style={{ backgroundColor: stage.color || '#6366F1' }} 
                     />
-                    <h3 className="font-bold text-xs text-slate-900 truncate" title={stage.name}>
+                    <h3 className="font-black text-xs text-slate-900 truncate" title={stage.name}>
                       {stage.name}
                     </h3>
                   </div>
-                  <span className="text-[11px] font-mono font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full shrink-0">
+                  <span className="text-xs font-mono font-black bg-slate-100 text-slate-800 px-2.5 py-0.5 rounded-full shrink-0 border border-slate-200">
                     {stageLeads.length}
                   </span>
                 </div>
 
-                <div className="flex items-center justify-between text-[10px] text-slate-500 font-medium">
-                  <span>Win prob: <strong className="text-slate-700">{stage.probability}%</strong></span>
-                  <span className="font-mono font-bold text-[#008f77]">
+                <div className="flex items-center justify-between text-[11px] text-slate-500 font-medium pt-1 border-t border-slate-100">
+                  <span>Win prob: <strong className="text-slate-800 font-bold">{stage.probability}%</strong></span>
+                  <span className="font-mono font-black text-[#008f77] text-xs">
                     ${stageValue.toLocaleString()}
                   </span>
                 </div>
 
                 {stage.slaDurationHours && (
-                  <div className="mt-1.5 flex items-center gap-1 text-[10px] text-slate-500">
-                    <Clock className="w-3 h-3 text-slate-400" />
-                    <span>SLA: {stage.slaDurationHours}h</span>
+                  <div className="flex items-center justify-between gap-1 text-[10px] text-slate-500 bg-slate-50 px-2 py-1 rounded-lg">
+                    <div className="flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-slate-400" />
+                      <span>SLA: <strong className="text-slate-700">{stage.slaDurationHours}h</strong></span>
+                    </div>
                     {stage.autoTaskOnEnter && (
-                      <span className="text-teal-700 font-medium truncate ml-auto flex items-center gap-0.5">
+                      <span className="text-[#008f77] font-bold flex items-center gap-0.5">
                         <Sparkles className="w-2.5 h-2.5" /> Auto-task
                       </span>
                     )}
@@ -173,11 +175,12 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
               </div>
 
               {/* Cards Container */}
-              <div className="p-2 space-y-2.5 overflow-y-auto flex-1 min-h-[140px]">
+              <div className="p-3 space-y-3 overflow-y-auto flex-1 min-h-[160px]">
                 {stageLeads.length === 0 ? (
-                  <div className="h-28 flex flex-col items-center justify-center text-slate-400 text-xs border-2 border-dashed border-slate-200 rounded-xl m-1 p-2 text-center">
-                    <Layers className="w-5 h-5 text-slate-300 mb-1" />
-                    <span>Drop leads here</span>
+                  <div className="h-32 flex flex-col items-center justify-center text-slate-400 text-xs border-2 border-dashed border-slate-200 rounded-2xl m-1 p-3 text-center bg-white/40">
+                    <Layers className="w-6 h-6 text-slate-300 mb-1.5" />
+                    <span className="font-semibold text-slate-500">Drop leads here</span>
+                    <span className="text-[10px] text-slate-400">Drag opportunity to update stage</span>
                   </div>
                 ) : (
                   stageLeads.map(lead => {
@@ -189,14 +192,14 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
                         draggable
                         onDragStart={e => handleDragStart(e, lead.id)}
                         onClick={() => onOpenDetail(lead)}
-                        className={`bg-white p-3 rounded-xl border border-slate-200 shadow-xs hover:shadow-md transition-all cursor-grab active:cursor-grabbing space-y-2 group ${
-                          draggedLeadId === lead.id ? 'opacity-40 ring-1 ring-slate-400' : ''
+                        className={`bg-white p-4 rounded-2xl border border-slate-200/90 shadow-xs hover:shadow-md transition-all cursor-grab active:cursor-grabbing space-y-3 group hover:border-[#00C6A6]/60 ${
+                          draggedLeadId === lead.id ? 'opacity-30 ring-2 ring-slate-400 scale-95' : ''
                         }`}
                       >
                         {/* Top: Reference and badges */}
-                        <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1">
-                            <span className="font-mono text-[10px] font-bold text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono text-[11px] font-black text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200/60">
                               {lead.leadNumber}
                             </span>
                             <RecordReminderIndicator
@@ -208,47 +211,74 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
                               onOpenActionCenter={onOpenActionCenter}
                             />
                           </div>
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1 shrink-0">
                             {getPriorityBadge(lead.priority)}
                           </div>
                         </div>
 
                         {/* Title & Agency */}
                         <div>
-                          <h4 className="text-xs font-bold text-slate-900 group-hover:text-[#008f77] transition-colors line-clamp-1">
+                          <h4 className="text-xs font-black text-slate-950 group-hover:text-[#008f77] transition-colors line-clamp-1">
                             {lead.contactName}
                           </h4>
-                          {lead.agencyName && (
-                            <span className="text-[10px] text-teal-700 font-semibold block truncate">
+                          {lead.agencyName ? (
+                            <span className="text-[11px] text-[#008f77] font-bold block truncate mt-0.5">
                               {lead.agencyName}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 block truncate mt-0.5">
+                              Direct Traveler • {lead.email}
                             </span>
                           )}
                         </div>
 
                         {/* Destination & Value Info */}
-                        <div className="bg-slate-50 p-2 rounded-lg text-[11px] space-y-1">
-                          <div className="flex items-center justify-between text-slate-600">
-                            <span className="flex items-center gap-1 truncate max-w-[120px]">
+                        <div className="bg-slate-50/90 p-2.5 rounded-xl text-xs space-y-1.5 border border-slate-100">
+                          <div className="flex items-center justify-between text-slate-700">
+                            <span className="flex items-center gap-1 truncate max-w-[150px] font-semibold text-[11px]">
                               <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
                               <span className="truncate">{lead.destinationName}</span>
                             </span>
-                            <span className="font-mono font-bold text-[#008f77]">
+                            <span className="font-mono font-black text-[#008f77] text-xs">
                               ${(Number(lead.estimatedBudget || lead.bookingValue || 0)).toLocaleString()}
                             </span>
                           </div>
                           {lead.travelDates && (
-                            <div className="flex items-center gap-1 text-slate-400 text-[10px]">
-                              <Calendar className="w-2.5 h-2.5 shrink-0" />
-                              <span className="truncate">{lead.travelDates}</span>
+                            <div className="flex items-center justify-between text-slate-400 text-[10px] pt-1 border-t border-slate-200/60">
+                              <span className="flex items-center gap-1 truncate max-w-[160px]">
+                                <Calendar className="w-2.5 h-2.5 shrink-0" />
+                                <span className="truncate">{lead.travelDates}</span>
+                              </span>
+                              <span className="font-medium text-slate-500">
+                                {lead.paxAdults || 2} Pax
+                              </span>
                             </div>
                           )}
                         </div>
 
+                        {/* Linked Records if present */}
+                        {(lead.quoteNumber || lead.bookingReference) && (
+                          <div className="flex items-center gap-1 flex-wrap text-[10px]">
+                            {lead.quoteNumber && (
+                              <span className="px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 font-bold border border-purple-200">
+                                Quote #{lead.quoteNumber}
+                              </span>
+                            )}
+                            {lead.bookingReference && (
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold border border-emerald-200">
+                                Book #{lead.bookingReference}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
                         {/* Footer with Assigned Staff & Next Stage quick button */}
-                        <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[10px]">
-                          <div className="flex items-center gap-1 text-slate-500 truncate max-w-[120px]">
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                          <div className="flex items-center gap-1.5 text-slate-500 truncate max-w-[130px]">
                             <User className="w-3 h-3 text-slate-400 shrink-0" />
-                            <span className="truncate">{lead.assignedStaffName?.split(' ')[0] || 'Unassigned'}</span>
+                            <span className="truncate font-semibold text-[11px] text-slate-700">
+                              {lead.assignedStaffName?.split(' ')[0] || 'Unassigned'}
+                            </span>
                           </div>
 
                           {nextStage && (
@@ -259,9 +289,9 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
                                 onStageChange(lead.id, nextStage.id);
                               }}
                               title={`Advance to ${nextStage.name}`}
-                              className="text-[#008f77] hover:text-white hover:bg-[#008f77] px-1.5 py-0.5 rounded flex items-center gap-0.5 font-bold transition-all text-[10px] cursor-pointer"
+                              className="text-[#008f77] hover:text-slate-950 bg-teal-50 hover:bg-[#00C6A6] px-2 py-1 rounded-lg flex items-center gap-1 font-black transition-all text-[10px] cursor-pointer border border-[#00C6A6]/30"
                             >
-                              <span>Next</span>
+                              <span>Next Stage</span>
                               <ChevronRight className="w-3 h-3" />
                             </button>
                           )}
