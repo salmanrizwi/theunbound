@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Building2, 
   ShieldCheck, 
@@ -16,21 +16,40 @@ import {
   ChevronRight,
   Terminal
 } from 'lucide-react';
-import { Destination } from '../../types';
+import { Destination, HomepageConfig } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { db } from '../../services/db';
 
 interface BuyerHeroSectionProps {
   allDestinations: Destination[];
   onSelectDestination: (slug: string) => void;
   onOpenRegister?: () => void;
+  config?: HomepageConfig;
+  homepageConfig?: HomepageConfig;
 }
 
 export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
   allDestinations,
   onSelectDestination,
-  onOpenRegister
+  onOpenRegister,
+  config,
+  homepageConfig
 }) => {
+  const activeIncomingConfig = homepageConfig || config;
   const { openAuthModal, login } = useAuth();
+  const [currentConfig, setCurrentConfig] = useState<HomepageConfig>(() => activeIncomingConfig || db.getHomepageConfig());
+
+  useEffect(() => {
+    if (activeIncomingConfig) {
+      setCurrentConfig(activeIncomingConfig);
+    }
+  }, [activeIncomingConfig]);
+
+  useEffect(() => {
+    return db.subscribe(() => {
+      setCurrentConfig(db.getHomepageConfig());
+    });
+  }, []);
 
   // Inline Quick Terminal state for the visual card
   const [showInlineTerminal, setShowInlineTerminal] = useState(false);
@@ -40,6 +59,43 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
   const [rememberMe, setRememberMe] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // If Hero Section is disabled in CMS layout manager, hide
+  if (currentConfig.showHeroSection === false) {
+    return null;
+  }
+
+  // Resolved CMS copy & media values
+  const eyebrowText = currentConfig.heroConfig?.eyebrowText || currentConfig.heroBadgeText || 'B2B Destination Management Company (DMC)';
+  const heading = currentConfig.heroConfig?.heading || currentConfig.heroHeading || 'Your Exclusive B2B DMC Travel Platform';
+  const headingHighlight = currentConfig.heroConfig?.headingHighlight || currentConfig.heroHighlightText || 'B2B DMC';
+  const subheading = currentConfig.heroConfig?.subheading || currentConfig.heroSubheading || 'TheUnbound provides verified travel agencies with direct ground operations, wholesale net tariffs, customized white-label itineraries, and guaranteed 24–48h proposal SLAs.';
+  
+  const showPrimaryCta = (currentConfig.showPrimaryCta !== false) && (currentConfig.heroConfig?.ctas?.showPrimaryCta !== false);
+  const primaryCtaText = currentConfig.heroConfig?.ctas?.primaryCtaText || currentConfig.primaryCtaText || 'Login as B2B Agent';
+  
+  const showSecondaryCta = (currentConfig.showSecondaryCta !== false) && (currentConfig.heroConfig?.ctas?.showSecondaryCta !== false);
+  const secondaryCtaText = currentConfig.heroConfig?.ctas?.secondaryCtaText || currentConfig.secondaryCtaText || 'Become a B2B Partner';
+
+  const showPillars = (currentConfig.heroConfig?.showPillars !== false) && (currentConfig.showHeroPillars !== false);
+  const pillar1Title = currentConfig.heroConfig?.pillar1Title || currentConfig.pillar1Title || 'Direct Contracts';
+  const pillar1Subtitle = currentConfig.heroConfig?.pillar1Subtitle || currentConfig.pillar1Subtitle || 'Zero brokers. Owned vehicle fleets & verified local guides.';
+  const pillar2Title = currentConfig.heroConfig?.pillar2Title || currentConfig.pillar2Title || '24–48h SLA';
+  const pillar2Subtitle = currentConfig.heroConfig?.pillar2Subtitle || currentConfig.pillar2Subtitle || 'Guaranteed turnaround on bespoke multi-city proposals.';
+  const pillar3Title = currentConfig.heroConfig?.pillar3Title || currentConfig.pillar3Title || 'Net Wholesale';
+  const pillar3Subtitle = currentConfig.heroConfig?.pillar3Subtitle || currentConfig.pillar3Subtitle || 'Confidential tariffs, multi-currency conversions & markups.';
+
+  const showGateways = currentConfig.showHeroGateways !== false;
+  const heroImage = currentConfig.heroConfig?.media?.desktopImageUrl || currentConfig.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=2000&auto=format&fit=crop';
+  const heroMobileImage = currentConfig.heroMobileImage || currentConfig.heroConfig?.media?.mobileImageUrl;
+  const heroVideoUrl = currentConfig.heroVideoUrl || currentConfig.heroConfig?.media?.videoUrl;
+  const heroImageAlt = currentConfig.heroConfig?.media?.altText || currentConfig.heroImageAlt || 'TheUnbound Premier Ground Operations & Wholesale DMC Network';
+  const overlayOpacity = currentConfig.heroConfig?.media?.overlayOpacity ?? currentConfig.heroOverlayOpacity ?? 0.65;
+  const statusBadgeText = currentConfig.heroStatusBadgeText || 'Operations Desk • Japan, Europe & UK';
+  const tradeBadgeText = currentConfig.heroTradeBadgeText || 'Trade Only';
+  const visualPanelTitle = currentConfig.heroVisualPanelTitle || 'Direct B2B Ground Tariffs';
+  const visualPanelDesc = currentConfig.heroVisualPanelDescription || 'Contracted wholesale rates & white-label quotes';
+  const visualMaxHeight = Math.min(Math.max(currentConfig.heroVisualMaxHeight || 420, 300), 480);
 
   const handleInlineLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,6 +129,32 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
     openAuthModal('Sign in to access your authorized B2B wholesale portal.');
   };
 
+  // Headline rendering with highlighted keyword accent
+  const renderHeadline = () => {
+    if (!headingHighlight || !heading.toLowerCase().includes(headingHighlight.toLowerCase())) {
+      return (
+        <>
+          {heading} {headingHighlight && !heading.toLowerCase().includes(headingHighlight.toLowerCase()) && (
+            <span className="text-[#00C6A6]">{headingHighlight}</span>
+          )}
+        </>
+      );
+    }
+    const escaped = headingHighlight.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = heading.split(new RegExp(`(${escaped})`, 'gi'));
+    return (
+      <>
+        {parts.map((part, i) => 
+          part.toLowerCase() === headingHighlight.toLowerCase() ? (
+            <span key={i} className="text-[#00C6A6]">{part}</span>
+          ) : (
+            <span key={i}>{part}</span>
+          )
+        )}
+      </>
+    );
+  };
+
   return (
     <section 
       id="buyer-homepage-hero"
@@ -81,16 +163,35 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
         minHeight: 'calc(100svh - var(--header-height, 94px))'
       }}
     >
-      {/* 1. Background Ambience & Photographic Layer */}
+      {/* 1. Background Ambience & Photographic / Video Layer */}
       <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
-        <img
-          src="https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=2200&auto=format&fit=crop"
-          alt="TheUnbound Global DMC Operations Ambience"
-          className="w-full h-full object-cover object-center opacity-25 mix-blend-luminosity scale-105"
-          referrerPolicy="no-referrer"
-        />
+        {heroVideoUrl ? (
+          <video
+            src={heroVideoUrl}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="w-full h-full object-cover object-center mix-blend-luminosity scale-105"
+            style={{ opacity: Math.max(0.15, 1 - overlayOpacity) }}
+          />
+        ) : (
+          <picture className="w-full h-full block">
+            {heroMobileImage && <source media="(max-width: 640px)" srcSet={heroMobileImage} />}
+            <img
+              src={heroImage}
+              alt={heroImageAlt}
+              className="w-full h-full object-cover object-center mix-blend-luminosity scale-105"
+              style={{ opacity: Math.max(0.15, 1 - overlayOpacity) }}
+              referrerPolicy="no-referrer"
+            />
+          </picture>
+        )}
         {/* Deep Slate Contrast Gradient */}
-        <div className="absolute inset-0 bg-gradient-to-r from-[#051124] via-[#051124]/95 to-[#051124]/80" />
+        <div 
+          className="absolute inset-0 bg-gradient-to-r from-[#051124] via-[#051124]/95 to-[#051124]/80"
+          style={{ opacity: overlayOpacity }}
+        />
         
         {/* Subtle Brand Radial Lighting in #00C6A6 */}
         <div 
@@ -112,7 +213,7 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
         />
       </div>
 
-      {/* 2. Core Viewport Container (Vertically Centered, No Excess Padding) */}
+      {/* 2. Core Viewport Container (Vertically Centered, Viewport-Aware) */}
       <div className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-4 xl:py-6 flex items-center my-auto">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-8 items-center w-full">
           
@@ -122,78 +223,92 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
             {/* Operational Eyebrow Pill */}
             <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-[#00C6A6]/10 border border-[#00C6A6]/30 text-[#00E5C0] text-[10px] sm:text-xs font-black uppercase tracking-wider backdrop-blur-md">
               <span className="w-2 h-2 rounded-full bg-[#00C6A6] animate-pulse"></span>
-              <span>B2B Destination Management Company (DMC)</span>
+              <span>{eyebrowText}</span>
             </div>
 
             {/* Main Display Headline (Mathematically Balanced for 1366x768 & 1280x720) */}
             <div className="space-y-2">
               <h1 className="text-2xl sm:text-3xl lg:text-[32px] xl:text-[38px] font-black tracking-tight text-white leading-[1.14] uppercase font-sans">
-                Your Exclusive <span className="text-[#00C6A6]">B2B DMC</span> Travel Platform
+                {renderHeadline()}
               </h1>
-              <p className="text-xs sm:text-sm text-slate-300 max-w-xl font-normal leading-relaxed">
-                TheUnbound provides verified travel agencies with direct ground operations, wholesale net tariffs, customized white-label itineraries, and guaranteed 24–48h proposal SLAs.
+              <p className="text-xs sm:text-sm text-slate-300 max-w-xl font-normal leading-relaxed line-clamp-3">
+                {subheading}
               </p>
             </div>
 
             {/* Action Buttons: Primary & Secondary CTAs (Always Visible in First Viewport) */}
-            <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 pt-0.5">
-              <button
-                type="button"
-                id="hero-login-b2b-btn"
-                onClick={handleLoginClick}
-                className="px-5 sm:px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] active:bg-[#009b82] text-slate-950 text-xs sm:text-sm font-black transition-all shadow-md shadow-[#00C6A6]/20 flex items-center space-x-2 cursor-pointer active:scale-[0.98]"
-              >
-                <Lock className="w-4 h-4 text-slate-950" />
-                <span>Login as B2B Agent</span>
-                <ArrowRight className="w-4 h-4 text-slate-950" />
-              </button>
+            {(showPrimaryCta || showSecondaryCta) && (
+              <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 pt-0.5">
+                {showPrimaryCta && (
+                  <button
+                    type="button"
+                    id="hero-login-b2b-btn"
+                    onClick={handleLoginClick}
+                    className="px-5 sm:px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] active:bg-[#009b82] text-slate-950 text-xs sm:text-sm font-black transition-all shadow-md shadow-[#00C6A6]/20 flex items-center space-x-2 cursor-pointer active:scale-[0.98]"
+                  >
+                    <Lock className="w-4 h-4 text-slate-950" />
+                    <span>{primaryCtaText}</span>
+                    <ArrowRight className="w-4 h-4 text-slate-950" />
+                  </button>
+                )}
 
-              <button
-                type="button"
-                id="hero-request-partnership-btn"
-                onClick={handlePartnerClick}
-                className="px-4.5 sm:px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/20 text-xs sm:text-sm font-bold transition-all backdrop-blur-md flex items-center space-x-2 cursor-pointer active:scale-[0.98]"
-              >
-                <Building2 className="w-4 h-4 text-[#00C6A6]" />
-                <span>Become a B2B Partner</span>
-              </button>
-            </div>
+                {showSecondaryCta && (
+                  <button
+                    type="button"
+                    id="hero-request-partnership-btn"
+                    onClick={handlePartnerClick}
+                    className="px-4.5 sm:px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/20 text-xs sm:text-sm font-bold transition-all backdrop-blur-md flex items-center space-x-2 cursor-pointer active:scale-[0.98]"
+                  >
+                    <Building2 className="w-4 h-4 text-[#00C6A6]" />
+                    <span>{secondaryCtaText}</span>
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* 3 Core Value Pillars Matrix (Tightly Grouped, Compact Heights) */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-2.5 pt-1">
-              <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 backdrop-blur-xs space-y-1">
-                <div className="flex items-center space-x-1.5 text-[#00C6A6]">
-                  <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                  <span className="text-[11px] sm:text-xs font-bold text-white uppercase tracking-wider truncate">Direct Contracts</span>
+            {showPillars && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-2.5 pt-1">
+                <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 backdrop-blur-xs space-y-1">
+                  <div className="flex items-center space-x-1.5 text-[#00C6A6]">
+                    <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                    <span className="text-[11px] sm:text-xs font-bold text-white uppercase tracking-wider truncate">
+                      {pillar1Title}
+                    </span>
+                  </div>
+                  <p className="text-[10px] sm:text-[11px] text-slate-400 leading-snug line-clamp-2">
+                    {pillar1Subtitle}
+                  </p>
                 </div>
-                <p className="text-[10px] sm:text-[11px] text-slate-400 leading-snug">
-                  Zero brokers. Owned vehicle fleets & verified local guides.
-                </p>
-              </div>
 
-              <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 backdrop-blur-xs space-y-1">
-                <div className="flex items-center space-x-1.5 text-[#00C6A6]">
-                  <Clock className="w-3.5 h-3.5 shrink-0" />
-                  <span className="text-[11px] sm:text-xs font-bold text-white uppercase tracking-wider truncate">24–48h SLA</span>
+                <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 backdrop-blur-xs space-y-1">
+                  <div className="flex items-center space-x-1.5 text-[#00C6A6]">
+                    <Clock className="w-3.5 h-3.5 shrink-0" />
+                    <span className="text-[11px] sm:text-xs font-bold text-white uppercase tracking-wider truncate">
+                      {pillar2Title}
+                    </span>
+                  </div>
+                  <p className="text-[10px] sm:text-[11px] text-slate-400 leading-snug line-clamp-2">
+                    {pillar2Subtitle}
+                  </p>
                 </div>
-                <p className="text-[10px] sm:text-[11px] text-slate-400 leading-snug">
-                  Guaranteed turnaround on bespoke multi-city proposals.
-                </p>
-              </div>
 
-              <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 backdrop-blur-xs space-y-1">
-                <div className="flex items-center space-x-1.5 text-[#00C6A6]">
-                  <Layers className="w-3.5 h-3.5 shrink-0" />
-                  <span className="text-[11px] sm:text-xs font-bold text-white uppercase tracking-wider truncate">Net Wholesale</span>
+                <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 backdrop-blur-xs space-y-1">
+                  <div className="flex items-center space-x-1.5 text-[#00C6A6]">
+                    <Layers className="w-3.5 h-3.5 shrink-0" />
+                    <span className="text-[11px] sm:text-xs font-bold text-white uppercase tracking-wider truncate">
+                      {pillar3Title}
+                    </span>
+                  </div>
+                  <p className="text-[10px] sm:text-[11px] text-slate-400 leading-snug line-clamp-2">
+                    {pillar3Subtitle}
+                  </p>
                 </div>
-                <p className="text-[10px] sm:text-[11px] text-slate-400 leading-snug">
-                  Confidential tariffs, multi-currency conversions & markups.
-                </p>
               </div>
-            </div>
+            )}
 
             {/* Quick Destination Gateway Bar (Single Row, No Overflow) */}
-            {allDestinations && allDestinations.length > 0 && (
+            {showGateways && allDestinations && allDestinations.length > 0 && (
               <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center gap-1.5">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mr-1 flex items-center space-x-1">
                   <Globe2 className="w-3 h-3 text-[#00C6A6]" />
@@ -217,18 +332,29 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
           <div className="lg:col-span-5 w-full flex items-center justify-center">
             <div 
               id="hero-visual-card"
-              className="relative w-full rounded-2xl lg:rounded-3xl overflow-hidden border border-slate-700/80 shadow-2xl bg-slate-900 group aspect-[4/3] sm:aspect-[16/11] lg:aspect-[4/3] xl:aspect-[16/11] max-h-[320px] sm:max-h-[360px] lg:max-h-[420px] xl:max-h-[460px]"
+              className="relative w-full rounded-2xl lg:rounded-3xl overflow-hidden border border-slate-700/80 shadow-2xl bg-slate-900 group aspect-[4/3] sm:aspect-[16/11] lg:aspect-[4/3] xl:aspect-[16/11]"
               style={{
-                maxHeight: 'calc(100svh - var(--header-height, 94px) - 48px)'
+                maxHeight: `min(${visualMaxHeight}px, calc(100svh - var(--header-height, 94px) - 48px))`
               }}
             >
               {/* Primary Visual Media */}
-              <img
-                src="https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=2000&auto=format&fit=crop"
-                alt="TheUnbound Premier Ground Operations & Wholesale DMC Network"
-                className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-700"
-                referrerPolicy="no-referrer"
-              />
+              {heroVideoUrl ? (
+                <video
+                  src={heroVideoUrl}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-700"
+                />
+              ) : (
+                <img
+                  src={heroImage}
+                  alt={heroImageAlt}
+                  className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-700"
+                  referrerPolicy="no-referrer"
+                />
+              )}
 
               {/* Ambient Visual Shading for Contrast */}
               <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/25 to-slate-950/60 pointer-events-none" />
@@ -236,13 +362,13 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
               {/* Top Left Floating Status Badge */}
               <div className="absolute top-2.5 sm:top-3 left-2.5 sm:left-3 inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-slate-950/85 backdrop-blur-md border border-slate-700/70 text-[10px] font-bold text-white shadow-lg">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#00C6A6] animate-pulse"></span>
-                <span>Operations Desk • Japan, Europe & UK</span>
+                <span>{statusBadgeText}</span>
               </div>
 
               {/* Top Right Confidential Access Pill */}
               <div className="absolute top-2.5 sm:top-3 right-2.5 sm:right-3 inline-flex items-center space-x-1 px-2 py-1 rounded-full bg-slate-950/85 backdrop-blur-md border border-slate-700/70 text-[10px] font-bold text-slate-300">
                 <Lock className="w-3 h-3 text-[#00C6A6]" />
-                <span>Trade Only</span>
+                <span>{tradeBadgeText}</span>
               </div>
 
               {/* Bottom Docked Quick Access & Interactive Terminal Strip */}
@@ -252,10 +378,10 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
                     <div>
                       <h4 className="text-xs sm:text-sm font-bold text-white flex items-center space-x-1.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-[#00C6A6]"></span>
-                        <span>Direct B2B Ground Tariffs</span>
+                        <span>{visualPanelTitle}</span>
                       </h4>
                       <p className="text-[10px] sm:text-[11px] text-slate-400">
-                        Contracted wholesale rates & white-label quotes
+                        {visualPanelDesc}
                       </p>
                     </div>
 
@@ -319,89 +445,94 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
                     </div>
                   )}
 
-                  <form onSubmit={handleInlineLogin} className="space-y-2.5 my-auto text-left">
+                  <form onSubmit={handleInlineLogin} className="space-y-2.5 my-auto">
                     <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">
-                        Trade Email Address
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                        Agency Email
                       </label>
                       <input
                         type="email"
-                        id="b2b-login-email"
-                        required
+                        id="b2b-hero-inline-email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        placeholder="agent@travelagency.com"
-                        className="w-full px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900/90 text-white text-xs placeholder:text-slate-500 focus:border-[#00C6A6] focus:outline-none"
+                        placeholder="agency@partner.com"
+                        required
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#00C6A6]"
                       />
                     </div>
 
                     <div>
-                      <div className="flex items-center justify-between mb-0.5">
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                          Password
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => openAuthModal('Password Reset Assistance')}
-                          className="text-[10px] text-[#00C6A6] hover:underline"
-                        >
-                          Forgot?
-                        </button>
-                      </div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                        Password
+                      </label>
                       <div className="relative">
                         <input
                           type={showPassword ? 'text' : 'password'}
-                          id="b2b-login-password"
-                          required
+                          id="b2b-hero-inline-password"
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
-                          placeholder="Password"
-                          className="w-full px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900/90 text-white text-xs placeholder:text-slate-500 focus:border-[#00C6A6] focus:outline-none pr-8"
+                          placeholder="••••••••"
+                          required
+                          className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#00C6A6] pr-8"
                         />
                         <button
                           type="button"
                           onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
+                          className="absolute right-2 top-2 text-slate-400 hover:text-slate-200 cursor-pointer"
                         >
                           {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                         </button>
                       </div>
                     </div>
 
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+                      <label className="flex items-center space-x-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={rememberMe}
+                          onChange={(e) => setRememberMe(e.target.checked)}
+                          className="rounded border-slate-700 text-[#00C6A6] focus:ring-0 w-3 h-3 bg-slate-900"
+                        />
+                        <span>Remember</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handlePartnerClick}
+                        className="text-[#00C6A6] hover:underline cursor-pointer"
+                      >
+                        Apply for account
+                      </button>
+                    </div>
+
                     <button
                       type="submit"
-                      id="btn-inline-hero-login"
                       disabled={isLoading}
-                      className="w-full py-2 px-3 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-black text-xs rounded-lg transition-all flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-60"
+                      className="w-full py-2 rounded-lg bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 text-xs font-black transition-all flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 mt-2"
                     >
                       {isLoading ? (
-                        <div className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin"></div>
+                        <span>Authenticating...</span>
                       ) : (
                         <>
-                          <span>Sign In to Trade Portal</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
+                          <Lock className="w-3 h-3" />
+                          <span>Authorize & Enter Portal</span>
                         </>
                       )}
                     </button>
                   </form>
 
-                  <div className="text-[10px] text-slate-400 text-center pt-1 border-t border-slate-800/80 flex items-center justify-between">
-                    <span>Authorized trade access only</span>
-                    <button
-                      type="button"
-                      onClick={handlePartnerClick}
-                      className="text-[#00C6A6] hover:underline font-bold cursor-pointer"
-                    >
-                      New Agency? Register
-                    </button>
+                  <div className="text-[10px] text-center text-slate-400 border-t border-slate-800/80 pt-1.5">
+                    <span>Verified Trade Accounts Only • 256-bit Ground Encryption</span>
                   </div>
                 </div>
               )}
+
             </div>
           </div>
 
         </div>
       </div>
+
     </section>
   );
 };
+

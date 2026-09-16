@@ -3686,13 +3686,33 @@ export interface HeroSearchParams {
   productType?: string;
 }
 
+export interface HomepageHubConfigItem {
+  hubId: string; // References authoritative CityHub.id in Firestore 'city_hubs'
+  enabled: boolean;
+  displayOrder: number;
+  featured?: boolean;
+  badge?: string; // e.g. "Direct Operations Desk", "Key Gateway", "Fleet Dispatch"
+  titleOverride?: string; // Optional homepage title override
+  descriptionOverride?: string; // Optional short description override
+  imageOverride?: string; // Optional hub image override
+  destinationIdOverride?: string; // Optional destination link override
+  customUrl?: string; // Optional custom destination link URL / route
+  ctaLabel?: string; // Optional custom CTA label
+  ctaAction?: string; // Optional custom CTA action / route
+  inventoryCountOverride?: {
+    totalProducts?: number;
+    hotels?: number;
+  };
+}
+
 export interface HomepageConfig {
   heroHeading: string;
   heroSubheading: string;
   heroBadgeText: string;
   heroImage: string;
+  heroMobileImage?: string;
   heroImageAlt?: string;
-  heroOverlayOpacity?: number; // 0.3 to 0.85, default 0.65
+  heroOverlayOpacity?: number; // 0.0 to 1.0, default 0.65
   primaryCtaText?: string;
   primaryCtaAction?: string;
   showPrimaryCta?: boolean;
@@ -3705,23 +3725,61 @@ export interface HomepageConfig {
   featuredDestinationIds: string[];
   destinationOrdering: string[];
   
-  // Section / Module Visibility Toggles
-  showHeroSection: boolean;
-  showDestinationFilter: boolean;
-  showCityHubs: boolean;
-  showCategoryFilters: boolean;
-  showProductGrid: boolean;
-  showGoogleReviews: boolean;
-  showHappyCustomerGallery: boolean;
-  showHomepageFAQs: boolean;
-  showPromotionsBanner: boolean;
-  showConversionCTA: boolean;
+  // Homepage Hubs CMS Fields (Authoritative Firestore Hub references)
+  homepageHubs?: HomepageHubConfigItem[];
+  hubSectionTitle?: string;
+  hubSectionSubtitle?: string;
+  hubSectionBadge?: string;
+  hubGridColumns?: number; // 2, 3, or 4
 
-  // Grid Layout Controls
-  productGridColumns: number; // 2, 3, or 4
+  // Hero Section Customization Fields (Directly connected to BuyerHeroSection)
+  heroHighlightText?: string;
+  heroStatusBadgeText?: string;
+  heroTradeBadgeText?: string;
+  heroVisualPanelTitle?: string;
+  heroVisualPanelDescription?: string;
+  heroVisualMaxHeight?: number; // Safe limit 300-480px
+  heroVideoUrl?: string;
+  showHeroPillars?: boolean;
+  pillar1Title?: string;
+  pillar1Subtitle?: string;
+  pillar2Title?: string;
+  pillar2Subtitle?: string;
+  pillar3Title?: string;
+  pillar3Subtitle?: string;
+  showHeroGateways?: boolean;
+  heroOperationalHighlights?: string[];
+  heroQuickStats?: Array<{ label: string; value: string; sublabel?: string }>;
+
+  // Module Display Order (Controls the live homepage section sequence)
+  homepageModuleOrder?: string[];
+
+  // Section / Module Visibility Toggles (The 9 live modules on the homepage)
+  showHeroSection: boolean;
+  showBrandIntroduction?: boolean;
+  brandIntroductionBadge?: string;
+  brandIntroductionTitle?: string;
+  brandIntroductionSubtitle?: string;
+  showDestinationFilter: boolean;
+  destinationSectionBadge?: string;
+  destinationSectionTitle?: string;
+  destinationSectionSubtitle?: string;
+  showCityHubs: boolean;
+  showPartnershipBenefits?: boolean;
+  partnershipBenefitsBadge?: string;
+  partnershipBenefitsTitle?: string;
+  partnershipBenefitsSubtitle?: string;
+  showOnboardingProcess?: boolean;
+  onboardingProcessBadge?: string;
+  onboardingProcessTitle?: string;
+  onboardingProcessSubtitle?: string;
+  showGoogleReviews: boolean;
+  showHomepageFAQs: boolean;
+  showConversionCTA: boolean;
+  tradeContactEmail?: string;
+
+  // Grid Layout Controls (Supported on the live homepage)
   destinationGridColumns: number; // 2, 3, or 4
-  happyCustomerGalleryRows: number;
-  happyCustomerGalleryCols: number;
 
   // Homepage FAQs (distinct from destination-specific FAQs)
   homepageFAQs: HomepageFAQItem[];
@@ -3731,6 +3789,15 @@ export interface HomepageConfig {
   ctaSubtitle: string;
   ctaButtonText: string;
   ctaButtonLink: string;
+
+  // Legacy fields kept optional for non-destructive Firestore compatibility
+  showCategoryFilters?: boolean;
+  showProductGrid?: boolean;
+  showHappyCustomerGallery?: boolean;
+  showPromotionsBanner?: boolean;
+  productGridColumns?: number;
+  happyCustomerGalleryRows?: number;
+  happyCustomerGalleryCols?: number;
 }
 
 export interface GalleryImage {

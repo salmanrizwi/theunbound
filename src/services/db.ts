@@ -789,6 +789,13 @@ export class AppDatabase {
         }
       }, (err) => console.debug('Firestore seo_settings sync note:', err?.message || err));
 
+      onSnapshot(doc(firestoreDb, 'homepage_config', 'main'), (docSnap) => {
+        if (docSnap.exists()) {
+          const remoteConfig = docSnap.data() as HomepageConfig;
+          this.setItem('homepage_config', remoteConfig, true);
+        }
+      }, (err) => console.debug('Firestore homepage_config sync note:', err?.message || err));
+
     } catch (error) {
       console.warn('Firestore real-time listeners initialization note:', error);
     }
@@ -8154,6 +8161,21 @@ export class AppDatabase {
     }
     if (config?.heroBadgeText && config.heroBadgeText.includes('ESTABLISHED IN 2018')) {
       config.heroBadgeText = config.heroBadgeText.replace('ESTABLISHED IN 2018', 'ESTABLISHED IN 2025');
+    }
+    if (!config.homepageModuleOrder || config.homepageModuleOrder.length === 0) {
+      config.homepageModuleOrder = INITIAL_HOMEPAGE_CONFIG.homepageModuleOrder;
+    }
+    if (!config.homepageHubs || config.homepageHubs.length === 0) {
+      config.homepageHubs = INITIAL_HOMEPAGE_CONFIG.homepageHubs;
+    }
+    if (!config.hubSectionTitle) {
+      config.hubSectionTitle = INITIAL_HOMEPAGE_CONFIG.hubSectionTitle;
+    }
+    if (!config.hubSectionSubtitle) {
+      config.hubSectionSubtitle = INITIAL_HOMEPAGE_CONFIG.hubSectionSubtitle;
+    }
+    if (!config.hubSectionBadge) {
+      config.hubSectionBadge = INITIAL_HOMEPAGE_CONFIG.hubSectionBadge;
     }
     return config;
   }

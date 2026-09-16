@@ -100,10 +100,81 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
   featuredDestinationIds: ['japan', 'united-kingdom', 'western-europe', 'southeast-asia', 'middle-east', 'usa', 'australia'],
   destinationOrdering: ['japan', 'united-kingdom', 'western-europe', 'southeast-asia', 'middle-east', 'usa', 'australia'],
   
-  // Module display toggles
+  // Homepage Hubs CMS Fields (Authoritative Firestore Hub references)
+  homepageHubs: [
+    { hubId: 'hub-tokyo', enabled: true, displayOrder: 1, featured: true, badge: 'Direct Operations Desk' },
+    { hubId: 'hub-kyoto', enabled: true, displayOrder: 2, featured: true, badge: 'Cultural Capital' },
+    { hubId: 'hub-osaka', enabled: true, displayOrder: 3, featured: false, badge: 'Gastronomy Hub' },
+    { hubId: 'hub-london', enabled: true, displayOrder: 4, featured: true, badge: 'UK Operations Center' },
+    { hubId: 'hub-paris', enabled: true, displayOrder: 5, featured: true, badge: 'Western Europe Gateway' },
+    { hubId: 'hub-rome', enabled: true, displayOrder: 6, featured: false, badge: 'VIP Ground Logistics' },
+    { hubId: 'hub-dubai', enabled: true, displayOrder: 7, featured: true, badge: 'Middle East Hub' },
+    { hubId: 'hub-bangkok', enabled: true, displayOrder: 8, featured: false, badge: 'Southeast Asia Hub' }
+  ],
+  hubSectionTitle: 'Direct Ground Operations Hubs & Gateways',
+  hubSectionSubtitle: 'Directly licensed ground handling, owned vehicle dispatch, and accredited bilingual guide networks across premier worldwide commercial gateways.',
+  hubSectionBadge: 'GLOBAL DESTINATION HUBS',
+  hubGridColumns: 3,
+
+  // Hero Section Customization Fields (Directly connected to BuyerHeroSection)
+  heroHighlightText: 'B2B DMC',
+  heroStatusBadgeText: 'Operations Desk • Japan, Europe & UK',
+  heroTradeBadgeText: 'Trade Only',
+  heroVisualPanelTitle: 'Direct B2B Ground Tariffs',
+  heroVisualPanelDescription: 'Contracted wholesale rates & white-label quotes',
+  heroVisualMaxHeight: 420,
+  showHeroPillars: true,
+  pillar1Title: 'Direct Contracts',
+  pillar1Subtitle: 'Zero brokers. Owned vehicle fleets & verified local guides.',
+  pillar2Title: '24–48h SLA',
+  pillar2Subtitle: 'Guaranteed turnaround on bespoke multi-city proposals.',
+  pillar3Title: 'Net Wholesale',
+  pillar3Subtitle: 'Confidential tariffs, multi-currency conversions & markups.',
+  showHeroGateways: true,
+  heroOperationalHighlights: [
+    '24–48h Custom FIT Itinerary Turnaround',
+    'Direct Wholesale Ground Contracts (Zero Broker Layers)',
+    'Private Chauffeur & VIP Coach Fleets',
+    'Licensed Bilingual Destination Experts'
+  ],
+  heroQuickStats: [
+    { label: 'Turnaround', value: '48h', sublabel: 'SLA' },
+    { label: 'Trade Access', value: '100%', sublabel: 'B2B Only' },
+    { label: 'Ground Duty', value: '24/7', sublabel: 'Dispatch' }
+  ],
+
+  // Canonical Homepage Module Sequence (Controls the live homepage section sequence)
+  homepageModuleOrder: [
+    'buyer-homepage-hero',
+    'b2b-brand-introduction',
+    'homepage-city-hubs',
+    'b2b-destination-expertise',
+    'b2b-partnership-benefits',
+    'b2b-onboarding-process',
+    'b2b-testimonials',
+    'b2b-trade-faqs',
+    'b2b-final-cta'
+  ],
+
+  // Module display toggles (The 9 live modules on the homepage)
   showHeroSection: true,
+  showBrandIntroduction: true,
+  brandIntroductionBadge: 'B2B WHOLESALE OPERATIONS • DIRECT GROUND DMC',
+  brandIntroductionTitle: 'The Unbound Ground Operations Architecture',
+  brandIntroductionSubtitle: 'We act as your dedicated destination management operations team in every destination, pairing owned fleets with verified licensed guides and confidential net pricing.',
   showDestinationFilter: true,
+  destinationSectionBadge: 'Destination Management Operations',
+  destinationSectionTitle: 'Explore Our Destination Expertise Across Global Corridors',
+  destinationSectionSubtitle: 'Specialized ground handling, VIP logistical planning, and local dispatch capabilities across Japan, Europe, Southeast Asia, the United Kingdom, Dubai, and Azerbaijan.',
   showCityHubs: true,
+  showPartnershipBenefits: true,
+  partnershipBenefitsBadge: 'Trade Partner Advantage',
+  partnershipBenefitsTitle: 'Why Premier Travel Advisors & Tour Operators Partner with TheUnbound',
+  partnershipBenefitsSubtitle: 'We remove the operational friction of sourcing international ground services, protecting your reputation with guaranteed SLAs and confidential net wholesale rates.',
+  showOnboardingProcess: true,
+  onboardingProcessBadge: 'Seamless Trade Registration',
+  onboardingProcessTitle: 'Partner Onboarding in 4 Simple Steps',
+  onboardingProcessSubtitle: 'How licensed travel agents and tour operators unlock full inventory, commercial net rates, and digital booking tools.',
   showCategoryFilters: true,
   showProductGrid: true,
   showGoogleReviews: true,
@@ -111,6 +182,7 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
   showHomepageFAQs: true,
   showPromotionsBanner: true,
   showConversionCTA: true,
+  tradeContactEmail: 'business@theunbound.in',
 
   // Grid layout controls
   productGridColumns: 3,

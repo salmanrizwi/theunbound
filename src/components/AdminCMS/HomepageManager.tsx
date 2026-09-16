@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { AppDatabase } from '../../services/db';
-import { HomepageConfig, Destination, HomepageFAQItem } from '../../types';
+import { HomepageConfig, Destination, HomepageFAQItem, CityHub, MasterRegion, HomepageHubConfigItem } from '../../types';
 import { INITIAL_HOMEPAGE_CONFIG } from '../../data/initialHomepage';
 import { useAuth } from '../../context/AuthContext';
+import { GlobalCountingEngine } from '../../services/countingEngine';
 import { 
   LayoutTemplate, 
   Save, 
@@ -13,34 +14,38 @@ import {
   CheckCircle2, 
   ArrowUp, 
   ArrowDown, 
-  Sparkles,
-  Sliders,
-  HelpCircle,
-  Plus,
-  Trash2,
-  Edit2,
-  Grid,
-  Layers,
-  Search,
-  Check,
-  Building2,
-  MessageSquare,
-  RotateCcw,
-  Compass,
-  ShieldCheck,
-  Clock,
-  Globe2,
-  ExternalLink,
-  Monitor,
-  Tablet,
-  Smartphone,
-  Video,
-  Award,
-  Zap,
-  Users,
-  CheckSquare
+  Sparkles, 
+  Sliders, 
+  HelpCircle, 
+  Plus, 
+  Trash2, 
+  Edit2, 
+  Grid, 
+  Layers, 
+  Search, 
+  Check, 
+  Building2, 
+  MessageSquare, 
+  RotateCcw, 
+  Compass, 
+  ShieldCheck, 
+  Clock, 
+  Globe2, 
+  ExternalLink, 
+  Monitor, 
+  Tablet, 
+  Smartphone, 
+  Video, 
+  Award, 
+  Zap, 
+  Users, 
+  CheckSquare,
+  AlertCircle,
+  X,
+  MapPin
 } from 'lucide-react';
 import { UniversalHero } from '../UniversalHero';
+import { BuyerHeroSection } from '../BuyerPortal/BuyerHeroSection';
 import { UniversalHeroConfig, HeroTrustItem } from '../../types';
 
 interface HomepageManagerProps {
@@ -50,13 +55,23 @@ interface HomepageManagerProps {
 export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }) => {
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
+  const countingEngine = GlobalCountingEngine.getInstance();
   const [config, setConfig] = useState<HomepageConfig>(db.getHomepageConfig());
+  const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());
+  const [regions, setRegions] = useState<MasterRegion[]>(() => db.getMasterRegions());
   const [savedSuccess, setSavedSuccess] = useState(false);
-  const [activeSubTab, setActiveSubTab] = useState<'LAYOUT' | 'HERO' | 'DESTINATIONS' | 'FAQS'>('LAYOUT');
+  const [activeSubTab, setActiveSubTab] = useState<'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'FAQS'>('LAYOUT');
+
+  // Hubs Management Specific State
+  const [hubSearchQuery, setHubSearchQuery] = useState('');
+  const [editingHubItem, setEditingHubItem] = useState<HomepageHubConfigItem | null>(null);
+  const [isAddHubModalOpen, setIsAddHubModalOpen] = useState(false);
+  const [addHubSearch, setAddHubSearch] = useState('');
+  const [addHubRegionFilter, setAddHubRegionFilter] = useState('ALL');
 
   // Hero CMS Specific State
   const [previewDevice, setPreviewDevice] = useState<'DESKTOP' | 'TABLET' | 'MOBILE'>('DESKTOP');
-  const [heroConfigSection, setHeroConfigSection] = useState<'COPY' | 'MEDIA' | 'DISCOVERY' | 'PROMOTION' | 'PILLARS' | 'TRUST' | 'CTA'>('COPY');
+  const [heroConfigSection, setHeroConfigSection] = useState<'COPY' | 'MEDIA' | 'CTA' | 'OPERATIONS'>('COPY');
 
   // FAQ Modal state
   const [isEditingFaq, setIsEditingFaq] = useState(false);
@@ -84,6 +99,8 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
   useEffect(() => {
     return db.subscribe(() => {
       setConfig(db.getHomepageConfig());
+      setCityHubs(db.getCityHubs());
+      setRegions(db.getMasterRegions());
     });
   }, []);
 
@@ -130,6 +147,80 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
     const updated = { ...config, destinationOrdering: updatedOrdering };
     setConfig(updated);
     db.updateHomepageConfig(updated, user);
+  };
+
+  // --- Hub Management Helpers ---
+  const moveHub = (index: number, direction: 'up' | 'down') => {
+    const currentList = [...(config.homepageHubs || [])];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= currentList.length) return;
+    const temp = currentList[index];
+    currentList[index] = currentList[targetIndex];
+    currentList[targetIndex] = temp;
+    const updatedList = currentList.map((item, idx) => ({ ...item, displayOrder: idx + 1 }));
+    const updated = { ...config, homepageHubs: updatedList };
+    setConfig(updated);
+    db.updateHomepageConfig(updated, user);
+  };
+
+  const toggleHubVisibility = (hubId: string) => {
+    const currentList = [...(config.homepageHubs || [])];
+    const updatedList = currentList.map(item => 
+      item.hubId === hubId ? { ...item, enabled: !item.enabled } : item
+    );
+    const updated = { ...config, homepageHubs: updatedList };
+    setConfig(updated);
+    db.updateHomepageConfig(updated, user);
+  };
+
+  const toggleHubFeatured = (hubId: string) => {
+    const currentList = [...(config.homepageHubs || [])];
+    const updatedList = currentList.map(item => 
+      item.hubId === hubId ? { ...item, featured: !item.featured } : item
+    );
+    const updated = { ...config, homepageHubs: updatedList };
+    setConfig(updated);
+    db.updateHomepageConfig(updated, user);
+  };
+
+  const addHubToHomepage = (hubId: string) => {
+    const hub = cityHubs.find(h => h.id === hubId);
+    if (!hub) return;
+    const currentList = [...(config.homepageHubs || [])];
+    if (currentList.some(item => item.hubId === hubId)) return;
+    const newItem: HomepageHubConfigItem = {
+      hubId,
+      enabled: true,
+      featured: false,
+      displayOrder: currentList.length + 1,
+      badge: 'Direct Ground Desk',
+      ctaLabel: 'Explore Ground Hub Services'
+    };
+    const updatedList = [...currentList, newItem];
+    const updated = { ...config, homepageHubs: updatedList };
+    setConfig(updated);
+    db.updateHomepageConfig(updated, user);
+    setIsAddHubModalOpen(false);
+  };
+
+  const removeHubFromHomepage = (hubId: string) => {
+    const currentList = (config.homepageHubs || []).filter(item => item.hubId !== hubId);
+    const updatedList = currentList.map((item, idx) => ({ ...item, displayOrder: idx + 1 }));
+    const updated = { ...config, homepageHubs: updatedList };
+    setConfig(updated);
+    db.updateHomepageConfig(updated, user);
+  };
+
+  const handleSaveHubOverrides = (item: HomepageHubConfigItem) => {
+    const currentList = [...(config.homepageHubs || [])];
+    const idx = currentList.findIndex(h => h.hubId === item.hubId);
+    if (idx >= 0) {
+      currentList[idx] = { ...item };
+    }
+    const updated = { ...config, homepageHubs: currentList };
+    setConfig(updated);
+    db.updateHomepageConfig(updated, user);
+    setEditingHubItem(null);
   };
 
   // FAQ CRUD
@@ -214,11 +305,13 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
       </div>
 
       {/* Sub Tab Navigation */}
-      <div className="flex items-center space-x-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 max-w-fit">
+      <div className="flex items-center space-x-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 max-w-fit overflow-x-auto">
         {[
           { id: 'LAYOUT', label: 'Modules & Grid Layout', icon: Grid },
           { id: 'HERO', label: 'Hero Banner & CTA', icon: Sliders },
+          { id: 'HUBS', label: 'Homepage Hubs & Gateways', icon: Building2 },
           { id: 'DESTINATIONS', label: 'Destinations & Ordering', icon: LayoutTemplate },
+          { id: 'SECTIONS', label: 'Homepage Content Sections', icon: Layers },
           { id: 'FAQS', label: 'Homepage FAQs Manager', icon: HelpCircle }
         ].map(tab => {
           const Icon = tab.icon;
@@ -227,7 +320,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
             <button
               key={tab.id}
               onClick={() => setActiveSubTab(tab.id as any)}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
                 isActive
                   ? 'bg-white text-slate-950 shadow-xs border border-slate-200'
                   : 'text-slate-600 hover:text-slate-950'
@@ -250,23 +343,22 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                 <Eye className="w-5 h-5 text-[#008972]" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">Module Display Toggles (Live Homepage Synchronized)</h3>
+                <h3 className="text-base font-bold text-slate-900">Live Homepage Module Toggles</h3>
                 <p className="text-xs text-slate-500">Toggle individual sections on or off. State immediately reflects in the live storefront.</p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
               {[
-                { key: 'showHeroSection', label: 'Hero Banner Section', desc: 'Main visual backdrop, headlines & SLA badge' },
-                { key: 'showDestinationFilter', label: 'Destination Hub Filter', desc: 'Destination tabs & region pill selectors' },
-                { key: 'showCityHubs', label: 'City Hubs & Gateways Bar', desc: 'Sub-regional cities (Tokyo, Kyoto, London, etc.)' },
-                { key: 'showCategoryFilters', label: 'Category Filter Badges', desc: 'Tours, Transfers, Day Excursions, VIP Hosts' },
-                { key: 'showProductGrid', label: 'Contracted Product Grid', desc: 'Card catalog with prices, ratings & booking SLAs' },
-                { key: 'showGoogleReviews', label: 'Google Business Reviews', desc: 'Verified client reviews with 5-star badges' },
-                { key: 'showHappyCustomerGallery', label: 'Happy Customer Gallery', desc: 'Real guest photo mosaic & testimonials' },
+                { key: 'showHeroSection', label: 'Hero Banner Section', desc: 'Main visual backdrop, headlines & B2B login terminal' },
+                { key: 'showBrandIntroduction', label: 'Brand Introduction & Architecture', desc: 'Direct DMC ground handling architecture & verified SLAs' },
+                { key: 'showCityHubs', label: 'City Hubs & Gateways Bar', desc: 'Direct regional gateways (Tokyo, Kyoto, London, etc.)' },
+                { key: 'showDestinationFilter', label: 'Destination Hubs & Operations', desc: 'Active corridor grid & in-country operational desks' },
+                { key: 'showPartnershipBenefits', label: 'Why Partner With TheUnbound', desc: 'Direct contracts, SLA turnaround, white-label quotes, 24/7 dispatch' },
+                { key: 'showOnboardingProcess', label: 'Partner Onboarding Process', desc: '4-step trade verification & account activation workflow' },
+                { key: 'showGoogleReviews', label: 'Google Business Reviews', desc: 'Verified trade partner reviews with 5-star badges' },
                 { key: 'showHomepageFAQs', label: 'Homepage FAQs Accordion', desc: 'Trade buyer & operational SLA Q&A section' },
-                { key: 'showPromotionsBanner', label: 'Promotions & Deals Ribbon', desc: 'Wholesale seasonal discount banners' },
-                { key: 'showConversionCTA', label: 'B2B Quotation Conversion CTA', desc: 'Bottom call-to-action to launch Quote Studio' }
+                { key: 'showConversionCTA', label: 'B2B Quotation Conversion CTA', desc: 'Bottom call-to-action to register and contact trade desk' }
               ].map(item => {
                 const isEnabled = (config as any)[item.key] !== false;
                 return (
@@ -298,41 +390,169 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
             </div>
           </div>
 
-          {/* Section: Grid Density & Layout Controls */}
+          {/* Section: Dynamic Section Sequence & Reordering */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+              <div className="flex items-center space-x-3">
+                <div className="w-9 h-9 rounded-xl bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
+                  <Sliders className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Homepage Section Sequence & Ordering</h3>
+                  <p className="text-xs text-slate-500">Define the vertical sequence in which sections render on the live homepage.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const canonical = [
+                    'hero',
+                    'brandIntroduction',
+                    'cityHubs',
+                    'destinationFilter',
+                    'partnershipBenefits',
+                    'onboardingProcess',
+                    'testimonials',
+                    'homepageFaqs',
+                    'conversionCta'
+                  ];
+                  const updated = { ...config, homepageModuleOrder: canonical };
+                  setConfig(updated);
+                  db.updateHomepageConfig(updated, user);
+                }}
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 cursor-pointer transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                <span>Reset to Recommended Sequence</span>
+              </button>
+            </div>
+
+            {(() => {
+              const CANONICAL = [
+                'hero',
+                'brandIntroduction',
+                'cityHubs',
+                'destinationFilter',
+                'partnershipBenefits',
+                'onboardingProcess',
+                'testimonials',
+                'homepageFaqs',
+                'conversionCta'
+              ];
+              const currentOrder = config.homepageModuleOrder && config.homepageModuleOrder.length > 0
+                ? config.homepageModuleOrder
+                : CANONICAL;
+
+              const moduleMeta: Record<string, { label: string; desc: string; toggleKey: keyof HomepageConfig }> = {
+                hero: { label: 'Hero Banner & Login Terminal', desc: 'Main visual backdrop, headlines & B2B login terminal', toggleKey: 'showHeroSection' },
+                brandIntroduction: { label: 'Brand Introduction & Architecture', desc: 'Direct DMC ground handling architecture & verified SLAs', toggleKey: 'showBrandIntroduction' },
+                cityHubs: { label: 'Direct Operations Hubs & Regional Gateways', desc: 'Direct regional gateways (Tokyo, Kyoto, London, etc.)', toggleKey: 'showCityHubs' },
+                destinationFilter: { label: 'Destination Expertise Across Global Corridors', desc: 'Editorial global corridors and active ground desks', toggleKey: 'showDestinationFilter' },
+                partnershipBenefits: { label: 'Why Travel Agents Partner With TheUnbound', desc: 'Direct contracts, SLA turnaround, white-label quotes, 24/7 dispatch', toggleKey: 'showPartnershipBenefits' },
+                onboardingProcess: { label: 'Partner Onboarding in 4 Simple Steps', desc: '4-step trade verification & account activation workflow', toggleKey: 'showOnboardingProcess' },
+                testimonials: { label: 'Verified Trade Partner Testimonials', desc: 'Client reviews carousel with 5-star ratings', toggleKey: 'showGoogleReviews' },
+                homepageFaqs: { label: 'Homepage FAQs Accordion', desc: 'Trade buyer & operational SLA Q&A section', toggleKey: 'showHomepageFAQs' },
+                conversionCta: { label: 'Final B2B Trade Accreditation CTA', desc: 'Bottom call-to-action to register and contact trade desk', toggleKey: 'showConversionCTA' }
+              };
+
+              const moveModule = (idx: number, direction: 'up' | 'down') => {
+                const newIdx = direction === 'up' ? idx - 1 : idx + 1;
+                if (newIdx < 0 || newIdx >= currentOrder.length) return;
+                const nextOrder = [...currentOrder];
+                const temp = nextOrder[idx];
+                nextOrder[idx] = nextOrder[newIdx];
+                nextOrder[newIdx] = temp;
+                const updated = { ...config, homepageModuleOrder: nextOrder };
+                setConfig(updated);
+                db.updateHomepageConfig(updated, user);
+              };
+
+              return (
+                <div className="space-y-2.5">
+                  {currentOrder.map((modId, idx) => {
+                    const meta = moduleMeta[modId] || { label: modId, desc: '', toggleKey: 'showHeroSection' as any };
+                    const isVisible = (config as any)[meta.toggleKey] !== false;
+
+                    return (
+                      <div
+                        key={modId}
+                        className={`flex items-center justify-between p-3.5 rounded-xl border transition-all ${
+                          isVisible
+                            ? 'bg-slate-50/80 border-slate-200'
+                            : 'bg-slate-50/40 border-slate-200 opacity-60'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-3">
+                          <span className="w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-700 text-xs font-mono font-bold flex items-center justify-center shadow-2xs">
+                            {idx + 1}
+                          </span>
+                          <div>
+                            <div className="flex items-center space-x-2">
+                              <span className="text-xs font-bold text-slate-900">{meta.label}</span>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                isVisible
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-slate-200 text-slate-600'
+                              }`}>
+                                {isVisible ? 'Active' : 'Disabled'}
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-slate-500">{meta.desc}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-1">
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => moveModule(idx, 'up')}
+                            className={`p-1.5 rounded-lg border text-xs transition-colors ${
+                              idx === 0
+                                ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-slate-50'
+                                : 'border-slate-200 text-slate-700 hover:bg-white cursor-pointer shadow-2xs'
+                            }`}
+                            title="Move section up"
+                          >
+                            <ArrowUp className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === currentOrder.length - 1}
+                            onClick={() => moveModule(idx, 'down')}
+                            className={`p-1.5 rounded-lg border text-xs transition-colors ${
+                              idx === currentOrder.length - 1
+                                ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-slate-50'
+                                : 'border-slate-200 text-slate-700 hover:bg-white cursor-pointer shadow-2xs'
+                            }`}
+                            title="Move section down"
+                          >
+                            <ArrowDown className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Section: Responsive Grid Density Controls */}
           <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
             <div className="flex items-center space-x-3 pb-4 border-b border-slate-100">
               <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold">
                 <Grid className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">Grid Layout & Card Density Controls</h3>
-                <p className="text-xs text-slate-500">Configure column counts and card arrangements across responsive breakpoints.</p>
+                <h3 className="text-base font-bold text-slate-900">Live Homepage Grid Density Controls</h3>
+                <p className="text-xs text-slate-500">Configure responsive column counts for active homepage card layouts.</p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Product Catalog Columns
-                </label>
-                <select
-                  value={config.productGridColumns || 3}
-                  onChange={e => {
-                    const updated = { ...config, productGridColumns: Number(e.target.value) as any };
-                    setConfig(updated);
-                    db.updateHomepageConfig(updated, user);
-                  }}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-slate-50"
-                >
-                  <option value={2}>2 Columns (Spacious Cards)</option>
-                  <option value={3}>3 Columns (Standard DMC - Recommended)</option>
-                  <option value={4}>4 Columns (High Density)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Destination Grid Columns
+                  Destination Expertise Grid Columns
                 </label>
                 <select
                   value={config.destinationGridColumns || 3}
@@ -343,48 +563,31 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                   }}
                   className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-slate-50"
                 >
-                  <option value={2}>2 Columns</option>
-                  <option value={3}>3 Columns (Standard)</option>
+                  <option value={2}>2 Columns (Spacious Cards)</option>
+                  <option value={3}>3 Columns (Standard DMC - Recommended)</option>
                   <option value={4}>4 Columns (Compact Hubs)</option>
                 </select>
+                <p className="text-[11px] text-slate-500 mt-1">Controls the layout of the Global Desks & Destinations section.</p>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Customer Gallery Rows
+                  City Hubs & Gateways Grid Columns
                 </label>
                 <select
-                  value={config.happyCustomerGalleryRows || 2}
+                  value={config.hubGridColumns || 3}
                   onChange={e => {
-                    const updated = { ...config, happyCustomerGalleryRows: Number(e.target.value) };
-                    setConfig(updated);
-                    db.updateHomepageConfig(updated, user);
-                  }}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-slate-50"
-                >
-                  <option value={1}>1 Row (Compact Strip)</option>
-                  <option value={2}>2 Rows (Standard Grid)</option>
-                  <option value={3}>3 Rows (Expanded Mosaic)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Customer Gallery Columns
-                </label>
-                <select
-                  value={config.happyCustomerGalleryCols || 3}
-                  onChange={e => {
-                    const updated = { ...config, happyCustomerGalleryCols: Number(e.target.value) };
+                    const updated = { ...config, hubGridColumns: Number(e.target.value) as any };
                     setConfig(updated);
                     db.updateHomepageConfig(updated, user);
                   }}
                   className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-slate-50"
                 >
                   <option value={2}>2 Columns</option>
-                  <option value={3}>3 Columns (Recommended)</option>
+                  <option value={3}>3 Columns (Standard)</option>
                   <option value={4}>4 Columns (High Density)</option>
                 </select>
+                <p className="text-[11px] text-slate-500 mt-1">Controls the card arrangement in the Direct Operations Hubs section.</p>
               </div>
             </div>
           </div>
@@ -425,8 +628,10 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
             heroSubheading: nextHero.subheading ?? config.heroSubheading,
             heroBadgeText: nextHero.eyebrowText ?? config.heroBadgeText,
             heroImage: nextHero.media?.desktopImageUrl ?? config.heroImage,
+            heroMobileImage: nextHero.media?.mobileImageUrl ?? config.heroMobileImage,
             heroImageAlt: nextHero.media?.altText ?? config.heroImageAlt,
             heroOverlayOpacity: nextHero.media?.overlayOpacity ?? config.heroOverlayOpacity,
+            heroVideoUrl: nextHero.media?.videoUrl ?? config.heroVideoUrl,
             primaryCtaText: nextHero.ctas?.primaryCtaText ?? config.primaryCtaText,
             secondaryCtaText: nextHero.ctas?.secondaryCtaText ?? config.secondaryCtaText,
             showPrimaryCta: nextHero.ctas?.showPrimaryCta ?? config.showPrimaryCta,
@@ -435,8 +640,6 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
 
           setConfig(nextConfig);
         };
-
-        const activePromotions = db.getActivePromotions();
 
         return (
           <div className="space-y-6">
@@ -555,11 +758,11 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                         : 'max-w-[390px] border-4 border-slate-800 rounded-3xl shadow-2xl'
                   }`}
                 >
-                  <UniversalHero
-                    context="HOMEPAGE"
-                    config={heroCfg}
-                    homepageConfig={config}
+                  <BuyerHeroSection
                     allDestinations={destinations}
+                    onSelectDestination={() => {}}
+                    onOpenRegister={() => {}}
+                    homepageConfig={config}
                   />
                 </div>
               </div>
@@ -568,13 +771,10 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
             {/* Sub-Section Navigation Tabs */}
             <div className="flex items-center space-x-2 overflow-x-auto pb-1 border-b border-slate-200">
               {[
-                { key: 'COPY', label: '1. Copy & Positioning', icon: Sliders },
+                { key: 'COPY', label: '1. Headlines & Copy', icon: Sliders },
                 { key: 'MEDIA', label: '2. Media & Contrast', icon: ImageIcon },
-                { key: 'DISCOVERY', label: '3. Trip Discovery Panel', icon: Search },
-                { key: 'PROMOTION', label: '4. Campaign Integration', icon: Tag },
-                { key: 'PILLARS', label: '5. The Three Pillars', icon: Layers },
-                { key: 'TRUST', label: '6. Trust & Value Strip', icon: ShieldCheck },
-                { key: 'CTA', label: '7. Action Buttons', icon: ExternalLink }
+                { key: 'CTA', label: '3. Action Buttons', icon: ExternalLink },
+                { key: 'OPERATIONS', label: '4. B2B Operations Terminal', icon: Building2 }
               ].map(tab => {
                 const Icon = tab.icon;
                 const active = heroConfigSection === tab.key;
@@ -789,369 +989,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
               </div>
             )}
 
-            {/* Sub-Section 3: DISCOVERY PANEL */}
-            {heroConfigSection === 'DISCOVERY' && (
-              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900">Trip Discovery & Inventory Search Panel</h4>
-                    <p className="text-xs text-slate-500">Configure which search parameters travel agents can interact with directly in the Hero.</p>
-                  </div>
-                  <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={heroCfg.showDiscoveryPanel !== false}
-                      onChange={e => updateHero({ showDiscoveryPanel: e.target.checked })}
-                      className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
-                    />
-                    <span>Show Search Panel</span>
-                  </label>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                    {[
-                      { key: 'showDestination', label: 'Destination Selector' },
-                      { key: 'showHub', label: 'Regional Hub Cascading Dropdown' },
-                      { key: 'showDates', label: 'Travel Dates & Nights Calculator' },
-                      { key: 'showTravelers', label: 'Passenger Classification (ADT/CWB/CNB/INF)' },
-                      { key: 'showTravelStyle', label: 'Travel Style Filter' },
-                      { key: 'showProductType', label: 'Product Type Filter' },
-                      { key: 'showAiPlannerShortcut', label: 'Quick AI Planner Callout' }
-                    ].map(field => {
-                      const isChecked = (heroCfg.discoveryPanelConfig as any)?.[field.key] !== false;
-                      return (
-                        <label 
-                          key={field.key}
-                          className="flex items-center space-x-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer text-xs font-semibold text-slate-800"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={e => {
-                              const curr = heroCfg.discoveryPanelConfig || {};
-                              updateHero({
-                                discoveryPanelConfig: {
-                                  ...curr,
-                                  [field.key]: e.target.checked
-                                }
-                              });
-                            }}
-                            className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
-                          />
-                          <span>{field.label}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        Search CTA Button Text
-                      </label>
-                      <input
-                        type="text"
-                        value={heroCfg.discoveryPanelConfig?.ctaText || 'Search Inventory'}
-                        onChange={e => {
-                          const curr = heroCfg.discoveryPanelConfig || {};
-                          updateHero({
-                            discoveryPanelConfig: {
-                              ...curr,
-                              ctaText: e.target.value
-                            }
-                          });
-                        }}
-                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold"
-                        placeholder="Search Inventory"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        30-Second AI Itinerary Callout Text
-                      </label>
-                      <input
-                        type="text"
-                        value={heroCfg.aiQuickBannerText ? String(heroCfg.aiQuickBannerText) : 'BUILD A COMPLETE TRAVEL PACKAGE IN AS LITTLE AS 30 SECONDS.'}
-                        onChange={e => updateHero({ aiQuickBannerText: e.target.value })}
-                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs"
-                        placeholder="BUILD A COMPLETE TRAVEL PACKAGE IN AS LITTLE AS 30 SECONDS."
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Sub-Section 4: PROMOTION */}
-            {heroConfigSection === 'PROMOTION' && (
-              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900">Active Promotion & Campaign Integration</h4>
-                    <p className="text-xs text-slate-500">Showcase active B2B campaigns, seasonal flash promotions, or special wholesale tariffs.</p>
-                  </div>
-                  <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={heroCfg.promotion?.enabled !== false}
-                      onChange={e => {
-                        const curr = heroCfg.promotion || {};
-                        updateHero({
-                          promotion: {
-                            ...curr,
-                            enabled: e.target.checked
-                          }
-                        });
-                      }}
-                      className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
-                    />
-                    <span>Enable Campaign Banner</span>
-                  </label>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        Selection Mode
-                      </label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {[
-                          { id: 'AUTO', label: 'Highest Priority (Auto)' },
-                          { id: 'MANUAL', label: 'Specific Campaign' }
-                        ].map(m => (
-                          <button
-                            key={m.id}
-                            type="button"
-                            onClick={() => {
-                              const curr = heroCfg.promotion || {};
-                              updateHero({
-                                promotion: {
-                                  ...curr,
-                                  mode: m.id as any
-                                }
-                              });
-                            }}
-                            className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
-                              (heroCfg.promotion?.mode || 'AUTO') === m.id
-                                ? 'bg-slate-900 text-white border-slate-900'
-                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                            }`}
-                          >
-                            {m.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        Custom Badge Tag
-                      </label>
-                      <input
-                        type="text"
-                        value={heroCfg.promotion?.customBadge || 'SPECIAL CAMPAIGN'}
-                        onChange={e => {
-                          const curr = heroCfg.promotion || {};
-                          updateHero({
-                            promotion: {
-                              ...curr,
-                              customBadge: e.target.value
-                            }
-                          });
-                        }}
-                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold uppercase"
-                        placeholder="SPECIAL CAMPAIGN"
-                      />
-                    </div>
-                  </div>
-
-                  {heroCfg.promotion?.mode === 'MANUAL' && (
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                        Select Promotion from Active Campaigns ({activePromotions.length} Available)
-                      </label>
-                      <select
-                        value={heroCfg.promotion?.manualPromotionId || ''}
-                        onChange={e => {
-                          const curr = heroCfg.promotion || {};
-                          updateHero({
-                            promotion: {
-                              ...curr,
-                              manualPromotionId: e.target.value
-                            }
-                          });
-                        }}
-                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold"
-                      >
-                        <option value="">-- Choose Campaign --</option>
-                        {activePromotions.map(p => (
-                          <option key={p.id} value={p.id}>
-                            {p.title} ({p.discountType === 'PERCENTAGE' ? `${p.discountValue}% OFF` : `$${p.discountValue} OFF`}) - {p.promoCode || 'No Code'}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Sub-Section 5: PILLARS */}
-            {heroConfigSection === 'PILLARS' && (
-              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900">The Three Pillars with Connected Arc</h4>
-                    <p className="text-xs text-slate-500">The core triad illustrating Travel, Technology, and Intelligence.</p>
-                  </div>
-                  <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={heroCfg.showPillars !== false}
-                      onChange={e => updateHero({ showPillars: e.target.checked })}
-                      className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
-                    />
-                    <span>Show Three Pillars</span>
-                  </label>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {/* Pillar 1 */}
-                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">PILLAR 1: TRAVEL</span>
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Title</label>
-                      <input
-                        type="text"
-                        value={heroCfg.pillar1Title || 'DESTINATION EXPERTISE'}
-                        onChange={e => updateHero({ pillar1Title: e.target.value })}
-                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold bg-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Subtitle</label>
-                      <textarea
-                        rows={2}
-                        value={heroCfg.pillar1Subtitle || 'Local knowledge. Destination services. Ground operations.'}
-                        onChange={e => updateHero({ pillar1Subtitle: e.target.value })}
-                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-white"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Pillar 2 */}
-                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">PILLAR 2: TECHNOLOGY</span>
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Title</label>
-                      <input
-                        type="text"
-                        value={heroCfg.pillar2Title || 'DIGITAL SOLUTIONS'}
-                        onChange={e => updateHero({ pillar2Title: e.target.value })}
-                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold bg-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Subtitle</label>
-                      <textarea
-                        rows={2}
-                        value={heroCfg.pillar2Subtitle || 'Package creation. Quotations. Connected workflows.'}
-                        onChange={e => updateHero({ pillar2Subtitle: e.target.value })}
-                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-white"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Pillar 3 */}
-                  <div className="p-4 rounded-xl border border-teal-200 bg-teal-50/50 space-y-3">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-[#008972] block">PILLAR 3: INTELLIGENCE</span>
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Title</label>
-                      <input
-                        type="text"
-                        value={heroCfg.pillar3Title || 'AI-POWERED'}
-                        onChange={e => updateHero({ pillar3Title: e.target.value })}
-                        className="w-full px-3 py-1.5 rounded-lg border border-teal-200 text-xs font-bold bg-white text-[#008972]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Subtitle</label>
-                      <textarea
-                        rows={2}
-                        value={heroCfg.pillar3Subtitle || 'Intelligent travel package creation in 30 seconds.'}
-                        onChange={e => updateHero({ pillar3Subtitle: e.target.value })}
-                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-white"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Sub-Section 6: TRUST */}
-            {heroConfigSection === 'TRUST' && (
-              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900">B2B Trust & Operational USP Strip</h4>
-                    <p className="text-xs text-slate-500">The 4 key ground capabilities displayed on the bottom bar of the hero.</p>
-                  </div>
-                  <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={heroCfg.showTrustStrip !== false}
-                      onChange={e => updateHero({ showTrustStrip: e.target.checked })}
-                      className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
-                    />
-                    <span>Show Trust Strip</span>
-                  </label>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {(heroCfg.trustItems || [
-                    { title: 'Direct B2B Net Wholesale Rates', description: 'Contracted rates with verified ground suppliers', icon: 'ShieldCheck' },
-                    { title: '24–48h SLA Operations Desk', description: 'Dedicated on-ground operations in key hubs', icon: 'Clock' },
-                    { title: 'Verified Licensed Guides', description: 'Bilingual guides & executive chauffeur fleets', icon: 'Building2' },
-                    { title: 'White-Label Proposals', description: 'Instant multi-currency quotes & client itineraries', icon: 'Globe2' }
-                  ]).map((item, idx) => (
-                    <div key={idx} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">USP Item {idx + 1}</span>
-                      <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">Headline</label>
-                        <input
-                          type="text"
-                          value={item.title}
-                          onChange={e => {
-                            const updated = [...(heroCfg.trustItems || [])];
-                            updated[idx] = { ...updated[idx], title: e.target.value };
-                            updateHero({ trustItems: updated });
-                          }}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] text-slate-500 mb-1">Description</label>
-                        <input
-                          type="text"
-                          value={item.description}
-                          onChange={e => {
-                            const updated = [...(heroCfg.trustItems || [])];
-                            updated[idx] = { ...updated[idx], description: e.target.value };
-                            updateHero({ trustItems: updated });
-                          }}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Sub-Section 7: CTA */}
+            {/* Sub-Section 3: CTA */}
             {heroConfigSection === 'CTA' && (
               <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
                 <div className="border-b border-slate-100 pb-3">
@@ -1225,6 +1063,226 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
               </div>
             )}
 
+            {/* Sub-Section 4: OPERATIONS PANEL */}
+            {heroConfigSection === 'OPERATIONS' && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
+                <div className="border-b border-slate-100 pb-3">
+                  <h4 className="text-sm font-bold text-slate-900">B2B Operations Terminal & Stats Panel</h4>
+                  <p className="text-xs text-slate-500">Configure the right-hand operational card, quick terminal login, live ground dispatch highlights, and metrics.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Visual Panel Badge
+                    </label>
+                    <input
+                      type="text"
+                      value={config.heroVisualPanelBadge ?? 'DIRECT OPERATIONS CENTER'}
+                      onChange={e => {
+                        const updated = { ...config, heroVisualPanelBadge: e.target.value };
+                        setConfig(updated);
+                        db.updateHomepageConfig(updated, user);
+                      }}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold"
+                      placeholder="DIRECT OPERATIONS CENTER"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Visual Panel Title
+                    </label>
+                    <input
+                      type="text"
+                      value={config.heroVisualPanelTitle ?? 'Trade Terminal • Ground Operations'}
+                      onChange={e => {
+                        const updated = { ...config, heroVisualPanelTitle: e.target.value };
+                        setConfig(updated);
+                        db.updateHomepageConfig(updated, user);
+                      }}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold"
+                      placeholder="Trade Terminal • Ground Operations"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Visual Panel Description
+                  </label>
+                  <input
+                    type="text"
+                    value={config.heroVisualPanelDescription ?? 'Licensed Ground Fulfillment & Live B2B Wholesale Desks'}
+                    onChange={e => {
+                      const updated = { ...config, heroVisualPanelDescription: e.target.value };
+                      setConfig(updated);
+                      db.updateHomepageConfig(updated, user);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs"
+                    placeholder="Licensed Ground Fulfillment & Live B2B Wholesale Desks"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Visual Panel Image URL
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={config.heroVisualImageUrl ?? 'https://images.unsplash.com/photo-1542051841857-5f90071e7989?q=80&w=1200&auto=format&fit=crop'}
+                      onChange={e => {
+                        const updated = { ...config, heroVisualImageUrl: e.target.value };
+                        setConfig(updated);
+                        db.updateHomepageConfig(updated, user);
+                      }}
+                      className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono"
+                      placeholder="https://images.unsplash.com/..."
+                    />
+                    {config.heroVisualImageUrl && (
+                      <img
+                        src={config.heroVisualImageUrl}
+                        alt="Preview"
+                        className="w-12 h-9 rounded-lg object-cover border border-slate-200"
+                        referrerPolicy="no-referrer"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                {/* Operational Highlights */}
+                <div className="space-y-3 pt-2 border-t border-slate-100">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                      Ground Operational Highlights (Bullet Points)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const current = [...(config.heroOperationalHighlights || [
+                          '24–48h Custom FIT Itinerary Turnaround',
+                          'Direct Wholesale Ground Contracts (Zero Broker Layers)',
+                          'Private Chauffeur & VIP Coach Fleets',
+                          'Licensed Bilingual Destination Experts'
+                        ])];
+                        current.push('New Operational Capability');
+                        const updated = { ...config, heroOperationalHighlights: current };
+                        setConfig(updated);
+                        db.updateHomepageConfig(updated, user);
+                      }}
+                      className="inline-flex items-center space-x-1 text-xs font-bold text-[#008972] hover:text-[#00C6A6] cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Highlight</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {(config.heroOperationalHighlights || [
+                      '24–48h Custom FIT Itinerary Turnaround',
+                      'Direct Wholesale Ground Contracts (Zero Broker Layers)',
+                      'Private Chauffeur & VIP Coach Fleets',
+                      'Licensed Bilingual Destination Experts'
+                    ]).map((highlight, hIdx) => (
+                      <div key={hIdx} className="flex items-center space-x-2">
+                        <Check className="w-3.5 h-3.5 text-[#00C6A6] shrink-0" />
+                        <input
+                          type="text"
+                          value={highlight}
+                          onChange={e => {
+                            const updatedList = [...(config.heroOperationalHighlights || [])];
+                            updatedList[hIdx] = e.target.value;
+                            const updated = { ...config, heroOperationalHighlights: updatedList };
+                            setConfig(updated);
+                            db.updateHomepageConfig(updated, user);
+                          }}
+                          className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-slate-50 focus:bg-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updatedList = (config.heroOperationalHighlights || []).filter((_, idx) => idx !== hIdx);
+                            const updated = { ...config, heroOperationalHighlights: updatedList };
+                            setConfig(updated);
+                            db.updateHomepageConfig(updated, user);
+                          }}
+                          className="p-1 text-slate-400 hover:text-rose-500 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Quick Stats */}
+                <div className="space-y-3 pt-2 border-t border-slate-100">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                      Hero Key Stats / Metrics
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {(config.heroQuickStats || [
+                      { label: 'Turnaround', value: '48h', sublabel: 'SLA' },
+                      { label: 'Trade Access', value: '100%', sublabel: 'B2B Only' },
+                      { label: 'Ground Duty', value: '24/7', sublabel: 'Dispatch' }
+                    ]).map((stat, sIdx) => (
+                      <div key={sIdx} className="p-3 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase">Value</label>
+                          <input
+                            type="text"
+                            value={stat.value}
+                            onChange={e => {
+                              const updatedStats = [...(config.heroQuickStats || [])];
+                              updatedStats[sIdx] = { ...updatedStats[sIdx], value: e.target.value };
+                              const updated = { ...config, heroQuickStats: updatedStats };
+                              setConfig(updated);
+                              db.updateHomepageConfig(updated, user);
+                            }}
+                            className="w-full px-2 py-1 rounded bg-white border border-slate-200 text-xs font-black text-[#008972]"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase">Label</label>
+                          <input
+                            type="text"
+                            value={stat.label}
+                            onChange={e => {
+                              const updatedStats = [...(config.heroQuickStats || [])];
+                              updatedStats[sIdx] = { ...updatedStats[sIdx], label: e.target.value };
+                              const updated = { ...config, heroQuickStats: updatedStats };
+                              setConfig(updated);
+                              db.updateHomepageConfig(updated, user);
+                            }}
+                            className="w-full px-2 py-1 rounded bg-white border border-slate-200 text-xs font-bold text-slate-800"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase">Sublabel</label>
+                          <input
+                            type="text"
+                            value={stat.sublabel || ''}
+                            onChange={e => {
+                              const updatedStats = [...(config.heroQuickStats || [])];
+                              updatedStats[sIdx] = { ...updatedStats[sIdx], sublabel: e.target.value };
+                              const updated = { ...config, heroQuickStats: updatedStats };
+                              setConfig(updated);
+                              db.updateHomepageConfig(updated, user);
+                            }}
+                            className="w-full px-2 py-1 rounded bg-white border border-slate-200 text-[11px] text-slate-500"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Bottom Save Button */}
             <div className="flex justify-end pt-2">
               <button
@@ -1239,6 +1297,640 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
           </div>
         );
       })()}
+
+      {/* SUB TAB: HOMEPAGE HUBS & GATEWAYS */}
+      {activeSubTab === 'HUBS' && (
+        <div className="space-y-6">
+          {/* Hubs Control Header & Layout Settings */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-teal-50 text-[#008972] flex items-center justify-center font-bold">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h3 className="text-base font-bold text-slate-900">Homepage City Hubs & Regional Gateways</h3>
+                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      Real Firestore Sync
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Curate, reorder, and configure direct ground hubs displayed on the live homepage. Connected to authoritative Firestore <code className="font-mono text-slate-700 bg-slate-100 px-1 py-0.5 rounded">city_hubs</code> and live B2B inventory counts.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddHubModalOpen(true)}
+                  className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-[#008972] hover:bg-[#00C6A6] text-white hover:text-slate-950 text-xs font-bold transition-all shadow-xs cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add Hub to Homepage</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Section Visibility & Display Settings */}
+            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Homepage Hubs Section Display</h4>
+                  <p className="text-[11px] text-slate-500">Toggle whether the City Hubs & Regional Gateways block appears on the live homepage.</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.showCityHubs !== false}
+                    onChange={e => {
+                      const updated = { ...config, showCityHubs: e.target.checked };
+                      setConfig(updated);
+                      db.updateHomepageConfig(updated, user);
+                    }}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#008972]"></div>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-3 border-t border-slate-200">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Section Eyebrow / Badge
+                  </label>
+                  <input
+                    type="text"
+                    value={config.hubSectionBadge ?? 'DIRECT GROUND DESKS & GATEWAYS'}
+                    onChange={e => {
+                      const updated = { ...config, hubSectionBadge: e.target.value };
+                      setConfig(updated);
+                      db.updateHomepageConfig(updated, user);
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white"
+                    placeholder="DIRECT GROUND DESKS & GATEWAYS"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Section Title
+                  </label>
+                  <input
+                    type="text"
+                    value={config.hubSectionTitle ?? 'Direct Operations Hubs & Regional Gateways'}
+                    onChange={e => {
+                      const updated = { ...config, hubSectionTitle: e.target.value };
+                      setConfig(updated);
+                      db.updateHomepageConfig(updated, user);
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white font-bold"
+                    placeholder="Direct Operations Hubs & Regional Gateways"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Grid Columns
+                  </label>
+                  <select
+                    value={config.hubGridColumns || 3}
+                    onChange={e => {
+                      const updated = { ...config, hubGridColumns: parseInt(e.target.value, 10) as 2 | 3 | 4 };
+                      setConfig(updated);
+                      db.updateHomepageConfig(updated, user);
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white font-bold"
+                  >
+                    <option value={2}>2 Columns (Spacious Cards)</option>
+                    <option value={3}>3 Columns (Standard Grid)</option>
+                    <option value={4}>4 Columns (Dense B2B Directory)</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-3">
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Section Subtitle / Description
+                  </label>
+                  <input
+                    type="text"
+                    value={config.hubSectionSubtitle ?? 'Direct ground dispatch teams, owned vehicle fleets, and immediate wholesale allotments across top destinations.'}
+                    onChange={e => {
+                      const updated = { ...config, hubSectionSubtitle: e.target.value };
+                      setConfig(updated);
+                      db.updateHomepageConfig(updated, user);
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white"
+                    placeholder="Bilingual ground dispatch teams, owned vehicle fleets..."
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Hubs Filtering & Quick Search */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+              <div className="flex items-center space-x-2">
+                <span className="text-xs font-bold text-slate-700">
+                  Configured Hubs ({config.homepageHubs?.length || 0})
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  • Active in Firestore: {cityHubs.filter(h => h.status === 'ACTIVE').length}
+                </span>
+              </div>
+
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
+                <input
+                  type="text"
+                  value={hubSearchQuery}
+                  onChange={e => setHubSearchQuery(e.target.value)}
+                  placeholder="Filter configured hubs..."
+                  className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white"
+                />
+              </div>
+            </div>
+
+            {/* List of Configured Homepage Hubs */}
+            <div className="space-y-3">
+              {(!config.homepageHubs || config.homepageHubs.length === 0) ? (
+                <div className="p-8 text-center rounded-xl border border-dashed border-slate-300 bg-slate-50">
+                  <Building2 className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">No Hubs Configured on Homepage</h4>
+                  <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                    Click "Add Hub to Homepage" above to select active ground hubs from your Firestore database to feature on the live homepage.
+                  </p>
+                </div>
+              ) : (
+                config.homepageHubs
+                  .filter(item => {
+                    if (!hubSearchQuery) return true;
+                    const hub = cityHubs.find(h => h.id === item.hubId || h.id === `hub-${item.hubId}` || item.hubId.endsWith(h.id));
+                    const dest = destinations.find(d => d.id === hub?.destinationId || d.slug === hub?.destinationId);
+                    const q = hubSearchQuery.toLowerCase();
+                    return (
+                      (item.titleOverride && item.titleOverride.toLowerCase().includes(q)) ||
+                      (hub?.name && hub.name.toLowerCase().includes(q)) ||
+                      (dest?.name && dest.name.toLowerCase().includes(q))
+                    );
+                  })
+                  .map((item, idx) => {
+                    const hub = cityHubs.find(h => h.id === item.hubId || h.id === `hub-${item.hubId}` || item.hubId.endsWith(h.id));
+                    const dest = destinations.find(d => d.id === hub?.destinationId || d.slug === hub?.destinationId);
+                    const region = regions.find(r => r.id === dest?.regionId || r.id === (dest as any)?.masterRegionId || r.id === (hub as any)?.regionId);
+                    const counts = hub ? countingEngine.getCountsBreakdown({ hubId: hub.id }) : { totalProducts: 0, hotels: 0, activities: 0, transfers: 0, customFit: 0 };
+                    const isArchivedOrMissing = !hub || hub.status === 'ARCHIVED';
+
+                    const displayName = item.titleOverride || hub?.name || item.hubId;
+                    const displayImage = item.imageOverride || hub?.heroImage || dest?.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=600&auto=format&fit=crop';
+                    const displayBadge = item.badge || (item.featured ? 'Featured Hub' : 'Direct Ground Desk');
+
+                    return (
+                      <div
+                        key={`homepage-hub-cfg-${item.hubId}-${idx}`}
+                        className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border transition-all gap-4 ${
+                          item.enabled === false
+                            ? 'border-slate-200 bg-slate-100/70 opacity-65'
+                            : isArchivedOrMissing
+                            ? 'border-amber-200 bg-amber-50/50'
+                            : item.featured
+                            ? 'border-teal-300 bg-teal-50/20 shadow-xs'
+                            : 'border-slate-200 bg-slate-50/60 hover:bg-slate-50'
+                        }`}
+                      >
+                        {/* Hub Thumbnail & Info */}
+                        <div className="flex items-center space-x-4 min-w-0">
+                          <span className="w-6 text-center text-xs font-mono font-bold text-slate-400 shrink-0">
+                            {idx + 1}
+                          </span>
+                          <img
+                            src={displayImage}
+                            alt={displayName}
+                            className="w-14 h-12 rounded-lg object-cover border border-slate-200 shrink-0"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="min-w-0">
+                            <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                              <h4 className="text-xs font-bold text-slate-900 truncate">{displayName}</h4>
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
+                                {displayBadge}
+                              </span>
+                              {isArchivedOrMissing && (
+                                <span className="inline-flex items-center space-x-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                                  <AlertCircle className="w-3 h-3" />
+                                  <span>Missing in Firestore</span>
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center space-x-2 text-[11px] text-slate-500 mt-0.5 flex-wrap">
+                              <span>
+                                {item.destinationOverride ? (
+                                  <span className="font-semibold text-teal-700">{item.destinationOverride} (Custom Dest)</span>
+                                ) : (
+                                  <>{region ? `${region.name} • ` : ''}{dest?.name || hub?.destinationName || 'Ground Gateway'}</>
+                                )}
+                              </span>
+                              <span>•</span>
+                              <span className="font-semibold text-slate-700">
+                                {item.inventoryCountOverride !== undefined ? (
+                                  <span className="text-teal-700 font-bold">{item.inventoryCountOverride} Services (Override)</span>
+                                ) : (
+                                  <>{counts.totalProducts} Direct Services</>
+                                )}
+                              </span>
+                              <span>•</span>
+                              <span className="font-semibold text-slate-700">
+                                {item.hotelsCountOverride !== undefined ? (
+                                  <span className="text-teal-700 font-bold">{item.hotelsCountOverride} Hotels (Override)</span>
+                                ) : (
+                                  <>{counts.hotels} Hotel Allotments</>
+                                )}
+                              </span>
+                              {item.customUrl && (
+                                <>
+                                  <span>•</span>
+                                  <span className="text-[10px] font-mono text-slate-500 truncate max-w-[150px]" title={item.customUrl}>
+                                    Link: {item.customUrl}
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                            {item.titleOverride && (
+                              <p className="text-[10px] text-teal-700 font-medium">
+                                Title override active (Original: {hub?.name || item.hubId})
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Hub Actions & Controls */}
+                        <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
+                          {/* Featured Toggle */}
+                          <button
+                            type="button"
+                            onClick={() => toggleHubFeatured(item.hubId)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                              item.featured
+                                ? 'bg-teal-100 text-[#008972] border border-teal-300 font-black'
+                                : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                            }`}
+                            title="Toggle featured status"
+                          >
+                            {item.featured ? '★ Featured Hub' : 'Standard'}
+                          </button>
+
+                          {/* Visibility Toggle */}
+                          <button
+                            type="button"
+                            onClick={() => toggleHubVisibility(item.hubId)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                              item.enabled !== false
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                : 'bg-rose-100 text-rose-800 border border-rose-200'
+                            }`}
+                            title="Toggle live homepage visibility"
+                          >
+                            {item.enabled !== false ? 'Active' : 'Hidden'}
+                          </button>
+
+                          {/* Customization Overrides Button */}
+                          <button
+                            type="button"
+                            onClick={() => setEditingHubItem(item)}
+                            className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 cursor-pointer"
+                            title="Customize CMS Overrides"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* Reordering Controls */}
+                          <div className="flex items-center space-x-1">
+                            <button
+                              type="button"
+                              disabled={idx === 0}
+                              onClick={() => moveHub(idx, 'up')}
+                              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 cursor-pointer"
+                              title="Move Up"
+                            >
+                              <ArrowUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idx === (config.homepageHubs?.length || 0) - 1}
+                              onClick={() => moveHub(idx, 'down')}
+                              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 cursor-pointer"
+                              title="Move Down"
+                            >
+                              <ArrowDown className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          {/* Remove Button */}
+                          <button
+                            type="button"
+                            onClick={() => removeHubFromHomepage(item.hubId)}
+                            className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
+                            title="Remove from Homepage"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ADD HUB TO HOMEPAGE */}
+      {isAddHubModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-2xl w-full max-h-[85vh] flex flex-col animate-in fade-in">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Add City Hub to Homepage</h3>
+                <p className="text-xs text-slate-500">
+                  Select an active Firestore hub to display on the live homepage directory.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddHubModalOpen(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Filters */}
+            <div className="p-4 border-b border-slate-100 bg-slate-50 flex flex-col sm:flex-row gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                <input
+                  type="text"
+                  value={addHubSearch}
+                  onChange={e => setAddHubSearch(e.target.value)}
+                  placeholder="Search hub by name or city..."
+                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 text-xs bg-white"
+                />
+              </div>
+
+              <select
+                value={addHubRegionFilter}
+                onChange={e => setAddHubRegionFilter(e.target.value)}
+                className="px-3 py-2 rounded-xl border border-slate-200 text-xs bg-white font-bold"
+              >
+                <option value="ALL">All Master Regions</option>
+                {regions.map(reg => (
+                  <option key={reg.id} value={reg.id}>{reg.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Hubs Selection List */}
+            <div className="p-4 overflow-y-auto space-y-2 flex-1">
+              {cityHubs
+                .filter(hub => hub.status === 'ACTIVE')
+                .filter(hub => !(config.homepageHubs || []).some(h => h.hubId === hub.id))
+                .filter(hub => {
+                  if (!addHubSearch) return true;
+                  const q = addHubSearch.toLowerCase();
+                  return hub.name.toLowerCase().includes(q) || hub.destinationName.toLowerCase().includes(q);
+                })
+                .filter(hub => {
+                  if (addHubRegionFilter === 'ALL') return true;
+                  const dest = destinations.find(d => d.id === hub.destinationId || d.slug === hub.destinationId);
+                  return dest?.regionId === addHubRegionFilter || (dest as any)?.masterRegionId === addHubRegionFilter;
+                })
+                .map(hub => {
+                  const dest = destinations.find(d => d.id === hub.destinationId || d.slug === hub.destinationId);
+                  const breakdown = countingEngine.getCountsBreakdown({ hubId: hub.id });
+
+                  return (
+                    <div
+                      key={`add-hub-option-${hub.id}`}
+                      className="flex items-center justify-between p-3 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors"
+                    >
+                      <div className="flex items-center space-x-3">
+                        <img
+                          src={hub.heroImage || dest?.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=300&auto=format&fit=crop'}
+                          alt={hub.name}
+                          className="w-12 h-10 rounded-lg object-cover border border-slate-200"
+                          referrerPolicy="no-referrer"
+                        />
+                        <div>
+                          <h4 className="text-xs font-bold text-slate-900">{hub.name}</h4>
+                          <p className="text-[11px] text-slate-500">
+                            {dest?.name || hub.destinationName} • {breakdown.totalProducts} services • {breakdown.hotels} hotels
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => addHubToHomepage(hub.id)}
+                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-[#008972] hover:bg-[#00C6A6] text-white hover:text-slate-950 text-xs font-bold transition-all shadow-xs cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add to Homepage</span>
+                      </button>
+                    </div>
+                  );
+                })}
+
+              {cityHubs
+                .filter(hub => hub.status === 'ACTIVE')
+                .filter(hub => !(config.homepageHubs || []).some(h => h.hubId === hub.id)).length === 0 && (
+                <div className="p-8 text-center text-slate-500 text-xs">
+                  All active Firestore hubs are already added to the homepage.
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsAddHubModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT HUB CMS OVERRIDES */}
+      {editingHubItem && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full p-6 animate-in fade-in space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Customize Hub Homepage Appearance</h3>
+                <p className="text-xs text-slate-500">Override title, description, or image specifically for the homepage.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingHubItem(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Title Override (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={editingHubItem.titleOverride || ''}
+                  onChange={e => setEditingHubItem({ ...editingHubItem, titleOverride: e.target.value })}
+                  placeholder="e.g. Tokyo Operations & Kanto Gateway"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Leave blank to use the standard Firestore Hub Name.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Badge Text (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={editingHubItem.badge || ''}
+                  onChange={e => setEditingHubItem({ ...editingHubItem, badge: e.target.value })}
+                  placeholder="e.g. Primary Airport Hub, VIP Ground Fleet"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Description Override (Optional)
+                </label>
+                <textarea
+                  rows={3}
+                  value={editingHubItem.descriptionOverride || ''}
+                  onChange={e => setEditingHubItem({ ...editingHubItem, descriptionOverride: e.target.value })}
+                  placeholder="Custom operational summary for the homepage card..."
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Hero Image URL Override (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={editingHubItem.imageOverride || ''}
+                  onChange={e => setEditingHubItem({ ...editingHubItem, imageOverride: e.target.value })}
+                  placeholder="https://images.unsplash.com/..."
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Destination Name Override (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={editingHubItem.destinationOverride || ''}
+                  onChange={e => setEditingHubItem({ ...editingHubItem, destinationOverride: e.target.value })}
+                  placeholder="e.g. Japan • Kanto Region"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Overrides the region/destination line on the homepage card.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Destination Custom Link / URL (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={editingHubItem.customUrl || ''}
+                  onChange={e => setEditingHubItem({ ...editingHubItem, customUrl: e.target.value })}
+                  placeholder="e.g. /catalog?destination=japan or /hub/tokyo"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-mono"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Default destination navigates to catalog filtered by hub.</p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Direct Services Count (Optional)
+                  </label>
+                  <input
+                    type="number"
+                    value={editingHubItem.inventoryCountOverride ?? ''}
+                    onChange={e => setEditingHubItem({ 
+                      ...editingHubItem, 
+                      inventoryCountOverride: e.target.value === '' ? undefined : Number(e.target.value) 
+                    })}
+                    placeholder="Leave blank for live Firestore count"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-mono"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">Manual override for total products/services.</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Hotel Allotments Count (Optional)
+                  </label>
+                  <input
+                    type="number"
+                    value={editingHubItem.hotelsCountOverride ?? ''}
+                    onChange={e => setEditingHubItem({ 
+                      ...editingHubItem, 
+                      hotelsCountOverride: e.target.value === '' ? undefined : Number(e.target.value) 
+                    })}
+                    placeholder="Leave blank for live Firestore count"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-mono"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">Manual override for hotel allocations.</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  CTA Button Label (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={editingHubItem.ctaLabel || ''}
+                  onChange={e => setEditingHubItem({ ...editingHubItem, ctaLabel: e.target.value })}
+                  placeholder="e.g. Explore Tokyo Operations"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-3 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingHubItem(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSaveHubOverrides(editingHubItem)}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-[#008972] hover:bg-[#00C6A6] text-white hover:text-slate-950 transition-all shadow-xs"
+              >
+                Save Overrides
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* SUB TAB 3: DESTINATIONS & ORDERING */}
       {activeSubTab === 'DESTINATIONS' && (
@@ -1366,7 +2058,496 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
         </div>
       )}
 
-      {/* SUB TAB 4: HOMEPAGE FAQS MANAGER */}
+      {/* SUB TAB: HOMEPAGE CONTENT SECTIONS */}
+      {activeSubTab === 'SECTIONS' && (
+        <div className="space-y-6">
+          {/* Header */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-xl bg-teal-50 text-[#008972] flex items-center justify-center font-bold">
+                <Layers className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <h3 className="text-base font-bold text-slate-900">Live Homepage Content Sections</h3>
+                  <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    Direct Live Sync
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Control the headlines, badges, subtitles, and visibility for every major section rendered on the live storefront.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleSave()}
+              className="inline-flex items-center space-x-2 bg-[#008972] hover:bg-[#00C6A6] text-white hover:text-slate-950 font-bold px-5 py-2.5 rounded-xl shadow-xs transition-all cursor-pointer text-xs"
+            >
+              <Save className="w-4 h-4" />
+              <span>Publish Sections Live</span>
+            </button>
+          </div>
+
+          {/* Section 2: Brand Introduction & Architecture */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center font-bold text-xs">
+                  02
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Section 2: Brand Introduction & Architecture</h4>
+                  <p className="text-xs text-slate-500">Direct DMC ground handling architecture, value proposition, and wholesale SLA guarantees.</p>
+                </div>
+              </div>
+
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.showBrandIntroduction !== false}
+                  onChange={e => {
+                    const updated = { ...config, showBrandIntroduction: e.target.checked };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#008972]"></div>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Eyebrow Badge
+                </label>
+                <input
+                  type="text"
+                  value={config.brandIntroductionBadge ?? 'DIRECT DMC GROUND HANDLING ARCHITECTURE'}
+                  onChange={e => {
+                    const updated = { ...config, brandIntroductionBadge: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-medium"
+                  placeholder="DIRECT DMC GROUND HANDLING ARCHITECTURE"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Main Headline
+                </label>
+                <input
+                  type="text"
+                  value={config.brandIntroductionTitle ?? 'One Contract. 20+ In-Country Desks. Zero Intermediary Markups.'}
+                  onChange={e => {
+                    const updated = { ...config, brandIntroductionTitle: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold"
+                  placeholder="One Contract. 20+ In-Country Desks. Zero Intermediary Markups."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Supporting Description
+                </label>
+                <textarea
+                  rows={2}
+                  value={config.brandIntroductionSubtitle ?? 'TheUnbound operates dedicated, fully licensed DMC infrastructure across premier global destinations. We provide licensed travel advisors, wholesalers, and corporate buyers with unmediated supplier rates, verified quality assurance, and end-to-end ground coordination.'}
+                  onChange={e => {
+                    const updated = { ...config, brandIntroductionSubtitle: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Destination Operations & Global Desks */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-teal-50 text-[#008972] flex items-center justify-center font-bold text-xs">
+                  03
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Section 3: Destination Operations & Global Desks</h4>
+                  <p className="text-xs text-slate-500">Contracted destination corridors, active ground desks, and region filter tabs.</p>
+                </div>
+              </div>
+
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.showDestinationFilter !== false}
+                  onChange={e => {
+                    const updated = { ...config, showDestinationFilter: e.target.checked };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#008972]"></div>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Eyebrow Badge
+                </label>
+                <input
+                  type="text"
+                  value={config.destinationSectionBadge ?? 'DESTINATION OPERATIONS & GLOBAL DESKS'}
+                  onChange={e => {
+                    const updated = { ...config, destinationSectionBadge: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-medium"
+                  placeholder="DESTINATION OPERATIONS & GLOBAL DESKS"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Section Headline
+                </label>
+                <input
+                  type="text"
+                  value={config.destinationSectionTitle ?? 'Contracted Global Desks & Direct Handling Corridors'}
+                  onChange={e => {
+                    const updated = { ...config, destinationSectionTitle: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold"
+                  placeholder="Contracted Global Desks & Direct Handling Corridors"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Section Subtitle
+                </label>
+                <input
+                  type="text"
+                  value={config.destinationSectionSubtitle ?? 'Explore dedicated in-country destination offices, active ground teams, and direct wholesale inventory.'}
+                  onChange={e => {
+                    const updated = { ...config, destinationSectionSubtitle: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs"
+                  placeholder="Explore dedicated in-country destination offices..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Grid Columns
+                </label>
+                <select
+                  value={config.destinationGridColumns || 3}
+                  onChange={e => {
+                    const updated = { ...config, destinationGridColumns: parseInt(e.target.value, 10) as 2 | 3 | 4 };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white font-bold"
+                >
+                  <option value={2}>2 Columns (Large Cards)</option>
+                  <option value={3}>3 Columns (Standard Grid)</option>
+                  <option value={4}>4 Columns (Dense Catalog)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 4: Why Travel Agents Partner With TheUnbound */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center font-bold text-xs">
+                  04
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Section 4: Why Travel Agents Partner With TheUnbound</h4>
+                  <p className="text-xs text-slate-500">Core B2B partner advantages, SLA commitments, margin protection, and operations.</p>
+                </div>
+              </div>
+
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.showPartnershipBenefits !== false}
+                  onChange={e => {
+                    const updated = { ...config, showPartnershipBenefits: e.target.checked };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#008972]"></div>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Eyebrow Badge
+                </label>
+                <input
+                  type="text"
+                  value={config.partnershipBenefitsBadge ?? 'B2B ADVANTAGE FOR TRAVEL ADVISORS & WHOLESALERS'}
+                  onChange={e => {
+                    const updated = { ...config, partnershipBenefitsBadge: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-medium"
+                  placeholder="B2B ADVANTAGE FOR TRAVEL ADVISORS & WHOLESALERS"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Section Headline
+                </label>
+                <input
+                  type="text"
+                  value={config.partnershipBenefitsTitle ?? 'Why Travel Agents Partner With TheUnbound'}
+                  onChange={e => {
+                    const updated = { ...config, partnershipBenefitsTitle: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold"
+                  placeholder="Why Travel Agents Partner With TheUnbound"
+                />
+              </div>
+
+              <div className="sm:col-span-3">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Section Subtitle
+                </label>
+                <input
+                  type="text"
+                  value={config.partnershipBenefitsSubtitle ?? 'We eliminate middlemen, protect your margins, and provide dedicated on-the-ground support so you can deliver exceptional travel experiences with complete confidence.'}
+                  onChange={e => {
+                    const updated = { ...config, partnershipBenefitsSubtitle: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs"
+                  placeholder="We eliminate middlemen, protect your margins..."
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 5: Partner Onboarding Process */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-teal-50 text-[#008972] flex items-center justify-center font-bold text-xs">
+                  05
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Section 5: Partner Onboarding Process</h4>
+                  <p className="text-xs text-slate-500">4-step trade application, vetting, net rate access, and operations execution process.</p>
+                </div>
+              </div>
+
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.showOnboardingProcess !== false}
+                  onChange={e => {
+                    const updated = { ...config, showOnboardingProcess: e.target.checked };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#008972]"></div>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Eyebrow Badge
+                </label>
+                <input
+                  type="text"
+                  value={config.onboardingProcessBadge ?? 'HOW TO WORK WITH US'}
+                  onChange={e => {
+                    const updated = { ...config, onboardingProcessBadge: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-medium"
+                  placeholder="HOW TO WORK WITH US"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Section Headline
+                </label>
+                <input
+                  type="text"
+                  value={config.onboardingProcessTitle ?? 'Start Booking in 4 Simple Steps'}
+                  onChange={e => {
+                    const updated = { ...config, onboardingProcessTitle: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold"
+                  placeholder="Start Booking in 4 Simple Steps"
+                />
+              </div>
+
+              <div className="sm:col-span-3">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Section Subtitle
+                </label>
+                <input
+                  type="text"
+                  value={config.onboardingProcessSubtitle ?? 'Our onboarding is seamless and tailored to licensed travel advisors and wholesale buyers.'}
+                  onChange={e => {
+                    const updated = { ...config, onboardingProcessSubtitle: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs"
+                  placeholder="Our onboarding is seamless..."
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 8: Final Trade Conversion CTA */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center font-bold text-xs">
+                  08
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Section 8: B2B Conversion & Quotation CTA</h4>
+                  <p className="text-xs text-slate-500">Bottom conversion banner with trade access registration and direct support desk contacts.</p>
+                </div>
+              </div>
+
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.showConversionCTA !== false}
+                  onChange={e => {
+                    const updated = { ...config, showConversionCTA: e.target.checked };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#008972]"></div>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Banner Headline
+                </label>
+                <input
+                  type="text"
+                  value={config.ctaTitle ?? 'Ready to Streamline Your Ground Operations?'}
+                  onChange={e => {
+                    const updated = { ...config, ctaTitle: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold"
+                  placeholder="Ready to Streamline Your Ground Operations?"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Banner Subtitle
+                </label>
+                <input
+                  type="text"
+                  value={config.ctaSubtitle ?? 'Join 500+ luxury travel agencies and tour operators who trust TheUnbound for direct ground dispatch and wholesale FIT contracting.'}
+                  onChange={e => {
+                    const updated = { ...config, ctaSubtitle: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs"
+                  placeholder="Join 500+ luxury travel agencies..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Primary Action Button Text
+                </label>
+                <input
+                  type="text"
+                  value={config.ctaButtonText ?? 'Apply for Trade Access'}
+                  onChange={e => {
+                    const updated = { ...config, ctaButtonText: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold text-[#008972]"
+                  placeholder="Apply for Trade Access"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Trade Desk Email
+                </label>
+                <input
+                  type="email"
+                  value={config.tradeContactEmail ?? 'partners@theunbound.com'}
+                  onChange={e => {
+                    const updated = { ...config, tradeContactEmail: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-mono"
+                  placeholder="partners@theunbound.com"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom Save Action */}
+          <div className="flex justify-end pt-2">
+            <button
+              type="button"
+              onClick={() => handleSave()}
+              className="inline-flex items-center space-x-2 bg-[#008972] hover:bg-[#00C6A6] text-white hover:text-slate-950 font-bold px-8 py-3 rounded-xl shadow-xs transition-all cursor-pointer text-xs"
+            >
+              <Save className="w-4 h-4" />
+              <span>Publish All Section Changes Live</span>
+            </button>
+          </div>
+        </div>
+      )}
       {activeSubTab === 'FAQS' && (
         <div className="space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
