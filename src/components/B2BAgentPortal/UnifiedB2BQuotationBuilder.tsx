@@ -66,7 +66,8 @@ import {
   ManualHotelDetails,
   B2BPackage,
   PackageItineraryDay,
-  AgentMarginType
+  AgentMarginType,
+  TravelLead
 } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
@@ -141,6 +142,10 @@ export const isProductMatchingCity = (product: Product, targetCityName?: string,
 
 export interface UnifiedB2BQuotationBuilderProps {
   initialDestinationSlug?: string;
+  targetQuoteId?: string;
+  targetQuoteVersion?: number;
+  isNewQuoteMode?: boolean;
+  prefillLead?: TravelLead | null;
   destinations?: Destination[];
   products?: Product[];
   hotels?: Hotel[];
@@ -155,6 +160,10 @@ export interface UnifiedB2BQuotationBuilderProps {
 
 export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProps> = ({
   initialDestinationSlug,
+  targetQuoteId,
+  targetQuoteVersion,
+  isNewQuoteMode = false,
+  prefillLead,
   destinations = [],
   products = [],
   hotels: propHotels = [],
@@ -447,12 +456,107 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [isRouteExpanded, setIsRouteExpanded] = useState<boolean>(true);
   const [isHotelSectionExpanded, setIsHotelSectionExpanded] = useState<boolean>(true);
 
-  // Auto-Save State
-  const [autoSaveStatus, setAutoSaveStatus] = useState<'SAVED' | 'SAVING' | 'IDLE'>('SAVED');
-  const [lastSavedTimestamp, setLastSavedTimestamp] = useState<string>('Just now');
-  const [activeQuoteId] = useState<string>(() => `QTE-${Date.now().toString(36).toUpperCase()}`);
-  const [quoteNumber] = useState<string>(() => `QTE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
-  const [quoteVersion] = useState<number>(1);
+  // Auto-Save State & Authoritative Lifecycle
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'SAVED' | 'SAVING' | 'IDLE'>('IDLE');
+  const [lastSavedTimestamp, setLastSavedTimestamp] = useState<string>('');
+  const [activeQuoteId, setActiveQuoteId] = useState<string>(() => targetQuoteId && !isNewQuoteMode ? targetQuoteId : `QTE-${Date.now().toString(36).toUpperCase()}`);
+  const [quoteNumber, setQuoteNumber] = useState<string>(() => `QTE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
+  const [quoteVersion, setQuoteVersion] = useState<number>(() => targetQuoteVersion || 1);
+  const [hasExplicitlySaved, setHasExplicitlySaved] = useState<boolean>(Boolean(targetQuoteId && !isNewQuoteMode));
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Authoritative Quote Loading & In-Memory Mode Initialization
+  useEffect(() => {
+    if (targetQuoteId && !isNewQuoteMode) {
+      const q = db.getQuoteByIdAuthorized(targetQuoteId, user);
+      if (!q) {
+        setLoadError(`Quotation record #${targetQuoteId} could not be found or you do not have permission to view it.`);
+        return;
+      }
+      setLoadError(null);
+      setActiveQuoteId(q.id);
+      setQuoteNumber(q.quoteNumber);
+      setQuoteVersion(q.version || 1);
+      setHasExplicitlySaved(true);
+      setAutoSaveStatus('SAVED');
+      setLastSavedTimestamp('Loaded');
+
+      // Hydrate all fields from authoritative record
+      if (q.clientName) setClientName(q.clientName);
+      if (q.clientEmail) setClientEmail(q.clientEmail);
+      if (q.clientPhone) setClientPhone(q.clientPhone);
+      if (q.clientCompany) setClientCompany(q.clientCompany);
+      if (q.agentNotes) setAgentNotes(q.agentNotes);
+      if (q.currency) setCurrency(q.currency);
+      if (q.leadId) setSelectedLeadId(q.leadId);
+      if (q.travelStartDate) setStartDate(q.travelStartDate);
+      if (q.travelEndDate) setEndDate(q.travelEndDate);
+      if (q.adultsCount) setAdultsCount(q.adultsCount);
+      if (q.childrenCount !== undefined) setChildrenCount(q.childrenCount);
+      if (q.infantsCount !== undefined) setInfantsCount(q.infantsCount);
+      if (q.childAges) setChildAges(q.childAges);
+      if (q.agentMarginType) setAgentMarginType(q.agentMarginType);
+      if (q.agentMarginValue !== undefined) setAgentMarginValue(q.agentMarginValue);
+      if (q.overallDiscountPercent !== undefined) setOverallDiscountPercent(q.overallDiscountPercent);
+      if (q.items && q.items.length > 0) setItems(q.items);
+      if (q.routeHubs && q.routeHubs.length > 0) {
+        setRouteHubs(q.routeHubs);
+        setContextRouteHubs(q.routeHubs);
+      }
+      if (q.dayThemes) {
+        setDayThemes(q.dayThemes);
+        setContextDayThemes(q.dayThemes);
+      }
+      if (q.destination) {
+        const dMatch = destinations.find(d => 
+          d.name.toLowerCase() === q.destination.toLowerCase() || 
+          d.id === q.destination.toLowerCase()
+        );
+        if (dMatch) setCurrentDestination(dMatch);
+      }
+    } else if (isNewQuoteMode) {
+      // In new quote mode, start clean in-memory workspace without creating records
+      setActiveQuoteId(`QTE-${Date.now().toString(36).toUpperCase()}`);
+      setQuoteNumber(`QTE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
+      setQuoteVersion(1);
+      setHasExplicitlySaved(false);
+      setLoadError(null);
+      setAutoSaveStatus('IDLE');
+
+      if (prefillLead) {
+        setClientName(prefillLead.contactName || prefillLead.clientName || '');
+        setClientEmail(prefillLead.email || '');
+        setClientPhone(prefillLead.phone || '');
+        setClientCompany(prefillLead.agencyName || '');
+        setSelectedLeadId(prefillLead.id || prefillLead.leadNumber || '');
+        if (prefillLead.paxAdults || prefillLead.passengersCount) {
+          setAdultsCount(prefillLead.paxAdults || prefillLead.passengersCount || 2);
+        }
+        if (prefillLead.paxChildren !== undefined) {
+          setChildrenCount(prefillLead.paxChildren);
+        }
+        if (prefillLead.destinationName) {
+          const dMatch = destinations.find(d => 
+            d.name.toLowerCase() === prefillLead.destinationName.toLowerCase() || 
+            d.id === prefillLead.destinationId
+          );
+          if (dMatch) setCurrentDestination(dMatch);
+        }
+        if (prefillLead.travelStartDate) setStartDate(prefillLead.travelStartDate);
+        if (prefillLead.travelEndDate) setEndDate(prefillLead.travelEndDate);
+      } else {
+        clearQuote();
+        setClientName('');
+        setClientEmail('');
+        setClientPhone('');
+        setClientCompany('');
+        setSelectedLeadId('');
+        setItems([]);
+        setRouteHubs([]);
+        setContextRouteHubs([]);
+      }
+    }
+  }, [targetQuoteId, isNewQuoteMode, prefillLead]);
 
   // City Hubs for Destination (strictly destination-aware via DestinationRelevanceService)
   const destinationHubs = useMemo(() => {
@@ -1091,7 +1195,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   }, [items, routeHubs, agentMarkupPercent, overallDiscountPercent, optionsData, activeOptionTab]);
 
   // Sync / Auto-Save Quote to AppDatabase
-  const handleSaveDraft = () => {
+  const handleSaveDraft = (explicit = false): Quotation | null => {
+    if (isNewQuoteMode && !hasExplicitlySaved && !explicit) {
+      // In new quote mode, do not persist to database until user explicitly saves
+      return null;
+    }
+    setHasExplicitlySaved(true);
     setAutoSaveStatus('SAVING');
     try {
       const activeQuote: Quotation = {
@@ -1200,15 +1309,16 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
   };
 
-  // Auto-Save Effect when items or specs change
+  // Auto-Save Effect when items or specs change (ONLY active once draft has been explicitly saved)
   useEffect(() => {
+    if (!hasExplicitlySaved) return;
     const timer = setTimeout(() => {
       if (items.length > 0 || clientName) {
-        handleSaveDraft();
+        handleSaveDraft(false);
       }
     }, 1500);
     return () => clearTimeout(timer);
-  }, [items, clientName, clientEmail, startDate, endDate, agentMarkupPercent, currency, routeHubs, quotationScope]);
+  }, [items, clientName, clientEmail, startDate, endDate, agentMarkupPercent, currency, routeHubs, quotationScope, hasExplicitlySaved]);
 
   // Balance Nights Helper
   const handleAutoBalanceNights = () => {
@@ -1873,6 +1983,28 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   // Product categories for filter
   const productCategories = ['ALL', 'Activity', 'Tour', 'Transfer', 'Transport', 'Rail', 'Guide', 'Restaurant', 'Private Yacht'];
 
+  if (loadError) {
+    return (
+      <div className="min-h-[500px] flex flex-col items-center justify-center p-8 bg-white rounded-3xl border border-slate-200 text-center max-w-xl mx-auto my-12 shadow-sm">
+        <div className="w-14 h-14 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center mb-4">
+          <AlertCircle className="w-7 h-7" />
+        </div>
+        <h3 className="text-lg font-black text-slate-900 mb-2">Quotation Record Unavailable</h3>
+        <p className="text-sm text-slate-600 mb-6">{loadError}</p>
+        <div className="flex items-center gap-3">
+          {(onViewMyQuotes || onBackToDashboard) && (
+            <button
+              onClick={onViewMyQuotes || onBackToDashboard}
+              className="px-4 py-2.5 bg-slate-900 text-white text-xs font-bold rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              Return to Quotation Master Records
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div 
       id="quote-builder-shell"
@@ -1905,8 +2037,14 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
             <div className="flex flex-wrap items-center gap-2">
               <span className="px-2 py-0.5 rounded-lg text-xs font-mono font-black bg-slate-900 text-[#00E5C0]">
-                {quoteNumber}
+                {quoteNumber} (v{quoteVersion})
               </span>
+
+              {!hasExplicitlySaved && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
+                  Unsaved Draft (In-Memory)
+                </span>
+              )}
 
               <span className="text-xs font-black text-slate-900">
                 {clientName || 'New Client'}
@@ -1964,7 +2102,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
             <button
               type="button"
-              onClick={handleSaveDraft}
+              onClick={() => handleSaveDraft(true)}
               className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-200 transition-all cursor-pointer shadow-2xs"
             >
               Save Draft
@@ -1973,7 +2111,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             <button
               type="button"
               onClick={() => {
-                handleSaveDraft();
+                handleSaveDraft(true);
                 setActiveViewTab(activeViewTab === 'PROPOSAL_PREVIEW' ? 'BUILDER' : 'PROPOSAL_PREVIEW');
               }}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs ${
@@ -1989,7 +2127,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             <button
               type="button"
               onClick={() => {
-                handleSaveDraft();
+                handleSaveDraft(true);
                 setActiveViewTab('PROPOSAL_PREVIEW');
               }}
               className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 shadow-xs"
@@ -2252,9 +2390,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               onOpenQuickAddProductModal={handleOpenQuickAddModal}
               onOpenProductDetails={handleOpenProductDetails}
               onOpenCalculator={(prod) => setCalculatorProduct(prod)}
-              onSaveDraft={handleSaveDraft}
+              onSaveDraft={() => handleSaveDraft(true)}
               onPreviewQuotation={() => {
-                handleSaveDraft();
+                handleSaveDraft(true);
                 setActiveViewTab('PROPOSAL_PREVIEW');
               }}
               onDownloadPDF={handleDownloadPDF}

@@ -131,7 +131,7 @@ export const AuditTrailViewer: React.FC = () => {
               {filtered.map(log => (
                 <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
                   <td className="py-3.5 px-4 font-mono text-[11px] text-slate-500 whitespace-nowrap">
-                    {log.timestamp.replace('T', ' ').substring(0, 19)}
+                    {(log.timestamp || '').replace('T', ' ').substring(0, 19)}
                   </td>
                   <td className="py-3.5 px-4">
                     <div className="font-bold text-slate-900 text-xs">{log.userName}</div>

@@ -176,7 +176,7 @@ export const EmailCampaignsManager: React.FC = () => {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
-                  {camp.campaignType.replace(/_/g, ' ')}
+                  {(camp.campaignType || 'CAMPAIGN').replace(/_/g, ' ')}
                 </span>
                 <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border ${
                   camp.isEnabled 

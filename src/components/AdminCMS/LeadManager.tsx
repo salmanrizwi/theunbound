@@ -53,11 +53,15 @@ export const STAFF_SPECIALISTS = [
 export interface LeadManagerProps {
   initialLeadId?: string | null;
   onOpenActionCenter?: (task: CalendarTask) => void;
+  onOpenBooking?: (bookingId: string) => void;
+  onOpenQuote?: (quoteId: string, options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly'; leadId?: string }) => void;
 }
 
 export const LeadManager: React.FC<LeadManagerProps> = ({
   initialLeadId,
-  onOpenActionCenter
+  onOpenActionCenter,
+  onOpenBooking,
+  onOpenQuote
 }) => {
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
@@ -68,6 +72,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
+  const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'assigned' | 'needs_assignment' | 'pending_internal' | 'pending_agent'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'table' | 'cards' | 'kanban'>(() => {
     try {
@@ -126,6 +131,22 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
   const wonLeads = leads.filter(l => l.status === 'WON' || l.conversionStatus === 'CONVERTED').length;
   const urgentLeads = leads.filter(l => l.priority === 'URGENT').length;
 
+  // Dual-Ownership Metrics
+  const fullyAssignedLeads = leads.filter(l => 
+    Boolean(l.responsibleAgentId || l.assignedAgentId) && 
+    Boolean(l.assignedTeamMemberId || l.assignedStaffId)
+  ).length;
+  const needsAssignmentLeads = leads.filter(l => 
+    !Boolean(l.responsibleAgentId || l.assignedAgentId) || 
+    !Boolean(l.assignedTeamMemberId || l.assignedStaffId)
+  ).length;
+  const pendingInternalLeads = leads.filter(l => 
+    !Boolean(l.assignedTeamMemberId || l.assignedStaffId)
+  ).length;
+  const pendingAgentLeads = leads.filter(l => 
+    !Boolean(l.responsibleAgentId || l.assignedAgentId)
+  ).length;
+
   const totalPipelineValue = leads.reduce((acc, l) => acc + Number(l.estimatedBudget || l.bookingValue || 0), 0);
 
   // Filtering
@@ -135,6 +156,20 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
     const matchesPriority = priorityFilter === 'all' || l.priority === priorityFilter;
     const matchesSource = sourceFilter === 'all' || l.source === sourceFilter;
     
+    // Dual Ownership Filter
+    const hasAgent = Boolean(l.responsibleAgentId || l.assignedAgentId);
+    const hasTeamMember = Boolean(l.assignedTeamMemberId || l.assignedStaffId);
+    let matchesOwnership = true;
+    if (ownershipFilter === 'assigned') {
+      matchesOwnership = hasAgent && hasTeamMember;
+    } else if (ownershipFilter === 'needs_assignment') {
+      matchesOwnership = !hasAgent || !hasTeamMember;
+    } else if (ownershipFilter === 'pending_internal') {
+      matchesOwnership = !hasTeamMember;
+    } else if (ownershipFilter === 'pending_agent') {
+      matchesOwnership = !hasAgent;
+    }
+
     const query = searchQuery.toLowerCase().trim();
     const matchesSearch = !query || 
       l.contactName.toLowerCase().includes(query) ||
@@ -142,10 +177,12 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
       l.leadNumber.toLowerCase().includes(query) ||
       (l.agencyName && l.agencyName.toLowerCase().includes(query)) ||
       (l.destinationName && l.destinationName.toLowerCase().includes(query)) ||
+      (l.responsibleAgentNameSnapshot && l.responsibleAgentNameSnapshot.toLowerCase().includes(query)) ||
+      (l.assignedTeamMemberNameSnapshot && l.assignedTeamMemberNameSnapshot.toLowerCase().includes(query)) ||
       (l.quoteNumber && l.quoteNumber.toLowerCase().includes(query)) ||
       (l.bookingReference && l.bookingReference.toLowerCase().includes(query));
 
-    return matchesStage && matchesStatus && matchesPriority && matchesSource && matchesSearch;
+    return matchesStage && matchesStatus && matchesPriority && matchesSource && matchesOwnership && matchesSearch;
   });
 
   const handleStageChange = (leadId: string, stageId: string) => {
@@ -202,6 +239,10 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
       priority: 'NORMAL',
       assignedStaffId: user?.id || 'staff-01',
       assignedStaffName: user?.name || 'Marcus Vance (Senior Ops)',
+      assignedTeamMemberId: user?.id || 'staff-01',
+      assignedTeamMemberNameSnapshot: user?.name || 'Marcus Vance (Senior Ops)',
+      assignedTeamMemberEmailSnapshot: user?.email || 'business@theunbound.in',
+      assignedTeamMemberDepartment: 'SALES',
       destinationId: 'japan',
       destinationName: 'Japan',
       travelDates: 'Autumn 2026',
@@ -270,13 +311,14 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
     }
   };
 
-  const hasActiveFilters = stageFilter !== 'all' || statusFilter !== 'all' || priorityFilter !== 'all' || sourceFilter !== 'all' || !!searchQuery.trim();
+  const hasActiveFilters = stageFilter !== 'all' || statusFilter !== 'all' || priorityFilter !== 'all' || sourceFilter !== 'all' || ownershipFilter !== 'all' || !!searchQuery.trim();
 
   const handleResetFilters = () => {
     setStageFilter('all');
     setStatusFilter('all');
     setPriorityFilter('all');
     setSourceFilter('all');
+    setOwnershipFilter('all');
     setSearchQuery('');
   };
 
@@ -532,9 +574,44 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
               <option value="MARKETING_CAMPAIGN">Campaign</option>
             </select>
 
+            {/* Mandatory Dual Ownership Filter */}
+            <select
+              id="lead-ownership-filter"
+              value={ownershipFilter}
+              onChange={e => setOwnershipFilter(e.target.value as any)}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                ownershipFilter === 'needs_assignment'
+                  ? 'bg-rose-50 border-rose-300 text-rose-800'
+                  : ownershipFilter !== 'all'
+                  ? 'bg-teal-50 border-[#00C6A6] text-[#008f77]'
+                  : 'bg-slate-50 border-slate-200 text-slate-700 focus:bg-white'
+              }`}
+            >
+              <option value="all">Ownership: All ({leads.length})</option>
+              <option value="assigned">Fully Assigned ({fullyAssignedLeads})</option>
+              <option value="needs_assignment">⚠️ Needs Assignment ({needsAssignmentLeads})</option>
+              <option value="pending_internal">Pending Internal Staff ({pendingInternalLeads})</option>
+              <option value="pending_agent">Pending B2B Agent ({pendingAgentLeads})</option>
+            </select>
+
+            {/* Quick Needs Assignment Filter Pill */}
+            {needsAssignmentLeads > 0 && ownershipFilter !== 'needs_assignment' && (
+              <button
+                type="button"
+                id="quick-filter-needs-assignment"
+                onClick={() => setOwnershipFilter('needs_assignment')}
+                className="px-2.5 py-1.5 rounded-xl text-xs font-black bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 transition-colors cursor-pointer flex items-center gap-1.5 animate-pulse"
+                title="Filter leads missing either a B2B Agent or an Internal Team Member"
+              >
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
+                <span>Needs Assignment ({needsAssignmentLeads})</span>
+              </button>
+            )}
+
             {hasActiveFilters && (
               <button
                 type="button"
+                id="reset-lead-filters-btn"
                 onClick={handleResetFilters}
                 className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer flex items-center gap-1"
               >
@@ -649,7 +726,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                   <th className="py-4 px-4">Destination & Timeline</th>
                   <th className="py-4 px-4">Pipeline Deal Value</th>
                   <th className="py-4 px-4">Inquiry Origin</th>
-                  <th className="py-4 px-4">Specialist Assigned</th>
+                  <th className="py-4 px-4">Dual Ownership (Agent / Team)</th>
                   <th className="py-4 px-4">SLA Priority</th>
                   <th className="py-4 px-4 text-right">Actions</th>
                 </tr>
@@ -795,16 +872,63 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                           </div>
                         </td>
 
-                        {/* Assigned Staff */}
+                        {/* Dual Ownership (Commercial Agent & Internal Team Member) */}
                         <td className="py-4 px-4">
-                          <div>
-                            <span className="text-xs text-slate-900 font-bold block">
-                              {lead.assignedStaffName || 'Unassigned'}
-                            </span>
-                            <span className="text-[10px] text-slate-400 block font-medium">
-                              {lead.assignedDepartment || 'SALES'}
-                            </span>
-                          </div>
+                          {(() => {
+                            const agentName = lead.responsibleAgentNameSnapshot || lead.assignedAgentNameSnapshot || (lead.userType === 'B2B_AGENT' ? lead.agencyName : undefined);
+                            const staffName = lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName;
+                            const hasAgent = Boolean(lead.responsibleAgentId || lead.assignedAgentId || agentName);
+                            const hasStaff = Boolean(lead.assignedTeamMemberId || lead.assignedStaffId || staffName);
+
+                            return (
+                              <div className="space-y-1.5 min-w-[180px]">
+                                {/* B2B Agent Indicator */}
+                                <div className="flex items-center gap-1.5">
+                                  <Building className={`w-3.5 h-3.5 shrink-0 ${hasAgent ? 'text-indigo-600' : 'text-amber-500'}`} />
+                                  <div className="truncate">
+                                    {hasAgent ? (
+                                      <span className="text-xs font-bold text-slate-900 truncate block">
+                                        {agentName || 'B2B Partner Agent'}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded inline-block">
+                                        Needs B2B Agent
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Internal Team Member Indicator */}
+                                <div className="flex items-center gap-1.5">
+                                  <UserCheck className={`w-3.5 h-3.5 shrink-0 ${hasStaff ? 'text-[#008f77]' : 'text-rose-500'}`} />
+                                  <div className="truncate">
+                                    {hasStaff ? (
+                                      <span className="text-xs font-semibold text-slate-700 truncate block">
+                                        {staffName} <span className="text-[10px] text-slate-400">({lead.assignedDepartment || 'OPS'})</span>
+                                      </span>
+                                    ) : (
+                                      <span className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded inline-block">
+                                        Needs Internal Staff
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Status Chip */}
+                                <div>
+                                  {hasAgent && hasStaff ? (
+                                    <span className="text-[9px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 rounded">
+                                      Dual Owned
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] font-black uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded">
+                                      Assignment Incomplete
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </td>
 
                         {/* Priority */}
@@ -984,29 +1108,68 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                       </p>
                     </div>
 
-                    {/* Footer */}
-                    <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                      <div>
-                        <span className="text-slate-400">Assigned:</span>{' '}
-                        <strong className="text-slate-800 font-bold">{lead.assignedStaffName?.split(' ')[0] || 'Unassigned'}</strong>
+                    {/* Dual Ownership Card Strip */}
+                    <div className="pt-3 border-t border-slate-100/80 space-y-2">
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        {/* Commercial Agent */}
+                        <div className="bg-slate-50/90 rounded-xl p-2 border border-slate-100">
+                          <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider">
+                            B2B Agent
+                          </span>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <Building className={`w-3 h-3 shrink-0 ${lead.responsibleAgentId || lead.assignedAgentId ? 'text-indigo-600' : 'text-amber-500'}`} />
+                            <span className="font-bold text-slate-800 truncate block">
+                              {lead.responsibleAgentNameSnapshot || lead.assignedAgentNameSnapshot || (lead.userType === 'B2B_AGENT' ? lead.agencyName : 'Needs Agent')}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Internal Operations Staff */}
+                        <div className="bg-slate-50/90 rounded-xl p-2 border border-slate-100">
+                          <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider">
+                            Internal Staff
+                          </span>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <UserCheck className={`w-3 h-3 shrink-0 ${lead.assignedTeamMemberId || lead.assignedStaffId ? 'text-[#008f77]' : 'text-rose-500'}`} />
+                            <span className="font-bold text-slate-800 truncate block">
+                              {lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName || 'Needs Staff'}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenDetail(lead)}
-                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer flex items-center gap-1"
-                        >
-                          <span>Details</span>
-                          <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={e => handleOpenEdit(lead, e)}
-                          className="p-1.5 rounded-xl text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors"
-                          title="Edit Lead"
-                        >
-                          <Edit className="w-3.5 h-3.5" />
-                        </button>
+
+                      {/* Footer Actions & Details */}
+                      <div className="flex items-center justify-between pt-1">
+                        <div>
+                          {Boolean(lead.responsibleAgentId || lead.assignedAgentId) && Boolean(lead.assignedTeamMemberId || lead.assignedStaffId) ? (
+                            <span className="text-[9px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full">
+                              ✓ Dual Assigned
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-black uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-full flex items-center gap-1 w-fit">
+                              <AlertTriangle className="w-2.5 h-2.5 text-amber-600" />
+                              <span>Needs Assignment</span>
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenDetail(lead)}
+                            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer flex items-center gap-1"
+                          >
+                            <span>Details</span>
+                            <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={e => handleOpenEdit(lead, e)}
+                            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors"
+                            title="Edit Lead"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1026,6 +1189,8 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
             setSelectedLead(updatedLead);
             setLeads(db.getLeadsAuthorized(user));
           }}
+          onOpenBooking={onOpenBooking}
+          onOpenQuote={onOpenQuote}
         />
       )}
 

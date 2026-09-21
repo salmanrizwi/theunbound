@@ -462,22 +462,52 @@ service cloud.firestore {
       // Guests / Public can submit inquiries; authenticated users can create
       allow create: if true;
 
-      // Internal team can read all leads; B2B Agents can ONLY read leads explicitly assigned to them
+      // Internal team can read all leads; B2B Agents can ONLY read leads explicitly submitted by them or assigned to them
       allow read: if canAccessCMSOperations() || (
         isAuthenticated() && isNotBuyer() && (
-          resource.data.assignedAgentId == request.auth.uid
+          resource.data.assignedAgentId == request.auth.uid ||
+          resource.data.responsibleAgentId == request.auth.uid ||
+          resource.data.submittingAgentId == request.auth.uid ||
+          resource.data.userId == request.auth.uid
         )
       );
 
-      // Updates: Internal team has full update; assigned agent can update without changing assignment ownership
+      // Updates: Internal operations team has full control; assigned/responsible agent can update without modifying protected ownership/assignment metadata
       allow update: if canAccessCMSOperations() || (
         isAuthenticated() && isNotBuyer() && (
-          resource.data.assignedAgentId == request.auth.uid &&
+          (resource.data.assignedAgentId == request.auth.uid || 
+           resource.data.responsibleAgentId == request.auth.uid || 
+           resource.data.submittingAgentId == request.auth.uid) &&
           !request.resource.data.diff(resource.data).affectedKeys().hasAny([
             'assignedAgentId',
             'assignedAgentNameSnapshot',
+            'assignedAgentEmailSnapshot',
+            'assignedAgentAgencySnapshot',
+            'responsibleAgentId',
+            'responsibleAgentNameSnapshot',
+            'responsibleAgentEmailSnapshot',
+            'responsibleAgentAgencySnapshot',
+            'submittingAgentId',
+            'submittingAgentNameSnapshot',
+            'submittingAgentAgencySnapshot',
+            'submittingAgentEmailSnapshot',
+            'agentAssignmentStatus',
+            'assignedTeamMemberId',
+            'assignedTeamMemberNameSnapshot',
+            'assignedTeamMemberEmailSnapshot',
+            'assignedStaffId',
+            'assignedStaffName',
+            'assignedStaffEmail',
+            'assignedDepartment',
+            'assignmentStatus',
             'assignedByUserId',
+            'assignedByUserNameSnapshot',
             'assignedAt',
+            'lastReassignedAt',
+            'lastReassignedByUserId',
+            'lastReassignedByUserNameSnapshot',
+            'assignmentNotes',
+            'assignmentHistory',
             'leadVisibilityStatus'
           ])
         )
@@ -547,6 +577,39 @@ service cloud.firestore {
           resource.data.userId == request.auth.uid
         )
       );
+
+      // Quote versions subcollection
+      match /versions/{versionId} {
+        allow read: if canAccessCMSOperations() || (
+          isAuthenticated() && (
+            resource.data.agentId == request.auth.uid ||
+            resource.data.userId == request.auth.uid
+          )
+        );
+        allow create, update: if canAccessCMSOperations() || (
+          isAuthenticated() && (
+            request.resource.data.agentId == request.auth.uid ||
+            request.resource.data.userId == request.auth.uid
+          )
+        );
+        allow delete: if canAccessCMSOperations();
+      }
+    }
+
+    match /quote_versions/{versionId} {
+      allow read: if canAccessCMSOperations() || (
+        isAuthenticated() && (
+          resource.data.agentId == request.auth.uid ||
+          resource.data.userId == request.auth.uid
+        )
+      );
+      allow create, update: if canAccessCMSOperations() || (
+        isAuthenticated() && (
+          request.resource.data.agentId == request.auth.uid ||
+          request.resource.data.userId == request.auth.uid
+        )
+      );
+      allow delete: if canAccessCMSOperations();
     }
 
     match /bookings/{bookingId} {
@@ -580,7 +643,10 @@ service cloud.firestore {
       );
 
       // Update: Internal operations can update all operational fields, supplier allocations, and pricing
-      // External booking owner / assigned agent can only update non-operational customer details
+      // External booking owner / assigned agent:
+      // 1. Cannot touch any supplier or internal commercial fields under any circumstances
+      // 2. Once booking is SUBMITTED or CONFIRMED, external agents CANNOT edit core booking details.
+      //    They are restricted to managing passenger documentation (passports, PAN, visas).
       allow update: if canAccessCMSOperations() || (
         isAuthenticated() && isNotBuyer() && (
           resource.data.submittedByUserId == request.auth.uid ||
@@ -600,8 +666,37 @@ service cloud.firestore {
             'supplierConfirmationOverride',
             'assignedAgentId',
             'assignedByUserId',
-            'submittingAgentId'
-          ])
+            'submittingAgentId',
+            'commercialNettTotal',
+            'commercialMargin',
+            'assignedTeamMemberId',
+            'assignedTeamMemberName',
+            'assignedTeamMemberNameSnapshot',
+            'assignedTeamMemberEmailSnapshot',
+            'assignmentStatus',
+            'assignmentHistory',
+            'assignmentNotes',
+            'agentId',
+            'agentNameSnapshot',
+            'agentEmailSnapshot',
+            'agentAgencySnapshot',
+            'agentVisibilityStatus',
+            'lastReassignedAt',
+            'lastReassignedByUserId',
+            'lastReassignedByUserNameSnapshot'
+          ]) && (
+            !(
+              resource.data.status in ['SUBMITTED', 'CONFIRMED', 'PROCESSING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'] ||
+              ('isSubmitted' in resource.data && resource.data.isSubmitted == true) ||
+              ('submissionStatus' in resource.data && resource.data.submissionStatus == 'SUBMITTED')
+            ) ||
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'passengers',
+              'missingDocuments',
+              'updatedAt',
+              'customerFacingNotes'
+            ])
+          )
         )
       );
 
@@ -641,11 +736,21 @@ service cloud.firestore {
     }
 
     match /b2b_tasks/{id} {
-      allow read, write: if true;
+      allow read, write: if canAccessCMSOperations() || (
+        isAuthenticated() && (
+          resource.data.agentId == request.auth.uid ||
+          request.resource.data.agentId == request.auth.uid
+        )
+      );
     }
 
     match /tasks/{id} {
-      allow read, write: if true;
+      allow read, write: if canAccessCMSOperations() || (
+        isAuthenticated() && (
+          resource.data.agentId == request.auth.uid ||
+          request.resource.data.agentId == request.auth.uid
+        )
+      );
     }
 
     // =========================================================================
@@ -682,11 +787,11 @@ service cloud.firestore {
     }
 
     match /job_sheets/{id} {
-      allow read, write: if canAccessCMSOperations() || true;
+      allow read, write: if canAccessCMSOperations();
     }
 
     match /roster_resources/{id} {
-      allow read, write: if canAccessCMSOperations() || true;
+      allow read, write: if canAccessCMSOperations();
     }
 
     // =========================================================================

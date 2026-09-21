@@ -826,7 +826,7 @@ export const CMSCalendarTasksManager: React.FC<CMSCalendarTasksManagerProps> = (
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                      When: {rule.triggerEvent.replace(/_/g, ' ')}
+                      When: {(rule.triggerEvent || 'TRIGGER').replace(/_/g, ' ')}
                     </span>
 
                     {/* Enable / Disable toggle */}

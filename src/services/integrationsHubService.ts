@@ -287,7 +287,7 @@ export class IntegrationsHubService {
       return {
         success: true,
         accountEmail: storedEmail,
-        messagesTotal: 142,
+        messagesTotal: 0,
         isSimulation: true,
         details: `Gmail integration active in Verified Sandbox Mode for ${storedEmail}. Transactional booking confirmations and vouchers ready to send.`
       };
@@ -308,7 +308,7 @@ export class IntegrationsHubService {
         return {
           success: true,
           accountEmail: data.accountEmail || storedEmail,
-          messagesTotal: data.messagesTotal || 142,
+          messagesTotal: data.messagesTotal ?? 0,
           isSimulation: Boolean(data.isSimulation),
           details: data.details || `Gmail API connected for ${data.accountEmail || storedEmail}. Ready for live dispatch.`
         };

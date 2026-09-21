@@ -85,6 +85,63 @@ class AuthService {
   private authError: string | null = null;
   private authListeners: Array<(user: User | null, state: AuthState, error?: string | null) => void> = [];
 
+  // In-memory rate limiting and brute-force mitigation
+  private failedAttemptsMap = new Map<string, { count: number; lockedUntil: number; windowStart: number }>();
+
+  /**
+   * Evaluates if a given email/session is temporarily rate-limited due to repeated failures
+   */
+  private checkRateLimit(email: string): { limited: boolean; remainingSeconds: number } {
+    const key = normalizeEmail(email) || 'default_client';
+    const record = this.failedAttemptsMap.get(key);
+    if (!record) return { limited: false, remainingSeconds: 0 };
+
+    const now = Date.now();
+    if (record.lockedUntil > now) {
+      const remainingSeconds = Math.ceil((record.lockedUntil - now) / 1000);
+      return { limited: true, remainingSeconds };
+    }
+
+    // Reset window after 5 minutes of inactivity
+    if (now - record.windowStart > 5 * 60 * 1000) {
+      this.failedAttemptsMap.delete(key);
+      return { limited: false, remainingSeconds: 0 };
+    }
+
+    return { limited: false, remainingSeconds: 0 };
+  }
+
+  /**
+   * Tracks failed login attempt and triggers lockout after threshold
+   */
+  private recordFailedLogin(email: string): void {
+    const key = normalizeEmail(email) || 'default_client';
+    const now = Date.now();
+    const record = this.failedAttemptsMap.get(key) || { count: 0, lockedUntil: 0, windowStart: now };
+
+    if (now - record.windowStart > 5 * 60 * 1000) {
+      record.count = 1;
+      record.windowStart = now;
+      record.lockedUntil = 0;
+    } else {
+      record.count++;
+      if (record.count >= 5) {
+        // Enforce 60-second backoff lockout without leaking account existence
+        record.lockedUntil = now + 60 * 1000;
+        console.warn(`[SECURITY] Authentication rate limit triggered for ${key}. 60s cooldown enforced.`);
+      }
+    }
+    this.failedAttemptsMap.set(key, record);
+  }
+
+  /**
+   * Resets failed login attempt counter upon successful authentication
+   */
+  private resetFailedLogin(email: string): void {
+    const key = normalizeEmail(email) || 'default_client';
+    this.failedAttemptsMap.delete(key);
+  }
+
   private constructor() {
     console.log('[AUTH] AuthService initialized. Setting up Firebase Auth listener...');
 
@@ -408,6 +465,15 @@ class AuthService {
       return { success: false, error: 'Please enter your account password.' };
     }
 
+    // Rate Limiting & Brute-Force Abuse Check
+    const rateCheck = this.checkRateLimit(normalizedEmail);
+    if (rateCheck.limited) {
+      return {
+        success: false,
+        error: `Too many failed login attempts. For your account security, please wait ${rateCheck.remainingSeconds} seconds before trying again.`
+      };
+    }
+
     let fbUser: FirebaseUser | null = null;
 
     // Step 1: Attempt Firebase Authentication
@@ -416,6 +482,7 @@ class AuthService {
       fbUser = userCredential.user;
       console.log('[AUTH] Firebase Auth authenticated successfully. UID:', fbUser.uid);
     } catch (authError: any) {
+      this.recordFailedLogin(normalizedEmail);
       const code = authError?.code || '';
       const msg = authError?.message || '';
       console.log('[AUTH] Firebase Auth signIn code:', code, msg);
@@ -423,7 +490,11 @@ class AuthService {
       // Handle operation-not-allowed (when Email/Password provider is disabled in Firebase Console)
       if (code === 'auth/operation-not-allowed' || msg.includes('operation-not-allowed')) {
         console.warn('[AUTH] Firebase Auth Email/Password provider disabled in console. Authenticating via Firestore & AppDatabase...');
-        return await this.authenticateViaFirestoreAndDb(normalizedEmail, password, requestedRole);
+        const directResult = await this.authenticateViaFirestoreAndDb(normalizedEmail, password, requestedRole);
+        if (directResult.success) {
+          this.resetFailedLogin(normalizedEmail);
+        }
+        return directResult;
       }
 
       // Handle invalid credentials or user-not-found
@@ -447,7 +518,11 @@ class AuthService {
             console.warn('[AUTH] Auto-provision note:', createErr?.code, createErr?.message);
             // If creation fails due to operation-not-allowed, authenticate directly!
             if (createErr?.code === 'auth/operation-not-allowed' || createErr?.message?.includes('operation-not-allowed')) {
-              return await this.authenticateViaFirestoreAndDb(normalizedEmail, password, requestedRole);
+              const directResult = await this.authenticateViaFirestoreAndDb(normalizedEmail, password, requestedRole);
+              if (directResult.success) {
+                this.resetFailedLogin(normalizedEmail);
+              }
+              return directResult;
             }
           }
         }
@@ -455,7 +530,11 @@ class AuthService {
         if (!fbUser) {
           // If this is an admin email, allow fallback verification
           if (['admin@theunbound.com', 'business@theunbound.in', 'marcus@theunbound.in'].includes(normalizedEmail)) {
-            return await this.authenticateViaFirestoreAndDb(normalizedEmail, password, requestedRole);
+            const directResult = await this.authenticateViaFirestoreAndDb(normalizedEmail, password, requestedRole);
+            if (directResult.success) {
+              this.resetFailedLogin(normalizedEmail);
+            }
+            return directResult;
           }
           return {
             success: false,
@@ -491,6 +570,7 @@ class AuthService {
     }
 
     if (!fbUser) {
+      this.recordFailedLogin(normalizedEmail);
       return { success: false, error: 'Authentication failed. Please try again.' };
     }
 
@@ -503,6 +583,7 @@ class AuthService {
     }
 
     if (!profile) {
+      this.recordFailedLogin(normalizedEmail);
       return {
         success: false,
         error: 'Unable to initialize user profile. Please try again.',
@@ -550,6 +631,9 @@ class AuthService {
         };
       }
     }
+
+    // Authentication succeeded: clear failed attempt tracker
+    this.resetFailedLogin(normalizedEmail);
 
     // Step 4: Update state and activity tracking
     this.currentFirebaseUser = fbUser;

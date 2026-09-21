@@ -1087,6 +1087,8 @@ export type QuoteItemSource = 'AI_PLANNER' | 'USER' | 'SYSTEM';
 export interface QuoteItem {
   id: string;
   product: Product;
+  productId?: string;
+  customTitle?: string;
   title?: string;
   productName?: string;
   category?: string;
@@ -1130,11 +1132,45 @@ export type QuoteStatus =
   | 'ARCHIVED';
 
 export interface QuoteVersionRecord {
+  id?: string;
   version: number;
+  versionNumber?: number;
+  quoteId?: string;
+  leadId?: string;
+  previousVersionId?: string;
   updatedAt: string;
   updatedBy: string;
+  createdByName?: string;
+  createdAt?: string;
+  status?: 'draft' | 'saved' | 'shared' | 'downloaded' | 'accepted' | 'converted' | 'expired' | 'cancelled' | QuoteStatus;
+  proposalStatus?: 'draft' | 'saved' | 'shared' | 'downloaded' | 'accepted' | 'converted' | 'expired' | 'cancelled';
   changesSummary: string;
+  title?: string;
+  destination?: string;
+  travelStartDate?: string;
+  travelEndDate?: string;
+  totalPax?: number;
+  adultsCount?: number;
+  childrenCount?: number;
+  infantsCount?: number;
+  currency?: CurrencyCode;
+  totalNetCost?: number;
   totalSellingPrice: number;
+  marginPercent?: number;
+  marginAmount?: number;
+  items?: QuoteItem[];
+  pricingSnapshot?: PricingSnapshot;
+  passengerBreakdown?: any;
+  roomingConfig?: any;
+  agentNotes?: string;
+  termsAndConditions?: string;
+  bookingId?: string;
+  bookingReference?: string;
+  sharedHistory?: {
+    type: 'WHATSAPP' | 'EMAIL' | 'DOWNLOAD';
+    recipient?: string;
+    timestamp: string;
+  }[];
 }
 
 export type AgentMarginType = 'PERCENTAGE' | 'FIXED';
@@ -1212,20 +1248,29 @@ export interface QuoteActivityRecord {
 
 export interface Quotation {
   id: string;
+  quoteId?: string;
   quoteNumber: string;
   version?: number;
+  versionNumber?: number;
   parentQuoteId?: string;
+  previousVersionId?: string;
+  isLatestVersion?: boolean;
   isLocked?: boolean;
   leadId?: string;
   linkedLeadId?: string;
   customerId?: string;
   bookingId?: string;
+  bookingReference?: string;
   linkedBookingIds?: string[];
+  proposalStatus?: 'draft' | 'saved' | 'shared' | 'downloaded' | 'accepted' | 'converted' | 'expired' | 'cancelled';
+  pricingSnapshotId?: string;
   
   // Ownership & Creation Attribution
   createdBy?: string;
   createdByName?: string;
   createdByUserType?: 'ADMIN' | 'TEAM_MEMBER' | 'B2B_AGENT' | 'DMC_STAFF' | 'BUYER' | 'PUBLIC';
+  createdByAgentId?: string;
+  assignedTeamMemberId?: string;
   assignedTo?: string;
   assignedToName?: string;
   b2bAgentId?: string;
@@ -1423,6 +1468,7 @@ export interface AgentQuotationResponse {
 // BOOKINGS & RESERVATIONS SYSTEM
 // ----------------------------------------------------
 export type BookingStatus = 
+  | 'DRAFT'
   | 'NEW' 
   | 'TO_BE_PROCESSED' 
   | 'PROCESSING' 
@@ -1650,6 +1696,10 @@ export type BookingActivityEventType =
   | 'INVOICE_REPLACED'
   | 'INVOICE_ARCHIVED'
   | 'INVOICE_DOWNLOADED'
+  | 'INVOICE_GENERATED'
+  | 'VOUCHER_DISPATCHED'
+  | 'PAYMENT_RECORDED'
+  | 'STATUS_UPDATED'
   | 'BOOKING_STATUS_CHANGED'
   | 'OTHER';
 
@@ -1762,6 +1812,9 @@ export interface BookingItem {
   operationalStatus?: ServiceItemOperationalStatus;
   voucherStatus?: ServiceItemVoucherStatus;
   invoiceStatus?: ServiceItemInvoiceStatus;
+  pickupLocation?: string;
+  dropoffLocation?: string;
+  cityHub?: string;
   confirmedAt?: string;
   confirmedBy?: string;
   confirmedByName?: string;
@@ -1870,6 +1923,12 @@ export interface BookingPassenger {
   panCardName?: string;
   panCardUploadedAt?: string;
   panNumber?: string;
+  visaCopyUrl?: string;
+  visaCopyName?: string;
+  visaCopyUploadedAt?: string;
+  documentVerificationStatus?: 'MISSING' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
+  documentRejectionReason?: string;
+  documentRejectionNotes?: string;
   mealPreference?: string;
   specialRequests?: string;
 }
@@ -1958,8 +2017,33 @@ export interface BookingDocumentItem {
   verificationStatus?: 'PENDING_VERIFICATION' | 'VERIFIED' | 'REJECTED';
 }
 
+export type BookingAssignmentStatus =
+  | 'pending_agent_assignment'
+  | 'pending_internal_assignment'
+  | 'assigned'
+  | 'reassigned';
+
+export interface BookingAssignmentHistoryItem {
+  id: string;
+  timestamp: string;
+  type: 'INITIAL_CREATION' | 'AGENT_ASSIGNMENT' | 'INTERNAL_TEAM_ASSIGNMENT' | 'REASSIGNMENT';
+  previousAgentId?: string;
+  previousAgentName?: string;
+  newAgentId?: string;
+  newAgentName?: string;
+  previousTeamMemberId?: string;
+  previousTeamMemberName?: string;
+  newTeamMemberId?: string;
+  newTeamMemberName?: string;
+  assignedByUserId: string;
+  assignedByUserNameSnapshot: string;
+  assignedByUserRole?: string;
+  reason?: string;
+  notes?: string;
+}
+
 export interface Booking {
-  // B2B Agent Connection & Ownership Architecture
+  // B2B Agent & Internal Team Member Mandatory Ownership Architecture
   bookingId?: string;
   source?: BookingSourceType | string;
   submittedByUserId?: string;
@@ -1968,12 +2052,41 @@ export interface Booking {
   submittingAgentNameSnapshot?: string;
   submittingAgentAgencySnapshot?: string;
   submittedAt?: string;
+
+  agentId?: string;
+  agentName?: string;
+  b2bAgentId?: string;
+  b2bAgentName?: string;
+  agencyName?: string;
+  agentNameSnapshot?: string;
+  agentEmailSnapshot?: string;
+  agentAgency?: string;
+  agentAgencySnapshot?: string;
+
   assignedAgentId?: string;
   assignedAgentNameSnapshot?: string;
   assignedAgentAgencySnapshot?: string;
+
+  assignedTeamMemberId?: string;
+  assignedTeamMemberName?: string;
+  operationalOwnerName?: string;
+  assignedTeamMemberNameSnapshot?: string;
+  assignedTeamMemberEmailSnapshot?: string;
+  hubName?: string;
+  isDeleted?: boolean;
+
+  assignmentStatus?: BookingAssignmentStatus;
+  assignedAt?: string;
   assignedByUserId?: string;
   assignedByUserNameSnapshot?: string;
-  assignedAt?: string;
+
+  lastReassignedAt?: string;
+  lastReassignedByUserId?: string;
+  lastReassignedByUserNameSnapshot?: string;
+
+  assignmentNotes?: string;
+  assignmentHistory?: BookingAssignmentHistoryItem[];
+
   agentVisibilityStatus?: 'VISIBLE' | 'HIDDEN' | 'PENDING_ASSIGNMENT';
   linkedLeadId?: string;
   linkedQuoteId?: string;
@@ -1984,13 +2097,8 @@ export interface Booking {
   sourceType: BookingSourceType;
   destination?: string;
   destinationName?: string;
-  agentId?: string;
-  agentName?: string;
-  agentAgency?: string;
   userId?: string;
   userRole?: UserRole;
-  assignedTeamMemberId?: string;
-  assignedTeamMemberName?: string;
   customer: BookingCustomerInfo;
   items: BookingItem[];
   currency: CurrencyCode;
@@ -2017,6 +2125,16 @@ export interface Booking {
   agencyId?: string;
   quoteId?: string;
   quoteNumber?: string;
+  sourceQuoteId?: string;
+  sourceQuoteVersionId?: string;
+  bookingVersionNumber?: number;
+  voucherIds?: string[];
+  completeVoucherId?: string;
+  proformaInvoiceIds?: string[];
+  activeProformaInvoiceId?: string;
+  paymentIds?: string[];
+  taskIds?: string[];
+  documentIds?: string[];
 
   // Operational & Desk Specific Fields
   isInternalManualBooking?: boolean;
@@ -4186,12 +4304,37 @@ export interface LeadDocument {
   bookingId?: string;
 }
 
+export type LeadAssignmentType = 
+  | 'INITIAL_CREATION' 
+  | 'ASSIGN_AGENT' 
+  | 'REASSIGN_AGENT' 
+  | 'UNASSIGN_AGENT'
+  | 'ASSIGN_INTERNAL' 
+  | 'REASSIGN_INTERNAL' 
+  | 'UNASSIGN_INTERNAL' 
+  | 'MIGRATION';
+
 export interface LeadAssignmentRecord {
   id: string;
-  assignedStaffId: string;
-  assignedStaffName: string;
+  type?: LeadAssignmentType;
+  // Internal team member assignment (legacy & dual model)
+  assignedStaffId?: string;
+  assignedStaffName?: string;
   assignedStaffEmail?: string;
   assignedDepartment?: string;
+  previousTeamMemberId?: string;
+  previousTeamMemberName?: string;
+  newTeamMemberId?: string;
+  newTeamMemberName?: string;
+  // B2B Agent commercial relationship assignment
+  previousAgentId?: string;
+  previousAgentName?: string;
+  newAgentId?: string;
+  newAgentName?: string;
+  // Actor audit trail
+  assignedByUserId?: string;
+  assignedByUserNameSnapshot?: string;
+  assignedByUserRole?: string;
   assignedBy: string;
   assignedAt: string;
   notes?: string;
@@ -4251,10 +4394,24 @@ export interface TravelLead {
   agencyId?: string;
   contactId?: string;
 
-  // B2B Agent Connection & Authoritative Assignment
+  // B2B Agent Connection & Authoritative Assignment (Commercial Owner)
   leadId?: string;
   createdByUserId?: string;
   createdByUserRole?: UserRole | string;
+  // Submitting Agent (Origin of lead - immutable reference)
+  submittingAgentId?: string;
+  submittingAgentNameSnapshot?: string;
+  submittingAgentAgencySnapshot?: string;
+  submittingAgencyNameSnapshot?: string;
+  submittingAgentEmailSnapshot?: string;
+  // Responsible Agent (Current Commercial Account Owner - kept in sync with assignedAgentId)
+  responsibleAgentId?: string;
+  responsibleAgentNameSnapshot?: string;
+  responsibleAgentAgencySnapshot?: string;
+  responsibleAgencyNameSnapshot?: string;
+  responsibleAgentEmailSnapshot?: string;
+  agentAssignmentStatus?: 'assigned' | 'pending_assignment' | 'reassigned';
+  // Legacy fields kept for strict backward compatibility
   assignedAgentId?: string;
   assignedAgentNameSnapshot?: string;
   assignedAgentEmailSnapshot?: string;
@@ -4262,14 +4419,24 @@ export interface TravelLead {
   assignedByUserId?: string;
   assignedByUserNameSnapshot?: string;
   assignedAt?: string;
+  lastReassignedAt?: string;
+  lastReassignedByUserId?: string;
+  lastReassignedByUserNameSnapshot?: string;
+  assignmentNotes?: string;
   leadVisibilityStatus?: 'ASSIGNED' | 'UNASSIGNED' | 'INTERNAL_ONLY';
   linkedQuoteIds?: string[];
   linkedBookingIds?: string[];
   customerId?: string;
 
-  // Staff Assignment
-  assignedStaffId: string;
-  assignedStaffName: string;
+  // Internal Team Member Assignment (Operational & Coordination Owner)
+  assignedTeamMemberId?: string;
+  assignedTeamMemberNameSnapshot?: string;
+  assignedTeamMemberEmailSnapshot?: string;
+  assignedTeamMemberDepartment?: 'SALES' | 'OPERATIONS' | 'MANAGEMENT' | string;
+  assignmentStatus?: 'pending_internal_assignment' | 'assigned' | 'reassigned' | 'needs_assignment' | 'pending_assignment';
+  // Legacy Staff Assignment fields (kept in sync with assignedTeamMemberId / assignedTeamMemberNameSnapshot)
+  assignedStaffId?: string;
+  assignedStaffName?: string;
   assignedStaffEmail?: string;
   assignedDepartment?: 'SALES' | 'OPERATIONS' | 'MANAGEMENT';
   assignmentHistory?: LeadAssignmentRecord[];
@@ -4305,6 +4472,9 @@ export interface TravelLead {
   quoteId?: string;
   quoteNumber?: string;
   quoteIds?: string[];
+  activeQuoteId?: string;
+  latestQuoteVersionId?: string;
+  lastQuoteVersionNumber?: number;
   quoteVersion?: number;
   quoteSnapshot?: LeadQuoteSnapshot;
   quoteVersions?: LeadQuoteVersion[];
@@ -4313,8 +4483,21 @@ export interface TravelLead {
   bookingId?: string;
   bookingReference?: string;
   bookingIds?: string[];
+  activeBookingId?: string;
   bookingValue?: number;
   bookingStatus?: BookingStatus;
+
+  // Operational & Commercial Documents & Financial linkage
+  voucherIds?: string[];
+  completeVoucherId?: string;
+  invoiceIds?: string[];
+  activeInvoiceId?: string;
+  paymentIds?: string[];
+  taskIds?: string[];
+  communicationIds?: string[];
+  lastProposalActivityAt?: string;
+  lastBookingActivityAt?: string;
+  lastFinancialActivityAt?: string;
 
   // Activity Timeline
   timeline?: LeadTimelineEvent[];
@@ -4361,6 +4544,12 @@ export interface BookingInvoice {
   invoiceNumber: string; // e.g. TUB-INV-2026-1048
   bookingId: string;
   bookingReference: string;
+  leadId?: string;
+  sourceQuoteId?: string;
+  invoiceVersion?: number;
+  isProforma?: boolean;
+  responsibleAgentId?: string;
+  assignedTeamMemberId?: string;
   customerName: string;
   customerEmail: string;
   customerPhone?: string;
@@ -4387,6 +4576,30 @@ export interface BookingInvoice {
   terms: string;
   createdAt: string;
   updatedAt: string;
+  // Enhanced Operational & Versioning Fields
+  previousInvoiceId?: string;
+  amendmentReason?: string;
+  amendedBy?: string;
+  amendedByName?: string;
+  amendedAt?: string;
+  billingAddress?: string;
+  taxDisplayRate?: string;
+  bankAccountDetails?: {
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+    swiftBic: string;
+    iban?: string;
+  };
+  versionHistory?: {
+    version: number;
+    invoiceNumber: string;
+    amendedAt: string;
+    amendedByName?: string;
+    reason?: string;
+    totalAmount: number;
+    currency: string;
+  }[];
 }
 
 export interface BookingVoucher {
@@ -4396,6 +4609,10 @@ export interface BookingVoucher {
   version?: number;
   bookingId: string;
   bookingReference: string;
+  leadId?: string;
+  isCompleteBookingVoucher?: boolean;
+  responsibleAgentId?: string;
+  assignedTeamMemberId?: string;
   serviceItemId?: string;
   customerName?: string;
   leadPaxName: string;
@@ -4418,7 +4635,7 @@ export interface BookingVoucher {
   passengerBreakdown: string;
   specialInstructions: string;
   termsAndConditions?: string;
-  status: 'ISSUED' | 'REDEEMED' | 'CANCELLED' | 'OUTDATED' | 'REISSUED';
+  status: 'ISSUED' | 'REDEEMED' | 'CANCELLED' | 'OUTDATED' | 'REISSUED' | 'draft' | 'generated' | 'amended' | 'issued' | 'reissued' | 'cancelled';
   generatedAt?: string;
   generatedBy?: string;
   generatedByName?: string;
@@ -4433,6 +4650,27 @@ export interface BookingVoucher {
   outdatedReason?: string;
   previousVoucherId?: string;
   issuedAt: string;
+  // Enhanced Fields for Activity and Complete Vouchers
+  voucherTitle?: string;
+  activityDescription?: string;
+  category?: string;
+  groupingType?: 'activity' | 'service_item' | 'category' | 'day' | 'combined';
+  inclusions?: string[];
+  exclusions?: string[];
+  amendmentReason?: string;
+  amendedBy?: string;
+  amendedByName?: string;
+  amendedAt?: string;
+  visibilityConfig?: Record<string, boolean>;
+  displayOrder?: number;
+  versionHistory?: {
+    version: number;
+    voucherNumber: string;
+    amendedAt: string;
+    amendedByName?: string;
+    amendmentReason?: string;
+    status: string;
+  }[];
 }
 
 export interface FinancialTransaction {

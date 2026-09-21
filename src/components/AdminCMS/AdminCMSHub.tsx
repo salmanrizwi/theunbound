@@ -44,7 +44,9 @@ import { SEOManager } from './SEOManager';
 import { SupplierManager } from './SupplierManager';
 import { GlobalRemindersBar } from '../GlobalRemindersBar';
 import { ActionCenterDrawer } from '../ActionCenter/ActionCenterDrawer';
-import { CalendarTask } from '../../types';
+import { CalendarTask, TravelLead } from '../../types';
+import { UnifiedB2BQuotationBuilder } from '../B2BAgentPortal/UnifiedB2BQuotationBuilder';
+import { resolveAndValidateQuoteForBuilder } from '../../services/quotationRouting';
 import { 
   canUserAccessCMS, 
   canUserAccessTopSection, 
@@ -237,6 +239,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [leadForNewQuote, setLeadForNewQuote] = useState<TravelLead | null>(null);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -367,12 +370,12 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       modules: [
         {
           id: 'DASHBOARD',
-          label: 'Command Dashboard',
-          shortLabel: 'Dashboard',
+          label: 'QUICK ACTION LAUNCHPAD',
+          shortLabel: 'Launchpad',
           icon: LayoutDashboard,
-          description: 'Operations overview, urgent alerts, real-time database metrics, module health, and quick actions.',
+          description: 'Operations overview, urgent alerts, real-time database metrics, module health, and quick actions launchpad.',
           subTabs: [
-            { id: 'OVERVIEW', label: 'Command Center Home', icon: LayoutDashboard }
+            { id: 'OVERVIEW', label: 'Quick Action Launchpad', icon: LayoutDashboard }
           ]
         }
       ]
@@ -452,7 +455,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           alertCount: pendingBookings,
           description: 'Ground reservation pipeline, supplier assignment, status verification, jobsheets, vouchers, invoices, and 12-hour SLA alerts.',
           subTabs: [
-            { id: 'BOOKINGS', label: 'Ground Bookings & Supplier Operations', icon: CalendarCheck }
+            { id: 'BOOKINGS', label: 'Ground Bookings & Supplier Operations', icon: CalendarCheck },
+            { id: 'HORIZON', label: 'Operational Horizon & Ground Dispatch', icon: Compass }
           ]
         },
         {
@@ -465,7 +469,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           description: 'B2B agent inquiries, CRM lead pipeline, Quotation Master Records across all users, PDF proposals, and sales conversion.',
           subTabs: [
             { id: 'LEADS', label: 'CRM Leads & Pipeline', icon: Users },
-            { id: 'QUOTES', label: 'Quotation Master Records', icon: Layers }
+            { id: 'QUOTES', label: 'Quotation Master Records', icon: Layers },
+            { id: 'BUILDER', label: 'Quote Builder', icon: FileText }
           ]
         }
       ]
@@ -660,11 +665,57 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     bookingId?: string | null;
     leadId?: string | null;
     quoteId?: string | null;
+    quoteVersion?: number | null;
+    quoteMode?: 'inspect' | 'edit' | 'readonly' | null;
   }>({});
 
   const handleOpenActionCenter = (task?: CalendarTask) => {
     setFocusedActionCenterTask(task || null);
     setIsActionCenterDrawerOpen(true);
+  };
+
+  const handleOpenQuoteInBuilder = (
+    quoteId: string, 
+    options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly'; leadId?: string }
+  ) => {
+    if (quoteId === 'new') {
+      setInitialRecordIds(prev => ({
+        ...prev,
+        quoteId: 'new',
+        quoteVersion: 1,
+        quoteMode: 'edit',
+        leadId: options?.leadId || null
+      }));
+      setActiveSection('LEAD_MANAGEMENT');
+      setActiveSubTab('BUILDER');
+      return;
+    }
+
+    const resolution = resolveAndValidateQuoteForBuilder(
+      db,
+      {
+        quoteId,
+        quoteVersion: options?.version,
+        mode: options?.mode || 'inspect',
+        leadId: options?.leadId
+      },
+      currentUser
+    );
+
+    if (!resolution.isValid || !resolution.quote) {
+      alert(resolution.errorMessage || 'Unable to open quotation in builder.');
+      return;
+    }
+
+    setInitialRecordIds(prev => ({
+      ...prev,
+      quoteId: resolution.quote.id,
+      quoteVersion: resolution.targetVersion,
+      quoteMode: resolution.mode,
+      leadId: options?.leadId || resolution.quote.leadId || null
+    }));
+    setActiveSection('LEAD_MANAGEMENT');
+    setActiveSubTab('BUILDER');
   };
 
   const handleNavigate = (
@@ -686,6 +737,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     if (recordId) {
       if (section === 'BOOKING_MANAGEMENT' || subTab === 'BOOKINGS') {
         setInitialRecordIds(prev => ({ ...prev, bookingId: recordId }));
+      } else if (subTab === 'BUILDER') {
+        setInitialRecordIds(prev => ({ ...prev, quoteId: recordId }));
       } else if ((section === 'LEAD_MANAGEMENT' && subTab === 'QUOTES') || subTab === 'QUOTES' || section === 'QUOTES') {
         setInitialRecordIds(prev => ({ ...prev, quoteId: recordId }));
       } else if (section === 'LEAD_MANAGEMENT' || subTab === 'LEADS') {
@@ -797,9 +850,9 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                       }`}
                     >
                       <span>{sec.label}</span>
-                      {sec.fullLabel && sec.fullLabel !== sec.label && (
+                      {sec.fullLabel && sec.label && sec.fullLabel !== sec.label && (
                         <span className="hidden 2xl:inline">
-                          {sec.fullLabel.replace(sec.label, '')}
+                          {(sec.fullLabel || '').replace(sec.label || '', '')}
                         </span>
                       )}
                     </button>
@@ -819,9 +872,9 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                       }`}
                     >
                       <span>{sec.label}</span>
-                      {sec.fullLabel && sec.fullLabel !== sec.label && (
+                      {sec.fullLabel && sec.label && sec.fullLabel !== sec.label && (
                         <span className="hidden 2xl:inline">
-                          {sec.fullLabel.replace(sec.label, '')}
+                          {(sec.fullLabel || '').replace(sec.label || '', '')}
                         </span>
                       )}
                       <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${isDropdownOpen ? 'rotate-180 text-white' : ''}`} />
@@ -1259,6 +1312,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           {currentModuleConfig.id === 'BOOKING_MANAGEMENT' && (
             <BookingsManager 
               initialBookingId={initialRecordIds.bookingId}
+              initialSubTab={activeSubTab}
               onOpenActionCenter={handleOpenActionCenter}
             />
           )}
@@ -1270,15 +1324,81 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                 <LeadManager 
                   initialLeadId={initialRecordIds.leadId}
                   onOpenActionCenter={handleOpenActionCenter}
+                  onOpenBooking={(bId) => {
+                    handleNavigate('BOOKING_MANAGEMENT', 'OPERATIONS', bId);
+                  }}
+                  onOpenQuote={(qId, options) => {
+                    handleOpenQuoteInBuilder(qId, options);
+                  }}
+                  onViewQuoteInLedger={(qId) => {
+                    handleNavigate('LEAD_MANAGEMENT', 'QUOTES', qId);
+                  }}
+                  onCreateQuoteForLead={(lead) => {
+                    setLeadForNewQuote(lead);
+                    handleOpenQuoteInBuilder('new', { leadId: lead.id, mode: 'edit' });
+                  }}
                 />
               )}
               {activeSubTab === 'QUOTES' && (
                 <QuoteMasterManager 
                   initialQuoteId={initialRecordIds.quoteId}
-                  onLoadQuote={onLoadQuote} 
+                  onLoadQuote={(q) => {
+                    onLoadQuote?.(q);
+                    handleOpenQuoteInBuilder(q.id, { version: q.version, mode: q.isLocked ? 'inspect' : 'edit', leadId: q.leadId });
+                  }}
                   onNavigateToLeads={() => setActiveSubTab('LEADS')}
+                  onNavigateToBuilder={(qId, options) => {
+                    if (!qId || qId === 'new') {
+                      handleOpenQuoteInBuilder('new');
+                    } else {
+                      handleOpenQuoteInBuilder(qId, options);
+                    }
+                  }}
                   onOpenActionCenter={handleOpenActionCenter}
                 />
+              )}
+              {activeSubTab === 'BUILDER' && (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-5 py-3 rounded-2xl border border-slate-200 shadow-2xs">
+                    <div className="flex items-center gap-2 text-xs">
+                      <button
+                        onClick={() => setActiveSubTab('QUOTES')}
+                        className="font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                        <span>← Quotation Master Records</span>
+                      </button>
+                      <span className="text-slate-300">|</span>
+                      <button
+                        onClick={() => setActiveSubTab('LEADS')}
+                        className="font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Users className="w-3.5 h-3.5" />
+                        <span>CRM Leads</span>
+                      </button>
+                    </div>
+                    <div className="text-xs font-semibold text-slate-500">
+                      {initialRecordIds.quoteId && initialRecordIds.quoteId !== 'new' ? (
+                        <span>Authoritative Record: <strong className="font-mono text-slate-900 font-bold">{initialRecordIds.quoteId}</strong>{initialRecordIds.quoteVersion ? ` (Version ${initialRecordIds.quoteVersion})` : ''} [{initialRecordIds.quoteMode?.toUpperCase() || 'INSPECT'}]</span>
+                      ) : (
+                        <span className="text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full font-bold border border-emerald-200">
+                          New Quotation Workspace (In-Memory / Unsaved)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <UnifiedB2BQuotationBuilder 
+                    destinations={destinations}
+                    products={products}
+                    targetQuoteId={initialRecordIds.quoteId === 'new' ? undefined : (initialRecordIds.quoteId || undefined)}
+                    targetQuoteVersion={initialRecordIds.quoteVersion || undefined}
+                    initialMode={initialRecordIds.quoteMode || 'inspect'}
+                    isNewQuoteMode={initialRecordIds.quoteId === 'new' || !initialRecordIds.quoteId}
+                    prefillLead={leadForNewQuote}
+                    onBackToDashboard={() => handleNavigate('DASHBOARD', 'OVERVIEW')}
+                    onViewMyQuotes={() => setActiveSubTab('QUOTES')}
+                  />
+                </div>
               )}
             </>
           )}

@@ -600,8 +600,10 @@ export function sanitizeQuoteForAgent(quote: Quotation): Quotation {
  * Sanitizes a Booking object for B2B Agents.
  * STRICT SECURITY:
  * - Strips all totalNetCost, grossProfit, grossMarginPercent, internalNettCost, supplier allocations.
- * - Strips all supplier/net fields from items.
- * - Returns strictly final selling prices.
+ * - Strips all supplier identities, supplier contact details, supplier confirmation refs, and nett costs from items.
+ * - Strips all internal notes, internal tasks, internal audits, and supplier invoices.
+ * - Locks submitted bookings into a hermetic read-only representation.
+ * - Returns strictly final selling prices and customer-facing data.
  */
 export function sanitizeBookingForAgent(b: Booking): Booking {
   if (!b) return b;
@@ -620,9 +622,37 @@ export function sanitizeBookingForAgent(b: Booking): Booking {
   delete clone.supplierAllocations;
   delete clone.supplierRequests;
   delete clone.operationalConfirmationOverride;
+  delete (clone as any).internalNotes;
+  delete (clone as any).internalNotesList;
+  delete (clone as any).notesList;
+  delete (clone as any).internalTasks;
+  delete (clone as any).deskHandler;
+  delete (clone as any).groundDispatch;
+  delete (clone as any).dispatchDesk;
+  delete clone.assignmentHistory;
+  delete clone.assignmentNotes;
+
+  // Strips internal invoices
+  clone.uploadedInvoices = [];
 
   if (clone.items && Array.isArray(clone.items)) {
     clone.items = clone.items.map(it => {
+      // Eliminate supplier identity and contacts
+      delete it.supplierId;
+      delete it.supplierName;
+      delete it.supplierContact;
+      delete (it as any).allocatedSupplierId;
+      delete (it as any).allocatedSupplierName;
+      delete (it as any).supplierAllocated;
+      delete (it as any).supplierStatus;
+      delete (it as any).supplierVoucherStatus;
+      delete (it as any).supplierInvoiceStatus;
+      delete (it as any).supplierConfirmationRef;
+      delete (it as any).supplierConfirmationStatus;
+      delete (it as any).supplierReferenceNumber;
+      delete (it as any).allocatedCost;
+
+      // Eliminate supplier pricing and nett costs
       delete it.supplierPrice;
       delete it.supplierCurrency;
       delete it.supplierPriceType;
@@ -657,11 +687,18 @@ export function sanitizeBookingForAgent(b: Booking): Booking {
     });
   }
 
-  if (clone.uploadedInvoices && Array.isArray(clone.uploadedInvoices)) {
-    clone.uploadedInvoices = clone.uploadedInvoices.filter(
-      inv => inv.invoiceType !== 'Supplier Invoice'
+  // Filter audit logs & timeline to strictly non-internal updates
+  if (clone.timeline && Array.isArray(clone.timeline)) {
+    clone.timeline = clone.timeline.filter((e: any) => 
+      !e.internalOnly && !e.isInternal && e.type !== 'SUPPLIER_ACTION' && e.type !== 'INTERNAL_NOTE'
     );
   }
+
+  // Set read-only flags for submitted bookings
+  const isSubmitted = clone.status !== 'DRAFT';
+  (clone as any).isSubmitted = isSubmitted;
+  (clone as any).isReadOnly = isSubmitted;
+  (clone as any).submissionLockMessage = 'This booking has been submitted and is now read-only. Please contact the internal team if a correction is required.';
 
   return clone;
 }

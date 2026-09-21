@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { TravelLead, LeadStatus, LeadPriority, LeadSource } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
-import { X, Save, User, Mail, Phone, Building, MapPin, Calendar, DollarSign, Plus } from 'lucide-react';
+import { X, Save, User, Mail, Phone, Building, MapPin, Calendar, DollarSign, Plus, UserCheck, ShieldCheck, AlertTriangle } from 'lucide-react';
 
 interface LeadEditModalProps {
   lead: Partial<TravelLead> | null;
@@ -42,9 +42,37 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
     { id: 'united-arab-emirates', name: 'UAE (Dubai & Abu Dhabi)' }
   ];
 
+  // Approved B2B partner agents
+  const b2bAgents = React.useMemo(() => {
+    return db.getUsers().filter(u => u.role === 'B2B_AGENT' && u.approvalStatus === 'APPROVED');
+  }, [db]);
+
+  // Internal operations & sales staff members
+  const internalStaffList = React.useMemo(() => {
+    const preset = [
+      { id: 'staff-01', name: 'Marcus Vance (Senior Ops)', email: 'business@theunbound.in', dept: 'OPERATIONS' as const },
+      { id: 'staff-02', name: 'Kenji Takahashi (Japan Ground Lead)', email: 'kenji@theunbound.in', dept: 'SALES' as const },
+      { id: 'staff-03', name: 'Elena Rostova (B2B Concierge)', email: 'elena@theunbound.in', dept: 'SALES' as const },
+      { id: 'staff-04', name: 'Aarav Patel (Client Success)', email: 'aarav@theunbound.in', dept: 'MANAGEMENT' as const }
+    ];
+    const dbStaff = db.getUsers()
+      .filter(u => (u.role === 'ADMIN' || u.role === 'DMC_STAFF' || u.role === 'TEAM_MEMBER') && !preset.some(p => p.id === u.id || p.email === u.email))
+      .map(u => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        dept: ((u as any).department || 'SALES') as 'SALES' | 'OPERATIONS' | 'MANAGEMENT'
+      }));
+    return [...preset, ...dbStaff];
+  }, [db]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.contactName || !formData.email) return;
+
+    // Resolve authoritative staff & agent
+    const selectedStaff = internalStaffList.find(s => s.id === formData.assignedTeamMemberId || s.id === formData.assignedStaffId);
+    const selectedAgent = b2bAgents.find(a => a.id === formData.responsibleAgentId || a.id === formData.assignedAgentId);
 
     const fullLead: TravelLead = {
       id: formData.id || `lead-${Date.now()}`,
@@ -53,19 +81,42 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
       email: formData.email,
       phone: formData.phone || '',
       country: formData.country || 'Global',
-      agencyName: formData.agencyName,
-      companyName: formData.companyName || formData.agencyName,
+      agencyName: formData.agencyName || selectedAgent?.agencyName || selectedAgent?.companyName,
+      companyName: formData.companyName || formData.agencyName || selectedAgent?.companyName || selectedAgent?.agencyName,
       userId: formData.userId,
-      userType: formData.userType || 'BUYER',
-      b2bAgentId: formData.b2bAgentId,
+      userType: formData.userType || (formData.responsibleAgentId ? 'B2B_AGENT' : 'BUYER'),
+      b2bAgentId: formData.responsibleAgentId || formData.b2bAgentId,
       source: formData.source || 'WEBSITE',
       campaignName: formData.campaignName,
       status: formData.status || 'NEW',
       priority: formData.priority || 'NORMAL',
-      assignedStaffId: formData.assignedStaffId || user?.id || 'staff-01',
-      assignedStaffName: formData.assignedStaffName || user?.name || 'Marcus Vance (Senior Ops)',
-      assignedStaffEmail: formData.assignedStaffEmail || user?.email || 'business@theunbound.in',
-      assignedDepartment: formData.assignedDepartment || 'SALES',
+
+      // Mandatory Commercial B2B Agent (authoritative)
+      responsibleAgentId: formData.responsibleAgentId || selectedAgent?.id,
+      responsibleAgentNameSnapshot: formData.responsibleAgentNameSnapshot || selectedAgent?.name,
+      responsibleAgentEmailSnapshot: formData.responsibleAgentEmailSnapshot || selectedAgent?.email,
+      responsibleAgencyNameSnapshot: formData.responsibleAgencyNameSnapshot || selectedAgent?.agencyName || selectedAgent?.companyName,
+      submittingAgentId: formData.submittingAgentId || formData.responsibleAgentId || selectedAgent?.id,
+      submittingAgentNameSnapshot: formData.submittingAgentNameSnapshot || formData.responsibleAgentNameSnapshot || selectedAgent?.name,
+
+      // Legacy Agent support
+      assignedAgentId: formData.responsibleAgentId || selectedAgent?.id || formData.assignedAgentId,
+      assignedAgentNameSnapshot: formData.responsibleAgentNameSnapshot || selectedAgent?.name || formData.assignedAgentNameSnapshot,
+      assignedAgentEmailSnapshot: formData.responsibleAgentEmailSnapshot || selectedAgent?.email || formData.assignedAgentEmailSnapshot,
+      assignedAgentAgencySnapshot: formData.responsibleAgencyNameSnapshot || selectedAgent?.agencyName || selectedAgent?.companyName || formData.assignedAgentAgencySnapshot,
+
+      // Mandatory Internal Team Member (authoritative)
+      assignedTeamMemberId: formData.assignedTeamMemberId || selectedStaff?.id || user?.id || 'staff-01',
+      assignedTeamMemberNameSnapshot: formData.assignedTeamMemberNameSnapshot || selectedStaff?.name || user?.name || 'Marcus Vance (Senior Ops)',
+      assignedTeamMemberEmailSnapshot: formData.assignedTeamMemberEmailSnapshot || selectedStaff?.email || user?.email || 'business@theunbound.in',
+      assignedTeamMemberDepartment: formData.assignedTeamMemberDepartment || selectedStaff?.dept || 'SALES',
+
+      // Legacy Staff support
+      assignedStaffId: formData.assignedTeamMemberId || selectedStaff?.id || user?.id || 'staff-01',
+      assignedStaffName: formData.assignedTeamMemberNameSnapshot || selectedStaff?.name || user?.name || 'Marcus Vance (Senior Ops)',
+      assignedStaffEmail: formData.assignedTeamMemberEmailSnapshot || selectedStaff?.email || user?.email || 'business@theunbound.in',
+      assignedDepartment: formData.assignedTeamMemberDepartment || selectedStaff?.dept || 'SALES',
+
       destinationId: formData.destinationId || 'japan',
       destinationName: formData.destinationName || 'Japan',
       travelDates: formData.travelDates || 'Autumn 2026',
@@ -202,6 +253,114 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
                   <option value="HIGH">High Priority</option>
                   <option value="URGENT">Urgent SLA</option>
                 </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Section: Mandatory Dual Ownership */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-[#008f77]" />
+                  <span>Mandatory Lead Ownership (Commercial Agent & Internal Lead Owner)</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Every lead must have both an assigned commercial B2B agent and an assigned internal team member.
+                </p>
+              </div>
+              {((formData.responsibleAgentId || formData.assignedAgentId) && (formData.assignedTeamMemberId || formData.assignedStaffId)) ? (
+                <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 shrink-0 self-start sm:self-auto">
+                  ✓ Dual Ownership Active
+                </span>
+              ) : (
+                <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1 shrink-0 self-start sm:self-auto">
+                  <AlertTriangle className="w-3 h-3 text-amber-600" />
+                  <span>Assignment Incomplete</span>
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+              {/* 1. Commercial Relationship: Responsible B2B Agent */}
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <label className="font-bold text-slate-800 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Building className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Commercial B2B Partner Agent</span>
+                  </span>
+                  <span className="text-[10px] text-indigo-600 font-bold uppercase">Commercial Owner</span>
+                </label>
+                <select
+                  value={formData.responsibleAgentId || formData.assignedAgentId || ''}
+                  onChange={e => {
+                    const agentId = e.target.value;
+                    const ag = b2bAgents.find(a => a.id === agentId);
+                    setFormData({
+                      ...formData,
+                      responsibleAgentId: agentId || undefined,
+                      responsibleAgentNameSnapshot: ag?.name,
+                      responsibleAgentEmailSnapshot: ag?.email,
+                      responsibleAgencyNameSnapshot: ag?.agencyName || ag?.companyName,
+                      assignedAgentId: agentId || undefined,
+                      assignedAgentNameSnapshot: ag?.name,
+                      assignedAgentEmailSnapshot: ag?.email,
+                      assignedAgentAgencySnapshot: ag?.agencyName || ag?.companyName,
+                      submittingAgentId: formData.submittingAgentId || agentId || undefined,
+                      submittingAgentNameSnapshot: formData.submittingAgentNameSnapshot || ag?.name
+                    });
+                  }}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-bold text-slate-900 focus:outline-none focus:border-[#00C6A6]"
+                >
+                  <option value="">-- Direct Lead / No Commercial Agent --</option>
+                  {b2bAgents.map(ag => (
+                    <option key={ag.id} value={ag.id}>
+                      {ag.name} ({ag.agencyName || ag.companyName || 'Independent'}) - {ag.email}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-500 leading-normal">
+                  The authoritative B2B Agent who commercially owns the client relationship and is granted visibility in the Agent Portal.
+                </p>
+              </div>
+
+              {/* 2. Operational Processing: Assigned Internal Team Member */}
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <label className="font-bold text-slate-800 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <UserCheck className="w-3.5 h-3.5 text-[#008f77]" />
+                    <span>Assigned Internal Team Member</span>
+                  </span>
+                  <span className="text-[10px] text-[#008f77] font-bold uppercase">Operational Owner</span>
+                </label>
+                <select
+                  value={formData.assignedTeamMemberId || formData.assignedStaffId || 'staff-01'}
+                  onChange={e => {
+                    const staffId = e.target.value;
+                    const st = internalStaffList.find(s => s.id === staffId);
+                    setFormData({
+                      ...formData,
+                      assignedTeamMemberId: staffId,
+                      assignedTeamMemberNameSnapshot: st?.name,
+                      assignedTeamMemberEmailSnapshot: st?.email,
+                      assignedTeamMemberDepartment: st?.dept,
+                      assignedStaffId: staffId,
+                      assignedStaffName: st?.name,
+                      assignedStaffEmail: st?.email,
+                      assignedDepartment: st?.dept
+                    });
+                  }}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-bold text-slate-900 focus:outline-none focus:border-[#00C6A6]"
+                >
+                  {internalStaffList.map(st => (
+                    <option key={st.id} value={st.id}>
+                      {st.name} ({st.dept})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-500 leading-normal">
+                  The internal team member responsible for quoting, itineraries, ground operations, and conversion.
+                </p>
               </div>
             </div>
           </div>

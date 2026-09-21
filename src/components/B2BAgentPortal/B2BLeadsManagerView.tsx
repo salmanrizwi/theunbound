@@ -21,6 +21,7 @@ import {
   Shield,
   ExternalLink,
   HelpCircle,
+  UserCheck,
   X
 } from 'lucide-react';
 import { TravelLead, User } from '../../types';
@@ -292,23 +293,18 @@ export const B2BLeadsManagerView: React.FC<B2BLeadsManagerViewProps> = ({
                     </div>
                   )}
 
-                  {/* Linked References */}
-                  {(lead.quoteNumber || lead.bookingReference) && (
-                    <div className="pt-2 border-t border-slate-100 space-y-1">
-                      {lead.quoteNumber && (
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span className="text-slate-400">Quote:</span>
-                          <span className="font-mono font-bold text-sky-700">#{lead.quoteNumber}</span>
-                        </div>
-                      )}
-                      {lead.bookingReference && (
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span className="text-slate-400">Booking:</span>
-                          <span className="font-mono font-bold text-emerald-700">#{lead.bookingReference}</span>
-                        </div>
-                      )}
+                  {/* Assigned Internal Team Member Strip */}
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1.5 text-slate-700 truncate max-w-[190px]">
+                      <UserCheck className="w-3.5 h-3.5 text-[#008f77] shrink-0" />
+                      <span className="truncate text-[11px] font-semibold">
+                        Ops Lead: {lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName || 'Central Operations'}
+                      </span>
                     </div>
-                  )}
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                      {lead.assignedTeamMemberDepartment || lead.assignedDepartment || 'SALES'}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Card Actions */}
@@ -364,6 +360,32 @@ export const B2BLeadsManagerView: React.FC<B2BLeadsManagerViewProps> = ({
                   Assigned by {selectedLead.assignedByUserNameSnapshot || 'TheUnbound Operations'}
                   {selectedLead.assignedAt && ` on ${new Date(selectedLead.assignedAt).toLocaleDateString()}`}
                 </p>
+              </div>
+
+              {/* Dedicated Internal Team Member Card */}
+              <div className="bg-teal-50/50 p-4 rounded-2xl border border-[#00C6A6]/30 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-[#008f77] uppercase tracking-wider text-[10px] flex items-center gap-1.5">
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>Your Dedicated Central Operations Specialist</span>
+                  </div>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-white text-[#008f77] border border-[#00C6A6]/20">
+                    {selectedLead.assignedTeamMemberDepartment || selectedLead.assignedDepartment || 'SALES'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-1">
+                  <div>
+                    <span className="font-bold text-slate-900 text-sm block">
+                      {selectedLead.assignedTeamMemberNameSnapshot || selectedLead.assignedStaffName || 'Central Operations Team'}
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      {selectedLead.assignedTeamMemberEmailSnapshot || selectedLead.assignedStaffEmail || 'business@theunbound.in'}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 max-w-[200px] text-right">
+                    Direct coordinator for custom pricing, supplier rates, and itinerary customization.
+                  </p>
+                </div>
               </div>
 
               {/* Contact Information */}

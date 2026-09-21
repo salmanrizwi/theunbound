@@ -5,10 +5,22 @@ import {
   LeadPriority, 
   LeadNote,
   LeadFollowUpTask,
-  CurrencyCode
+  CurrencyCode,
+  Booking,
+  Quotation,
+  BookingVoucher,
+  BookingInvoice,
+  QuoteVersionRecord
 } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
+import { formatCurrency } from '../../services/pricingEngine';
+import { VoucherDocumentView } from '../Bookings/VoucherDocumentView';
+import { ProformaInvoiceModal } from './leads/ProformaInvoiceModal';
+import { LeadQuotesTab } from './leads/LeadQuotesTab';
+import { LeadBookingsTab } from './leads/LeadBookingsTab';
+import { LeadVouchersTab } from './leads/LeadVouchersTab';
+import { LeadFinancialsTab } from './leads/LeadFinancialsTab';
 import { 
   X, 
   User, 
@@ -36,7 +48,14 @@ import {
   Users,
   Compass,
   Check,
-  BookmarkCheck
+  BookmarkCheck,
+  UserCheck,
+  Receipt,
+  Printer,
+  CreditCard,
+  ArrowUpRight,
+  Eye,
+  FileCheck
 } from 'lucide-react';
 import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
 import { LeadTasksSection } from './tasks/LeadTasksSection';
@@ -47,20 +66,30 @@ interface LeadDetailDrawerProps {
   onClose: () => void;
   onUpdateLead: (updatedLead: TravelLead) => void;
   onNavigateToTasks?: () => void;
+  onOpenBooking?: (bookingId: string) => void;
+  onOpenQuote?: (quoteId: string, options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly'; leadId?: string }) => void;
 }
 
 export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   lead,
   onClose,
   onUpdateLead,
-  onNavigateToTasks
+  onNavigateToTasks,
+  onOpenBooking,
+  onOpenQuote
 }) => {
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
 
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'requirements' | 'products' | 'quotes' | 'timeline' | 'followups' | 'notes' | 'documents'
+    'overview' | 'requirements' | 'products' | 'quotes' | 'bookings' | 'vouchers' | 'financials' | 'timeline' | 'followups' | 'notes' | 'documents'
   >('overview');
+
+  const [previewVoucher, setPreviewVoucher] = useState<BookingVoucher | null>(null);
+  const [previewInvoice, setPreviewInvoice] = useState<BookingInvoice | null>(null);
+  const [isConverting, setIsConverting] = useState(false);
+  const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
+  const [actionErrorMessage, setActionErrorMessage] = useState<string | null>(null);
 
   const [newNoteText, setNewNoteText] = useState('');
   const [isInternalNote, setIsInternalNote] = useState(true);
@@ -89,7 +118,108 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
     return db.getUsers().filter(u => u.role === 'B2B_AGENT' && u.approvalStatus === 'APPROVED');
   }, [db]);
 
+  const linkedQuotes = React.useMemo(() => {
+    if (!lead) return [];
+    return db.getQuotesForLead(lead.id, user);
+  }, [db, lead, user]);
+
+  const linkedQuoteVersions = React.useMemo(() => {
+    if (!lead) return [];
+    return db.getQuoteVersionsForLead(lead.id);
+  }, [db, lead]);
+
+  const linkedBookings = React.useMemo(() => {
+    if (!lead) return [];
+    const all = db.getAllBookings();
+    return all.filter(b => 
+      b.leadId === lead.id || 
+      b.linkedLeadId === lead.id || 
+      (lead.bookingId && b.id === lead.bookingId) || 
+      (lead.bookingReference && b.bookingReference === lead.bookingReference) ||
+      (lead.linkedBookingIds && lead.linkedBookingIds.includes(b.id))
+    );
+  }, [db, lead]);
+
+  const linkedVouchers = React.useMemo(() => {
+    if (!lead) return [];
+    return db.getVouchersForLead(lead.id);
+  }, [db, lead]);
+
+  const linkedInvoices = React.useMemo(() => {
+    if (!lead) return [];
+    return db.getInvoicesForLead(lead.id);
+  }, [db, lead]);
+
+  const financialSummary = React.useMemo(() => {
+    if (!lead) return null;
+    return db.getFinancialSummaryForLead(lead.id, user);
+  }, [db, lead, user]);
+
   if (!lead) return null;
+
+  const handleConvertToBooking = (quote: Quotation) => {
+    try {
+      setIsConverting(true);
+      setActionErrorMessage(null);
+      const newBooking = db.submitBookingFromQuote(quote.id, user);
+      const refreshed = db.getLeadById(lead.id);
+      if (refreshed) onUpdateLead(refreshed);
+      setActionSuccessMessage(`Successfully converted Quote #${quote.quoteNumber} into Ground Booking #${newBooking.bookingReference}!`);
+      setActiveTab('bookings');
+    } catch (err: any) {
+      setActionErrorMessage(err.message || 'Failed to convert quote to booking');
+    } finally {
+      setIsConverting(false);
+    }
+  };
+
+  const handleGenerateCompleteVoucher = (bookingId: string) => {
+    try {
+      const res = db.generateBookingVoucher(bookingId, user);
+      if (!res.success || !res.voucher) {
+        setActionErrorMessage(res.error || 'Failed to generate complete itinerary voucher');
+        return;
+      }
+      const refreshed = db.getLeadById(lead.id);
+      if (refreshed) onUpdateLead(refreshed);
+      setPreviewVoucher(res.voucher);
+      setActionSuccessMessage(`Generated complete itinerary voucher #${res.voucher.voucherNumber}`);
+    } catch (err: any) {
+      setActionErrorMessage(err.message || 'Failed to generate voucher');
+    }
+  };
+
+  const handleGenerateActivityVoucher = (bookingId: string, itemId: string) => {
+    try {
+      const res = db.generateActivityVoucher(bookingId, itemId, user);
+      if (!res.success || !res.voucher) {
+        setActionErrorMessage(res.error || 'Failed to generate activity voucher');
+        return;
+      }
+      const refreshed = db.getLeadById(lead.id);
+      if (refreshed) onUpdateLead(refreshed);
+      setPreviewVoucher(res.voucher);
+      setActionSuccessMessage(`Generated activity voucher #${res.voucher.voucherNumber}`);
+    } catch (err: any) {
+      setActionErrorMessage(err.message || 'Failed to generate activity voucher');
+    }
+  };
+
+  const handleGenerateInvoice = (bookingId: string) => {
+    try {
+      const res = db.generateProformaInvoice(bookingId, user);
+      if (!res.success || !res.invoice) {
+        setActionErrorMessage(res.error || 'Failed to generate commercial proforma invoice');
+        return;
+      }
+      const refreshed = db.getLeadById(lead.id);
+      if (refreshed) onUpdateLead(refreshed);
+      setPreviewInvoice(res.invoice);
+      setActionSuccessMessage(`Issued commercial proforma invoice #${res.invoice.invoiceNumber}`);
+    } catch (err: any) {
+      setActionErrorMessage(err.message || 'Failed to generate proforma invoice');
+    }
+  };
 
   const handleAssignAgent = () => {
     if (!selectedAgentId) return;
@@ -226,7 +356,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                 variant="header"
               />
               <span className={`text-xs font-bold px-3 py-1 rounded-full border ${getStatusBadge(lead.status)}`}>
-                {lead.status.replace(/_/g, ' ')}
+                {(lead.status || 'NEW').replace(/_/g, ' ')}
               </span>
               {getPriorityBadge(lead.priority)}
             </div>
@@ -337,11 +467,14 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
             { id: 'overview', label: 'Overview', icon: Briefcase },
             { id: 'requirements', label: 'Travel Details', icon: Compass },
             { id: 'products', label: `Products (${lead.requestedProducts?.length || 0})`, icon: Package },
-            { id: 'quotes', label: `Quote & Versions (${lead.quoteVersions?.length || (lead.quoteNumber ? 1 : 0)})`, icon: DollarSign },
+            { id: 'quotes', label: `Quotes & Proposals (${linkedQuotes.length || (lead.quoteNumber ? 1 : 0)})`, icon: DollarSign },
+            { id: 'bookings', label: `Bookings (${linkedBookings.length})`, icon: Building },
+            { id: 'vouchers', label: `Vouchers (${linkedVouchers.length})`, icon: ShieldCheck },
+            { id: 'financials', label: `Invoices & Settlement (${linkedInvoices.length})`, icon: Receipt },
             { id: 'timeline', label: `Timeline (${lead.timeline?.length || 0})`, icon: History },
-            { id: 'followups', label: `Tasks & Follow-Ups (${db.getTasksForLead(lead.id).length})`, icon: CheckSquare },
+            { id: 'followups', label: `Tasks (${db.getTasksForLead(lead.id).length})`, icon: CheckSquare },
             { id: 'notes', label: `Notes (${lead.notes?.length || 0})`, icon: FileText },
-            { id: 'documents', label: `Documents (${lead.documents?.length || 0})`, icon: ShieldCheck }
+            { id: 'documents', label: `Documents (${lead.documents?.length || 0})`, icon: FileCheck }
           ].map(tab => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -365,22 +498,75 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
 
         {/* Tab Body Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/50">
+          {/* Action Success / Error Notifications */}
+          {actionSuccessMessage && (
+            <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-300 text-xs text-emerald-900 flex items-center justify-between shadow-xs animate-in fade-in duration-200">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="font-bold">{actionSuccessMessage}</span>
+              </div>
+              <button 
+                onClick={() => setActionSuccessMessage(null)}
+                className="text-emerald-700 hover:text-emerald-950 font-bold px-2 py-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {actionErrorMessage && (
+            <div className="p-4 rounded-2xl bg-rose-50 border border-rose-300 text-xs text-rose-900 flex items-center justify-between shadow-xs animate-in fade-in duration-200">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span className="font-bold">{actionErrorMessage}</span>
+              </div>
+              <button 
+                onClick={() => setActionErrorMessage(null)}
+                className="text-rose-700 hover:text-rose-950 font-bold px-2 py-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
           {/* TAB: OVERVIEW */}
           {activeTab === 'overview' && (
             <div className="space-y-6">
-              {/* Assignment & Owner Card */}
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3 flex items-center justify-between">
-                  <span>Lead Ownership & Assignment</span>
-                  <span className="text-xs font-normal text-slate-500">Dept: {lead.assignedDepartment || 'SALES'}</span>
-                </h3>
+              {/* Dual Ownership & Assignment Card */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-[#008f77]" />
+                    <span>Mandatory Dual Ownership</span>
+                  </h3>
+                  {((lead.responsibleAgentId || lead.assignedAgentId) && (lead.assignedTeamMemberId || lead.assignedStaffId)) ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                      ✓ Dual Assigned
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 text-amber-600" />
+                      <span>Needs Assignment</span>
+                    </span>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-xs text-slate-500 font-semibold block mb-1">Assigned Specialist</label>
+                  {/* Internal Team Member (Operational Owner) */}
+                  <div className="p-3.5 rounded-xl bg-teal-50/40 border border-teal-100/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                        <UserCheck className="w-3.5 h-3.5 text-[#008f77]" />
+                        <span>Internal Team Member</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-[#008f77] uppercase bg-white px-2 py-0.5 rounded-md border border-[#00C6A6]/20">
+                        {lead.assignedTeamMemberDepartment || lead.assignedDepartment || 'SALES'}
+                      </span>
+                    </div>
+
                     <select
-                      value={staffList.find(s => s.name === lead.assignedStaffName || s.id === lead.assignedStaffId)?.id || 'staff-01'}
+                      value={staffList.find(s => s.name === (lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName) || s.id === (lead.assignedTeamMemberId || lead.assignedStaffId))?.id || 'staff-01'}
                       onChange={e => handleAssignStaff(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#00C6A6]"
+                      className="w-full px-3 py-2 rounded-xl border border-teal-200 bg-white text-xs font-bold text-slate-900 focus:outline-none focus:border-[#00C6A6]"
                     >
                       {staffList.map(st => (
                         <option key={st.id} value={st.id}>
@@ -388,54 +574,63 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                         </option>
                       ))}
                     </select>
+                    <p className="text-[10px] text-slate-500">
+                      Authoritative internal lead owner responsible for processing, follow-ups, quotes, and conversion.
+                    </p>
                   </div>
-                  <div>
-                    <label className="text-xs text-slate-500 font-semibold block mb-1">User Account Link</label>
-                    <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs flex items-center justify-between">
-                      <span className="font-medium text-slate-700">
-                        {lead.userType ? `${lead.userType} Account` : 'Direct Consumer / Guest'}
-                      </span>
-                      {lead.userId && (
-                        <span className="font-mono text-[10px] bg-slate-200 px-1.5 py-0.5 rounded text-slate-700">
-                          {lead.userId}
+
+                  {/* Submitting vs Commercial Agent Info */}
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                    <span className="text-xs font-bold text-slate-700 block">Lead Source & Submitter</span>
+                    <div className="p-2.5 rounded-xl bg-white border border-slate-200 text-xs space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-slate-500">Submitter:</span>
+                        <span className="font-semibold text-slate-800">
+                          {lead.submittingAgentNameSnapshot || (lead.userType === 'B2B_AGENT' ? lead.agencyName : 'Website / Direct')}
                         </span>
-                      )}
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-slate-500">Account Type:</span>
+                        <span className="font-medium text-slate-700">
+                          {lead.userType || 'BUYER'} {lead.userId ? `(${lead.userId})` : ''}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
 
                 {/* B2B Partner Agent Assignment & Portal Visibility */}
-                <div className="mt-4 pt-4 border-t border-slate-100">
+                <div className="pt-2 border-t border-slate-100">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                      <Building className="w-3.5 h-3.5 text-[#00C6A6]" />
-                      <span>B2B Partner Agent Assignment</span>
+                      <Building className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Commercial B2B Agent (Client Relationship Owner)</span>
                     </span>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${
-                      lead.assignedAgentId 
-                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                      (lead.responsibleAgentId || lead.assignedAgentId)
+                        ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' 
                         : 'bg-slate-100 text-slate-600 border border-slate-200'
                     }`}>
-                      {lead.assignedAgentId ? 'Visible in Agent Portal' : 'Internal Only (Hidden from Agents)'}
+                      {(lead.responsibleAgentId || lead.assignedAgentId) ? 'Portal Access Enabled' : 'Internal Only (No Agent)'}
                     </span>
                   </div>
 
-                  {lead.assignedAgentId ? (
-                    <div className="p-3.5 rounded-xl bg-emerald-50/50 border border-emerald-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  {(lead.responsibleAgentId || lead.assignedAgentId) ? (
+                    <div className="p-3.5 rounded-xl bg-indigo-50/40 border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-emerald-950">
-                            {lead.assignedAgentNameSnapshot || 'Partner Agent'}
+                          <span className="text-sm font-bold text-indigo-950">
+                            {lead.responsibleAgentNameSnapshot || lead.assignedAgentNameSnapshot || 'Partner Agent'}
                           </span>
-                          {lead.assignedAgentAgencySnapshot && (
-                            <span className="text-xs px-2 py-0.5 rounded bg-emerald-100/70 text-emerald-800 font-medium">
-                              {lead.assignedAgentAgencySnapshot}
+                          {(lead.responsibleAgencyNameSnapshot || lead.assignedAgentAgencySnapshot) && (
+                            <span className="text-xs px-2 py-0.5 rounded bg-indigo-100/70 text-indigo-800 font-medium">
+                              {lead.responsibleAgencyNameSnapshot || lead.assignedAgentAgencySnapshot}
                             </span>
                           )}
                         </div>
-                        <p className="text-[11px] text-emerald-700 mt-0.5">
-                          Assigned by {lead.assignedByUserNameSnapshot || 'Operations'} • {lead.assignedAt ? new Date(lead.assignedAt).toLocaleDateString() : 'Recently'}
-                          {lead.assignedAgentEmailSnapshot && ` • ${lead.assignedAgentEmailSnapshot}`}
+                        <p className="text-[11px] text-indigo-700 mt-0.5">
+                          Assigned by {lead.assignedByUserNameSnapshot || 'Operations'} • {lead.assignedAt ? new Date(lead.assignedAt).toLocaleDateString() : 'Active'}
+                          {(lead.responsibleAgentEmailSnapshot || lead.assignedAgentEmailSnapshot) && ` • ${lead.responsibleAgentEmailSnapshot || lead.assignedAgentEmailSnapshot}`}
                         </p>
                       </div>
                       <button
@@ -550,56 +745,140 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                 </div>
               </div>
 
-              {/* Linked Commercial Records (Quotations & Bookings) */}
-              {(lead.quoteNumber || lead.bookingReference || (lead.linkedBookingIds && lead.linkedBookingIds.length > 0)) && (
-                <div className="bg-white p-5 rounded-2xl border border-teal-200/80 bg-teal-50/20 shadow-xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                      <BookmarkCheck className="w-4 h-4 text-[#00C6A6]" />
-                      <span>Linked Commercial Transactions</span>
-                    </h3>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#00C6A6]/10 text-[#008f77]">
-                      Bi-directional Link Active
+              {/* Linked Commercial Records (Quotations, Bookings, Vouchers & Invoices) */}
+              <div className="bg-white p-5 rounded-2xl border border-teal-200/80 bg-teal-50/20 shadow-xs space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                    <BookmarkCheck className="w-4 h-4 text-[#00C6A6]" />
+                    <span>Linked Commercial & Operational Pipeline</span>
+                  </h3>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#00C6A6]/10 text-[#008f77]">
+                    Bi-directional Link Active
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                  {/* Proposal Card */}
+                  <div 
+                    onClick={() => {
+                      const targetQId = lead.quoteId || (linkedQuotes.length > 0 ? linkedQuotes[0].id : null);
+                      if (targetQId && onOpenQuote) {
+                        onOpenQuote(targetQId, {
+                          version: lead.quoteSnapshot?.version || (linkedQuotes.length > 0 ? linkedQuotes[0].version : undefined),
+                          leadId: lead.id,
+                          mode: 'inspect'
+                        });
+                      } else {
+                        setActiveTab('quotes');
+                      }
+                    }}
+                    className="p-3.5 bg-white rounded-xl border border-slate-200 shadow-2xs hover:border-[#00C6A6] hover:shadow-xs transition-all cursor-pointer group flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Proposal / Quote</span>
+                        <ArrowUpRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-[#008f77] transition-colors" />
+                      </div>
+                      <p className="font-mono font-bold text-slate-900 text-sm">
+                        {lead.quoteNumber ? `#${lead.quoteNumber}` : linkedQuotes.length > 0 ? `#${linkedQuotes[0].quoteNumber}` : 'Drafting'}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        {lead.quoteSnapshot?.totalSellingPrice 
+                          ? `${lead.quoteSnapshot.currency || 'USD'} ${Number(lead.quoteSnapshot.totalSellingPrice).toLocaleString()}`
+                          : linkedQuotes.length > 0
+                          ? `${linkedQuotes[0].currency} ${(linkedQuotes[0].totalSellingPrice || 0).toLocaleString()}`
+                          : `${linkedQuotes.length} Quotes Available`}
+                      </p>
+                    </div>
+                    <span className="text-[10px] text-[#008f77] font-bold mt-2 inline-flex items-center gap-1 group-hover:underline">
+                      Inspect Proposals →
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                    {lead.quoteNumber && (
-                      <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[10px] uppercase font-bold text-slate-400">Proposal</span>
-                          <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-sky-50 text-sky-700">
-                            {lead.quoteSnapshot?.status || 'Active'}
-                          </span>
-                        </div>
-                        <p className="font-mono font-bold text-slate-900 text-sm">#{lead.quoteNumber}</p>
-                        {lead.quoteSnapshot?.totalSellingPrice && (
-                          <p className="text-[11px] text-slate-500 mt-0.5">
-                            Value: {lead.quoteSnapshot.currency || 'USD'} {Number(lead.quoteSnapshot.totalSellingPrice).toLocaleString()}
-                          </p>
-                        )}
+                  {/* Confirmed Booking Card */}
+                  <div 
+                    onClick={() => {
+                      const targetBookingId = lead.bookingId || (linkedBookings.length > 0 ? linkedBookings[0].id : null);
+                      if (targetBookingId && onOpenBooking) {
+                        onOpenBooking(targetBookingId);
+                      } else {
+                        setActiveTab('bookings');
+                      }
+                    }}
+                    className={`p-3.5 bg-white rounded-xl border shadow-2xs hover:shadow-xs transition-all cursor-pointer group flex flex-col justify-between ${
+                      (lead.bookingReference || lead.bookingId || linkedBookings.length > 0)
+                        ? 'border-emerald-200 hover:border-emerald-400'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Ground Booking</span>
+                        <ArrowUpRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-emerald-700 transition-colors" />
                       </div>
-                    )}
+                      <p className="font-mono font-bold text-emerald-800 text-sm">
+                        {lead.bookingReference ? `#${lead.bookingReference}` : lead.bookingId ? `#${lead.bookingId}` : linkedBookings.length > 0 ? `#${linkedBookings[0].bookingReference}` : 'Not Converted'}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        {lead.bookingValue 
+                          ? `${lead.currency || 'USD'} ${Number(lead.bookingValue).toLocaleString()}`
+                          : linkedBookings.length > 0
+                          ? `${linkedBookings[0].currency} ${(linkedBookings[0].totalAmount || 0).toLocaleString()}`
+                          : 'Pending Conversion'}
+                      </p>
+                    </div>
+                    <span className="text-[10px] text-emerald-700 font-bold mt-2 inline-flex items-center gap-1 group-hover:underline">
+                      Operations Desk →
+                    </span>
+                  </div>
 
-                    {(lead.bookingReference || lead.bookingId) && (
-                      <div className="p-3 bg-white rounded-xl border border-emerald-200 shadow-2xs">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[10px] uppercase font-bold text-slate-400">Confirmed Booking</span>
-                          <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                            {lead.conversionStatus || 'CONVERTED'}
-                          </span>
-                        </div>
-                        <p className="font-mono font-bold text-emerald-800 text-sm">#{lead.bookingReference || lead.bookingId}</p>
-                        {lead.bookingValue && (
-                          <p className="text-[11px] text-slate-500 mt-0.5">
-                            Gross Booking Value: {lead.currency || 'USD'} {Number(lead.bookingValue).toLocaleString()}
-                          </p>
-                        )}
+                  {/* Vouchers Card */}
+                  <div 
+                    onClick={() => setActiveTab('vouchers')}
+                    className="p-3.5 bg-white rounded-xl border border-slate-200 shadow-2xs hover:border-purple-300 hover:shadow-xs transition-all cursor-pointer group flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Issued Vouchers</span>
+                        <ArrowUpRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-purple-700 transition-colors" />
                       </div>
-                    )}
+                      <p className="font-mono font-bold text-purple-900 text-sm">
+                        {linkedVouchers.length} Vouchers
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        {linkedVouchers.length > 0 ? `Latest: ${linkedVouchers[0].voucherNumber}` : 'Awaiting confirmation'}
+                      </p>
+                    </div>
+                    <span className="text-[10px] text-purple-700 font-bold mt-2 inline-flex items-center gap-1 group-hover:underline">
+                      View Vouchers →
+                    </span>
+                  </div>
+
+                  {/* Settlement / Financials Card */}
+                  <div 
+                    onClick={() => setActiveTab('financials')}
+                    className="p-3.5 bg-white rounded-xl border border-slate-200 shadow-2xs hover:border-teal-300 hover:shadow-xs transition-all cursor-pointer group flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Financial Balance</span>
+                        <ArrowUpRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-teal-700 transition-colors" />
+                      </div>
+                      <p className="font-mono font-bold text-slate-900 text-sm">
+                        {linkedInvoices.length} Proformas
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        {financialSummary 
+                          ? `Due: ${formatCurrency(financialSummary.totalBalanceDue, financialSummary.currency)}`
+                          : 'No invoices yet'}
+                      </p>
+                    </div>
+                    <span className="text-[10px] text-teal-700 font-bold mt-2 inline-flex items-center gap-1 group-hover:underline">
+                      Financial Summary →
+                    </span>
                   </div>
                 </div>
-              )}
+              </div>
 
               {/* Brief Travel Requirements Overview */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
@@ -791,112 +1070,149 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
             </div>
           )}
 
-          {/* TAB: QUOTE & VERSION CONTROL */}
+          {/* TAB: QUOTES & PROPOSALS */}
           {activeTab === 'quotes' && (
-            <div className="space-y-4">
-              {/* Active Snapshot */}
-              {lead.quoteSnapshot && (
-                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                  <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3">
-                    Active Quotation Snapshot: #{lead.quoteSnapshot.quoteNumber} (v{lead.quoteSnapshot.version})
-                  </h3>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                    <div className="p-3 bg-slate-50 rounded-xl">
-                      <span className="text-slate-400 block">Total Net Cost</span>
-                      <span className="font-mono font-bold text-slate-800 text-sm">
-                        {lead.quoteSnapshot.currency} {lead.quoteSnapshot.totalNetCost.toLocaleString()}
-                      </span>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-xl">
-                      <span className="text-slate-400 block">Margin Applied</span>
-                      <span className="font-mono font-bold text-[#008f77] text-sm">
-                        {lead.quoteSnapshot.marginPercent}% ({lead.quoteSnapshot.currency} {lead.quoteSnapshot.marginAmount.toLocaleString()})
-                      </span>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-xl">
-                      <span className="text-slate-400 block">Selling Price</span>
-                      <span className="font-mono font-black text-slate-900 text-base">
-                        {lead.quoteSnapshot.currency} {lead.quoteSnapshot.finalSellingPrice.toLocaleString()}
-                      </span>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-xl">
-                      <span className="text-slate-400 block">Quote Status</span>
-                      <span className="font-bold text-amber-700">{lead.quoteSnapshot.status}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
+            <LeadQuotesTab
+              lead={lead}
+              linkedQuotes={linkedQuotes}
+              linkedQuoteVersions={linkedQuoteVersions}
+              onOpenQuote={onOpenQuote}
+              onConvertToBooking={handleConvertToBooking}
+              isConverting={isConverting}
+            />
+          )}
 
-              {/* Version History Log */}
+          {/* TAB: GROUND BOOKINGS */}
+          {activeTab === 'bookings' && (
+            <LeadBookingsTab
+              lead={lead}
+              linkedBookings={linkedBookings}
+              onOpenBooking={onOpenBooking}
+              onGenerateCompleteVoucher={handleGenerateCompleteVoucher}
+              onGenerateActivityVoucher={handleGenerateActivityVoucher}
+              onGenerateInvoice={handleGenerateInvoice}
+            />
+          )}
+
+          {/* TAB: ITINERARY & ACTIVITY VOUCHERS */}
+          {activeTab === 'vouchers' && (
+            <LeadVouchersTab
+              lead={lead}
+              linkedVouchers={linkedVouchers}
+              linkedBookings={linkedBookings}
+              onViewVoucher={voucher => setPreviewVoucher(voucher)}
+              onGenerateCompleteVoucher={handleGenerateCompleteVoucher}
+            />
+          )}
+
+          {/* TAB: FINANCIALS & PROFORMA INVOICES */}
+          {activeTab === 'financials' && (
+            <LeadFinancialsTab
+              lead={lead}
+              linkedInvoices={linkedInvoices}
+              linkedBookings={linkedBookings}
+              financialSummary={financialSummary}
+              onViewInvoice={invoice => setPreviewInvoice(invoice)}
+              onGenerateInvoice={handleGenerateInvoice}
+            />
+          )}
+
+          {/* TAB: ACTIVITY TIMELINE */}
+          {activeTab === 'timeline' && (
+            <div className="space-y-6">
+              {/* Chronological Dual-Ownership & Assignment Audit Trail */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-3 flex items-center gap-2">
-                  <History className="w-4 h-4 text-[#00C6A6]" />
-                  <span>Version Control & Modifications Log</span>
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4 flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-[#008f77]" />
+                    <span>Ownership & Assignment Audit Trail</span>
+                  </span>
+                  <span className="text-[10px] font-bold text-slate-500 uppercase">
+                    {lead.assignmentHistory?.length || 0} Records
+                  </span>
                 </h3>
 
-                {(!lead.quoteVersions || lead.quoteVersions.length === 0) ? (
-                  <div className="text-slate-400 text-xs py-4 text-center">
-                    Single version recorded (#{lead.quoteNumber || 'Initial Draft'}).
+                {(!lead.assignmentHistory || lead.assignmentHistory.length === 0) ? (
+                  <div className="text-center py-4 text-slate-400 text-xs">
+                    No ownership reassignments recorded yet. Current assignment: {lead.responsibleAgentNameSnapshot || 'No Agent'} (Commercial) & {lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName} (Operations).
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {lead.quoteVersions.map(v => (
-                      <div key={v.version} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 text-xs">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="font-bold text-slate-900">
-                            Version {v.version} • {new Date(v.createdAt).toLocaleString()}
+                    {lead.assignmentHistory.map((entry, aIdx) => (
+                      <div key={entry.id || aIdx} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 text-xs space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                            <span className={`w-2 h-2 rounded-full ${
+                              entry.changeType === 'AGENT_REASSIGNED' || entry.changeType === 'AGENT_INITIAL' ? 'bg-indigo-600' : 'bg-teal-600'
+                            }`} />
+                            <span className="uppercase text-[11px] tracking-wide">
+                              {(entry.changeType || 'UPDATE').replace(/_/g, ' ')}
+                            </span>
                           </span>
-                          <span className="font-mono font-bold text-[#008f77]">
-                            {v.currency} {v.totalSellingPrice.toLocaleString()}
+                          <span className="text-[10px] font-mono text-slate-400">
+                            {new Date(entry.timestamp).toLocaleString()}
                           </span>
                         </div>
-                        <p className="text-slate-600 text-[11px] mb-1">
-                          Modified by: <strong>{v.createdBy}</strong> ({v.createdByUserType}) • {v.totalItems} Items
-                        </p>
-                        {v.changesSummary && (
-                          <p className="text-slate-700 bg-white p-2 rounded border border-slate-200 mt-1 font-mono text-[11px]">
-                            {v.changesSummary}
-                          </p>
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-700 font-medium">
+                          {entry.previousAssigneeName && (
+                            <>
+                              <span className="line-through text-slate-400">{entry.previousAssigneeName}</span>
+                              <span className="text-slate-400">→</span>
+                            </>
+                          )}
+                          <span className="font-bold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-200">
+                            {entry.newAssigneeName || 'Unassigned'}
+                          </span>
+                          {entry.newAssigneeAgency && (
+                            <span className="text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded text-[10px] border border-indigo-100">
+                              {entry.newAssigneeAgency}
+                            </span>
+                          )}
+                        </div>
+                        {entry.notes && (
+                          <p className="text-[11px] text-slate-600 italic mt-1">"{entry.notes}"</p>
                         )}
+                        <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-200/60 flex items-center justify-between">
+                          <span>Action by: <strong className="text-slate-700">{entry.performedByName}</strong> ({entry.performedByRole || 'User'})</span>
+                          <span className="font-mono text-[9px] text-slate-400">{entry.id}</span>
+                        </div>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
-            </div>
-          )}
 
-          {/* TAB: ACTIVITY TIMELINE */}
-          {activeTab === 'timeline' && (
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <History className="w-4 h-4 text-[#00C6A6]" />
-                <span>Customer Journey & Activity Timeline</span>
-              </h3>
+              {/* Customer Journey Timeline */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-2">
+                  <History className="w-4 h-4 text-[#00C6A6]" />
+                  <span>Customer Journey & Activity Timeline</span>
+                </h3>
 
-              {(!lead.timeline || lead.timeline.length === 0) ? (
-                <div className="text-center py-6 text-slate-400 text-xs">No activity logged yet.</div>
-              ) : (
-                <div className="relative pl-6 space-y-6 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
-                  {lead.timeline.map((evt, idx) => (
-                    <div key={evt.id || idx} className="relative group">
-                      <div className="absolute -left-6 top-1 w-3.5 h-3.5 rounded-full bg-[#00C6A6] border-2 border-white shadow-xs" />
-                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
-                        <div className="flex items-center justify-between mb-0.5">
-                          <span className="font-bold text-slate-900">{evt.title}</span>
-                          <span className="text-[10px] text-slate-400">
-                            {new Date(evt.timestamp).toLocaleString()}
-                          </span>
-                        </div>
-                        <p className="text-slate-600">{evt.description}</p>
-                        <div className="text-[10px] text-slate-400 mt-1">
-                          By: <strong className="text-slate-700">{evt.performedBy}</strong>
+                {(!lead.timeline || lead.timeline.length === 0) ? (
+                  <div className="text-center py-6 text-slate-400 text-xs">No activity logged yet.</div>
+                ) : (
+                  <div className="relative pl-6 space-y-6 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
+                    {lead.timeline.map((evt, idx) => (
+                      <div key={evt.id || idx} className="relative group">
+                        <div className="absolute -left-6 top-1 w-3.5 h-3.5 rounded-full bg-[#00C6A6] border-2 border-white shadow-xs" />
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <span className="font-bold text-slate-900">{evt.title}</span>
+                            <span className="text-[10px] text-slate-400">
+                              {new Date(evt.timestamp).toLocaleString()}
+                            </span>
+                          </div>
+                          <p className="text-slate-600">{evt.description}</p>
+                          <div className="text-[10px] text-slate-400 mt-1">
+                            By: <strong className="text-slate-700">{evt.performedBy}</strong>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -1018,6 +1334,27 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
           )}
         </div>
       </div>
+
+      {/* Voucher Document Preview Modal */}
+      {previewVoucher && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <VoucherDocumentView
+              voucher={previewVoucher}
+              onClose={() => setPreviewVoucher(null)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Commercial Proforma Invoice Preview Modal */}
+      {previewInvoice && (
+        <ProformaInvoiceModal
+          invoice={previewInvoice}
+          isOpen={true}
+          onClose={() => setPreviewInvoice(null)}
+        />
+      )}
     </div>
   );
 };

@@ -94,6 +94,10 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
     return db.getCityHubs() || [];
   }, [db]);
 
+  const [targetQuoteIdForBuilder, setTargetQuoteIdForBuilder] = useState<string | null>(null);
+  const [targetQuoteVersionForBuilder, setTargetQuoteVersionForBuilder] = useState<number | undefined>(undefined);
+  const [targetQuoteModeForBuilder, setTargetQuoteModeForBuilder] = useState<'inspect' | 'edit' | 'readonly'>('inspect');
+
   const { 
     items, 
     clearQuote, 
@@ -157,6 +161,9 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
   };
 
   const handleOpenCreateQuote = (destSlug?: string) => {
+    setTargetQuoteIdForBuilder(null);
+    setTargetQuoteVersionForBuilder(undefined);
+    setTargetQuoteModeForBuilder('edit');
     if (destSlug) {
       setInitialDestinationSlug(destSlug);
     }
@@ -257,6 +264,9 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
 
   const handleEditQuote = (quote: Quotation) => {
     loadSavedQuote(quote);
+    setTargetQuoteIdForBuilder(quote.id);
+    setTargetQuoteVersionForBuilder(quote.version);
+    setTargetQuoteModeForBuilder(quote.isLocked ? 'inspect' : 'edit');
     setActiveTab('create-quote');
   };
 
@@ -426,6 +436,10 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
               hotels={hotels}
               products={products}
               cityHubs={cityHubs}
+              targetQuoteId={targetQuoteIdForBuilder || undefined}
+              targetQuoteVersion={targetQuoteVersionForBuilder}
+              initialMode={targetQuoteModeForBuilder}
+              isNewQuoteMode={!targetQuoteIdForBuilder}
               onBackToDashboard={() => handleTabSelect('dashboard')}
               onViewMyQuotes={() => handleTabSelect('my-quotes')}
               onConvertToBooking={handleConvertToBooking}

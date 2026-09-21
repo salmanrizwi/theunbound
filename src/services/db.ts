@@ -11,6 +11,8 @@ import {
   Quotation, 
   Booking,
   BookingStatus,
+  BookingAssignmentStatus,
+  BookingAssignmentHistoryItem,
   AgentMarginType,
   PricingSnapshot,
   AuditLog, 
@@ -42,7 +44,10 @@ import {
   LeadQuoteVersion,
   CurrencyCode,
   BookingInvoice,
+  InvoicePaymentStatus,
+  InvoiceServiceItem,
   BookingVoucher,
+  QuoteVersionRecord,
   BookingFinancialRecord,
   JobSheet,
   EmailCampaignConfig,
@@ -184,7 +189,13 @@ import {
   getDefaultPermissionsForRole, 
   syncSessionUserPermissions, 
   canRevokeAdminPermissions, 
-  isMasterAdmin 
+  isMasterAdmin,
+  isExternalUser,
+  isInternalStaff,
+  canEditSubmittedBooking,
+  canEditPassengerDetails,
+  canUploadPassengerDocuments,
+  toB2BAgentBookingDTO
 } from './permissionEngine';
 import { 
   sanitizeQuoteForAgent, 
@@ -1090,6 +1101,18 @@ export class AppDatabase {
       this.syncAdminActivitiesFromEntities();
     } catch (e) {
       console.warn('Initial admin activities synthesis note:', e);
+    }
+
+    try {
+      this.migrateBookingAssignments();
+    } catch (e) {
+      console.warn('Initial booking assignment migration note:', e);
+    }
+
+    try {
+      this.migrateLeadAssignments();
+    } catch (e) {
+      console.warn('Initial lead assignment migration note:', e);
     }
   }
 
@@ -4128,6 +4151,68 @@ export class AppDatabase {
       quotes.unshift(updatedQuote);
     }
     
+    // Ensure authoritative QuoteVersionRecord snapshot exists for currentVersion
+    if (!updatedQuote.versionHistory) updatedQuote.versionHistory = [];
+    const vIdx = updatedQuote.versionHistory.findIndex(v => v.version === currentVersion);
+    const fullVersionRecord: QuoteVersionRecord = {
+      id: `${updatedQuote.id}-v${currentVersion}`,
+      version: currentVersion,
+      versionNumber: currentVersion,
+      quoteId: updatedQuote.id,
+      leadId: updatedQuote.leadId || updatedQuote.linkedLeadId,
+      previousVersionId: currentVersion > 1 ? `${updatedQuote.id}-v${currentVersion - 1}` : undefined,
+      updatedAt: timestamp,
+      createdAt: existingQuote?.createdAt || timestamp,
+      updatedBy: userName,
+      createdByName: updatedQuote.createdByName || userName,
+      title: updatedQuote.title,
+      destination: updatedQuote.destination,
+      travelStartDate: updatedQuote.travelStartDate,
+      travelEndDate: updatedQuote.travelEndDate,
+      totalPax: updatedQuote.totalPax || ((updatedQuote.adultsCount || 2) + (updatedQuote.childrenCount || 0) + (updatedQuote.infantsCount || 0)),
+      adultsCount: updatedQuote.adultsCount || 2,
+      childrenCount: updatedQuote.childrenCount || 0,
+      infantsCount: updatedQuote.infantsCount || 0,
+      currency: updatedQuote.currency || 'USD',
+      totalNetCost: updatedQuote.totalNetCost || 0,
+      totalSellingPrice: updatedQuote.totalSellingPrice || 0,
+      marginPercent: updatedQuote.overallMarkupPercent || 15,
+      marginAmount: updatedQuote.totalMargin || 0,
+      items: updatedQuote.items ? JSON.parse(JSON.stringify(updatedQuote.items)) : [],
+      status: updatedQuote.status || 'SAVED',
+      proposalStatus: (actionType === 'BOOKED' || actionType === 'CONVERTED') ? 'converted' :
+                      (actionType === 'DOWNLOADED' ? 'downloaded' :
+                      (actionType === 'SENT' || actionType === 'WHATSAPP_SHARED' ? 'shared' :
+                      (updatedQuote.status === 'ACCEPTED' ? 'accepted' : 'saved'))),
+      changesSummary: (vIdx >= 0 && updatedQuote.versionHistory[vIdx].changesSummary) ? updatedQuote.versionHistory[vIdx].changesSummary : defaultActionDetails,
+      agentNotes: typeof updatedQuote.agentNotes === 'string' ? updatedQuote.agentNotes : undefined,
+      termsAndConditions: updatedQuote.termsAndConditions,
+      bookingId: updatedQuote.bookingId,
+      sharedHistory: (vIdx >= 0 && updatedQuote.versionHistory[vIdx].sharedHistory) ? updatedQuote.versionHistory[vIdx].sharedHistory : []
+    };
+
+    if (actionType === 'WHATSAPP_SHARED') {
+      if (!fullVersionRecord.sharedHistory) fullVersionRecord.sharedHistory = [];
+      fullVersionRecord.sharedHistory.push({ type: 'WHATSAPP', recipient: updatedQuote.clientPhone, timestamp });
+      fullVersionRecord.proposalStatus = 'shared';
+    } else if (actionType === 'SENT' || actionType === 'SENT_TO_CLIENT') {
+      if (!fullVersionRecord.sharedHistory) fullVersionRecord.sharedHistory = [];
+      fullVersionRecord.sharedHistory.push({ type: 'EMAIL', recipient: updatedQuote.clientEmail, timestamp });
+      fullVersionRecord.proposalStatus = 'shared';
+    } else if (actionType === 'DOWNLOADED') {
+      if (!fullVersionRecord.sharedHistory) fullVersionRecord.sharedHistory = [];
+      fullVersionRecord.sharedHistory.push({ type: 'DOWNLOAD', timestamp });
+      if (fullVersionRecord.proposalStatus !== 'converted' && fullVersionRecord.proposalStatus !== 'accepted') {
+        fullVersionRecord.proposalStatus = 'downloaded';
+      }
+    }
+
+    if (vIdx >= 0) {
+      updatedQuote.versionHistory[vIdx] = fullVersionRecord;
+    } else {
+      updatedQuote.versionHistory.push(fullVersionRecord);
+    }
+
     this.syncFirestoreDoc('quotations', updatedQuote.id, updatedQuote);
     this.setItem('saved_quotes', quotes);
     
@@ -4210,7 +4295,8 @@ export class AppDatabase {
         changesSummary: v.changesSummary
       }));
 
-      this.captureLeadFromSource({
+      const linkedLead = this.captureLeadFromSource({
+        leadId: updatedQuote.leadId || updatedQuote.linkedLeadId,
         contactName: updatedQuote.clientName,
         email: updatedQuote.clientEmail || `${(updatedQuote.clientName || 'client').toLowerCase().replace(/[^a-z0-9]/g, '')}@client.local`,
         phone: updatedQuote.clientPhone,
@@ -4240,6 +4326,22 @@ export class AppDatabase {
         quoteVersions,
         requestedProducts: mappedProducts
       }, user);
+
+      if (linkedLead) {
+        updatedQuote.leadId = linkedLead.id;
+        updatedQuote.linkedLeadId = linkedLead.id;
+        const curQuotes = this.getAllSavedQuotes();
+        const curIdx = curQuotes.findIndex(q => q.id === updatedQuote.id);
+        if (curIdx >= 0) {
+          curQuotes[curIdx].leadId = linkedLead.id;
+          curQuotes[curIdx].linkedLeadId = linkedLead.id;
+          this.setItem('saved_quotes', curQuotes);
+          this.syncFirestoreDoc('quotations', updatedQuote.id, {
+            leadId: linkedLead.id,
+            linkedLeadId: linkedLead.id
+          });
+        }
+      }
     }
 
     // Auto-trigger SLA & Google Calendar dispatch listeners
@@ -5052,50 +5154,12 @@ export class AppDatabase {
 
   /**
    * Sanitizes Booking data for external users (Buyers, B2B Agents, Guests).
-   * Strips out supplier prices, nett costs, margins, profits, supplier allocations,
-   * internal notes, internal pricing history, and supplier invoices.
+   * Strips out supplier identities, supplier contacts, supplier prices, nett costs,
+   * margins, profits, supplier allocations, internal notes, internal tasks,
+   * internal pricing history, internal dispatch desks, and supplier invoices.
    */
   public sanitizeBookingForExternalUser(b: Booking): Booking {
-    const clone: Booking = JSON.parse(JSON.stringify(b));
-    delete clone.totalNetCost;
-    delete clone.grossProfit;
-    delete clone.grossMarginPercent;
-    delete clone.supplierAllocations;
-    delete clone.supplierRequests;
-    delete clone.operationalConfirmationOverride;
-
-    if (clone.items && Array.isArray(clone.items)) {
-      clone.items = clone.items.map(it => {
-        delete it.supplierPrice;
-        delete it.supplierCurrency;
-        delete it.supplierPriceType;
-        delete it.supplierPriceTax;
-        delete it.supplierPriceFee;
-        delete it.supplierPriceDiscount;
-        delete it.supplierPaymentCutoffDate;
-        delete it.supplierCancellationDeadline;
-        delete it.supplierPriceValidityDate;
-        delete it.supplierPriceSource;
-        delete it.supplierPriceHistory;
-        delete it.supplierPriceLastUpdatedAt;
-        delete it.supplierPriceLastUpdatedBy;
-        delete it.internalPricingNotes;
-        delete it.internalNotes;
-        delete it.internalOpsNotes;
-        delete it.unitNetPrice;
-        delete (it as any).costPrice;
-        delete (it as any).netCost;
-        return it;
-      });
-    }
-
-    if (clone.uploadedInvoices && Array.isArray(clone.uploadedInvoices)) {
-      clone.uploadedInvoices = clone.uploadedInvoices.filter(
-        inv => inv.invoiceType !== 'Supplier Invoice'
-      );
-    }
-
-    return clone;
+    return sanitizeBookingForAgent(b);
   }
 
   /**
@@ -5292,6 +5356,8 @@ export class AppDatabase {
       sourceType: BookingSourceType;
       quoteId?: string;
       quoteNumber?: string;
+      sourceQuoteVersionId?: string;
+      leadId?: string;
       destinationName?: string;
       customer: Booking['customer'];
       items: Booking['items'];
@@ -5300,6 +5366,9 @@ export class AppDatabase {
       totalNetCost?: number;
       travelStartDate: string;
       travelEndDate: string;
+      agentId?: string;
+      assignedTeamMemberId?: string;
+      assignmentNotes?: string;
     },
     user: User | null
   ): Booking {
@@ -5360,15 +5429,102 @@ export class AppDatabase {
     const submittingAgentId = isAgent ? user?.id : undefined;
     const submittingAgentNameSnapshot = isAgent ? user?.name : undefined;
     const submittingAgentAgencySnapshot = isAgent ? (user?.agencyName || data.customer.agencyName) : undefined;
-    const agentVisibilityStatus = isAgent ? 'VISIBLE' : undefined;
+
+    // Authoritative Agent Determination
+    const allUsers = this.getUsers();
+    let resolvedAgentId: string | undefined = undefined;
+    let resolvedAgentNameSnapshot: string | undefined = undefined;
+    let resolvedAgentEmailSnapshot: string | undefined = undefined;
+    let resolvedAgentAgencySnapshot: string | undefined = undefined;
+
+    if (isAgent) {
+      resolvedAgentId = user.id;
+      resolvedAgentNameSnapshot = user.name;
+      resolvedAgentEmailSnapshot = user.email;
+      resolvedAgentAgencySnapshot = user.agencyName || user.companyName || data.customer.agencyName;
+    } else if (data.agentId) {
+      const explicitAgent = allUsers.find(u => u.id === data.agentId);
+      if (explicitAgent) {
+        resolvedAgentId = explicitAgent.id;
+        resolvedAgentNameSnapshot = explicitAgent.name;
+        resolvedAgentEmailSnapshot = explicitAgent.email;
+        resolvedAgentAgencySnapshot = explicitAgent.agencyName || explicitAgent.companyName;
+      }
+    } else if (data.quoteId) {
+      const rawQuote = this.getRawQuoteById(data.quoteId);
+      if (rawQuote) {
+        const quoteAgentId = rawQuote.agentId || rawQuote.createdBy;
+        if (quoteAgentId) {
+          const matchedAgent = allUsers.find(u => u.id === quoteAgentId && u.role === 'B2B_AGENT');
+          if (matchedAgent) {
+            resolvedAgentId = matchedAgent.id;
+            resolvedAgentNameSnapshot = matchedAgent.name;
+            resolvedAgentEmailSnapshot = matchedAgent.email;
+            resolvedAgentAgencySnapshot = matchedAgent.agencyName || matchedAgent.companyName;
+          }
+        }
+      }
+    }
+
+    // Authoritative Internal Team Member (Operational Owner)
+    let resolvedTeamMemberId: string | undefined = undefined;
+    let resolvedTeamMemberNameSnapshot: string | undefined = undefined;
+    let resolvedTeamMemberEmailSnapshot: string | undefined = undefined;
+
+    if (data.assignedTeamMemberId) {
+      const explicitMember = allUsers.find(u => u.id === data.assignedTeamMemberId);
+      if (explicitMember && explicitMember.role !== 'B2B_AGENT' && explicitMember.role !== 'BUYER') {
+        resolvedTeamMemberId = explicitMember.id;
+        resolvedTeamMemberNameSnapshot = explicitMember.name;
+        resolvedTeamMemberEmailSnapshot = explicitMember.email;
+      }
+    } else if (user && user.role !== 'B2B_AGENT' && user.role !== 'BUYER') {
+      // Internal staff submitting booking defaults to operational owner
+      resolvedTeamMemberId = user.id;
+      resolvedTeamMemberNameSnapshot = user.name;
+      resolvedTeamMemberEmailSnapshot = user.email;
+    }
+
+    let assignmentStatus: BookingAssignmentStatus = 'assigned';
+    if (!resolvedAgentId && !resolvedTeamMemberId) {
+      assignmentStatus = 'pending_internal_assignment';
+    } else if (!resolvedAgentId) {
+      assignmentStatus = 'pending_agent_assignment';
+    } else if (!resolvedTeamMemberId) {
+      assignmentStatus = 'pending_internal_assignment';
+    } else {
+      assignmentStatus = 'assigned';
+    }
+
+    const agentVisibilityStatus = (isAgent || resolvedAgentId) ? 'VISIBLE' : undefined;
+
+    const initialAssignmentHistory: BookingAssignmentHistoryItem[] = [
+      {
+        id: `asg-init-${Date.now()}-${randomRef}`,
+        timestamp,
+        type: 'INITIAL_CREATION',
+        newAgentId: resolvedAgentId,
+        newAgentName: resolvedAgentNameSnapshot,
+        newTeamMemberId: resolvedTeamMemberId,
+        newTeamMemberName: resolvedTeamMemberNameSnapshot,
+        assignedByUserId: user.id,
+        assignedByUserNameSnapshot: user.name,
+        assignedByUserRole: user.role,
+        notes: data.assignmentNotes || (
+          isAgent 
+            ? 'Submitted via B2B Agent Portal. Awaiting internal operational owner assignment.' 
+            : `Booking created by internal staff ${user.name}.`
+        )
+      }
+    ];
 
     // Reuse or create customer record to avoid duplicate data
     const customerRecord = this.findOrCreateCustomerRecord({
-      agentId: user?.id,
+      agentId: resolvedAgentId || user?.id,
       name: data.customer.leadTravelerName || data.customer.bookerName || 'Lead Traveler',
       email: data.customer.email,
       phone: data.customer.phone,
-      company: data.customer.agencyName || user?.agencyName,
+      company: resolvedAgentAgencySnapshot || data.customer.agencyName || user?.agencyName,
       source: 'BOOKING_SUBMISSION',
       notes: data.customer.specialRequests,
       isBooking: true
@@ -5378,7 +5534,7 @@ export class AppDatabase {
       {
         id: `tl-${Date.now()}-01`,
         title: 'Booking Submitted',
-        description: `Booking ${bookingReference} initiated for ${data.customer.leadTravelerName}.${isAgent ? ` Submitted by B2B Agent ${user?.name} (${user?.agencyName || 'Agent'}).` : ''}`,
+        description: `Booking ${bookingReference} initiated for ${data.customer.leadTravelerName}.${resolvedAgentNameSnapshot ? ` Associated B2B Agent: ${resolvedAgentNameSnapshot} (${resolvedAgentAgencySnapshot || 'Agent'}).` : ''}${resolvedTeamMemberNameSnapshot ? ` Operational Owner: ${resolvedTeamMemberNameSnapshot}.` : ''}`,
         timestamp,
         type: 'CREATION',
         actorName: user?.name || data.customer.leadTravelerName,
@@ -5399,9 +5555,29 @@ export class AppDatabase {
       submittingAgentAgencySnapshot,
       submittedAt: timestamp,
       agentVisibilityStatus: agentVisibilityStatus as any,
-      agentId: isAgent ? user.id : undefined,
-      agentName: isAgent ? user.name : undefined,
-      agentAgency: isAgent ? (user.agencyName || data.customer.agencyName) : undefined,
+
+      agentId: resolvedAgentId,
+      agentName: resolvedAgentNameSnapshot,
+      agentNameSnapshot: resolvedAgentNameSnapshot,
+      agentEmailSnapshot: resolvedAgentEmailSnapshot,
+      agentAgency: resolvedAgentAgencySnapshot,
+      agentAgencySnapshot: resolvedAgentAgencySnapshot,
+      assignedAgentId: resolvedAgentId,
+      assignedAgentNameSnapshot: resolvedAgentNameSnapshot,
+      assignedAgentAgencySnapshot: resolvedAgentAgencySnapshot,
+
+      assignedTeamMemberId: resolvedTeamMemberId,
+      assignedTeamMemberName: resolvedTeamMemberNameSnapshot,
+      assignedTeamMemberNameSnapshot: resolvedTeamMemberNameSnapshot,
+      assignedTeamMemberEmailSnapshot: resolvedTeamMemberEmailSnapshot,
+
+      assignmentStatus,
+      assignedAt: resolvedTeamMemberId ? timestamp : undefined,
+      assignedByUserId: resolvedTeamMemberId ? user.id : undefined,
+      assignedByUserNameSnapshot: resolvedTeamMemberId ? user.name : undefined,
+      assignmentNotes: data.assignmentNotes,
+      assignmentHistory: initialAssignmentHistory,
+
       quoteId: data.quoteId,
       quoteNumber: data.quoteNumber,
       linkedQuoteId: data.quoteId,
@@ -5475,25 +5651,53 @@ export class AppDatabase {
       }
     });
 
+    // Authoritative relationship tracking
+    newBookingDraft.sourceQuoteId = data.quoteId;
+    newBookingDraft.sourceQuoteVersionId = (data as any).sourceQuoteVersionId || (data.quoteId ? `${data.quoteId}-v${data.quoteNumber || 1}` : undefined);
+    newBookingDraft.bookingVersionNumber = 1;
+    newBookingDraft.voucherIds = [];
+    newBookingDraft.proformaInvoiceIds = [];
+    newBookingDraft.paymentIds = [];
+
     existing.unshift(newBookingDraft);
     this.setItem('bookings', existing);
     this.syncFirestoreDoc('bookings', newBookingDraft.id, newBookingDraft);
 
-    // If booking was created from a quote, update quote status
+    // If booking was created from a quote, update quote status and versions
     if (data.quoteId) {
       const quotes = this.getAllSavedQuotes();
       const qIdx = quotes.findIndex(q => q.id === data.quoteId);
       if (qIdx >= 0) {
         quotes[qIdx].status = 'BOOKING_SUBMITTED';
+        quotes[qIdx].proposalStatus = 'converted';
+        quotes[qIdx].bookingId = newBookingDraft.id;
+        quotes[qIdx].bookingReference = newBookingDraft.bookingReference;
+        quotes[qIdx].linkedBookingIds = Array.from(new Set([...(quotes[qIdx].linkedBookingIds || []), newBookingDraft.id]));
         quotes[qIdx].updatedAt = timestamp;
+        if (quotes[qIdx].versionHistory && quotes[qIdx].versionHistory.length > 0) {
+          const lastV = quotes[qIdx].versionHistory[quotes[qIdx].versionHistory.length - 1];
+          lastV.bookingId = newBookingDraft.id;
+          lastV.bookingReference = newBookingDraft.bookingReference;
+          lastV.proposalStatus = 'converted';
+          lastV.status = 'ACCEPTED';
+        }
         this.setItem('saved_quotes', quotes);
-        this.syncFirestoreDoc('quotations', quotes[qIdx].id, { status: 'BOOKING_SUBMITTED', updatedAt: timestamp });
+        this.syncFirestoreDoc('quotations', quotes[qIdx].id, {
+          status: 'BOOKING_SUBMITTED',
+          proposalStatus: 'converted',
+          bookingId: newBookingDraft.id,
+          bookingReference: newBookingDraft.bookingReference,
+          linkedBookingIds: quotes[qIdx].linkedBookingIds,
+          versionHistory: quotes[qIdx].versionHistory,
+          updatedAt: timestamp
+        });
       }
     }
 
     // Sync into CRM Lead without duplication
     try {
       const linkedLead = this.captureLeadFromSource({
+        leadId: (data as any).leadId || (data as any).linkedLeadId,
         contactName: data.customer.leadTravelerName || data.customer.bookerName || 'Lead Traveler',
         email: data.customer.email,
         phone: data.customer.phone,
@@ -5522,6 +5726,24 @@ export class AppDatabase {
         newBookingDraft.linkedLeadId = linkedLead.id;
         newBookingDraft.leadId = linkedLead.id;
         newBookingDraft.leadNumber = linkedLead.leadNumber;
+        
+        linkedLead.bookingId = newBookingDraft.id;
+        linkedLead.bookingReference = newBookingDraft.bookingReference;
+        linkedLead.activeBookingId = newBookingDraft.id;
+        linkedLead.bookingIds = Array.from(new Set([...(linkedLead.bookingIds || []), newBookingDraft.id]));
+        linkedLead.bookingValue = newBookingDraft.totalAmount;
+        linkedLead.lastBookingActivityAt = timestamp;
+        linkedLead.status = 'BOOKING_SUBMITTED';
+        linkedLead.conversionStatus = 'CONVERTED';
+
+        const curLeads = this.getLeads();
+        const curLIdx = curLeads.findIndex(l => l.id === linkedLead.id);
+        if (curLIdx >= 0) {
+          curLeads[curLIdx] = linkedLead;
+          this.setItem('leads', curLeads);
+          this.syncFirestoreDoc('leads', linkedLead.id, linkedLead);
+        }
+
         this.setItem('bookings', existing);
         this.syncFirestoreDoc('bookings', newBookingDraft.id, {
           linkedLeadId: linkedLead.id,
@@ -5573,6 +5795,10 @@ export class AppDatabase {
   }
 
   public updateBookingStatus(bookingId: string, status: BookingStatus, user: User | null, reason?: string): Booking | null {
+    if (user && isExternalUser(user)) {
+      throw new Error('Unauthorized: Booking status updates are restricted to internal operations staff.');
+    }
+
     const all = this.getAllBookings();
     const index = all.findIndex(b => b.id === bookingId || b.bookingReference === bookingId);
     if (index === -1) return null;
@@ -5653,10 +5879,18 @@ export class AppDatabase {
     return b;
   }
 
-  public saveBooking(booking: Booking, user: User | null): void {
+  public saveBooking(booking: Booking, user: User | null, options?: { isDocumentUpdate?: boolean }): void {
     const all = this.getAllBookings();
     const index = all.findIndex(b => b.id === booking.id || b.bookingReference === booking.bookingReference);
     
+    // Check submission lock for B2B Agents & Buyers
+    if (user && isExternalUser(user) && index >= 0 && !options?.isDocumentUpdate) {
+      const existing = all[index];
+      if (!canEditSubmittedBooking(user, existing)) {
+        throw new Error('This booking has been submitted and is now read-only. Please contact the internal team if a correction is required.');
+      }
+    }
+
     // Auto-update document and payment summaries
     const docStatus = this.calculateBookingDocumentStatus(booking);
     booking.documentStatus = docStatus.status;
@@ -5764,6 +5998,10 @@ export class AppDatabase {
     const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
     if (!b) throw new Error(`Booking ${bookingId} not found`);
 
+    if (user && isExternalUser(user) && b.status !== 'DRAFT') {
+      throw new Error('This booking has been submitted and is now read-only. New passenger profiles cannot be added. Please contact the internal team if a correction is required.');
+    }
+
     const maxPax = (b.customer?.totalAdults || 0) + (b.customer?.totalChildren || 0) || 
       b.items?.reduce((max, it) => Math.max(max, it.totalPax), 0) || 1;
 
@@ -5820,13 +6058,36 @@ export class AppDatabase {
     if (pIdx === -1) return;
 
     const existing = b.passengers[pIdx];
-    const isLeadPax = updates.isLeadPax !== undefined ? updates.isLeadPax : existing.isLeadPax;
+
+    // For B2B Agents / Buyers on submitted bookings:
+    // Identity fields are immutable. Only document upload/replace is permitted.
+    const isSubmittedExternal = Boolean(user && isExternalUser(user) && b.status !== 'DRAFT');
+    
+    let sanitizedUpdates = updates;
+    if (isSubmittedExternal) {
+      sanitizedUpdates = {
+        passportFrontUrl: updates.passportFrontUrl !== undefined ? updates.passportFrontUrl : existing.passportFrontUrl,
+        passportFrontName: updates.passportFrontName !== undefined ? updates.passportFrontName : existing.passportFrontName,
+        passportFrontUploadedAt: updates.passportFrontUploadedAt !== undefined ? updates.passportFrontUploadedAt : existing.passportFrontUploadedAt,
+        passportBackUrl: updates.passportBackUrl !== undefined ? updates.passportBackUrl : existing.passportBackUrl,
+        passportBackName: updates.passportBackName !== undefined ? updates.passportBackName : existing.passportBackName,
+        passportBackUploadedAt: updates.passportBackUploadedAt !== undefined ? updates.passportBackUploadedAt : existing.passportBackUploadedAt,
+        panCardUrl: updates.panCardUrl !== undefined ? updates.panCardUrl : existing.panCardUrl,
+        panCardName: updates.panCardName !== undefined ? updates.panCardName : existing.panCardName,
+        panCardUploadedAt: updates.panCardUploadedAt !== undefined ? updates.panCardUploadedAt : existing.panCardUploadedAt,
+        panNumber: updates.panNumber !== undefined ? updates.panNumber : existing.panNumber,
+        passportNumber: updates.passportNumber !== undefined ? updates.passportNumber : existing.passportNumber,
+        passportExpiryDate: updates.passportExpiryDate !== undefined ? updates.passportExpiryDate : existing.passportExpiryDate,
+      };
+    }
+
+    const isLeadPax = isSubmittedExternal ? existing.isLeadPax : (sanitizedUpdates.isLeadPax !== undefined ? sanitizedUpdates.isLeadPax : existing.isLeadPax);
 
     const updatedPax: BookingPassenger = {
       ...existing,
-      ...updates,
+      ...sanitizedUpdates,
       isLeadPax,
-      fullName: `${updates.firstName || existing.firstName || ''} ${updates.middleName !== undefined ? updates.middleName : existing.middleName || ''} ${updates.lastName || existing.lastName || ''}`.replace(/\s+/g, ' ').trim()
+      fullName: isSubmittedExternal ? existing.fullName : `${sanitizedUpdates.firstName || existing.firstName || ''} ${sanitizedUpdates.middleName !== undefined ? sanitizedUpdates.middleName : existing.middleName || ''} ${sanitizedUpdates.lastName || existing.lastName || ''}`.replace(/\s+/g, ' ').trim()
     };
 
     // Enforce Rule 9: PAN Card ONLY for Lead Passenger!
@@ -5850,13 +6111,17 @@ export class AppDatabase {
       actorName: user?.name || 'Operations Lead'
     });
 
-    this.saveBooking(b, user);
+    this.saveBooking(b, user, { isDocumentUpdate: true });
   }
 
   public deleteBookingPassenger(bookingId: string, passengerId: string, user: User | null): void {
     const all = this.getAllBookings();
     const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
     if (!b || !b.passengers) return;
+
+    if (user && isExternalUser(user) && b.status !== 'DRAFT') {
+      throw new Error('This booking has been submitted and is now read-only. Passenger profiles cannot be deleted. Please contact the internal team if a correction is required.');
+    }
 
     const removedPax = b.passengers.find(p => p.id === passengerId);
     b.passengers = b.passengers.filter(p => p.id !== passengerId);
@@ -6160,7 +6425,7 @@ export class AppDatabase {
     if (!b.timeline) b.timeline = [];
     b.timeline.unshift({
       id: event.eventId,
-      title: event.description || `Event: ${event.eventType.replace(/_/g, ' ')}`,
+      title: event.description || `Event: ${(event.eventType || 'ACTIVITY').replace(/_/g, ' ')}`,
       description: `Actor: ${event.actorName || user?.name || 'Operations Lead'} (${event.actorRole || 'INTERNAL'}) | Service: ${event.serviceItemName || 'Booking Level'}`,
       timestamp: event.timestamp,
       type: 'SUPPLIER',
@@ -6878,7 +7143,14 @@ export class AppDatabase {
         : (isUnallocatingSupplier 
           ? 'Supplier Not Allocated' 
           : (updates.operationalStatus || currentItem.operationalStatus || (targetSupplierId ? 'Confirmation Pending' : 'Supplier Not Allocated'))),
-      voucherStatus: (triggersReconfirmation || isUnallocatingSupplier) ? 'Not Ready' : (updates.voucherStatus || currentItem.voucherStatus)
+      voucherStatus: (triggersReconfirmation || isUnallocatingSupplier) ? 'Not Ready' : (updates.voucherStatus || currentItem.voucherStatus),
+      assignedTeamMember: updates.assignedTeamMember !== undefined ? updates.assignedTeamMember : currentItem.assignedTeamMember,
+      assignedTeamMemberId: updates.assignedTeamMemberId !== undefined ? updates.assignedTeamMemberId : currentItem.assignedTeamMemberId,
+      workflowStage: updates.workflowStage !== undefined ? updates.workflowStage : currentItem.workflowStage,
+      serviceHotelDetails: updates.serviceHotelDetails !== undefined ? updates.serviceHotelDetails : currentItem.serviceHotelDetails,
+      serviceTransferDetails: updates.serviceTransferDetails !== undefined ? updates.serviceTransferDetails : currentItem.serviceTransferDetails,
+      serviceSightseeingDetails: updates.serviceSightseeingDetails !== undefined ? updates.serviceSightseeingDetails : currentItem.serviceSightseeingDetails,
+      serviceVisaDetails: updates.serviceVisaDetails !== undefined ? updates.serviceVisaDetails : currentItem.serviceVisaDetails
     };
 
     b.items[itemIdx] = updatedItem;
@@ -7331,6 +7603,9 @@ export class AppDatabase {
       agentId?: string;
       agentName?: string;
       agentAgency?: string;
+      assignedTeamMemberId?: string;
+      assignedTeamMemberName?: string;
+      assignmentNotes?: string;
       customerName: string;
       leadPassengerName: string;
       email?: string;
@@ -7358,6 +7633,70 @@ export class AppDatabase {
     const totalChildren = Number(data.children) || 0;
     const totalInfants = Number(data.infants) || 0;
     const totalPax = totalAdults + totalChildren + totalInfants;
+
+    const allUsers = this.getUsers();
+    let resolvedAgentId: string | undefined = undefined;
+    let resolvedAgentNameSnapshot: string | undefined = undefined;
+    let resolvedAgentEmailSnapshot: string | undefined = undefined;
+    let resolvedAgentAgencySnapshot: string | undefined = undefined;
+
+    if (data.agentId) {
+      const explicitAgent = allUsers.find(u => u.id === data.agentId);
+      if (explicitAgent) {
+        resolvedAgentId = explicitAgent.id;
+        resolvedAgentNameSnapshot = explicitAgent.name;
+        resolvedAgentEmailSnapshot = explicitAgent.email;
+        resolvedAgentAgencySnapshot = explicitAgent.agencyName || explicitAgent.companyName || data.agentAgency;
+      } else {
+        resolvedAgentId = data.agentId;
+        resolvedAgentNameSnapshot = data.agentName;
+        resolvedAgentAgencySnapshot = data.agentAgency;
+      }
+    }
+
+    let resolvedTeamMemberId: string | undefined = undefined;
+    let resolvedTeamMemberNameSnapshot: string | undefined = undefined;
+    let resolvedTeamMemberEmailSnapshot: string | undefined = undefined;
+
+    if (data.assignedTeamMemberId) {
+      const explicitMember = allUsers.find(u => u.id === data.assignedTeamMemberId);
+      if (explicitMember && explicitMember.role !== 'B2B_AGENT' && explicitMember.role !== 'BUYER') {
+        resolvedTeamMemberId = explicitMember.id;
+        resolvedTeamMemberNameSnapshot = explicitMember.name;
+        resolvedTeamMemberEmailSnapshot = explicitMember.email;
+      }
+    } else if (user && user.role !== 'B2B_AGENT' && user.role !== 'BUYER') {
+      resolvedTeamMemberId = user.id;
+      resolvedTeamMemberNameSnapshot = user.name;
+      resolvedTeamMemberEmailSnapshot = user.email;
+    }
+
+    let assignmentStatus: BookingAssignmentStatus = 'assigned';
+    if (!resolvedAgentId && !resolvedTeamMemberId) {
+      assignmentStatus = 'pending_internal_assignment';
+    } else if (!resolvedAgentId) {
+      assignmentStatus = 'pending_agent_assignment';
+    } else if (!resolvedTeamMemberId) {
+      assignmentStatus = 'pending_internal_assignment';
+    } else {
+      assignmentStatus = 'assigned';
+    }
+
+    const initialAssignmentHistory: BookingAssignmentHistoryItem[] = [
+      {
+        id: `asg-man-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+        timestamp: now,
+        type: 'INITIAL_CREATION',
+        newAgentId: resolvedAgentId,
+        newAgentName: resolvedAgentNameSnapshot,
+        newTeamMemberId: resolvedTeamMemberId,
+        newTeamMemberName: resolvedTeamMemberNameSnapshot,
+        assignedByUserId: user?.id || 'admin',
+        assignedByUserNameSnapshot: user?.name || 'Operations Lead',
+        assignedByUserRole: user?.role || 'ADMIN',
+        notes: data.assignmentNotes || `Manual operational booking created by ${user?.name || 'Operations Desk'}.`
+      }
+    ];
 
     const initialItems: BookingItem[] = (data.serviceItems || []).map((it, idx) => {
       const itemId = it.id || `item-man-${Date.now()}-${idx + 1}`;
@@ -7443,9 +7782,30 @@ export class AppDatabase {
       sourceType: 'INTERNAL_MANUAL',
       isInternalManualBooking: true,
       leadId: data.leadId,
-      agentId: data.agentId,
-      agentName: data.agentName,
-      agentAgency: data.agentAgency,
+
+      agentId: resolvedAgentId,
+      agentName: resolvedAgentNameSnapshot,
+      agentNameSnapshot: resolvedAgentNameSnapshot,
+      agentEmailSnapshot: resolvedAgentEmailSnapshot,
+      agentAgency: resolvedAgentAgencySnapshot,
+      agentAgencySnapshot: resolvedAgentAgencySnapshot,
+      assignedAgentId: resolvedAgentId,
+      assignedAgentNameSnapshot: resolvedAgentNameSnapshot,
+      assignedAgentAgencySnapshot: resolvedAgentAgencySnapshot,
+      agentVisibilityStatus: resolvedAgentId ? 'VISIBLE' : undefined,
+
+      assignedTeamMemberId: resolvedTeamMemberId,
+      assignedTeamMemberName: resolvedTeamMemberNameSnapshot,
+      assignedTeamMemberNameSnapshot: resolvedTeamMemberNameSnapshot,
+      assignedTeamMemberEmailSnapshot: resolvedTeamMemberEmailSnapshot,
+
+      assignmentStatus,
+      assignedAt: resolvedTeamMemberId ? now : undefined,
+      assignedByUserId: resolvedTeamMemberId ? (user?.id || 'admin') : undefined,
+      assignedByUserNameSnapshot: resolvedTeamMemberId ? (user?.name || 'Operations Lead') : undefined,
+      assignmentNotes: data.assignmentNotes,
+      assignmentHistory: initialAssignmentHistory,
+
       userId: data.userId || user?.id,
       destination: data.destination,
       destinationName: data.destinationName || data.destination,
@@ -7651,6 +8011,10 @@ export class AppDatabase {
       version: newVersion,
       bookingId: b.id,
       bookingReference: b.bookingReference,
+      leadId: b.leadId || b.linkedLeadId,
+      isCompleteBookingVoucher: true,
+      responsibleAgentId: b.submittingAgentId || b.agentId,
+      assignedTeamMemberId: b.assignedTeamMemberId,
       serviceItemId: primaryItem?.id || 'all-services',
       customerName: b.customer?.leadTravelerName || 'Guest',
       leadPaxName: b.customer?.leadTravelerName || 'Lead Traveler',
@@ -7686,8 +8050,31 @@ export class AppDatabase {
     // Update parent booking
     if (!b.vouchersList) b.vouchersList = [];
     b.vouchersList.unshift(newVoucher);
+    if (!b.voucherIds) b.voucherIds = [];
+    b.voucherIds = Array.from(new Set([...b.voucherIds, newVoucher.id]));
+    b.completeVoucherId = newVoucher.id;
     b.voucherUrl = `/vouchers/${newVoucher.id}`;
     b.updatedAt = now;
+
+    // Update connected lead record
+    const targetLeadId = b.leadId || b.linkedLeadId;
+    if (targetLeadId) {
+      const allLeads = this.getLeads();
+      const lIdx = allLeads.findIndex(l => l.id === targetLeadId);
+      if (lIdx >= 0) {
+        const lead = allLeads[lIdx];
+        lead.voucherIds = Array.from(new Set([...(lead.voucherIds || []), newVoucher.id]));
+        lead.completeVoucherId = newVoucher.id;
+        lead.lastBookingActivityAt = now;
+        allLeads[lIdx] = lead;
+        this.setItem('leads', allLeads);
+        this.syncFirestoreDoc('leads', lead.id, {
+          voucherIds: lead.voucherIds,
+          completeVoucherId: lead.completeVoucherId,
+          lastBookingActivityAt: now
+        });
+      }
+    }
 
     // Also persist in global vouchers collection for audit
     this.saveVoucher(newVoucher, user);
@@ -7717,6 +8104,1005 @@ export class AppDatabase {
     const b = this.getBookingById(bookingId);
     if (!b) return [];
     return b.vouchersList || [];
+  }
+
+  /**
+   * Generates an activity-level voucher for a specific confirmed service item in a booking
+   */
+  public generateActivityVoucher(
+    bookingId: string,
+    serviceItemId: string,
+    user: User | null
+  ): { success: boolean; voucher?: BookingVoucher; error?: string } {
+    const b = this.getBookingById(bookingId);
+    if (!b) return { success: false, error: 'Booking not found' };
+
+    const item = (b.items || []).find(it => it.id === serviceItemId);
+    if (!item) return { success: false, error: 'Service item not found in booking' };
+
+    if (item.supplierConfirmationStatus !== 'Confirmed') {
+      return { 
+        success: false, 
+        error: `Activity voucher cannot be generated: service item is ${item.supplierConfirmationStatus || 'Pending'}. Only confirmed services are eligible.` 
+      };
+    }
+
+    const now = new Date().toISOString();
+    const voucherNumber = `TUB-ACTV-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const singleItemSnapshot = [{
+      itemId: item.id,
+      productName: item.productName,
+      category: item.category,
+      destination: item.destination || item.destinationName || b.destinationName,
+      city: item.city || 'Tokyo',
+      serviceDate: item.serviceDate || item.travelDate || b.travelStartDate,
+      serviceTime: item.serviceTime || '09:00 AM',
+      supplierName: item.supplierName || 'Authorized Ground Supplier',
+      supplierConfirmationRef: item.supplierConfirmationRef || 'CONFIRMED',
+      adults: item.adults || b.customer?.totalAdults || 1,
+      children: item.children || 0,
+      totalPax: item.totalPax || (item.adults || 1) + (item.children || 0)
+    }];
+
+    const newVoucher: BookingVoucher = {
+      id: `vou-actv-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      voucherId: `vou-actv-${Date.now()}`,
+      voucherNumber,
+      version: 1,
+      bookingId: b.id,
+      bookingReference: b.bookingReference,
+      leadId: b.leadId || b.linkedLeadId,
+      isCompleteBookingVoucher: false,
+      responsibleAgentId: b.submittingAgentId || b.agentId,
+      assignedTeamMemberId: b.assignedTeamMemberId,
+      serviceItemId: item.id,
+      customerName: b.customer?.leadTravelerName || 'Guest',
+      leadPaxName: b.customer?.leadTravelerName || 'Lead Traveler',
+      totalPax: singleItemSnapshot[0].totalPax,
+      destination: singleItemSnapshot[0].destination || 'Japan',
+      city: singleItemSnapshot[0].city || 'Tokyo',
+      serviceName: item.productName,
+      serviceDate: singleItemSnapshot[0].serviceDate,
+      serviceTime: singleItemSnapshot[0].serviceTime,
+      supplierName: item.supplierName || 'TheUnbound Authorized Ground Partner',
+      supplierContact: item.supplierContact || '+91 9811654959 (TheUnbound Operations)',
+      supplierConfirmationRef: item.supplierConfirmationRef || 'CONFIRMED',
+      meetingPoint: (item as any).meetingPoint || b.customer?.pickupLocation || 'Hotel Lobby / Arrival Terminal',
+      pickupInfo: (item as any).pickupInfo || (b.customer?.pickupLocation ? `Pick up at ${b.customer.pickupLocation}. Be ready 15 mins prior.` : 'Standard pickup at hotel lobby.'),
+      dropoffInfo: (item as any).dropoffInfo || b.customer?.dropoffLocation,
+      emergencyContact: '+91 9811654959 / 24-Hour Operations Hotline',
+      passengerBreakdown: `${singleItemSnapshot[0].adults} Adults${singleItemSnapshot[0].children ? `, ${singleItemSnapshot[0].children} Children` : ''}`,
+      specialInstructions: (item as any).specialInstructions || 'Please show this activity voucher to your local guide or driver upon pickup. Valid photo identification is required.',
+      termsAndConditions: 'Activity voucher issued by TheUnbound DMC. Valid strictly for confirmed date and designated passenger.',
+      status: 'ISSUED',
+      generatedAt: now,
+      generatedBy: user?.id || 'admin',
+      generatedByName: user?.name || 'Operations Desk',
+      templateVersion: 'v2.4-Activity-Voucher',
+      serviceItemsSnapshot: singleItemSnapshot,
+      isOutdated: false,
+      issuedAt: now
+    };
+
+    if (!b.vouchersList) b.vouchersList = [];
+    b.vouchersList.unshift(newVoucher);
+    if (!b.voucherIds) b.voucherIds = [];
+    b.voucherIds = Array.from(new Set([...b.voucherIds, newVoucher.id]));
+    b.updatedAt = now;
+
+    // Update item's voucher status
+    item.voucherStatus = 'Generated';
+
+    this.saveVoucher(newVoucher, user);
+
+    const targetLeadId = b.leadId || b.linkedLeadId;
+    if (targetLeadId) {
+      const allLeads = this.getLeads();
+      const lIdx = allLeads.findIndex(l => l.id === targetLeadId);
+      if (lIdx >= 0) {
+        const lead = allLeads[lIdx];
+        lead.voucherIds = Array.from(new Set([...(lead.voucherIds || []), newVoucher.id]));
+        lead.lastBookingActivityAt = now;
+        allLeads[lIdx] = lead;
+        this.setItem('leads', allLeads);
+        this.syncFirestoreDoc('leads', lead.id, {
+          voucherIds: lead.voucherIds,
+          lastBookingActivityAt: now
+        });
+      }
+    }
+
+    this.saveBooking(b, user);
+
+    this.logAudit(
+      user,
+      'STATUS_UPDATED',
+      'Booking',
+      b.id,
+      `Generated activity voucher ${voucherNumber} for ${item.productName} (Booking ${b.bookingReference})`
+    );
+
+    return { success: true, voucher: newVoucher };
+  }
+
+  /**
+   * Updates an existing Booking Voucher with edit tracking, version history, and audit
+   */
+  public updateBookingVoucher(
+    bookingId: string,
+    updatedVoucher: BookingVoucher,
+    user: User | null,
+    amendmentReason?: string
+  ): { success: boolean; voucher?: BookingVoucher; error?: string } {
+    const b = this.getBookingById(bookingId);
+    if (!b) return { success: false, error: 'Booking not found' };
+
+    const now = new Date().toISOString();
+    const existingList = b.vouchersList || [];
+    const idx = existingList.findIndex(v => v.id === updatedVoucher.id);
+    const prevVoucher = idx >= 0 ? existingList[idx] : null;
+
+    const currentVersion = prevVoucher?.version || 1;
+    const newVersion = amendmentReason ? currentVersion + 1 : currentVersion;
+
+    const history = prevVoucher?.versionHistory || [];
+    if (prevVoucher && amendmentReason) {
+      history.unshift({
+        version: currentVersion,
+        voucherNumber: prevVoucher.voucherNumber,
+        amendedAt: now,
+        amendedByName: user?.name || 'Operations Staff',
+        amendmentReason: amendmentReason || 'Manual operational amendment',
+        status: prevVoucher.status
+      });
+    }
+
+    const finalizedVoucher: BookingVoucher = {
+      ...updatedVoucher,
+      version: newVersion,
+      amendedAt: now,
+      amendedBy: user?.id || 'admin',
+      amendedByName: user?.name || 'Operations Lead',
+      amendmentReason: amendmentReason || updatedVoucher.amendmentReason,
+      versionHistory: history
+    };
+
+    if (idx >= 0) {
+      existingList[idx] = finalizedVoucher;
+    } else {
+      existingList.unshift(finalizedVoucher);
+    }
+    b.vouchersList = existingList;
+    b.updatedAt = now;
+
+    this.saveVoucher(finalizedVoucher, user);
+    this.saveBooking(b, user);
+
+    this.recordBookingActivity({
+      eventId: `act-vou-edit-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      bookingId: b.id,
+      eventType: 'VOUCHER_REGENERATED',
+      previousValue: prevVoucher ? `Version ${currentVersion}` : 'New',
+      newValue: `Version ${newVersion} (${finalizedVoucher.voucherNumber})`,
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.name || 'Operations Lead',
+      timestamp: now,
+      relatedVoucherId: finalizedVoucher.id,
+      metadata: { voucherNumber: finalizedVoucher.voucherNumber, reason: amendmentReason },
+      description: `Service Voucher AMENDED: ${finalizedVoucher.voucherNumber} (v${newVersion}) - ${amendmentReason || 'Manual edit saved'}`
+    }, user);
+
+    return { success: true, voucher: finalizedVoucher };
+  }
+
+  /**
+   * Generates Activity-Level vouchers grouped by selected criteria:
+   * 'activity' | 'service_item' | 'category' | 'day' | 'combined'
+   */
+  public generateActivityVouchersGrouped(
+    bookingId: string,
+    groupingType: 'activity' | 'service_item' | 'category' | 'day' | 'combined',
+    selectedItemIds: string[] | undefined,
+    user: User | null
+  ): { success: boolean; vouchers?: BookingVoucher[]; error?: string } {
+    const b = this.getBookingById(bookingId);
+    if (!b) return { success: false, error: 'Booking not found' };
+
+    let candidateItems = b.items || [];
+    if (selectedItemIds && selectedItemIds.length > 0) {
+      candidateItems = candidateItems.filter(it => selectedItemIds.includes(it.id));
+    }
+
+    const confirmedItems = candidateItems.filter(it => it.supplierConfirmationStatus === 'Confirmed');
+    if (confirmedItems.length === 0) {
+      return {
+        success: false,
+        error: 'No confirmed service items available to generate activity vouchers.'
+      };
+    }
+
+    const now = new Date().toISOString();
+    const generatedVouchers: BookingVoucher[] = [];
+
+    if (groupingType === 'combined') {
+      const voucherNumber = `TUB-ACTV-COMB-${Math.floor(1000 + Math.random() * 9000)}`;
+      const vch: BookingVoucher = {
+        id: `vou-actv-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+        voucherId: `vou-actv-${Date.now()}`,
+        voucherNumber,
+        version: 1,
+        bookingId: b.id,
+        bookingReference: b.bookingReference,
+        isCompleteBookingVoucher: false,
+        responsibleAgentId: b.submittingAgentId || b.agentId,
+        assignedTeamMemberId: b.assignedTeamMemberId,
+        customerName: b.customer?.leadTravelerName || 'Guest',
+        leadPaxName: b.customer?.leadTravelerName || 'Lead Traveler',
+        totalPax: (b.customer?.totalAdults || 1) + (b.customer?.totalChildren || 0),
+        destination: b.destinationName || 'Destination',
+        city: confirmedItems[0]?.city || 'Local Area',
+        serviceName: `${confirmedItems.length} Activities & Excursions Combined Voucher`,
+        serviceDate: b.travelStartDate || confirmedItems[0]?.serviceDate || now.split('T')[0],
+        serviceTime: 'As per itinerary',
+        supplierName: confirmedItems.map(i => i.supplierName).filter(Boolean).join(', ') || 'Local Ground Partners',
+        supplierContact: '+91 9811654959 (TheUnbound 24/7 Dispatch)',
+        meetingPoint: b.customer?.pickupLocation || 'Hotel Lobby / Scheduled Meeting Point',
+        pickupInfo: 'Please refer to individual day timings.',
+        emergencyContact: '+91 9811654959 / 24-Hour Hotline',
+        passengerBreakdown: `${b.customer?.totalAdults || 1} Adults${b.customer?.totalChildren ? `, ${b.customer.totalChildren} Children` : ''}`,
+        specialInstructions: 'Combined activity pass. Present to local guide or representative at each scheduled activity.',
+        termsAndConditions: 'Valid strictly for specified services and dates.',
+        status: 'ISSUED',
+        generatedAt: now,
+        generatedBy: user?.id || 'admin',
+        generatedByName: user?.name || 'Operations Desk',
+        templateVersion: 'v2.4-Combined-Activity',
+        groupingType: 'combined',
+        serviceItemsSnapshot: confirmedItems.map(it => ({
+          itemId: it.id,
+          productName: it.productName,
+          category: it.category,
+          serviceDate: it.serviceDate || it.travelDate,
+          serviceTime: it.serviceTime || '09:00 AM',
+          supplierName: it.supplierName,
+          supplierConfirmationRef: it.supplierConfirmationRef,
+          totalPax: it.totalPax || 1
+        })),
+        isOutdated: false,
+        issuedAt: now
+      };
+      generatedVouchers.push(vch);
+    } else if (groupingType === 'category') {
+      const byCategory: Record<string, typeof confirmedItems> = {};
+      confirmedItems.forEach(it => {
+        const cat = it.category || 'OTHER';
+        if (!byCategory[cat]) byCategory[cat] = [];
+        byCategory[cat].push(it);
+      });
+
+      Object.entries(byCategory).forEach(([cat, catItems]) => {
+        const voucherNumber = `TUB-VOU-${cat.substring(0,4).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+        const vch: BookingVoucher = {
+          id: `vou-cat-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+          voucherNumber,
+          version: 1,
+          bookingId: b.id,
+          bookingReference: b.bookingReference,
+          isCompleteBookingVoucher: false,
+          category: cat,
+          groupingType: 'category',
+          customerName: b.customer?.leadTravelerName || 'Guest',
+          leadPaxName: b.customer?.leadTravelerName || 'Lead Traveler',
+          totalPax: (b.customer?.totalAdults || 1) + (b.customer?.totalChildren || 0),
+          destination: b.destinationName || 'Destination',
+          city: catItems[0]?.city || 'City',
+          serviceName: `${cat} Services Voucher (${catItems.length} items)`,
+          serviceDate: catItems[0]?.serviceDate || b.travelStartDate || now.split('T')[0],
+          serviceTime: catItems[0]?.serviceTime || '09:00 AM',
+          supplierName: catItems.map(i => i.supplierName).filter(Boolean).join(', ') || 'Local Ground Partners',
+          supplierContact: '+91 9811654959',
+          meetingPoint: b.customer?.pickupLocation || 'Hotel Lobby',
+          pickupInfo: 'Present to designated representative.',
+          emergencyContact: '+91 9811654959',
+          passengerBreakdown: `${b.customer?.totalAdults || 1} Adults`,
+          specialInstructions: `Valid for all ${cat} services listed on this voucher.`,
+          status: 'ISSUED',
+          generatedAt: now,
+          generatedBy: user?.id || 'admin',
+          generatedByName: user?.name || 'Operations Desk',
+          serviceItemsSnapshot: catItems.map(it => ({
+            itemId: it.id,
+            productName: it.productName,
+            category: it.category,
+            serviceDate: it.serviceDate || it.travelDate,
+            serviceTime: it.serviceTime || '09:00 AM',
+            supplierName: it.supplierName,
+            supplierConfirmationRef: it.supplierConfirmationRef,
+            totalPax: it.totalPax || 1
+          })),
+          isOutdated: false,
+          issuedAt: now
+        };
+        generatedVouchers.push(vch);
+      });
+    } else {
+      // One per activity / service item
+      confirmedItems.forEach(it => {
+        const res = this.generateActivityVoucher(b.id, it.id, user);
+        if (res.success && res.voucher) {
+          generatedVouchers.push(res.voucher);
+        }
+      });
+      return { success: true, vouchers: generatedVouchers };
+    }
+
+    if (!b.vouchersList) b.vouchersList = [];
+    b.vouchersList.unshift(...generatedVouchers);
+    if (!b.voucherIds) b.voucherIds = [];
+    b.voucherIds = Array.from(new Set([...b.voucherIds, ...generatedVouchers.map(v => v.id)]));
+    b.updatedAt = now;
+
+    generatedVouchers.forEach(v => this.saveVoucher(v, user));
+    this.saveBooking(b, user);
+
+    return { success: true, vouchers: generatedVouchers };
+  }
+
+  /**
+   * Reissues a voucher with a new voucher number and incremented version
+   */
+  public reissueBookingVoucher(
+    bookingId: string,
+    voucherId: string,
+    user: User | null,
+    reason?: string
+  ): { success: boolean; voucher?: BookingVoucher; error?: string } {
+    const b = this.getBookingById(bookingId);
+    if (!b) return { success: false, error: 'Booking not found' };
+
+    const target = (b.vouchersList || []).find(v => v.id === voucherId);
+    if (!target) return { success: false, error: 'Voucher not found' };
+
+    const now = new Date().toISOString();
+    const newVersion = (target.version || 1) + 1;
+    const newNumber = `TUB-VOU-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const reissued: BookingVoucher = {
+      ...target,
+      id: `vou-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      voucherNumber: newNumber,
+      version: newVersion,
+      status: 'REISSUED',
+      previousVoucherId: target.id,
+      amendmentReason: reason || 'Reissued with updated operational parameters',
+      amendedBy: user?.id || 'admin',
+      amendedByName: user?.name || 'Operations Lead',
+      amendedAt: now,
+      issuedAt: now
+    };
+
+    // Mark previous as cancelled/outdated
+    target.status = 'OUTDATED';
+    target.outdatedReason = `Superseded by reissued voucher #${newNumber}`;
+
+    b.vouchersList.unshift(reissued);
+    b.updatedAt = now;
+    this.saveVoucher(reissued, user);
+    this.saveBooking(b, user);
+
+    return { success: true, voucher: reissued };
+  }
+
+  /**
+   * Cancels an existing voucher
+   */
+  public cancelBookingVoucher(
+    bookingId: string,
+    voucherId: string,
+    user: User | null,
+    reason?: string
+  ): { success: boolean; error?: string } {
+    const b = this.getBookingById(bookingId);
+    if (!b) return { success: false, error: 'Booking not found' };
+
+    const target = (b.vouchersList || []).find(v => v.id === voucherId);
+    if (!target) return { success: false, error: 'Voucher not found' };
+
+    target.status = 'CANCELLED';
+    target.outdatedReason = reason || 'Cancelled by operations desk';
+    b.updatedAt = new Date().toISOString();
+
+    this.saveVoucher(target, user);
+    this.saveBooking(b, user);
+
+    return { success: true };
+  }
+
+  /**
+   * Generates an authoritative Proforma Invoice for a booking
+   */
+  public generateProformaInvoice(
+    bookingId: string,
+    user: User | null
+  ): { success: boolean; invoice?: BookingInvoice; error?: string } {
+    const b = this.getBookingById(bookingId);
+    if (!b) return { success: false, error: 'Booking not found' };
+
+    const now = new Date().toISOString();
+    const invoiceNumber = `TUB-PINV-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const services: InvoiceServiceItem[] = (b.items || []).map((it, idx) => ({
+      id: it.id || `inv-item-${idx}`,
+      serviceName: it.productName || 'Travel Ground Service',
+      category: it.category || 'SERVICE',
+      travelDate: it.travelDate || it.serviceDate || b.travelStartDate,
+      quantity: 1,
+      unitPrice: it.totalPrice || it.unitSellingPrice || 0,
+      taxAmount: 0,
+      totalPrice: it.totalPrice || it.unitSellingPrice || 0,
+      currency: b.currency || 'USD'
+    }));
+
+    const subtotal = b.totalAmount || 0;
+    const amountPaid = (b as any).paidAmount || (b.paymentStatus === 'PAID' ? subtotal : 0);
+    const balanceDue = Math.max(0, subtotal - amountPaid);
+    const paymentStatus: InvoicePaymentStatus = balanceDue === 0 && subtotal > 0 ? 'PAID' : amountPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
+
+    const dueDate = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString().split('T')[0];
+
+    const invoice: BookingInvoice = {
+      id: `inv-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      invoiceNumber,
+      bookingId: b.id,
+      bookingReference: b.bookingReference,
+      leadId: b.leadId || b.linkedLeadId,
+      sourceQuoteId: b.sourceQuoteId || b.quoteId,
+      invoiceVersion: 1,
+      isProforma: true,
+      responsibleAgentId: b.submittingAgentId || b.agentId,
+      assignedTeamMemberId: b.assignedTeamMemberId,
+      customerName: b.customer?.leadTravelerName || b.customer?.bookerName || 'Valued Client',
+      customerEmail: b.customer?.email || 'client@theunbound.com',
+      customerPhone: b.customer?.phone,
+      agentName: b.agentName || user?.name,
+      agencyName: b.agentAgency || b.customer?.agencyName || 'TheUnbound Partner Network',
+      invoiceDate: now.split('T')[0],
+      dueDate,
+      services,
+      subtotal,
+      taxTotal: 0,
+      serviceFeeTotal: 0,
+      discountTotal: 0,
+      totalAmount: subtotal,
+      amountPaid,
+      balanceDue,
+      currency: b.currency || 'USD',
+      paymentStatus,
+      paymentMethod: 'BANK_WIRE_TRANSFER',
+      companyName: 'TheUnbound DMC Global Pte. Ltd.',
+      companyAddress: '100 Marina Boulevard, Marina Bay Financial Centre, Singapore 018983',
+      companyTaxNumber: 'SG-GST-2026-9811654',
+      notes: `Proforma invoice issued for Booking Reference ${b.bookingReference}. Please quote the booking reference during wire transfer.`,
+      terms: 'Payment due within 7 days of invoice issuance or 14 days prior to travel departure, whichever is earlier. Wire transfer fees to be borne by remitter.',
+      createdAt: now,
+      updatedAt: now
+    };
+
+    // Persist in global invoices collection
+    const allInvoices = this.getItem<BookingInvoice[]>('booking_invoices', []);
+    allInvoices.unshift(invoice);
+    this.setItem('booking_invoices', allInvoices);
+    this.syncFirestoreDoc('invoices', invoice.id, invoice);
+
+    // Update parent booking
+    if (!b.proformaInvoiceIds) b.proformaInvoiceIds = [];
+    b.proformaInvoiceIds = Array.from(new Set([...b.proformaInvoiceIds, invoice.id]));
+    b.activeProformaInvoiceId = invoice.id;
+    b.proformaInvoiceUrl = `/invoices/${invoice.id}`;
+    b.updatedAt = now;
+    this.saveBooking(b, user);
+
+    // Update lead
+    const targetLeadId = b.leadId || b.linkedLeadId;
+    if (targetLeadId) {
+      const allLeads = this.getLeads();
+      const lIdx = allLeads.findIndex(l => l.id === targetLeadId);
+      if (lIdx >= 0) {
+        const lead = allLeads[lIdx];
+        lead.invoiceIds = Array.from(new Set([...(lead.invoiceIds || []), invoice.id]));
+        lead.activeInvoiceId = invoice.id;
+        lead.lastFinancialActivityAt = now;
+        allLeads[lIdx] = lead;
+        this.setItem('leads', allLeads);
+        this.syncFirestoreDoc('leads', lead.id, {
+          invoiceIds: lead.invoiceIds,
+          activeInvoiceId: lead.activeInvoiceId,
+          lastFinancialActivityAt: now
+        });
+      }
+    }
+
+    this.logAudit(
+      user,
+      'STATUS_UPDATED',
+      'Booking',
+      b.id,
+      `Generated Proforma Invoice ${invoiceNumber} for ${b.bookingReference} (${invoice.currency} ${invoice.totalAmount})`
+    );
+
+    return { success: true, invoice };
+  }
+
+  /**
+   * Updates an existing Booking Proforma Invoice with edit history and audit
+   */
+  public updateBookingInvoice(
+    bookingId: string,
+    updatedInvoice: BookingInvoice,
+    user: User | null,
+    amendmentReason?: string
+  ): { success: boolean; invoice?: BookingInvoice; error?: string } {
+    const b = this.getBookingById(bookingId);
+    if (!b) return { success: false, error: 'Booking not found' };
+
+    const now = new Date().toISOString();
+    const allInvoices = this.getItem<BookingInvoice[]>('booking_invoices', []);
+    const idx = allInvoices.findIndex(inv => inv.id === updatedInvoice.id);
+    const prevInvoice = idx >= 0 ? allInvoices[idx] : null;
+
+    const currentVersion = prevInvoice?.invoiceVersion || 1;
+    const newVersion = amendmentReason ? currentVersion + 1 : currentVersion;
+
+    const history = prevInvoice?.versionHistory || [];
+    if (prevInvoice && amendmentReason) {
+      history.unshift({
+        version: currentVersion,
+        invoiceNumber: prevInvoice.invoiceNumber,
+        amendedAt: now,
+        amendedByName: user?.name || 'Operations Lead',
+        reason: amendmentReason || 'Operational term / notes amendment',
+        totalAmount: prevInvoice.totalAmount,
+        currency: prevInvoice.currency
+      });
+    }
+
+    const finalizedInvoice: BookingInvoice = {
+      ...updatedInvoice,
+      invoiceVersion: newVersion,
+      amendedAt: now,
+      amendedBy: user?.id || 'admin',
+      amendedByName: user?.name || 'Operations Lead',
+      amendmentReason: amendmentReason || updatedInvoice.amendmentReason,
+      versionHistory: history,
+      updatedAt: now
+    };
+
+    if (idx >= 0) {
+      allInvoices[idx] = finalizedInvoice;
+    } else {
+      allInvoices.unshift(finalizedInvoice);
+    }
+    this.setItem('booking_invoices', allInvoices);
+    this.syncFirestoreDoc('invoices', finalizedInvoice.id, finalizedInvoice);
+
+    b.updatedAt = now;
+    this.saveBooking(b, user);
+
+    this.logAudit(
+      user,
+      'STATUS_UPDATED',
+      'Booking',
+      b.id,
+      `Updated Proforma Invoice #${finalizedInvoice.invoiceNumber} (v${newVersion}) - ${amendmentReason || 'Amended'}`
+    );
+
+    return { success: true, invoice: finalizedInvoice };
+  }
+
+  /**
+   * Reissues a Proforma Invoice with an incremented version and new number
+   */
+  public reissueBookingInvoice(
+    bookingId: string,
+    invoiceId: string,
+    user: User | null,
+    reason?: string
+  ): { success: boolean; invoice?: BookingInvoice; error?: string } {
+    const b = this.getBookingById(bookingId);
+    if (!b) return { success: false, error: 'Booking not found' };
+
+    const allInvoices = this.getItem<BookingInvoice[]>('booking_invoices', []);
+    const target = allInvoices.find(inv => inv.id === invoiceId);
+    if (!target) return { success: false, error: 'Invoice not found' };
+
+    const now = new Date().toISOString();
+    const newVersion = (target.invoiceVersion || 1) + 1;
+    const newInvoiceNumber = `TUB-PINV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const reissued: BookingInvoice = {
+      ...target,
+      id: `inv-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      invoiceNumber: newInvoiceNumber,
+      invoiceVersion: newVersion,
+      previousInvoiceId: target.id,
+      amendmentReason: reason || 'Reissued with updated billing terms',
+      amendedBy: user?.id || 'admin',
+      amendedByName: user?.name || 'Operations Lead',
+      amendedAt: now,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    allInvoices.unshift(reissued);
+    this.setItem('booking_invoices', allInvoices);
+    this.syncFirestoreDoc('invoices', reissued.id, reissued);
+
+    if (!b.proformaInvoiceIds) b.proformaInvoiceIds = [];
+    b.proformaInvoiceIds = Array.from(new Set([...b.proformaInvoiceIds, reissued.id]));
+    b.activeProformaInvoiceId = reissued.id;
+    b.proformaInvoiceUrl = `/invoices/${reissued.id}`;
+    b.updatedAt = now;
+    this.saveBooking(b, user);
+
+    return { success: true, invoice: reissued };
+  }
+
+  /**
+   * Authoritative Quote to Booking Submission workflow:
+   * Idempotent conversion of a Proposal Quote into a Confirmed Operational Booking.
+   */
+  public submitBookingFromQuote(
+    quoteId: string,
+    user: User | null,
+    options?: {
+      leadTravelerName?: string;
+      email?: string;
+      phone?: string;
+      pickupLocation?: string;
+      specialRequests?: string;
+    }
+  ): Booking {
+    const quotes = this.getAllSavedQuotes();
+    const quote = quotes.find(q => q.id === quoteId || q.quoteNumber === quoteId);
+    if (!quote) throw new Error('Proposal quote not found');
+
+    // Deduplication check: check if booking already exists for this quote
+    if (quote.bookingId) {
+      const existingB = this.getBookingById(quote.bookingId);
+      if (existingB) {
+        return existingB;
+      }
+    }
+    const allBookings = this.getAllBookings();
+    const existingBooking = allBookings.find(b => b.quoteId === quote.id || b.sourceQuoteId === quote.id);
+    if (existingBooking) {
+      return existingBooking;
+    }
+
+    // Map items from quote to booking items
+    const bookingItems: BookingItem[] = (quote.items || []).map((item, idx) => ({
+      id: `bi-${Date.now()}-${idx}`,
+      productId: item.productId || item.product?.id || `prod-${idx}`,
+      productName: item.product?.name || item.customTitle || item.title || 'Confirmed Service',
+      destination: quote.destination,
+      destinationName: quote.destination,
+      city: item.product?.city || 'Tokyo',
+      category: (item.product?.productType as any) || 'GROUND_SERVICE',
+      travelDate: item.travelDate || quote.travelStartDate || new Date().toISOString().split('T')[0],
+      adults: item.pax?.adults || quote.adultsCount || 2,
+      children: item.pax?.children || quote.childrenCount || 0,
+      infants: item.pax?.infants || quote.infantsCount || 0,
+      totalPax: (item.pax?.adults || 2) + (item.pax?.children || 0),
+      unitSellingPrice: item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || 0,
+      totalPrice: item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || 0,
+      currency: quote.currency || 'USD',
+      supplierConfirmationStatus: 'Confirmed',
+      operationalStatus: 'Processing',
+      voucherStatus: 'Ready to Generate',
+      supplierName: 'TheUnbound Authorized Ground Partner',
+      supplierConfirmationRef: `CONF-${Math.floor(10000 + Math.random() * 90000)}`,
+      meetingPoint: options?.pickupLocation || 'Hotel Lobby / Airport Arrival Terminal'
+    }));
+
+    const newBooking = this.createBooking({
+      quoteId: quote.id,
+      quoteNumber: quote.quoteNumber,
+      sourceQuoteVersionId: quote.versionHistory && quote.versionHistory.length > 0 ? quote.versionHistory[quote.versionHistory.length - 1].id : `${quote.id}-v${quote.versionNumber || 1}`,
+      leadId: quote.leadId || quote.linkedLeadId,
+      destinationName: quote.destination,
+      travelStartDate: quote.travelStartDate || new Date().toISOString().split('T')[0],
+      travelEndDate: quote.travelEndDate || new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
+      currency: quote.currency || 'USD',
+      totalAmount: quote.totalSellingPrice || 0,
+      customer: {
+        leadTravelerName: options?.leadTravelerName || quote.clientName || 'Lead Traveler',
+        bookerName: quote.clientName,
+        email: options?.email || quote.clientEmail || 'client@theunbound.com',
+        phone: options?.phone || quote.clientPhone || '+1000000000',
+        agencyName: quote.clientCompany || quote.agentAgency || user?.agencyName,
+        pickupLocation: options?.pickupLocation,
+        specialRequests: options?.specialRequests || (typeof quote.agentNotes === 'string' ? quote.agentNotes : undefined),
+        totalAdults: quote.adultsCount || 2,
+        totalChildren: quote.childrenCount || 0,
+        totalPax: quote.totalPax || (quote.adultsCount || 2) + (quote.childrenCount || 0)
+      },
+      items: bookingItems,
+      sourceType: 'QUOTATION'
+    }, user);
+
+    if (newBooking) {
+      // Auto-generate Proforma Invoice for the new confirmed booking
+      try {
+        this.generateProformaInvoice(newBooking.id, user);
+      } catch (e) {
+        console.warn('Auto proforma invoice creation notice:', e);
+      }
+    }
+
+    return newBooking;
+  }
+
+  public getVouchersForLead(leadId: string): BookingVoucher[] {
+    const allVouchers = this.getVouchers();
+    const allBookings = this.getAllBookings().filter(b => b.leadId === leadId || b.linkedLeadId === leadId);
+    const bookingIds = allBookings.map(b => b.id);
+    const bookingRefs = allBookings.map(b => b.bookingReference);
+
+    const fromGlobal = allVouchers.filter(v => 
+      v.leadId === leadId || 
+      bookingIds.includes(v.bookingId) || 
+      bookingRefs.includes(v.bookingReference)
+    );
+
+    const fromBookings: BookingVoucher[] = [];
+    allBookings.forEach(b => {
+      if (b.vouchersList && Array.isArray(b.vouchersList)) {
+        fromBookings.push(...b.vouchersList);
+      }
+    });
+
+    const combined = [...fromGlobal, ...fromBookings];
+    const uniqueMap = new Map<string, BookingVoucher>();
+    combined.forEach(v => {
+      if (v.id && !uniqueMap.has(v.id)) {
+        uniqueMap.set(v.id, v);
+      }
+    });
+    return Array.from(uniqueMap.values()).sort((a, b) => 
+      new Date(b.generatedAt || b.issuedAt || 0).getTime() - new Date(a.generatedAt || a.issuedAt || 0).getTime()
+    );
+  }
+
+  public getInvoicesForLead(leadId: string): BookingInvoice[] {
+    const allInvoices = this.getItem<BookingInvoice[]>('booking_invoices', []);
+    const allBookings = this.getAllBookings().filter(b => b.leadId === leadId || b.linkedLeadId === leadId);
+    const bookingIds = allBookings.map(b => b.id);
+    const bookingRefs = allBookings.map(b => b.bookingReference);
+
+    const matching = allInvoices.filter(inv => 
+      inv.leadId === leadId || 
+      bookingIds.includes(inv.bookingId) || 
+      bookingRefs.includes(inv.bookingReference)
+    );
+
+    const uniqueMap = new Map<string, BookingInvoice>();
+    matching.forEach(inv => {
+      if (inv.id && !uniqueMap.has(inv.id)) {
+        uniqueMap.set(inv.id, inv);
+      }
+    });
+    return Array.from(uniqueMap.values()).sort((a, b) => 
+      new Date(b.invoiceDate || b.createdAt || 0).getTime() - new Date(a.invoiceDate || a.createdAt || 0).getTime()
+    );
+  }
+
+  public getBookingInvoices(bookingId?: string): BookingInvoice[] {
+    const allInvoices = this.getItem<BookingInvoice[]>('booking_invoices', []);
+    if (!bookingId) return allInvoices;
+    const booking = this.getBookingById(bookingId);
+    const invoiceIds = booking?.proformaInvoiceIds || [];
+    const bRef = booking?.bookingReference;
+
+    return allInvoices.filter(inv => 
+      inv.bookingId === bookingId ||
+      (bRef && inv.bookingReference === bRef) ||
+      invoiceIds.includes(inv.id)
+    ).sort((a, b) => 
+      new Date(b.invoiceDate || b.createdAt || 0).getTime() - new Date(a.invoiceDate || a.createdAt || 0).getTime()
+    );
+  }
+
+  public getQuotesForLead(leadId: string, user: User | null): Quotation[] {
+    const allQuotes = this.getAllSavedQuotesForUser(user);
+    const lead = this.getLeadById(leadId);
+    const quoteIds = lead?.quoteIds || (lead?.quoteId ? [lead.quoteId] : []);
+
+    return allQuotes.filter(q => 
+      q.leadId === leadId || 
+      q.linkedLeadId === leadId || 
+      quoteIds.includes(q.id) || 
+      quoteIds.includes(q.quoteNumber)
+    );
+  }
+
+  public getQuoteVersionsForLead(leadId: string): QuoteVersionRecord[] {
+    const quotes = this.getAllSavedQuotes().filter(q => 
+      q.leadId === leadId || 
+      q.linkedLeadId === leadId
+    );
+    const versionMap = new Map<string, QuoteVersionRecord>();
+
+    // 1. Process quote documents (authoritative concrete records)
+    quotes.forEach(q => {
+      const verNum = q.version || 1;
+      const key = `${q.quoteNumber?.split('-v')[0] || q.id}-v${verNum}`;
+      const record: QuoteVersionRecord = {
+        id: q.id,
+        version: verNum,
+        versionNumber: verNum,
+        quoteId: q.id,
+        leadId: q.leadId || leadId,
+        createdAt: q.createdAt,
+        updatedAt: q.updatedAt || q.createdAt,
+        updatedBy: q.createdByName || q.agentName || 'Travel Consultant',
+        createdByName: q.createdByName || q.agentName,
+        status: q.status,
+        changesSummary: q.parentQuoteId ? `Version ${verNum} branched from parent quotation` : `Authoritative proposal version ${verNum}`,
+        totalSellingPrice: q.finalCustomerSellingPrice || q.totalSellingPrice || 0,
+        currency: q.currency || 'USD',
+        totalNetCost: q.totalNetCost || q.internalNettCost || 0,
+        marginPercent: q.overallMarkupPercent || 15,
+        marginAmount: q.agentMarginAmount || q.totalMargin || 0,
+        items: q.items || [],
+        title: q.title,
+        destination: q.destination,
+        travelStartDate: q.travelStartDate,
+        travelEndDate: q.travelEndDate,
+        totalPax: q.totalPax,
+        adultsCount: q.adultsCount,
+        childrenCount: q.childrenCount,
+        infantsCount: q.infantsCount
+      };
+      versionMap.set(key, record);
+
+      // Also incorporate any embedded version history snapshots not already present
+      if (q.versionHistory && Array.isArray(q.versionHistory)) {
+        q.versionHistory.forEach(v => {
+          const vKey = `${q.quoteNumber?.split('-v')[0] || q.id}-v${v.version}`;
+          if (!versionMap.has(vKey)) {
+            versionMap.set(vKey, {
+              ...v,
+              id: v.id || `vh-${q.id}-v${v.version}`,
+              version: v.version,
+              versionNumber: v.version,
+              quoteId: v.quoteId || q.id,
+              leadId: v.leadId || q.leadId || leadId,
+              createdAt: v.createdAt || v.updatedAt || q.createdAt,
+              updatedAt: v.updatedAt || q.updatedAt,
+              updatedBy: v.updatedBy || q.createdByName || 'Partner Agent',
+              currency: v.currency || q.currency || 'USD',
+              totalSellingPrice: v.totalSellingPrice ?? q.totalSellingPrice ?? 0,
+              totalNetCost: v.totalNetCost ?? q.totalNetCost ?? 0,
+              items: v.items && v.items.length > 0 ? v.items : q.items
+            });
+          }
+        });
+      }
+    });
+
+    const versions = Array.from(versionMap.values());
+    return versions.sort((a, b) => (b.version || 0) - (a.version || 0));
+  }
+
+  public restoreQuotationVersion(quoteId: string, targetVersion: number, user: User | null): Quotation | null {
+    const parentQuote = this.getQuoteByIdAuthorized(quoteId, user);
+    if (!parentQuote) return null;
+
+    const allQuotes = this.getAllSavedQuotes();
+    const baseNumber = parentQuote.quoteNumber ? parentQuote.quoteNumber.split('-v')[0] : '';
+    const targetQuoteDoc = allQuotes.find(q => 
+      (q.version === targetVersion || q.versionNumber === targetVersion) &&
+      (q.id === quoteId || q.parentQuoteId === parentQuote.id || parentQuote.parentQuoteId === q.id || (baseNumber && q.quoteNumber?.startsWith(baseNumber)))
+    );
+
+    const snapshot = targetQuoteDoc || parentQuote.versionHistory?.find(v => v.version === targetVersion);
+
+    const existingVersions = allQuotes
+      .filter(q => baseNumber && q.quoteNumber?.startsWith(baseNumber))
+      .map(q => q.version || 1);
+    const maxExisting = existingVersions.length > 0 ? Math.max(...existingVersions) : (parentQuote.version || 1);
+    const nextVersion = maxExisting + 1;
+    const newQuoteNumber = `${baseNumber || 'UBQ-2026'}-v${nextVersion}`;
+    const timestamp = new Date().toISOString();
+    const userName = user?.name || parentQuote.agentName || 'Travel Consultant';
+
+    const restoredQuote: Quotation = {
+      ...parentQuote,
+      ...(targetQuoteDoc || {}),
+      id: `quote-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      quoteNumber: newQuoteNumber,
+      version: nextVersion,
+      parentQuoteId: parentQuote.id,
+      isLocked: false,
+      status: 'DRAFT',
+      title: `${snapshot?.title || parentQuote.title} (Restored from v${targetVersion})`,
+      items: snapshot?.items && snapshot.items.length > 0 ? JSON.parse(JSON.stringify(snapshot.items)) : JSON.parse(JSON.stringify(parentQuote.items)),
+      totalSellingPrice: snapshot?.totalSellingPrice || parentQuote.totalSellingPrice,
+      totalNetCost: snapshot?.totalNetCost || parentQuote.totalNetCost,
+      currency: snapshot?.currency || parentQuote.currency,
+      travelStartDate: snapshot?.travelStartDate || parentQuote.travelStartDate,
+      travelEndDate: snapshot?.travelEndDate || parentQuote.travelEndDate,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      lastActivityAt: timestamp,
+      createdByName: userName,
+      activityLog: [
+        ...(parentQuote.activityLog || []),
+        {
+          id: `act-${Date.now()}`,
+          action: 'VERSION_BRANCHED',
+          timestamp,
+          userName,
+          userRole: user?.role,
+          userType: (user?.role as any) || 'ADMIN',
+          details: `Restored Version ${targetVersion} into new active Version ${nextVersion} (#${newQuoteNumber})`
+        }
+      ]
+    };
+
+    allQuotes.unshift(restoredQuote);
+    this.setItem('saved_quotes', allQuotes);
+    this.syncFirestoreDoc('quotations', restoredQuote.id, restoredQuote);
+    this.logAudit(user, 'QUOTE_CREATED', 'Quotation', restoredQuote.id, `Restored Version ${targetVersion} as ${newQuoteNumber}`);
+    return restoredQuote;
+  }
+
+  public getFinancialSummaryForLead(leadId: string, user: User | null) {
+    const bookings = this.getAllBookings().filter(b => b.leadId === leadId || b.linkedLeadId === leadId);
+    const invoices = this.getInvoicesForLead(leadId);
+
+    const isInternal = user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER' || user?.role === 'DMC_STAFF';
+
+    const totalSellingPrice = bookings.reduce((sum, b) => sum + (b.totalAmount || 0), 0);
+    const totalPaid = bookings.reduce((sum, b) => sum + ((b as any).paidAmount || (b.paymentStatus === 'PAID' ? b.totalAmount : 0) || 0), 0);
+    const pendingBalance = Math.max(0, totalSellingPrice - totalPaid);
+    const currency = bookings[0]?.currency || 'USD';
+
+    let totalNetCost = 0;
+    let grossMargin = 0;
+    let grossMarginPercent = 0;
+
+    if (isInternal) {
+      totalNetCost = bookings.reduce((sum, b) => sum + (b.totalNetCost || b.internalNettCost || 0), 0);
+      grossMargin = totalSellingPrice - totalNetCost;
+      grossMarginPercent = totalSellingPrice > 0 ? Math.round((grossMargin / totalSellingPrice) * 100) : 0;
+    }
+
+    const paymentProofs: BookingPaymentProof[] = [];
+    bookings.forEach(b => {
+      if (b.paymentProofs && Array.isArray(b.paymentProofs)) {
+        paymentProofs.push(...b.paymentProofs);
+      }
+    });
+
+    return {
+      totalSellingPrice,
+      totalPaid,
+      pendingBalance,
+      currency,
+      paymentStatus: pendingBalance === 0 && totalSellingPrice > 0 ? 'PAID' : totalPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID',
+      bookingsCount: bookings.length,
+      invoicesCount: invoices.length,
+      isInternal,
+      totalNetCost: isInternal ? totalNetCost : undefined,
+      grossMargin: isInternal ? grossMargin : undefined,
+      grossMarginPercent: isInternal ? grossMarginPercent : undefined,
+      bookings,
+      invoices,
+      paymentProofs
+    };
   }
 
   // =========================================================================
@@ -8322,10 +9708,16 @@ export class AppDatabase {
       return allLeads;
     }
 
-    // B2B Agent visibility rule: Visible ONLY when assigned to this agent
+    // B2B Agent visibility rule: Visible when assigned to this agent, responsible commercial owner, or submitted by them
     if (user.role === 'B2B_AGENT') {
       return allLeads
-        .filter(l => l.assignedAgentId === user.id)
+        .filter(l => 
+          l.responsibleAgentId === user.id || 
+          l.assignedAgentId === user.id || 
+          l.submittingAgentId === user.id ||
+          l.b2bAgentId === user.id ||
+          l.userId === user.id
+        )
         .map(l => this.sanitizeLeadForAgent(l));
     }
 
@@ -8337,12 +9729,12 @@ export class AppDatabase {
   }
 
   // =========================================================================
-  // B2B AGENT ASSIGNMENT & NOTIFICATION ENGINE
+  // B2B AGENT & INTERNAL TEAM MEMBER MANDATORY LEAD DUAL OWNERSHIP ENGINE
   // =========================================================================
 
   /**
-   * Assigns a Lead to an approved B2B Agent.
-   * Records assignment snapshots, updates visibility, appends history, and emits deduplicated notification.
+   * Assigns or Reassigns a Lead to an approved responsible B2B Agent.
+   * Preserves submittingAgentId while updating authoritative responsibleAgentId and legacy assignedAgentId.
    */
   public assignLeadToAgent(
     leadId: string, 
@@ -8365,30 +9757,69 @@ export class AppDatabase {
 
     const lead = leads[idx];
     const timestamp = new Date().toISOString();
-    const previousAgentName = lead.assignedAgentNameSnapshot || 'Unassigned';
+    const isReassignment = Boolean(lead.responsibleAgentId || lead.assignedAgentId);
+    const previousAgentId = lead.responsibleAgentId || lead.assignedAgentId;
+    const previousAgentName = lead.responsibleAgentNameSnapshot || lead.assignedAgentNameSnapshot || 'Unassigned';
 
+    // Submitting Agent is immutable once captured; populate if not set
+    if (!lead.submittingAgentId) {
+      lead.submittingAgentId = agent.id;
+      lead.submittingAgentNameSnapshot = agent.name;
+      lead.submittingAgentAgencySnapshot = agent.agencyName || agent.companyName;
+      lead.submittingAgentEmailSnapshot = agent.email;
+    }
+
+    // Responsible Commercial Agent
+    lead.responsibleAgentId = agent.id;
+    lead.responsibleAgentNameSnapshot = agent.name;
+    lead.responsibleAgentEmailSnapshot = agent.email;
+    lead.responsibleAgentAgencySnapshot = agent.agencyName || agent.companyName;
+    lead.agentAssignmentStatus = 'assigned';
+
+    // Legacy sync fields
     lead.assignedAgentId = agent.id;
     lead.assignedAgentNameSnapshot = agent.name;
     lead.assignedAgentEmailSnapshot = agent.email;
     lead.assignedAgentAgencySnapshot = agent.agencyName || agent.companyName;
     lead.assignedByUserId = assignedByUser?.id || 'admin';
     lead.assignedByUserNameSnapshot = assignedByUser?.name || 'Operations Desk';
-    lead.assignedAt = timestamp;
+    lead.assignedAt = lead.assignedAt || timestamp;
+    if (isReassignment) {
+      lead.lastReassignedAt = timestamp;
+      lead.lastReassignedByUserId = assignedByUser?.id || 'admin';
+      lead.lastReassignedByUserNameSnapshot = assignedByUser?.name || 'Operations Desk';
+    }
     lead.leadVisibilityStatus = 'ASSIGNED';
     lead.updatedAt = timestamp;
     lead.lastActivityAt = timestamp;
+
+    // Dual-ownership overall status
+    const hasTeamMember = Boolean(lead.assignedTeamMemberId || lead.assignedStaffId);
+    lead.assignmentStatus = hasTeamMember ? 'assigned' : 'pending_internal_assignment';
+
+    if (notes) {
+      lead.assignmentNotes = notes;
+    }
 
     // Append to assignment history
     lead.assignmentHistory = lead.assignmentHistory || [];
     lead.assignmentHistory.unshift({
       id: `asg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      type: isReassignment ? 'REASSIGN_AGENT' : 'ASSIGN_AGENT',
+      previousAgentId: isReassignment ? previousAgentId : undefined,
+      previousAgentName: isReassignment ? previousAgentName : undefined,
+      newAgentId: agent.id,
+      newAgentName: `${agent.name} (${agent.agencyName || agent.companyName || 'Agent'})`,
       assignedStaffId: agent.id,
-      assignedStaffName: `${agent.name} (${agent.agencyName || 'Agent'})`,
+      assignedStaffName: `${agent.name} (${agent.agencyName || agent.companyName || 'Agent'})`,
       assignedStaffEmail: agent.email,
       assignedDepartment: 'SALES',
+      assignedByUserId: assignedByUser?.id || 'admin',
+      assignedByUserNameSnapshot: assignedByUser?.name || 'Operations Desk',
+      assignedByUserRole: assignedByUser?.role || 'ADMIN',
       assignedBy: assignedByUser?.name || 'Internal Operations',
       assignedAt: timestamp,
-      notes: notes || 'Assigned to B2B Agent partner for fulfillment'
+      notes: notes || (isReassignment ? `Commercial relationship reassigned from ${previousAgentName} to ${agent.name}.` : `Commercial relationship assigned to B2B Agent ${agent.name}.`)
     });
 
     // Append to timeline
@@ -8396,8 +9827,8 @@ export class AppDatabase {
     lead.timeline.unshift({
       id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       type: 'CUSTOM_ACTIVITY',
-      title: 'Lead Assigned to B2B Agent',
-      description: `Assigned to ${agent.name} (${agent.agencyName || 'Agent'}) by ${assignedByUser?.name || 'Internal Team'}.${notes ? ' Note: ' + notes : ''}`,
+      title: isReassignment ? 'Commercial Agent Reassigned' : 'Lead Assigned to B2B Agent',
+      description: `${isReassignment ? 'Reassigned from ' + previousAgentName + ' to ' : 'Assigned to '}${agent.name} (${agent.agencyName || 'Agent'}) by ${assignedByUser?.name || 'Internal Team'}.${notes ? ' Note: ' + notes : ''}`,
       timestamp,
       performedBy: assignedByUser?.name || 'Operations Desk',
       performedByUserType: assignedByUser?.role || 'ADMIN'
@@ -8418,8 +9849,8 @@ export class AppDatabase {
       assignedByName: assignedByUser?.name || 'TheUnbound Operations',
       customerName: lead.contactName,
       destination: lead.destinationName,
-      title: `Lead Assigned: ${lead.leadNumber}`,
-      message: `Travel lead for ${lead.contactName} (${lead.destinationName || 'Destination'}) has been assigned to you.`,
+      title: `${isReassignment ? 'Lead Reassigned' : 'Lead Assigned'}: ${lead.leadNumber}`,
+      message: `Travel lead for ${lead.contactName} (${lead.destinationName || 'Destination'}) is ${isReassignment ? 'reassigned' : 'assigned'} to your agency.`,
       deepLinkTab: 'leads'
     });
 
@@ -8428,15 +9859,33 @@ export class AppDatabase {
       'SETTINGS_UPDATED', 
       'TravelLead', 
       lead.id, 
-      `Assigned lead ${lead.leadNumber} (${lead.contactName}) to B2B Agent ${agent.name} (${agent.agencyName})`
+      `${isReassignment ? 'Reassigned' : 'Assigned'} lead ${lead.leadNumber} (${lead.contactName}) to B2B Agent ${agent.name} (${agent.agencyName})`
     );
 
     return lead;
   }
 
+  public assignLeadResponsibleAgent(
+    leadId: string, 
+    agentUserId: string, 
+    assignedByUser: User | null, 
+    notes?: string
+  ): TravelLead | null {
+    return this.assignLeadToAgent(leadId, agentUserId, assignedByUser, notes);
+  }
+
+  public reassignLeadAgent(
+    leadId: string, 
+    newAgentUserId: string, 
+    reassignedByUser: User | null, 
+    notes?: string
+  ): TravelLead | null {
+    return this.assignLeadToAgent(leadId, newAgentUserId, reassignedByUser, notes);
+  }
+
   /**
-   * Unassigns a Lead from a B2B Agent.
-   * Removes Agent visibility immediately without deleting or duplicating customer or lead records.
+   * Unassigns a responsible B2B Agent from a Lead.
+   * Sets the commercial ownership to pending assignment while maintaining internal processing continuity.
    */
   public unassignLead(
     leadId: string, 
@@ -8448,9 +9897,17 @@ export class AppDatabase {
     if (idx === -1) return null;
 
     const lead = leads[idx];
-    const previousAgentName = lead.assignedAgentNameSnapshot || 'Previous Agent';
+    const previousAgentId = lead.responsibleAgentId || lead.assignedAgentId;
+    const previousAgentName = lead.responsibleAgentNameSnapshot || lead.assignedAgentNameSnapshot || 'Previous Agent';
     const timestamp = new Date().toISOString();
 
+    lead.responsibleAgentId = undefined;
+    lead.responsibleAgentNameSnapshot = undefined;
+    lead.responsibleAgentEmailSnapshot = undefined;
+    lead.responsibleAgentAgencySnapshot = undefined;
+    lead.agentAssignmentStatus = 'pending_assignment';
+
+    // Legacy fields
     lead.assignedAgentId = undefined;
     lead.assignedAgentNameSnapshot = undefined;
     lead.assignedAgentEmailSnapshot = undefined;
@@ -8459,15 +9916,24 @@ export class AppDatabase {
     lead.updatedAt = timestamp;
     lead.lastActivityAt = timestamp;
 
+    const hasTeamMember = Boolean(lead.assignedTeamMemberId || lead.assignedStaffId);
+    lead.assignmentStatus = hasTeamMember ? 'pending_assignment' : 'needs_assignment';
+
     lead.assignmentHistory = lead.assignmentHistory || [];
     lead.assignmentHistory.unshift({
       id: `asg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      type: 'UNASSIGN_AGENT',
+      previousAgentId,
+      previousAgentName,
       assignedStaffId: '',
-      assignedStaffName: 'Unassigned',
+      assignedStaffName: 'Unassigned Agent',
       assignedDepartment: 'SALES',
+      assignedByUserId: unassignedByUser?.id || 'admin',
+      assignedByUserNameSnapshot: unassignedByUser?.name || 'Operations Desk',
+      assignedByUserRole: unassignedByUser?.role || 'ADMIN',
       assignedBy: unassignedByUser?.name || 'Internal Operations',
       assignedAt: timestamp,
-      notes: reason || 'Unassigned by operations team'
+      notes: reason || 'Commercial B2B Agent unassigned by operations team; lead moved to Pending Commercial Assignment.'
     });
 
     lead.timeline = lead.timeline || [];
@@ -8475,7 +9941,7 @@ export class AppDatabase {
       id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       type: 'CUSTOM_ACTIVITY',
       title: 'B2B Agent Unassigned',
-      description: `Unassigned from ${previousAgentName} by ${unassignedByUser?.name || 'Internal Team'}.${reason ? ' Reason: ' + reason : ''}`,
+      description: `Unassigned from commercial owner ${previousAgentName} by ${unassignedByUser?.name || 'Internal Team'}.${reason ? ' Reason: ' + reason : ''}`,
       timestamp,
       performedBy: unassignedByUser?.name || 'Operations Desk',
       performedByUserType: unassignedByUser?.role || 'ADMIN'
@@ -8496,6 +9962,462 @@ export class AppDatabase {
     return lead;
   }
 
+  public unassignLeadAgent(leadId: string, unassignedByUser: User | null, reason?: string): TravelLead | null {
+    return this.unassignLead(leadId, unassignedByUser, reason);
+  }
+
+  /**
+   * Assigns or Reassigns an Internal Team Member to a Lead for operational processing and quotation workflow.
+   * Enforces that the target user is an internal staff member (ADMIN, DMC_STAFF, or TEAM_MEMBER).
+   * Automatically provisions or updates operational follow-up tasks.
+   */
+  public assignLeadTeamMember(
+    leadId: string, 
+    teamMemberUserId: string, 
+    assignedByUser: User | null, 
+    notes?: string
+  ): TravelLead | null {
+    if (assignedByUser && (assignedByUser.role === 'BUYER' || assignedByUser.role === 'B2B_AGENT')) {
+      throw new Error('Unauthorized: Modifying internal team assignment is restricted to internal team members.');
+    }
+
+    const leads = this.getLeads();
+    const idx = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
+    if (idx === -1) return null;
+
+    const allUsers = this.getUsers();
+    const member = allUsers.find(u => u.id === teamMemberUserId);
+    if (!member) {
+      throw new Error(`Target internal team member with UID ${teamMemberUserId} was not found.`);
+    }
+    if (member.role === 'B2B_AGENT' || member.role === 'BUYER') {
+      throw new Error(`User ${member.name} is an external user and cannot be assigned as an internal team member.`);
+    }
+
+    const lead = leads[idx];
+    const timestamp = new Date().toISOString();
+    const isReassignment = Boolean(lead.assignedTeamMemberId || lead.assignedStaffId);
+    const previousTeamMemberId = lead.assignedTeamMemberId || lead.assignedStaffId;
+    const previousTeamMemberName = lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName || 'Unassigned';
+
+    // Authoritative internal assignment
+    lead.assignedTeamMemberId = member.id;
+    lead.assignedTeamMemberNameSnapshot = member.name;
+    lead.assignedTeamMemberEmailSnapshot = member.email;
+
+    // Legacy sync fields
+    lead.assignedStaffId = member.id;
+    lead.assignedStaffName = member.name;
+    lead.assignedStaffEmail = member.email;
+    lead.assignedDepartment = (member as any).department || 'OPERATIONS';
+    lead.assignedByUserId = assignedByUser?.id || 'admin';
+    lead.assignedByUserNameSnapshot = assignedByUser?.name || 'Operations Desk';
+    lead.assignedAt = lead.assignedAt || timestamp;
+    if (isReassignment) {
+      lead.lastReassignedAt = timestamp;
+      lead.lastReassignedByUserId = assignedByUser?.id || 'admin';
+      lead.lastReassignedByUserNameSnapshot = assignedByUser?.name || 'Operations Desk';
+    }
+    lead.updatedAt = timestamp;
+    lead.lastActivityAt = timestamp;
+
+    const hasAgent = Boolean(lead.responsibleAgentId || lead.assignedAgentId);
+    lead.assignmentStatus = hasAgent ? 'assigned' : 'pending_assignment';
+
+    if (notes) {
+      lead.assignmentNotes = notes;
+    }
+
+    // Append to assignment history
+    lead.assignmentHistory = lead.assignmentHistory || [];
+    lead.assignmentHistory.unshift({
+      id: `asg-tm-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      type: isReassignment ? 'REASSIGN_INTERNAL' : 'ASSIGN_INTERNAL',
+      previousTeamMemberId: isReassignment ? previousTeamMemberId : undefined,
+      previousTeamMemberName: isReassignment ? previousTeamMemberName : undefined,
+      newTeamMemberId: member.id,
+      newTeamMemberName: member.name,
+      assignedStaffId: member.id,
+      assignedStaffName: member.name,
+      assignedStaffEmail: member.email,
+      assignedDepartment: (member as any).department || 'OPERATIONS',
+      assignedByUserId: assignedByUser?.id || 'admin',
+      assignedByUserNameSnapshot: assignedByUser?.name || 'Operations Desk',
+      assignedByUserRole: assignedByUser?.role || 'ADMIN',
+      assignedBy: assignedByUser?.name || 'Operations Desk',
+      assignedAt: timestamp,
+      notes: notes || (isReassignment ? `Operational owner reassigned from ${previousTeamMemberName} to ${member.name}.` : `Internal operational owner assigned to ${member.name}.`)
+    });
+
+    // Append to timeline
+    lead.timeline = lead.timeline || [];
+    lead.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      type: 'ASSIGNMENT_CHANGED',
+      title: isReassignment ? 'Internal Owner Reassigned' : `Assigned to ${member.name}`,
+      description: notes 
+        ? `${isReassignment ? 'Reassigned from ' + previousTeamMemberName + ' to ' : 'Assigned to '}${member.name}: ${notes}` 
+        : `${isReassignment ? 'Reassigned from ' + previousTeamMemberName + ' to ' : 'Assigned to '}${member.name} for quotation & fulfillment`,
+      timestamp,
+      performedBy: assignedByUser?.name || 'Operations Desk',
+      performedByUserType: assignedByUser?.role || 'ADMIN'
+    });
+
+    leads[idx] = lead;
+    this.setItem('leads', leads);
+    this.syncFirestoreDoc('leads', lead.id, lead);
+
+    // Automatically create or update operational task in CalendarTask collection
+    try {
+      const nowIso = new Date().toISOString();
+      const dueIso = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+      const agentLabel = lead.responsibleAgentNameSnapshot || lead.submittingAgentNameSnapshot || 'Direct / Pending Agent';
+      const reviewTask: CalendarTask = {
+        id: `task-lead-${lead.id}-${Date.now()}`,
+        title: `Lead Coordination & Quote Review: ${lead.leadNumber}`,
+        description: `Internal operations ownership assigned to you for Lead ${lead.leadNumber} (${lead.contactName}). Commercial Agent: ${agentLabel}. Destination: ${lead.destinationName || 'Destination'}. Review travel requirements and initiate quote proposal.`,
+        status: 'PENDING',
+        priority: lead.priority === 'URGENT' ? 'URGENT' : 'HIGH',
+        importance: 'IMPORTANT',
+        category: 'OPERATIONS_SLA',
+        assignedTo: member.id,
+        assignedToName: member.name,
+        assignedToEmail: member.email,
+        entityType: 'LEAD',
+        entityId: lead.id,
+        relatedEntityType: 'LEAD',
+        relatedEntityId: lead.id,
+        relatedEntityReference: lead.leadNumber,
+        leadId: lead.id,
+        leadNumber: lead.leadNumber,
+        startDate: nowIso.split('T')[0],
+        startTime: '09:00',
+        dueDate: dueIso.split('T')[0],
+        dueAt: dueIso,
+        targetRoute: `/admin/leads?id=${lead.id}`,
+        isSyncedToGoogleCalendar: false,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+      this.saveCalendarTask(reviewTask, assignedByUser);
+    } catch (taskErr) {
+      console.debug('Operational task creation note for lead:', taskErr);
+    }
+
+    // Live Admin Activity Stream notification
+    try {
+      this.recordAdminActivity({
+        category: 'LEAD',
+        activityType: 'LEAD_ASSIGNED',
+        actorName: assignedByUser?.name || 'Operations Desk',
+        actorType: assignedByUser?.role === 'ADMIN' ? 'ADMIN' : 'TEAM_MEMBER',
+        severity: 'INFO',
+        actionRequired: false,
+        summary: `${isReassignment ? 'Reassigned' : 'Assigned'} Lead [${lead.leadNumber}] ${lead.contactName} to ${member.name} (${member.role})`,
+        details: {
+          leadNumber: lead.leadNumber,
+          customerName: lead.contactName,
+          assignedStaff: member.name,
+          department: (member as any).department || 'OPERATIONS'
+        },
+        targetSection: 'LEAD_MANAGEMENT',
+        targetSubTab: 'LEADS',
+        recordId: lead.id,
+        leadId: lead.id,
+        entityId: lead.id,
+        entityType: 'TravelLead'
+      });
+    } catch {
+      // Non-blocking
+    }
+
+    this.logAudit(
+      assignedByUser, 
+      'SETTINGS_UPDATED', 
+      'TravelLead', 
+      lead.id, 
+      `${isReassignment ? 'Reassigned' : 'Assigned'} operational ownership of lead ${lead.leadNumber} to ${member.name}`
+    );
+
+    return lead;
+  }
+
+  public reassignLeadTeamMember(
+    leadId: string, 
+    newTeamMemberUserId: string, 
+    reassignedByUser: User | null, 
+    notes?: string
+  ): TravelLead | null {
+    return this.assignLeadTeamMember(leadId, newTeamMemberUserId, reassignedByUser, notes);
+  }
+
+  /**
+   * Unassigns an internal team member from a Lead, placing it in pending internal assignment.
+   */
+  public unassignLeadTeamMember(
+    leadId: string, 
+    unassignedByUser: User | null, 
+    reason?: string
+  ): TravelLead | null {
+    if (unassignedByUser && (unassignedByUser.role === 'BUYER' || unassignedByUser.role === 'B2B_AGENT')) {
+      throw new Error('Unauthorized: Modifying internal team assignment is restricted to internal staff.');
+    }
+
+    const leads = this.getLeads();
+    const idx = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
+    if (idx === -1) return null;
+
+    const lead = leads[idx];
+    const previousTeamMemberId = lead.assignedTeamMemberId || lead.assignedStaffId;
+    const previousTeamMemberName = lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName || 'Previous Assignee';
+    const timestamp = new Date().toISOString();
+
+    lead.assignedTeamMemberId = undefined;
+    lead.assignedTeamMemberNameSnapshot = undefined;
+    lead.assignedTeamMemberEmailSnapshot = undefined;
+    lead.assignedStaffId = undefined as any;
+    lead.assignedStaffName = undefined as any;
+    lead.assignedStaffEmail = undefined as any;
+    lead.assignmentStatus = 'pending_internal_assignment';
+    lead.updatedAt = timestamp;
+    lead.lastActivityAt = timestamp;
+
+    lead.assignmentHistory = lead.assignmentHistory || [];
+    lead.assignmentHistory.unshift({
+      id: `asg-tm-un-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      type: 'UNASSIGN_INTERNAL',
+      previousTeamMemberId,
+      previousTeamMemberName,
+      assignedByUserId: unassignedByUser?.id || 'admin',
+      assignedByUserNameSnapshot: unassignedByUser?.name || 'Operations Desk',
+      assignedByUserRole: unassignedByUser?.role || 'ADMIN',
+      assignedBy: unassignedByUser?.name || 'Operations Desk',
+      assignedAt: timestamp,
+      notes: reason || 'Internal operational owner unassigned; lead placed in Pending Internal Assignment queue.'
+    });
+
+    lead.timeline = lead.timeline || [];
+    lead.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      type: 'ASSIGNMENT_CHANGED',
+      title: 'Internal Owner Unassigned',
+      description: `Unassigned from ${previousTeamMemberName} by ${unassignedByUser?.name || 'Operations Desk'}. Lead marked Pending Internal Assignment.${reason ? ' Reason: ' + reason : ''}`,
+      timestamp,
+      performedBy: unassignedByUser?.name || 'Operations Desk',
+      performedByUserType: unassignedByUser?.role || 'ADMIN'
+    });
+
+    leads[idx] = lead;
+    this.setItem('leads', leads);
+    this.syncFirestoreDoc('leads', lead.id, lead);
+
+    this.logAudit(
+      unassignedByUser, 
+      'SETTINGS_UPDATED', 
+      'TravelLead', 
+      lead.id, 
+      `Unassigned operational owner from lead ${lead.leadNumber}; placed in pending internal assignment.`
+    );
+
+    return lead;
+  }
+
+  /**
+   * Administrative Reconciliation Migration:
+   * Reconciles all existing leads to ensure mandatory dual ownership (B2B Agent + Internal Team Member)
+   * without creating duplicate leads or losing existing data.
+   */
+  public migrateLeadAssignments(): {
+    migratedCount: number;
+    fullyAssignedCount: number;
+    pendingInternalCount: number;
+    pendingAgentCount: number;
+    needsBothCount: number;
+  } {
+    const all = this.getLeads();
+    const allUsers = this.getUsers();
+    let migratedCount = 0;
+    let fullyAssignedCount = 0;
+    let pendingInternalCount = 0;
+    let pendingAgentCount = 0;
+    let needsBothCount = 0;
+    const timestamp = new Date().toISOString();
+
+    const updated = all.map(lead => {
+      let changed = false;
+
+      // 1. Reconcile B2B Agent Commercial Association
+      if (!lead.responsibleAgentId) {
+        if (lead.assignedAgentId) {
+          lead.responsibleAgentId = lead.assignedAgentId;
+          changed = true;
+        } else if (lead.b2bAgentId) {
+          lead.responsibleAgentId = lead.b2bAgentId;
+          changed = true;
+        } else if (lead.submittingAgentId) {
+          lead.responsibleAgentId = lead.submittingAgentId;
+          changed = true;
+        } else if (lead.userId) {
+          const userObj = allUsers.find(u => u.id === lead.userId);
+          if (userObj && userObj.role === 'B2B_AGENT') {
+            lead.responsibleAgentId = userObj.id;
+            changed = true;
+          }
+        }
+      }
+
+      // Preserve submittingAgentId
+      if (!lead.submittingAgentId && lead.responsibleAgentId) {
+        lead.submittingAgentId = lead.responsibleAgentId;
+        changed = true;
+      }
+
+      // Populate Agent snapshots
+      if (lead.responsibleAgentId) {
+        const agent = allUsers.find(u => u.id === lead.responsibleAgentId);
+        if (agent) {
+          if (!lead.responsibleAgentNameSnapshot) {
+            lead.responsibleAgentNameSnapshot = agent.name;
+            changed = true;
+          }
+          if (!lead.responsibleAgentEmailSnapshot && agent.email) {
+            lead.responsibleAgentEmailSnapshot = agent.email;
+            changed = true;
+          }
+          if (!lead.responsibleAgentAgencySnapshot && (agent.agencyName || agent.companyName)) {
+            lead.responsibleAgentAgencySnapshot = agent.agencyName || agent.companyName;
+            changed = true;
+          }
+          if (!lead.submittingAgentNameSnapshot) {
+            lead.submittingAgentNameSnapshot = agent.name;
+            lead.submittingAgentAgencySnapshot = agent.agencyName || agent.companyName;
+            lead.submittingAgentEmailSnapshot = agent.email;
+            changed = true;
+          }
+        }
+        // Legacy sync
+        if (!lead.assignedAgentId) {
+          lead.assignedAgentId = lead.responsibleAgentId;
+          lead.assignedAgentNameSnapshot = lead.responsibleAgentNameSnapshot;
+          lead.assignedAgentAgencySnapshot = lead.responsibleAgentAgencySnapshot;
+          lead.assignedAgentEmailSnapshot = lead.responsibleAgentEmailSnapshot;
+          changed = true;
+        }
+        lead.agentAssignmentStatus = 'assigned';
+        lead.leadVisibilityStatus = 'ASSIGNED';
+      } else {
+        lead.agentAssignmentStatus = 'pending_assignment';
+      }
+
+      // 2. Reconcile Internal Team Member Assignment
+      if (!lead.assignedTeamMemberId) {
+        if (lead.assignedStaffId) {
+          lead.assignedTeamMemberId = lead.assignedStaffId;
+          changed = true;
+        } else if (lead.assignedStaffName) {
+          const member = allUsers.find(u => 
+            u.name?.toLowerCase() === lead.assignedStaffName?.toLowerCase() &&
+            u.role !== 'B2B_AGENT' && u.role !== 'BUYER'
+          );
+          if (member) {
+            lead.assignedTeamMemberId = member.id;
+            lead.assignedTeamMemberNameSnapshot = member.name;
+            lead.assignedTeamMemberEmailSnapshot = member.email;
+            changed = true;
+          }
+        }
+      }
+
+      if (lead.assignedTeamMemberId) {
+        const member = allUsers.find(u => u.id === lead.assignedTeamMemberId);
+        if (member) {
+          if (!lead.assignedTeamMemberNameSnapshot) {
+            lead.assignedTeamMemberNameSnapshot = member.name;
+            lead.assignedStaffName = member.name;
+            changed = true;
+          }
+          if (!lead.assignedTeamMemberEmailSnapshot && member.email) {
+            lead.assignedTeamMemberEmailSnapshot = member.email;
+            lead.assignedStaffEmail = member.email;
+            changed = true;
+          }
+        }
+        if (!lead.assignedStaffId) {
+          lead.assignedStaffId = lead.assignedTeamMemberId;
+          lead.assignedStaffName = lead.assignedTeamMemberNameSnapshot;
+          lead.assignedStaffEmail = lead.assignedTeamMemberEmailSnapshot;
+          changed = true;
+        }
+      }
+
+      // 3. Reconcile Dual Assignment Status
+      const hasAgent = Boolean(lead.responsibleAgentId || lead.assignedAgentId);
+      const hasTeamMember = Boolean(lead.assignedTeamMemberId || lead.assignedStaffId);
+
+      if (hasAgent && hasTeamMember) {
+        if (lead.assignmentStatus !== 'assigned') {
+          lead.assignmentStatus = 'assigned';
+          changed = true;
+        }
+        fullyAssignedCount++;
+      } else if (hasAgent && !hasTeamMember) {
+        if (lead.assignmentStatus !== 'pending_internal_assignment') {
+          lead.assignmentStatus = 'pending_internal_assignment';
+          changed = true;
+        }
+        pendingInternalCount++;
+      } else if (!hasAgent && hasTeamMember) {
+        if (lead.assignmentStatus !== 'pending_assignment') {
+          lead.assignmentStatus = 'pending_assignment';
+          changed = true;
+        }
+        pendingAgentCount++;
+      } else {
+        if (lead.assignmentStatus !== 'needs_assignment') {
+          lead.assignmentStatus = 'needs_assignment';
+          changed = true;
+        }
+        needsBothCount++;
+      }
+
+      // 4. Initialize Assignment History if empty
+      if (!lead.assignmentHistory || lead.assignmentHistory.length === 0) {
+        lead.assignmentHistory = [
+          {
+            id: `asg-mig-${lead.id}`,
+            type: 'INITIAL_CREATION',
+            newAgentId: lead.responsibleAgentId || lead.assignedAgentId,
+            newAgentName: lead.responsibleAgentNameSnapshot || lead.assignedAgentNameSnapshot,
+            newTeamMemberId: lead.assignedTeamMemberId || lead.assignedStaffId,
+            newTeamMemberName: lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName,
+            assignedStaffId: lead.assignedTeamMemberId || lead.assignedStaffId,
+            assignedStaffName: lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName || 'Unassigned',
+            assignedByUserId: lead.assignedByUserId || 'system-migration',
+            assignedByUserNameSnapshot: lead.assignedByUserNameSnapshot || 'System Migration',
+            assignedBy: lead.assignedByUserNameSnapshot || 'System Migration',
+            assignedAt: lead.createdAt || timestamp,
+            notes: 'Reconciled during mandatory dual lead ownership & assignment architecture migration.'
+          }
+        ];
+        changed = true;
+      }
+
+      if (changed) {
+        lead.updatedAt = timestamp;
+        migratedCount++;
+      }
+
+      return lead;
+    });
+
+    if (migratedCount > 0) {
+      this.setItem('leads', updated);
+      console.log(`MIGRATION: Successfully reconciled ${migratedCount} leads with mandatory B2B Agent & Internal Team Member assignments.`);
+    }
+
+    return { migratedCount, fullyAssignedCount, pendingInternalCount, pendingAgentCount, needsBothCount };
+  }
+
   /**
    * Assigns a Booking to an approved B2B Agent.
    * Records assignment snapshots, updates visibility, appends history, and emits deduplicated notification.
@@ -8506,6 +10428,10 @@ export class AppDatabase {
     assignedByUser: User | null, 
     notes?: string
   ): Booking | null {
+    if (assignedByUser && isExternalUser(assignedByUser)) {
+      throw new Error('Unauthorized: Agent assignment is restricted to internal operations staff.');
+    }
+
     const all = this.getAllBookings();
     const idx = all.findIndex(b => b.id === bookingId || b.bookingReference === bookingId);
     if (idx === -1) return null;
@@ -8521,20 +10447,60 @@ export class AppDatabase {
 
     const booking = all[idx];
     const timestamp = new Date().toISOString();
+    const isReassignment = Boolean(booking.agentId && booking.agentId !== agent.id);
+    const previousAgentId = booking.agentId;
+    const previousAgentName = booking.agentNameSnapshot || booking.agentName || 'Unassigned';
+
+    // Preserve original submittingAgentId if submitted by an agent
+    if (!booking.submittingAgentId && booking.submittedByUserRole === 'B2B_AGENT' && booking.submittedByUserId) {
+      booking.submittingAgentId = booking.submittedByUserId;
+    }
+
+    booking.agentId = agent.id;
+    booking.agentName = agent.name;
+    booking.agentNameSnapshot = agent.name;
+    booking.agentEmailSnapshot = agent.email;
+    booking.agentAgency = agent.agencyName || agent.companyName;
+    booking.agentAgencySnapshot = agent.agencyName || agent.companyName;
 
     booking.assignedAgentId = agent.id;
     booking.assignedAgentNameSnapshot = agent.name;
     booking.assignedAgentAgencySnapshot = agent.agencyName || agent.companyName;
-    booking.assignedByUserId = assignedByUser?.id || 'admin';
-    booking.assignedByUserNameSnapshot = assignedByUser?.name || 'Operations Desk';
-    booking.assignedAt = timestamp;
     booking.agentVisibilityStatus = 'VISIBLE';
+
+    if (isReassignment) {
+      booking.lastReassignedAt = timestamp;
+      booking.lastReassignedByUserId = assignedByUser?.id || 'admin';
+      booking.lastReassignedByUserNameSnapshot = assignedByUser?.name || 'Operations Desk';
+      booking.assignmentStatus = booking.assignedTeamMemberId ? 'reassigned' : 'pending_internal_assignment';
+    } else {
+      booking.assignedAt = timestamp;
+      booking.assignedByUserId = assignedByUser?.id || 'admin';
+      booking.assignedByUserNameSnapshot = assignedByUser?.name || 'Operations Desk';
+      booking.assignmentStatus = booking.assignedTeamMemberId ? 'assigned' : 'pending_internal_assignment';
+    }
+
     booking.updatedAt = timestamp;
+
+    booking.assignmentHistory = booking.assignmentHistory || [];
+    booking.assignmentHistory.unshift({
+      id: `asg-ag-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      timestamp,
+      type: isReassignment ? 'REASSIGNMENT' : 'AGENT_ASSIGNMENT',
+      previousAgentId,
+      previousAgentName,
+      newAgentId: agent.id,
+      newAgentName: agent.name,
+      assignedByUserId: assignedByUser?.id || 'admin',
+      assignedByUserNameSnapshot: assignedByUser?.name || 'Operations Desk',
+      assignedByUserRole: assignedByUser?.role || 'ADMIN',
+      notes: notes || (isReassignment ? `Reassigned booking to B2B Agent ${agent.name}.` : `Assigned booking to B2B Agent ${agent.name}.`)
+    });
 
     booking.timeline = booking.timeline || [];
     booking.timeline.unshift({
       id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      title: 'Booking Assigned to B2B Agent',
+      title: isReassignment ? 'Booking Reassigned to B2B Agent' : 'Booking Assigned to B2B Agent',
       description: `Assigned to ${agent.name} (${agent.agencyName || 'Agent'}) by ${assignedByUser?.name || 'Operations Desk'}.${notes ? ' Note: ' + notes : ''}`,
       timestamp,
       type: 'STATUS_CHANGE',
@@ -8566,10 +10532,365 @@ export class AppDatabase {
       'BOOKING_UPDATED', 
       'Booking', 
       booking.id, 
-      `Assigned booking ${booking.bookingReference} to B2B Agent ${agent.name} (${agent.agencyName})`
+      `${isReassignment ? 'Reassigned' : 'Assigned'} booking ${booking.bookingReference} to B2B Agent ${agent.name} (${agent.agencyName})`
     );
 
     return booking;
+  }
+
+  /**
+   * Assigns an Internal Team Member as operational owner of a booking.
+   * Enforces role validation, sets operational snapshots, records audit and timeline.
+   */
+  public assignBookingInternalTeamMember(
+    bookingId: string, 
+    teamMemberUserId: string, 
+    assignedByUser: User | null, 
+    notes?: string
+  ): Booking | null {
+    if (assignedByUser && isExternalUser(assignedByUser)) {
+      throw new Error('Unauthorized: Assigning internal team members is restricted to internal staff.');
+    }
+
+    const all = this.getAllBookings();
+    const idx = all.findIndex(b => b.id === bookingId || b.bookingReference === bookingId);
+    if (idx === -1) return null;
+
+    const allUsers = this.getUsers();
+    const member = allUsers.find(u => u.id === teamMemberUserId);
+    if (!member) {
+      throw new Error(`Target team member with UID ${teamMemberUserId} was not found.`);
+    }
+    if (member.role === 'B2B_AGENT' || member.role === 'BUYER') {
+      throw new Error(`User ${member.name} is an external user and cannot be assigned as an internal operational owner.`);
+    }
+
+    const booking = all[idx];
+    const timestamp = new Date().toISOString();
+    const isReassignment = Boolean(booking.assignedTeamMemberId && booking.assignedTeamMemberId !== member.id);
+    const previousTeamMemberId = booking.assignedTeamMemberId;
+    const previousTeamMemberName = booking.assignedTeamMemberNameSnapshot || booking.assignedTeamMemberName || 'Unassigned';
+
+    booking.assignedTeamMemberId = member.id;
+    booking.assignedTeamMemberName = member.name;
+    booking.assignedTeamMemberNameSnapshot = member.name;
+    booking.assignedTeamMemberEmailSnapshot = member.email;
+
+    if (isReassignment) {
+      booking.lastReassignedAt = timestamp;
+      booking.lastReassignedByUserId = assignedByUser?.id || 'admin';
+      booking.lastReassignedByUserNameSnapshot = assignedByUser?.name || 'Operations Desk';
+      booking.assignmentStatus = booking.agentId ? 'reassigned' : 'pending_agent_assignment';
+    } else {
+      booking.assignedAt = timestamp;
+      booking.assignedByUserId = assignedByUser?.id || 'admin';
+      booking.assignedByUserNameSnapshot = assignedByUser?.name || 'Operations Desk';
+      booking.assignmentStatus = booking.agentId ? 'assigned' : 'pending_agent_assignment';
+    }
+
+    if (notes) {
+      booking.assignmentNotes = notes;
+    }
+    booking.updatedAt = timestamp;
+
+    booking.assignmentHistory = booking.assignmentHistory || [];
+    booking.assignmentHistory.unshift({
+      id: `asg-tm-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      timestamp,
+      type: isReassignment ? 'REASSIGNMENT' : 'INTERNAL_TEAM_ASSIGNMENT',
+      previousTeamMemberId,
+      previousTeamMemberName,
+      newTeamMemberId: member.id,
+      newTeamMemberName: member.name,
+      assignedByUserId: assignedByUser?.id || 'admin',
+      assignedByUserNameSnapshot: assignedByUser?.name || 'Operations Desk',
+      assignedByUserRole: assignedByUser?.role || 'ADMIN',
+      notes: notes || (isReassignment ? `Reassigned operational ownership to ${member.name}.` : `Assigned operational ownership to ${member.name}.`)
+    });
+
+    booking.timeline = booking.timeline || [];
+    booking.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      title: isReassignment ? 'Operational Owner Reassigned' : 'Operational Owner Assigned',
+      description: `Internal operational ownership assigned to ${member.name} (${member.role || 'Operations'}) by ${assignedByUser?.name || 'Operations Desk'}.${notes ? ' Note: ' + notes : ''}`,
+      timestamp,
+      type: 'STATUS_CHANGE',
+      actorName: assignedByUser?.name || 'Operations Desk',
+      actorRole: assignedByUser?.role || 'ADMIN'
+    });
+
+    all[idx] = booking;
+    this.setItem('bookings', all);
+    this.syncFirestoreDoc('bookings', booking.id, booking);
+
+    // Create or update assignment review task
+    try {
+      const nowIso = new Date().toISOString();
+      const dueIso = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+      const reviewTask: CalendarTask = {
+        id: `task-ops-${booking.id}-${Date.now()}`,
+        title: `Operational Review: ${booking.bookingReference}`,
+        description: `You are the assigned operational owner for booking ${booking.bookingReference} (${booking.customer?.leadTravelerName || 'Guest'}). Review service items, verify dates, and coordinate supplier allocations.`,
+        status: 'PENDING',
+        priority: 'HIGH',
+        importance: 'IMPORTANT',
+        category: 'OPERATIONS_SLA',
+        assignedTo: member.id,
+        assignedToName: member.name,
+        assignedToEmail: member.email,
+        entityType: 'BOOKING',
+        entityId: booking.id,
+        relatedEntityReference: booking.bookingReference,
+        bookingId: booking.id,
+        startDate: nowIso.split('T')[0],
+        startTime: '09:00',
+        dueDate: dueIso.split('T')[0],
+        dueAt: dueIso,
+        targetRoute: `/admin/bookings/${booking.id}`,
+        isSyncedToGoogleCalendar: false,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+      this.saveCalendarTask(reviewTask, assignedByUser);
+    } catch (e) {
+      console.debug('Operational task creation note:', e);
+    }
+
+    this.logAudit(
+      assignedByUser, 
+      'BOOKING_UPDATED', 
+      'Booking', 
+      booking.id, 
+      `${isReassignment ? 'Reassigned' : 'Assigned'} operational ownership of booking ${booking.bookingReference} to ${member.name} (${member.email})`
+    );
+
+    return booking;
+  }
+
+  /**
+   * Unassigns an internal team member from a booking, setting it to pending internal assignment.
+   */
+  public unassignBookingTeamMember(
+    bookingId: string, 
+    unassignedByUser: User | null, 
+    reason?: string
+  ): Booking | null {
+    if (unassignedByUser && isExternalUser(unassignedByUser)) {
+      throw new Error('Unauthorized: Modifying operational team assignment is restricted to internal staff.');
+    }
+
+    const all = this.getAllBookings();
+    const idx = all.findIndex(b => b.id === bookingId || b.bookingReference === bookingId);
+    if (idx === -1) return null;
+
+    const booking = all[idx];
+    const previousTeamMemberId = booking.assignedTeamMemberId;
+    const previousTeamMemberName = booking.assignedTeamMemberNameSnapshot || booking.assignedTeamMemberName || 'Previous Assignee';
+    const timestamp = new Date().toISOString();
+
+    booking.assignedTeamMemberId = undefined;
+    booking.assignedTeamMemberName = undefined;
+    booking.assignedTeamMemberNameSnapshot = undefined;
+    booking.assignedTeamMemberEmailSnapshot = undefined;
+    booking.assignmentStatus = 'pending_internal_assignment';
+    booking.updatedAt = timestamp;
+
+    booking.assignmentHistory = booking.assignmentHistory || [];
+    booking.assignmentHistory.unshift({
+      id: `asg-un-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      timestamp,
+      type: 'REASSIGNMENT',
+      previousTeamMemberId,
+      previousTeamMemberName,
+      assignedByUserId: unassignedByUser?.id || 'admin',
+      assignedByUserNameSnapshot: unassignedByUser?.name || 'Operations Desk',
+      assignedByUserRole: unassignedByUser?.role || 'ADMIN',
+      notes: reason || 'Internal operational owner unassigned; booking placed in Pending Internal Assignment queue.'
+    });
+
+    booking.timeline = booking.timeline || [];
+    booking.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      title: 'Operational Owner Unassigned',
+      description: `Unassigned from ${previousTeamMemberName} by ${unassignedByUser?.name || 'Operations Desk'}. Booking marked Pending Internal Assignment.${reason ? ' Reason: ' + reason : ''}`,
+      timestamp,
+      type: 'STATUS_CHANGE',
+      actorName: unassignedByUser?.name || 'Operations Desk',
+      actorRole: unassignedByUser?.role || 'ADMIN'
+    });
+
+    all[idx] = booking;
+    this.setItem('bookings', all);
+    this.syncFirestoreDoc('bookings', booking.id, booking);
+
+    this.logAudit(
+      unassignedByUser, 
+      'BOOKING_UPDATED', 
+      'Booking', 
+      booking.id, 
+      `Unassigned operational owner from booking ${booking.bookingReference}; placed in pending internal assignment.`
+    );
+
+    return booking;
+  }
+
+  /**
+   * Automatic Data Migration & Backfill Strategy for Bookings:
+   * Ensures every existing booking is associated with both an authoritative B2B Agent and an assigned Internal Team Member,
+   * populating snapshots and initializing assignment history without duplicating records or losing existing data.
+   */
+  public migrateBookingAssignments(): {
+    migratedCount: number;
+    alreadyAssignedCount: number;
+    pendingInternalCount: number;
+    pendingAgentCount: number;
+  } {
+    const all = this.getAllBookings();
+    const allUsers = this.getUsers();
+    let migratedCount = 0;
+    let alreadyAssignedCount = 0;
+    let pendingInternalCount = 0;
+    let pendingAgentCount = 0;
+    const timestamp = new Date().toISOString();
+
+    const updated = all.map(booking => {
+      let changed = false;
+
+      // 1. Reconcile Agent Association
+      if (!booking.agentId) {
+        if (booking.submittingAgentId) {
+          booking.agentId = booking.submittingAgentId;
+          changed = true;
+        } else if (booking.assignedAgentId) {
+          booking.agentId = booking.assignedAgentId;
+          changed = true;
+        } else if (booking.submittedByUserId) {
+          const submitter = allUsers.find(u => u.id === booking.submittedByUserId);
+          if (submitter && submitter.role === 'B2B_AGENT') {
+            booking.agentId = submitter.id;
+            booking.submittingAgentId = submitter.id;
+            booking.submittingAgentNameSnapshot = submitter.name;
+            booking.submittingAgentAgencySnapshot = submitter.agencyName || submitter.companyName;
+            changed = true;
+          }
+        }
+      }
+
+      // Populate Agent snapshots if agentId exists
+      if (booking.agentId) {
+        const agent = allUsers.find(u => u.id === booking.agentId);
+        if (agent) {
+          if (!booking.agentNameSnapshot) {
+            booking.agentNameSnapshot = agent.name;
+            booking.agentName = agent.name;
+            changed = true;
+          }
+          if (!booking.agentEmailSnapshot && agent.email) {
+            booking.agentEmailSnapshot = agent.email;
+            changed = true;
+          }
+          if (!booking.agentAgencySnapshot && (agent.agencyName || agent.companyName)) {
+            booking.agentAgencySnapshot = agent.agencyName || agent.companyName;
+            booking.agentAgency = agent.agencyName || agent.companyName;
+            changed = true;
+          }
+        }
+        if (!booking.assignedAgentId) {
+          booking.assignedAgentId = booking.agentId;
+          booking.assignedAgentNameSnapshot = booking.agentNameSnapshot;
+          booking.assignedAgentAgencySnapshot = booking.agentAgencySnapshot;
+          changed = true;
+        }
+        if (!booking.agentVisibilityStatus) {
+          booking.agentVisibilityStatus = 'VISIBLE';
+          changed = true;
+        }
+      }
+
+      // 2. Reconcile Internal Team Member Assignment
+      if (booking.assignedTeamMemberId) {
+        const member = allUsers.find(u => u.id === booking.assignedTeamMemberId);
+        if (member) {
+          if (!booking.assignedTeamMemberNameSnapshot) {
+            booking.assignedTeamMemberNameSnapshot = member.name;
+            booking.assignedTeamMemberName = member.name;
+            changed = true;
+          }
+          if (!booking.assignedTeamMemberEmailSnapshot && member.email) {
+            booking.assignedTeamMemberEmailSnapshot = member.email;
+            changed = true;
+          }
+        }
+      } else if (booking.assignedTeamMemberName) {
+        const member = allUsers.find(u => 
+          u.name?.toLowerCase() === booking.assignedTeamMemberName?.toLowerCase() &&
+          u.role !== 'B2B_AGENT' && u.role !== 'BUYER'
+        );
+        if (member) {
+          booking.assignedTeamMemberId = member.id;
+          booking.assignedTeamMemberNameSnapshot = member.name;
+          booking.assignedTeamMemberEmailSnapshot = member.email;
+          changed = true;
+        }
+      }
+
+      // 3. Reconcile Assignment Status
+      const hasAgent = Boolean(booking.agentId);
+      const hasTeamMember = Boolean(booking.assignedTeamMemberId);
+
+      if (hasAgent && hasTeamMember) {
+        if (!booking.assignmentStatus) {
+          booking.assignmentStatus = 'assigned';
+          changed = true;
+        }
+        alreadyAssignedCount++;
+      } else if (!hasAgent) {
+        if (booking.assignmentStatus !== 'pending_agent_assignment') {
+          booking.assignmentStatus = 'pending_agent_assignment';
+          changed = true;
+        }
+        pendingAgentCount++;
+      } else if (!hasTeamMember) {
+        if (booking.assignmentStatus !== 'pending_internal_assignment') {
+          booking.assignmentStatus = 'pending_internal_assignment';
+          changed = true;
+        }
+        pendingInternalCount++;
+      }
+
+      // 4. Initialize Assignment History if empty
+      if (!booking.assignmentHistory || booking.assignmentHistory.length === 0) {
+        booking.assignmentHistory = [
+          {
+            id: `asg-mig-${booking.id}`,
+            timestamp: booking.createdAt || timestamp,
+            type: 'INITIAL_CREATION',
+            newAgentId: booking.agentId,
+            newAgentName: booking.agentNameSnapshot || booking.agentName,
+            newTeamMemberId: booking.assignedTeamMemberId,
+            newTeamMemberName: booking.assignedTeamMemberNameSnapshot || booking.assignedTeamMemberName,
+            assignedByUserId: booking.assignedByUserId || 'system-migration',
+            assignedByUserNameSnapshot: booking.assignedByUserNameSnapshot || 'System Migration',
+            notes: 'Reconciled during mandatory ownership & assignment architecture migration.'
+          }
+        ];
+        changed = true;
+      }
+
+      if (changed) {
+        booking.updatedAt = timestamp;
+        migratedCount++;
+      }
+
+      return booking;
+    });
+
+    if (migratedCount > 0) {
+      this.setItem('bookings', updated);
+      console.log(`MIGRATION: Successfully reconciled ${migratedCount} bookings with mandatory B2B Agent & Internal Team Member assignments.`);
+    }
+
+    return { migratedCount, alreadyAssignedCount, pendingInternalCount, pendingAgentCount };
   }
 
   /**
@@ -8580,6 +10901,10 @@ export class AppDatabase {
     unassignedByUser: User | null, 
     reason?: string
   ): Booking | null {
+    if (unassignedByUser && isExternalUser(unassignedByUser)) {
+      throw new Error('Unauthorized: Agent assignment is restricted to internal operations staff.');
+    }
+
     const all = this.getAllBookings();
     const idx = all.findIndex(b => b.id === bookingId || b.bookingReference === bookingId);
     if (idx === -1) return null;
@@ -8746,6 +11071,77 @@ export class AppDatabase {
       };
       leads.unshift(savedLead);
       this.logAudit(user, 'BOOKING_CREATED', 'TravelLead', savedLead.id, `Captured new CRM lead ${savedLead.leadNumber} for ${savedLead.contactName} (${savedLead.destinationName})`);
+    }
+
+    // Synchronize B2B Agent Commercial Association
+    if (!savedLead.responsibleAgentId && savedLead.assignedAgentId) {
+      savedLead.responsibleAgentId = savedLead.assignedAgentId;
+      savedLead.responsibleAgentNameSnapshot = savedLead.assignedAgentNameSnapshot;
+      savedLead.responsibleAgentEmailSnapshot = savedLead.assignedAgentEmailSnapshot;
+      savedLead.responsibleAgentAgencySnapshot = savedLead.assignedAgentAgencySnapshot;
+    }
+    if (savedLead.responsibleAgentId) {
+      if (!savedLead.submittingAgentId) {
+        savedLead.submittingAgentId = savedLead.responsibleAgentId;
+        savedLead.submittingAgentNameSnapshot = savedLead.responsibleAgentNameSnapshot;
+        savedLead.submittingAgentAgencySnapshot = savedLead.responsibleAgentAgencySnapshot;
+        savedLead.submittingAgentEmailSnapshot = savedLead.responsibleAgentEmailSnapshot;
+      }
+      savedLead.assignedAgentId = savedLead.responsibleAgentId;
+      savedLead.assignedAgentNameSnapshot = savedLead.responsibleAgentNameSnapshot;
+      savedLead.assignedAgentAgencySnapshot = savedLead.responsibleAgentAgencySnapshot;
+      savedLead.assignedAgentEmailSnapshot = savedLead.responsibleAgentEmailSnapshot;
+      savedLead.agentAssignmentStatus = 'assigned';
+      savedLead.leadVisibilityStatus = 'ASSIGNED';
+    } else {
+      savedLead.agentAssignmentStatus = 'pending_assignment';
+    }
+
+    // Synchronize Internal Team Member Assignment
+    if (!savedLead.assignedTeamMemberId && savedLead.assignedStaffId) {
+      savedLead.assignedTeamMemberId = savedLead.assignedStaffId;
+      savedLead.assignedTeamMemberNameSnapshot = savedLead.assignedStaffName;
+      savedLead.assignedTeamMemberEmailSnapshot = savedLead.assignedStaffEmail;
+    }
+    if (savedLead.assignedTeamMemberId) {
+      savedLead.assignedStaffId = savedLead.assignedTeamMemberId;
+      savedLead.assignedStaffName = savedLead.assignedTeamMemberNameSnapshot;
+      savedLead.assignedStaffEmail = savedLead.assignedTeamMemberEmailSnapshot;
+    }
+
+    // Compute Dual-Ownership Assignment Status
+    const hasAgent = Boolean(savedLead.responsibleAgentId || savedLead.assignedAgentId);
+    const hasTeamMember = Boolean(savedLead.assignedTeamMemberId || savedLead.assignedStaffId);
+    if (hasAgent && hasTeamMember) {
+      savedLead.assignmentStatus = 'assigned';
+    } else if (hasAgent && !hasTeamMember) {
+      savedLead.assignmentStatus = 'pending_internal_assignment';
+    } else if (!hasAgent && hasTeamMember) {
+      savedLead.assignmentStatus = 'pending_assignment';
+    } else {
+      savedLead.assignmentStatus = 'needs_assignment';
+    }
+
+    // Initialize assignmentHistory if empty
+    if (!savedLead.assignmentHistory || savedLead.assignmentHistory.length === 0) {
+      savedLead.assignmentHistory = [
+        {
+          id: `asg-init-${savedLead.id}`,
+          type: 'INITIAL_CREATION',
+          newAgentId: savedLead.responsibleAgentId,
+          newAgentName: savedLead.responsibleAgentNameSnapshot,
+          newTeamMemberId: savedLead.assignedTeamMemberId,
+          newTeamMemberName: savedLead.assignedTeamMemberNameSnapshot,
+          assignedStaffId: savedLead.assignedTeamMemberId,
+          assignedStaffName: savedLead.assignedTeamMemberNameSnapshot || 'Unassigned',
+          assignedByUserId: user?.id || 'system',
+          assignedByUserNameSnapshot: user?.name || 'CRM Engine',
+          assignedByUserRole: user?.role || 'ADMIN',
+          assignedBy: user?.name || 'CRM Engine',
+          assignedAt: savedLead.createdAt || timestamp,
+          notes: 'Lead record initialized with dual-ownership architecture.'
+        }
+      ];
     }
 
     // Defensive guarantee: ensure travelRequirements and specialRequests are strings
@@ -9143,27 +11539,43 @@ export class AppDatabase {
     user: User | null, 
     notes?: string
   ): TravelLead | null {
+    if (staff.id) {
+      try {
+        return this.assignLeadTeamMember(leadId, staff.id, user, notes);
+      } catch (e) {
+        console.debug('Fallback internal team assignment in assignLead:', e);
+      }
+    }
+
     const leads = this.getLeads();
     const index = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
     if (index === -1) return null;
 
     const timestamp = new Date().toISOString();
-    const prevStaff = leads[index].assignedStaffName;
+    const prevStaff = leads[index].assignedTeamMemberNameSnapshot || leads[index].assignedStaffName || 'Unassigned';
+    leads[index].assignedTeamMemberId = staff.id;
+    leads[index].assignedTeamMemberNameSnapshot = staff.name;
+    leads[index].assignedTeamMemberEmailSnapshot = staff.email;
     leads[index].assignedStaffId = staff.id;
     leads[index].assignedStaffName = staff.name;
     leads[index].assignedStaffEmail = staff.email;
-    leads[index].assignedDepartment = staff.department || 'SALES';
+    leads[index].assignedDepartment = staff.department || 'OPERATIONS';
+    leads[index].assignmentStatus = (leads[index].responsibleAgentId || leads[index].assignedAgentId) ? 'assigned' : 'pending_assignment';
     leads[index].updatedAt = timestamp;
     leads[index].lastActivityAt = timestamp;
     leads[index].lastActivitySummary = `Assigned to ${staff.name}`;
 
     const assignmentRecord: LeadAssignmentRecord = {
       id: `asg-${Date.now()}`,
+      type: 'ASSIGN_INTERNAL',
       assignedStaffId: staff.id,
       assignedStaffName: staff.name,
       assignedStaffEmail: staff.email,
       assignedDepartment: staff.department,
       assignedBy: user?.name || 'Manager',
+      assignedByUserId: user?.id || 'admin',
+      assignedByUserNameSnapshot: user?.name || 'Operations Desk',
+      assignedByUserRole: user?.role || 'ADMIN',
       assignedAt: timestamp,
       notes
     };
@@ -9378,6 +11790,7 @@ export class AppDatabase {
 
   public captureLeadFromSource(
     data: {
+      leadId?: string;
       contactName: string;
       email: string;
       phone?: string;
@@ -9422,9 +11835,12 @@ export class AppDatabase {
     const emailLower = (data.email || '').trim().toLowerCase();
     const timestamp = new Date().toISOString();
 
-    // Deduplication matching strategy: match by authenticated userId, or quoteId/bookingId, or email
+    // Deduplication matching strategy: match by explicit leadId first, then by authenticated userId, or quoteId/bookingId, or email
     let existingIdx = -1;
-    if (data.userId) {
+    if (data.leadId) {
+      existingIdx = leads.findIndex(l => l.id === data.leadId || l.leadNumber === data.leadId);
+    }
+    if (existingIdx === -1 && data.userId) {
       existingIdx = leads.findIndex(l => l.userId === data.userId && l.destinationName.toLowerCase() === (data.destinationName || '').toLowerCase());
     }
     if (existingIdx === -1 && emailLower) {
@@ -9432,6 +11848,9 @@ export class AppDatabase {
     }
     if (existingIdx === -1 && data.quoteId) {
       existingIdx = leads.findIndex(l => l.quoteId === data.quoteId || (l.quoteIds && l.quoteIds.includes(data.quoteId)));
+    }
+    if (existingIdx === -1 && data.bookingId) {
+      existingIdx = leads.findIndex(l => l.bookingId === data.bookingId || (l.bookingIds && l.bookingIds.includes(data.bookingId)));
     }
     if (existingIdx === -1 && emailLower) {
       existingIdx = leads.findIndex(l => l.email.toLowerCase() === emailLower);
@@ -9490,14 +11909,20 @@ export class AppDatabase {
         quoteId: data.quoteId || existing.quoteId,
         quoteNumber: data.quoteNumber || existing.quoteNumber,
         quoteIds: allQuoteIds,
+        activeQuoteId: data.quoteId || existing.activeQuoteId || existing.quoteId,
+        latestQuoteVersionId: data.quoteId ? `${data.quoteId}-v${data.quoteVersion || 1}` : existing.latestQuoteVersionId,
+        lastQuoteVersionNumber: data.quoteVersion || existing.lastQuoteVersionNumber || existing.quoteVersion || 1,
         quoteVersion: data.quoteVersion || existing.quoteVersion,
         quoteSnapshot: data.quoteSnapshot || existing.quoteSnapshot,
         quoteVersions: data.quoteVersions || existing.quoteVersions,
         bookingId: data.bookingId || existing.bookingId,
         bookingReference: data.bookingReference || existing.bookingReference,
         bookingIds: allBookingIds,
+        activeBookingId: data.bookingId || existing.activeBookingId || existing.bookingId,
         bookingValue: data.bookingValue || existing.bookingValue,
         requestedProducts: data.requestedProducts || existing.requestedProducts,
+        lastProposalActivityAt: (data.source === 'QUOTATION_SAVED' || data.source === 'PROPOSAL_DOWNLOADED') ? timestamp : existing.lastProposalActivityAt,
+        lastBookingActivityAt: (data.source === 'BOOKING_SUBMISSION' || data.bookingId) ? timestamp : existing.lastBookingActivityAt,
         updatedAt: timestamp,
         lastActivityAt: timestamp,
         lastActivitySummary: `Activity from ${data.source}: ${data.quoteNumber ? 'Quote #' + data.quoteNumber : data.bookingReference ? 'Booking #' + data.bookingReference : 'Inquiry updated'}`,
@@ -9543,6 +11968,30 @@ export class AppDatabase {
         userId: data.userId || user?.id,
         userType: data.userType || (user?.role === 'B2B_AGENT' ? 'B2B_AGENT' : user?.role === 'BUYER' ? 'BUYER' : 'PUBLIC'),
         b2bAgentId: data.b2bAgentId || (user?.role === 'B2B_AGENT' ? user.id : undefined),
+        // Submitting & Responsible Commercial B2B Agent
+        submittingAgentId: (user?.role === 'B2B_AGENT' ? user.id : data.b2bAgentId),
+        submittingAgentNameSnapshot: user?.role === 'B2B_AGENT' ? user.name : (data.agencyName || undefined),
+        submittingAgentAgencySnapshot: user?.role === 'B2B_AGENT' ? (user.agencyName || user.companyName) : data.agencyName,
+        submittingAgentEmailSnapshot: user?.role === 'B2B_AGENT' ? user.email : (data.userType === 'B2B_AGENT' ? data.email : undefined),
+        responsibleAgentId: (user?.role === 'B2B_AGENT' ? user.id : data.b2bAgentId),
+        responsibleAgentNameSnapshot: user?.role === 'B2B_AGENT' ? user.name : (data.agencyName || undefined),
+        responsibleAgentAgencySnapshot: user?.role === 'B2B_AGENT' ? (user.agencyName || user.companyName) : data.agencyName,
+        responsibleAgentEmailSnapshot: user?.role === 'B2B_AGENT' ? user.email : (data.userType === 'B2B_AGENT' ? data.email : undefined),
+        agentAssignmentStatus: (user?.role === 'B2B_AGENT' || data.b2bAgentId) ? 'assigned' : 'pending_assignment',
+        assignedAgentId: (user?.role === 'B2B_AGENT' ? user.id : data.b2bAgentId),
+        assignedAgentNameSnapshot: user?.role === 'B2B_AGENT' ? user.name : undefined,
+        leadVisibilityStatus: (user?.role === 'B2B_AGENT' || data.b2bAgentId) ? 'ASSIGNED' : 'UNASSIGNED',
+        // Internal Operations Team Member
+        assignedTeamMemberId: (user?.role === 'ADMIN' || user?.role === 'DMC_STAFF' || user?.role === 'TEAM_MEMBER') ? user.id : undefined,
+        assignedTeamMemberNameSnapshot: (user?.role === 'ADMIN' || user?.role === 'DMC_STAFF' || user?.role === 'TEAM_MEMBER') ? user.name : undefined,
+        assignedTeamMemberEmailSnapshot: (user?.role === 'ADMIN' || user?.role === 'DMC_STAFF' || user?.role === 'TEAM_MEMBER') ? user.email : undefined,
+        assignedStaffId: (user?.role === 'ADMIN' || user?.role === 'DMC_STAFF' || user?.role === 'TEAM_MEMBER') ? user.id : undefined as any,
+        assignedStaffName: (user?.role === 'ADMIN' || user?.role === 'DMC_STAFF' || user?.role === 'TEAM_MEMBER') ? user.name : undefined as any,
+        assignedStaffEmail: (user?.role === 'ADMIN' || user?.role === 'DMC_STAFF' || user?.role === 'TEAM_MEMBER') ? user.email : undefined as any,
+        assignedDepartment: (user as any)?.department || 'OPERATIONS',
+        assignmentStatus: (user?.role === 'B2B_AGENT' || data.b2bAgentId) 
+          ? ((user?.role === 'ADMIN' || user?.role === 'DMC_STAFF' || user?.role === 'TEAM_MEMBER') ? 'assigned' : 'pending_internal_assignment')
+          : ((user?.role === 'ADMIN' || user?.role === 'DMC_STAFF' || user?.role === 'TEAM_MEMBER') ? 'pending_assignment' : 'needs_assignment'),
         source: data.source || 'WEBSITE',
         campaignId: data.campaignId,
         campaignName: data.campaignName,
@@ -9551,10 +12000,6 @@ export class AppDatabase {
                 data.source === 'QUOTATION_SAVED' ? 'PROPOSAL_SAVED' : 'NEW',
         priority: calculatedPriority,
         conversionStatus: data.source === 'BOOKING_SUBMISSION' ? 'CONVERTED' : 'IN_PROGRESS',
-        assignedStaffId: user?.id || 'staff-01',
-        assignedStaffName: user?.name || 'Marcus Vance (Senior Ops)',
-        assignedStaffEmail: user?.email || 'business@theunbound.in',
-        assignedDepartment: 'OPERATIONS',
         destinationId: data.destinationId || 'japan',
         destinationName: data.destinationName || 'Japan',
         travelDates: data.travelDates || 'Upcoming 2026',
@@ -9575,13 +12020,24 @@ export class AppDatabase {
         quoteId: data.quoteId,
         quoteNumber: data.quoteNumber,
         quoteIds: data.quoteId ? [data.quoteId] : [],
+        activeQuoteId: data.quoteId,
+        latestQuoteVersionId: data.quoteId ? `${data.quoteId}-v${data.quoteVersion || 1}` : undefined,
+        lastQuoteVersionNumber: data.quoteVersion || 1,
         quoteVersion: data.quoteVersion || 1,
         quoteSnapshot: data.quoteSnapshot,
         quoteVersions: data.quoteVersions,
         bookingId: data.bookingId,
         bookingReference: data.bookingReference,
         bookingIds: data.bookingId ? [data.bookingId] : [],
+        activeBookingId: data.bookingId,
         bookingValue: data.bookingValue,
+        voucherIds: [],
+        invoiceIds: [],
+        paymentIds: [],
+        taskIds: [],
+        communicationIds: [],
+        lastProposalActivityAt: (data.source === 'QUOTATION_SAVED' || data.source === 'PROPOSAL_DOWNLOADED') ? timestamp : undefined,
+        lastBookingActivityAt: (data.source === 'BOOKING_SUBMISSION' || data.bookingId) ? timestamp : undefined,
         requestedProducts: data.requestedProducts || [],
         timeline: [
           {
@@ -11287,7 +13743,7 @@ export class AppDatabase {
             userRole: user.role,
             category: 'QUOTE',
             eventType: act.action,
-            title: `Quote #${q.quoteNumber || q.id}: ${act.action.replace(/_/g, ' ')}`,
+            title: `Quote #${q.quoteNumber || q.id}: ${(act.action || 'ACTION').replace(/_/g, ' ')}`,
             description: act.details || `Quote status updated to ${act.action}`,
             timestamp: act.timestamp || q.createdAt,
             entityId: q.id,
@@ -11506,7 +13962,7 @@ export class AppDatabase {
         userRole: user.role,
         category: cat,
         eventType: a.action,
-        title: `${a.entity || 'System'}: ${a.action.replace(/_/g, ' ')}`,
+        title: `${a.entity || 'System'}: ${(a.action || 'ACTION').replace(/_/g, ' ')}`,
         description: a.details || `${a.action} performed on ${a.entity}`,
         timestamp: a.timestamp,
         entityId: a.entityId,
@@ -13439,7 +15895,7 @@ export class AppDatabase {
       });
       return {
         ...sup,
-        supplierCode: sup.supplierCode || `SUP-${sup.id.replace(/\D/g, '').padStart(5, '0') || '00100'}`,
+        supplierCode: sup.supplierCode || `SUP-${(sup.id || '').replace(/\D/g, '').padStart(5, '0') || '00100'}`,
         status: sup.status || (sup.archivedAt ? 'ARCHIVED' : 'ACTIVE'),
         linkedServiceItemsCount: linkedItems,
         activeBookingsCount: activeBookings

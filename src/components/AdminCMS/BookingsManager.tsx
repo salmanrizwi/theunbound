@@ -6,6 +6,7 @@ import { formatCurrency } from '../../services/pricingEngine';
 import { BookingDashboardCards } from '../Bookings/BookingDashboardCards';
 import { BookingOperationsDesk, DeskSection } from '../Bookings/BookingOperationsDesk';
 import { ManualOperationalBookingModal } from '../Bookings/ManualOperationalBookingModal';
+import { OperationalHorizonDesk } from '../Bookings/OperationalHorizonDesk';
 import { 
   Search, 
   Filter, 
@@ -23,17 +24,23 @@ import {
   ShieldCheck, 
   Layers,
   ArrowRight,
-  TrendingUp
+  TrendingUp,
+  UserCheck,
+  UserPlus,
+  RefreshCw,
+  Compass
 } from 'lucide-react';
 import { CalendarTask } from '../../types';
 
 export interface BookingsManagerProps {
   initialBookingId?: string | null;
+  initialSubTab?: string;
   onOpenActionCenter?: (task: CalendarTask) => void;
 }
 
 export const BookingsManager: React.FC<BookingsManagerProps> = ({
   initialBookingId,
+  initialSubTab,
   onOpenActionCenter
 }) => {
   const { user } = useAuth();
@@ -41,11 +48,29 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
   
   const [bookings, setBookings] = useState<Booking[]>(() => db.getAllBookings());
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(initialBookingId || null);
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<'PIPELINE' | 'HORIZON'>(
+    initialSubTab === 'HORIZON' ? 'HORIZON' : 'PIPELINE'
+  );
   const [initialDeskSection, setInitialDeskSection] = useState<DeskSection>('OVERVIEW');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('ALL');
   const [channelFilter, setChannelFilter] = useState('ALL');
+  const [ownershipFilter, setOwnershipFilter] = useState<'ALL' | 'ASSIGNED_TO_ME' | 'PENDING_INTERNAL' | 'PENDING_AGENT'>('ALL');
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
+
+  const handleRunMigration = () => {
+    setIsMigrating(true);
+    try {
+      const res = db.migrateBookingAssignments();
+      alert(`Assignment reconciliation completed!\n• Migrated/Updated: ${res.migratedCount}\n• Already Complete: ${res.alreadyAssignedCount}\n• Pending Operational Owner: ${res.pendingInternalCount}\n• Pending Agent: ${res.pendingAgentCount}`);
+      setBookings(db.getAllBookings());
+    } catch (e: any) {
+      alert('Migration error: ' + (e?.message || e));
+    } finally {
+      setIsMigrating(false);
+    }
+  };
 
   useEffect(() => {
     const unsub = db.subscribe(() => {
@@ -86,11 +111,24 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
         b.customer?.name?.toLowerCase().includes(q) ||
         b.customer?.email?.toLowerCase().includes(q) ||
         b.agencyName?.toLowerCase().includes(q) ||
+        b.assignedTeamMemberNameSnapshot?.toLowerCase().includes(q) ||
+        b.assignedTeamMemberName?.toLowerCase().includes(q) ||
+        b.agentNameSnapshot?.toLowerCase().includes(q) ||
+        b.agentAgencySnapshot?.toLowerCase().includes(q) ||
         b.items?.some(it => it.productName.toLowerCase().includes(q));
 
       if (!matchesSearch) return false;
 
       if (channelFilter !== 'ALL' && b.sourceType !== channelFilter) return false;
+
+      // Ownership Filter
+      if (ownershipFilter === 'ASSIGNED_TO_ME') {
+        if (b.assignedTeamMemberId !== user?.id) return false;
+      } else if (ownershipFilter === 'PENDING_INTERNAL') {
+        if (b.assignedTeamMemberId && b.assignmentStatus !== 'pending_internal_assignment') return false;
+      } else if (ownershipFilter === 'PENDING_AGENT') {
+        if (b.agentId || b.submittingAgentId || b.assignedAgentId) return false;
+      }
 
       if (activeFilter === 'STATUS_NEW') return b.status === 'NEW' || b.status === 'PENDING_CONFIRMATION';
       if (activeFilter === 'STATUS_TO_BE_PROCESSED') return b.status === 'TO_BE_PROCESSED';
@@ -104,7 +142,7 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
 
       return true;
     });
-  }, [bookings, searchQuery, channelFilter, activeFilter]);
+  }, [bookings, searchQuery, channelFilter, ownershipFilter, activeFilter, user?.id]);
 
   // If a booking is selected, render the full unified Booking Operations & Supplier Allocation Desk
   if (selectedBookingId) {
@@ -147,6 +185,17 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
           </div>
 
           <button
+            type="button"
+            onClick={handleRunMigration}
+            disabled={isMigrating}
+            title="Reconcile legacy bookings to populate missing agent and internal owner snapshots"
+            className="inline-flex items-center space-x-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3.5 py-2.5 rounded-2xl transition-all cursor-pointer text-xs disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isMigrating ? 'animate-spin' : ''}`} />
+            <span>Reconcile Ownership</span>
+          </button>
+
+          <button
             id="btn-create-manual-booking"
             onClick={() => setIsManualModalOpen(true)}
             className="inline-flex items-center space-x-2 bg-[#008972] hover:bg-[#00705d] text-white font-bold px-4 py-2.5 rounded-2xl transition-all cursor-pointer shadow-xs text-xs sm:text-sm"
@@ -157,12 +206,62 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
         </div>
       </div>
 
-      {/* Dashboard Status Metric Cards */}
-      <BookingDashboardCards
-        bookings={bookings}
-        activeFilter={activeFilter}
-        onSelectFilter={handleSelectFilter}
-      />
+      {/* Primary Workspace Navigation Tabs */}
+      <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
+        <button
+          type="button"
+          onClick={() => setActiveWorkspaceTab('PIPELINE')}
+          className={`flex items-center space-x-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+            activeWorkspaceTab === 'PIPELINE'
+              ? 'bg-[#008972] text-white shadow-xs'
+              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+          }`}
+        >
+          <Building2 className="w-4 h-4" />
+          <span>Booking Pipeline & Supplier Allocation</span>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+            activeWorkspaceTab === 'PIPELINE' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
+          }`}>
+            {bookings.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveWorkspaceTab('HORIZON')}
+          className={`flex items-center space-x-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+            activeWorkspaceTab === 'HORIZON'
+              ? 'bg-[#008972] text-white shadow-xs'
+              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+          }`}
+        >
+          <Compass className="w-4 h-4" />
+          <span>Operational Horizon & Ground Dispatch Desk</span>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+            activeWorkspaceTab === 'HORIZON' ? 'bg-white/20 text-white' : 'bg-teal-50 text-teal-800 border border-teal-200'
+          }`}>
+            Daily Ops
+          </span>
+        </button>
+      </div>
+
+      {/* Render Active Workspace */}
+      {activeWorkspaceTab === 'HORIZON' ? (
+        <OperationalHorizonDesk
+          currentUser={user}
+          onOpenBooking={(id) => {
+            setSelectedBookingId(id);
+          }}
+          onBackToAllocationDesk={() => setActiveWorkspaceTab('PIPELINE')}
+        />
+      ) : (
+        <>
+          {/* Dashboard Status Metric Cards */}
+          <BookingDashboardCards
+            bookings={bookings}
+            activeFilter={activeFilter}
+            onSelectFilter={handleSelectFilter}
+          />
 
       {/* Filter and Search Bar */}
       <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -180,6 +279,18 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
 
         <div className="flex items-center gap-2 flex-wrap">
           <select
+            id="select-ownership-filter"
+            value={ownershipFilter}
+            onChange={(e: any) => setOwnershipFilter(e.target.value)}
+            className="px-3.5 py-2.5 rounded-xl text-xs bg-white border border-slate-200 text-slate-700 font-semibold focus:outline-hidden focus:border-[#008972]"
+          >
+            <option value="ALL">All Assignments</option>
+            <option value="ASSIGNED_TO_ME">Assigned to Me (Owner)</option>
+            <option value="PENDING_INTERNAL">Pending Operational Owner</option>
+            <option value="PENDING_AGENT">Pending Agent Association</option>
+          </select>
+
+          <select
             id="select-channel-filter"
             value={channelFilter}
             onChange={(e) => setChannelFilter(e.target.value)}
@@ -191,13 +302,16 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
             <option value="MANUAL">Internal Ops / Manual</option>
           </select>
 
-          {activeFilter !== 'ALL' && (
+          {(activeFilter !== 'ALL' || ownershipFilter !== 'ALL') && (
             <button
-              onClick={() => setActiveFilter('ALL')}
+              onClick={() => {
+                setActiveFilter('ALL');
+                setOwnershipFilter('ALL');
+              }}
               className="px-3.5 py-2.5 rounded-xl text-xs text-[#008972] hover:bg-[#008972]/10 border border-slate-200 flex items-center gap-1.5 font-bold transition-colors cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              Reset Filter
+              Reset Filters
             </button>
           )}
         </div>
@@ -222,6 +336,7 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
                 <tr>
                   <th className="py-3.5 px-4">Booking & Channel</th>
                   <th className="py-3.5 px-4">Lead Passenger & Hub</th>
+                  <th className="py-3.5 px-4">Dual Assignment</th>
                   <th className="py-3.5 px-4">Schedule</th>
                   <th className="py-3.5 px-4">Service Items</th>
                   <th className="py-3.5 px-4">Supplier Allocation</th>
@@ -266,6 +381,35 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
                           <span className="text-[11px] text-slate-400">
                             {b.destinationName || b.destination || 'Japan'}
                           </span>
+                        </div>
+                      </td>
+
+                      {/* Dual Assignment (B2B Agent & Internal Operational Owner) */}
+                      <td className="py-4 px-4 align-top">
+                        <div className="space-y-1.5 min-w-[170px]">
+                          <div>
+                            <span className="text-[9px] text-slate-400 font-bold block uppercase">B2B Agent</span>
+                            <span className="font-semibold text-slate-900 block text-xs truncate max-w-[180px]">
+                              {b.agentNameSnapshot || b.agencyName || (b.submittingAgentId ? 'Partner Agent' : 'Direct')}
+                            </span>
+                            {b.agentAgencySnapshot && (
+                              <span className="text-[10px] text-slate-500 block truncate max-w-[180px]">
+                                {b.agentAgencySnapshot}
+                              </span>
+                            )}
+                          </div>
+                          <div className="pt-1 border-t border-slate-100">
+                            <span className="text-[9px] text-slate-400 font-bold block uppercase">Operational Owner</span>
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider ${
+                                b.assignedTeamMemberId
+                                  ? 'bg-teal-50 text-[#008f77] border border-teal-200'
+                                  : 'bg-rose-50 text-rose-700 border border-rose-200'
+                              }`}>
+                                {b.assignedTeamMemberNameSnapshot || b.assignedTeamMemberName || 'Pending'}
+                              </span>
+                            </div>
+                          </div>
                         </div>
                       </td>
 
@@ -346,6 +490,8 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
           </div>
         )}
       </div>
+      </>
+      )}
 
       {/* Single Authoritative Booking Creation Modal */}
       {isManualModalOpen && (

@@ -394,7 +394,7 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
 
       const rows = userMetricsList.map(m => [
         `"${m.user.id}"`,
-        `"${m.user.name.replace(/"/g, '""')}"`,
+        `"${(m.user.name || '').replace(/"/g, '""')}"`,
         `"${m.user.email}"`,
         `"${(m.user.agencyName || m.user.companyName || 'Direct').replace(/"/g, '""')}"`,
         `"${m.user.role}"`,

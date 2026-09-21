@@ -145,15 +145,15 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
 
   // Canonical Homepage Module Sequence (Controls the live homepage section sequence)
   homepageModuleOrder: [
-    'buyer-homepage-hero',
-    'b2b-brand-introduction',
-    'homepage-city-hubs',
-    'b2b-destination-expertise',
-    'b2b-partnership-benefits',
-    'b2b-onboarding-process',
-    'b2b-testimonials',
-    'b2b-trade-faqs',
-    'b2b-final-cta'
+    'hero',
+    'brandIntroduction',
+    'cityHubs',
+    'destinationFilter',
+    'partnershipBenefits',
+    'onboardingProcess',
+    'testimonials',
+    'homepageFaqs',
+    'conversionCta'
   ],
 
   // Module display toggles (The 9 live modules on the homepage)

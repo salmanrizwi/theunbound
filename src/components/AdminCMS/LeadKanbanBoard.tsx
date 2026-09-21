@@ -13,7 +13,9 @@ import {
   CheckCircle2,
   ArrowRight,
   Sparkles,
-  Layers
+  Layers,
+  Building,
+  UserCheck
 } from 'lucide-react';
 import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
 
@@ -232,6 +234,40 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
                           )}
                         </div>
 
+                        {/* Dual Ownership Strip */}
+                        {(() => {
+                          const agentName = lead.responsibleAgentNameSnapshot || lead.assignedAgentNameSnapshot || (lead.userType === 'B2B_AGENT' ? lead.agencyName : undefined);
+                          const staffName = lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName;
+                          const hasAgent = Boolean(lead.responsibleAgentId || lead.assignedAgentId || agentName);
+                          const hasStaff = Boolean(lead.assignedTeamMemberId || lead.assignedStaffId || staffName);
+                          const isFullyAssigned = hasAgent && hasStaff;
+
+                          return (
+                            <div className="space-y-1.5 pt-0.5">
+                              <div className="flex items-center justify-between gap-1 text-[10px]">
+                                {/* Commercial B2B Agent */}
+                                <div className="flex items-center gap-1 truncate max-w-[130px]">
+                                  <Building className={`w-3 h-3 shrink-0 ${hasAgent ? 'text-indigo-600' : 'text-amber-500'}`} />
+                                  <span className={`truncate font-semibold ${hasAgent ? 'text-slate-800' : 'text-amber-700 italic'}`}>
+                                    {agentName || 'Needs Agent'}
+                                  </span>
+                                </div>
+
+                                {/* Status chip */}
+                                {isFullyAssigned ? (
+                                  <span className="text-[9px] font-black uppercase text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.2 rounded shrink-0">
+                                    Dual
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-black uppercase text-rose-700 bg-rose-50 border border-rose-200/80 px-1.5 py-0.2 rounded shrink-0">
+                                    Incomplete
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
                         {/* Destination & Value Info */}
                         <div className="bg-slate-50/90 p-2.5 rounded-xl text-xs space-y-1.5 border border-slate-100">
                           <div className="flex items-center justify-between text-slate-700">
@@ -272,12 +308,12 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
                           </div>
                         )}
 
-                        {/* Footer with Assigned Staff & Next Stage quick button */}
+                        {/* Footer with Assigned Internal Staff & Next Stage quick button */}
                         <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
                           <div className="flex items-center gap-1.5 text-slate-500 truncate max-w-[130px]">
-                            <User className="w-3 h-3 text-slate-400 shrink-0" />
-                            <span className="truncate font-semibold text-[11px] text-slate-700">
-                              {lead.assignedStaffName?.split(' ')[0] || 'Unassigned'}
+                            <UserCheck className={`w-3 h-3 shrink-0 ${lead.assignedTeamMemberId || lead.assignedStaffId ? 'text-[#008f77]' : 'text-rose-500'}`} />
+                            <span className={`truncate font-semibold text-[11px] ${lead.assignedTeamMemberId || lead.assignedStaffId ? 'text-slate-700' : 'text-rose-600 italic font-bold'}`}>
+                              {lead.assignedTeamMemberNameSnapshot?.split(' ')[0] || lead.assignedStaffName?.split(' ')[0] || 'Needs Staff'}
                             </span>
                           </div>
 

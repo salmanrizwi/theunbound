@@ -349,8 +349,8 @@ export function createIntegrationsRouter(): Router {
         status: 'CONNECTED',
         isSimulation: true,
         accountEmail: 'business@theunbound.in',
-        messagesTotal: 142,
-        threadsTotal: 87,
+        messagesTotal: 0,
+        threadsTotal: 0,
         details: 'Gmail API operational in Verified Sandbox Mode for business@theunbound.in. Transactional email queue ready.',
         checkedAt: now
       });
@@ -719,7 +719,7 @@ export function createIntegrationsRouter(): Router {
         lastSyncError: store.sheetsStats.lastError,
         lastSyncDurationMs: store.sheetsStats.lastSyncDurationMs,
         lastValidationStatus: store.sheetsStats.lastValidationStatus || 'Passed (Hierarchy & FK Validated)',
-        totalSyncedCount: store.sheetsStats.rowsCreated + store.sheetsStats.rowsUpdated || 1284,
+        totalSyncedCount: store.sheetsStats.rowsCreated + store.sheetsStats.rowsUpdated,
         checkedAt: now,
         details: `Connected to Enterprise Spreadsheet (16 Canonical Tabs Verified).`
       });

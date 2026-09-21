@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Server,
   Zap,
+  Layers,
   ArrowRight
 } from 'lucide-react';
 import { AuditLog, User } from '../../../types';
@@ -56,9 +57,17 @@ export const AuditStreamAndQuickActionsSection: React.FC<AuditStreamAndQuickActi
     {
       id: 'qa-quote',
       title: 'Create Quotation',
-      desc: 'Price custom FIT/Group proposal',
+      desc: 'Open new proposal workspace',
       icon: FileText,
       color: 'bg-purple-50 text-purple-700 hover:bg-purple-100',
+      action: () => onNavigate('LEAD_MANAGEMENT', 'BUILDER', 'new')
+    },
+    {
+      id: 'qa-quote-ledger',
+      title: 'Quotation Records',
+      desc: 'Inspect existing quotes & versions',
+      icon: Layers,
+      color: 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100',
       action: () => onNavigate('LEAD_MANAGEMENT', 'QUOTES')
     },
     {
@@ -168,7 +177,7 @@ export const AuditStreamAndQuickActionsSection: React.FC<AuditStreamAndQuickActi
         <div className="bg-white rounded-3xl border border-slate-200/90 p-5 sm:p-7 shadow-xs space-y-4">
           <div className="border-b border-slate-100 pb-3">
             <h3 className="text-sm font-extrabold text-slate-900 uppercase tracking-wider">
-              Quick Action Launchpad
+              QUICK ACTION LAUNCHPAD
             </h3>
             <p className="text-[11px] text-slate-500">Accelerated navigation to daily execution modules</p>
           </div>

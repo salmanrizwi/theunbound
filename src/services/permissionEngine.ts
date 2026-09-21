@@ -833,7 +833,7 @@ export function canUserAccessTopSection(
 
   switch (sectionId) {
     case 'OVERVIEW':
-      return true; // Any authorized CMS user can view Command Dashboard
+      return true; // Any authorized CMS user can view Quick Action Launchpad
 
     case 'SYSTEM_ANALYSIS':
       return canUserAccessSystemAnalysis(user, 'view');
@@ -1169,4 +1169,420 @@ export function syncSessionUserPermissions(updatedUser: User): void {
   } catch (e) {
     console.error('Error syncing session permissions:', e);
   }
+}
+
+// ---------------------------------------------------------------------------
+// AUTHORITATIVE B2B AGENT RESTRICTIONS & PERMISSION CONTRACTS
+// ---------------------------------------------------------------------------
+
+export const B2B_AGENT_ALLOWED_MODULES = [
+  'booking_overview',
+  'passengers_docs'
+] as const;
+
+export const B2B_AGENT_RESTRICTED_MODULES = [
+  'service_items_and_supplier_allocation',
+  'supplier_management',
+  'supplier_directory',
+  'supplier_search',
+  'supplier_filters',
+  'supplier_commercial_pricing',
+  'buying_cost',
+  'nett_cost',
+  'markup_and_margin',
+  'profit',
+  'internal_pricing',
+  'internal_notes_and_updates',
+  'internal_dispatch_desk',
+  'operational_horizon_and_ground_dispatch_desk',
+  'supplier_confirmation',
+  'supplier_invoice_management',
+  'internal_voucher_management',
+  'internal_audit',
+  'internal_booking_editing',
+  'internal_allocation_controls',
+  'internal_payment_ledger',
+  'internal_commercial_documents'
+] as const;
+
+export const SUBMISSION_LOCKED_FIELDS = [
+  'customerName',
+  'customerContact',
+  'travelDates',
+  'destination',
+  'hub',
+  'passengerCount',
+  'passengerNames',
+  'selectedServices',
+  'hotelDetails',
+  'transferDetails',
+  'activityDetails',
+  'tourDetails',
+  'dailyTourDetails',
+  'bookingNotes',
+  'sellingPrice',
+  'paymentTerms',
+  'bookingStatus',
+  'serviceDates',
+  'serviceTimes',
+  'supplierInformation',
+  'internalOperationalFields',
+  'commercialFields'
+] as const;
+
+/**
+ * Evaluates whether a user is an external user (B2B Agent or Buyer)
+ */
+export function isExternalUser(user: User | null | undefined): boolean {
+  if (!user) return true;
+  const role = user.role;
+  return role === 'B2B_AGENT' || role === 'AGENT' || role === 'BUYER' || role === 'VIEWER' || role === 'PUBLIC';
+}
+
+/**
+ * Checks if a user is internal staff (Admin, Team Member, DMC Staff)
+ */
+export function isInternalStaff(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (isMasterAdmin(user)) return true;
+  return user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF';
+}
+
+/**
+ * Validates whether a user can access a specific section of Booking Operations Desk
+ * External B2B Agents can ONLY access OVERVIEW and PASSENGERS
+ */
+export function canAccessBookingDeskSection(
+  user: User | null | undefined, 
+  section: string
+): boolean {
+  if (!user) return false;
+  
+  if (isExternalUser(user)) {
+    return section === 'OVERVIEW' || section === 'PASSENGERS';
+  }
+
+  // Internal staff can access all tabs based on booking operations permission
+  return true;
+}
+
+/**
+ * Evaluates whether a booking can be edited after submission.
+ * Enforces: canEdit(bookings, submitted_booking, b2b_agent) = false
+ */
+export function canEditSubmittedBooking(
+  user: User | null | undefined, 
+  booking: any
+): boolean {
+  if (!user) return false;
+  if (isMasterAdmin(user) || user.role === 'ADMIN') return true;
+
+  // If internal staff, check booking editing permission
+  if (isInternalStaff(user)) {
+    return hasBookingOperationsPermission(user, 'edit');
+  }
+
+  // B2B Agent & Buyer: Strictly locked once submitted or not in DRAFT
+  if (isExternalUser(user)) {
+    // If the booking is already created/submitted, it is immutable
+    const status = booking?.status;
+    if (!status || status === 'DRAFT') {
+      return true; // only pre-submission draft
+    }
+    return false;
+  }
+
+  return false;
+}
+
+/**
+ * Checks if passenger identity details can be changed after submission
+ */
+export function canEditPassengerDetails(
+  user: User | null | undefined, 
+  booking: any
+): boolean {
+  if (!user) return false;
+  if (isMasterAdmin(user) || user.role === 'ADMIN') return true;
+  if (isInternalStaff(user)) {
+    return hasBookingOperationsPermission(user, 'edit');
+  }
+  // B2B Agent: No, unless separately approved
+  return false;
+}
+
+/**
+ * Checks if passenger compliance documents (Passport, PAN) can be uploaded or replaced
+ */
+export function canUploadPassengerDocuments(
+  user: User | null | undefined, 
+  booking: any
+): boolean {
+  if (!user) return false;
+  // B2B Agent and internal staff are permitted to upload and replace passenger compliance docs
+  return true;
+}
+
+/**
+ * Checks field-level visibility for booking data
+ */
+export function canViewBookingField(
+  user: User | null | undefined, 
+  fieldName: string
+): boolean {
+  const sensitiveFields = [
+    'supplierId',
+    'supplierName',
+    'supplierContact',
+    'supplierPrice',
+    'supplierTotalCost',
+    'supplierConfirmationRef',
+    'supplierConfirmationStatus',
+    'supplierInvoice',
+    'supplierAllocation',
+    'allocatedItems',
+    'confirmedItems',
+    'unitNetPrice',
+    'costPrice',
+    'netCost',
+    'totalNetCost',
+    'grossProfit',
+    'grossMarginPercent',
+    'internalNettCost',
+    'internalProfit',
+    'markup',
+    'margin',
+    'internalNotes',
+    'internalNotesList',
+    'internalTasks',
+    'internalAudit',
+    'auditLog',
+    'deskHandler',
+    'groundDispatch',
+    'dispatchDesk'
+  ];
+
+  if (sensitiveFields.includes(fieldName)) {
+    return isInternalStaff(user);
+  }
+
+  return true;
+}
+
+/**
+ * B2B Agent Sanitized Booking DTO
+ * Strictly eliminates all supplier identities, supplier confirmation refs, buying prices,
+ * internal markups, internal audit logs, internal dispatch desks, and internal notes.
+ */
+export interface B2BAgentBookingDTO {
+  id: string;
+  bookingReference: string;
+  status: string;
+  customerFacingStatus: string;
+  createdAt: string;
+  updatedAt?: string;
+  travelStartDate?: string;
+  travelEndDate?: string;
+  destinationName?: string;
+  hub?: string;
+  currency: string;
+  totalSellingPrice: number;
+  paymentStatus: string;
+  documentStatus: string;
+  isSubmitted: boolean;
+  isReadOnly: boolean;
+  submissionLockMessage: string;
+  customer: {
+    leadTravelerName?: string;
+    email?: string;
+    phone?: string;
+    agencyName?: string;
+    agentRefNumber?: string;
+    totalAdults?: number;
+    totalChildren?: number;
+    totalInfants?: number;
+    specialRequests?: string;
+    flightDetails?: string;
+    pickupLocation?: string;
+  };
+  passengers: Array<{
+    id: string;
+    passengerNumber: number;
+    isLeadPax?: boolean;
+    leadPassenger?: boolean;
+    firstName?: string;
+    lastName?: string;
+    fullName?: string;
+    type?: string;
+    paxType?: string;
+    dateOfBirth?: string;
+    gender?: string;
+    nationality?: string;
+    passportNumber?: string;
+    passportExpiryDate?: string;
+    passportExpiry?: string;
+    passportFrontUrl?: string;
+    passportFrontName?: string;
+    passportBackUrl?: string;
+    passportBackName?: string;
+    panNumber?: string;
+    panCardUrl?: string;
+    panCardName?: string;
+    verificationStatus?: string;
+    documentVerificationStatus?: string;
+    mealPreference?: string;
+  }>;
+  items: Array<{
+    id: string;
+    productId?: string;
+    productName: string;
+    category?: string;
+    destinationName?: string;
+    city?: string;
+    travelDate?: string;
+    serviceDate?: string;
+    serviceTime?: string;
+    totalPax: number;
+    adults: number;
+    children?: number;
+    infants?: number;
+    unitSellingPrice?: number;
+    totalPrice: number;
+    currency: string;
+    status?: string;
+    customerNotes?: string;
+  }>;
+  customerNotes?: string[];
+  customerTimeline?: Array<{
+    id: string;
+    title: string;
+    timestamp: string;
+    type: string;
+    description?: string;
+  }>;
+}
+
+/**
+ * Transforms an internal Booking object into a safe, hermetic B2BAgentBookingDTO
+ */
+export function toB2BAgentBookingDTO(booking: any): B2BAgentBookingDTO {
+  const isSubmitted = booking.status !== 'DRAFT';
+  
+  // Format customer-facing service items with ZERO supplier/cost data
+  const sanitizedItems = (booking.items || []).map((it: any) => ({
+    id: it.id,
+    productId: it.productId,
+    productName: it.productName || 'Ground Service Item',
+    category: it.category || 'SERVICE',
+    destinationName: it.destinationName || booking.destinationName || '',
+    city: it.city || '',
+    travelDate: it.travelDate || it.serviceDate || booking.travelStartDate || '',
+    serviceDate: it.serviceDate || it.travelDate || booking.travelStartDate || '',
+    serviceTime: it.serviceTime || '',
+    totalPax: it.totalPax || it.adults || 1,
+    adults: it.adults || 1,
+    children: it.children || 0,
+    infants: it.infants || 0,
+    unitSellingPrice: it.unitSellingPrice || (it.totalPrice && it.totalPax ? Math.round(it.totalPrice / it.totalPax) : it.totalPrice),
+    totalPrice: it.totalPrice || 0,
+    currency: it.currency || booking.currency || 'USD',
+    status: it.status || 'CONFIRMED',
+    customerNotes: it.customerNotes || ''
+  }));
+
+  // Format passengers with document verification status
+  const sanitizedPassengers = (booking.passengers || []).map((p: any, idx: number) => ({
+    id: p.id || `pax-${idx + 1}`,
+    passengerNumber: p.passengerNumber || (idx + 1),
+    isLeadPax: Boolean(p.isLeadPax || p.leadPassenger || idx === 0),
+    leadPassenger: Boolean(p.isLeadPax || p.leadPassenger || idx === 0),
+    firstName: p.firstName || '',
+    lastName: p.lastName || '',
+    fullName: p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim() || 'Passenger',
+    type: p.type || p.paxType || 'ADULT',
+    paxType: p.paxType || p.type || 'ADULT',
+    dateOfBirth: p.dateOfBirth || '',
+    gender: p.gender || '',
+    nationality: p.nationality || '',
+    passportNumber: p.passportNumber || '',
+    passportExpiryDate: p.passportExpiryDate || p.passportExpiry || '',
+    passportExpiry: p.passportExpiry || p.passportExpiryDate || '',
+    passportFrontUrl: p.passportFrontUrl || '',
+    passportFrontName: p.passportFrontName || '',
+    passportBackUrl: p.passportBackUrl || '',
+    passportBackName: p.passportBackName || '',
+    panNumber: p.panNumber || '',
+    panCardUrl: p.panCardUrl || '',
+    panCardName: p.panCardName || '',
+    verificationStatus: p.verificationStatus || (p.passportFrontUrl ? 'VERIFIED' : 'PENDING'),
+    documentVerificationStatus: p.documentVerificationStatus || (p.passportFrontUrl ? 'VERIFIED' : 'PENDING'),
+    mealPreference: p.mealPreference || ''
+  }));
+
+  // Customer facing notes only
+  const customerNotes = Array.isArray(booking.customerNotes) 
+    ? booking.customerNotes 
+    : booking.customerNotes ? [booking.customerNotes] : [];
+
+  // Filter timeline entries to only customer-facing ones
+  const customerTimeline = (booking.auditLog || booking.timeline || [])
+    .filter((e: any) => !e.internalOnly && !e.isInternal && e.type !== 'SUPPLIER_ACTION' && e.type !== 'INTERNAL_NOTE')
+    .map((e: any) => ({
+      id: e.id || `tl-${Math.random()}`,
+      title: e.title || e.action || 'Booking Update',
+      timestamp: e.timestamp || e.createdAt || new Date().toISOString(),
+      type: e.type || 'STATUS_CHANGE',
+      description: e.description || e.message || ''
+    }));
+
+  return {
+    id: booking.id,
+    bookingReference: booking.bookingReference,
+    status: booking.status,
+    customerFacingStatus: booking.status,
+    createdAt: booking.createdAt,
+    updatedAt: booking.updatedAt,
+    travelStartDate: booking.travelStartDate,
+    travelEndDate: booking.travelEndDate,
+    destinationName: booking.destinationName || (booking.items?.[0]?.destinationName) || '',
+    hub: booking.hub || (booking.items?.[0]?.city) || '',
+    currency: booking.currency || 'USD',
+    totalSellingPrice: booking.totalAmount || booking.finalSellingPrice || booking.sellingPrice || 0,
+    paymentStatus: booking.paymentStatus || 'UNPAID',
+    documentStatus: booking.documentStatus || 'DOCUMENTS_PENDING',
+    isSubmitted,
+    isReadOnly: isSubmitted,
+    submissionLockMessage: 'This booking has been submitted and is now read-only. Please contact the internal team if a correction is required.',
+    customer: {
+      leadTravelerName: booking.customer?.leadTravelerName || booking.leadPassengerName || 'Guest',
+      email: booking.customer?.email || booking.leadPassengerEmail || '',
+      phone: booking.customer?.phone || booking.leadPassengerPhone || '',
+      agencyName: booking.customer?.agencyName || booking.agencyName || '',
+      agentRefNumber: booking.customer?.agentRefNumber || booking.agentRefNumber || '',
+      totalAdults: booking.customer?.totalAdults || (booking.passengers?.filter((p: any) => p.type !== 'CHILD' && p.type !== 'INFANT').length) || 1,
+      totalChildren: booking.customer?.totalChildren || (booking.passengers?.filter((p: any) => p.type === 'CHILD').length) || 0,
+      totalInfants: booking.customer?.totalInfants || (booking.passengers?.filter((p: any) => p.type === 'INFANT').length) || 0,
+      specialRequests: booking.customer?.specialRequests || '',
+      flightDetails: booking.customer?.flightDetails || '',
+      pickupLocation: booking.customer?.pickupLocation || ''
+    },
+    passengers: sanitizedPassengers,
+    items: sanitizedItems,
+    customerNotes,
+    customerTimeline
+  };
+}
+
+/**
+ * Sanitizes a booking based on the requesting user's role
+ */
+export function sanitizeBookingForUser(
+  booking: any, 
+  user: User | null | undefined
+): any {
+  if (!booking) return null;
+  if (isExternalUser(user)) {
+    return toB2BAgentBookingDTO(booking);
+  }
+  return booking;
 }

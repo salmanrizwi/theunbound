@@ -114,7 +114,7 @@ export const CMSGlobalSearch: React.FC<CMSGlobalSearchProps> = ({
         results.push({
           id: h.id,
           title: h.name,
-          subtitle: `${h.starRating}★ ${h.propertyType.replace('_', ' ')} • ${h.cityName} • from ${h.currency} ${h.startingNetPrice}/nt`,
+          subtitle: `${h.starRating}★ ${(h.propertyType || 'HOTEL').replace('_', ' ')} • ${h.cityName} • from ${h.currency} ${h.startingNetPrice}/nt`,
           entityType: 'HOTEL',
           moduleSection: 'HOTEL_MANAGEMENT',
           subTab: 'HOTELS',

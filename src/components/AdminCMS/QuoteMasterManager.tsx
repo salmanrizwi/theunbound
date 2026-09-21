@@ -43,10 +43,11 @@ import { ShareWhatsAppModal } from '../B2BAgentPortal/ShareWhatsAppModal';
 import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
 import { CalendarTask } from '../../types';
 
-interface QuoteMasterManagerProps {
+export interface QuoteMasterManagerProps {
   initialQuoteId?: string | null;
   onLoadQuote?: (quote: Quotation) => void;
   onNavigateToLeads?: (leadId?: string) => void;
+  onNavigateToBuilder?: (quoteId?: string, options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly'; leadId?: string }) => void;
   onOpenActionCenter?: (task: CalendarTask) => void;
 }
 
@@ -54,6 +55,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
   initialQuoteId,
   onLoadQuote,
   onNavigateToLeads,
+  onNavigateToBuilder,
   onOpenActionCenter
 }) => {
   const db = AppDatabase.getInstance();
@@ -156,7 +158,13 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
     if (newQuote) {
       showSuccess(`Created new draft version v${newQuote.version || 2} of quote #${newQuote.quoteNumber}`);
       refresh();
-      if (onLoadQuote) {
+      if (onNavigateToBuilder) {
+        onNavigateToBuilder(newQuote.id, {
+          version: newQuote.version,
+          mode: 'edit',
+          leadId: newQuote.leadId
+        });
+      } else if (onLoadQuote) {
         onLoadQuote(newQuote);
       }
     }
@@ -310,51 +318,9 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
   const handleConvertToBooking = (q: Quotation) => {
     if (confirm(`Convert quote #${q.quoteNumber} into a live ground booking reservation?`)) {
       try {
-        const bookingDraft = db.createBooking({
-          sourceType: 'QUOTATION',
-          quoteId: q.id,
-          quoteNumber: q.quoteNumber,
-          destinationName: q.destination,
-          customer: {
-            leadTravelerName: q.clientName || 'Valued Traveler',
-            email: q.clientEmail || q.agentEmail || 'booking@example.com',
-            phone: q.clientPhone || q.agentPhone || '+1-555-0199',
-            agencyName: q.agentAgency || q.agentCompany,
-            agentRefNumber: q.leadId || q.quoteNumber,
-            totalAdults: q.adultsCount || q.totalPax || 2,
-            totalChildren: q.childrenCount || 0,
-            totalInfants: q.infantsCount || 0
-          },
-          items: (q.items || []).map((item, idx) => ({
-            id: `bk-item-${Date.now()}-${idx}`,
-            productId: item.product?.id || `prod-${idx}`,
-            productName: item.product?.name || `Tour Service ${idx + 1}`,
-            productSku: item.product?.sku || `SKU-${idx + 100}`,
-            destinationName: q.destination || 'Japan',
-            city: item.product?.city || 'Tokyo',
-            category: item.product?.category || 'ACTIVITY',
-            travelDate: item.travelDate || q.travelStartDate || new Date().toISOString().split('T')[0],
-            adults: q.adultsCount || q.totalPax || 2,
-            children: q.childrenCount || 0,
-            infants: q.infantsCount || 0,
-            totalPax: q.totalPax || 2,
-            unitNetPrice: (item.calculation as any)?.totalNetCost ? ((item.calculation as any).totalNetCost / (q.totalPax || 1)) : 100,
-            unitSellingPrice: item.calculation?.finalTotalSellingPrice ? (item.calculation.finalTotalSellingPrice / (q.totalPax || 1)) : 120,
-            totalPrice: item.calculation?.finalTotalSellingPrice || 120,
-            currency: (q.currency || 'USD') as any,
-            supplierStatus: 'PENDING_DISPATCH'
-          })),
-          currency: (q.currency || 'USD') as any,
-          totalAmount: q.totalSellingPrice || 0,
-          totalNetCost: q.totalNetCost || 0,
-          travelStartDate: q.travelStartDate || new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
-          travelEndDate: q.travelEndDate || new Date(Date.now() + 21 * 86400000).toISOString().split('T')[0]
-        }, user);
-
-        // Update quote status to ACCEPTED
-        db.updateQuotationStatus(q.id, 'ACCEPTED', user);
+        const booking = db.submitBookingFromQuote(q.id, user);
         refresh();
-        showSuccess(`Created Ground Booking #${bookingDraft.bookingReference} from Quote #${q.quoteNumber}!`);
+        showSuccess(`Created Ground Booking #${booking.bookingReference} from Quote #${q.quoteNumber}!`);
       } catch (err: any) {
         showError(`Booking conversion failed: ${err.message || 'Unknown error'}`);
       }
@@ -495,6 +461,16 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
               </span>
             </div>
           </div>
+
+          {onNavigateToBuilder && (
+            <button
+              onClick={() => onNavigateToBuilder('new')}
+              className="px-4 py-2 bg-[#00C6A6] hover:bg-[#00b598] text-slate-950 font-bold rounded-xl text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>Create Quotation</span>
+            </button>
+          )}
 
           <button
             onClick={refresh}
@@ -1019,11 +995,21 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                         </button>
 
                         {/* Open in Live Quotation Builder */}
-                        {onLoadQuote && !q.isLocked && (
+                        {(onNavigateToBuilder || onLoadQuote) && (
                           <button
-                            onClick={() => onLoadQuote(q)}
+                            onClick={() => {
+                              if (onNavigateToBuilder) {
+                                onNavigateToBuilder(q.id, {
+                                  version: q.version,
+                                  mode: q.isLocked ? 'inspect' : 'edit',
+                                  leadId: q.leadId
+                                });
+                              } else if (onLoadQuote) {
+                                onLoadQuote(q);
+                              }
+                            }}
                             className="p-1.5 text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer"
-                            title="Open in Interactive Quotation Builder"
+                            title={q.isLocked ? "Inspect Quote in Builder (Locked Snapshot)" : "Open in Quotation Builder"}
                           >
                             <FileText className="w-3.5 h-3.5" />
                           </button>
@@ -1237,16 +1223,24 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                   <span>Download PDF Proposal</span>
                 </button>
 
-                {onLoadQuote && !viewingQuote.isLocked && (
+                {(onNavigateToBuilder || onLoadQuote) && (
                   <button
                     onClick={() => {
-                      onLoadQuote(viewingQuote);
+                      if (onNavigateToBuilder) {
+                        onNavigateToBuilder(viewingQuote.id, {
+                          version: viewingQuote.version,
+                          mode: viewingQuote.isLocked ? 'inspect' : 'edit',
+                          leadId: viewingQuote.leadId
+                        });
+                      } else if (onLoadQuote) {
+                        onLoadQuote(viewingQuote);
+                      }
                       setViewingQuote(null);
                     }}
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs flex items-center space-x-1.5 cursor-pointer shadow-xs"
                   >
                     <FileText className="w-3.5 h-3.5" />
-                    <span>Open in Builder</span>
+                    <span>{viewingQuote.isLocked ? "Inspect in Quote Builder" : "Open in Quote Builder"}</span>
                   </button>
                 )}
               </div>

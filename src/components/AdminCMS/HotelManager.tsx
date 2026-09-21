@@ -989,7 +989,7 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                         )}
                       </div>
                       <div className="absolute top-3 right-3 bg-[#008972] text-white text-[10px] font-extrabold px-2.5 py-1 rounded-xl uppercase tracking-wider shadow-sm">
-                        {hotel.propertyType.replace('_', ' ')}
+                        {(hotel.propertyType || 'HOTEL').replace('_', ' ')}
                       </div>
                       <div className="absolute bottom-3 left-3 bg-white/95 backdrop-blur-sm text-amber-500 text-xs font-bold px-2.5 py-1 rounded-xl flex items-center space-x-1 shadow-sm">
                         {[...Array(hotel.starRating)].map((_, i) => (

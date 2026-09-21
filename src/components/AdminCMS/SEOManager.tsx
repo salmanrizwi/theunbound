@@ -375,7 +375,7 @@ export const SEOManager: React.FC = () => {
                       </td>
                       <td className="py-3.5 px-4">
                         <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-bold uppercase">
-                          {item.entityType.replace('_', ' ')}
+                          {(item.entityType || 'ENTITY').replace('_', ' ')}
                         </span>
                       </td>
                       <td className="py-3.5 px-4 font-mono text-[11px] text-slate-600">

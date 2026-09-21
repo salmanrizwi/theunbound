@@ -110,6 +110,10 @@ export const ManualOperationalBookingModal: React.FC<ManualOperationalBookingMod
   // Linkage to CRM Lead (Optional)
   const [selectedLeadId, setSelectedLeadId] = useState<string>('');
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+  const [selectedTeamMemberId, setSelectedTeamMemberId] = useState<string>(
+    currentUser && currentUser.role !== 'B2B_AGENT' && currentUser.role !== 'BUYER' ? currentUser.id : ''
+  );
+  const [assignmentNotes, setAssignmentNotes] = useState<string>('');
 
   // Service Items state
   const [items, setItems] = useState<TempServiceItem[]>([
@@ -158,6 +162,29 @@ export const ManualOperationalBookingModal: React.FC<ManualOperationalBookingMod
   const destinations = useMemo(() => db.getDestinations?.() || [], [db]);
   const leads = useMemo(() => db.getLeads?.() || [], [db]);
   const masterProducts = useMemo(() => db.getProducts?.() || [], [db]);
+  const allUsers = useMemo(() => db.getUsers?.() || [], [db]);
+  const b2bAgents = useMemo(() => allUsers.filter(u => u.role === 'B2B_AGENT' && u.approvalStatus === 'APPROVED'), [allUsers]);
+  const internalTeamMembers = useMemo(() => allUsers.filter(u => u.role !== 'B2B_AGENT' && u.role !== 'BUYER'), [allUsers]);
+
+  // Handle lead selection auto-fill
+  const handleLeadChange = (leadId: string) => {
+    setSelectedLeadId(leadId);
+    if (leadId) {
+      const foundLead = leads.find(l => l.id === leadId);
+      if (foundLead) {
+        if (!customerName && foundLead.travelerName) {
+          setCustomerName(foundLead.travelerName);
+          setLeadPassengerName(foundLead.travelerName);
+        }
+        if (!email && foundLead.contactEmail) setEmail(foundLead.contactEmail);
+        if (!phone && foundLead.contactPhone) setPhone(foundLead.contactPhone);
+        if (!travelStartDate && foundLead.preferredTravelDate) setTravelStartDate(foundLead.preferredTravelDate);
+        if (foundLead.assignedAgentId && !selectedAgentId) {
+          setSelectedAgentId(foundLead.assignedAgentId);
+        }
+      }
+    }
+  };
 
   // Auto-sync lead passenger name with customer name if empty
   const handleCustomerNameChange = (val: string) => {
@@ -270,6 +297,8 @@ export const ManualOperationalBookingModal: React.FC<ManualOperationalBookingMod
         bookingReference: manualBookingRef.trim(),
         leadId: selectedLeadId || undefined,
         agentId: selectedAgentId || undefined,
+        assignedTeamMemberId: selectedTeamMemberId || undefined,
+        assignmentNotes: assignmentNotes.trim() || undefined,
         customerName: customerName.trim(),
         leadPassengerName: (leadPassengerName || customerName).trim(),
         email: email.trim() || 'internal-ops@theunbound.in',
@@ -569,7 +598,7 @@ export const ManualOperationalBookingModal: React.FC<ManualOperationalBookingMod
                   </label>
                   <select
                     value={selectedLeadId}
-                    onChange={(e) => setSelectedLeadId(e.target.value)}
+                    onChange={(e) => handleLeadChange(e.target.value)}
                     className="w-full mt-1.5 px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 focus:outline-hidden focus:border-[#008972]"
                   >
                     <option value="">No CRM Lead Linked</option>
@@ -579,6 +608,80 @@ export const ManualOperationalBookingModal: React.FC<ManualOperationalBookingMod
                       </option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              {/* Mandatory Booking Ownership & Operational Assignment */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-[#008972]"></span>
+                    <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                      Mandatory Booking Ownership & Operational Assignment
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-medium">
+                    Every booking requires both an Authoritative B2B Agent & Internal Operational Owner
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-slate-700 flex items-center justify-between">
+                      <span>Associated B2B Partner Agent</span>
+                      <span className="text-[10px] font-normal text-slate-500">Commercial / Channel Owner</span>
+                    </label>
+                    <select
+                      value={selectedAgentId}
+                      onChange={(e) => setSelectedAgentId(e.target.value)}
+                      className="w-full mt-1.5 px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-xs text-slate-900 font-medium focus:outline-hidden focus:border-[#008972]"
+                    >
+                      <option value="">Select B2B Partner Agent (or Leave Pending)</option>
+                      {b2bAgents.map(ag => (
+                        <option key={ag.id} value={ag.id}>
+                          {ag.name} — {ag.agencyName || ag.companyName || 'Agency Partner'} ({ag.email})
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-[10px] text-slate-500 mt-0.5 block">
+                      Authoritative B2B agent linked to this booking's lifecycle and client relationship.
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-slate-700 flex items-center justify-between">
+                      <span>Assigned Internal Operational Owner *</span>
+                      <span className="text-[10px] font-normal text-slate-500">Execution / Supplier Owner</span>
+                    </label>
+                    <select
+                      value={selectedTeamMemberId}
+                      onChange={(e) => setSelectedTeamMemberId(e.target.value)}
+                      className="w-full mt-1.5 px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-xs text-slate-900 font-bold focus:outline-hidden focus:border-[#008972]"
+                    >
+                      <option value="">Select Internal Team Member</option>
+                      {internalTeamMembers.map(tm => (
+                        <option key={tm.id} value={tm.id}>
+                          {tm.name} — {tm.role || 'Operations'} ({tm.email})
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-[10px] text-slate-500 mt-0.5 block">
+                      Internal team member accountable for coordinating supplier allocations, vouchers, and updates.
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-700">
+                    Assignment Handover / Operational Instructions (Internal)
+                  </label>
+                  <input
+                    type="text"
+                    value={assignmentNotes}
+                    onChange={(e) => setAssignmentNotes(e.target.value)}
+                    placeholder="e.g. VIP agent client; please confirm airport transfer directly with supplier within 24 hours."
+                    className="w-full mt-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-xs text-slate-900 focus:outline-hidden focus:border-[#008972]"
+                  />
                 </div>
               </div>
 

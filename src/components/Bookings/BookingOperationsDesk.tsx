@@ -3,6 +3,11 @@ import { Booking, User, BookingStatus } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { formatCurrency } from '../../services/pricingEngine';
 import { 
+  canAccessBookingDeskSection, 
+  isInternalStaff, 
+  isExternalUser 
+} from '../../services/permissionEngine';
+import { 
   Building2, 
   ArrowLeft, 
   Calendar, 
@@ -19,22 +24,38 @@ import {
   Printer, 
   ChevronRight,
   ShieldCheck,
-  ChevronDown
+  ChevronDown,
+  UserCheck,
+  Ticket,
+  FileCheck,
+  Receipt
 } from 'lucide-react';
 import { DeskOverviewSection } from './desk/DeskOverviewSection';
+import { DeskAssignmentSection } from './desk/DeskAssignmentSection';
 import { DeskServiceItemsSection } from './desk/DeskServiceItemsSection';
+import { DeskFinancialsSection } from './desk/DeskFinancialsSection';
+import { DeskActivityVouchersSection } from './desk/DeskActivityVouchersSection';
+import { DeskCompleteVoucherSection } from './desk/DeskCompleteVoucherSection';
+import { DeskProformaInvoiceSection } from './desk/DeskProformaInvoiceSection';
 import { DeskTasksSection } from './desk/DeskTasksSection';
 import { DeskPassengersDocsSection } from './desk/DeskPassengersDocsSection';
-import { DeskPaymentsSection } from './desk/DeskPaymentsSection';
 import { DeskNotesSection } from './desk/DeskNotesSection';
 import { DeskTimelineSection } from './desk/DeskTimelineSection';
+import { OperationalHorizonDesk } from './OperationalHorizonDesk';
+import { Compass } from 'lucide-react';
 
 export type DeskSection = 
   | 'OVERVIEW'
+  | 'ASSIGNMENT'
   | 'SERVICES'
-  | 'TASKS'
+  | 'OPERATIONAL_HORIZON'
+  | 'FINANCIALS'
+  | 'ACTIVITY_VOUCHERS'
+  | 'COMPLETE_VOUCHER'
+  | 'PROFORMA_INVOICE'
   | 'PASSENGERS'
   | 'PAYMENTS'
+  | 'TASKS'
   | 'NOTES'
   | 'TIMELINE';
 
@@ -53,32 +74,45 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
 }) => {
   const db = AppDatabase.getInstance();
 
+  const isExternal = isExternalUser(currentUser);
+  const isInternal = isInternalStaff(currentUser);
+
   const [activeBookingId, setActiveBookingId] = useState(initialBookingId);
-  const [activeSection, setActiveSection] = useState<DeskSection>(initialSection);
+  const [activeSection, setActiveSection] = useState<DeskSection>(
+    canAccessBookingDeskSection(currentUser, initialSection) ? initialSection : 'OVERVIEW'
+  );
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Read all bookings for switcher
-  const [allBookings, setAllBookings] = useState<Booking[]>(() => db.getAllBookings());
+  // Read all bookings for switcher (filtered for external agent)
+  const getAccessibleBookings = () => {
+    const all = db.getAllBookings();
+    if (isExternal) {
+      return all.filter(b => 
+        b.assignedAgentId === currentUser?.id || 
+        b.submittedByUserId === currentUser?.id || 
+        b.agentId === currentUser?.id
+      );
+    }
+    return all;
+  };
+
+  const [allBookings, setAllBookings] = useState<Booking[]>(getAccessibleBookings);
 
   // Subscribe to real-time updates
   useEffect(() => {
     const unsub = db.subscribe(() => {
-      setAllBookings(db.getAllBookings());
+      setAllBookings(getAccessibleBookings());
       setRefreshKey(prev => prev + 1);
     });
     return () => unsub();
-  }, [db]);
+  }, [db, currentUser]);
 
   // Active Booking
   const booking = useMemo(() => {
     return allBookings.find(b => b.id === activeBookingId) || null;
   }, [allBookings, activeBookingId, refreshKey]);
 
-  // Permission Check
-  const isB2BOrBuyer = currentUser?.role === 'B2B_AGENT' || currentUser?.role === 'BUYER';
-  const isInternalStaff = currentUser?.role === 'ADMIN' || currentUser?.role === 'TEAM_MEMBER' || currentUser?.role === 'DMC_STAFF';
-
-  // Navigation Items
+  // Navigation Items (Strictly governed by permissionEngine)
   const navItems = useMemo(() => {
     if (!booking) return [];
 
@@ -89,7 +123,7 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
     const missingDocsCount = booking.missingDocuments?.length || 0;
     const notesCount = (booking.internalNotesList?.length || 0) + (booking.customerUpdates?.length || 0);
 
-    const base = [
+    const candidates = [
       {
         id: 'OVERVIEW' as DeskSection,
         label: 'Booking Overview',
@@ -97,20 +131,55 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
         badge: null
       },
       {
+        id: 'ASSIGNMENT' as DeskSection,
+        label: 'Assignment & Ownership',
+        icon: UserCheck,
+        badge: booking.operationalOwnerName ? 'Assigned' : 'Pending',
+        badgeColor: booking.operationalOwnerName ? 'bg-teal-100 text-teal-800' : 'bg-amber-100 text-amber-800'
+      },
+      {
         id: 'SERVICES' as DeskSection,
         label: 'Service Items & Supplier Allocation',
         icon: Layers,
-        badge: isInternalStaff && unallocatedCount > 0 
+        badge: isInternal && unallocatedCount > 0 
           ? `${unallocatedCount} unallocated` 
           : `${totalServices} items`,
         badgeColor: unallocatedCount > 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'
       },
       {
-        id: 'TASKS' as DeskSection,
-        label: 'Tasks & Follow-Ups',
-        icon: CheckSquare,
-        badge: openTasks > 0 ? `${openTasks} open` : null,
-        badgeColor: 'bg-purple-100 text-purple-800'
+        id: 'OPERATIONAL_HORIZON' as DeskSection,
+        label: 'Operational Horizon Desk',
+        icon: Compass,
+        badge: 'Ground Ops',
+        badgeColor: 'bg-teal-100 text-teal-800'
+      },
+      {
+        id: 'FINANCIALS' as DeskSection,
+        label: 'Financials & Tranches',
+        icon: CreditCard,
+        badge: booking.paymentStatus === 'PAID' ? 'Settled' : 'Pending',
+        badgeColor: booking.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
+      },
+      {
+        id: 'ACTIVITY_VOUCHERS' as DeskSection,
+        label: 'Activity Vouchers',
+        icon: Ticket,
+        badge: (booking.activityVoucherIds?.length || 0) > 0 ? `${booking.activityVoucherIds?.length}` : null,
+        badgeColor: 'bg-emerald-100 text-emerald-800'
+      },
+      {
+        id: 'COMPLETE_VOUCHER' as DeskSection,
+        label: 'Complete Voucher',
+        icon: FileCheck,
+        badge: booking.completeBookingVoucherId ? 'Issued' : null,
+        badgeColor: 'bg-teal-100 text-teal-800'
+      },
+      {
+        id: 'PROFORMA_INVOICE' as DeskSection,
+        label: 'Proforma Invoice',
+        icon: Receipt,
+        badge: (booking.proformaInvoiceIds?.length || 0) > 0 ? `${booking.proformaInvoiceIds?.length}` : null,
+        badgeColor: 'bg-indigo-100 text-indigo-800'
       },
       {
         id: 'PASSENGERS' as DeskSection,
@@ -120,38 +189,44 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
         badgeColor: missingDocsCount > 0 ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-700'
       },
       {
-        id: 'PAYMENTS' as DeskSection,
-        label: 'Payments & Tranches',
-        icon: CreditCard,
-        badge: booking.paymentStatus === 'PAID' ? 'Settled' : 'Pending',
-        badgeColor: booking.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
-      }
-    ];
-
-    // Internal only tabs
-    if (!isB2BOrBuyer) {
-      base.push({
+        id: 'TASKS' as DeskSection,
+        label: 'Tasks & Follow-Ups',
+        icon: CheckSquare,
+        badge: openTasks > 0 ? `${openTasks} open` : null,
+        badgeColor: 'bg-purple-100 text-purple-800'
+      },
+      {
         id: 'NOTES' as DeskSection,
         label: 'Notes & Updates',
         icon: MessageSquare,
         badge: notesCount > 0 ? `${notesCount}` : null,
         badgeColor: 'bg-slate-100 text-slate-700'
-      });
-      base.push({
+      },
+      {
         id: 'TIMELINE' as DeskSection,
         label: 'Timeline & Audit',
         icon: History,
         badge: null,
         badgeColor: 'bg-slate-100 text-slate-700'
-      });
-    }
+      }
+    ];
 
-    return base;
-  }, [booking, db, isB2BOrBuyer, isInternalStaff]);
+    return candidates.filter(item => canAccessBookingDeskSection(currentUser, item.id));
+  }, [booking, db, currentUser, isInternal]);
 
   const handleRefresh = () => {
     setRefreshKey(prev => prev + 1);
   };
+
+  const handleNavigateSection = (section: DeskSection) => {
+    if (canAccessBookingDeskSection(currentUser, section)) {
+      setActiveSection(section);
+    } else {
+      setActiveSection('OVERVIEW');
+    }
+  };
+
+  const currentSection = canAccessBookingDeskSection(currentUser, activeSection) ? activeSection : 'OVERVIEW';
 
   if (!booking) {
     return (
@@ -191,7 +266,7 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-black uppercase tracking-wider text-[#008f77] flex items-center gap-1">
                   <Building2 className="w-3.5 h-3.5" />
-                  Booking Operations & Supplier Allocation Desk
+                  {isExternal ? 'Booking Overview & Documentation Desk' : 'Booking Operations & Supplier Allocation Desk'}
                 </span>
                 <span className="text-slate-300">•</span>
                 <span className="font-mono text-xs font-bold text-slate-900">
@@ -294,18 +369,18 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* 3. SECTION NAVIGATION (EXACT 7 REQUIRED SECTIONS) */}
+      {/* 3. SECTION NAVIGATION (EXACT PERMITTED SECTIONS ONLY) */}
       {/* ========================================================================= */}
       <div className="flex items-center gap-1.5 overflow-x-auto p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200">
         {navItems.map(item => {
           const Icon = item.icon;
-          const isActive = activeSection === item.id;
+          const isActive = currentSection === item.id;
 
           return (
             <button
               key={item.id}
               id={`desk-nav-btn-${item.id.toLowerCase()}`}
-              onClick={() => setActiveSection(item.id)}
+              onClick={() => handleNavigateSection(item.id)}
               className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
                 isActive 
                   ? 'bg-[#008f77] text-white shadow-xs' 
@@ -330,16 +405,24 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
       {/* 4. ACTIVE SECTION CONTENT (ONLY ONE SECTION DETAILED AT A TIME) */}
       {/* ========================================================================= */}
       <div id="desk-active-section-viewport">
-        {activeSection === 'OVERVIEW' && (
+        {currentSection === 'OVERVIEW' && (
           <DeskOverviewSection
             booking={booking}
             currentUser={currentUser}
-            onNavigateToSection={setActiveSection}
+            onNavigateToSection={handleNavigateSection}
             onRefresh={handleRefresh}
           />
         )}
 
-        {activeSection === 'SERVICES' && (
+        {isInternal && currentSection === 'ASSIGNMENT' && (
+          <DeskAssignmentSection
+            booking={booking}
+            currentUser={currentUser}
+            onRefresh={handleRefresh}
+          />
+        )}
+
+        {isInternal && currentSection === 'SERVICES' && (
           <DeskServiceItemsSection
             booking={booking}
             currentUser={currentUser}
@@ -347,15 +430,51 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
           />
         )}
 
-        {activeSection === 'TASKS' && (
-          <DeskTasksSection
+        {isInternal && currentSection === 'OPERATIONAL_HORIZON' && (
+          <OperationalHorizonDesk
+            currentUser={currentUser}
+            initialDate={booking.travelStartDate || undefined}
+            onOpenBooking={(bId) => {
+              setActiveBookingId(bId);
+              setActiveSection('OVERVIEW');
+            }}
+            onBackToAllocationDesk={() => setActiveSection('SERVICES')}
+          />
+        )}
+
+        {isInternal && (currentSection === 'FINANCIALS' || currentSection === 'PAYMENTS') && (
+          <DeskFinancialsSection
             booking={booking}
             currentUser={currentUser}
             onRefresh={handleRefresh}
           />
         )}
 
-        {activeSection === 'PASSENGERS' && (
+        {isInternal && currentSection === 'ACTIVITY_VOUCHERS' && (
+          <DeskActivityVouchersSection
+            booking={booking}
+            currentUser={currentUser}
+            onRefresh={handleRefresh}
+          />
+        )}
+
+        {isInternal && currentSection === 'COMPLETE_VOUCHER' && (
+          <DeskCompleteVoucherSection
+            booking={booking}
+            currentUser={currentUser}
+            onRefresh={handleRefresh}
+          />
+        )}
+
+        {isInternal && currentSection === 'PROFORMA_INVOICE' && (
+          <DeskProformaInvoiceSection
+            booking={booking}
+            currentUser={currentUser}
+            onRefresh={handleRefresh}
+          />
+        )}
+
+        {currentSection === 'PASSENGERS' && (
           <DeskPassengersDocsSection
             booking={booking}
             currentUser={currentUser}
@@ -363,15 +482,15 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
           />
         )}
 
-        {activeSection === 'PAYMENTS' && (
-          <DeskPaymentsSection
+        {isInternal && currentSection === 'TASKS' && (
+          <DeskTasksSection
             booking={booking}
             currentUser={currentUser}
             onRefresh={handleRefresh}
           />
         )}
 
-        {activeSection === 'NOTES' && !isB2BOrBuyer && (
+        {isInternal && currentSection === 'NOTES' && (
           <DeskNotesSection
             booking={booking}
             currentUser={currentUser}
@@ -379,7 +498,7 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
           />
         )}
 
-        {activeSection === 'TIMELINE' && !isB2BOrBuyer && (
+        {isInternal && currentSection === 'TIMELINE' && (
           <DeskTimelineSection
             booking={booking}
             currentUser={currentUser}

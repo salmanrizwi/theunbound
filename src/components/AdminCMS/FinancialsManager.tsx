@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AppDatabase } from '../../services/db';
 import { BookingInvoice, BookingVoucher, JobSheet, Booking, BookingUploadedInvoice } from '../../types';
 import { useAuth } from '../../context/AuthContext';
-import { BookingOperationsEngine } from '../Bookings/BookingOperationsEngine';
+import { BookingOperationsDesk } from '../Bookings/BookingOperationsDesk';
 import { VoucherDocumentView } from '../Bookings/VoucherDocumentView';
 import { formatCurrency } from '../../services/pricingEngine';
 import { 
@@ -138,22 +138,14 @@ export const FinancialsManager: React.FC = () => {
         <div className="space-y-6">
           {selectedBookingForOps ? (
             <div className="space-y-4">
-              <div className="flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200">
-                <button
-                  onClick={() => setSelectedBookingForOps(null)}
-                  className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-                >
-                  ← Back to Bookings Overview
-                </button>
-                <div className="text-xs text-slate-600 font-bold">
-                  Managing Booking: <span className="text-teal-700">{selectedBookingForOps.bookingReference}</span>
-                </div>
-              </div>
-
-              <BookingOperationsEngine
-                booking={selectedBookingForOps}
+              <BookingOperationsDesk
+                bookingId={selectedBookingForOps.id}
                 currentUser={user}
-                onRefresh={refreshData}
+                onBack={() => {
+                  setSelectedBookingForOps(null);
+                  refreshData();
+                }}
+                initialSection="FINANCIALS"
               />
             </div>
           ) : (
