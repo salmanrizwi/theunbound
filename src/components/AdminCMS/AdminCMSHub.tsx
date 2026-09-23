@@ -1018,6 +1018,16 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                 </span>
               </div>
 
+              {/* Canonical Home Link */}
+              <button
+                onClick={() => navigateTo('/')}
+                className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-[#00C6A6]/40 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition-all cursor-pointer group shrink-0"
+                title="Return to TheUnbound Canonical Home Page (/)"
+              >
+                <Globe2 className="w-3.5 h-3.5 text-[#00E5C0]" />
+                <span className="hidden md:inline text-xs font-semibold">Home</span>
+              </button>
+
               {/* Quick Search Button */}
               <button
                 onClick={() => setIsSearchOpen(true)}
@@ -1122,16 +1132,12 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                       <button
                         onClick={() => {
                           setIsUserMenuOpen(false);
-                          if (onSwitchToBuyerMode) {
-                            onSwitchToBuyerMode();
-                          } else {
-                            window.location.href = '/';
-                          }
+                          navigateTo('/');
                         }}
-                        className="w-full text-left px-3 py-2 text-xs font-semibold text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/30 rounded-lg flex items-center space-x-2 cursor-pointer"
+                        className="w-full text-left px-3 py-2 text-xs font-semibold text-[#00E5C0] hover:text-[#00C6A6] hover:bg-emerald-950/30 rounded-lg flex items-center space-x-2 cursor-pointer"
                       >
-                        <Globe2 className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>View Live Website (Buyer Mode)</span>
+                        <Globe2 className="w-3.5 h-3.5 text-[#00E5C0]" />
+                        <span>Home Page (/)</span>
                       </button>
 
                       <div className="pt-1 border-t border-slate-800/80 mt-1">

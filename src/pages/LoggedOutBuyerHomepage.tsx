@@ -43,7 +43,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
   onOpenRegister,
   onOpenLogin
 }) => {
-  const { openAuthModal } = useAuth();
+  const { user, isAuthenticated, openAuthModal } = useAuth();
   const db = AppDatabase.getInstance();
   const countingEngine = GlobalCountingEngine.getInstance();
 
@@ -79,7 +79,18 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     return list;
   }, [baseDestinations, config.destinationOrdering]);
 
+  const isUserAdmin = isAuthenticated && (user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER');
+  const isUserAgent = isAuthenticated && (user?.role === 'B2B_AGENT' || user?.role === 'AGENT');
+
   const handlePartnerAction = () => {
+    if (isAuthenticated) {
+      if (isUserAdmin) {
+        navigateTo('/b2b');
+      } else {
+        navigateTo('/b2b/quote-builder');
+      }
+      return;
+    }
     if (onOpenRegister) {
       onOpenRegister();
     } else {
@@ -88,6 +99,14 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
   };
 
   const handleLoginAction = () => {
+    if (isAuthenticated) {
+      if (isUserAdmin) {
+        navigateTo('/admin');
+      } else {
+        navigateTo('/b2b');
+      }
+      return;
+    }
     if (onOpenLogin) {
       onOpenLogin();
     } else {
@@ -213,7 +232,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                       onClick={handleLoginAction}
                       className="flex-1 px-4 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 text-xs font-bold transition-all text-center cursor-pointer shadow-sm"
                     >
-                      Agent Login
+                      {isAuthenticated ? (isUserAdmin ? 'Enter Admin CMS' : 'Enter B2B Portal') : 'Agent Login'}
                     </button>
                     <button
                       type="button"
@@ -221,7 +240,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                       onClick={handlePartnerAction}
                       className="flex-1 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 text-xs font-bold transition-all text-center cursor-pointer"
                     >
-                      Apply for Access
+                      {isAuthenticated ? (isUserAdmin ? 'Wholesale B2B View' : 'Quotation Builder') : 'Apply for Access'}
                     </button>
                   </div>
                 </div>
@@ -818,3 +837,6 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     </div>
   );
 };
+
+export { LoggedOutBuyerHomepage as CanonicalHomepage, LoggedOutBuyerHomepage as PublicHomepage };
+

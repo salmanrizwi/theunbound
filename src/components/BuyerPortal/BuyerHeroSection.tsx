@@ -19,6 +19,7 @@ import {
 import { Destination, HomepageConfig } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { db } from '../../services/db';
+import { navigateTo } from '../../services/portalRouter';
 
 interface BuyerHeroSectionProps {
   allDestinations: Destination[];
@@ -36,7 +37,9 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
   homepageConfig
 }) => {
   const activeIncomingConfig = homepageConfig || config;
-  const { openAuthModal, login } = useAuth();
+  const { user, isAuthenticated, openAuthModal, login } = useAuth();
+  const isUserAdmin = isAuthenticated && (user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER');
+  const isUserAgent = isAuthenticated && (user?.role === 'B2B_AGENT' || user?.role === 'AGENT');
   const [currentConfig, setCurrentConfig] = useState<HomepageConfig>(() => activeIncomingConfig || db.getHomepageConfig());
 
   useEffect(() => {
@@ -118,6 +121,14 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
   };
 
   const handlePartnerClick = () => {
+    if (isAuthenticated) {
+      if (isUserAdmin) {
+        navigateTo('/b2b');
+      } else {
+        navigateTo('/b2b/quote-builder');
+      }
+      return;
+    }
     if (onOpenRegister) {
       onOpenRegister();
     } else {
@@ -126,6 +137,14 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
   };
 
   const handleLoginClick = () => {
+    if (isAuthenticated) {
+      if (isUserAdmin) {
+        navigateTo('/admin');
+      } else {
+        navigateTo('/b2b');
+      }
+      return;
+    }
     openAuthModal('Sign in to access your authorized B2B wholesale portal.');
   };
 
@@ -247,7 +266,7 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
                     className="px-5 sm:px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] active:bg-[#009b82] text-slate-950 text-xs sm:text-sm font-black transition-all shadow-md shadow-[#00C6A6]/20 flex items-center space-x-2 cursor-pointer active:scale-[0.98]"
                   >
                     <Lock className="w-4 h-4 text-slate-950" />
-                    <span>{primaryCtaText}</span>
+                    <span>{isAuthenticated ? (isUserAdmin ? 'Enter Admin Operations' : 'Enter B2B Portal') : primaryCtaText}</span>
                     <ArrowRight className="w-4 h-4 text-slate-950" />
                   </button>
                 )}
@@ -260,7 +279,7 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
                     className="px-4.5 sm:px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/20 text-xs sm:text-sm font-bold transition-all backdrop-blur-md flex items-center space-x-2 cursor-pointer active:scale-[0.98]"
                   >
                     <Building2 className="w-4 h-4 text-[#00C6A6]" />
-                    <span>{secondaryCtaText}</span>
+                    <span>{isAuthenticated ? (isUserAdmin ? 'Wholesale B2B View' : 'Quotation Studio') : secondaryCtaText}</span>
                   </button>
                 )}
               </div>
@@ -385,16 +404,23 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
                       </p>
                     </div>
 
-                    <button
-                      type="button"
-                      id="hero-visual-toggle-terminal-btn"
-                      onClick={() => setShowInlineTerminal(true)}
-                      className="px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-600 text-[10px] font-bold text-slate-200 hover:text-white transition-colors cursor-pointer flex items-center space-x-1"
-                      title="Open Fast Sign In Terminal"
-                    >
-                      <Terminal className="w-3 h-3 text-[#00C6A6]" />
-                      <span className="hidden sm:inline">Fast Sign In</span>
-                    </button>
+                    {!isAuthenticated && (
+                      <button
+                        type="button"
+                        id="hero-visual-toggle-terminal-btn"
+                        onClick={() => setShowInlineTerminal(true)}
+                        className="px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-600 text-[10px] font-bold text-slate-200 hover:text-white transition-colors cursor-pointer flex items-center space-x-1"
+                        title="Open Fast Sign In Terminal"
+                      >
+                        <Terminal className="w-3 h-3 text-[#00C6A6]" />
+                        <span className="hidden sm:inline">Fast Sign In</span>
+                      </button>
+                    )}
+                    {isAuthenticated && (
+                      <span className="px-2 py-0.5 rounded-md bg-[#00C6A6]/20 border border-[#00C6A6]/40 text-[#00E5C0] text-[10px] font-bold">
+                        {isUserAdmin ? 'Ops Admin' : 'Trade Partner'}
+                      </span>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 pt-0.5">
@@ -405,7 +431,7 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
                       className="w-full py-2 px-3 rounded-lg bg-[#00C6A6] hover:bg-[#00b094] active:bg-[#009b82] text-slate-950 text-xs font-black transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs shadow-[#00C6A6]/20"
                     >
                       <Lock className="w-3.5 h-3.5 text-slate-950" />
-                      <span>Agent Login</span>
+                      <span>{isAuthenticated ? (isUserAdmin ? 'Admin CMS' : 'B2B Portal') : 'Agent Login'}</span>
                     </button>
 
                     <button
@@ -415,7 +441,7 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
                       className="w-full py-2 px-3 rounded-lg bg-white/10 hover:bg-white/15 text-white border border-white/20 text-xs font-bold transition-all backdrop-blur-sm flex items-center justify-center space-x-1.5 cursor-pointer"
                     >
                       <Building2 className="w-3.5 h-3.5 text-[#00C6A6]" />
-                      <span>Register Agency</span>
+                      <span>{isAuthenticated ? (isUserAdmin ? 'Wholesale View' : 'Quote Studio') : 'Register Agency'}</span>
                     </button>
                   </div>
                 </div>

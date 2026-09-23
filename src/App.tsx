@@ -72,9 +72,37 @@ const MainAppContent: React.FC = () => {
   const [isQuoteAuthModalOpen, setIsQuoteAuthModalOpen] = useState(false);
 
   // Navigation State - Defaults to 'all' (All Destinations as Homepage)
-  const [activeTab, setActiveTab] = useState<MainNavTab>('DESTINATIONS');
-  const [selectedDestinationSlug, setSelectedDestinationSlug] = useState<string>('all');
-  const [activeCustomPageSlug, setActiveCustomPageSlug] = useState<string>('about-theunbound');
+  const [activeTab, setActiveTab] = useState<MainNavTab>(() => {
+    const route = parseRoute(getCurrentPath());
+    if (route.namespace === 'PUBLIC' || route.namespace === 'BUYER') {
+      if (route.subTab === 'visas') return 'VISAS';
+      if (route.subTab === 'contact') return 'CONTACT';
+      if (route.subTab === 'about') return 'ABOUT';
+      if (route.subTab === 'blogs') return 'BLOGS';
+      if (route.subTab === 'page') return 'CUSTOM_PAGE';
+      if (route.subTab === 'terms') return 'TERMS';
+      if (route.subTab === 'privacy') return 'PRIVACY';
+      if (route.subTab === 'refund') return 'REFUND';
+      if (route.subTab === 'cookies') return 'COOKIES';
+    }
+    return 'DESTINATIONS';
+  });
+
+  const [selectedDestinationSlug, setSelectedDestinationSlug] = useState<string>(() => {
+    const route = parseRoute(getCurrentPath());
+    if (route.subTab === 'destinations' && route.param) {
+      return route.param;
+    }
+    return 'all';
+  });
+
+  const [activeCustomPageSlug, setActiveCustomPageSlug] = useState<string>(() => {
+    const route = parseRoute(getCurrentPath());
+    if (route.subTab === 'page' && route.param) {
+      return route.param;
+    }
+    return 'about-theunbound';
+  });
 
   // Real-time synced Database State for Destinations and Products
   const [destinations, setDestinations] = useState<Destination[]>(() => db.getDestinations());
@@ -110,7 +138,7 @@ const MainAppContent: React.FC = () => {
           return;
         } else if (parsed.subTab === 'destinations') {
           setActiveTab('DESTINATIONS');
-          if (parsed.param) setSelectedDestinationSlug(parsed.param);
+          setSelectedDestinationSlug(parsed.param || 'all');
         } else if (parsed.subTab === 'visas') {
           setActiveTab('VISAS');
         } else if (parsed.subTab === 'contact') {
@@ -419,36 +447,30 @@ const MainAppContent: React.FC = () => {
       {/* Main Viewport Content Area */}
       <main className="flex-1 bg-[#F8FAFC]">
         {activeTab === 'DESTINATIONS' && (
-          !isB2BAuthorized ? (
-            isAllDestinations ? (
-              <LoggedOutBuyerHomepage
-                allDestinations={destinations}
-                onSelectDestination={handleSelectDestination}
-              />
-            ) : (
-              <DestinationPage
-                destination={currentDestination}
-                allDestinations={destinations}
-                onSelectDestination={handleSelectDestination}
-                products={[]}
-                onViewProduct={() => {}}
-                onOpenCalculator={() => {}}
-                onInstantBook={() => {}}
-                onCustomizePackage={handleCustomizePackage}
-              />
-            )
+          isAllDestinations ? (
+            /* Authoritative Canonical Home Page — Used for ALL visitors (unauthenticated, B2B Agent, and Admin) */
+            <LoggedOutBuyerHomepage
+              allDestinations={destinations}
+              onSelectDestination={handleSelectDestination}
+            />
           ) : (
             <DestinationPage
               destination={currentDestination}
               allDestinations={destinations}
               onSelectDestination={handleSelectDestination}
-              products={products}
+              products={isB2BAuthorized ? products : []}
               onViewProduct={(p) => {
-                setInspectingProductHidePrice(false);
-                setInspectingProduct(p);
+                if (isB2BAuthorized) {
+                  setInspectingProductHidePrice(false);
+                  setInspectingProduct(p);
+                }
               }}
-              onOpenCalculator={(p) => setCalculatorProduct(p)}
-              onInstantBook={(p) => handleOpenProductBooking(p)}
+              onOpenCalculator={(p) => {
+                if (isB2BAuthorized) setCalculatorProduct(p);
+              }}
+              onInstantBook={(p) => {
+                if (isB2BAuthorized) handleOpenProductBooking(p);
+              }}
               onCustomizePackage={handleCustomizePackage}
             />
           )

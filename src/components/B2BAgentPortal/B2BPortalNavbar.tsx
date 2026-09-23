@@ -33,6 +33,7 @@ import { B2BTabType, CurrencyCode, SUPPORTED_CURRENCIES } from '../../types';
 import { formatCurrency } from '../../services/pricingEngine';
 import { AppDatabase } from '../../services/db';
 import { VISA_CATALOG } from './B2BVisaView';
+import { navigateTo } from '../../services/portalRouter';
 
 export type { B2BTabType };
 
@@ -132,7 +133,7 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
     count?: number;
     alertCount?: number;
   }[] = [
-    { id: 'home', label: 'Home', icon: Compass },
+    { id: 'home', label: 'Discovery', icon: Compass },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'products', label: 'Products', icon: ShoppingBag, count: productsCount },
     { id: 'hotels', label: 'Hotels', icon: Building2, count: hotelsCount },
@@ -165,6 +166,16 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
         </div>
 
         <div className="flex items-center space-x-3">
+          {/* Canonical Home Link */}
+          <button
+            onClick={() => navigateTo('/')}
+            className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-[11px] font-bold transition-all cursor-pointer"
+            title="Return to TheUnbound Home Page (/)"
+          >
+            <Globe2 className="w-3 h-3 text-[#00E5C0]" />
+            <span>Home</span>
+          </button>
+
           {/* Currency Switcher */}
           <div className="flex items-center space-x-1.5 bg-slate-800 border border-slate-700 px-2.5 py-1 rounded-lg">
             <Globe2 className="w-3 h-3 text-slate-400" />
@@ -212,8 +223,9 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
         {/* Brand Logo & Portal Badge */}
         <div className="flex items-center space-x-8">
           <div 
-            onClick={() => onSelectTab('home')}
+            onClick={() => navigateTo('/')}
             className="cursor-pointer flex items-center group"
+            title="Return to TheUnbound Home Page (/)"
           >
             <img 
               src="/White Icon.jpg?v=3" 
@@ -544,6 +556,17 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
                   >
                     <UserIcon className="w-3.5 h-3.5 text-slate-400" />
                     <span>Agency Account & Profile</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsUserMenuOpen(false);
+                      navigateTo('/');
+                    }}
+                    className="w-full text-left px-4 py-2 text-xs text-[#008f77] hover:bg-teal-50 flex items-center space-x-2 font-semibold"
+                  >
+                    <Globe2 className="w-3.5 h-3.5 text-[#00C6A6]" />
+                    <span>Home Page (/)</span>
                   </button>
                 </div>
 

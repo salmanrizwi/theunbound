@@ -92,7 +92,7 @@ export function parseRoute(pathString?: string): ParsedRoute {
   const segments = normalized.replace(/^\//, '').split('/').filter(Boolean);
   const first = (segments[0] || '').toLowerCase();
 
-  // Redirect legacy buyer routes directly to home
+  // Redirect legacy buyer and alternate home routes directly to canonical home (/)
   if (
     first === 'buyer' || 
     first === 'buyers' || 
@@ -100,7 +100,14 @@ export function parseRoute(pathString?: string): ParsedRoute {
     first === 'landing' || 
     first === 'portal' || 
     first === 'customer' || 
-    first === 'customers'
+    first === 'customers' ||
+    first === 'home' ||
+    first === 'homepage' ||
+    first === 'admin-home' ||
+    first === 'agent-home' ||
+    first === 'buyer-home' ||
+    first === 'authenticated-home' ||
+    first === 'dashboard-home'
   ) {
     return {
       namespace: 'PUBLIC',

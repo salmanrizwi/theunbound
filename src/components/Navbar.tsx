@@ -139,6 +139,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       if (target === 'home' || target === 'destinations') {
         if (onSelectTab) onSelectTab('DESTINATIONS');
         onSelectDestination('all');
+        navigateTo('/');
       } else if (target === 'japan' || target === 'united-kingdom' || target === 'europe') {
         if (onSelectTab) onSelectTab('DESTINATIONS');
         onSelectDestination(target);
@@ -295,6 +296,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClick={() => {
                 if (onSelectTab) onSelectTab('DESTINATIONS');
                 onSelectDestination('all');
+                navigateTo('/');
               }} 
               className="flex items-center cursor-pointer group"
               id="brand-logo"
