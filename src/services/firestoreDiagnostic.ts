@@ -7,19 +7,20 @@ import {
   limit, 
   query 
 } from 'firebase/firestore';
-import { db as firestoreDb } from './firebase';
+import { db as firestoreDb, auth } from './firebase';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 export interface CollectionDiagnosticResult {
   collectionName: string;
   displayName: string;
-  status: 'CONNECTED' | 'EMPTY' | 'ERROR' | 'OFFLINE';
+  status: 'CONNECTED' | 'EMPTY' | 'ERROR' | 'OFFLINE' | 'RESTRICTED_BY_RULES';
   documentCount: number;
   isFromCache: boolean;
   sampleIds: string[];
   latencyMs: number;
   sourceOfTruth: 'FIRESTORE_LIVE' | 'FIRESTORE_CACHE' | 'FALLBACK_LOCAL';
   errorDetails?: string;
+  isProtectedByRules?: boolean;
 }
 
 export interface FirestoreDiagnosticReport {
@@ -46,6 +47,7 @@ export interface FirestoreDiagnosticReport {
     connectedCollections: number;
     emptyCollections: number;
     errorCollections: number;
+    restrictedCollections?: number;
     isAuthoritativeLiveDb: boolean;
   };
   notes: string[];
@@ -63,6 +65,12 @@ export async function runFirestoreDiagnostics(): Promise<FirestoreDiagnosticRepo
   const databaseId = (firebaseConfigJson as any).firestoreDatabaseId || '(default)';
 
   notes.push(`[${new Date().toLocaleTimeString()}] Initiating Firestore Diagnostics for Project: "${projectId}", Database: "${databaseId}"`);
+
+  if (auth.currentUser) {
+    notes.push(`[${new Date().toLocaleTimeString()}] Authenticated Diagnostic Session: ${auth.currentUser.email || auth.currentUser.uid}`);
+  } else {
+    notes.push(`[${new Date().toLocaleTimeString()}] Public / Guest Caller: Sensitive collections (quotations, bookings, users, leads) are guarded by Firestore RBAC rules.`);
+  }
 
   // 1. Direct Ping to Live Server
   let serverPingSuccess = false;
@@ -133,17 +141,25 @@ export async function runFirestoreDiagnostics(): Promise<FirestoreDiagnosticRepo
     } catch (err: any) {
       const latencyMs = Math.round(performance.now() - collStart);
       const errMsg = err?.message || err?.code || 'Unknown Firestore collection error';
+      const isPermissionDenied = err?.code === 'permission-denied' || errMsg.includes('permission') || errMsg.includes('insufficient');
+      const isProtectedCollection = ['quotations', 'bookings', 'users', 'leads'].includes(collPath);
       
+      // If collection is protected by security rules and caller is not a master admin with collection-wide scan rights
+      const isProtectedByRules = isPermissionDenied && isProtectedCollection;
+
       return {
         collectionName: collPath,
         displayName,
-        status: err?.code === 'permission-denied' ? 'ERROR' : 'OFFLINE',
+        status: isProtectedByRules ? 'RESTRICTED_BY_RULES' : (err?.code === 'permission-denied' ? 'ERROR' : 'OFFLINE'),
         documentCount: 0,
         isFromCache: true,
         sampleIds: [],
         latencyMs,
-        sourceOfTruth: 'FALLBACK_LOCAL',
-        errorDetails: errMsg
+        sourceOfTruth: isProtectedByRules ? 'FIRESTORE_LIVE' : 'FALLBACK_LOCAL',
+        errorDetails: isProtectedByRules
+          ? 'Guarded by production Firestore RBAC security rules: collection-level queries require authorized Administrative session.'
+          : errMsg,
+        isProtectedByRules
       };
     }
   }
@@ -184,12 +200,20 @@ export async function runFirestoreDiagnostics(): Promise<FirestoreDiagnosticRepo
 
   if (quotesRes.status === 'CONNECTED') {
     notes.push(`[${new Date().toLocaleTimeString()}] Verified Quotations collection: ${quotesRes.documentCount} active quotes stored in Firestore`);
+  } else if (quotesRes.status === 'RESTRICTED_BY_RULES') {
+    notes.push(`[${new Date().toLocaleTimeString()}] Quotations collection guarded: access controlled via RBAC rules.`);
   }
+
   if (bookingsRes.status === 'CONNECTED') {
     notes.push(`[${new Date().toLocaleTimeString()}] Verified Bookings collection: ${bookingsRes.documentCount} reservations stored in Firestore`);
+  } else if (bookingsRes.status === 'RESTRICTED_BY_RULES') {
+    notes.push(`[${new Date().toLocaleTimeString()}] Bookings collection guarded: access controlled via RBAC rules.`);
   }
+
   if (usersRes.status === 'CONNECTED') {
     notes.push(`[${new Date().toLocaleTimeString()}] Verified Users collection: ${usersRes.documentCount} user accounts stored in Firestore`);
+  } else if (usersRes.status === 'RESTRICTED_BY_RULES') {
+    notes.push(`[${new Date().toLocaleTimeString()}] Users collection guarded: user profiles isolated per-user under security rules.`);
   }
 
   const allCollResults = [
@@ -207,14 +231,17 @@ export async function runFirestoreDiagnostics(): Promise<FirestoreDiagnosticRepo
 
   const connectedCount = allCollResults.filter(c => c.status === 'CONNECTED').length;
   const emptyCount = allCollResults.filter(c => c.status === 'EMPTY').length;
-  const errorCount = allCollResults.filter(c => c.status === 'ERROR' || c.status === 'OFFLINE').length;
+  const restrictedCount = allCollResults.filter(c => c.status === 'RESTRICTED_BY_RULES').length;
+  const trueErrorCount = allCollResults.filter(c => c.status === 'ERROR' || c.status === 'OFFLINE').length;
 
   let overallStatus: FirestoreDiagnosticReport['overallStatus'] = 'HEALTHY';
-  if (errorCount > 0) {
-    const hasPermissionDenied = allCollResults.some(c => c.errorDetails?.includes('permission-denied'));
+  if (trueErrorCount > 0) {
+    const hasPermissionDenied = allCollResults.some(c => c.status === 'ERROR' && c.errorDetails?.includes('permission-denied'));
     overallStatus = hasPermissionDenied ? 'PERMISSION_DENIED' : 'DEGRADED';
   } else if (!serverPingSuccess && connectedCount === 0) {
     overallStatus = 'OFFLINE';
+  } else {
+    overallStatus = 'HEALTHY';
   }
 
   const totalLatencyMs = Math.round(performance.now() - startTime);
@@ -242,8 +269,9 @@ export async function runFirestoreDiagnostics(): Promise<FirestoreDiagnosticRepo
       totalCollectionsChecked: allCollResults.length,
       connectedCollections: connectedCount,
       emptyCollections: emptyCount,
-      errorCollections: errorCount,
-      isAuthoritativeLiveDb: productsRes.status === 'CONNECTED' || (connectedCount > 0 && errorCount === 0)
+      errorCollections: trueErrorCount,
+      restrictedCollections: restrictedCount,
+      isAuthoritativeLiveDb: productsRes.status === 'CONNECTED' || (connectedCount > 0 && trueErrorCount === 0)
     },
     notes
   };

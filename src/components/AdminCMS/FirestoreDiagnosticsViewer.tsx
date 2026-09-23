@@ -59,6 +59,13 @@ export const FirestoreDiagnosticsViewer: React.FC = () => {
             <span>LIVE FIRESTORE</span>
           </span>
         );
+      case 'RESTRICTED_BY_RULES':
+        return (
+          <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200" title="Protected by RBAC security rules">
+            <ShieldCheck className="w-3 h-3 text-indigo-600" />
+            <span>PROTECTED BY RBAC RULES</span>
+          </span>
+        );
       case 'EMPTY':
         return (
           <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200">
@@ -248,8 +255,8 @@ export const FirestoreDiagnosticsViewer: React.FC = () => {
                   )}
 
                   {item.errorDetails && (
-                    <div className="pt-2 border-t border-rose-200 text-rose-700 text-xs">
-                      <span className="font-bold">Error: </span>{item.errorDetails}
+                    <div className={`pt-2 border-t text-xs ${item.status === 'RESTRICTED_BY_RULES' ? 'border-indigo-100 text-indigo-700' : 'border-rose-200 text-rose-700'}`}>
+                      <span className="font-bold">{item.status === 'RESTRICTED_BY_RULES' ? 'Security Policy: ' : 'Error: '}</span>{item.errorDetails}
                     </div>
                   )}
                 </div>

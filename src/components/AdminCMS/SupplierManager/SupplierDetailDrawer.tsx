@@ -692,7 +692,7 @@ export const SupplierDetailDrawer: React.FC<SupplierDetailDrawerProps> = ({
                   </p>
                 </div>
               ) : (
-                <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+                <div className="border border-slate-200 rounded-2xl overflow-x-auto shadow-xs">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-black text-slate-500">
@@ -833,7 +833,7 @@ export const SupplierDetailDrawer: React.FC<SupplierDetailDrawerProps> = ({
                   </p>
                 </div>
               ) : (
-                <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+                <div className="border border-slate-200 rounded-2xl overflow-x-auto shadow-xs">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-black text-slate-500">

@@ -818,7 +818,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   };
 
   return (
-    <div id="theunbound-admin-cms-root" className="min-h-screen w-full bg-slate-900 text-slate-100 flex flex-col font-sans selection:bg-[#00C6A6] selection:text-slate-950">
+    <div id="theunbound-admin-cms-root" className="min-h-screen w-full max-w-full overflow-x-hidden min-w-0 bg-slate-900 text-slate-100 flex flex-col font-sans selection:bg-[#00C6A6] selection:text-slate-950">
       
       {/* Global Command Palette / Search Modal */}
       <CMSGlobalSearch
@@ -1273,7 +1273,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       {/* ========================================================================= */}
       {/* MAIN FULL-SCREEN WORKSPACE CONTENT */}
       {/* ========================================================================= */}
-      <main className="flex-1 w-full bg-slate-100 text-slate-900 p-3 sm:p-6 lg:p-8 space-y-6">
+      <main className="flex-1 w-full min-w-0 max-w-full bg-slate-100 text-slate-900 p-3 sm:p-6 lg:p-8 space-y-6">
         
         {/* Urgent Action Center & Global Reminders Bar */}
         <div className="rounded-2xl overflow-hidden border border-slate-200/90 shadow-xs">

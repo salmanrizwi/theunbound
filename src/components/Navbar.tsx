@@ -579,7 +579,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Mobile Nav Drawer */}
         {isMobileNavOpen && (
-          <div className="lg:hidden border-t border-slate-200 py-3 space-y-1 animate-in fade-in">
+          <div className="lg:hidden border-t border-slate-200 py-3 space-y-1 animate-in fade-in max-h-[calc(100dvh-120px)] overflow-y-auto">
             <p className="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Navigation Menu</p>
             {rootHeaderItems.map((item) => {
               const children = getChildItems(item.id);

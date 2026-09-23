@@ -252,7 +252,7 @@ export const ChatbotPanel: React.FC<ChatbotPanelProps> = ({
       className={`fixed z-50 transition-all duration-300 flex flex-col bg-white shadow-2xl border border-slate-200 overflow-hidden ${
         isExpanded
           ? 'inset-4 sm:inset-10 rounded-2xl'
-          : 'bottom-4 right-4 sm:bottom-6 sm:right-6 w-[95vw] sm:w-[540px] h-[85vh] sm:h-[680px] max-h-[85vh] rounded-2xl'
+          : 'bottom-4 right-4 sm:bottom-6 sm:right-6 w-[95vw] sm:w-[540px] max-w-[calc(100vw-2rem)] h-[85vh] sm:h-[680px] max-h-[85vh] rounded-2xl'
       }`}
     >
       {/* Sessions Drawer */}

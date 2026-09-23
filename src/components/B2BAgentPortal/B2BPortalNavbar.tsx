@@ -624,7 +624,7 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
 
       {/* Mobile Drawer Menu */}
       {isMobileMenuOpen && (
-        <div className="xl:hidden bg-white border-t border-slate-200 p-4 space-y-2 animate-in slide-in-from-top-2">
+        <div className="xl:hidden bg-white border-t border-slate-200 p-4 space-y-2 animate-in slide-in-from-top-2 max-h-[calc(100dvh-80px)] overflow-y-auto">
           {navItems.map(item => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;

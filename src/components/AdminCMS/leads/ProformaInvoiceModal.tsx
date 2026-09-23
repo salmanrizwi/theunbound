@@ -154,7 +154,7 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
           </div>
 
           {/* Services & Line Items Table */}
-          <div className="border border-slate-200 rounded-2xl overflow-hidden">
+          <div className="border border-slate-200 rounded-2xl overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-100 text-slate-600 font-bold border-b border-slate-200">

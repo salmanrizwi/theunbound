@@ -170,7 +170,7 @@ export const LeadBookingsTab: React.FC<LeadBookingsTabProps> = ({
                       </span>
                     </div>
 
-                    <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                    <div className="border border-slate-200 rounded-xl overflow-x-auto bg-white">
                       <table className="w-full text-left text-xs border-collapse">
                         <thead>
                           <tr className="bg-slate-100 text-slate-600 font-bold border-b border-slate-200">

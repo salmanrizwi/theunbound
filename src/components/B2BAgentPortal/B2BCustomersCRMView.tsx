@@ -258,10 +258,10 @@ export const B2BCustomersCRMView: React.FC<B2BCustomersCRMViewProps> = ({
 
       {/* Add / Edit Client Modal */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
           <form 
             onSubmit={handleSaveCustomer}
-            className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 space-y-4 shadow-2xl animate-in fade-in zoom-in-95"
+            className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 my-auto max-h-[90vh] overflow-y-auto"
           >
             <div className="flex items-start justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">

@@ -790,7 +790,7 @@ export const SEOManager: React.FC = () => {
           </div>
 
           {/* REDIRECTS TABLE */}
-          <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs overflow-hidden">
+          <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">

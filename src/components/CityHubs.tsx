@@ -406,8 +406,8 @@ export const CityHubs: React.FC<CityHubsProps> = ({
 
       {/* 5. Hub Dossier / Inspection Modal */}
       {inspectingHub && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl max-w-xl w-full overflow-hidden shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-xl w-full overflow-hidden shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-200 my-auto max-h-[90vh] flex flex-col">
             {/* Modal Image Header */}
             <div className="relative h-48 sm:h-56 w-full">
               <img

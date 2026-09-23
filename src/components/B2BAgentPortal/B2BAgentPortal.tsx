@@ -332,7 +332,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900 selection:bg-[#00C6A6] selection:text-slate-950">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden min-w-0 bg-slate-100 flex flex-col font-sans text-slate-900 selection:bg-[#00C6A6] selection:text-slate-950">
       {/* Dedicated B2B Navigation - Quote Builder has its own fixed application-level header */}
       {activeTab !== 'create-quote' && (
         <B2BPortalNavbar
@@ -375,7 +375,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 pb-16">
+      <main className="flex-1 w-full min-w-0 max-w-full pb-16">
         {activeTab === 'home' && (
           <B2BHomeDiscoveryView
             destinations={destinations}

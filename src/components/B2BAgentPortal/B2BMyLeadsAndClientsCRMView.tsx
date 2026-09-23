@@ -1056,8 +1056,8 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
       {/* 6. COMPREHENSIVE CRM DETAIL MODAL: 7 SECTIONS                            */}
       {/* ========================================================================= */}
       {selectedLead && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh] my-auto">
             {/* Header */}
             <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
               <div className="flex items-center space-x-2">
@@ -1432,9 +1432,9 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
       {/* 7. ADD / EDIT CLIENT PROFILE MODAL                                      */}
       {/* ========================================================================= */}
       {isAddClientModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh] my-auto">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70 shrink-0">
               <h3 className="font-black text-sm text-slate-900">
                 {editingCustomer ? 'Edit Client Profile' : 'Add New Client to CRM'}
               </h3>
@@ -1449,7 +1449,7 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
               </button>
             </div>
 
-            <form onSubmit={handleSaveCustomer} className="p-6 space-y-4 text-xs">
+            <form onSubmit={handleSaveCustomer} className="p-6 space-y-4 text-xs overflow-y-auto flex-1">
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <label className="block font-bold text-slate-700 mb-1">Full Name *</label>
