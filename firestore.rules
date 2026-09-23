@@ -302,72 +302,71 @@ service cloud.firestore {
 
     // =========================================================================
     // CMS MASTER OPERATIONAL DATA (Products, Hotels, Tariffs, Packages, Visas)
-    // Read: Strictly Verified B2B Agents & Internal Operations | Write/Delete: Strictly Authorized Internal Users
-    // Unauthenticated visitors, public buyers, and pending accounts are DENIED access.
+    // Read: Public Catalog / Verified Agents | Write/Delete: Strictly Authorized Internal Users
     // =========================================================================
 
     match /products/{document=**} {
-      allow read: if canAccessB2BInventory();
+      allow read: if true;
       allow write: if canAccessCMSOperations();
     }
 
     match /product_pricing_rates/{document=**} {
-      allow read: if canAccessB2BInventory();
+      allow read: if true;
       allow write: if canAccessCMSOperations();
     }
 
     match /product_capacities/{document=**} {
-      allow read: if canAccessB2BInventory();
+      allow read: if true;
       allow write: if canAccessCMSOperations();
     }
 
     match /hotels/{document=**} {
-      allow read: if canAccessB2BInventory();
+      allow read: if true;
       allow write: if canAccessCMSOperations();
     }
 
     match /hotel_rooms/{document=**} {
-      allow read: if canAccessB2BInventory();
+      allow read: if true;
       allow write: if canAccessCMSOperations();
     }
 
     match /hotel_rates/{document=**} {
-      allow read: if canAccessB2BInventory();
+      allow read: if true;
       allow write: if canAccessCMSOperations();
     }
 
     match /hotel_meal_plans/{document=**} {
-      allow read: if canAccessB2BInventory();
+      allow read: if true;
       allow write: if canAccessCMSOperations();
     }
 
     match /transfer_routes/{document=**} {
-      allow read: if canAccessB2BInventory();
+      allow read: if true;
       allow write: if canAccessCMSOperations();
     }
 
     match /transfer_rates/{document=**} {
-      allow read: if canAccessB2BInventory();
+      allow read: if true;
       allow write: if canAccessCMSOperations();
     }
 
     match /b2b_packages/{document=**} {
-      allow read: if canAccessB2BInventory();
+      allow read: if true;
       allow write: if canAccessCMSOperations();
     }
 
     match /package_items/{document=**} {
-      allow read: if canAccessB2BInventory();
+      allow read: if true;
       allow write: if canAccessCMSOperations();
     }
 
     match /visas/{document=**} {
-      allow read: if canAccessB2BInventory();
+      allow read: if true;
       allow write: if canAccessCMSOperations();
     }
 
     match /visa_rates/{document=**} {
-      allow read: if canAccessB2BInventory();
+      allow read: if true;
       allow write: if canAccessCMSOperations();
     }
 

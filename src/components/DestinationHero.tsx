@@ -16,6 +16,7 @@ export const DestinationHero: React.FC<DestinationHeroProps> = ({
   onSelectDestination,
   onExploreProducts
 }) => {
+  if (!destination) return null;
   const hubsCount = destination.cities?.length || 0;
 
   return (

@@ -174,6 +174,7 @@ import { INITIAL_LEADS } from '../data/initialLeads';
 import { EmailNotificationService } from './emailNotificationService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { googleBusinessService } from './googleBusinessService';
+import { envService } from './environment';
 import { db as firestoreDb } from './firebase';
 import { 
   collection, 
@@ -560,6 +561,7 @@ export class AppDatabase {
   }
 
   private constructor() {
+    this.purgeDemoDataIfProduction();
     this.initDefaultData();
     this.initFirestoreSync();
     if (typeof window !== 'undefined') {
@@ -568,6 +570,79 @@ export class AppDatabase {
           this.notify();
         }
       });
+    }
+  }
+
+  /**
+   * Authoritative Production Safety & Demo Purge Engine
+   * When running in Production / Published mode:
+   * Strips all demo products, demo hotels, demo hubs, demo destinations, demo leads,
+   * mock reviews, demo users, and demo suppliers from localStorage.
+   * Ensures that Firebase/Firestore is the 100% single source of truth.
+   */
+  public purgeDemoDataIfProduction(): void {
+    if (envService.allowDemoData() || typeof window === 'undefined') return;
+
+    try {
+      // 1. Purge demo products
+      const demoProductIds = new Set([
+        'p-tokyo-01', 'p-kyoto-01', 'p-singapore-01', 'p-bali-01', 'p-vietnam-01',
+        'p-london-01', 'p-scotland-01', 'p-paris-01', 'p-amalfi-01', 'p-swiss-01',
+        'p-dubai-01', 'p-bangkok-01', 'p-phuket-01'
+      ]);
+      const currentProducts = this.getItem<Product[]>('products', []);
+      const cleanedProducts = currentProducts.filter(p => p && p.id && !demoProductIds.has(p.id) && !p.id.startsWith('p-demo-'));
+      if (cleanedProducts.length !== currentProducts.length) {
+        this.setItem('products', cleanedProducts, false);
+      }
+
+      // 2. Purge demo leads
+      const demoLeadIds = new Set(['lead-001', 'lead-002', 'lead-003', 'lead-004', 'lead-005', 'lead-006']);
+      const currentLeads = this.getItem<TravelLead[]>('leads', []);
+      const cleanedLeads = currentLeads.filter(l => l && l.id && !demoLeadIds.has(l.id) && !l.id.startsWith('lead-demo-'));
+      if (cleanedLeads.length !== currentLeads.length) {
+        this.setItem('leads', cleanedLeads, false);
+      }
+
+      // 3. Purge demo hotels
+      const demoHotelIds = new Set(['htl-01', 'htl-02', 'htl-03', 'htl-04', 'htl-05', 'htl-06', 'htl-07', 'htl-08']);
+      const currentHotels = this.getItem<Hotel[]>('hotels', []);
+      const cleanedHotels = currentHotels.filter(h => h && h.id && !demoHotelIds.has(h.id));
+      if (cleanedHotels.length !== currentHotels.length) {
+        this.setItem('hotels', cleanedHotels, false);
+      }
+
+      // 4. Purge demo city hubs
+      const demoHubIds = new Set([
+        'hub-tokyo', 'hub-kyoto', 'hub-osaka', 'hub-london', 'hub-edinburgh',
+        'hub-paris', 'hub-nice', 'hub-rome', 'hub-amalfi', 'hub-zurich',
+        'hub-geneva', 'hub-dubai', 'hub-bangkok', 'hub-phuket', 'hub-singapore',
+        'hub-bali', 'hub-hanoi', 'hub-saigon', 'hub-newyork', 'hub-losangeles',
+        'hub-sydney', 'hub-melbourne'
+      ]);
+      const currentHubs = this.getItem<CityHub[]>('city_hubs', []);
+      const cleanedHubs = currentHubs.filter(h => h && h.id && !demoHubIds.has(h.id));
+      if (cleanedHubs.length !== currentHubs.length) {
+        this.setItem('city_hubs', cleanedHubs, false);
+      }
+
+      // 5. Purge demo system users (keep only real authenticated users)
+      const demoUserIds = new Set(['usr-admin-01', 'usr-staff-01', 'usr-agent-01', 'usr-agent-02', 'usr-buyer-01', 'usr-agent-pending-01']);
+      const currentUsers = this.getItem<User[]>('system_users', []);
+      const cleanedUsers = currentUsers.filter(u => u && u.id && !demoUserIds.has(u.id) && u.email !== 'marcus@theunbound.in' && u.email !== 'kenji.ops@theunbound.in');
+      if (cleanedUsers.length !== currentUsers.length) {
+        this.setItem('system_users', cleanedUsers, false);
+      }
+
+      // 6. Purge demo suppliers
+      const demoSupplierIds = new Set(['sup-1', 'sup-2', 'sup-3', 'sup-4', 'sup-5', 'sup-6']);
+      const currentSuppliers = this.getItem<Supplier[]>('suppliers', []);
+      const cleanedSuppliers = currentSuppliers.filter(s => s && s.id && !demoSupplierIds.has(s.id));
+      if (cleanedSuppliers.length !== currentSuppliers.length) {
+        this.setItem('suppliers', cleanedSuppliers, false);
+      }
+    } catch (err) {
+      console.warn('Production demo data purge note:', err);
     }
   }
 
@@ -727,38 +802,39 @@ export class AppDatabase {
   public purgeTombstonedItems(): void {
     const deletedSet = this.getDeletedEntityIds();
     if (deletedSet.size === 0) return;
+    const allowDemo = envService.allowDemoData();
 
-    const products = this.getItem<Product[]>('products', INITIAL_PRODUCTS);
+    const products = this.getItem<Product[]>('products', allowDemo ? INITIAL_PRODUCTS : []);
     const filteredProducts = products.filter(p => !deletedSet.has(p.id));
     if (filteredProducts.length !== products.length) this.setItem('products', filteredProducts, false);
 
-    const hotels = this.getItem<Hotel[]>('hotels', INITIAL_HOTELS);
+    const hotels = this.getItem<Hotel[]>('hotels', allowDemo ? INITIAL_HOTELS : []);
     const filteredHotels = hotels.filter(h => !deletedSet.has(h.id));
     if (filteredHotels.length !== hotels.length) this.setItem('hotels', filteredHotels, false);
 
-    const hubs = this.getItem<CityHub[]>('city_hubs', INITIAL_CITY_HUBS);
+    const hubs = this.getItem<CityHub[]>('city_hubs', allowDemo ? INITIAL_CITY_HUBS : []);
     const filteredHubs = hubs.filter(h => !deletedSet.has(h.id));
     if (filteredHubs.length !== hubs.length) this.setItem('city_hubs', filteredHubs, false);
 
-    const regions = this.getItem<MasterRegion[]>('master_regions', INITIAL_MASTER_REGIONS);
+    const regions = this.getItem<MasterRegion[]>('master_regions', allowDemo ? INITIAL_MASTER_REGIONS : []);
     const filteredRegions = regions.filter(r => !deletedSet.has(r.id));
     if (filteredRegions.length !== regions.length) this.setItem('master_regions', filteredRegions, false);
 
-    const pkgs = this.getItem<B2BPackage[]>('b2b_packages', INITIAL_B2B_PACKAGES);
+    const pkgs = this.getItem<B2BPackage[]>('b2b_packages', allowDemo ? INITIAL_B2B_PACKAGES : []);
     const filteredPkgs = pkgs.filter(p => !deletedSet.has(p.id));
     if (filteredPkgs.length !== pkgs.length) this.setItem('b2b_packages', filteredPkgs, false);
 
-    const dests = this.getItem<Destination[]>('destinations', DESTINATIONS);
+    const dests = this.getItem<Destination[]>('destinations', allowDemo ? DESTINATIONS : []);
     const filteredDests = dests.filter(d => !deletedSet.has(d.id) && !deletedSet.has(d.slug));
     if (filteredDests.length !== dests.length) this.setItem('destinations', filteredDests, false);
   }
 
   /**
-   * Safe real-time Firestore listener with Zero Data Loss Guarantee:
+   * Authoritative real-time Firestore listener:
    * When snapshot is non-empty, updates local storage with authoritative cloud data.
-   * When snapshot is empty or during offline/transient state, strictly PRESERVES existing local records
-   * rather than overwriting with an empty array [].
-   * Filters out any tombstoned, deleted, or de-activated entities so deletions permanently persist.
+   * In Production mode: If Firestore returns 0 documents, commits [] so UI renders legitimate empty state.
+   * In Development mode: Preserves local development mock fixtures if Firestore is empty.
+   * Filters out any tombstoned or deleted entities.
    */
   private syncCollectionSafely<T extends Record<string, any>>(
     collectionName: string,
@@ -766,9 +842,9 @@ export class AppDatabase {
     transformDoc?: (docData: any, docId: string) => T | null
   ): void {
     onSnapshot(collection(firestoreDb, collectionName), (snapshot) => {
+      const deletedSet = this.getDeletedEntityIds();
+      const list: T[] = [];
       if (!snapshot.empty) {
-        const deletedSet = this.getDeletedEntityIds();
-        const list: T[] = [];
         snapshot.forEach(docSnap => {
           const raw = docSnap.data();
           if (raw.isDeleted === true || raw.status === 'DELETED') return;
@@ -781,9 +857,12 @@ export class AppDatabase {
             list.push(item);
           }
         });
+      }
+      
+      // In production mode, always commit authoritative Firestore state (including 0 items [])
+      if (!snapshot.empty || !envService.allowDemoData()) {
         this.setItem(storageKey, list, true);
       }
-      // ZERO DATA LOSS GUARANTEE: Never overwrite local cache with [] when snapshot is empty!
     }, (err) => {
       console.debug(`Firestore ${collectionName} sync note (non-blocking):`, err?.message || err);
     });
@@ -926,6 +1005,57 @@ export class AppDatabase {
   }
 
   private initDefaultData() {
+    const allowDemo = envService.allowDemoData();
+    if (!allowDemo) {
+      // IN PRODUCTION MODE: strictly NO demo data, seed records, or mock fixtures.
+      // Initialize only empty collections so the app queries Firestore directly.
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'master_regions')) this.setItem('master_regions', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'products')) this.setItem('products', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'destinations')) this.setItem('destinations', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'promotions')) this.setItem('promotions', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'blogs')) this.setItem('blogs', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'reviews')) this.setItem('reviews', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'hotels')) this.setItem('hotels', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'city_hubs')) this.setItem('city_hubs', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'regions')) this.setItem('regions', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'destination_faqs')) this.setItem('destination_faqs', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'gallery')) this.setItem('gallery', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'homepage_config')) {
+        const prodHomepage = { ...INITIAL_HOMEPAGE_CONFIG, homepageHubs: [] };
+        this.setItem('homepage_config', prodHomepage);
+      }
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'menu_items')) this.setItem('menu_items', INITIAL_MENU_ITEMS);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'custom_pages')) this.setItem('custom_pages', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'visas')) this.setItem('visas', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'footer_config')) this.setItem('footer_config', INITIAL_FOOTER_CONFIG);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'calendar_tasks')) this.setItem('calendar_tasks', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'user_activities')) this.setItem('user_activities', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'leads')) this.setItem('leads', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'bookings')) this.setItem('bookings', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'saved_quotes')) this.setItem('saved_quotes', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_customers')) this.setItem('b2b_customers', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_tasks')) this.setItem('b2b_tasks', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'roster_resources')) this.setItem('roster_resources', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'campaigns')) this.setItem('campaigns', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'invoices')) this.setItem('invoices', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'vouchers')) this.setItem('vouchers', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'job_sheets')) this.setItem('job_sheets', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'sla_automation_rules')) this.setItem('sla_automation_rules', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'sla_automation_audit_logs')) this.setItem('sla_automation_audit_logs', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'audit_logs')) this.setItem('audit_logs', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'seo_redirects')) this.setItem('seo_redirects', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'seo_settings')) this.setItem('seo_settings', DEFAULT_GLOBAL_SEO_DEFAULTS);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'suppliers')) this.setItem('suppliers', []);
+      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'system_users')) this.setItem('system_users', []);
+
+      try {
+        this.migrateBookingAssignments();
+      } catch (e) {
+        console.warn('Booking assignments migration note:', e);
+      }
+      return;
+    }
+
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'master_regions')) {
       this.setItem('master_regions', INITIAL_MASTER_REGIONS);
     }
@@ -3477,7 +3607,7 @@ export class AppDatabase {
   // PRODUCTS CRUD
   // ==========================================
   public getProducts(): Product[] {
-    const raw = this.getItem<Product[]>('products', INITIAL_PRODUCTS);
+    const raw = this.getItem<Product[]>('products', envService.allowDemoData() ? INITIAL_PRODUCTS : []);
     const deletedSet = this.getDeletedEntityIds();
     return raw.filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Product_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED');
   }
@@ -3569,7 +3699,7 @@ export class AppDatabase {
   // MASTER MACRO REGIONS CRUD (TIER 1: REGION)
   // ==========================================
   public getMasterRegions(): MasterRegion[] {
-    const raw = this.getItem<MasterRegion[]>('master_regions', INITIAL_MASTER_REGIONS);
+    const raw = this.getItem<MasterRegion[]>('master_regions', envService.allowDemoData() ? INITIAL_MASTER_REGIONS : []);
     const deletedSet = this.getDeletedEntityIds();
     return raw.filter(r => r && r.id && !deletedSet.has(r.id) && !deletedSet.has(`MasterRegion_${r.id}`) && !(r as any).isDeleted && (r as any).status !== 'DELETED');
   }
@@ -3615,8 +3745,8 @@ export class AppDatabase {
   // DESTINATIONS CRUD (TIER 2: DESTINATION)
   // ==========================================
   public getDestinations(): Destination[] {
-    const raw = this.getItem<Destination[]>('destinations', DESTINATIONS);
-    if (!Array.isArray(raw)) return DESTINATIONS;
+    const raw = this.getItem<Destination[]>('destinations', envService.allowDemoData() ? DESTINATIONS : []);
+    if (!Array.isArray(raw)) return envService.allowDemoData() ? DESTINATIONS : [];
     const deletedSet = this.getDeletedEntityIds();
     const seen = new Set<string>();
     const deduped: Destination[] = [];
@@ -3714,7 +3844,7 @@ export class AppDatabase {
   // PROMOTIONS & MARKETING CAMPAIGNS CRUD
   // ==========================================
   public getPromotions(): Promotion[] {
-    const raw = this.getItem<Promotion[]>('promotions', INITIAL_PROMOTIONS);
+    const raw = this.getItem<Promotion[]>('promotions', envService.allowDemoData() ? INITIAL_PROMOTIONS : []);
     const today = new Date().toISOString().split('T')[0];
     
     // Normalize status and active states
@@ -3858,7 +3988,7 @@ export class AppDatabase {
   // BLOGS CRUD
   // ==========================================
   public getBlogs(): BlogArticle[] {
-    return this.getItem<BlogArticle[]>('blogs', INITIAL_BLOGS);
+    return this.getItem<BlogArticle[]>('blogs', envService.allowDemoData() ? INITIAL_BLOGS : []);
   }
 
   public getBlogBySlug(slug: string): BlogArticle | undefined {
@@ -5267,7 +5397,7 @@ export class AppDatabase {
   // B2B READY-MADE PACKAGES MANAGEMENT
   // ==========================================
   public getPackages(): B2BPackage[] {
-    const raw = this.getItem<B2BPackage[]>('b2b_packages', INITIAL_B2B_PACKAGES);
+    const raw = this.getItem<B2BPackage[]>('b2b_packages', envService.allowDemoData() ? INITIAL_B2B_PACKAGES : []);
     const deletedSet = this.getDeletedEntityIds();
     return raw.filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Package_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED');
   }
@@ -9771,7 +9901,7 @@ export class AppDatabase {
   // HOTEL MANAGEMENT (B2B Rates, Room Types, Blackout)
   // ==========================================
   public getHotels(): Hotel[] {
-    const raw = this.getItem<Hotel[]>('hotels', INITIAL_HOTELS);
+    const raw = this.getItem<Hotel[]>('hotels', envService.allowDemoData() ? INITIAL_HOTELS : []);
     const deletedSet = this.getDeletedEntityIds();
     return raw.filter(h => h && h.id && !deletedSet.has(h.id) && !deletedSet.has(`Hotel_${h.id}`) && !(h as any).isDeleted && (h as any).status !== 'DELETED');
   }
@@ -9818,7 +9948,7 @@ export class AppDatabase {
   // DESTINATION CITIES / HUBS MANAGEMENT
   // ==========================================
   public getCityHubs(): CityHub[] {
-    const raw = this.getItem<CityHub[]>('city_hubs', INITIAL_CITY_HUBS);
+    const raw = this.getItem<CityHub[]>('city_hubs', envService.allowDemoData() ? INITIAL_CITY_HUBS : []);
     const deletedSet = this.getDeletedEntityIds();
     return raw.filter(h => h && h.id && !deletedSet.has(h.id) && !deletedSet.has(`CityHub_${h.id}`) && !(h as any).isDeleted && (h as any).status !== 'DELETED');
   }
@@ -9862,7 +9992,7 @@ export class AppDatabase {
   // DESTINATION FAQs MANAGEMENT
   // ==========================================
   public getDestinationFAQs(destinationId?: string): DestinationFAQ[] {
-    const faqs = this.getItem<DestinationFAQ[]>('destination_faqs', INITIAL_FAQS);
+    const faqs = this.getItem<DestinationFAQ[]>('destination_faqs', envService.allowDemoData() ? INITIAL_FAQS : []);
     if (destinationId && destinationId !== 'all') {
       return faqs.filter(f => f.destinationId === destinationId);
     }
@@ -9870,7 +10000,7 @@ export class AppDatabase {
   }
 
   public saveDestinationFAQ(faq: DestinationFAQ, user: User | null): void {
-    const faqs = this.getItem<DestinationFAQ[]>('destination_faqs', INITIAL_FAQS);
+    const faqs = this.getItem<DestinationFAQ[]>('destination_faqs', envService.allowDemoData() ? INITIAL_FAQS : []);
     const index = faqs.findIndex(f => f.id === faq.id);
     if (index >= 0) {
       faqs[index] = faq;
@@ -9884,7 +10014,7 @@ export class AppDatabase {
   }
 
   public deleteDestinationFAQ(faqId: string, user: User | null): void {
-    const faqs = this.getItem<DestinationFAQ[]>('destination_faqs', INITIAL_FAQS);
+    const faqs = this.getItem<DestinationFAQ[]>('destination_faqs', envService.allowDemoData() ? INITIAL_FAQS : []);
     const target = faqs.find(f => f.id === faqId);
     this.setItem('destination_faqs', faqs.filter(f => f.id !== faqId));
     this.deleteFirestoreDoc('faqs', faqId);
@@ -9897,7 +10027,7 @@ export class AppDatabase {
   // HAPPY CUSTOMER GALLERY MANAGEMENT
   // ==========================================
   public getGalleryImages(): GalleryImage[] {
-    return this.getItem<GalleryImage[]>('gallery', INITIAL_GALLERY);
+    return this.getItem<GalleryImage[]>('gallery', envService.allowDemoData() ? INITIAL_GALLERY : []);
   }
 
   public saveGalleryImage(image: GalleryImage, user: User | null): void {
@@ -9939,7 +10069,7 @@ export class AppDatabase {
       config.homepageModuleOrder = INITIAL_HOMEPAGE_CONFIG.homepageModuleOrder;
     }
     if (!config.homepageHubs || config.homepageHubs.length === 0) {
-      config.homepageHubs = INITIAL_HOMEPAGE_CONFIG.homepageHubs;
+      config.homepageHubs = envService.allowDemoData() ? INITIAL_HOMEPAGE_CONFIG.homepageHubs : [];
     }
     if (!config.hubSectionTitle) {
       config.hubSectionTitle = INITIAL_HOMEPAGE_CONFIG.hubSectionTitle;
@@ -9978,8 +10108,12 @@ export class AppDatabase {
   public getLeads(): TravelLead[] {
     let raw = this.getItem<TravelLead[]>('leads', []);
     if (!raw || raw.length === 0) {
-      raw = INITIAL_LEADS;
-      this.setItem('leads', raw);
+      if (envService.allowDemoData()) {
+        raw = INITIAL_LEADS;
+        this.setItem('leads', raw);
+      } else {
+        return [];
+      }
     }
 
     // Ensure all leads have required CRM arrays and valid safe primitive types
@@ -12589,7 +12723,7 @@ export class AppDatabase {
   // AUTOMATED EMAIL CAMPAIGNS
   // ==========================================
   public getEmailCampaigns(): EmailCampaignConfig[] {
-    return this.getItem<EmailCampaignConfig[]>('campaigns', INITIAL_CAMPAIGNS);
+    return this.getItem<EmailCampaignConfig[]>('campaigns', envService.allowDemoData() ? INITIAL_CAMPAIGNS : []);
   }
 
   public saveEmailCampaign(campaign: EmailCampaignConfig, user: User | null): void {
@@ -12630,7 +12764,7 @@ export class AppDatabase {
   // ROSTER RESOURCES & OPERATIONS CMS
   // ==========================================
   public getResources(): RosterResource[] {
-    return this.getItem<RosterResource[]>('roster_resources', INITIAL_ROSTER_RESOURCES);
+    return this.getItem<RosterResource[]>('roster_resources', envService.allowDemoData() ? INITIAL_ROSTER_RESOURCES : []);
   }
 
   public getResourceById(id: string): RosterResource | undefined {
@@ -12731,6 +12865,10 @@ export class AppDatabase {
   // USER APPROVAL, SEGREGATION & ACCESS CONTROL
   // ==========================================
   public getUsers(): User[] {
+    const allowDemo = envService.allowDemoData();
+    if (!allowDemo) {
+      return this.getItem<User[]>('system_users', []);
+    }
     const defaultUsers: User[] = [
       {
         id: 'usr-admin-business',
@@ -13393,7 +13531,7 @@ export class AppDatabase {
   }
 
   public getCustomPages(): CustomPage[] {
-    return this.getItem<CustomPage[]>('custom_pages', INITIAL_CUSTOM_PAGES);
+    return this.getItem<CustomPage[]>('custom_pages', envService.allowDemoData() ? INITIAL_CUSTOM_PAGES : []);
   }
 
   public getCustomPageBySlug(slug: string): CustomPage | undefined {
@@ -13525,7 +13663,7 @@ export class AppDatabase {
   // VISA PRODUCTS & CHECKLIST MANAGEMENT
   // ==========================================
   public getVisas(): VisaProduct[] {
-    return this.getItem<VisaProduct[]>('visas', INITIAL_VISAS);
+    return this.getItem<VisaProduct[]>('visas', envService.allowDemoData() ? INITIAL_VISAS : []);
   }
 
   public getVisaById(id: string): VisaProduct | undefined {
@@ -14877,7 +15015,7 @@ export class AppDatabase {
     if (existing && existing.length > 0) {
       return existing;
     }
-    return INITIAL_SLA_AUTOMATION_RULES;
+    return envService.allowDemoData() ? INITIAL_SLA_AUTOMATION_RULES : [];
   }
 
   public initDefaultSLAAutomationRules(): SLAAutomationRule[] {
@@ -16050,8 +16188,11 @@ export class AppDatabase {
 
   public getSuppliers(includeArchived: boolean = true): Supplier[] {
     const list = this.getItem<Supplier[]>('suppliers', []);
-    // If empty in local cache and firestore hasn't populated, populate default trusted DMC ground partners
+    // If empty in local cache and firestore hasn't populated, populate default trusted DMC ground partners (dev only)
     if (list.length === 0) {
+      if (!envService.allowDemoData()) {
+        return [];
+      }
       const defaultSuppliers: Supplier[] = [
         {
           id: 'sup-1',

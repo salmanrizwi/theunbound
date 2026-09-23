@@ -7,6 +7,7 @@ import {
   DateAvailabilityStatus 
 } from '../types';
 import { INITIAL_ROSTER_RESOURCES, INITIAL_PRODUCT_ROSTER_RULES } from '../data/initialRoster';
+import { envService } from '../services/environment';
 
 interface RosterContextType {
   resources: RosterResource[];
@@ -30,28 +31,32 @@ const RosterContext = createContext<RosterContextType | undefined>(undefined);
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export const RosterProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const allowDemo = envService.allowDemoData();
+
   const [resources, setResources] = useState<RosterResource[]>(() => {
     const saved = localStorage.getItem('unbound_roster_resources');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
       } catch (e) {
-        return INITIAL_ROSTER_RESOURCES;
+        return allowDemo ? INITIAL_ROSTER_RESOURCES : [];
       }
     }
-    return INITIAL_ROSTER_RESOURCES;
+    return allowDemo ? INITIAL_ROSTER_RESOURCES : [];
   });
 
   const [rosterRules, setRosterRules] = useState<Record<string, ProductRosterRule>>(() => {
     const saved = localStorage.getItem('unbound_roster_rules');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
       } catch (e) {
-        return INITIAL_PRODUCT_ROSTER_RULES;
+        return allowDemo ? INITIAL_PRODUCT_ROSTER_RULES : {};
       }
     }
-    return INITIAL_PRODUCT_ROSTER_RULES;
+    return allowDemo ? INITIAL_PRODUCT_ROSTER_RULES : {};
   });
 
   useEffect(() => {
@@ -408,8 +413,8 @@ export const RosterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const resetRosterToDefaults = () => {
-    setResources(INITIAL_ROSTER_RESOURCES);
-    setRosterRules(INITIAL_PRODUCT_ROSTER_RULES);
+    setResources(allowDemo ? INITIAL_ROSTER_RESOURCES : []);
+    setRosterRules(allowDemo ? INITIAL_PRODUCT_ROSTER_RULES : {});
     localStorage.removeItem('unbound_roster_resources');
     localStorage.removeItem('unbound_roster_rules');
   };

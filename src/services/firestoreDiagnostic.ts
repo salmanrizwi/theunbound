@@ -9,7 +9,6 @@ import {
 } from 'firebase/firestore';
 import { db as firestoreDb } from './firebase';
 import firebaseConfigJson from '../../firebase-applet-config.json';
-import { INITIAL_PRODUCTS } from '../data/initialProducts';
 
 export interface CollectionDiagnosticResult {
   collectionName: string;
@@ -162,7 +161,7 @@ export async function runFirestoreDiagnostics(): Promise<FirestoreDiagnosticRepo
     reviewsRes,
     blogsRes
   ] = await Promise.all([
-    testCollection('products', 'Product Inventory', INITIAL_PRODUCTS.length),
+    testCollection('products', 'Product Inventory'),
     testCollection('quotations', 'Custom Quotations', 0),
     testCollection('bookings', 'Ground Reservations & Bookings', 0),
     testCollection('users', 'System & B2B Users', 0),

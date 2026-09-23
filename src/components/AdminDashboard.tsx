@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Product } from '../types';
-import { SUPPLIERS } from '../data/suppliers';
+import { AppDatabase } from '../services/db';
 import { formatCurrency } from '../services/pricingEngine';
 import { RosterAdminManager } from './RosterAdminManager';
 import { BookingsManager } from './AdminCMS/BookingsManager';
@@ -9,9 +9,10 @@ import {
   Table, 
   Building2, 
   Eye, 
-  Calendar,
-  CalendarCheck,
-  Search
+  Calendar, 
+  CalendarCheck, 
+  Search,
+  Inbox
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -26,6 +27,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'ROSTER' | 'BOOKINGS' | 'PRODUCTS' | 'SUPPLIERS'>('ROSTER');
   const [productFilter, setProductFilter] = useState('');
+  const db = AppDatabase.getInstance();
+  const suppliers = db.getSuppliers();
 
   const safeProducts = products || [];
   const filteredProducts = safeProducts.filter(p => 
@@ -58,7 +61,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           { id: 'ROSTER', label: 'Operations Roster & Calendar', icon: Calendar },
           { id: 'BOOKINGS', label: 'Bookings & 24-48h SLA Dispatch', icon: CalendarCheck },
           { id: 'PRODUCTS', label: `Master Product Inventory (${safeProducts.length})`, icon: Table },
-          { id: 'SUPPLIERS', label: `Contracted Ground Suppliers (${SUPPLIERS.length})`, icon: Building2 }
+          { id: 'SUPPLIERS', label: `Contracted Ground Suppliers (${suppliers.length})`, icon: Building2 }
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -172,49 +175,59 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* TAB 3: SUPPLIERS */}
       {activeTab === 'SUPPLIERS' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {SUPPLIERS.map((supplier) => (
-              <div key={supplier.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700">
-                      <Building2 className="w-5 h-5" />
+          {suppliers.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs">
+              <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+              <h3 className="text-base font-bold text-slate-800">No contracted ground suppliers found</h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+                Authoritative supplier contracts configured in Firebase will appear here.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {suppliers.map((supplier) => (
+                <div key={supplier.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700">
+                        <Building2 className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900">{supplier.name}</h3>
+                        <span className="text-[11px] text-slate-500">{supplier.destination} ({supplier.country})</span>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">{supplier.name}</h3>
-                      <span className="text-[11px] text-slate-500">{supplier.destination} ({supplier.country})</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      supplier.contractStatus === 'ACTIVE'
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : 'bg-amber-50 text-amber-700 border border-amber-200'
+                    }`}>
+                      {supplier.contractStatus}
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                    {supplier.paymentTerms} • {supplier.cancellationTerms}
+                  </p>
+
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1.5 text-xs text-slate-600">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Contact Person:</span>
+                      <span className="font-semibold text-slate-800">{supplier.contactPerson}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Email:</span>
+                      <span className="font-mono text-slate-800">{supplier.email}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Currency:</span>
+                      <span className="font-mono text-[#008972] font-bold">{supplier.currency}</span>
                     </div>
                   </div>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    supplier.contractStatus === 'ACTIVE'
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : 'bg-amber-50 text-amber-700 border border-amber-200'
-                  }`}>
-                    {supplier.contractStatus}
-                  </span>
                 </div>
-
-                <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
-                  {supplier.paymentTerms} • {supplier.cancellationTerms}
-                </p>
-
-                <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1.5 text-xs text-slate-600">
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Contact Person:</span>
-                    <span className="font-semibold text-slate-800">{supplier.contactPerson}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Email:</span>
-                    <span className="font-mono text-slate-800">{supplier.email}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Currency:</span>
-                    <span className="font-mono text-[#008972] font-bold">{supplier.currency}</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

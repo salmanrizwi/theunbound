@@ -491,6 +491,14 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
               </div>
             </div>
 
+            {displayDestinations.length === 0 ? (
+              <div className="p-8 text-center rounded-2xl border border-slate-200 bg-white">
+                <Globe2 className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                <p className="text-xs text-slate-500">
+                  Active destination corridors are being synchronized with live operations.
+                </p>
+              </div>
+            ) : (
             <div className={`grid ${
               config.destinationGridColumns === 4 
                 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4' 
@@ -605,6 +613,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                 );
               })}
             </div>
+            )}
           </section>
         ) : null;
 
