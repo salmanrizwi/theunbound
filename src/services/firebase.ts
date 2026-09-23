@@ -3,10 +3,20 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getFirestore, 
   initializeFirestore, 
-  enableIndexedDbPersistence, 
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  memoryLocalCache,
   setLogLevel 
 } from 'firebase/firestore';
-import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { 
+  getAuth, 
+  initializeAuth, 
+  browserLocalPersistence, 
+  browserSessionPersistence, 
+  indexedDBLocalPersistence,
+  inMemoryPersistence,
+  GoogleAuthProvider 
+} from 'firebase/auth';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 const metaEnv = (import.meta as unknown as { env?: Record<string, string> }).env || {};
@@ -30,52 +40,67 @@ const firebaseConfig = {
 // Initialize Firebase App singleton
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Initialize Firestore with auto long-polling to prevent WebChannel / streaming connection dropouts
+// Initialize Firestore with robust multi-platform cache & auto long-polling
 const customDatabaseId = (firebaseConfigJson as any).firestoreDatabaseId;
+const dbTargetId = customDatabaseId && customDatabaseId !== '(default)' ? customDatabaseId : undefined;
+
 let firestoreInstance;
 try {
+  let cacheConfig;
+  try {
+    // Attempt persistent multi-tab cache first (supported in desktop & modern mobile)
+    cacheConfig = persistentLocalCache({
+      tabManager: persistentMultipleTabManager()
+    });
+  } catch (cacheErr) {
+    // Fallback to memory cache for restricted storage environments (iOS Safari ITP, private browsing)
+    cacheConfig = memoryLocalCache();
+  }
+
   firestoreInstance = initializeFirestore(
     app,
     {
       experimentalAutoDetectLongPolling: true,
+      localCache: cacheConfig
     },
-    customDatabaseId && customDatabaseId !== '(default)' ? customDatabaseId : undefined
+    dbTargetId
   );
 } catch (e) {
-  // Fallback to standard getFirestore if already initialized
-  firestoreInstance = customDatabaseId && customDatabaseId !== '(default)'
-    ? getFirestore(app, customDatabaseId)
-    : getFirestore(app);
+  // Fallback if already initialized or custom settings rejected
+  try {
+    firestoreInstance = dbTargetId ? getFirestore(app, dbTargetId) : getFirestore(app);
+  } catch (fallbackErr) {
+    console.warn('[FIREBASE] Firestore fallback init notice:', fallbackErr);
+    firestoreInstance = getFirestore(app);
+  }
 }
 
 export const db = firestoreInstance;
 
-// Initialize Auth
-export const auth = getAuth(app);
-
-// Ensure local persistence for cross-tab and cross-session reliability across mobile and desktop
-if (typeof window !== 'undefined') {
-  setPersistence(auth, browserLocalPersistence).catch((err) => {
-    console.debug('Firebase Auth persistence initialization note:', err);
-  });
+// Initialize Auth with multi-tier persistence cascade for iOS Safari / Mobile / Private Browsing resilience
+let authInstance;
+try {
+  if (typeof window !== 'undefined') {
+    authInstance = initializeAuth(app, {
+      persistence: [
+        indexedDBLocalPersistence,
+        browserLocalPersistence,
+        browserSessionPersistence,
+        inMemoryPersistence
+      ]
+    });
+  } else {
+    authInstance = getAuth(app);
+  }
+} catch (authInitErr) {
+  // If auth was already initialized by another module, reuse getAuth instance
+  authInstance = getAuth(app);
 }
+
+export const auth = authInstance;
 
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({
   prompt: 'select_account'
 });
 
-// Enable persistence for offline capabilities where supported
-try {
-  if (typeof window !== 'undefined') {
-    enableIndexedDbPersistence(db).catch((err) => {
-      if (err.code === 'failed-precondition') {
-        console.debug('Firestore persistence note: Multiple tabs open');
-      } else if (err.code === 'unimplemented') {
-        console.debug('Firestore persistence not supported in this browser environment');
-      }
-    });
-  }
-} catch (e) {
-  console.debug('Firestore persistence init note:', e);
-}

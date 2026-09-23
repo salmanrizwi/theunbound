@@ -16,7 +16,7 @@ import {
   ChevronRight,
   Terminal
 } from 'lucide-react';
-import { Destination, HomepageConfig } from '../../types';
+import { Destination, HomepageConfig, UserRole } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { db } from '../../services/db';
 import { navigateTo } from '../../services/portalRouter';
@@ -102,14 +102,21 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
 
   const handleInlineLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !password) {
       setErrorMsg('Please enter both your registered trade email and password.');
       return;
     }
     setIsLoading(true);
     setErrorMsg(null);
+
+    let roleToSubmit: UserRole = 'B2B_AGENT';
+    if (['admin@theunbound.com', 'business@theunbound.in', 'marcus@theunbound.in'].includes(cleanEmail) || cleanEmail.endsWith('@theunbound.in')) {
+      roleToSubmit = cleanEmail === 'kenji.ops@theunbound.in' ? 'TEAM_MEMBER' : 'ADMIN';
+    }
+
     try {
-      const res = await login(email.trim(), 'B2B_AGENT', password);
+      const res = await login(cleanEmail, roleToSubmit, password);
       if (!res.success) {
         setErrorMsg(res.error || 'Invalid credentials. Please verify your email and password.');
       }

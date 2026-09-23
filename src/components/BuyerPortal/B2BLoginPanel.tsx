@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { UserRole } from '../../types';
 import { 
   Building2, 
   ShieldCheck, 
@@ -54,7 +55,8 @@ export const B2BLoginPanel: React.FC<B2BLoginPanelProps> = ({
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !password) {
       setErrorMsg('Please enter both your registered email and password.');
       return;
     }
@@ -62,8 +64,14 @@ export const B2BLoginPanel: React.FC<B2BLoginPanelProps> = ({
     setIsLoading(true);
     setErrorMsg(null);
 
+    // Auto-detect role if admin/team staff signs in from hero B2B panel
+    let roleToSubmit: UserRole = 'B2B_AGENT';
+    if (['admin@theunbound.com', 'business@theunbound.in', 'marcus@theunbound.in'].includes(cleanEmail) || cleanEmail.endsWith('@theunbound.in')) {
+      roleToSubmit = cleanEmail === 'kenji.ops@theunbound.in' ? 'TEAM_MEMBER' : 'ADMIN';
+    }
+
     try {
-      const res = await login(email.trim(), 'B2B_AGENT', password);
+      const res = await login(cleanEmail, roleToSubmit, password);
       if (res.success) {
         setSuccessMsg('Welcome back! Loading trade agent portal...');
         if (onSuccess) onSuccess();
@@ -79,7 +87,8 @@ export const B2BLoginPanel: React.FC<B2BLoginPanelProps> = ({
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regEmail || !regPassword || !regAgency) {
+    const cleanEmail = regEmail.trim().toLowerCase();
+    if (!cleanEmail || !regPassword || !regAgency) {
       setErrorMsg('Please fill in required fields: Email, Password, and Agency Name.');
       return;
     }
@@ -95,7 +104,7 @@ export const B2BLoginPanel: React.FC<B2BLoginPanelProps> = ({
     try {
       const fullName = `${regFirstName} ${regLastName}`.trim() || regAgency;
       const res = await register({
-        email: regEmail.trim(),
+        email: cleanEmail,
         name: fullName,
         role: 'B2B_AGENT',
         category: 'EXTERNAL',
@@ -200,10 +209,14 @@ export const B2BLoginPanel: React.FC<B2BLoginPanelProps> = ({
                 type="email"
                 id="b2b-login-email"
                 required
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="agent@travelagency.com"
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20 text-xs font-medium text-slate-900 placeholder:text-slate-400 bg-slate-50/50 transition-all"
+                className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20 text-xs font-medium text-slate-900 placeholder:text-slate-400 bg-slate-50/50 transition-all"
               />
             </div>
 
@@ -225,15 +238,20 @@ export const B2BLoginPanel: React.FC<B2BLoginPanelProps> = ({
                   type={showPassword ? 'text' : 'password'}
                   id="b2b-login-password"
                   required
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your confidential password"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20 text-xs font-medium text-slate-900 placeholder:text-slate-400 bg-slate-50/50 pr-10 transition-all"
+                  className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20 text-xs font-medium text-slate-900 placeholder:text-slate-400 bg-slate-50/50 pr-12 transition-all"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  className="absolute right-0 top-0 bottom-0 min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-400 hover:text-slate-600"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -256,7 +274,7 @@ export const B2BLoginPanel: React.FC<B2BLoginPanelProps> = ({
               type="submit"
               id="btn-b2b-hero-login"
               disabled={isLoading}
-              className="w-full mt-2 py-3 px-4 bg-[#00C6A6] hover:bg-[#00b094] active:bg-[#009b82] text-slate-950 font-black text-xs sm:text-sm rounded-xl transition-all shadow-md shadow-[#00C6A6]/20 flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-70 active:scale-[0.99]"
+              className="w-full min-h-[44px] mt-2 py-3 px-4 bg-[#00C6A6] hover:bg-[#00b094] active:bg-[#009b82] text-slate-950 font-black text-xs sm:text-sm rounded-xl transition-all shadow-md shadow-[#00C6A6]/20 flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-70 active:scale-[0.99]"
             >
               {isLoading ? (
                 <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin"></div>

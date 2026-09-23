@@ -81,11 +81,32 @@ async function startServer() {
     const distPath = path.resolve(process.cwd(), "dist");
     const indexPath = path.join(distPath, "index.html");
 
-    app.use(express.static(distPath, { index: false }));
+    app.use(express.static(distPath, { 
+      index: false,
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        } else if (filePath.includes('/assets/') || filePath.includes('\\assets\\')) {
+          // Vite hashed bundles - immutable cache for 1 year
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+          // Other static assets (favicons, manifests, etc.) - short revalidate
+          res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+        }
+      }
+    }));
+
     app.get("*all", (req, res) => {
       if (req.path.startsWith("/api")) {
         return res.status(404).json({ error: "Endpoint not found" });
       }
+      // Ensure mobile and desktop browsers never hold an obsolete HTML cache
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+
       try {
         if (fs.existsSync(indexPath)) {
           const rawHtml = fs.readFileSync(indexPath, "utf-8");

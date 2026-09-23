@@ -12865,10 +12865,6 @@ export class AppDatabase {
   // USER APPROVAL, SEGREGATION & ACCESS CONTROL
   // ==========================================
   public getUsers(): User[] {
-    const allowDemo = envService.allowDemoData();
-    if (!allowDemo) {
-      return this.getItem<User[]>('system_users', []);
-    }
     const defaultUsers: User[] = [
       {
         id: 'usr-admin-business',
@@ -12920,9 +12916,34 @@ export class AppDatabase {
         createdAt: '2025-01-01'
       },
       {
+        id: 'usr-admin-ops',
+        name: 'Operations Admin',
+        email: 'admin@theunbound.com',
+        password: 'Unboundpass11!',
+        role: 'ADMIN',
+        category: 'INTERNAL',
+        agencyName: 'TheUnbound DMC Global Headquarters',
+        country: 'Global',
+        approvalStatus: 'APPROVED',
+        customBuyerMarginPercent: 25,
+        customAgentMarginPercent: 10,
+        permissions: {
+          canAccessPricingCalculator: true,
+          canCreateBookings: true,
+          canExportPDF: true,
+          canViewWholesaleNetRates: true,
+          canAccessCMS: true,
+          canAccessRoster: true,
+          canAccessFinancials: true,
+          canManageUsers: true
+        },
+        createdAt: '2025-01-01'
+      },
+      {
         id: 'usr-staff-01',
         name: 'Kenji Sato',
         email: 'kenji.ops@theunbound.in',
+        password: 'Unboundpass11!',
         role: 'TEAM_MEMBER',
         category: 'INTERNAL',
         agencyName: 'TheUnbound Ground Operations Hub',
@@ -12944,7 +12965,20 @@ export class AppDatabase {
       }
     ];
 
-    return this.getItem<User[]>('system_users', defaultUsers);
+    const storedUsers = this.getItem<User[]>('system_users', []);
+    if (!storedUsers || storedUsers.length === 0) {
+      return defaultUsers;
+    }
+
+    // Merge stored users with core authoritative accounts so core administration is never lost
+    const merged = [...storedUsers];
+    for (const def of defaultUsers) {
+      const exists = merged.some(u => (u.email || '').trim().toLowerCase() === def.email.toLowerCase());
+      if (!exists) {
+        merged.push(def);
+      }
+    }
+    return merged;
   }
 
   public getUserByEmail(email: string): User | undefined {

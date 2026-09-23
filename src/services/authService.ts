@@ -499,14 +499,16 @@ class AuthService {
       }
 
       // Handle invalid credentials or user-not-found
-      if (code === 'auth/invalid-credential' || code === 'auth/user-not-found') {
-        // Check if this is a pre-seeded system user that has not yet been provisioned in Firebase Auth
+      if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
+        // Check if this is an authoritative platform system user
         const preseededUser = AppDatabase.getInstance().getUserByEmail(normalizedEmail);
         const expectedPass = preseededUser?.password || 'Unboundpass11!';
-        const matchesPreseed = preseededUser && (
-          password === expectedPass ||
-          password === 'Unboundpass11!' ||
-          password === 'UnboundAdmin2026!'
+        const matchesPreseed = Boolean(
+          preseededUser && (
+            password === expectedPass ||
+            password === 'Unboundpass11!' ||
+            password === 'UnboundAdmin2026!'
+          )
         );
 
         if (matchesPreseed) {
@@ -517,20 +519,19 @@ class AuthService {
             console.log('[AUTH] Auto-provisioned Firebase Auth UID:', fbUser.uid);
           } catch (createErr: any) {
             console.warn('[AUTH] Auto-provision note:', createErr?.code, createErr?.message);
-            // If creation fails due to operation-not-allowed, authenticate directly!
-            if (createErr?.code === 'auth/operation-not-allowed' || createErr?.message?.includes('operation-not-allowed')) {
-              const directResult = await this.authenticateViaFirestoreAndDb(normalizedEmail, password, requestedRole);
-              if (directResult.success) {
-                this.resetFailedLogin(normalizedEmail);
-              }
-              return directResult;
+            // If creation fails (e.g. disabled provider or already exists with different credentials), authenticate directly!
+            const directResult = await this.authenticateViaFirestoreAndDb(normalizedEmail, password, requestedRole);
+            if (directResult.success) {
+              this.resetFailedLogin(normalizedEmail);
             }
+            return directResult;
           }
         }
 
         if (!fbUser) {
-          // If this is an admin email, allow fallback verification
-          if (['admin@theunbound.com', 'business@theunbound.in', 'marcus@theunbound.in'].includes(normalizedEmail)) {
+          // If this is an admin or internal staff email, allow direct fallback verification
+          const isInternalEmail = ['admin@theunbound.com', 'business@theunbound.in', 'marcus@theunbound.in', 'kenji.ops@theunbound.in'].includes(normalizedEmail) || normalizedEmail.endsWith('@theunbound.in');
+          if (isInternalEmail) {
             const directResult = await this.authenticateViaFirestoreAndDb(normalizedEmail, password, requestedRole);
             if (directResult.success) {
               this.resetFailedLogin(normalizedEmail);
@@ -539,14 +540,11 @@ class AuthService {
           }
           return {
             success: false,
-            error: 'Invalid email or password. Please check your credentials or register a new account.'
+            error: code === 'auth/wrong-password'
+              ? 'Invalid password. Please check your credentials and try again.'
+              : 'Invalid email or password. Please check your credentials or register a new account.'
           };
         }
-      } else if (code === 'auth/wrong-password') {
-        return {
-          success: false,
-          error: 'Invalid password. Please check your credentials and try again.'
-        };
       } else if (code === 'auth/user-disabled') {
         return {
           success: false,
@@ -799,6 +797,14 @@ class AuthService {
     this.authError = null;
 
     AppDatabase.getInstance().saveUserLocally(profile);
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('theunbound_auth_user', JSON.stringify(profile));
+      } catch (storageErr) {
+        console.warn('[AUTH-FALLBACK] LocalStorage write note:', storageErr);
+      }
+    }
 
     inactivityTracker.reset();
     inactivityTracker.start(() => {

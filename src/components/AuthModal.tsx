@@ -250,9 +250,15 @@ export const AuthModal: React.FC = () => {
       return;
     }
 
+    // Auto-detect role if user enters internal admin/team email while External was selected
+    let roleToSubmit = activeRole;
+    if (['admin@theunbound.com', 'business@theunbound.in', 'marcus@theunbound.in'].includes(cleanEmail) || cleanEmail.endsWith('@theunbound.in')) {
+      roleToSubmit = cleanEmail === 'kenji.ops@theunbound.in' ? 'TEAM_MEMBER' : 'ADMIN';
+    }
+
     setIsSubmitting(true);
     try {
-      const res = await login(cleanEmail, activeRole, password);
+      const res = await login(cleanEmail, roleToSubmit, password);
       if (!res.success) {
         setErrorMessage(formatAuthError(res.error || 'Invalid credentials or login failed.'));
       }
@@ -696,11 +702,15 @@ export const AuthModal: React.FC = () => {
                   {userCategory === 'INTERNAL' ? 'TheUnbound Official Email' : 'Official Business Email'} <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
-                  <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 sm:top-3" />
+                  <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3 sm:top-3.5 pointer-events-none" />
                   <input
                     type="email"
                     required
                     id="auth-input-email"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    autoComplete="email"
                     placeholder={
                       authMode === 'REGISTER'
                         ? 'e.g. yourname@agencydomain.com'
@@ -710,7 +720,7 @@ export const AuthModal: React.FC = () => {
                     }
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8.5 pr-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
+                    className="w-full min-h-[44px] bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm font-medium text-slate-900 focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] focus:bg-white"
                   />
                 </div>
               </div>
@@ -722,23 +732,27 @@ export const AuthModal: React.FC = () => {
                     Password <span className="text-rose-500">*</span>
                   </label>
                   <div className="relative">
-                    <KeyRound className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 sm:top-3" />
+                    <KeyRound className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3 sm:top-3.5 pointer-events-none" />
                     <input
                       type={showPassword ? 'text' : 'password'}
                       required
                       id="auth-input-password"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      autoComplete={authMode === 'REGISTER' ? 'new-password' : 'current-password'}
                       placeholder="••••••••••••"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8.5 pr-9 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-900 focus:ring-1 focus:ring-[#00C6A6] focus:bg-white"
+                      className="w-full min-h-[44px] bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-12 py-2 text-xs sm:text-sm font-medium text-slate-900 focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] focus:bg-white"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-2.5 top-2 sm:top-2.5 text-slate-400 hover:text-slate-700 p-1 rounded-md transition-colors cursor-pointer"
+                      className="absolute right-0 top-0 bottom-0 min-w-[44px] min-h-[44px] flex items-center justify-center text-slate-400 hover:text-slate-700 rounded-r-xl transition-colors cursor-pointer"
                       aria-label={showPassword ? 'Hide password' : 'Show password'}
                     >
-                      {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
                 </div>
@@ -817,7 +831,7 @@ export const AuthModal: React.FC = () => {
                 type="submit"
                 id="auth-submit-btn"
                 disabled={isSubmitting}
-                className={`w-full bg-[#00C6A6] hover:bg-[#00b094] active:bg-[#009b82] text-slate-950 font-black py-2.5 sm:py-3 px-4 rounded-xl text-xs sm:text-sm transition-all shadow-md shadow-[#00C6A6]/20 flex items-center justify-center space-x-2 cursor-pointer active:scale-[0.99] ${
+                className={`w-full min-h-[44px] bg-[#00C6A6] hover:bg-[#00b094] active:bg-[#009b82] text-slate-950 font-black py-2.5 sm:py-3 px-4 rounded-xl text-xs sm:text-sm transition-all shadow-md shadow-[#00C6A6]/20 flex items-center justify-center space-x-2 cursor-pointer active:scale-[0.99] ${
                   isSubmitting ? 'opacity-70 cursor-not-allowed' : ''
                 }`}
               >

@@ -1,5 +1,7 @@
 import { 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider, 
   User as FirebaseUser,
   onAuthStateChanged
@@ -62,6 +64,25 @@ class GoogleAuthService {
       } catch (e) {
         // Ignore
       }
+
+      // Check for redirect result on mobile/tablet or after redirect flow
+      try {
+        getRedirectResult(auth).then((result) => {
+          if (result) {
+            const credential = GoogleAuthProvider.credentialFromResult(result);
+            const token = credential?.accessToken;
+            if (token) {
+              console.log('[GOOGLE-AUTH] Captured credentials from redirect authentication flow.');
+              this.saveAuth(token, result.user);
+              this.notifyListeners();
+            }
+          }
+        }).catch((err) => {
+          console.debug('[GOOGLE-AUTH] getRedirectResult note:', err);
+        });
+      } catch (e) {
+        // Ignore
+      }
     }
 
     // Listen to Firebase Auth state
@@ -82,6 +103,22 @@ class GoogleAuthService {
   }
 
   public async signInWithGoogle(): Promise<GoogleAuthState> {
+    const isMobileDevice = typeof window !== 'undefined' && (
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+      (Boolean(navigator.maxTouchPoints && navigator.maxTouchPoints > 1) && window.innerWidth < 1024)
+    );
+
+    // On mobile devices, prefer redirect authentication to prevent popup blocker failures
+    if (isMobileDevice) {
+      try {
+        console.log('[GOOGLE-AUTH] Mobile device detected. Initiating redirect authentication...');
+        await signInWithRedirect(auth, this.provider);
+        return this.getAuthState();
+      } catch (redirectErr) {
+        console.warn('[GOOGLE-AUTH] Mobile redirect error, attempting popup fallback:', redirectErr);
+      }
+    }
+
     try {
       const result = await signInWithPopup(auth, this.provider);
       const credential = GoogleAuthProvider.credentialFromResult(result);
@@ -104,6 +141,17 @@ class GoogleAuthService {
           error.message.includes('popup-closed') ||
           error.message.includes('blocked by the browser')
         ));
+
+      // If popup was blocked on desktop, seamlessly fall back to redirect flow
+      if (isPopupBlocked && typeof window !== 'undefined') {
+        try {
+          console.log('[GOOGLE-AUTH] Pop-up was blocked. Initiating redirect flow fallback...');
+          await signInWithRedirect(auth, this.provider);
+          return this.getAuthState();
+        } catch (redirectErr) {
+          console.warn('[GOOGLE-AUTH] Redirect fallback notice:', redirectErr);
+        }
+      }
 
       const isUnauthorizedDomain = 
         error?.code === 'auth/unauthorized-domain' || 
