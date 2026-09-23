@@ -71,24 +71,11 @@ export class EnvironmentService {
 
   /**
    * Authoritative Demo Data Gate:
-   * Demo, mock, seed, and placeholder records are ONLY permitted if:
-   * 1. Environment is explicitly 'development'
-   * 2. AND we are running in Vite DEV mode
-   * 3. AND running on localhost / 127.0.0.1
-   * 
-   * In Production / Staging, this ALWAYS returns false.
+   * Strictly enforces that NO demo, mock, seed, or placeholder records
+   * are ever permitted. Firebase / Firestore is the 100% authoritative single source of truth.
    */
   public allowDemoData(): boolean {
-    if (this.currentEnv === 'production' || this.currentEnv === 'staging') {
-      return false;
-    }
-    if (typeof window !== 'undefined') {
-      const host = window.location.hostname.toLowerCase();
-      if (host !== 'localhost' && host !== '127.0.0.1') {
-        return false;
-      }
-    }
-    return Boolean(import.meta.env.DEV);
+    return false;
   }
 
   private logEnvironmentStatus(): void {

@@ -365,13 +365,17 @@ export const BuyerFooter: React.FC<BuyerFooterProps> = ({
             <span>© 2026 Unbound Experiences India Pvt Ltd. All rights reserved.</span>
           </div>
 
-          <div className="flex items-center space-x-4">
+          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-x-4 gap-y-1.5 text-xs text-slate-400">
             <span className="flex items-center space-x-1.5 text-emerald-400">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <span>Ground Operations Network: Operational (24-48h SLA)</span>
             </span>
-            <span>•</span>
-            <span>IATA / ASTA / PATA Verified</span>
+            <span className="hidden sm:inline text-slate-700">•</span>
+            <span className="font-semibold tracking-wider text-slate-300">JATA / MSME / NIDHI</span>
+            <span className="hidden sm:inline text-slate-700">•</span>
+            <span className="text-slate-400 font-medium tracking-wide">
+              Made with <span className="text-rose-500 inline-block px-0.5" aria-label="love">♥</span> in India
+            </span>
           </div>
         </div>
       </div>

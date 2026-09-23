@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { Product, ProductCategory, CurrencyCode, Destination, Supplier, DestinationRegionItem, CityHub, MasterRegion, ProductPricingMethod, TransferVehicleConfig } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
-import { SUPPLIERS } from '../../data/suppliers';
 import { formatCurrency, CAPACITY_BASED_CATEGORIES } from '../../services/pricingEngine';
 import { 
   Package, 
@@ -60,6 +59,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   const [masterRegions, setMasterRegions] = useState<MasterRegion[]>(() => db.getMasterRegions());
   const [regions, setRegions] = useState<DestinationRegionItem[]>(() => db.getRegions());
   const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => db.getSuppliers());
   
   useEffect(() => {
     return db.subscribe(() => {
@@ -67,6 +67,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       setMasterRegions(db.getMasterRegions());
       setRegions(db.getRegions());
       setCityHubs(db.getCityHubs());
+      setSuppliers(db.getSuppliers());
     });
   }, []);
 
@@ -133,8 +134,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     optionalUpgradeProductIds: [],
     shortDescription: '',
     longDescription: '',
-    supplierId: SUPPLIERS[0]?.id || 'supp-01',
-    supplierName: SUPPLIERS[0]?.name || 'Tokyo Luxury Transport & Guide Services Ltd',
+    supplierId: db.getSuppliers()[0]?.id || '',
+    supplierName: db.getSuppliers()[0]?.name || 'Authorized Ground Partner',
     supplierProductCode: '',
     season: 'All Year',
     validityFrom: '2026-01-01',
@@ -248,8 +249,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       optionalUpgradeProductIds: [],
       shortDescription: '',
       longDescription: '',
-      supplierId: SUPPLIERS[0]?.id || 'supp-01',
-      supplierName: SUPPLIERS[0]?.name || 'Ground Supplier',
+      supplierId: suppliers[0]?.id || db.getSuppliers()[0]?.id || '',
+      supplierName: suppliers[0]?.name || db.getSuppliers()[0]?.name || 'Ground Supplier',
       supplierProductCode: skuGenerated,
       season: 'All Year',
       validityFrom: '2026-01-01',
@@ -361,8 +362,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       name: formData.name || '',
       shortDescription: formData.shortDescription || '',
       longDescription: formData.longDescription || formData.shortDescription || '',
-      supplierId: formData.supplierId || SUPPLIERS[0]?.id || 'supp-01',
-      supplierName: SUPPLIERS.find(s => s.id === formData.supplierId)?.name || formData.supplierName || 'Ground Supplier',
+      supplierId: formData.supplierId || suppliers[0]?.id || '',
+      supplierName: suppliers.find(s => s.id === formData.supplierId)?.name || formData.supplierName || 'Ground Supplier',
       supplierProductCode: formData.supplierProductCode || formData.sku || '',
       category: (formData.category as ProductCategory) || 'Private Tours',
       subcategory: formData.subcategory || 'Luxury & Culture',
