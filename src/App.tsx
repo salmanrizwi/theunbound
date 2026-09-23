@@ -242,71 +242,25 @@ const MainAppContent: React.FC = () => {
 
   // Route Access Validation
   const accessCheck = validateRouteAccess(user, currentRoute.pathname);
-
-  // STRICT ROLE-BASED PORTAL SEGREGATION:
-  // 1. Authenticated B2B Travel Agent
-  if (isAuthenticated && (role === 'B2B_AGENT' || role === 'AGENT')) {
-    if (!accessCheck.allowed) {
-      return (
-        <PortalAccessRestrictedView
-          targetNamespace={currentRoute.namespace}
-          reason={accessCheck.reason || 'ACCESS_RESTRICTED'}
-          message={accessCheck.message}
-          onRedirect={() => navigateTo('/b2b')}
-        />
-      );
-    }
-
-    // Map legacy standalone lead routes to canonical CRM route
-    const isLegacyLeadRoute = currentRoute.subTab === 'leads' || currentRoute.subTab === 'assigned-leads';
-    const b2bTab = (currentRoute.subTab === 'quote-builder' || currentRoute.subTab === 'create-quote')
-      ? 'create-quote'
-      : (isLegacyLeadRoute || currentRoute.subTab === 'customers' || currentRoute.subTab === 'crm')
-        ? 'crm'
-        : (currentRoute.subTab as any) || 'home';
-
-    // Canonical URL synchronization: if visited /b2b/leads or /b2b/assigned-leads, update URL to /b2b/crm without reload
-    if (isLegacyLeadRoute && typeof window !== 'undefined' && window.location.pathname !== '/b2b/crm') {
-      window.history.replaceState(null, '', '/b2b/crm');
-    }
-
-    return (
-      <B2BAgentPortal
-        destinations={destinations}
-        hotels={hotels}
-        products={products}
-        onOpenBookingModal={handleOpenQuotationBooking}
-        initialTab={b2bTab}
-        onTabChange={(tab) => {
-          const path = tab === 'create-quote' 
-            ? '/b2b/quote-builder' 
-            : tab === 'home' 
-              ? '/b2b' 
-              : (tab === 'crm' || tab === 'leads' || tab === 'customers') 
-                ? '/b2b/crm' 
-                : `/b2b/${tab}`;
-          navigateTo(path);
-        }}
-      />
-    );
-  }
-
-  // 2. Authenticated Admin & Operations Staff
   const hasCMSAccess = isAuthenticated && canUserAccessCMS(user);
-  if (isAuthenticated && hasCMSAccess) {
-    if (!accessCheck.allowed) {
+
+  // 1. ADMIN OPERATIONS CMS ENGINE (/admin/*)
+  if (currentRoute.namespace === 'ADMIN') {
+    if (!hasCMSAccess) {
       return (
         <PortalAccessRestrictedView
-          targetNamespace={currentRoute.namespace}
-          reason={accessCheck.reason || 'ACCESS_RESTRICTED'}
-          message={accessCheck.message}
-          onRedirect={() => navigateTo('/admin')}
+          targetNamespace="ADMIN"
+          reason={!isAuthenticated ? 'AUTH_REQUIRED' : 'ACCESS_RESTRICTED'}
+          message="Administrative access is restricted to verified TheUnbound DMC operations personnel."
+          onRedirect={() => navigateTo(isB2BAuthorized ? '/b2b' : '/')}
         />
       );
     }
 
     return (
       <AdminCMSHub
+        initialTab={currentRoute.subTab}
+        initialSubTab={currentRoute.param}
         destinations={destinations}
         products={products}
         onViewProduct={(p) => {
@@ -321,24 +275,101 @@ const MainAppContent: React.FC = () => {
     );
   }
 
-  // 3. Unauthenticated visitor or Buyer visiting restricted internal route (e.g. /admin or /b2b)
-  if (!accessCheck.allowed) {
-    if (accessCheck.reason === 'AUTH_REQUIRED' && currentRoute.pathname === '/b2b/quote-builder') {
-      // Keep Buyer layout in background and show QuoteBuilderAuthRequiredModal
+  // 2. WHOLESALE B2B AGENT PORTAL (/b2b/*)
+  if (currentRoute.namespace === 'B2B') {
+    if (!isB2BAuthorized && !hasCMSAccess) {
+      if (accessCheck.reason === 'AUTH_REQUIRED' && currentRoute.pathname === '/b2b/quote-builder') {
+        // Allow QuoteBuilderAuthRequiredModal on Buyer background
+      } else {
+        return (
+          <PortalAccessRestrictedView
+            targetNamespace="B2B"
+            reason={!isAuthenticated ? 'AUTH_REQUIRED' : 'ACCESS_RESTRICTED'}
+            message="Wholesale B2B Agent portal access is restricted to verified travel agency partners."
+            onRedirect={() => navigateTo('/')}
+          />
+        );
+      }
     } else {
+      // Map legacy standalone lead routes to canonical CRM route
+      const isLegacyLeadRoute = currentRoute.subTab === 'leads' || currentRoute.subTab === 'assigned-leads';
+      const b2bTab = (currentRoute.subTab === 'quote-builder' || currentRoute.subTab === 'create-quote')
+        ? 'create-quote'
+        : (isLegacyLeadRoute || currentRoute.subTab === 'customers' || currentRoute.subTab === 'crm')
+          ? 'crm'
+          : (currentRoute.subTab as any) || 'home';
+
+      // Canonical URL synchronization: if visited /b2b/leads or /b2b/assigned-leads, update URL to /b2b/crm without reload
+      if (isLegacyLeadRoute && typeof window !== 'undefined' && window.location.pathname !== '/b2b/crm') {
+        window.history.replaceState(null, '', '/b2b/crm');
+      }
+
       return (
-        <PortalAccessRestrictedView
-          targetNamespace={currentRoute.namespace}
-          reason={accessCheck.reason || 'ACCESS_RESTRICTED'}
-          message={accessCheck.message}
-          onRedirect={() => navigateTo('/')}
+        <B2BAgentPortal
+          destinations={destinations}
+          hotels={hotels}
+          products={products}
+          onOpenBookingModal={handleOpenQuotationBooking}
+          initialTab={b2bTab}
+          onTabChange={(tab) => {
+            const path = tab === 'create-quote' 
+              ? '/b2b/quote-builder' 
+              : tab === 'home' 
+                ? '/b2b' 
+                : (tab === 'crm' || tab === 'leads' || tab === 'customers') 
+                  ? '/b2b/crm' 
+                  : `/b2b/${tab}`;
+            navigateTo(path);
+          }}
         />
       );
     }
   }
 
+  // 3. Fallback check for any other unpermitted route
+  if (!accessCheck.allowed && currentRoute.namespace !== 'BUYER') {
+    return (
+      <PortalAccessRestrictedView
+        targetNamespace={currentRoute.namespace}
+        reason={accessCheck.reason || 'ACCESS_RESTRICTED'}
+        message={accessCheck.message}
+        onRedirect={() => navigateTo('/')}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex flex-col font-sans selection:bg-[#00C6A6] selection:text-white">
+      {/* Authenticated Staff & Partner Quick Navigation Bar */}
+      {isAuthenticated && (hasCMSAccess || isB2BAuthorized) && (
+        <div className="bg-slate-900 text-slate-300 px-4 py-2 text-xs flex flex-wrap items-center justify-between border-b border-slate-800 gap-2">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>
+              Signed in: <strong className="text-white">{user?.name || user?.email}</strong> ({user?.role === 'ADMIN' ? 'Operations Admin' : user?.role === 'B2B_AGENT' ? 'B2B Travel Partner' : user?.role})
+            </span>
+          </div>
+          <div className="flex items-center gap-4">
+            {hasCMSAccess && (
+              <button
+                onClick={() => navigateTo('/admin')}
+                className="text-amber-400 hover:text-amber-300 font-semibold underline flex items-center gap-1 transition-colors"
+              >
+                Go to Admin CMS Hub &rarr;
+              </button>
+            )}
+            {isB2BAuthorized && (
+              <button
+                onClick={() => navigateTo('/b2b')}
+                className="text-[#00C6A6] hover:text-emerald-300 font-semibold underline flex items-center gap-1 transition-colors"
+              >
+                Go to Wholesale B2B Portal &rarr;
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Dynamic Promotions Banner & Modals */}
       <PublicPromotionsBanner onNavigateDestination={handleSelectDestination} />
 

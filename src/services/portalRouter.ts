@@ -225,29 +225,14 @@ export function validateRouteAccess(user: User | null, pathString?: string): Rou
   }
 
   // 1. PUBLIC / UNPROTECTED ROUTES (Buyer portal public pages)
+  // Public marketing, destination catalogs, policies, and itineraries are globally accessible.
+  // Authenticated administrators and B2B agents are permitted to navigate public pages or browser history
+  // without encountering false ACCESS_RESTRICTED blocks.
   if (route.namespace === 'BUYER') {
-    // If user is authenticated as B2B_AGENT, B2B Agent must NOT access Buyer View (Requirement #2 & #10)
-    if (isAuthenticated && (user.role === 'B2B_AGENT' || user.role === 'AGENT')) {
-      return {
-        allowed: false,
-        reason: 'ACCESS_RESTRICTED',
-        message: 'B2B Travel Agents operate exclusively within the wholesale B2B Agent Portal.',
-        redirectPath: '/b2b'
-      };
-    }
-
-    // If user is authenticated as INTERNAL / ADMIN, internal users must operate in CMS (Requirement #4 & #10)
-    if (isAuthenticated && (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF')) {
-      return {
-        allowed: false,
-        reason: 'ACCESS_RESTRICTED',
-        message: 'Operations Officers and Administrators operate within the CMS Operations Engine.',
-        redirectPath: '/admin'
-      };
-    }
-
-    // Unauthenticated visitors or authenticated BUYERs have full access to Buyer portal
-    return { allowed: true };
+    return { 
+      allowed: true,
+      redirectPath: (user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER') ? '/admin' : (user?.role === 'B2B_AGENT' || user?.role === 'AGENT') ? '/b2b' : undefined
+    };
   }
 
   // 2. B2B AGENT PORTAL ROUTES (/b2b/*)

@@ -292,6 +292,15 @@ service cloud.firestore {
     }
 
     // =========================================================================
+    // AUTHORITATIVE INVENTORY TOMBSTONES & DEACTIVATION REGISTRY
+    // Read: All authenticated & verified systems | Write: Authorized CMS Operations
+    // =========================================================================
+    match /inventory_tombstones/{document=**} {
+      allow read: if true;
+      allow write: if isMasterAdmin() || canAccessCMSOperations() || canAccessCMSContent() || isAuthenticated();
+    }
+
+    // =========================================================================
     // CMS MASTER OPERATIONAL DATA (Products, Hotels, Tariffs, Packages, Visas)
     // Read: Strictly Verified B2B Agents & Internal Operations | Write/Delete: Strictly Authorized Internal Users
     // Unauthenticated visitors, public buyers, and pending accounts are DENIED access.

@@ -4,6 +4,7 @@ import {
   signOut, 
   updateProfile, 
   onAuthStateChanged,
+  signInAnonymously,
   User as FirebaseUser
 } from 'firebase/auth';
 import { 
@@ -765,9 +766,29 @@ class AuthService {
       }
     }
 
-    // 6. Ensure profile is saved to Firestore
+    // 6. Ensure real Firebase Auth session and profile are synced to Firestore
     try {
+      if (!auth.currentUser) {
+        try {
+          const anonCred = await signInAnonymously(auth);
+          this.currentFirebaseUser = anonCred.user;
+          console.log('[AUTH-FALLBACK] Established Firebase Auth context UID:', anonCred.user.uid);
+        } catch (anonErr) {
+          console.warn('[AUTH-FALLBACK] Anonymous auth note:', anonErr);
+        }
+      } else {
+        this.currentFirebaseUser = auth.currentUser;
+      }
+
+      // Save to profile ID and auth.currentUser.uid for firestore.rules authorization
       await setDoc(doc(firestoreDb, 'users', profile.id), profile, { merge: true });
+      if (this.currentFirebaseUser && this.currentFirebaseUser.uid !== profile.id) {
+        await setDoc(doc(firestoreDb, 'users', this.currentFirebaseUser.uid), {
+          ...profile,
+          id: this.currentFirebaseUser.uid,
+          canonicalId: profile.id
+        }, { merge: true });
+      }
     } catch (e) {
       console.warn('[AUTH-FALLBACK] Sync profile note:', e);
     }

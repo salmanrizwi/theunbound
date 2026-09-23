@@ -656,15 +656,101 @@ export class AppDatabase {
     }
   }
 
-  private deleteFirestoreDoc(collectionName: string, docId: string): void {
-    if (!docId) return;
+  public getDeletedEntityIds(): Set<string> {
+    const ids = this.getItem<string[]>('inventory_tombstones', []);
+    return new Set(ids);
+  }
+
+  public markEntityDeleted(collectionOrType: string, recordId: string, details?: any): void {
+    if (!recordId) return;
+    const current = this.getItem<string[]>('inventory_tombstones', []);
+    const set = new Set(current);
+    set.add(recordId);
+    set.add(`${collectionOrType}_${recordId}`);
+    this.setItem('inventory_tombstones', Array.from(set));
+
+    // Also persist tombstone in Firestore
     try {
-      deleteDoc(doc(firestoreDb, collectionName, docId)).catch((err) => {
-        console.debug(`Firestore delete note (${collectionName}/${docId}):`, err);
+      const tombstoneDoc = {
+        id: `${collectionOrType}_${recordId}`,
+        collectionName: collectionOrType,
+        recordId,
+        deletedAt: new Date().toISOString(),
+        isDeleted: true,
+        ...(details || {})
+      };
+      setDoc(doc(firestoreDb, 'inventory_tombstones', `${collectionOrType}_${recordId}`), tombstoneDoc, { merge: true }).catch(err => {
+        console.debug('Firestore tombstone write note:', err);
       });
     } catch (e) {
-      console.debug(`Firestore delete error (${collectionName}/${docId}):`, e);
+      console.debug('Tombstone local error:', e);
     }
+  }
+
+  public isEntityDeleted(recordId: string, collectionOrType?: string): boolean {
+    if (!recordId) return false;
+    const set = this.getDeletedEntityIds();
+    if (set.has(recordId)) return true;
+    if (collectionOrType && set.has(`${collectionOrType}_${recordId}`)) return true;
+    return false;
+  }
+
+  public async deleteFirestoreDocAsync(collectionName: string, docId: string, details?: any): Promise<boolean> {
+    if (!docId) return true;
+    this.markEntityDeleted(collectionName, docId, details);
+    try {
+      await deleteDoc(doc(firestoreDb, collectionName, docId));
+      return true;
+    } catch (err: any) {
+      console.warn(`[DB] Direct deleteDoc note (${collectionName}/${docId}):`, err?.message || err);
+      // Soft-delete marker fallback in Firestore so document is marked deleted even if hard delete was restricted
+      try {
+        await setDoc(doc(firestoreDb, collectionName, docId), {
+          isDeleted: true,
+          status: 'DELETED',
+          deletedAt: new Date().toISOString()
+        }, { merge: true });
+        return true;
+      } catch (innerErr) {
+        console.debug(`[DB] Soft delete note:`, innerErr);
+      }
+      return false;
+    }
+  }
+
+  private deleteFirestoreDoc(collectionName: string, docId: string): void {
+    if (!docId) return;
+    this.markEntityDeleted(collectionName, docId);
+    this.deleteFirestoreDocAsync(collectionName, docId).catch(() => {});
+  }
+
+  public purgeTombstonedItems(): void {
+    const deletedSet = this.getDeletedEntityIds();
+    if (deletedSet.size === 0) return;
+
+    const products = this.getItem<Product[]>('products', INITIAL_PRODUCTS);
+    const filteredProducts = products.filter(p => !deletedSet.has(p.id));
+    if (filteredProducts.length !== products.length) this.setItem('products', filteredProducts, false);
+
+    const hotels = this.getItem<Hotel[]>('hotels', INITIAL_HOTELS);
+    const filteredHotels = hotels.filter(h => !deletedSet.has(h.id));
+    if (filteredHotels.length !== hotels.length) this.setItem('hotels', filteredHotels, false);
+
+    const hubs = this.getItem<CityHub[]>('city_hubs', INITIAL_CITY_HUBS);
+    const filteredHubs = hubs.filter(h => !deletedSet.has(h.id));
+    if (filteredHubs.length !== hubs.length) this.setItem('city_hubs', filteredHubs, false);
+
+    const regions = this.getItem<MasterRegion[]>('master_regions', INITIAL_MASTER_REGIONS);
+    const filteredRegions = regions.filter(r => !deletedSet.has(r.id));
+    if (filteredRegions.length !== regions.length) this.setItem('master_regions', filteredRegions, false);
+
+    const pkgs = this.getItem<B2BPackage[]>('b2b_packages', INITIAL_B2B_PACKAGES);
+    const filteredPkgs = pkgs.filter(p => !deletedSet.has(p.id));
+    if (filteredPkgs.length !== pkgs.length) this.setItem('b2b_packages', filteredPkgs, false);
+
+    const dests = this.getItem<Destination[]>('destinations', DESTINATIONS);
+    const filteredDests = dests.filter(d => !deletedSet.has(d.id) && !deletedSet.has(d.slug));
+    if (filteredDests.length !== dests.length) this.setItem('destinations', filteredDests, false);
   }
 
   /**
@@ -672,18 +758,28 @@ export class AppDatabase {
    * When snapshot is non-empty, updates local storage with authoritative cloud data.
    * When snapshot is empty or during offline/transient state, strictly PRESERVES existing local records
    * rather than overwriting with an empty array [].
+   * Filters out any tombstoned, deleted, or de-activated entities so deletions permanently persist.
    */
-  private syncCollectionSafely<T>(
+  private syncCollectionSafely<T extends Record<string, any>>(
     collectionName: string,
     storageKey: string,
     transformDoc?: (docData: any, docId: string) => T | null
   ): void {
     onSnapshot(collection(firestoreDb, collectionName), (snapshot) => {
       if (!snapshot.empty) {
+        const deletedSet = this.getDeletedEntityIds();
         const list: T[] = [];
         snapshot.forEach(docSnap => {
-          const item = transformDoc ? transformDoc(docSnap.data(), docSnap.id) : (docSnap.data() as T);
-          if (item) list.push(item);
+          const raw = docSnap.data();
+          if (raw.isDeleted === true || raw.status === 'DELETED') return;
+          if (deletedSet.has(docSnap.id) || (raw.id && deletedSet.has(raw.id))) return;
+
+          const item = transformDoc ? transformDoc(raw, docSnap.id) : (raw as T);
+          if (item) {
+            if ((item as any).isDeleted === true || (item as any).status === 'DELETED') return;
+            if (item.id && deletedSet.has(item.id)) return;
+            list.push(item);
+          }
         });
         this.setItem(storageKey, list, true);
       }
@@ -698,6 +794,23 @@ export class AppDatabase {
     this.isFirestoreInitialized = true;
 
     try {
+      // 0. Synchronize Authoritative Inventory Tombstones
+      onSnapshot(collection(firestoreDb, 'inventory_tombstones'), (snapshot) => {
+        if (!snapshot.empty) {
+          const current = this.getItem<string[]>('inventory_tombstones', []);
+          const set = new Set(current);
+          snapshot.forEach(docSnap => {
+            const data = docSnap.data();
+            if (data.recordId) set.add(data.recordId);
+            if (data.id) set.add(data.id);
+            set.add(docSnap.id);
+          });
+          this.setItem('inventory_tombstones', Array.from(set), false);
+          this.purgeTombstonedItems();
+        }
+      }, (err) => {
+        console.debug('Firestore inventory_tombstones sync note:', err);
+      });
       // 1. Core Inventory & Catalog Collections
       this.syncCollectionSafely<Product>('products', 'products');
       this.syncCollectionSafely<Destination>('destinations', 'destinations');
@@ -2756,6 +2869,12 @@ export class AppDatabase {
     }
 
     // 3. Perform Verified Deletion across Collections & Firestore
+    this.markEntityDeleted(entityType, recordId, {
+      deletedBy: user?.email || user?.name || 'Administrator',
+      entityType,
+      recordId
+    });
+
     switch (entityType) {
       case 'Product': {
         const prods = this.getProducts();
@@ -3098,11 +3217,100 @@ export class AppDatabase {
     };
   }
 
+  public async secureDeleteRecordAsync(
+    entityType: CMSDeletableEntityType,
+    recordId: string,
+    user: User | null,
+    options?: { forceHardDelete?: boolean }
+  ): Promise<SecureDeleteResult> {
+    const res = this.secureDeleteRecord(entityType, recordId, user, options);
+    if (!res.success) return res;
+
+    let col = '';
+    switch (entityType) {
+      case 'Product': col = 'products'; break;
+      case 'Hotel': col = 'hotels'; break;
+      case 'Package': col = 'b2b_packages'; break;
+      case 'CityHub': col = 'city_hubs'; break;
+      case 'Destination': col = 'destinations'; break;
+      case 'MasterRegion': col = 'master_regions'; break;
+      case 'DestinationRegion': col = 'regions'; break;
+      case 'DestinationFAQ': col = 'faqs'; break;
+      case 'Blog': col = 'blog_articles'; break;
+      case 'Review': col = 'google_reviews'; break;
+      case 'Promotion': col = 'promotions'; break;
+      case 'GalleryImage': col = 'gallery_items'; break;
+      case 'Visa': case 'VisaRequirement': col = 'visas'; break;
+      case 'CustomPage': col = 'custom_pages'; break;
+      case 'MenuItem': col = 'menu_items'; break;
+      case 'Quote': col = 'quotations'; break;
+      case 'Lead': col = 'leads'; break;
+      case 'RosterResource': col = 'roster_resources'; break;
+      case 'CalendarTask': col = 'calendar_tasks'; break;
+      default: col = entityType.toLowerCase() + 's'; break;
+    }
+
+    if (col) {
+      await this.deleteFirestoreDocAsync(col, recordId, {
+        entityType,
+        recordId,
+        deletedBy: user?.email || user?.name || 'Admin'
+      });
+    }
+
+    this.notify();
+    return res;
+  }
+
+  public async secureArchiveRecordAsync(
+    entityType: CMSDeletableEntityType,
+    recordId: string,
+    user: User | null
+  ): Promise<SecureDeleteResult> {
+    const res = this.secureArchiveRecord(entityType, recordId, user);
+    if (!res.success) return res;
+
+    let col = '';
+    switch (entityType) {
+      case 'Product': col = 'products'; break;
+      case 'Hotel': col = 'hotels'; break;
+      case 'Package': col = 'b2b_packages'; break;
+      case 'CityHub': col = 'city_hubs'; break;
+      case 'Destination': col = 'destinations'; break;
+      case 'MasterRegion': col = 'master_regions'; break;
+      case 'DestinationRegion': col = 'regions'; break;
+      case 'DestinationFAQ': col = 'faqs'; break;
+      case 'Blog': col = 'blog_articles'; break;
+      case 'Review': col = 'google_reviews'; break;
+      case 'Promotion': col = 'promotions'; break;
+      case 'Visa': case 'VisaRequirement': col = 'visas'; break;
+      case 'CustomPage': col = 'custom_pages'; break;
+      default: col = entityType.toLowerCase() + 's'; break;
+    }
+
+    if (col) {
+      try {
+        await setDoc(doc(firestoreDb, col, recordId), {
+          status: 'ARCHIVED',
+          isArchived: true,
+          archivedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (e) {
+        console.debug('Firestore archive note:', e);
+      }
+    }
+
+    this.notify();
+    return res;
+  }
+
   // ==========================================
   // PRODUCTS CRUD
   // ==========================================
   public getProducts(): Product[] {
-    return this.getItem<Product[]>('products', INITIAL_PRODUCTS);
+    const raw = this.getItem<Product[]>('products', INITIAL_PRODUCTS);
+    const deletedSet = this.getDeletedEntityIds();
+    return raw.filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Product_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED');
   }
 
   public getProductById(id: string): Product | undefined {
@@ -3192,7 +3400,9 @@ export class AppDatabase {
   // MASTER MACRO REGIONS CRUD (TIER 1: REGION)
   // ==========================================
   public getMasterRegions(): MasterRegion[] {
-    return this.getItem<MasterRegion[]>('master_regions', INITIAL_MASTER_REGIONS);
+    const raw = this.getItem<MasterRegion[]>('master_regions', INITIAL_MASTER_REGIONS);
+    const deletedSet = this.getDeletedEntityIds();
+    return raw.filter(r => r && r.id && !deletedSet.has(r.id) && !deletedSet.has(`MasterRegion_${r.id}`) && !(r as any).isDeleted && (r as any).status !== 'DELETED');
   }
 
   public getMasterRegionById(regionId: string): MasterRegion | undefined {
@@ -3238,10 +3448,12 @@ export class AppDatabase {
   public getDestinations(): Destination[] {
     const raw = this.getItem<Destination[]>('destinations', DESTINATIONS);
     if (!Array.isArray(raw)) return DESTINATIONS;
+    const deletedSet = this.getDeletedEntityIds();
     const seen = new Set<string>();
     const deduped: Destination[] = [];
     for (const d of raw) {
       if (!d) continue;
+      if (deletedSet.has(d.id) || (d.slug && deletedSet.has(d.slug)) || deletedSet.has(`Destination_${d.id}`) || (d as any).isDeleted || (d as any).status === 'DELETED') continue;
       const keyId = d.id ? d.id.trim().toLowerCase() : '';
       const keySlug = d.slug ? d.slug.trim().toLowerCase() : '';
       if (keyId && seen.has(keyId)) continue;
@@ -4886,7 +5098,9 @@ export class AppDatabase {
   // B2B READY-MADE PACKAGES MANAGEMENT
   // ==========================================
   public getPackages(): B2BPackage[] {
-    return this.getItem<B2BPackage[]>('b2b_packages', INITIAL_B2B_PACKAGES);
+    const raw = this.getItem<B2BPackage[]>('b2b_packages', INITIAL_B2B_PACKAGES);
+    const deletedSet = this.getDeletedEntityIds();
+    return raw.filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Package_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED');
   }
 
   public getPackageById(id: string): B2BPackage | null {
@@ -9388,7 +9602,9 @@ export class AppDatabase {
   // HOTEL MANAGEMENT (B2B Rates, Room Types, Blackout)
   // ==========================================
   public getHotels(): Hotel[] {
-    return this.getItem<Hotel[]>('hotels', INITIAL_HOTELS);
+    const raw = this.getItem<Hotel[]>('hotels', INITIAL_HOTELS);
+    const deletedSet = this.getDeletedEntityIds();
+    return raw.filter(h => h && h.id && !deletedSet.has(h.id) && !deletedSet.has(`Hotel_${h.id}`) && !(h as any).isDeleted && (h as any).status !== 'DELETED');
   }
 
   public getHotelById(id: string): Hotel | undefined {
@@ -9433,7 +9649,9 @@ export class AppDatabase {
   // DESTINATION CITIES / HUBS MANAGEMENT
   // ==========================================
   public getCityHubs(): CityHub[] {
-    return this.getItem<CityHub[]>('city_hubs', INITIAL_CITY_HUBS);
+    const raw = this.getItem<CityHub[]>('city_hubs', INITIAL_CITY_HUBS);
+    const deletedSet = this.getDeletedEntityIds();
+    return raw.filter(h => h && h.id && !deletedSet.has(h.id) && !deletedSet.has(`CityHub_${h.id}`) && !(h as any).isDeleted && (h as any).status !== 'DELETED');
   }
 
   public getCityHubsByDestination(destinationIdOrSlug: string): CityHub[] {
@@ -15063,130 +15281,221 @@ export class AppDatabase {
     packages?: B2BPackage[];
     packageItems?: PackageItemRef[];
   }, user?: User | null): void {
+    const deletedSet = this.getDeletedEntityIds();
+
     if (syncedData.regions && syncedData.regions.length > 0) {
       const existing = this.getMasterRegions();
-      const merged = this.mergeEntitiesById(existing, syncedData.regions);
+      const merged = this.mergeEntitiesById(existing, syncedData.regions, 'MasterRegion');
       this.setItem('master_regions', merged, false);
-      for (const r of syncedData.regions) this.syncFirestoreDoc('master_regions', r.id, r);
+      for (const r of merged) {
+        if (!deletedSet.has(r.id) && !deletedSet.has(`MasterRegion_${r.id}`)) {
+          this.syncFirestoreDoc('master_regions', r.id, r);
+        }
+      }
     }
 
     if (syncedData.destinations && syncedData.destinations.length > 0) {
       const existing = this.getDestinations();
-      const merged = this.mergeEntitiesById(existing, syncedData.destinations);
+      const merged = this.mergeEntitiesById(existing, syncedData.destinations, 'Destination');
       this.setItem('destinations', merged, false);
-      for (const d of syncedData.destinations) this.syncFirestoreDoc('destinations', d.id, d);
+      for (const d of merged) {
+        if (!deletedSet.has(d.id) && !deletedSet.has(d.slug) && !deletedSet.has(`Destination_${d.id}`)) {
+          this.syncFirestoreDoc('destinations', d.id, d);
+        }
+      }
     }
 
     if (syncedData.hubs && syncedData.hubs.length > 0) {
       const existing = this.getCityHubs();
-      const merged = this.mergeEntitiesById(existing, syncedData.hubs);
+      const merged = this.mergeEntitiesById(existing, syncedData.hubs, 'CityHub');
       this.setItem('city_hubs', merged, false);
-      for (const h of syncedData.hubs) this.syncFirestoreDoc('city_hubs', h.id, h);
+      for (const h of merged) {
+        if (!deletedSet.has(h.id) && !deletedSet.has(`CityHub_${h.id}`)) {
+          this.syncFirestoreDoc('city_hubs', h.id, h);
+        }
+      }
     }
 
     if (syncedData.products && syncedData.products.length > 0) {
       const existing = this.getProducts();
-      const merged = this.mergeEntitiesById(existing, syncedData.products);
+      const merged = this.mergeEntitiesById(existing, syncedData.products, 'Product');
       this.setItem('products', merged, false);
-      for (const p of syncedData.products) this.syncFirestoreDoc('products', p.id, p);
+      for (const p of merged) {
+        if (!deletedSet.has(p.id) && !deletedSet.has(`Product_${p.id}`)) {
+          this.syncFirestoreDoc('products', p.id, p);
+        }
+      }
     }
 
     if (syncedData.productRates && syncedData.productRates.length > 0) {
       const existing = this.getProductRates();
-      const merged = this.mergeEntitiesById(existing, syncedData.productRates);
+      const merged = this.mergeEntitiesById(existing, syncedData.productRates, 'ProductPricingRate');
       this.setItem('product_pricing_rates', merged, false);
-      for (const pr of syncedData.productRates) this.syncFirestoreDoc('product_pricing_rates', pr.id, pr);
+      for (const pr of merged) {
+        if (!deletedSet.has(pr.id)) {
+          this.syncFirestoreDoc('product_pricing_rates', pr.id, pr);
+        }
+      }
     }
 
     if (syncedData.productCapacities && syncedData.productCapacities.length > 0) {
       const existing = this.getProductCapacities();
-      const merged = this.mergeEntitiesById(existing, syncedData.productCapacities);
+      const merged = this.mergeEntitiesById(existing, syncedData.productCapacities, 'ProductCapacityItem');
       this.setItem('product_capacities', merged, false);
-      for (const pc of syncedData.productCapacities) this.syncFirestoreDoc('product_capacities', pc.id, pc);
+      for (const pc of merged) {
+        if (!deletedSet.has(pc.id)) {
+          this.syncFirestoreDoc('product_capacities', pc.id, pc);
+        }
+      }
     }
 
     if (syncedData.hotels && syncedData.hotels.length > 0) {
       const existing = this.getHotels();
-      const merged = this.mergeEntitiesById(existing, syncedData.hotels);
+      const merged = this.mergeEntitiesById(existing, syncedData.hotels, 'Hotel');
       this.setItem('hotels', merged, false);
-      for (const h of syncedData.hotels) this.syncFirestoreDoc('hotels', h.id, h);
+      for (const h of merged) {
+        if (!deletedSet.has(h.id) && !deletedSet.has(`Hotel_${h.id}`)) {
+          this.syncFirestoreDoc('hotels', h.id, h);
+        }
+      }
     }
 
     if (syncedData.hotelRooms && syncedData.hotelRooms.length > 0) {
       const existing = this.getHotelRooms();
-      const merged = this.mergeEntitiesById(existing, syncedData.hotelRooms);
+      const merged = this.mergeEntitiesById(existing, syncedData.hotelRooms, 'HotelRoom');
       this.setItem('hotel_rooms', merged, false);
-      for (const hr of syncedData.hotelRooms) this.syncFirestoreDoc('hotel_rooms', hr.id, hr);
+      for (const hr of merged) {
+        if (!deletedSet.has(hr.id)) {
+          this.syncFirestoreDoc('hotel_rooms', hr.id, hr);
+        }
+      }
     }
 
     if (syncedData.hotelMealPlans && syncedData.hotelMealPlans.length > 0) {
       const existing = this.getHotelMealPlans();
-      const merged = this.mergeEntitiesById(existing, syncedData.hotelMealPlans);
+      const merged = this.mergeEntitiesById(existing, syncedData.hotelMealPlans, 'HotelMealPlan');
       this.setItem('hotel_meal_plans', merged, false);
-      for (const mp of syncedData.hotelMealPlans) this.syncFirestoreDoc('hotel_meal_plans', mp.id, mp);
+      for (const mp of merged) {
+        if (!deletedSet.has(mp.id)) {
+          this.syncFirestoreDoc('hotel_meal_plans', mp.id, mp);
+        }
+      }
     }
 
     if (syncedData.hotelRates && syncedData.hotelRates.length > 0) {
       const existing = this.getHotelRates();
-      const merged = this.mergeEntitiesById(existing, syncedData.hotelRates);
+      const merged = this.mergeEntitiesById(existing, syncedData.hotelRates, 'HotelRate');
       this.setItem('hotel_rates', merged, false);
-      for (const hr of syncedData.hotelRates) this.syncFirestoreDoc('hotel_rates', hr.id, hr);
+      for (const hr of merged) {
+        if (!deletedSet.has(hr.id)) {
+          this.syncFirestoreDoc('hotel_rates', hr.id, hr);
+        }
+      }
     }
 
     if (syncedData.visas && syncedData.visas.length > 0) {
       const existing = this.getVisas();
-      const merged = this.mergeEntitiesById(existing, syncedData.visas);
+      const merged = this.mergeEntitiesById(existing, syncedData.visas, 'VisaProduct');
       this.setItem('visas', merged, false);
-      for (const v of syncedData.visas) this.syncFirestoreDoc('visas', v.id, v);
+      for (const v of merged) {
+        if (!deletedSet.has(v.id) && !deletedSet.has(`Visa_${v.id}`)) {
+          this.syncFirestoreDoc('visas', v.id, v);
+        }
+      }
     }
 
     if (syncedData.visaRates && syncedData.visaRates.length > 0) {
       const existing = this.getVisaRates();
-      const merged = this.mergeEntitiesById(existing, syncedData.visaRates);
+      const merged = this.mergeEntitiesById(existing, syncedData.visaRates, 'VisaRate');
       this.setItem('visa_rates', merged, false);
-      for (const vr of syncedData.visaRates) this.syncFirestoreDoc('visa_rates', vr.id, vr);
+      for (const vr of merged) {
+        if (!deletedSet.has(vr.id)) {
+          this.syncFirestoreDoc('visa_rates', vr.id, vr);
+        }
+      }
     }
 
     if (syncedData.transferRoutes && syncedData.transferRoutes.length > 0) {
       const existing = this.getTransferRoutes();
-      const merged = this.mergeEntitiesById(existing, syncedData.transferRoutes);
+      const merged = this.mergeEntitiesById(existing, syncedData.transferRoutes, 'TransferRoute');
       this.setItem('transfer_routes', merged, false);
-      for (const tr of syncedData.transferRoutes) this.syncFirestoreDoc('transfer_routes', tr.id, tr);
+      for (const tr of merged) {
+        if (!deletedSet.has(tr.id)) {
+          this.syncFirestoreDoc('transfer_routes', tr.id, tr);
+        }
+      }
     }
 
     if (syncedData.transferRates && syncedData.transferRates.length > 0) {
       const existing = this.getTransferRates();
-      const merged = this.mergeEntitiesById(existing, syncedData.transferRates);
+      const merged = this.mergeEntitiesById(existing, syncedData.transferRates, 'TransferRate');
       this.setItem('transfer_rates', merged, false);
-      for (const tr of syncedData.transferRates) this.syncFirestoreDoc('transfer_rates', tr.id, tr);
+      for (const tr of merged) {
+        if (!deletedSet.has(tr.id)) {
+          this.syncFirestoreDoc('transfer_rates', tr.id, tr);
+        }
+      }
     }
 
     if (syncedData.packages && syncedData.packages.length > 0) {
       const existing = this.getB2BPackages();
-      const merged = this.mergeEntitiesById(existing, syncedData.packages);
+      const merged = this.mergeEntitiesById(existing, syncedData.packages, 'B2BPackage');
       this.setItem('b2b_packages', merged, false);
-      for (const p of syncedData.packages) this.syncFirestoreDoc('b2b_packages', p.id, p);
+      for (const p of merged) {
+        if (!deletedSet.has(p.id) && !deletedSet.has(`Package_${p.id}`)) {
+          this.syncFirestoreDoc('b2b_packages', p.id, p);
+        }
+      }
     }
 
     if (syncedData.packageItems && syncedData.packageItems.length > 0) {
       const existing = this.getPackageItems();
-      const merged = this.mergeEntitiesById(existing, syncedData.packageItems);
+      const merged = this.mergeEntitiesById(existing, syncedData.packageItems, 'PackageItemRef');
       this.setItem('package_items', merged, false);
-      for (const pi of syncedData.packageItems) this.syncFirestoreDoc('package_items', pi.id, pi);
+      for (const pi of merged) {
+        if (!deletedSet.has(pi.id)) {
+          this.syncFirestoreDoc('package_items', pi.id, pi);
+        }
+      }
     }
   }
 
-  private mergeEntitiesById<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
+  private mergeEntitiesById<T extends { id: string }>(existing: T[], incoming: T[], entityType?: string): T[] {
     const map = new Map<string, T>();
     const now = new Date().toISOString();
+    const deletedSet = this.getDeletedEntityIds();
+
     for (const item of existing) {
-      if (item && item.id) map.set(item.id, item);
+      if (item && item.id && !deletedSet.has(item.id) && !(item as any).isDeleted && (item as any).status !== 'DELETED') {
+        map.set(item.id, item);
+      }
     }
+
     for (const item of incoming) {
       if (item && item.id) {
+        // Authoritative Deletion & Deactivation Guarantee:
+        // If an item has been deleted or tombstoned by Admin, NEVER resurrect it!
+        if (deletedSet.has(item.id) || (entityType && deletedSet.has(`${entityType}_${item.id}`))) {
+          continue;
+        }
+        if ((item as any).isDeleted === true || (item as any).status === 'DELETED') {
+          continue;
+        }
+
         const prev = map.get(item.id);
+        if (prev && ((prev as any).isDeleted === true || (prev as any).status === 'DELETED')) {
+          continue;
+        }
+
+        // Preserve Admin-managed inactive / archived status
+        const prevStatus = (prev as any)?.status;
+        const preservedStatus = (prevStatus === 'ARCHIVED' || prevStatus === 'INACTIVE')
+          ? prevStatus
+          : ((item as any).status || prevStatus || 'ACTIVE');
+
         const stampedItem: any = {
           ...item,
+          status: preservedStatus,
           source: (item as any).source || 'MASTER_GOOGLE_SHEETS',
           sourceId: item.id,
           lastSyncedAt: now,

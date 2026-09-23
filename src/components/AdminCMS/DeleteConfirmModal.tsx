@@ -92,7 +92,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
     setIsProcessing(true);
     setErrorMsg(null);
     try {
-      const res = db.secureDeleteRecord(entityType, recordId, user, { forceHardDelete });
+      const res = await db.secureDeleteRecordAsync(entityType, recordId, user, { forceHardDelete });
       if (res.success) {
         if (onSuccess) onSuccess(res);
         onClose();
@@ -110,7 +110,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
     setIsProcessing(true);
     setErrorMsg(null);
     try {
-      const res = db.secureArchiveRecord(entityType, recordId, user);
+      const res = await db.secureArchiveRecordAsync(entityType, recordId, user);
       if (res.success) {
         if (onSuccess) onSuccess(res);
         onClose();
