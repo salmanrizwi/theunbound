@@ -1,7 +1,7 @@
 import { User } from '../types';
 import { canUserAccessQuoteBuilder, canUserAccessCMS, canUserAccessB2BInventory } from './permissionEngine';
 
-export type PortalNamespace = 'BUYER' | 'B2B' | 'ADMIN';
+export type PortalNamespace = 'PUBLIC' | 'B2B' | 'ADMIN' | 'BUYER';
 
 export interface ParsedRoute {
   namespace: PortalNamespace;
@@ -77,9 +77,39 @@ export function parseRoute(pathString?: string): ParsedRoute {
     };
   }
 
-  // BUYER Namespace (Default)
+  // Handle Legacy Standalone Assigned Leads or Leads routes
+  if (normalized.startsWith('/assigned-leads') || normalized.startsWith('/leads')) {
+    return {
+      namespace: 'B2B',
+      pathname: '/b2b/crm',
+      subTab: 'crm',
+      param: 'assigned-leads',
+      rawPath: normalized
+    };
+  }
+
+  // PUBLIC Namespace (Single authoritative public portal / logged-out homepage)
   const segments = normalized.replace(/^\//, '').split('/').filter(Boolean);
-  const first = segments[0] || 'destinations';
+  const first = (segments[0] || '').toLowerCase();
+
+  // Redirect legacy buyer routes directly to home
+  if (
+    first === 'buyer' || 
+    first === 'buyers' || 
+    first === 'buyer-landing' || 
+    first === 'landing' || 
+    first === 'portal' || 
+    first === 'customer' || 
+    first === 'customers'
+  ) {
+    return {
+      namespace: 'PUBLIC',
+      pathname: '/',
+      subTab: 'destinations',
+      param: 'all',
+      rawPath: normalized
+    };
+  }
 
   let subTab = 'destinations';
   let param: string | undefined = undefined;
@@ -106,25 +136,18 @@ export function parseRoute(pathString?: string): ParsedRoute {
     subTab = 'refund';
   } else if (first === 'cookies' || first === 'cookie-policy') {
     subTab = 'cookies';
-  } else if (first === 'account') {
-    subTab = 'account';
-  } else if (first === 'dashboard') {
-    subTab = 'dashboard';
-  } else if (first === 'assigned-leads' || first === 'leads') {
-    // Redirect standalone assigned leads route to canonical B2B CRM path
-    return {
-      namespace: 'B2B',
-      pathname: '/b2b/crm',
-      subTab: 'crm',
-      param: 'assigned-leads',
-      rawPath: normalized
-    };
+  } else if (first === 'dashboard' || first === 'account') {
+    // Legacy dashboard/account routes redirect based on authenticated portal
+    subTab = first;
+  } else if (!first) {
+    subTab = 'destinations';
+    param = 'all';
   } else {
     subTab = first;
   }
 
   return {
-    namespace: 'BUYER',
+    namespace: 'PUBLIC',
     pathname: normalized,
     subTab,
     param,
@@ -224,14 +247,13 @@ export function validateRouteAccess(user: User | null, pathString?: string): Rou
     };
   }
 
-  // 1. PUBLIC / UNPROTECTED ROUTES (Buyer portal public pages)
+  // 1. PUBLIC / UNPROTECTED ROUTES (Single Public Homepage & Destination Catalogs)
   // Public marketing, destination catalogs, policies, and itineraries are globally accessible.
   // Authenticated administrators and B2B agents are permitted to navigate public pages or browser history
-  // without encountering false ACCESS_RESTRICTED blocks.
-  if (route.namespace === 'BUYER') {
+  // without encountering false ACCESS_RESTRICTED blocks or unwanted redirects.
+  if (route.namespace === 'PUBLIC' || route.namespace === 'BUYER') {
     return { 
-      allowed: true,
-      redirectPath: (user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER') ? '/admin' : (user?.role === 'B2B_AGENT' || user?.role === 'AGENT') ? '/b2b' : undefined
+      allowed: true
     };
   }
 

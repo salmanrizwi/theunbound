@@ -23,7 +23,6 @@ import { ProductDetailModal } from './components/ProductDetailModal';
 import { PricingCalculatorModal } from './components/PricingCalculatorModal';
 import { QuoteBuilderDrawer } from './components/QuoteBuilderDrawer';
 import { AuthModal } from './components/AuthModal';
-import { UserDashboard } from './components/UserDashboard';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AdminCMSHub } from './components/AdminCMS/AdminCMSHub';
 import { PublicPromotionsBanner } from './components/PublicPromotionsBanner';
@@ -37,7 +36,6 @@ import { B2BAgentPortal } from './components/B2BAgentPortal/B2BAgentPortal';
 import { BuyerFooter } from './components/BuyerPortal/BuyerFooter';
 import { QuoteBuilderAuthRequiredModal } from './components/QuoteBuilderAuthRequiredModal';
 import { PortalAccessRestrictedView } from './components/PortalAccessRestrictedView';
-import { ChatbotLauncher } from './components/Chatbot/ChatbotLauncher';
 import { 
   parseRoute, 
   getCurrentPath, 
@@ -90,8 +88,27 @@ const MainAppContent: React.FC = () => {
       const parsed = parseRoute(getCurrentPath());
       setCurrentRoute(parsed);
 
-      if (parsed.namespace === 'BUYER') {
-        if (parsed.subTab === 'destinations') {
+      if (parsed.namespace === 'PUBLIC' || parsed.namespace === 'BUYER') {
+        if (parsed.subTab === 'dashboard') {
+          // No Buyer dashboard: Redirect directly to authorized portal
+          if (user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER') {
+            navigateTo('/admin', { replace: true });
+          } else if (user?.role === 'B2B_AGENT' || user?.role === 'AGENT') {
+            navigateTo('/b2b/dashboard', { replace: true });
+          } else {
+            navigateTo('/', { replace: true });
+          }
+          return;
+        } else if (parsed.subTab === 'account') {
+          if (user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER') {
+            navigateTo('/admin/accounts', { replace: true });
+          } else if (user?.role === 'B2B_AGENT' || user?.role === 'AGENT') {
+            navigateTo('/b2b/account', { replace: true });
+          } else {
+            navigateTo('/', { replace: true });
+          }
+          return;
+        } else if (parsed.subTab === 'destinations') {
           setActiveTab('DESTINATIONS');
           if (parsed.param) setSelectedDestinationSlug(parsed.param);
         } else if (parsed.subTab === 'visas') {
@@ -102,10 +119,6 @@ const MainAppContent: React.FC = () => {
           setActiveTab('ABOUT');
         } else if (parsed.subTab === 'blogs') {
           setActiveTab('BLOGS');
-        } else if (parsed.subTab === 'dashboard') {
-          setActiveTab('DASHBOARD');
-        } else if (parsed.subTab === 'account') {
-          setActiveTab('ACCOUNT');
         } else if (parsed.subTab === 'page' && parsed.param) {
           setActiveTab('CUSTOM_PAGE');
           setActiveCustomPageSlug(parsed.param);
@@ -327,7 +340,7 @@ const MainAppContent: React.FC = () => {
   }
 
   // 3. Fallback check for any other unpermitted route
-  if (!accessCheck.allowed && currentRoute.namespace !== 'BUYER') {
+  if (!accessCheck.allowed && currentRoute.namespace !== 'PUBLIC' && currentRoute.namespace !== 'BUYER') {
     return (
       <PortalAccessRestrictedView
         targetNamespace={currentRoute.namespace}
@@ -471,19 +484,6 @@ const MainAppContent: React.FC = () => {
               </button>
             </div>
           )
-        )}
-
-        {activeTab === 'DASHBOARD' && (
-          <UserDashboard
-            onExploreProducts={() => setActiveTab('DESTINATIONS')}
-            onSelectDestination={handleSelectDestination}
-            onViewProduct={(p) => {
-              setInspectingProductHidePrice(false);
-              setInspectingProduct(p);
-            }}
-            onNavigateToAccount={() => setActiveTab('ACCOUNT')}
-            products={products}
-          />
         )}
 
         {activeTab === 'ACCOUNT' && (
@@ -672,9 +672,6 @@ const MainAppContent: React.FC = () => {
       {isSpecsModalOpen && (
         <SpecificationModal onClose={() => setIsSpecsModalOpen(false)} />
       )}
-
-      {/* Global TheUnbound AI Travel Specialist Chatbot Launcher for Retail & Buyer Portals */}
-      <ChatbotLauncher portal="BUYER" />
 
       {/* Global GDPR & DPDP Cookie Consent Banner */}
       <CookieConsentBanner

@@ -22,8 +22,9 @@ import { useQuotation } from '../context/QuotationContext';
 import { CurrencyCode, DestinationRegion, Destination, SUPPORTED_CURRENCIES, MenuItemConfig } from '../types';
 import { AppDatabase } from '../services/db';
 import { canUserAccessCMS, canUserAccessQuoteBuilder, canUserAccessB2BInventory } from '../services/permissionEngine';
+import { navigateTo } from '../services/portalRouter';
 
-export type MainNavTab = 'DESTINATIONS' | 'VISAS' | 'B2B_BUILDER' | 'DASHBOARD' | 'ADMIN' | 'ACCOUNT' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND' | 'COOKIES' | 'CUSTOM_PAGE' | 'ABOUT';
+export type MainNavTab = 'DESTINATIONS' | 'VISAS' | 'B2B_BUILDER' | 'ADMIN' | 'ACCOUNT' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND' | 'COOKIES' | 'CUSTOM_PAGE' | 'ABOUT';
 
 interface NavbarProps {
   destinations?: Destination[];
@@ -458,11 +459,44 @@ export const Navbar: React.FC<NavbarProps> = ({
                     </div>
 
                     <div className="py-1">
+                      {isB2BAgentOrAdmin && (
+                        <button
+                          id="user-menu-b2b-portal"
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            navigateTo('/b2b');
+                          }}
+                          className="w-full px-4 py-2 text-left text-sm text-[#00a88d] hover:bg-emerald-50 flex items-center space-x-2 cursor-pointer font-bold"
+                        >
+                          <Briefcase className="w-4 h-4 text-[#00C6A6]" />
+                          <span>Wholesale B2B Portal</span>
+                        </button>
+                      )}
+
+                      {canAccessAdminCMS && (
+                        <button
+                          id="user-menu-admin-cms"
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            if (onOpenAdmin) onOpenAdmin();
+                            else navigateTo('/admin');
+                          }}
+                          className="w-full px-4 py-2 text-left text-sm text-amber-700 hover:bg-amber-50 flex items-center space-x-2 cursor-pointer font-bold border-b border-slate-100"
+                        >
+                          <ShieldCheck className="w-4 h-4 text-amber-600" />
+                          <span>Admin CMS Operations</span>
+                        </button>
+                      )}
+
                       <button
                         id="user-menu-account"
                         onClick={() => {
                           setIsUserMenuOpen(false);
-                          if (onSelectTab) onSelectTab('ACCOUNT');
+                          if (canAccessAdminCMS) {
+                            navigateTo('/admin/accounts');
+                          } else {
+                            navigateTo('/b2b/account');
+                          }
                         }}
                         className="w-full px-4 py-2 text-left text-sm text-slate-800 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer font-medium"
                       >
@@ -475,39 +509,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                         onClick={() => {
                           setIsUserMenuOpen(false);
                           if (onOpenBookings) onOpenBookings();
+                          else navigateTo('/b2b/bookings');
                         }}
                         className="w-full px-4 py-2 text-left text-sm text-slate-800 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer font-medium"
                       >
                         <Calendar className="w-4 h-4 text-[#00C6A6]" />
                         <span>Bookings</span>
                       </button>
-
-                      <button
-                        id="user-menu-dashboard"
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          if (onSelectTab) onSelectTab('DASHBOARD');
-                          if (onOpenDashboard) onOpenDashboard();
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer"
-                      >
-                        <Layers className="w-4 h-4 text-slate-400" />
-                        <span>Quotes & Dashboard</span>
-                      </button>
-
-                      {canAccessAdminCMS && onOpenAdmin && (
-                        <button
-                          id="user-menu-admin-cms"
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            onOpenAdmin();
-                          }}
-                          className="w-full px-4 py-2 text-left text-sm text-emerald-700 hover:bg-emerald-50 flex items-center space-x-2 cursor-pointer font-bold border-b border-slate-100"
-                        >
-                          <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                          <span>Admin CMS Operations</span>
-                        </button>
-                      )}
 
                       <button
                         id="user-menu-specs"
@@ -675,10 +683,45 @@ export const Navbar: React.FC<NavbarProps> = ({
               <div className="pt-2 border-t border-slate-100 space-y-1">
                 {isAuthenticated && (
                   <>
+                    {isB2BAgentOrAdmin && (
+                      <button
+                        onClick={() => {
+                          setIsMobileNavOpen(false);
+                          navigateTo('/b2b');
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-[#00a88d] hover:bg-emerald-50 flex items-center justify-between"
+                      >
+                        <span className="flex items-center space-x-2">
+                          <Briefcase className="w-4 h-4 text-[#00C6A6]" />
+                          <span>Wholesale B2B Portal</span>
+                        </span>
+                      </button>
+                    )}
+
+                    {canAccessAdminCMS && (
+                      <button
+                        onClick={() => {
+                          setIsMobileNavOpen(false);
+                          if (onOpenAdmin) onOpenAdmin();
+                          else navigateTo('/admin');
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-amber-700 hover:bg-amber-50 flex items-center justify-between"
+                      >
+                        <span className="flex items-center space-x-2">
+                          <ShieldCheck className="w-4 h-4 text-amber-600" />
+                          <span>Admin CMS Operations</span>
+                        </span>
+                      </button>
+                    )}
+
                     <button
                       onClick={() => {
-                        onSelectTab('ACCOUNT');
                         setIsMobileNavOpen(false);
+                        if (canAccessAdminCMS) {
+                          navigateTo('/admin/accounts');
+                        } else {
+                          navigateTo('/b2b/account');
+                        }
                       }}
                       className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-slate-800 hover:bg-slate-50 flex items-center justify-between"
                     >
@@ -690,8 +733,9 @@ export const Navbar: React.FC<NavbarProps> = ({
 
                     <button
                       onClick={() => {
-                        if (onOpenBookings) onOpenBookings();
                         setIsMobileNavOpen(false);
+                        if (onOpenBookings) onOpenBookings();
+                        else navigateTo('/b2b/bookings');
                       }}
                       className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-slate-800 hover:bg-slate-50 flex items-center justify-between"
                     >
@@ -700,34 +744,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                         <span>Bookings</span>
                       </span>
                     </button>
-
-                    <button
-                      onClick={() => {
-                        onSelectTab('DASHBOARD');
-                        if (onOpenDashboard) onOpenDashboard();
-                        setIsMobileNavOpen(false);
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-md text-sm font-medium text-slate-700 hover:bg-slate-50 flex items-center justify-between"
-                    >
-                      <span className="flex items-center space-x-2">
-                        <Layers className="w-4 h-4 text-slate-400" />
-                        <span>Quotes & Dashboard</span>
-                      </span>
-                    </button>
-                    {canAccessAdminCMS && onOpenAdmin && (
-                      <button
-                        onClick={() => {
-                          onOpenAdmin();
-                          setIsMobileNavOpen(false);
-                        }}
-                        className="w-full text-left px-3 py-2 rounded-md text-sm font-bold text-emerald-700 hover:bg-emerald-50 flex items-center justify-between"
-                      >
-                        <span className="flex items-center space-x-2">
-                          <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                          <span>Admin CMS Operations</span>
-                        </span>
-                      </button>
-                    )}
                   </>
                 )}
                 {!isAuthenticated && (

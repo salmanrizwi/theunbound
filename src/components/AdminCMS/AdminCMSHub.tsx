@@ -53,6 +53,7 @@ import {
   canUserAccessCMSModule, 
   canUserAccessCMSSubTab 
 } from '../../services/permissionEngine';
+import { navigateTo } from '../../services/portalRouter';
 
 // Lucide Icons
 import { 
@@ -162,6 +163,50 @@ interface AdminCMSHubProps {
   initialSubTab?: string;
 }
 
+const SECTION_SLUG_MAP: Record<CMSSection, string> = {
+  DASHBOARD: 'dashboard',
+  SYSTEM_ANALYSIS: 'system-analysis',
+  PRODUCT_MANAGEMENT: 'products',
+  HOTEL_MANAGEMENT: 'hotels',
+  PACKAGE_MANAGEMENT: 'packages',
+  BOOKING_MANAGEMENT: 'bookings',
+  LEAD_MANAGEMENT: 'leads',
+  DESTINATION_MANAGEMENT: 'destinations',
+  PAGE_MANAGEMENT: 'pages',
+  MARKETING_MANAGEMENT: 'marketing',
+  SEO_MANAGEMENT: 'seo',
+  ACCOUNT_MANAGEMENT: 'accounts',
+  ANALYTICS_MANAGEMENT: 'analytics',
+  CURRENCY_MANAGEMENT: 'currency',
+  NOTIFICATIONS_MANAGEMENT: 'tasks',
+  CALENDAR_SLAS: 'tasks',
+  DATABASE_MANAGEMENT: 'database',
+  INTEGRATIONS_DB: 'integrations'
+};
+
+function resolveSectionFromSlug(slug?: string): CMSSection {
+  if (!slug) return 'DASHBOARD';
+  const clean = slug.trim().toUpperCase().replace(/[-_]/g, '');
+  if (clean === 'PRODUCTS' || clean === 'PRODUCT' || clean === 'PRODUCTMANAGEMENT') return 'PRODUCT_MANAGEMENT';
+  if (clean === 'HOTELS' || clean === 'HOTEL' || clean === 'HOTELMANAGEMENT') return 'HOTEL_MANAGEMENT';
+  if (clean === 'PACKAGES' || clean === 'PACKAGE' || clean === 'PACKAGEMANAGEMENT') return 'PACKAGE_MANAGEMENT';
+  if (clean === 'BOOKINGS' || clean === 'BOOKING' || clean === 'BOOKINGMANAGEMENT') return 'BOOKING_MANAGEMENT';
+  if (clean === 'LEADS' || clean === 'LEAD' || clean === 'LEADMANAGEMENT') return 'LEAD_MANAGEMENT';
+  if (clean === 'DESTINATIONS' || clean === 'DESTINATION' || clean === 'DESTINATIONMANAGEMENT') return 'DESTINATION_MANAGEMENT';
+  if (clean === 'PAGES' || clean === 'PAGE' || clean === 'PAGEMANAGEMENT' || clean === 'MENU' || clean === 'NAVIGATION') return 'PAGE_MANAGEMENT';
+  if (clean === 'MARKETING' || clean === 'MARKETINGMANAGEMENT') return 'MARKETING_MANAGEMENT';
+  if (clean === 'SEO' || clean === 'SEOMANAGEMENT') return 'SEO_MANAGEMENT';
+  if (clean === 'ACCOUNTS' || clean === 'ACCOUNT' || clean === 'ACCOUNTMANAGEMENT' || clean === 'USERS' || clean === 'USER' || clean === 'SUPPLIERS') return 'ACCOUNT_MANAGEMENT';
+  if (clean === 'ANALYTICS' || clean === 'ANALYTICSMANAGEMENT' || clean === 'FINANCIALS') return 'ANALYTICS_MANAGEMENT';
+  if (clean === 'CURRENCY' || clean === 'CURRENCYMANAGEMENT' || clean === 'FX') return 'CURRENCY_MANAGEMENT';
+  if (clean === 'TASKS' || clean === 'TASK' || clean === 'SLAS' || clean === 'SLA' || clean === 'NOTIFICATIONS' || clean === 'NOTIFICATIONSMANAGEMENT' || clean === 'CALENDARSLAS') return 'NOTIFICATIONS_MANAGEMENT';
+  if (clean === 'INTEGRATIONS' || clean === 'INTEGRATIONSDB') return 'INTEGRATIONS_DB';
+  if (clean === 'DATABASE' || clean === 'DATABASEMANAGEMENT') return 'DATABASE_MANAGEMENT';
+  if (clean === 'SYSTEMANALYSIS' || clean === 'ANALYSIS') return 'SYSTEM_ANALYSIS';
+  if (clean === 'DASHBOARD' || clean === 'OVERVIEW') return 'DASHBOARD';
+  return 'DASHBOARD';
+}
+
 export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   destinations,
   products,
@@ -177,60 +222,35 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   const db = AppDatabase.getInstance();
 
   // Active navigation states
-  const [activeSection, setActiveSection] = useState<CMSSection>(() => {
-    if (initialTab) {
-      if (initialTab === 'PRODUCTS') return 'PRODUCT_MANAGEMENT';
-      if (initialTab === 'HOTELS') return 'HOTEL_MANAGEMENT';
-      if (initialTab === 'PACKAGES') return 'PACKAGE_MANAGEMENT';
-      if (initialTab === 'BOOKINGS') return 'BOOKING_MANAGEMENT';
-      if (initialTab === 'LEADS') return 'LEAD_MANAGEMENT';
-      if (initialTab === 'DESTINATIONS') return 'DESTINATION_MANAGEMENT';
-      if (initialTab === 'PAGES' || initialTab === 'PAGE_MANAGEMENT' || initialTab === 'MENU' || initialTab === 'NAVIGATION') return 'PAGE_MANAGEMENT';
-      if (initialTab === 'MARKETING') return 'MARKETING_MANAGEMENT';
-      if (initialTab === 'ACCOUNTS' || initialTab === 'USERS') return 'ACCOUNT_MANAGEMENT';
-      if (initialTab === 'SUPPLIERS') return 'ACCOUNT_MANAGEMENT';
-      if (initialTab === 'ANALYTICS') return 'ANALYTICS_MANAGEMENT';
-      if (initialTab === 'TASKS' || initialTab === 'SLAS') return 'NOTIFICATIONS_MANAGEMENT';
-      if (initialTab === 'INTEGRATIONS' || initialTab === 'DATABASE') return 'DATABASE_MANAGEMENT';
-      return (initialTab as CMSSection);
+  const [activeSection, setActiveSection] = useState<CMSSection>(() => resolveSectionFromSlug(initialTab));
+
+  const [activeSubTab, setActiveSubTab] = useState<string>(() => {
+    if (initialSubTab) {
+      const subUpper = initialSubTab.toUpperCase();
+      if (subUpper === 'MENU' || subUpper === 'NAVIGATION') return 'NAVIGATION_MENU';
+      if (subUpper === 'CUSTOM_PAGES' || subUpper === 'PAGES') return 'CUSTOM_PAGES';
+      return subUpper;
     }
-    return 'DASHBOARD';
+    return 'OVERVIEW';
   });
 
-  const [activeSubTab, setActiveSubTab] = useState<string>(() => initialSubTab || 'OVERVIEW');
-
-  // React to prop changes (e.g. route transitions or direct jump links)
+  // React to browser Back/Forward or direct route navigation
   useEffect(() => {
     if (initialTab) {
-      let targetSec: CMSSection = 'DASHBOARD';
-      if (initialTab === 'PRODUCTS') targetSec = 'PRODUCT_MANAGEMENT';
-      else if (initialTab === 'HOTELS') targetSec = 'HOTEL_MANAGEMENT';
-      else if (initialTab === 'PACKAGES') targetSec = 'PACKAGE_MANAGEMENT';
-      else if (initialTab === 'BOOKINGS') targetSec = 'BOOKING_MANAGEMENT';
-      else if (initialTab === 'LEADS') targetSec = 'LEAD_MANAGEMENT';
-      else if (initialTab === 'DESTINATIONS') targetSec = 'DESTINATION_MANAGEMENT';
-      else if (initialTab === 'PAGES' || initialTab === 'PAGE_MANAGEMENT' || initialTab === 'MENU' || initialTab === 'NAVIGATION') targetSec = 'PAGE_MANAGEMENT';
-      else if (initialTab === 'MARKETING') targetSec = 'MARKETING_MANAGEMENT';
-      else if (initialTab === 'ACCOUNTS' || initialTab === 'USERS') targetSec = 'ACCOUNT_MANAGEMENT';
-      else if (initialTab === 'SUPPLIERS') {
-        targetSec = 'ACCOUNT_MANAGEMENT';
+      const resolved = resolveSectionFromSlug(initialTab);
+      setActiveSection(resolved);
+      if (initialTab.toUpperCase() === 'SUPPLIERS') {
         setActiveSubTab('SUPPLIERS');
       }
-      else if (initialTab === 'ANALYTICS') targetSec = 'ANALYTICS_MANAGEMENT';
-      else if (initialTab === 'CURRENCY' || initialTab === 'CURRENCY_MANAGEMENT' || initialTab === 'FX') targetSec = 'CURRENCY_MANAGEMENT';
-      else if (initialTab === 'TASKS' || initialTab === 'SLAS') targetSec = 'NOTIFICATIONS_MANAGEMENT';
-      else if (initialTab === 'INTEGRATIONS' || initialTab === 'DATABASE') targetSec = 'DATABASE_MANAGEMENT';
-      else targetSec = initialTab as CMSSection;
-
-      setActiveSection(targetSec);
     }
     if (initialSubTab) {
-      if (initialSubTab === 'MENU' || initialSubTab === 'NAVIGATION') {
+      const subUpper = initialSubTab.toUpperCase();
+      if (subUpper === 'MENU' || subUpper === 'NAVIGATION') {
         setActiveSubTab('NAVIGATION_MENU');
-      } else if (initialSubTab === 'CUSTOM_PAGES' || initialSubTab === 'PAGES') {
+      } else if (subUpper === 'CUSTOM_PAGES' || subUpper === 'PAGES') {
         setActiveSubTab('CUSTOM_PAGES');
       } else {
-        setActiveSubTab(initialSubTab);
+        setActiveSubTab(subUpper);
       }
     }
   }, [initialTab, initialSubTab]);
@@ -728,10 +748,18 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     const targetModule = allModules.find(m => m.id === normalized || m.id === section);
     if (targetModule) {
       setActiveSection(targetModule.id);
-      if (subTab) {
-        setActiveSubTab(subTab);
+      let chosenSubTab = subTab;
+      if (chosenSubTab) {
+        setActiveSubTab(chosenSubTab);
       } else if (targetModule.subTabs && targetModule.subTabs.length > 0) {
-        setActiveSubTab(targetModule.subTabs[0].id);
+        chosenSubTab = targetModule.subTabs[0].id;
+        setActiveSubTab(chosenSubTab);
+      }
+      const slug = SECTION_SLUG_MAP[targetModule.id] || targetModule.id.toLowerCase();
+      const subSlug = chosenSubTab && chosenSubTab !== 'OVERVIEW' ? `/${chosenSubTab.toLowerCase()}` : '';
+      const targetUrl = `/admin/${slug}${subSlug}`;
+      if (typeof window !== 'undefined' && window.location.pathname !== targetUrl) {
+        navigateTo(targetUrl);
       }
     }
     if (recordId) {
@@ -763,13 +791,22 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   const handleSelectModule = (moduleId: CMSSection, defaultSubTab?: string) => {
     setActiveSection(moduleId);
     const mod = allModules.find(m => m.id === moduleId);
-    if (defaultSubTab) {
-      setActiveSubTab(defaultSubTab);
+    let chosenSubTab = defaultSubTab;
+    if (chosenSubTab) {
+      setActiveSubTab(chosenSubTab);
     } else if (mod && mod.subTabs && mod.subTabs.length > 0) {
-      setActiveSubTab(mod.subTabs[0].id);
+      chosenSubTab = mod.subTabs[0].id;
+      setActiveSubTab(chosenSubTab);
     }
     setOpenDropdown(null);
     setIsMobileMenuOpen(false);
+
+    const slug = SECTION_SLUG_MAP[moduleId] || moduleId.toLowerCase();
+    const subSlug = chosenSubTab && chosenSubTab !== 'OVERVIEW' ? `/${chosenSubTab.toLowerCase()}` : '';
+    const targetUrl = `/admin/${slug}${subSlug}`;
+    if (typeof window !== 'undefined' && window.location.pathname !== targetUrl) {
+      navigateTo(targetUrl);
+    }
   };
 
   const handleSelectTopSection = (section: TopSectionConfig) => {
