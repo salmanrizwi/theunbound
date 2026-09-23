@@ -24,13 +24,14 @@ export class EnvironmentService {
 
   private detectEnvironment(): AppEnvironment {
     // 1. Explicit environment variable check
-    const explicitEnv = import.meta.env.VITE_APP_ENV as string | undefined;
+    const envObj = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : (process?.env || {});
+    const explicitEnv = (envObj.VITE_APP_ENV || envObj.NODE_ENV) as string | undefined;
     if (explicitEnv === 'production') return 'production';
     if (explicitEnv === 'staging') return 'staging';
     if (explicitEnv === 'development') return 'development';
 
     // 2. Vite production build flag
-    if (import.meta.env.PROD || import.meta.env.MODE === 'production') {
+    if (envObj.PROD || envObj.MODE === 'production') {
       return 'production';
     }
 
@@ -39,7 +40,7 @@ export class EnvironmentService {
       const hostname = window.location.hostname.toLowerCase();
       
       // Local development machine
-      if ((hostname === 'localhost' || hostname === '127.0.0.1') && import.meta.env.DEV) {
+      if ((hostname === 'localhost' || hostname === '127.0.0.1') && envObj.DEV) {
         return 'development';
       }
 

@@ -93,7 +93,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
 
   useEffect(() => {
     if (isOpen && recordId) {
-      const perms = db.canUserDelete(user, entityType);
+      const perms = db.canUserDelete(user, entityType, recordId);
       setPermCheck(perms);
       const deps = db.checkRecordDependencies(entityType, recordId);
       setDepCheck(deps);

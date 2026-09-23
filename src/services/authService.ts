@@ -590,6 +590,35 @@ class AuthService {
       };
     }
 
+    // Step 2.2: Reject Deleted or Deactivated Users (Access Revocation)
+    const dbInstance = AppDatabase.getInstance();
+    const isDeletedUser = (profile as any).isDeleted === true || 
+      (profile as any).status === 'DELETED' || 
+      profile.approvalStatus === 'REJECTED' ||
+      dbInstance.isEntityDeleted(profile.id, 'User') ||
+      dbInstance.isEntityDeleted(profile.id, 'users') ||
+      (profile.email && (
+        dbInstance.isEntityDeleted(profile.email.toLowerCase().trim(), 'User') ||
+        dbInstance.isEntityDeleted(profile.email.toLowerCase().trim(), 'users')
+      ));
+
+    if (isDeletedUser) {
+      try {
+        await signOut(auth);
+      } catch (e) {}
+      this.currentFirebaseUser = null;
+      this.currentUserProfile = null;
+      this.authState = 'UNAUTHENTICATED';
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('theunbound_auth_user');
+      }
+      return {
+        success: false,
+        error: 'This account has been deleted or deactivated by an administrator. Access is revoked.',
+        status: 'REJECTED'
+      };
+    }
+
     // Step 2.5: Reject Direct Buyer login attempts
     if (profile.role === 'BUYER' || (profile as any).userType === 'BUYER' || requestedRole === 'BUYER') {
       try {
@@ -716,6 +745,29 @@ class AuthService {
       return {
         success: false,
         error: `No registered account found for ${normalizedEmail}. Please verify your email or create a new profile.`
+      };
+    }
+
+    // Step 3.5: Reject Deleted or Deactivated Users
+    const dbInst = AppDatabase.getInstance();
+    const isProfileDeleted = (profile as any).isDeleted === true || 
+      (profile as any).status === 'DELETED' || 
+      profile.approvalStatus === 'REJECTED' ||
+      dbInst.isEntityDeleted(profile.id, 'User') ||
+      dbInst.isEntityDeleted(profile.id, 'users') ||
+      (profile.email && (
+        dbInst.isEntityDeleted(profile.email.toLowerCase().trim(), 'User') ||
+        dbInst.isEntityDeleted(profile.email.toLowerCase().trim(), 'users')
+      ));
+
+    if (isProfileDeleted) {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('theunbound_auth_user');
+      }
+      return {
+        success: false,
+        error: 'This account has been deleted or deactivated by an administrator. Access is revoked.',
+        status: 'REJECTED'
       };
     }
 

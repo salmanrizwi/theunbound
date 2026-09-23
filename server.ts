@@ -5,6 +5,7 @@ import { handleSitemapXml, handleRobotsTxt, injectSEOIntoHtml } from "./server/s
 import { handleGeminiChat } from "./server/geminiChatHandler";
 import { createIntegrationsRouter } from "./server/integrationsService";
 import { createFXRouter } from "./server/fxService";
+import { createAdminUserRouter } from "./server/adminUserService";
 
 // Prevent unexpected unhandled crashes
 process.on('unhandledRejection', (reason) => {
@@ -26,6 +27,9 @@ async function startServer() {
 
   // Secure Server-Side Integrations Router (Gmail, Google Sheets, Token Refresh)
   app.use("/api/integrations", createIntegrationsRouter());
+
+  // Secure Server-Side Admin User Management Router (Deletion, Deactivation)
+  app.use("/api/admin/users", createAdminUserRouter());
 
   // Centralized Live XE.com FX Currency Engine Router
   app.use("/api/fx", createFXRouter());

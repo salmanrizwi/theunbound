@@ -536,6 +536,40 @@ export const INITIAL_SLA_AUTOMATION_RULES: SLAAutomationRule[] = [
 export type BookingSaveListener = (booking: Booking, user: User | null, isNew: boolean) => void;
 export type QuotationSaveListener = (quote: Quotation, user: User | null, isNew: boolean) => void;
 
+const memoryStorage = new Map<string, string>();
+export const safeStorage = {
+  getItem: (key: string): string | null => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        return window.localStorage.getItem(key);
+      }
+      return memoryStorage.get(key) || null;
+    } catch {
+      return memoryStorage.get(key) || null;
+    }
+  },
+  setItem: (key: string, value: string): void => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(key, value);
+      }
+      memoryStorage.set(key, value);
+    } catch {
+      memoryStorage.set(key, value);
+    }
+  },
+  removeItem: (key: string): void => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.removeItem(key);
+      }
+      memoryStorage.delete(key);
+    } catch {
+      memoryStorage.delete(key);
+    }
+  }
+};
+
 export class AppDatabase {
   private static instance: AppDatabase;
   private listeners: Set<() => void> = new Set();
@@ -700,7 +734,7 @@ export class AppDatabase {
 
   private getItem<T>(key: string, fallback: T): T {
     try {
-      const data = localStorage.getItem(STORAGE_KEY_PREFIX + key);
+      const data = safeStorage.getItem(STORAGE_KEY_PREFIX + key);
       return data ? JSON.parse(data) : fallback;
     } catch (e) {
       console.error(`Error reading ${key} from storage:`, e);
@@ -710,7 +744,7 @@ export class AppDatabase {
 
   private setItem<T>(key: string, value: T, shouldNotify: boolean = true): void {
     try {
-      localStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(value));
+      safeStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(value));
       if (shouldNotify) {
         this.notify();
       }
@@ -746,7 +780,7 @@ export class AppDatabase {
 
     // Also persist tombstone in Firestore
     try {
-      const tombstoneDoc = {
+      const rawTombstone = {
         id: `${collectionOrType}_${recordId}`,
         collectionName: collectionOrType,
         recordId,
@@ -754,6 +788,7 @@ export class AppDatabase {
         isDeleted: true,
         ...(details || {})
       };
+      const tombstoneDoc = cleanForFirestore(rawTombstone);
       setDoc(doc(firestoreDb, 'inventory_tombstones', `${collectionOrType}_${recordId}`), tombstoneDoc, { merge: true }).catch(err => {
         console.debug('Firestore tombstone write note:', err);
       });
@@ -1009,44 +1044,44 @@ export class AppDatabase {
     if (!allowDemo) {
       // IN PRODUCTION MODE: strictly NO demo data, seed records, or mock fixtures.
       // Initialize only empty collections so the app queries Firestore directly.
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'master_regions')) this.setItem('master_regions', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'products')) this.setItem('products', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'destinations')) this.setItem('destinations', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'promotions')) this.setItem('promotions', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'blogs')) this.setItem('blogs', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'reviews')) this.setItem('reviews', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'hotels')) this.setItem('hotels', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'city_hubs')) this.setItem('city_hubs', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'regions')) this.setItem('regions', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'destination_faqs')) this.setItem('destination_faqs', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'gallery')) this.setItem('gallery', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'homepage_config')) {
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'master_regions')) this.setItem('master_regions', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'products')) this.setItem('products', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'destinations')) this.setItem('destinations', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'promotions')) this.setItem('promotions', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'blogs')) this.setItem('blogs', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'reviews')) this.setItem('reviews', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'hotels')) this.setItem('hotels', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'city_hubs')) this.setItem('city_hubs', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'regions')) this.setItem('regions', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'destination_faqs')) this.setItem('destination_faqs', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'gallery')) this.setItem('gallery', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'homepage_config')) {
         const prodHomepage = { ...INITIAL_HOMEPAGE_CONFIG, homepageHubs: [] };
         this.setItem('homepage_config', prodHomepage);
       }
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'menu_items')) this.setItem('menu_items', INITIAL_MENU_ITEMS);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'custom_pages')) this.setItem('custom_pages', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'visas')) this.setItem('visas', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'footer_config')) this.setItem('footer_config', INITIAL_FOOTER_CONFIG);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'calendar_tasks')) this.setItem('calendar_tasks', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'user_activities')) this.setItem('user_activities', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'leads')) this.setItem('leads', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'bookings')) this.setItem('bookings', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'saved_quotes')) this.setItem('saved_quotes', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_customers')) this.setItem('b2b_customers', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_tasks')) this.setItem('b2b_tasks', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'roster_resources')) this.setItem('roster_resources', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'campaigns')) this.setItem('campaigns', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'invoices')) this.setItem('invoices', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'vouchers')) this.setItem('vouchers', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'job_sheets')) this.setItem('job_sheets', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'sla_automation_rules')) this.setItem('sla_automation_rules', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'sla_automation_audit_logs')) this.setItem('sla_automation_audit_logs', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'audit_logs')) this.setItem('audit_logs', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'seo_redirects')) this.setItem('seo_redirects', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'seo_settings')) this.setItem('seo_settings', DEFAULT_GLOBAL_SEO_DEFAULTS);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'suppliers')) this.setItem('suppliers', []);
-      if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'system_users')) this.setItem('system_users', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'menu_items')) this.setItem('menu_items', INITIAL_MENU_ITEMS);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'custom_pages')) this.setItem('custom_pages', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'visas')) this.setItem('visas', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'footer_config')) this.setItem('footer_config', INITIAL_FOOTER_CONFIG);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'calendar_tasks')) this.setItem('calendar_tasks', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'user_activities')) this.setItem('user_activities', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'leads')) this.setItem('leads', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'bookings')) this.setItem('bookings', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'saved_quotes')) this.setItem('saved_quotes', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_customers')) this.setItem('b2b_customers', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_tasks')) this.setItem('b2b_tasks', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'roster_resources')) this.setItem('roster_resources', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'campaigns')) this.setItem('campaigns', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'invoices')) this.setItem('invoices', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'vouchers')) this.setItem('vouchers', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'job_sheets')) this.setItem('job_sheets', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'sla_automation_rules')) this.setItem('sla_automation_rules', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'sla_automation_audit_logs')) this.setItem('sla_automation_audit_logs', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'audit_logs')) this.setItem('audit_logs', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'seo_redirects')) this.setItem('seo_redirects', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'seo_settings')) this.setItem('seo_settings', DEFAULT_GLOBAL_SEO_DEFAULTS);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'suppliers')) this.setItem('suppliers', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'system_users')) this.setItem('system_users', []);
 
       try {
         this.migrateBookingAssignments();
@@ -1056,19 +1091,19 @@ export class AppDatabase {
       return;
     }
 
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'master_regions')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'master_regions')) {
       this.setItem('master_regions', INITIAL_MASTER_REGIONS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'products')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'products')) {
       this.setItem('products', INITIAL_PRODUCTS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'destinations')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'destinations')) {
       this.setItem('destinations', DESTINATIONS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'promotions')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'promotions')) {
       this.setItem('promotions', INITIAL_PROMOTIONS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'blogs')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'blogs')) {
       this.setItem('blogs', INITIAL_BLOGS);
     }
     // Clean up any legacy dummy reviews from storage
@@ -1088,7 +1123,7 @@ export class AppDatabase {
       r.authorName === 'Evelyn St. Claire (Travel Luxe Magazine)' ||
       r.authorName === 'Siddharth Rao (Global Travel Club)'
     );
-    if (isMock || !localStorage.getItem(STORAGE_KEY_PREFIX + 'reviews')) {
+    if (isMock || !safeStorage.getItem(STORAGE_KEY_PREFIX + 'reviews')) {
       const cleaned = storedReviews.filter(r => 
         !r.id.startsWith('rev-0') && 
         !r.id.startsWith('rev-google-') && 
@@ -1106,13 +1141,13 @@ export class AppDatabase {
       );
       this.setItem('reviews', cleaned);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'hotels')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'hotels')) {
       this.setItem('hotels', INITIAL_HOTELS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'city_hubs')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'city_hubs')) {
       this.setItem('city_hubs', INITIAL_CITY_HUBS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'regions')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'regions')) {
       const initialRegions = DESTINATIONS.flatMap(d => d.regions || []);
       this.setItem('regions', initialRegions);
     }
@@ -2325,10 +2360,25 @@ export class AppDatabase {
   // ==========================================
   // GLOBAL CMS DELETE & ARCHIVE PERMISSION CONTROL
   // ==========================================
-  public canUserDelete(user: User | null, moduleName?: string): { allowed: boolean; reason?: string } {
+  public canUserDelete(user: User | null, moduleName?: string, recordId?: string): { allowed: boolean; reason?: string } {
     const effectiveUser = user || this.getCurrentUser();
     if (!effectiveUser) {
       return { allowed: false, reason: 'Authentication required. Please sign in.' };
+    }
+
+    // Protection against User Deletion restrictions (Requirement 16)
+    if (moduleName === 'User' && recordId) {
+      const email = (effectiveUser.email || '').toLowerCase().trim();
+      const targetUser = this.getUsers().find(u => u.id === recordId);
+      const targetEmail = (targetUser?.email || '').toLowerCase().trim();
+
+      // Requirement 16: Prevent Admin Self-Deletion
+      if (effectiveUser.id === recordId || (email && targetEmail && email === targetEmail)) {
+        return {
+          allowed: false,
+          reason: 'Self-deletion is prohibited: You cannot delete or deactivate your own active Administrator account.'
+        };
+      }
     }
 
     const email = (effectiveUser.email || '').toLowerCase().trim();
@@ -2924,6 +2974,26 @@ export class AppDatabase {
         const targetUser = users.find(u => u.id === recordId);
         const userEmail = (targetUser?.email || '').toLowerCase().trim();
 
+        // Requirement 17: Last Admin Protection Check
+        if (targetUser && targetUser.role === 'ADMIN') {
+          const otherActiveAdmins = users.filter(u => 
+            u.role === 'ADMIN' && 
+            u.id !== recordId && 
+            !this.isEntityDeleted(u.id, 'User') &&
+            !this.isEntityDeleted(u.id, 'users') &&
+            (u as any).status !== 'DELETED' &&
+            (u as any).isDeleted !== true
+          );
+          if (otherActiveAdmins.length === 0) {
+            groups.push({
+              entityType: 'User',
+              count: 1,
+              label: 'Sole Active Administrator Account (System Protection)',
+              items: [{ id: targetUser.id, name: `${targetUser.name} (${targetUser.email})`, type: 'Root Admin', details: 'System requires at least 1 active Administrator' }]
+            });
+          }
+        }
+
         // Check Leads (Requirement 19 & 20: preserve historical records, report dependency counts)
         const linkedLeads = leads.filter(l => 
           l.userId === recordId || 
@@ -3070,7 +3140,7 @@ export class AppDatabase {
     options?: { forceHardDelete?: boolean }
   ): SecureDeleteResult {
     // 1. Permission Validation
-    const permCheck = this.canUserDelete(user, entityType);
+    const permCheck = this.canUserDelete(user, entityType, recordId);
     if (!permCheck.allowed) {
       this.logAudit(
         user,
@@ -3298,6 +3368,37 @@ export class AppDatabase {
       case 'User': {
         const users = this.getUsers();
         const target = users.find(u => u.id === recordId);
+
+        // Requirement 16: Prevent Self-Deletion
+        const actorEmail = (user?.email || '').toLowerCase().trim();
+        const targetEmail = (target?.email || '').toLowerCase().trim();
+        if (user?.id === recordId || (actorEmail && targetEmail && actorEmail === targetEmail)) {
+          return {
+            success: false,
+            action: 'BLOCKED',
+            message: 'Self-deletion is prohibited: You cannot delete or deactivate your own active Administrator account.'
+          };
+        }
+
+        // Requirement 17: Last Admin Protection Check
+        if (target && target.role === 'ADMIN') {
+          const otherActiveAdmins = users.filter(u => 
+            u.role === 'ADMIN' && 
+            u.id !== recordId && 
+            !this.isEntityDeleted(u.id, 'User') &&
+            !this.isEntityDeleted(u.id, 'users') &&
+            (u as any).status !== 'DELETED' &&
+            (u as any).isDeleted !== true
+          );
+          if (otherActiveAdmins.length === 0) {
+            return {
+              success: false,
+              action: 'BLOCKED',
+              message: 'Action blocked: Cannot delete or deactivate the last remaining Administrator account. The system must retain at least one active Admin.'
+            };
+          }
+        }
+
         // Requirement 19 & 20: Preserve historical relationship without corrupting quotes, leads, or bookings
         if (target) {
           const quotes = this.getAllSavedQuotes();
@@ -3320,8 +3421,17 @@ export class AppDatabase {
           });
           this.setItem('leads', leads);
         }
-        this.setItem('users', users.filter(u => u.id !== recordId));
+
+        const remainingUsers = users.filter(u => u.id !== recordId);
+        this.setItem('system_users', remainingUsers);
+        this.setItem('users', remainingUsers);
+        this.markEntityDeleted('User', recordId, { deletedBy: user?.email || user?.name || 'Administrator', recordId, email: target?.email });
+        this.markEntityDeleted('users', recordId, { deletedBy: user?.email || user?.name || 'Administrator', recordId, email: target?.email });
+        if (target?.email) {
+          this.markEntityDeleted(target.email.toLowerCase(), 'User', { deletedBy: user?.email || 'Administrator', recordId });
+        }
         this.deleteFirestoreDoc('users', recordId);
+        this.deleteFirestoreDoc('system_users', recordId);
         this.logAudit(user, 'USER_DELETED', 'User', recordId, `Permanently deleted user account: ${target?.name || recordId} (${target?.email || ''}), preserved historical proposal snapshots.`);
         break;
       }
@@ -3557,6 +3667,26 @@ export class AppDatabase {
       });
     }
 
+    if (entityType === 'User') {
+      try {
+        const actor = user || this.getCurrentUser();
+        const targetUser = this.getUserById(recordId);
+        await fetch(`/api/admin/users/${recordId}/delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            actorUid: actor?.id,
+            actorEmail: actor?.email,
+            actorRole: actor?.role,
+            targetEmail: targetUser?.email,
+            targetRole: targetUser?.role
+          })
+        }).catch(e => console.debug('[DB] Backend delete user notice:', e));
+      } catch (err) {
+        console.debug('[DB] Backend delete user notice:', err);
+      }
+    }
+
     this.notify();
     return res;
   }
@@ -3571,6 +3701,7 @@ export class AppDatabase {
 
     let col = '';
     switch (entityType) {
+      case 'User': col = 'users'; break;
       case 'Product': col = 'products'; break;
       case 'Hotel': col = 'hotels'; break;
       case 'Package': col = 'b2b_packages'; break;
@@ -12966,19 +13097,26 @@ export class AppDatabase {
     ];
 
     const storedUsers = this.getItem<User[]>('system_users', []);
-    if (!storedUsers || storedUsers.length === 0) {
-      return defaultUsers;
-    }
+    const deletedSet = this.getDeletedEntityIds();
 
-    // Merge stored users with core authoritative accounts so core administration is never lost
-    const merged = [...storedUsers];
-    for (const def of defaultUsers) {
-      const exists = merged.some(u => (u.email || '').trim().toLowerCase() === def.email.toLowerCase());
-      if (!exists) {
-        merged.push(def);
+    const candidateList = (!storedUsers || storedUsers.length === 0) ? [...defaultUsers] : [...storedUsers];
+    if (storedUsers && storedUsers.length > 0) {
+      for (const def of defaultUsers) {
+        const exists = candidateList.some(u => (u.email || '').trim().toLowerCase() === def.email.toLowerCase());
+        if (!exists) {
+          candidateList.push(def);
+        }
       }
     }
-    return merged;
+
+    // Filter out deleted and tombstoned users
+    return candidateList.filter(u => {
+      if (!u || !u.id) return false;
+      if (deletedSet.has(u.id) || deletedSet.has(`User_${u.id}`) || deletedSet.has(`users_${u.id}`)) return false;
+      if (u.email && (deletedSet.has(u.email.toLowerCase().trim()) || deletedSet.has(`user_email_${u.email.toLowerCase().trim()}`))) return false;
+      if ((u as any).status === 'DELETED' || (u as any).isDeleted === true) return false;
+      return true;
+    });
   }
 
   public getUserByEmail(email: string): User | undefined {

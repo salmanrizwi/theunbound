@@ -937,13 +937,45 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                               </button>
                             )}
 
-                            <button
-                              onClick={() => setDeleteTarget({ id: userItem.id, name: userItem.name, email: userItem.email, role: userItem.role, status: status })}
-                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                              title="Delete or Deactivate Account"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            {(() => {
+                              const isCurrentUser = Boolean(
+                                (currentUser?.id && userItem.id === currentUser.id) ||
+                                (currentUser?.email && userItem.email && currentUser.email.toLowerCase().trim() === userItem.email.toLowerCase().trim())
+                              );
+                              const otherAdminsCount = users.filter(u => 
+                                u.role === 'ADMIN' && 
+                                u.id !== userItem.id && 
+                                !db.isEntityDeleted(u.id, 'User') && 
+                                !db.isEntityDeleted(u.id, 'users')
+                              ).length;
+                              const isSoleAdmin = userItem.role === 'ADMIN' && otherAdminsCount === 0;
+
+                              if (isCurrentUser) {
+                                return (
+                                  <span title="Your active Admin account (Self-deletion prohibited)" className="inline-block p-1.5 text-slate-300 cursor-not-allowed opacity-40">
+                                    <Trash2 className="w-4 h-4" />
+                                  </span>
+                                );
+                              }
+
+                              if (isSoleAdmin) {
+                                return (
+                                  <span title="Sole active Administrator (Protected from deletion)" className="inline-block p-1.5 text-amber-400/60 cursor-not-allowed opacity-60">
+                                    <Trash2 className="w-4 h-4" />
+                                  </span>
+                                );
+                              }
+
+                              return (
+                                <button
+                                  onClick={() => setDeleteTarget({ id: userItem.id, name: userItem.name, email: userItem.email, role: userItem.role, status: status })}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                  title="Delete or Deactivate Account"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              );
+                            })()}
                           </div>
                         </td>
                       </tr>
