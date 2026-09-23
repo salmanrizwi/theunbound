@@ -59,6 +59,8 @@ import {
 import { PackageDetailModal } from '../PackageDetailModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { EntitySEO } from '../../types/seo';
+import { useAuth } from '../../context/AuthContext';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface PackageManagerProps {
   destinations: Destination[];
@@ -76,6 +78,7 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
   onOpenQuotationBuilder
 }) => {
   const db = AppDatabase.getInstance();
+  const { user } = useAuth();
   const [packages, setPackages] = useState<B2BPackage[]>(() => db.getPackages());
   const [products] = useState<Product[]>(() => propProducts.length > 0 ? propProducts : db.getProducts());
   const [hotels] = useState<Hotel[]>(() => db.getHotels());
@@ -905,33 +908,19 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmId && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
-            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
-              <AlertCircle className="w-6 h-6" />
-            </div>
-            <div className="text-center">
-              <h3 className="text-base font-black text-slate-900">Delete Tour Package?</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                This will permanently remove the ready-made package from the catalog and website. Master products and hotels will NOT be affected.
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-3 pt-2">
-              <button
-                onClick={() => setDeleteConfirmId(null)}
-                className="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleDelete(deleteConfirmId)}
-                className="py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-black rounded-xl text-xs cursor-pointer shadow-xs"
-              >
-                Confirm Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <DeleteConfirmModal
+          isOpen={Boolean(deleteConfirmId)}
+          onClose={() => setDeleteConfirmId(null)}
+          onSuccess={() => {
+            setDeleteConfirmId(null);
+            refreshPackages();
+            showNotification('Package deleted successfully.', 'info');
+          }}
+          entityType="Package"
+          recordId={deleteConfirmId}
+          recordTitle={packages.find(p => p.id === deleteConfirmId)?.title || deleteConfirmId}
+          user={user}
+        />
       )}
 
       {/* Interactive Package Preview Modal */}

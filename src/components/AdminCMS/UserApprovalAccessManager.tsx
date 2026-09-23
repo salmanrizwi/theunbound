@@ -3,6 +3,7 @@ import { User, UserRole, UserApprovalStatus, UserPermissionAccess } from '../../
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { UserPermissionModal } from './UserPermissionModal';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { 
   getDefaultPermissionsForRole, 
   isMasterAdmin, 
@@ -42,7 +43,8 @@ import {
   Sparkles,
   AlertTriangle,
   ChevronRight,
-  Settings2
+  Settings2,
+  Trash2
 } from 'lucide-react';
 
 interface UserApprovalAccessManagerProps {
@@ -68,6 +70,7 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
   // Modal State
   const [selectedUserForModal, setSelectedUserForModal] = useState<User | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; email?: string; role?: string; status?: string } | null>(null);
 
   // Bulk Operations State
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
@@ -718,13 +721,22 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
 
                       {/* Actions */}
                       <td className="py-3 px-4 text-right">
-                        <button
-                          onClick={() => handleOpenPermissionModal(u)}
-                          className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-slate-900 hover:bg-[#00C6A6] text-white rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer group"
-                        >
-                          <Settings2 className="w-3.5 h-3.5 text-[#00E5C0] group-hover:text-white" />
-                          <span>Manage Permissions</span>
-                        </button>
+                        <div className="flex items-center justify-end space-x-2">
+                          <button
+                            onClick={() => handleOpenPermissionModal(u)}
+                            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-slate-900 hover:bg-[#00C6A6] text-white rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer group"
+                          >
+                            <Settings2 className="w-3.5 h-3.5 text-[#00E5C0] group-hover:text-white" />
+                            <span>Manage Permissions</span>
+                          </button>
+                          <button
+                            onClick={() => setDeleteTarget({ id: u.id, name: u.name, email: u.email, role: u.role, status: u.approvalStatus })}
+                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                            title="Delete or Deactivate User"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -924,6 +936,14 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                                 Revoke
                               </button>
                             )}
+
+                            <button
+                              onClick={() => setDeleteTarget({ id: userItem.id, name: userItem.name, email: userItem.email, role: userItem.role, status: status })}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              title="Delete or Deactivate Account"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -993,6 +1013,27 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
         currentUser={currentUser}
         allUsers={users}
       />
+
+      {/* Delete / Deactivate Confirmation Modal */}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          isOpen={Boolean(deleteTarget)}
+          onClose={() => setDeleteTarget(null)}
+          onSuccess={() => {
+            setDeleteTarget(null);
+            refreshUsers();
+          }}
+          entityType="User"
+          recordId={deleteTarget.id}
+          recordTitle={deleteTarget.name}
+          user={currentUser}
+          extraDetails={{
+            email: deleteTarget.email,
+            role: deleteTarget.role,
+            status: deleteTarget.status
+          }}
+        />
+      )}
 
     </div>
   );

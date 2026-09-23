@@ -2789,6 +2789,112 @@ export class AppDatabase {
         break;
       }
 
+      case 'User': {
+        const users = this.getUsers();
+        const targetUser = users.find(u => u.id === recordId);
+        const userEmail = (targetUser?.email || '').toLowerCase().trim();
+
+        // Check Leads (Requirement 19 & 20: preserve historical records, report dependency counts)
+        const linkedLeads = leads.filter(l => 
+          l.userId === recordId || 
+          l.b2bAgentId === recordId || 
+          l.salesOwnerId === recordId ||
+          (userEmail && (l as any).agentEmail?.toLowerCase() === userEmail)
+        );
+        if (linkedLeads.length > 0) {
+          groups.push({
+            entityType: 'Lead',
+            count: linkedLeads.length,
+            label: `${linkedLeads.length} Travel Lead${linkedLeads.length > 1 ? 's' : ''}`,
+            items: linkedLeads.slice(0, 10).map(l => ({ id: l.id, name: `${l.leadNumber} (${l.contactName})`, type: 'Lead', details: `Status: ${l.status}` }))
+          });
+        }
+
+        // Check Quotes
+        const linkedQuotes = quotes.filter(q => 
+          q.agentId === recordId || 
+          (q as any).creatorId === recordId || 
+          (q as any).authorUid === recordId || 
+          (userEmail && (q as any).agentEmail?.toLowerCase() === userEmail)
+        );
+        if (linkedQuotes.length > 0) {
+          groups.push({
+            entityType: 'Quote',
+            count: linkedQuotes.length,
+            label: `${linkedQuotes.length} Proposal${linkedQuotes.length > 1 ? 's' : ''}`,
+            items: linkedQuotes.slice(0, 10).map(q => ({ id: q.id, name: `Quote #${q.quoteNumber || q.id}`, type: 'Quote', details: `Status: ${q.status}` }))
+          });
+        }
+
+        // Check Bookings
+        const linkedBookings = bookings.filter(b => 
+          (b as any).agentId === recordId || 
+          (b as any).bookedByUid === recordId || 
+          (b as any).customerId === recordId || 
+          (userEmail && b.customer?.email?.toLowerCase() === userEmail)
+        );
+        if (linkedBookings.length > 0) {
+          groups.push({
+            entityType: 'Booking',
+            count: linkedBookings.length,
+            label: `${linkedBookings.length} Active Booking${linkedBookings.length > 1 ? 's' : ''}`,
+            items: linkedBookings.slice(0, 10).map(b => ({ id: b.id, name: `Booking ${b.bookingReference}`, type: 'Booking', details: `Client: ${b.customer.leadTravelerName}` }))
+          });
+        }
+
+        // Check Tasks
+        const linkedTasks = tasks.filter(t => 
+          (t as any).assignedTo === recordId || 
+          (t as any).assignedToId === recordId || 
+          (t as any).assignedToUid === recordId
+        );
+        if (linkedTasks.length > 0) {
+          groups.push({
+            entityType: 'CalendarTask',
+            count: linkedTasks.length,
+            label: `${linkedTasks.length} Assigned Task${linkedTasks.length > 1 ? 's' : ''}`,
+            items: linkedTasks.slice(0, 10).map(t => ({ id: t.id, name: t.title, type: 'CalendarTask', details: `Status: ${t.status}` }))
+          });
+        }
+        break;
+      }
+
+      case 'Booking': {
+        const targetBooking = bookings.find(b => b.id === recordId || b.bookingReference === recordId);
+        // Check linked Quotes
+        if (targetBooking?.quoteId) {
+          const q = quotes.find(item => item.id === targetBooking.quoteId);
+          if (q) {
+            groups.push({
+              entityType: 'Quote',
+              count: 1,
+              label: '1 Linked Proposal',
+              items: [{ id: q.id, name: `Quote #${q.quoteNumber || q.id}`, type: 'Quote', details: `Status: ${q.status}` }]
+            });
+          }
+        }
+        break;
+      }
+
+      case 'TransferRoute': {
+        const transferRoutes = this.getTransferRoutes();
+        const tr = transferRoutes.find(r => r.id === recordId);
+        const routeName = (tr?.routeName || '').toLowerCase();
+        // Check Quotes referencing this route
+        const linkedQuotes = quotes.filter(q => 
+          q.items && q.items.some(i => i.product?.id === recordId || (routeName && i.product?.name?.toLowerCase().includes(routeName)))
+        );
+        if (linkedQuotes.length > 0) {
+          groups.push({
+            entityType: 'Quote',
+            count: linkedQuotes.length,
+            label: `${linkedQuotes.length} Linked Proposal${linkedQuotes.length > 1 ? 's' : ''}`,
+            items: linkedQuotes.slice(0, 10).map(q => ({ id: q.id, name: `Quote #${q.quoteNumber || q.id}`, type: 'Quote', details: q.status }))
+          });
+        }
+        break;
+      }
+
       default:
         break;
     }
@@ -3059,6 +3165,56 @@ export class AppDatabase {
         break;
       }
 
+      case 'User': {
+        const users = this.getUsers();
+        const target = users.find(u => u.id === recordId);
+        // Requirement 19 & 20: Preserve historical relationship without corrupting quotes, leads, or bookings
+        if (target) {
+          const quotes = this.getAllSavedQuotes();
+          quotes.forEach(q => {
+            if (q.agentId === recordId || (q as any).creatorId === recordId) {
+              (q as any).submitted_by_uid = target.id;
+              (q as any).submitted_by_name_snapshot = target.name;
+              (q as any).submitted_by_email_snapshot = target.email;
+            }
+          });
+          this.setItem('saved_quotations', quotes);
+
+          const leads = this.getLeads();
+          leads.forEach(l => {
+            if (l.userId === recordId || l.b2bAgentId === recordId || l.salesOwnerId === recordId) {
+              (l as any).submitted_by_uid = target.id;
+              (l as any).submitted_by_name_snapshot = target.name;
+              (l as any).submitted_by_email_snapshot = target.email;
+            }
+          });
+          this.setItem('leads', leads);
+        }
+        this.setItem('users', users.filter(u => u.id !== recordId));
+        this.deleteFirestoreDoc('users', recordId);
+        this.logAudit(user, 'USER_DELETED', 'User', recordId, `Permanently deleted user account: ${target?.name || recordId} (${target?.email || ''}), preserved historical proposal snapshots.`);
+        break;
+      }
+
+      case 'Booking': {
+        const bookings = this.getAllBookings();
+        const target = bookings.find(b => b.id === recordId || b.bookingReference === recordId);
+        const bId = target?.id || recordId;
+        this.setItem('bookings', bookings.filter(b => b.id !== bId && b.bookingReference !== bId));
+        this.deleteFirestoreDoc('bookings', bId);
+        this.logAudit(user, 'BOOKING_DELETED', 'Booking', bId, `Permanently deleted booking record: ${target?.bookingReference || bId}`);
+        break;
+      }
+
+      case 'TransferRoute': {
+        const routes = this.getTransferRoutes();
+        const target = routes.find(r => r.id === recordId);
+        this.setItem('transfer_routes', routes.filter(r => r.id !== recordId));
+        this.deleteFirestoreDoc('transfer_routes', recordId);
+        this.logAudit(user, 'TRANSFER_ROUTE_DELETED', 'TransferRoute', recordId, `Permanently deleted transfer route: ${target?.routeName || recordId}`);
+        break;
+      }
+
       default:
         return {
           success: false,
@@ -3143,9 +3299,22 @@ export class AppDatabase {
         const dests = this.getDestinations();
         const dest = dests.find(item => item.id === recordId || item.slug === recordId);
         if (dest) {
-          dest.status = 'COMING_SOON';
+          (dest as any).status = 'ARCHIVED';
+          (dest as any).visibilityStatus = 'ARCHIVED';
           this.saveDestination(dest, user);
-          this.logAudit(user, 'DESTINATION_ARCHIVED', 'Destination', recordId, `Archived destination: ${dest.name} (set to Coming Soon)`);
+          this.logAudit(user, 'DESTINATION_ARCHIVED', 'Destination', recordId, `Archived destination: ${dest.name} (status set to ARCHIVED, hidden from active catalog)`);
+        }
+        break;
+      }
+
+      case 'User': {
+        const users = this.getUsers();
+        const u = users.find(item => item.id === recordId);
+        if (u) {
+          u.approvalStatus = 'REJECTED';
+          (u as any).status = 'INACTIVE';
+          this.saveUser(u, user, 'USER_PERMISSIONS_CHANGED', `Archived and deactivated user account: ${u.name} (${u.email})`);
+          this.logAudit(user, 'USER_ARCHIVED', 'User', recordId, `Deactivated user account: ${u.name} (${u.email})`);
         }
         break;
       }

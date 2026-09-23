@@ -5,6 +5,7 @@ import { PublicReviewsCarousel } from '../components/PublicReviewsCarousel';
 import { FinalCTA } from '../components/FinalCTA';
 import { AppDatabase } from '../services/db';
 import { GlobalCountingEngine } from '../services/countingEngine';
+import { inventoryVisibilityService, useInventoryVisibility } from '../services/inventoryVisibilityService';
 import { 
   Building2, 
   ShieldCheck, 
@@ -46,6 +47,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
   const { user, isAuthenticated, openAuthModal } = useAuth();
   const db = AppDatabase.getInstance();
   const countingEngine = GlobalCountingEngine.getInstance();
+  const { visibleDestinations, visibleHubs } = useInventoryVisibility({ userRole: user?.role });
 
   const [config, setConfig] = useState<HomepageConfig>(() => db.getHomepageConfig());
   const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());
@@ -60,8 +62,14 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     });
   }, []);
 
-  // Filter out any virtual "all" destination
-  const baseDestinations = (allDestinations || []).filter(d => d.slug !== 'all');
+  // Authoritative real-time destination inventory derivation (excluding virtual 'all')
+  const baseDestinations = useMemo(() => {
+    // Rely primarily on inventoryVisibilityService
+    const sourceList = visibleDestinations && visibleDestinations.length > 0
+      ? visibleDestinations
+      : (allDestinations || []);
+    return sourceList.filter(d => d.slug !== 'all');
+  }, [visibleDestinations, allDestinations]);
 
   // Order destinations according to HomepageConfig if defined
   const displayDestinations = useMemo(() => {
@@ -294,13 +302,18 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                   ? 'grid-cols-1 md:grid-cols-2' 
                   : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3';
 
-              // Resolve each configured hub from active Firestore cityHubs
+              // Resolve each configured hub from authoritative inventory visibility
               const resolvedHubs = activeConfigured
                 .map(item => {
                   const hub = cityHubs.find(h => h.id === item.hubId || h.id === `hub-${item.hubId}` || item.hubId.endsWith(h.id));
                   return { item, hub };
                 })
-                .filter(({ hub }) => !!hub && hub.status !== 'ARCHIVED');
+                .filter(({ hub }) => {
+                  if (!hub) return false;
+                  const computedStatus = inventoryVisibilityService.getHubComputedStatus(hub);
+                  if (computedStatus === 'HIDDEN' && !isUserAdmin) return false;
+                  return true;
+                });
 
               if (resolvedHubs.length === 0) {
                 return (
@@ -343,8 +356,18 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                     const destinationDisplay = item.destinationOverride || dest?.name || hub.destinationName || 'Ground Gateway';
                     const description = item.descriptionOverride || hub.description || 'Direct wholesale ground fulfillment desk and on-site operation center.';
                     const image = item.imageOverride || hub.heroImage || dest?.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop';
-                    const badge = item.badge || (item.featured ? 'Featured Hub' : 'Direct Ground Desk');
-                    const cta = item.ctaLabel || 'Explore Ground Hub';
+                    const hubComputedStatus = inventoryVisibilityService.getHubComputedStatus(hub);
+                    const isHubComingSoon = hubComputedStatus === 'COMING_SOON';
+                    const isHubHidden = hubComputedStatus === 'HIDDEN';
+
+                    const badge = isHubComingSoon
+                      ? 'COMING SOON'
+                      : isHubHidden
+                        ? 'HIDDEN (0 INVENTORY)'
+                        : item.badge || (item.featured ? 'Featured Hub' : 'Direct Ground Desk');
+                    const cta = isHubComingSoon
+                      ? 'Notify on Launch'
+                      : item.ctaLabel || 'Explore Ground Hub';
 
                     return (
                       <div
@@ -475,7 +498,12 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                 ? 'grid-cols-1 md:grid-cols-2' 
                 : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
             } gap-6`}>
-              {displayDestinations.map((dest) => (
+              {displayDestinations.map((dest) => {
+                const destStatus = inventoryVisibilityService.getDestinationComputedStatus(dest);
+                const isComingSoon = destStatus === 'COMING_SOON';
+                const isHidden = destStatus === 'HIDDEN';
+
+                return (
                 <div
                   key={`b2b-editorial-dest-${dest.id || dest.slug}`}
                   id={`editorial-destination-card-${dest.slug}`}
@@ -494,9 +522,19 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                       <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-white/95 text-slate-900 shadow-xs">
                         {dest.country}
                       </span>
-                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-[#00C6A6] text-slate-950 shadow-xs">
-                        Direct Ground Desk
-                      </span>
+                      {isComingSoon ? (
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-amber-400 text-slate-950 shadow-xs uppercase tracking-wider">
+                          Coming Soon
+                        </span>
+                      ) : isHidden ? (
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-rose-500 text-white shadow-xs uppercase tracking-wider">
+                          Hidden (Admin Only)
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-[#00C6A6] text-slate-950 shadow-xs">
+                          Direct Ground Desk
+                        </span>
+                      )}
                     </div>
 
                     <div className="absolute bottom-3 inset-x-3 text-white z-10">
@@ -513,7 +551,9 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
 
                   <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
                     <p className="text-xs text-slate-600 line-clamp-3 leading-relaxed">
-                      {dest.description || `Specialized B2B ground handling, VIP logistics, and licensed bilingual guides in ${dest.name}.`}
+                      {isComingSoon 
+                        ? `Ground operations and direct contracting in ${dest.name} are currently in preparation. Verified B2B partners will receive advance notice of wholesale rate cards.`
+                        : dest.description || `Specialized B2B ground handling, VIP logistics, and licensed bilingual guides in ${dest.name}.`}
                     </p>
 
                     <div className="space-y-2 pt-3 border-t border-slate-100">
@@ -534,18 +574,36 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                     </div>
 
                     <div className="pt-2">
-                      <button
-                        type="button"
-                        onClick={handlePartnerAction}
-                        className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer shadow-xs"
-                      >
-                        <Lock className="w-3.5 h-3.5 text-[#00C6A6]" />
-                        <span>Agent Verification Required for Inventory</span>
-                      </button>
+                      {isComingSoon ? (
+                        <button
+                          type="button"
+                          onClick={handlePartnerAction}
+                          className="w-full py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition-all flex items-center justify-center space-x-2 cursor-pointer shadow-xs"
+                        >
+                          <Clock className="w-3.5 h-3.5 text-slate-950" />
+                          <span>Coming Soon • Register for Launch</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (dest.slug) {
+                              onSelectDestination(dest.slug);
+                            } else {
+                              handlePartnerAction();
+                            }
+                          }}
+                          className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-[#008972] text-white text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer shadow-xs"
+                        >
+                          <Lock className="w-3.5 h-3.5 text-[#00C6A6]" />
+                          <span>Agent Verification Required for Inventory</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         ) : null;

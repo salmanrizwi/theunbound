@@ -43,6 +43,7 @@ import { DestinationHubsContextView, HubProductsContextView } from './B2BContext
 import { AddProductToQuoteModal } from './AddProductToQuoteModal';
 import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
 import { AddVisaToQuoteModal } from './AddVisaToQuoteModal';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 
 interface B2BHomeDiscoveryViewProps {
   destinations: Destination[];
@@ -93,6 +94,18 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
   const [selectedHotelForModal, setSelectedHotelForModal] = useState<Hotel | null>(null);
   const [selectedVisaForModal, setSelectedVisaForModal] = useState<VisaProduct | null>(null);
   const [modalExistingItemId, setModalExistingItemId] = useState<string | undefined>(undefined);
+
+  const isUserAdmin = user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER';
+
+  // Authoritative destination visibility
+  const visibleDestinationsList = useMemo(() => {
+    return destinations.filter(dest => {
+      if (dest.slug === 'all') return false;
+      const status = inventoryVisibilityService.getDestinationComputedStatus(dest);
+      if (status === 'HIDDEN' && !isUserAdmin) return false;
+      return true;
+    });
+  }, [destinations, isUserAdmin]);
 
   const handleOpenConfigureProduct = (prod: Product) => {
     const existing = items.find(it => it.product.id === prod.id || it.product.sku === prod.sku);
@@ -794,8 +807,12 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {destinations.map(dest => {
+            {visibleDestinationsList.map(dest => {
               const metrics = getDestinationMetrics(dest.name, dest.id);
+              const destStatus = inventoryVisibilityService.getDestinationComputedStatus(dest);
+              const isComingSoon = destStatus === 'COMING_SOON';
+              const isHidden = destStatus === 'HIDDEN';
+
               return (
                 <div
                   key={dest.id}
@@ -816,9 +833,19 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                       <span className="px-3 py-1 rounded-full bg-slate-900/90 backdrop-blur-xs text-white text-[11px] font-bold">
                         {dest.country}
                       </span>
-                      <span className="px-2.5 py-0.5 rounded-full bg-[#00C6A6] text-slate-950 text-[10px] font-black uppercase">
-                        Active DMC Office
-                      </span>
+                      {isComingSoon ? (
+                        <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black uppercase">
+                          Coming Soon
+                        </span>
+                      ) : isHidden ? (
+                        <span className="px-2.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black uppercase">
+                          Hidden (0 Inventory)
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-0.5 rounded-full bg-[#00C6A6] text-slate-950 text-[10px] font-black uppercase">
+                          Active DMC Office
+                        </span>
+                      )}
                     </div>
 
                     {/* Bottom Title & Counts */}
@@ -837,18 +864,30 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                   {/* Body & Actions */}
                   <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
                     <p className="text-xs text-slate-600 leading-relaxed line-clamp-2">
-                      {dest.description || `Comprehensive luxury DMC services, private excursions, and 5-star contracted inventory across ${dest.name}.`}
+                      {isComingSoon
+                        ? `Ground operations and direct contracting in ${dest.name} are currently in preparation. Direct allotments will be published upon launch.`
+                        : dest.description || `Comprehensive luxury DMC services, private excursions, and 5-star contracted inventory across ${dest.name}.`}
                     </p>
 
                     {/* Action Buttons */}
                     <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
-                      <button
-                        onClick={() => onOpenCreateQuoteWithDestination ? onOpenCreateQuoteWithDestination(dest.slug || dest.id) : onNavigate('create-quote')}
-                        className="w-full py-2.5 px-3 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 font-black text-xs transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"
-                      >
-                        <PlusCircle className="w-3.5 h-3.5" />
-                        <span>Create Quote</span>
-                      </button>
+                      {isComingSoon ? (
+                        <button
+                          disabled
+                          className="w-full py-2.5 px-3 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 font-bold text-xs flex items-center justify-center space-x-1.5 opacity-80 cursor-not-allowed"
+                        >
+                          <Clock className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Coming Soon</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => onOpenCreateQuoteWithDestination ? onOpenCreateQuoteWithDestination(dest.slug || dest.id) : onNavigate('create-quote')}
+                          className="w-full py-2.5 px-3 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 font-black text-xs transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"
+                        >
+                          <PlusCircle className="w-3.5 h-3.5" />
+                          <span>Create Quote</span>
+                        </button>
+                      )}
 
                       <button
                         onClick={() => handleSelectDestinationForHubs(dest)}

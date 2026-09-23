@@ -2665,6 +2665,10 @@ export type AuditAction =
   | 'USER_REJECTED'
   | 'USER_ROLE_CHANGED'
   | 'USER_PERMISSIONS_CHANGED'
+  | 'USER_DELETED'
+  | 'USER_ARCHIVED'
+  | 'BOOKING_DELETED'
+  | 'TRANSFER_ROUTE_DELETED'
   // CMS Actions
   | 'PRODUCT_CREATED'
   | 'PRODUCT_UPDATED'
@@ -2833,7 +2837,10 @@ export type CMSDeletableEntityType =
   | 'Lead'
   | 'RosterResource'
   | 'CalendarTask'
-  | 'Campaign';
+  | 'Campaign'
+  | 'User'
+  | 'Booking'
+  | 'TransferRoute';
 
 export interface DependencyDetailItem {
   id: string;
