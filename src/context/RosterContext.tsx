@@ -8,6 +8,7 @@ import {
 } from '../types';
 import { INITIAL_ROSTER_RESOURCES, INITIAL_PRODUCT_ROSTER_RULES } from '../data/initialRoster';
 import { envService } from '../services/environment';
+import { AppDatabase } from '../services/db';
 
 interface RosterContextType {
   resources: RosterResource[];
@@ -32,19 +33,17 @@ const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export const RosterProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const allowDemo = envService.allowDemoData();
+  const db = AppDatabase.getInstance();
 
-  const [resources, setResources] = useState<RosterResource[]>(() => {
-    const saved = localStorage.getItem('unbound_roster_resources');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch (e) {
-        return allowDemo ? INITIAL_ROSTER_RESOURCES : [];
-      }
-    }
-    return allowDemo ? INITIAL_ROSTER_RESOURCES : [];
-  });
+  const [resources, setResources] = useState<RosterResource[]>(() => db.getResources());
+
+  useEffect(() => {
+    // Subscribe to DB updates so Firestore real-time synchronization updates Roster resources
+    const unsubscribe = db.subscribe(() => {
+      setResources(db.getResources());
+    });
+    return unsubscribe;
+  }, [db]);
 
   const [rosterRules, setRosterRules] = useState<Record<string, ProductRosterRule>>(() => {
     const saved = localStorage.getItem('unbound_roster_rules');
@@ -58,10 +57,6 @@ export const RosterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     return allowDemo ? INITIAL_PRODUCT_ROSTER_RULES : {};
   });
-
-  useEffect(() => {
-    localStorage.setItem('unbound_roster_resources', JSON.stringify(resources));
-  }, [resources]);
 
   useEffect(() => {
     localStorage.setItem('unbound_roster_rules', JSON.stringify(rosterRules));
@@ -401,21 +396,33 @@ export const RosterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ...resourceData,
       id: `res-${Date.now()}`
     };
-    setResources(prev => [...prev, newRes]);
+    db.saveResource(newRes, null);
+    setResources(db.getResources());
   };
 
   const updateResource = (id: string, resourceData: Partial<RosterResource>) => {
-    setResources(prev => prev.map(r => r.id === id ? { ...r, ...resourceData } : r));
+    const current = db.getResourceById(id);
+    if (current) {
+      const updated: RosterResource = { ...current, ...resourceData };
+      db.saveResource(updated, null);
+      setResources(db.getResources());
+    }
   };
 
   const deleteResource = (id: string) => {
-    setResources(prev => prev.filter(r => r.id !== id));
+    db.deleteResource(id, null);
+    setResources(db.getResources());
   };
 
   const resetRosterToDefaults = () => {
-    setResources(allowDemo ? INITIAL_ROSTER_RESOURCES : []);
-    setRosterRules(allowDemo ? INITIAL_PRODUCT_ROSTER_RULES : {});
-    localStorage.removeItem('unbound_roster_resources');
+    if (allowDemo) {
+      INITIAL_ROSTER_RESOURCES.forEach(r => db.saveResource(r, null));
+      setResources(db.getResources());
+      setRosterRules(INITIAL_PRODUCT_ROSTER_RULES);
+    } else {
+      setResources([]);
+      setRosterRules({});
+    }
     localStorage.removeItem('unbound_roster_rules');
   };
 

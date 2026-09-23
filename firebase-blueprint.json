@@ -29,6 +29,37 @@
         "updatedAt": { "type": "string", "required": true }
       }
     },
+    "Company": {
+      "collection": "companies",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "legalName": { "type": "string", "required": false },
+        "businessType": { "type": "string", "required": false },
+        "logoUrl": { "type": "string", "required": false },
+        "brandLogoUrl": { "type": "string", "required": false },
+        "website": { "type": "string", "required": false },
+        "email": { "type": "string", "required": false },
+        "phone": { "type": "string", "required": false },
+        "address": { "type": "string", "required": false },
+        "city": { "type": "string", "required": false },
+        "state": { "type": "string", "required": false },
+        "postalCode": { "type": "string", "required": false },
+        "country": { "type": "string", "required": false },
+        "taxOrGstNumber": { "type": "string", "required": false },
+        "iataOrAbtaNumber": { "type": "string", "required": false },
+        "verificationStatus": { "type": "string", "required": true, "enum": ["VERIFIED", "PENDING_VERIFICATION", "UNVERIFIED", "REJECTED"] },
+        "tier": { "type": "string", "required": false },
+        "notes": { "type": "string", "required": false },
+        "primaryContactUserId": { "type": "string", "required": false },
+        "primaryContactName": { "type": "string", "required": false },
+        "primaryContactEmail": { "type": "string", "required": false },
+        "primaryContactPhone": { "type": "string", "required": false },
+        "linkedUserIds": { "type": "array", "required": false },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": false }
+      }
+    },
     "Destination": {
       "collection": "destinations",
       "fields": {

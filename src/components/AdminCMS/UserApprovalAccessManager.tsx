@@ -4,6 +4,7 @@ import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { UserPermissionModal } from './UserPermissionModal';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { CompanyManagementView } from './CompanyManagementView';
 import { 
   getDefaultPermissionsForRole, 
   isMasterAdmin, 
@@ -23,6 +24,7 @@ import {
   Clock, 
   Percent, 
   Building, 
+  Building2,
   Mail, 
   Phone, 
   Globe2, 
@@ -48,7 +50,7 @@ import {
 } from 'lucide-react';
 
 interface UserApprovalAccessManagerProps {
-  initialTab?: 'USERS_ACCESS' | 'PERMISSIONS';
+  initialTab?: 'USERS_ACCESS' | 'PERMISSIONS' | 'COMPANIES';
 }
 
 export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps> = ({ 
@@ -57,7 +59,8 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
   const db = AppDatabase.getInstance();
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<User[]>(() => db.getUsers());
-  const [currentSectionTab, setCurrentSectionTab] = useState<'PERMISSIONS' | 'USERS_ACCESS'>(initialTab);
+  const [companies, setCompanies] = useState(() => db.getCompanies());
+  const [currentSectionTab, setCurrentSectionTab] = useState<'PERMISSIONS' | 'USERS_ACCESS' | 'COMPANIES'>(initialTab);
   
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
@@ -86,6 +89,7 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
   const refreshUsers = () => {
     const fresh = db.getUsers();
     setUsers(fresh);
+    setCompanies(db.getCompanies());
     // Also update currently selected modal user if open
     if (selectedUserForModal) {
       const refreshedTarget = fresh.find(u => u.id === selectedUserForModal.id);
@@ -420,6 +424,21 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                 {pendingCount}
               </span>
             )}
+          </button>
+
+          <button
+            onClick={() => setCurrentSectionTab('COMPANIES')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+              currentSectionTab === 'COMPANIES'
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            <Building2 className="w-4 h-4 text-[#00C6A6]" />
+            <span>COMPANIES & TRADE PARTNERS</span>
+            <span className="bg-slate-800 text-slate-300 text-[10px] px-2 py-0.5 rounded-full ml-1 font-mono">
+              {companies.length}
+            </span>
           </button>
         </div>
       </div>
@@ -986,6 +1005,11 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
             </div>
           </div>
         </div>
+      )}
+
+      {/* VIEW 3: CORPORATE COMPANIES & TRADE PARTNERS DIRECTORY */}
+      {currentSectionTab === 'COMPANIES' && (
+        <CompanyManagementView onOpenUserModal={handleOpenPermissionModal} />
       )}
 
       {/* Bulk Operation Confirmation Modal */}

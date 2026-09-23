@@ -21,6 +21,8 @@ import {
   SyncDetailedReport,
   UserRole,
   User,
+  Company,
+  VerificationStatus,
   UserCategory,
   UserApprovalStatus,
   UserPermissionAccess,
@@ -204,7 +206,7 @@ import {
   sanitizeProductForAgent 
 } from '../utils/customerQuoteSanitizer';
 
-function cleanForFirestore(data: any): any {
+export function cleanForFirestore(data: any): any {
   if (data === undefined) {
     return null;
   }
@@ -942,6 +944,7 @@ export class AppDatabase {
 
       // 2. User Accounts & Transactions (Preserved across all deployments)
       this.syncCollectionSafely<User>('users', 'system_users');
+      this.syncCollectionSafely<Company>('companies', 'companies');
       this.syncCollectionSafely<Quotation>('quotations', 'saved_quotes');
       this.syncCollectionSafely<Booking>('bookings', 'bookings');
       this.syncCollectionSafely<TravelLead>('leads', 'leads');
@@ -1082,6 +1085,20 @@ export class AppDatabase {
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'seo_settings')) this.setItem('seo_settings', DEFAULT_GLOBAL_SEO_DEFAULTS);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'suppliers')) this.setItem('suppliers', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'system_users')) this.setItem('system_users', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'companies')) this.setItem('companies', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_packages')) this.setItem('b2b_packages', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'hotel_rooms')) this.setItem('hotel_rooms', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'hotel_rates')) this.setItem('hotel_rates', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'hotel_meal_plans')) this.setItem('hotel_meal_plans', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'transfer_routes')) this.setItem('transfer_routes', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'transfer_rates')) this.setItem('transfer_rates', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'product_pricing_rates')) this.setItem('product_pricing_rates', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'product_capacities')) this.setItem('product_capacities', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'visa_rates')) this.setItem('visa_rates', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'package_items')) this.setItem('package_items', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'supplier_requests')) this.setItem('supplier_requests', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'uploaded_invoices')) this.setItem('uploaded_invoices', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'campaign_events')) this.setItem('campaign_events', []);
 
       try {
         this.migrateBookingAssignments();
@@ -13276,7 +13293,237 @@ export class AppDatabase {
       `Updated personal & company profile for ${updated.name} (${updated.companyName || updated.agencyName || 'Personal'})`
     );
 
+    // Sync company profile in companies collection if company information exists
+    const companyDisplayName = (updated.companyName || updated.agencyName || '').trim();
+    if (companyDisplayName) {
+      this.syncUserCompanyProfile(updated, actor);
+    }
+
     return updated;
+  }
+
+  // =========================================================================
+  // AUTHORITATIVE COMPANY PROFILES MANAGEMENT
+  // =========================================================================
+
+  public getCompanies(): Company[] {
+    const list = this.getItem<Company[]>('companies', []);
+    if (list && list.length > 0) {
+      return list;
+    }
+    // Auto-generate company records from existing registered users if empty
+    const users = this.getUsers();
+    const companyMap = new Map<string, Company>();
+    users.forEach(u => {
+      const cName = (u.companyName || u.agencyName || '').trim();
+      if (!cName) return;
+      const cId = u.companyId || `comp-${cName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+      if (!companyMap.has(cId)) {
+        companyMap.set(cId, {
+          id: cId,
+          name: cName,
+          legalName: u.companyName || u.agencyName,
+          businessType: u.businessType || 'Luxury Tour Operator & Wholesale Partner',
+          website: u.companyWebsite,
+          email: u.companyEmail || u.email,
+          phone: u.companyPhone || u.contactNumber,
+          address: u.companyAddress || u.address,
+          city: u.companyCity || u.city,
+          state: u.companyState || u.state,
+          postalCode: u.companyPostalCode || u.postalCode,
+          country: u.companyCountry || u.country || 'United Kingdom',
+          taxOrGstNumber: u.taxOrGstNumber,
+          iataOrAbtaNumber: u.iataOrAbtaNumber,
+          verificationStatus: (u.verificationStatus || (u.approvalStatus === 'APPROVED' ? 'VERIFIED' : 'PENDING_VERIFICATION')) as VerificationStatus,
+          tier: 'TIER_1_DIRECT_DMC',
+          primaryContactUserId: u.id,
+          primaryContactName: u.name,
+          primaryContactEmail: u.email,
+          primaryContactPhone: u.contactNumber || u.phone,
+          linkedUserIds: [u.id],
+          createdAt: u.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        const existing = companyMap.get(cId)!;
+        if (!existing.linkedUserIds) existing.linkedUserIds = [];
+        if (!existing.linkedUserIds.includes(u.id)) existing.linkedUserIds.push(u.id);
+      }
+    });
+
+    const initialCompanies = Array.from(companyMap.values());
+    if (initialCompanies.length > 0) {
+      this.setItem('companies', initialCompanies);
+      initialCompanies.forEach(c => this.syncFirestoreDoc('companies', c.id, c));
+    }
+    return initialCompanies;
+  }
+
+  public getCompanyById(id: string): Company | null {
+    if (!id) return null;
+    return this.getCompanies().find(c => c.id === id) || null;
+  }
+
+  public saveCompany(
+    company: Company, 
+    actor: User | null, 
+    actionType: string = 'COMPANY_PROFILE_UPDATED',
+    auditNotes?: string
+  ): Company {
+    const companies = this.getCompanies();
+    const idx = companies.findIndex(c => c.id === company.id);
+    const updatedCompany: Company = {
+      ...company,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (idx >= 0) {
+      companies[idx] = updatedCompany;
+    } else {
+      companies.push(updatedCompany);
+    }
+
+    this.setItem('companies', companies);
+    this.syncFirestoreDoc('companies', updatedCompany.id, updatedCompany);
+
+    this.logAudit(
+      actor,
+      'SETTINGS_UPDATED',
+      'CompanyProfile',
+      updatedCompany.id,
+      auditNotes || `Updated company profile: ${updatedCompany.name} (Status: ${updatedCompany.verificationStatus})`
+    );
+
+    // Also update any linked users with matching company ID
+    if (updatedCompany.linkedUserIds && updatedCompany.linkedUserIds.length > 0) {
+      const users = this.getUsers();
+      let usersChanged = false;
+      updatedCompany.linkedUserIds.forEach(uId => {
+        const u = users.find(usr => usr.id === uId);
+        if (u) {
+          u.companyId = updatedCompany.id;
+          u.companyName = updatedCompany.name;
+          u.agencyName = updatedCompany.name;
+          u.businessType = updatedCompany.businessType || u.businessType;
+          u.companyWebsite = updatedCompany.website || u.companyWebsite;
+          u.companyEmail = updatedCompany.email || u.companyEmail;
+          u.companyPhone = updatedCompany.phone || u.companyPhone;
+          u.companyAddress = updatedCompany.address || u.companyAddress;
+          u.companyCity = updatedCompany.city || u.companyCity;
+          u.companyState = updatedCompany.state || u.companyState;
+          u.companyPostalCode = updatedCompany.postalCode || u.companyPostalCode;
+          u.companyCountry = updatedCompany.country || u.companyCountry;
+          u.taxOrGstNumber = updatedCompany.taxOrGstNumber || u.taxOrGstNumber;
+          u.iataOrAbtaNumber = updatedCompany.iataOrAbtaNumber || u.iataOrAbtaNumber;
+          u.verificationStatus = updatedCompany.verificationStatus;
+          usersChanged = true;
+          this.syncFirestoreDoc('users', u.id, u);
+        }
+      });
+      if (usersChanged) {
+        this.setItem('system_users', users);
+      }
+    }
+
+    return updatedCompany;
+  }
+
+  public deleteCompany(companyId: string, actor: User | null): boolean {
+    const companies = this.getCompanies();
+    const target = companies.find(c => c.id === companyId);
+    if (!target) return false;
+
+    const filtered = companies.filter(c => c.id !== companyId);
+    this.setItem('companies', filtered);
+    this.deleteFirestoreDoc('companies', companyId);
+
+    // Unlink company from users
+    const users = this.getUsers();
+    let usersUpdated = false;
+    users.forEach(u => {
+      if (u.companyId === companyId) {
+        u.companyId = undefined;
+        usersUpdated = true;
+        this.syncFirestoreDoc('users', u.id, u);
+      }
+    });
+    if (usersUpdated) {
+      this.setItem('system_users', users);
+    }
+
+    this.logAudit(
+      actor,
+      'USER_ROLE_CHANGED',
+      'CompanyProfile',
+      companyId,
+      `Admin deleted company profile: ${target.name}`
+    );
+
+    return true;
+  }
+
+  private syncUserCompanyProfile(user: User, actor: User | null = null): void {
+    try {
+      const cName = (user.companyName || user.agencyName || '').trim();
+      if (!cName) return;
+      const companies = this.getCompanies();
+      let company = user.companyId 
+        ? companies.find(c => c.id === user.companyId)
+        : companies.find(c => c.name.toLowerCase() === cName.toLowerCase());
+
+      if (company) {
+        // Update existing company
+        company.name = cName;
+        if (user.businessType) company.businessType = user.businessType;
+        if (user.companyWebsite) company.website = user.companyWebsite;
+        if (user.companyEmail) company.email = user.companyEmail;
+        if (user.companyPhone) company.phone = user.companyPhone;
+        if (user.companyAddress) company.address = user.companyAddress;
+        if (user.companyCity) company.city = user.companyCity;
+        if (user.companyState) company.state = user.companyState;
+        if (user.companyPostalCode) company.postalCode = user.companyPostalCode;
+        if (user.companyCountry) company.country = user.companyCountry;
+        if (user.taxOrGstNumber) company.taxOrGstNumber = user.taxOrGstNumber;
+        if (user.iataOrAbtaNumber) company.iataOrAbtaNumber = user.iataOrAbtaNumber;
+        if (!company.linkedUserIds) company.linkedUserIds = [];
+        if (!company.linkedUserIds.includes(user.id)) company.linkedUserIds.push(user.id);
+        company.updatedAt = new Date().toISOString();
+
+        this.saveCompany(company, actor, 'COMPANY_PROFILE_UPDATED', `Synced company details from user ${user.name}`);
+      } else {
+        // Create new company
+        const newCompId = `comp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        const newCompany: Company = {
+          id: newCompId,
+          name: cName,
+          legalName: cName,
+          businessType: user.businessType || 'Luxury Tour Operator & Wholesale Partner',
+          website: user.companyWebsite,
+          email: user.companyEmail || user.email,
+          phone: user.companyPhone || user.contactNumber,
+          address: user.companyAddress || user.address,
+          city: user.companyCity || user.city,
+          state: user.companyState || user.state,
+          postalCode: user.companyPostalCode || user.postalCode,
+          country: user.companyCountry || user.country || 'United Kingdom',
+          taxOrGstNumber: user.taxOrGstNumber,
+          iataOrAbtaNumber: user.iataOrAbtaNumber,
+          verificationStatus: user.verificationStatus || 'PENDING_VERIFICATION',
+          tier: 'STANDARD_PARTNER',
+          primaryContactUserId: user.id,
+          primaryContactName: user.name,
+          primaryContactEmail: user.email,
+          primaryContactPhone: user.contactNumber || user.phone,
+          linkedUserIds: [user.id],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        user.companyId = newCompId;
+        this.saveCompany(newCompany, actor, 'COMPANY_PROFILE_CREATED', `Auto-created company record for ${cName}`);
+      }
+    } catch (e) {
+      console.warn('[DB] Company sync note:', e);
+    }
   }
 
   public approveUser(userId: string, actor: User | null): void {
@@ -13423,6 +13670,7 @@ export class AppDatabase {
     users.push(newUser);
     this.setItem('system_users', users);
     this.syncFirestoreDoc('users', newUser.id, newUser);
+    this.syncUserCompanyProfile(newUser);
 
     this.logAudit(
       newUser,

@@ -4,7 +4,8 @@ import {
   UserRole, 
   UserPermissionAccess, 
   UserApprovalStatus, 
-  UserCategory 
+  UserCategory,
+  VerificationStatus
 } from '../../types';
 import { 
   getDefaultPermissionsForRole, 
@@ -33,7 +34,15 @@ import {
   CheckCircle2,
   Building2,
   Mail,
-  Calendar
+  Calendar,
+  Copy,
+  User as UserIcon,
+  Briefcase,
+  Phone,
+  MapPin,
+  Globe,
+  Clock,
+  ExternalLink
 } from 'lucide-react';
 
 interface UserPermissionModalProps {
@@ -59,12 +68,44 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
   const [role, setRole] = useState<UserRole>(user?.role || 'B2B_AGENT');
   const [category, setCategory] = useState<UserCategory>(user?.category || ((user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER') ? 'INTERNAL' : 'EXTERNAL'));
   const [approvalStatus, setApprovalStatus] = useState<UserApprovalStatus>(user?.approvalStatus || 'APPROVED');
+  const [verificationStatus, setVerificationStatus] = useState<VerificationStatus>(user?.verificationStatus || (user?.approvalStatus === 'APPROVED' ? 'VERIFIED' : 'PENDING_VERIFICATION'));
+  const [department, setDepartment] = useState<string>(user?.department || '');
+  const [notes, setNotes] = useState<string>(user?.notes || '');
+  const [copiedUid, setCopiedUid] = useState(false);
+
+  // Personal Profile Form State
+  const [firstName, setFirstName] = useState<string>(user?.firstName || '');
+  const [lastName, setLastName] = useState<string>(user?.lastName || '');
+  const [name, setName] = useState<string>(user?.name || '');
+  const [phone, setPhone] = useState<string>(user?.phone || user?.contactNumber || '');
+  const [jobTitle, setJobTitle] = useState<string>(user?.jobTitle || '');
+  const [avatarUrl, setAvatarUrl] = useState<string>(user?.avatarUrl || '');
+  const [bio, setBio] = useState<string>(user?.bio || '');
+  const [emergencyContactPerson, setEmergencyContactPerson] = useState<string>(user?.emergencyContactPerson || '');
+  const [emergencyContactPhone, setEmergencyContactPhone] = useState<string>(user?.emergencyContactPhone || '');
+
+  // Company Profile Form State
+  const [companyName, setCompanyName] = useState<string>(user?.companyName || user?.agencyName || '');
+  const [agencyName, setAgencyName] = useState<string>(user?.agencyName || user?.companyName || '');
+  const [businessType, setBusinessType] = useState<string>(user?.businessType || '');
+  const [companyWebsite, setCompanyWebsite] = useState<string>(user?.companyWebsite || '');
+  const [companyEmail, setCompanyEmail] = useState<string>(user?.companyEmail || user?.email || '');
+  const [companyPhone, setCompanyPhone] = useState<string>(user?.companyPhone || '');
+  const [companyAddress, setCompanyAddress] = useState<string>(user?.companyAddress || user?.address || '');
+  const [companyCity, setCompanyCity] = useState<string>(user?.companyCity || user?.city || '');
+  const [companyState, setCompanyState] = useState<string>(user?.companyState || user?.state || '');
+  const [companyCountry, setCompanyCountry] = useState<string>(user?.companyCountry || user?.country || 'United Kingdom');
+  const [companyPostalCode, setCompanyPostalCode] = useState<string>(user?.companyPostalCode || user?.postalCode || '');
+  const [taxOrGstNumber, setTaxOrGstNumber] = useState<string>(user?.taxOrGstNumber || '');
+  const [iataOrAbtaNumber, setIataOrAbtaNumber] = useState<string>(user?.iataOrAbtaNumber || '');
+  const [brandLogoUrl, setBrandLogoUrl] = useState<string>(user?.brandLogoUrl || user?.logoUrl || '');
+
   const [buyerMargin, setBuyerMargin] = useState<number>(user?.customBuyerMarginPercent ?? 25);
   const [agentMargin, setAgentMargin] = useState<number>(user?.customAgentMarginPercent ?? 10);
   const [auditReason, setAuditReason] = useState<string>('');
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'PERMISSIONS' | 'COMMERCIAL' | 'ACCOUNT'>('PERMISSIONS');
+  const [activeTab, setActiveTab] = useState<'PROFILE' | 'COMPANY' | 'ACCOUNT' | 'PERMISSIONS' | 'COMMERCIAL'>('PROFILE');
 
   // Permissions state initialized with existing or default
   const [perms, setPerms] = useState<UserPermissionAccess>(() => {
@@ -99,6 +140,35 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
       setRole(user.role);
       setCategory(user.category || (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' ? 'INTERNAL' : 'EXTERNAL'));
       setApprovalStatus(user.approvalStatus || 'APPROVED');
+      setVerificationStatus(user.verificationStatus || (user.approvalStatus === 'APPROVED' ? 'VERIFIED' : 'PENDING_VERIFICATION'));
+      setDepartment(user.department || '');
+      setNotes(user.notes || '');
+
+      setFirstName(user.firstName || user.name?.split(' ')[0] || '');
+      setLastName(user.lastName || user.name?.split(' ').slice(1).join(' ') || '');
+      setName(user.name || '');
+      setPhone(user.phone || user.contactNumber || '');
+      setJobTitle(user.jobTitle || '');
+      setAvatarUrl(user.avatarUrl || '');
+      setBio(user.bio || '');
+      setEmergencyContactPerson(user.emergencyContactPerson || '');
+      setEmergencyContactPhone(user.emergencyContactPhone || '');
+
+      setCompanyName(user.companyName || user.agencyName || '');
+      setAgencyName(user.agencyName || user.companyName || '');
+      setBusinessType(user.businessType || '');
+      setCompanyWebsite(user.companyWebsite || '');
+      setCompanyEmail(user.companyEmail || user.email || '');
+      setCompanyPhone(user.companyPhone || '');
+      setCompanyAddress(user.companyAddress || user.address || '');
+      setCompanyCity(user.companyCity || user.city || '');
+      setCompanyState(user.companyState || user.state || '');
+      setCompanyCountry(user.companyCountry || user.country || 'United Kingdom');
+      setCompanyPostalCode(user.companyPostalCode || user.postalCode || '');
+      setTaxOrGstNumber(user.taxOrGstNumber || '');
+      setIataOrAbtaNumber(user.iataOrAbtaNumber || '');
+      setBrandLogoUrl(user.brandLogoUrl || user.logoUrl || '');
+
       setBuyerMargin(user.customBuyerMarginPercent ?? 25);
       setAgentMargin(user.customAgentMarginPercent ?? 10);
       setAuditReason('');
@@ -232,11 +302,43 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
       }
     }
 
+    const finalFullName = name.trim() || `${firstName} ${lastName}`.trim() || user.name;
     const updatedUser: User = {
       ...user,
+      name: finalFullName,
+      displayName: finalFullName,
+      firstName: firstName.trim() || undefined,
+      lastName: lastName.trim() || undefined,
+      phone: phone.trim() || undefined,
+      contactNumber: phone.trim() || user.contactNumber,
+      jobTitle: jobTitle.trim() || undefined,
+      avatarUrl: avatarUrl.trim() || undefined,
+      bio: bio.trim() || undefined,
+      emergencyContactPerson: emergencyContactPerson.trim() || undefined,
+      emergencyContactPhone: emergencyContactPhone.trim() || undefined,
+
+      companyName: companyName.trim() || agencyName.trim() || undefined,
+      agencyName: agencyName.trim() || companyName.trim() || undefined,
+      businessType: businessType.trim() || undefined,
+      companyWebsite: companyWebsite.trim() || undefined,
+      companyEmail: companyEmail.trim() || undefined,
+      companyPhone: companyPhone.trim() || undefined,
+      companyAddress: companyAddress.trim() || undefined,
+      companyCity: companyCity.trim() || undefined,
+      companyState: companyState.trim() || undefined,
+      companyCountry: companyCountry.trim() || undefined,
+      country: companyCountry.trim() || undefined,
+      companyPostalCode: companyPostalCode.trim() || undefined,
+      taxOrGstNumber: taxOrGstNumber.trim() || undefined,
+      iataOrAbtaNumber: iataOrAbtaNumber.trim() || undefined,
+      brandLogoUrl: brandLogoUrl.trim() || undefined,
+
       role,
       category,
       approvalStatus,
+      verificationStatus,
+      department: department.trim() || undefined,
+      notes: notes.trim() || undefined,
       customBuyerMarginPercent: Number(buyerMargin) || 0,
       customAgentMarginPercent: Number(agentMargin) || 0,
       permissions: {
@@ -247,7 +349,8 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
         canAccessFinancials: perms.cmsFinance?.financials ?? (role === 'ADMIN'),
         canManageUsers: perms.cmsFinance?.accountManagement ?? (role === 'ADMIN'),
         canManagePermissions: perms.cmsFinance?.userPermissionManagement ?? (role === 'ADMIN')
-      }
+      },
+      updatedAt: new Date().toISOString()
     };
 
     try {
@@ -333,23 +436,59 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
         )}
 
         {/* Navigation Subtabs */}
-        <div className="bg-slate-50 border-b border-slate-200 px-6 flex items-center justify-between shrink-0">
+        <div className="bg-slate-50 border-b border-slate-200 px-6 flex items-center justify-between shrink-0 overflow-x-auto">
           <div className="flex items-center space-x-2">
             <button
+              onClick={() => setActiveTab('PROFILE')}
+              className={`py-3 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center space-x-1.5 whitespace-nowrap ${
+                activeTab === 'PROFILE'
+                  ? 'border-[#00C6A6] text-[#008f77]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <UserIcon className="w-3.5 h-3.5" />
+              <span>Personal Profile</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('COMPANY')}
+              className={`py-3 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center space-x-1.5 whitespace-nowrap ${
+                activeTab === 'COMPANY'
+                  ? 'border-[#00C6A6] text-[#008f77]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>Company & Trade</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('ACCOUNT')}
+              className={`py-3 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center space-x-1.5 whitespace-nowrap ${
+                activeTab === 'ACCOUNT'
+                  ? 'border-[#00C6A6] text-[#008f77]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <UserCheck className="w-3.5 h-3.5" />
+              <span>Account & Security</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('PERMISSIONS')}
-              className={`py-3 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center space-x-1.5 ${
+              className={`py-3 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center space-x-1.5 whitespace-nowrap ${
                 activeTab === 'PERMISSIONS'
                   ? 'border-[#00C6A6] text-[#008f77]'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
               <Shield className="w-3.5 h-3.5" />
-              <span>Permissions & Modules Matrix</span>
+              <span>Permissions Matrix</span>
             </button>
 
             <button
               onClick={() => setActiveTab('COMMERCIAL')}
-              className={`py-3 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center space-x-1.5 ${
+              className={`py-3 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center space-x-1.5 whitespace-nowrap ${
                 activeTab === 'COMMERCIAL'
                   ? 'border-[#00C6A6] text-[#008f77]'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -358,24 +497,12 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
               <Percent className="w-3.5 h-3.5" />
               <span>Commercial Margins</span>
             </button>
-
-            <button
-              onClick={() => setActiveTab('ACCOUNT')}
-              className={`py-3 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center space-x-1.5 ${
-                activeTab === 'ACCOUNT'
-                  ? 'border-[#00C6A6] text-[#008f77]'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <UserCheck className="w-3.5 h-3.5" />
-              <span>Role & Classification</span>
-            </button>
           </div>
 
           <button
             type="button"
             onClick={handleResetToRoleDefaults}
-            className="text-xs text-slate-600 hover:text-indigo-600 font-semibold flex items-center space-x-1 py-1 px-2.5 rounded-lg hover:bg-slate-200/60 transition-colors cursor-pointer"
+            className="text-xs text-slate-600 hover:text-indigo-600 font-semibold flex items-center space-x-1 py-1 px-2.5 rounded-lg hover:bg-slate-200/60 transition-colors cursor-pointer shrink-0 ml-4"
             title="Reset this user to default permissions defined for their role"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -385,6 +512,296 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
 
         {/* Modal Body */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-6">
+
+          {/* TAB 0: PERSONAL PROFILE */}
+          {activeTab === 'PROFILE' && (
+            <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-5">
+              <div className="flex items-center space-x-2 text-slate-900 font-bold text-sm pb-2 border-b border-slate-100">
+                <UserIcon className="w-4 h-4 text-[#00C6A6]" />
+                <span>Personal Information & Contact Credentials</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                {/* First Name */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">First Name</label>
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={e => setFirstName(e.target.value)}
+                    placeholder="e.g. John"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Last Name */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Last Name</label>
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={e => setLastName(e.target.value)}
+                    placeholder="e.g. Smith"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Full Name */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Full Display Name</label>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    placeholder="e.g. John Smith"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Job Title */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Designation / Job Title</label>
+                  <input
+                    type="text"
+                    value={jobTitle}
+                    onChange={e => setJobTitle(e.target.value)}
+                    placeholder="e.g. Managing Director / Senior Agent"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Email (Read Only Auth Identity) */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Email Address (Auth Identity)</label>
+                  <input
+                    type="email"
+                    disabled
+                    value={user.email}
+                    className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-slate-500 font-mono text-xs cursor-not-allowed"
+                  />
+                </div>
+
+                {/* Phone */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Direct Contact Number / WhatsApp</label>
+                  <input
+                    type="text"
+                    value={phone}
+                    onChange={e => setPhone(e.target.value)}
+                    placeholder="+44 7700 900077"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Avatar URL */}
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="font-bold text-slate-700">Profile Photo / Avatar URL</label>
+                  <input
+                    type="text"
+                    value={avatarUrl}
+                    onChange={e => setAvatarUrl(e.target.value)}
+                    placeholder="https://images.unsplash.com/..."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Bio */}
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="font-bold text-slate-700">Professional Bio / Profile Summary</label>
+                  <textarea
+                    rows={2}
+                    value={bio}
+                    onChange={e => setBio(e.target.value)}
+                    placeholder="Travel consultant specializing in luxury bespoke journeys..."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Emergency Contact Person */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Emergency Contact Person</label>
+                  <input
+                    type="text"
+                    value={emergencyContactPerson}
+                    onChange={e => setEmergencyContactPerson(e.target.value)}
+                    placeholder="e.g. Operations Duty Manager"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Emergency Contact Phone */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Emergency Contact Phone</label>
+                  <input
+                    type="text"
+                    value={emergencyContactPhone}
+                    onChange={e => setEmergencyContactPhone(e.target.value)}
+                    placeholder="+44 20 7946 0999"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 0.5: COMPANY & TRADE PROFILE */}
+          {activeTab === 'COMPANY' && (
+            <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-5">
+              <div className="flex items-center space-x-2 text-slate-900 font-bold text-sm pb-2 border-b border-slate-100">
+                <Building2 className="w-4 h-4 text-[#00C6A6]" />
+                <span>Associated Company Profile & Trade Registration</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                {/* Company Name */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Company / Agency Name</label>
+                  <input
+                    type="text"
+                    value={companyName}
+                    onChange={e => {
+                      setCompanyName(e.target.value);
+                      if (!agencyName) setAgencyName(e.target.value);
+                    }}
+                    placeholder="e.g. Mayfair Luxury Travel Ltd"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Business Type */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Business Model / Type</label>
+                  <input
+                    type="text"
+                    value={businessType}
+                    onChange={e => setBusinessType(e.target.value)}
+                    placeholder="e.g. Luxury Tour Operator & Concierge"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Company Website */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Official Website</label>
+                  <input
+                    type="text"
+                    value={companyWebsite}
+                    onChange={e => setCompanyWebsite(e.target.value)}
+                    placeholder="https://mayfairtravel.co.uk"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Company Email */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Official Company Email</label>
+                  <input
+                    type="email"
+                    value={companyEmail}
+                    onChange={e => setCompanyEmail(e.target.value)}
+                    placeholder="ops@mayfairtravel.co.uk"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Company Phone */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Official Company Phone</label>
+                  <input
+                    type="text"
+                    value={companyPhone}
+                    onChange={e => setCompanyPhone(e.target.value)}
+                    placeholder="+44 20 7946 0912"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Country */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Country</label>
+                  <input
+                    type="text"
+                    value={companyCountry}
+                    onChange={e => setCompanyCountry(e.target.value)}
+                    placeholder="United Kingdom"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* City */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">City</label>
+                  <input
+                    type="text"
+                    value={companyCity}
+                    onChange={e => setCompanyCity(e.target.value)}
+                    placeholder="London"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Postal Code */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Postal / Zip Code</label>
+                  <input
+                    type="text"
+                    value={companyPostalCode}
+                    onChange={e => setCompanyPostalCode(e.target.value)}
+                    placeholder="W1J 8DJ"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Address */}
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="font-bold text-slate-700">Registered Office Address</label>
+                  <input
+                    type="text"
+                    value={companyAddress}
+                    onChange={e => setCompanyAddress(e.target.value)}
+                    placeholder="14 Berkeley Square, Mayfair"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Tax / VAT Number */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Tax / VAT / GST Registration</label>
+                  <input
+                    type="text"
+                    value={taxOrGstNumber}
+                    onChange={e => setTaxOrGstNumber(e.target.value)}
+                    placeholder="GB 982 3411 90"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* IATA / ABTA Number */}
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">IATA / ABTA License Number</label>
+                  <input
+                    type="text"
+                    value={iataOrAbtaNumber}
+                    onChange={e => setIataOrAbtaNumber(e.target.value)}
+                    placeholder="IATA-91283021"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Brand Logo URL */}
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="font-bold text-slate-700">Corporate Brand Logo URL</label>
+                  <input
+                    type="text"
+                    value={brandLogoUrl}
+                    onChange={e => setBrandLogoUrl(e.target.value)}
+                    placeholder="https://..."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* TAB 1: PERMISSIONS MATRIX */}
           {activeTab === 'PERMISSIONS' && (
@@ -966,10 +1383,49 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
             <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-5">
               <div className="flex items-center space-x-2 text-slate-900 font-bold text-sm pb-2 border-b border-slate-100">
                 <UserCheck className="w-4 h-4 text-indigo-600" />
-                <span>Account Role & Segregation Classification</span>
+                <span>Account Role & Authoritative Security Credentials</span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Authoritative Firebase Auth UID Card */}
+              <div className="bg-slate-950 text-white rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-slate-800">
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <ShieldCheck className="w-4 h-4 text-[#00C6A6]" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                      Authoritative Firebase Auth UID
+                    </span>
+                  </div>
+                  <p className="font-mono text-xs font-bold text-[#00E5C0] mt-1 break-all select-all">
+                    {user.id}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    Primary unique identifier bound to Firebase Authentication & Firestore profile.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(user.id);
+                    setCopiedUid(true);
+                    setTimeout(() => setCopiedUid(false), 2000);
+                  }}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shrink-0 transition-colors cursor-pointer border border-slate-700"
+                >
+                  {copiedUid ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-400">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy UID</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {/* User Role */}
                 <div>
                   <label className="block text-xs font-bold text-slate-800 mb-1.5">User Role</label>
@@ -1016,6 +1472,55 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
                     <option value="REJECTED">REJECTED (Access Blocked)</option>
                   </select>
                 </div>
+
+                {/* Verification Status */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1.5">Trade Verification</label>
+                  <select
+                    value={verificationStatus}
+                    onChange={e => setVerificationStatus(e.target.value as VerificationStatus)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:ring-1 focus:ring-[#00C6A6]"
+                  >
+                    <option value="VERIFIED">VERIFIED (Full Trade Clearance)</option>
+                    <option value="PENDING_VERIFICATION">PENDING VERIFICATION</option>
+                    <option value="UNVERIFIED">UNVERIFIED</option>
+                    <option value="REJECTED">REJECTED</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Department & Operational Unit */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1.5">Department / Operational Unit</label>
+                  <input
+                    type="text"
+                    value={department}
+                    onChange={e => setDepartment(e.target.value)}
+                    placeholder="e.g. Inbound Luxury Operations / Sales"
+                    className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:ring-1 focus:ring-[#00C6A6]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1.5">Account Timeline Metadata</label>
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 flex items-center justify-between">
+                    <span>Created: {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}</span>
+                    <span>Updated: {user.updatedAt ? new Date(user.updatedAt).toLocaleDateString() : 'N/A'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Internal Notes */}
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1.5">Internal Administrative Notes</label>
+                <textarea
+                  rows={2}
+                  value={notes}
+                  onChange={e => setNotes(e.target.value)}
+                  placeholder="Administrative notes regarding user permissions, commercial agreements, or trade verification..."
+                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-800 focus:ring-1 focus:ring-[#00C6A6]"
+                />
               </div>
 
               {/* Safeguard Notice for Admins */}

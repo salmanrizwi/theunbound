@@ -19,7 +19,7 @@ import {
   getDocs
 } from 'firebase/firestore';
 import { auth, db as firestoreDb } from './firebase';
-import { AppDatabase } from './db';
+import { AppDatabase, cleanForFirestore } from './db';
 import { User, UserRole, UserCategory, UserApprovalStatus } from '../types';
 import { getDefaultPermissionsForRole } from './permissionEngine';
 import { inactivityTracker } from './inactivityTracker';
@@ -1178,16 +1178,20 @@ class AuthService {
   public async updateUserProfile(userId: string, updates: Partial<User>): Promise<User | null> {
     try {
       const userRef = doc(firestoreDb, 'users', userId);
-      await updateDoc(userRef, updates as Record<string, any>);
+      const cleanUpdates = cleanForFirestore(updates);
+      await setDoc(userRef, cleanUpdates, { merge: true });
       console.log('[AUTH] Updated Firestore doc users/' + userId);
 
+      const db = AppDatabase.getInstance();
+      const updatedUser = db.updateUserProfile(userId, cleanUpdates, this.currentUserProfile);
+
       if (this.currentUserProfile && this.currentUserProfile.id === userId) {
-        this.currentUserProfile = { ...this.currentUserProfile, ...updates };
-        AppDatabase.getInstance().saveUserLocally(this.currentUserProfile);
+        this.currentUserProfile = { ...this.currentUserProfile, ...cleanUpdates };
+        db.saveUserLocally(this.currentUserProfile);
         this.notifyListeners();
         return this.currentUserProfile;
       }
-      return null;
+      return updatedUser;
     } catch (err) {
       console.error('[AUTH] Error updating profile in Firestore:', err);
       // Fallback local update

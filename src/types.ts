@@ -323,6 +323,37 @@ export interface ManualHotelDetails {
   calculatedPrice?: number;
 }
 
+export type VerificationStatus = 'VERIFIED' | 'PENDING_VERIFICATION' | 'UNVERIFIED' | 'REJECTED';
+
+export interface Company {
+  id: string;
+  name: string;
+  legalName?: string;
+  businessType?: string;
+  logoUrl?: string;
+  brandLogoUrl?: string;
+  website?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  country?: string;
+  taxOrGstNumber?: string;
+  iataOrAbtaNumber?: string;
+  verificationStatus: VerificationStatus;
+  tier?: 'TIER_1_DIRECT_DMC' | 'PREFERRED_PARTNER' | 'STANDARD_PARTNER';
+  notes?: string;
+  primaryContactUserId?: string;
+  primaryContactName?: string;
+  primaryContactEmail?: string;
+  primaryContactPhone?: string;
+  linkedUserIds?: string[];
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -335,6 +366,7 @@ export interface User {
   role: UserRole;
   category?: UserCategory;
   department?: string;
+  companyId?: string;
   agencyName?: string;
   companyName?: string;
   businessType?: string;
@@ -363,7 +395,13 @@ export interface User {
   emergencyContactPhone?: string;
   phone?: string;
   createdAt: string;
+  updatedAt?: string;
+  lastLoginAt?: string;
   approvalStatus?: UserApprovalStatus;
+  verificationStatus?: VerificationStatus;
+  isDeactivated?: boolean;
+  deactivatedAt?: string;
+  notes?: string;
   permissions?: UserPermissionAccess;
   customBuyerMarginPercent?: number;
   customAgentMarginPercent?: number;

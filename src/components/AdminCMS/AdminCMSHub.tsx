@@ -582,6 +582,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           subTabs: [
             { id: 'PERMISSIONS', label: 'Access & Permissions', icon: Shield },
             { id: 'USERS_ACCESS', label: 'User Approval & Segregation', icon: UserCheck },
+            { id: 'COMPANIES', label: 'Corporate Partners & Companies', icon: Building2 },
             { id: 'ROSTER', label: 'Staff Roster & Ops Allocation', icon: Users },
             { id: 'SUPPLIERS', label: 'Suppliers', icon: Building2 }
           ]
@@ -1504,6 +1505,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             <>
               {(!activeSubTab || activeSubTab === 'PERMISSIONS') && <UserApprovalAccessManager initialTab="PERMISSIONS" />}
               {activeSubTab === 'USERS_ACCESS' && <UserApprovalAccessManager initialTab="USERS_ACCESS" />}
+              {activeSubTab === 'COMPANIES' && <UserApprovalAccessManager initialTab="COMPANIES" />}
               {activeSubTab === 'ROSTER' && <RosterAdminManager products={products} />}
               {activeSubTab === 'SUPPLIERS' && (
                 <SupplierManager

@@ -276,14 +276,27 @@ service cloud.firestore {
       // Self-updates are allowed ONLY if privilege fields (role, permissions, approvalStatus) are unchanged, and role is not BUYER
       allow update: if canManageUserAccounts() || (
         isAuthenticated() && request.auth.uid == userId && isNotBuyer() && (
-          request.resource.data.role == resource.data.role &&
-          (!('permissions' in request.resource.data) || request.resource.data.permissions == resource.data.permissions) &&
-          (!('approvalStatus' in request.resource.data) || request.resource.data.approvalStatus == resource.data.approvalStatus)
+          (!('role' in request.resource.data) || !('role' in resource.data) || request.resource.data.role == resource.data.role) &&
+          (!('permissions' in request.resource.data) || !('permissions' in resource.data) || request.resource.data.permissions == resource.data.permissions) &&
+          (!('approvalStatus' in request.resource.data) || !('approvalStatus' in resource.data) || request.resource.data.approvalStatus == resource.data.approvalStatus)
         )
       );
 
       // Deletion strictly reserved for Administrators
       allow delete: if canManageUserAccounts();
+    }
+
+    match /companies/{companyId} {
+      // Authenticated business users can read company profiles
+      allow read: if isAuthenticated();
+      // Write: Admins and staff have full control; users can manage their own company profile
+      allow write: if canManageUserAccounts() || isInternalUser() || (
+        isAuthenticated() && (
+          resource == null ||
+          (resource.data.primaryContactUserId == request.auth.uid) ||
+          (request.auth.uid in resource.data.linkedUserIds)
+        )
+      );
     }
 
     match /system_users/{userId} {

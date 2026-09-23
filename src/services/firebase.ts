@@ -6,7 +6,9 @@ import {
   persistentLocalCache,
   persistentMultipleTabManager,
   memoryLocalCache,
-  setLogLevel 
+  setLogLevel,
+  doc,
+  getDocFromServer
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -103,4 +105,22 @@ export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({
   prompt: 'select_account'
 });
+
+export async function testConnection(): Promise<boolean> {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error("Please check your Firebase configuration.");
+      return false;
+    }
+    // Any other response (like document not found or permissions) confirms connectivity
+    return true;
+  }
+}
+
+if (typeof window !== 'undefined') {
+  testConnection().catch(() => {});
+}
 
