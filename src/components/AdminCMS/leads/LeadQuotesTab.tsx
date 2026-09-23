@@ -710,7 +710,9 @@ export const LeadQuotesTab: React.FC<LeadQuotesTabProps> = ({
                             {item.cityHub && `📍 ${item.cityHub} • `}
                             {item.travelDate && `Date: ${item.travelDate} • `}
                             {item.nights ? `${item.nights} Nights • ` : ''}
-                            Pax: {item.pax || 2}
+                            Pax: {typeof item.pax === 'object' && item.pax !== null
+                              ? `${item.pax.adults ?? 2} Adults${item.pax.children ? `, ${item.pax.children} Ch` : ''}${item.pax.infants ? `, ${item.pax.infants} Inf` : ''}`
+                              : (item.pax || 2)}
                           </p>
                         </div>
                         <span className="font-mono font-bold text-slate-900">

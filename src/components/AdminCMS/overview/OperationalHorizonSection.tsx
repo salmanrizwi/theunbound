@@ -157,7 +157,7 @@ export const OperationalHorizonSection: React.FC<OperationalHorizonSectionProps>
                           </span>
                         </div>
                         <div className="text-slate-400 text-[11px] flex items-center space-x-2 mt-0.5">
-                          <span>{arr.pax} Pax</span>
+                          <span>{typeof arr.pax === 'object' && arr.pax !== null ? (((arr.pax as any).adults ?? 0) + ((arr.pax as any).children ?? 0) + ((arr.pax as any).infants ?? 0)) : arr.pax} Pax</span>
                           <span>·</span>
                           <span>Dest: {arr.destination}</span>
                           <span>·</span>
@@ -203,7 +203,7 @@ export const OperationalHorizonSection: React.FC<OperationalHorizonSectionProps>
                           </span>
                         </div>
                         <div className="text-slate-400 text-[11px] flex items-center space-x-2 mt-0.5">
-                          <span>{dep.pax} Pax</span>
+                          <span>{typeof dep.pax === 'object' && dep.pax !== null ? (((dep.pax as any).adults ?? 0) + ((dep.pax as any).children ?? 0) + ((dep.pax as any).infants ?? 0)) : dep.pax} Pax</span>
                           <span>·</span>
                           <span>Departing {dep.destination}</span>
                         </div>
@@ -249,7 +249,7 @@ export const OperationalHorizonSection: React.FC<OperationalHorizonSectionProps>
                         <div className="text-slate-400 text-[11px] flex items-center space-x-2 mt-0.5">
                           <span>Ref: {act.bookingRef}</span>
                           <span>·</span>
-                          <span>{act.pax} Pax</span>
+                          <span>{typeof act.pax === 'object' && act.pax !== null ? (((act.pax as any).adults ?? 0) + ((act.pax as any).children ?? 0) + ((act.pax as any).infants ?? 0)) : act.pax} Pax</span>
                           <span>·</span>
                           <span>Time: {act.time}</span>
                           <span>·</span>

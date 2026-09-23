@@ -177,7 +177,11 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
                         )}
                       </td>
                       <td className="py-3 px-4 text-slate-600">{item.serviceDate || 'Scheduled'}</td>
-                      <td className="py-3 px-4 text-center font-semibold text-slate-700">{item.pax || 1}</td>
+                      <td className="py-3 px-4 text-center font-semibold text-slate-700">
+                        {typeof (item as any).pax === 'object' && (item as any).pax !== null
+                          ? (((item as any).pax.adults ?? 0) + ((item as any).pax.children ?? 0) + ((item as any).pax.infants ?? 0)) || 1
+                          : (item.pax || 1)}
+                      </td>
                       <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
                         {formatCurrency(item.totalPrice || 0, invoice.currency)}
                       </td>
@@ -190,7 +194,11 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
                       Ground Itinerary Arrangements & VIP Concierge
                     </td>
                     <td className="py-3 px-4 text-slate-600">{invoice.travelDates || 'TBA'}</td>
-                    <td className="py-3 px-4 text-center font-semibold text-slate-700">{invoice.totalPax || 1}</td>
+                    <td className="py-3 px-4 text-center font-semibold text-slate-700">
+                      {typeof (invoice as any).totalPax === 'object' && (invoice as any).totalPax !== null
+                        ? (((invoice as any).totalPax.adults ?? 0) + ((invoice as any).totalPax.children ?? 0) + ((invoice as any).totalPax.infants ?? 0)) || 1
+                        : (invoice.totalPax || 1)}
+                    </td>
                     <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
                       {formatCurrency(invoice.totalAmount || 0, invoice.currency)}
                     </td>
