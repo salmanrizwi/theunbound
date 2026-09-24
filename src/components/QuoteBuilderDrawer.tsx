@@ -11,6 +11,9 @@ import { VisaProduct } from './B2BAgentPortal/B2BVisaView';
 import { AddProductToQuoteModal } from './B2BAgentPortal/AddProductToQuoteModal';
 import { AddHotelToQuoteModal } from './B2BAgentPortal/AddHotelToQuoteModal';
 import { AddVisaToQuoteModal } from './B2BAgentPortal/AddVisaToQuoteModal';
+import { RailJourneyModal } from './RailJourneyModal';
+import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
+import { isHotelService, isShinkansenService, isVisaService } from '../services/configuratorRoutingEngine';
 import { BookingSubmissionModal } from './B2BAgentPortal/BookingSubmissionModal';
 import { BookingConfirmationModal } from './BookingConfirmationModal';
 import { 
@@ -36,6 +39,7 @@ import {
   Compass, 
   Clock,
   Car,
+  Train,
   Lock
 } from 'lucide-react';
 
@@ -75,6 +79,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [editingHotel, setEditingHotel] = useState<Hotel | null>(null);
   const [editingVisa, setEditingVisa] = useState<VisaProduct | null>(null);
+  const [editingRailItem, setEditingRailItem] = useState<any | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | undefined>(undefined);
 
   // Booking Flow Modals
@@ -110,8 +115,14 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
     const sku = item.product.sku || '';
     const meta = (item as any).metadata;
 
-    // Check if Hotel
-    if (cat === 'ACCOMMODATION' || cat === 'HOTELS' || code.startsWith('SUP-HTL-') || meta?.hotelId) {
+    // 1. Check if Japan Rail / Shinkansen -> Shinkansen Dynamic Journey Configurator
+    if (isShinkansenService(item) || isRailQuoteItem(item)) {
+      setEditingRailItem(item);
+      return;
+    }
+
+    // 2. Check if Hotel / Accommodation -> Hotel Configurator
+    if (isHotelService(item)) {
       const hotel = db.getHotels().find(h => 
         h.id === item.product.id || 
         h.id === meta?.hotelId ||
@@ -161,11 +172,11 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
     }
 
     // Check if Visa
-    if (cat === 'VISA' || cat === 'VISA SERVICE' || sku.startsWith('VSA-') || meta?.visaProductId) {
+    if (isVisaService(item) || cat === 'VISA' || cat === 'VISA SERVICE' || sku.startsWith('VSA-') || meta?.visaProductId) {
       const visa = db.getVisas().find(v => 
         v.id === item.product.id || 
         v.id === meta?.visaProductId ||
-        sku.includes(v.countryCode) ||
+        sku.includes(v.countryCode || '') ||
         v.country.toLowerCase() === item.product.country.toLowerCase()
       ) || {
         id: item.product.id,
@@ -535,7 +546,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
             )}
 
             {/* Drawer Scrollable Content Area */}
-            <div className="overflow-y-auto p-4 sm:p-5 space-y-5 flex-1 bg-slate-50/50">
+            <div className="overflow-y-auto p-3.5 sm:p-5 space-y-4 sm:space-y-5 flex-1 bg-slate-50/50 modal-body-scroll">
               {items.length === 0 ? (
                 <div className="text-center py-14 px-4 bg-white rounded-3xl border border-slate-200 shadow-xs my-auto">
                   <div className="w-16 h-16 rounded-2xl bg-[#00C6A6]/10 border border-[#00C6A6]/30 flex items-center justify-center mx-auto mb-4 text-[#00a88c]">
@@ -699,8 +710,26 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                                   )}
                                 </div>
                                 <h4 className="text-xs sm:text-sm font-extrabold text-slate-900 leading-snug mt-1">
-                                  {item.product.name}
+                                  {item.customTitle || item.title || item.product.name}
                                 </h4>
+                                {item.railJourneyDetails && (
+                                  <div className="mt-1.5 p-2 rounded-lg bg-teal-50 border border-teal-200 text-[11px] text-teal-950 flex flex-wrap items-center gap-1.5 font-medium">
+                                    <span className="font-bold text-[#008972] flex items-center gap-1">
+                                      <Train className="w-3.5 h-3.5" />
+                                      {item.railJourneyDetails.originStationName} → {item.railJourneyDetails.destinationStationName}
+                                    </span>
+                                    <span>•</span>
+                                    <span>{item.railJourneyDetails.carType} Car ({item.railJourneyDetails.seatType})</span>
+                                    <span>•</span>
+                                    <span className="font-semibold text-slate-700">{item.railJourneyDetails.serviceGroup === 'NOZOMI_MIZUHO' ? 'Nozomi Super Express' : 'Hikari / Kodama'}</span>
+                                    {item.railJourneyDetails.seatPreference && (
+                                      <>
+                                        <span>•</span>
+                                        <span className="text-slate-500">Pref: {item.railJourneyDetails.seatPreference}</span>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             </div>
 
@@ -857,7 +886,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
 
             {/* Drawer Footer (Fixed at bottom) */}
             {items.length > 0 && (
-              <div className="bg-slate-900 p-4 sm:p-5 border-t border-slate-800 shrink-0 space-y-4">
+              <div className="bg-slate-900 p-4 sm:p-5 border-t border-slate-800 shrink-0 space-y-4 pb-safe">
                 
                 {/* Price Breakdown */}
                 <div className="flex items-baseline justify-between">
@@ -947,6 +976,29 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
           existingQuoteItemId={editingItemId}
           onAdded={() => {
             setEditingVisa(null);
+            setEditingItemId(undefined);
+          }}
+        />
+      )}
+
+      {/* Editing Rail Modal */}
+      {editingRailItem && (
+        <RailJourneyModal
+          product={editingRailItem.product}
+          portalOrigin="B2B_QUOTE_BUILDER"
+          existingQuoteItemId={editingItemId}
+          existingJourneySnapshot={editingRailItem.japanRailJourneySnapshot || editingRailItem.metadata?.journeySnapshot || editingRailItem.railJourneyDetails}
+          initialOriginStationId={editingRailItem.railJourneyDetails?.originStationId || 'JP-ST-TOKYO'}
+          initialDestinationStationId={editingRailItem.railJourneyDetails?.destinationStationId || 'JP-ST-KYOTO'}
+          onClose={() => {
+            setEditingRailItem(null);
+            setEditingItemId(undefined);
+          }}
+          onAddToQuote={() => {
+            if (editingItemId) {
+              removeProductFromQuote(editingItemId);
+            }
+            setEditingRailItem(null);
             setEditingItemId(undefined);
           }}
         />

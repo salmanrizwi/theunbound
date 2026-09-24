@@ -42,6 +42,7 @@ import { DataSyncAuditViewer } from './DataSyncAuditViewer';
 import { SystemAnalysis } from './SystemAnalysis';
 import { SEOManager } from './SEOManager';
 import { SupplierManager } from './SupplierManager';
+import { RailManager } from './RailManager';
 import { GlobalRemindersBar } from '../GlobalRemindersBar';
 import { ActionCenterDrawer } from '../ActionCenter/ActionCenterDrawer';
 import { CalendarTask, TravelLead } from '../../types';
@@ -80,6 +81,7 @@ import {
   Database, 
   FileSpreadsheet,
   FileText,
+  FileCheck,
   ChevronDown,
   Layers,
   Sparkles,
@@ -98,6 +100,12 @@ import {
   Briefcase,
   Eye,
   SlidersHorizontal,
+  Train,
+  MapPin,
+  Route as RouteIcon,
+  DollarSign,
+  Calendar,
+  Percent,
   LucideIcon
 } from 'lucide-react';
 
@@ -113,6 +121,8 @@ export type CMSSection =
   | 'DASHBOARD'
   | 'SYSTEM_ANALYSIS'
   | 'PRODUCT_MANAGEMENT'
+  | 'VISA_ANCILLARY_SERVICES'
+  | 'RAIL_MANAGEMENT'
   | 'HOTEL_MANAGEMENT'
   | 'PACKAGE_MANAGEMENT'
   | 'BOOKING_MANAGEMENT'
@@ -167,6 +177,8 @@ const SECTION_SLUG_MAP: Record<CMSSection, string> = {
   DASHBOARD: 'dashboard',
   SYSTEM_ANALYSIS: 'system-analysis',
   PRODUCT_MANAGEMENT: 'products',
+  VISA_ANCILLARY_SERVICES: 'visas-ancillary',
+  RAIL_MANAGEMENT: 'rail',
   HOTEL_MANAGEMENT: 'hotels',
   PACKAGE_MANAGEMENT: 'packages',
   BOOKING_MANAGEMENT: 'bookings',
@@ -188,6 +200,8 @@ function resolveSectionFromSlug(slug?: string): CMSSection {
   if (!slug) return 'DASHBOARD';
   const clean = slug.trim().toUpperCase().replace(/[-_]/g, '');
   if (clean === 'PRODUCTS' || clean === 'PRODUCT' || clean === 'PRODUCTMANAGEMENT') return 'PRODUCT_MANAGEMENT';
+  if (clean === 'VISA' || clean === 'VISAS' || clean === 'VISAANCILLARYSERVICES' || clean === 'ANCILLARY' || clean === 'ANCILLARIES' || clean === 'VISASERVICES' || clean === 'TRAVELPROTECTION' || clean === 'VISASANCILLARY') return 'VISA_ANCILLARY_SERVICES';
+  if (clean === 'RAIL' || clean === 'JAPANRAIL' || clean === 'RAILMANAGEMENT' || clean === 'SHINKANSEN') return 'RAIL_MANAGEMENT';
   if (clean === 'HOTELS' || clean === 'HOTEL' || clean === 'HOTELMANAGEMENT') return 'HOTEL_MANAGEMENT';
   if (clean === 'PACKAGES' || clean === 'PACKAGE' || clean === 'PACKAGEMANAGEMENT') return 'PACKAGE_MANAGEMENT';
   if (clean === 'BOOKINGS' || clean === 'BOOKING' || clean === 'BOOKINGMANAGEMENT') return 'BOOKING_MANAGEMENT';
@@ -435,13 +449,44 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
         {
           id: 'PRODUCT_MANAGEMENT',
           label: 'Product Management',
-          shortLabel: 'Products & Visas',
+          shortLabel: 'Product Inventory',
           icon: Package,
           badge: `${counts.totalProducts}`,
-          description: 'Master ground tour inventory engine, SKU specifications, child/infant rates, adult tiers, and visas.',
+          description: 'Master ground tour inventory engine, SKU specifications, child/infant rates, and adult tiers.',
           subTabs: [
             { id: 'PRODUCTS', label: `Product Inventory (${counts.totalProducts})`, icon: Package },
             { id: 'VISAS', label: 'Visa Requirements & Checklists', icon: FileText }
+          ]
+        },
+        {
+          id: 'VISA_ANCILLARY_SERVICES',
+          label: 'Visa & Ancillary Services',
+          shortLabel: 'Visa & Ancillaries',
+          icon: FileCheck,
+          badge: 'Verified',
+          description: 'Official Visa requirements & checklists, global travel protection, VIP airport concierge, and 5G eSIM connectivity.',
+          subTabs: [
+            { id: 'VISA_SERVICES', label: 'Visa Services & Assistance', icon: FileText },
+            { id: 'TRAVEL_PROTECTION', label: 'Travel Protection & Medical', icon: ShieldCheck },
+            { id: 'VIP_CONNECTIVITY', label: 'VIP Ground & 5G eSIM', icon: Sparkles },
+            { id: 'FIELD_PARITY', label: 'Field Contract Matrix', icon: FileSpreadsheet }
+          ]
+        },
+        {
+          id: 'RAIL_MANAGEMENT',
+          label: 'Japan Rail Inventory',
+          shortLabel: 'Japan Rail',
+          icon: Train,
+          badge: 'smartEX Dynamic',
+          description: 'Dynamic Japan Rail Shinkansen stations, routes, normalized tariff rates, season calendar rules, and dynamic pricing engine.',
+          subTabs: [
+            { id: 'OVERVIEW', label: 'Master Products & Engine', icon: Train },
+            { id: 'STATIONS', label: 'Station Master', icon: MapPin },
+            { id: 'ROUTES', label: 'Route Network', icon: RouteIcon },
+            { id: 'RATES', label: 'Rate Explorer', icon: DollarSign },
+            { id: 'SEASONS', label: 'Season Calendar', icon: Calendar },
+            { id: 'MARKUP', label: 'Dynamic Markup', icon: Percent },
+            { id: 'SHEETS_SYNC', label: 'Google Sheets Sync', icon: FileSpreadsheet }
           ]
         },
         {
@@ -1226,7 +1271,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
 
         {/* MOBILE NAVIGATION DRAWER */}
         {isMobileMenuOpen && (
-          <div className="lg:hidden bg-slate-950 border-t border-slate-800 p-4 max-h-[80vh] overflow-y-auto space-y-4">
+          <div className="lg:hidden bg-slate-950 border-t border-slate-800 p-3.5 sm:p-4 max-h-[calc(100dvh-120px)] overflow-y-auto modal-body-scroll space-y-4 pb-safe shadow-2xl">
             <div className="space-y-4">
               {accessibleTopSections.map((sec) => (
                 <div key={sec.id} className="space-y-1.5">
@@ -1332,12 +1377,33 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                 <ProductManager destinations={destinations} onViewProduct={onViewProduct} />
               )}
               {activeSubTab === 'VISAS' && (
-                <VisaCMSManager destinations={destinations} />
+                <VisaCMSManager 
+                  destinations={destinations} 
+                  initialSubTab="VISA_SERVICES"
+                  onSubTabChange={setActiveSubTab}
+                />
               )}
             </>
           )}
 
-          {/* 2.2 HOTEL MANAGEMENT */}
+          {/* 2.2 VISA & ANCILLARY SERVICES */}
+          {currentModuleConfig.id === 'VISA_ANCILLARY_SERVICES' && (
+            <VisaCMSManager 
+              destinations={destinations} 
+              initialSubTab={activeSubTab}
+              onSubTabChange={setActiveSubTab}
+            />
+          )}
+
+          {/* 2.2 JAPAN RAIL INVENTORY & DYNAMIC PRICING ENGINE */}
+          {currentModuleConfig.id === 'RAIL_MANAGEMENT' && (
+            <RailManager 
+              initialTab={activeSubTab} 
+              onSubTabChange={setActiveSubTab}
+            />
+          )}
+
+          {/* 2.3 HOTEL MANAGEMENT */}
           {currentModuleConfig.id === 'HOTEL_MANAGEMENT' && (
             <HotelManager destinations={destinations} />
           )}

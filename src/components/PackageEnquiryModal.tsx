@@ -104,8 +104,8 @@ export const PackageEnquiryModal: React.FC<PackageEnquiryModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
-      <div className="bg-white rounded-3xl max-w-xl w-full my-auto shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl sm:rounded-3xl max-w-xl w-full my-auto shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[94dvh] sm:max-h-[90vh]">
         
         {/* Header */}
         <div className="bg-slate-900 text-white p-5 sm:p-6 flex items-center justify-between shrink-0 border-b border-slate-800">
@@ -137,8 +137,8 @@ export const PackageEnquiryModal: React.FC<PackageEnquiryModalProps> = ({
         </div>
 
         {/* Modal Content */}
-        <div className="p-6 overflow-y-auto space-y-5">
-          {isSubmitted ? (
+        {isSubmitted ? (
+          <div className="p-6 overflow-y-auto space-y-5 flex-1 modal-body-scroll text-xs">
             <div className="text-center py-6 space-y-4">
               <div className="w-16 h-16 rounded-full bg-emerald-50 text-[#008972] mx-auto flex items-center justify-center border-2 border-emerald-200 shadow-sm">
                 <CheckCircle2 className="w-8 h-8" />
@@ -175,9 +175,11 @@ export const PackageEnquiryModal: React.FC<PackageEnquiryModalProps> = ({
                 Close & Return to Tour Circuits
               </button>
             </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Package Summary Card */}
+          </div>
+        ) : (
+            <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 modal-body-scroll text-xs">
+                {/* Package Summary Card */}
               <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between text-xs">
                 <div className="space-y-1">
                   <div className="flex items-center space-x-2">
@@ -324,14 +326,15 @@ export const PackageEnquiryModal: React.FC<PackageEnquiryModalProps> = ({
                 />
               </div>
 
-              {/* Security & Response Guarantee */}
-              <div className="flex items-center space-x-2 text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
-                <ShieldCheck className="w-4 h-4 text-[#008972] shrink-0" />
-                <span>Direct DMC Contract Rates • 100% Verified Accommodations • No spam policy</span>
+                {/* Security & Response Guarantee */}
+                <div className="flex items-center space-x-2 text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
+                  <ShieldCheck className="w-4 h-4 text-[#008972] shrink-0" />
+                  <span>Direct DMC Contract Rates • 100% Verified Accommodations • No spam policy</span>
+                </div>
               </div>
 
-              {/* Submit Buttons */}
-              <div className="pt-2 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2">
+              {/* Modal Footer */}
+              <div className="p-4 sm:px-6 py-3 border-t border-slate-200 bg-slate-50 shrink-0 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={onClose}
@@ -350,7 +353,6 @@ export const PackageEnquiryModal: React.FC<PackageEnquiryModalProps> = ({
               </div>
             </form>
           )}
-        </div>
       </div>
     </div>
   );

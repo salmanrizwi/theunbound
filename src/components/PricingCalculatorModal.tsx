@@ -26,6 +26,11 @@ import {
   CalendarX,
   Building2
 } from 'lucide-react';
+import { RailJourneyModal } from './RailJourneyModal';
+import { isRailProduct } from '../services/rail/JapanRailJourneyDataService';
+import { isHotelService, isVisaService } from '../services/configuratorRoutingEngine';
+import { HotelConfigurator } from './B2BAgentPortal/AddHotelToQuoteModal';
+import { VisaServiceAndFacilitationConfigurator } from './Configurators/VisaServiceAndFacilitationConfigurator';
 
 interface PricingCalculatorModalProps {
   product: Product;
@@ -39,6 +44,84 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
   onAddedToQuote
 }) => {
   const { user, role, openAuthModal } = useAuth();
+
+  // NON-NEGOTIABLE RULE: Japan Rail / Shinkansen products MUST only use Shinkansen Dynamic Journey Configurator
+  if (isRailProduct(product)) {
+    return (
+      <RailJourneyModal
+        product={product}
+        portalOrigin={role === 'BUYER' ? 'BUYER' : 'B2B_AGENT'}
+        onClose={onClose}
+        onAddToQuote={() => {
+          onClose();
+          if (onAddedToQuote) onAddedToQuote();
+        }}
+      />
+    );
+  }
+
+  // NON-NEGOTIABLE RULE: Hotel / Accommodation products MUST only use Hotel Configurator
+  if (isHotelService(product)) {
+    return (
+      <HotelConfigurator
+        hotel={{
+          id: product.id,
+          name: product.name,
+          city: product.city || 'Tokyo',
+          country: product.country || 'Japan',
+          destinationId: product.destinationId || 'dest-japan',
+          starRating: 5,
+          roomTypes: [
+            {
+              id: `room-${product.id}`,
+              name: 'Deluxe Room',
+              rates: [
+                {
+                  id: `rate-${product.id}`,
+                  name: 'Standard Wholesale Rate',
+                  mealPlan: 'BB',
+                  singleNetRate: product.adultNetPrice || 250,
+                  doubleNetRate: product.adultNetPrice || 300,
+                  tripleNetRate: (product.adultNetPrice || 300) * 1.4,
+                  extraBedRate: 80,
+                  childRate: 40,
+                  markupPercent: product.defaultMarkupPercent || 15,
+                  taxPercent: 10,
+                  feePercent: 2.5,
+                  currency: product.currency || 'USD',
+                  validityFrom: '2026-01-01',
+                  validityTo: '2026-12-31'
+                }
+              ]
+            }
+          ]
+        } as any}
+        isOpen={true}
+        onClose={onClose}
+        onSuccess={() => {
+          onClose();
+          if (onAddedToQuote) onAddedToQuote();
+        }}
+      />
+    );
+  }
+
+  // NON-NEGOTIABLE RULE: Visa Service & Facilitation products MUST only use Visa Service & Facilitation Configurator
+  if (isVisaService(product)) {
+    return (
+      <VisaServiceAndFacilitationConfigurator
+        isOpen={true}
+        itemOrProduct={product}
+        portalOrigin={role === 'BUYER' ? 'BUYER' : 'B2B_AGENT'}
+        onClose={onClose}
+        onSuccess={() => {
+          onClose();
+          if (onAddedToQuote) onAddedToQuote();
+        }}
+      />
+    );
+  }
+
   const isAuthorized = canUserAccessB2BInventory(user).allowed;
 
   if (!isAuthorized) {
@@ -147,13 +230,13 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
   const canViewWholesale = canUserViewWholesaleRates(user);
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 sm:p-6 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
       <div 
         id="pricing-calculator-dialog"
-        className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-4xl w-full overflow-hidden flex flex-col max-h-[92vh]"
+        className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 max-w-4xl w-full overflow-hidden flex flex-col max-h-[94dvh] sm:max-h-[90vh]"
       >
         {/* Header */}
-        <div className="bg-slate-900 text-white p-6 flex items-start justify-between">
+        <div className="bg-slate-900 text-white p-5 sm:p-6 flex items-start justify-between shrink-0">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-xl bg-[#00C6A6]/20 border border-[#00C6A6]/40 flex items-center justify-center text-[#00E5C0]">
               <Calculator className="w-5 h-5" />

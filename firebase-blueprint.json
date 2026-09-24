@@ -462,6 +462,42 @@
         "status": { "type": "string", "required": true }
       }
     },
+    "TravelProtectionPlan": {
+      "collection": "travel_protection_plans",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "serviceName": { "type": "string", "required": true },
+        "provider": { "type": "string", "required": true },
+        "coverageArea": { "type": "string", "required": true },
+        "medicalCoverageAmount": { "type": "number", "required": true },
+        "sellingPricePerDay": { "type": "number", "required": true },
+        "currency": { "type": "string", "required": true },
+        "status": { "type": "string", "required": true }
+      }
+    },
+    "VipGroundService": {
+      "collection": "vip_ground_services",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "serviceType": { "type": "string", "required": true },
+        "sellingPrice": { "type": "number", "required": true },
+        "currency": { "type": "string", "required": true },
+        "status": { "type": "string", "required": true }
+      }
+    },
+    "ConnectivityPlan": {
+      "collection": "connectivity_plans",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "type": { "type": "string", "required": true },
+        "dataAllowance": { "type": "string", "required": true },
+        "validityDays": { "type": "number", "required": true },
+        "sellingPrice": { "type": "number", "required": true },
+        "status": { "type": "string", "required": true }
+      }
+    },
     "B2BCustomer": {
       "collection": "b2b_customers",
       "fields": {
@@ -604,6 +640,79 @@
         "status": { "type": "string", "required": true },
         "allocatedBy": { "type": "string", "required": true },
         "allocatedAt": { "type": "string", "required": true }
+      }
+    },
+    "RailStation": {
+      "collection": "rail_stations",
+      "fields": {
+        "stationId": { "type": "string", "required": true },
+        "stationCode": { "type": "string", "required": true },
+        "stationName": { "type": "string", "required": true },
+        "displayName": { "type": "string", "required": true },
+        "city": { "type": "string", "required": true },
+        "country": { "type": "string", "required": true },
+        "railOperator": { "type": "string", "required": true },
+        "latitude": { "type": "number", "required": true },
+        "longitude": { "type": "number", "required": true },
+        "shinkansenLine": { "type": "string", "required": false },
+        "active": { "type": "boolean", "required": true }
+      }
+    },
+    "RailRoute": {
+      "collection": "rail_routes",
+      "fields": {
+        "routeId": { "type": "string", "required": true },
+        "originStationId": { "type": "string", "required": true },
+        "destinationStationId": { "type": "string", "required": true },
+        "originStationName": { "type": "string", "required": true },
+        "destinationStationName": { "type": "string", "required": true },
+        "distanceKm": { "type": "number", "required": false },
+        "active": { "type": "boolean", "required": true }
+      }
+    },
+    "RailRate": {
+      "collection": "rail_rates",
+      "fields": {
+        "rateId": { "type": "string", "required": true },
+        "routeId": { "type": "string", "required": true },
+        "productId": { "type": "string", "required": true },
+        "carType": { "type": "string", "required": true },
+        "seatType": { "type": "string", "required": true },
+        "serviceGroup": { "type": "string", "required": true },
+        "passengerType": { "type": "string", "required": true },
+        "baseFareJPY": { "type": "number", "required": true },
+        "superExpressSurchargeJPY": { "type": "number", "required": true },
+        "greenCarSurchargeJPY": { "type": "number", "required": true },
+        "regularTotalFareJPY": { "type": "number", "required": true },
+        "effectiveDate": { "type": "string", "required": true },
+        "active": { "type": "boolean", "required": true }
+      }
+    },
+    "RailSeason": {
+      "collection": "rail_seasons",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "title": { "type": "string", "required": true },
+        "seasonType": { "type": "string", "required": true },
+        "startDate": { "type": "string", "required": true },
+        "endDate": { "type": "string", "required": true },
+        "adultAdjustmentJPY": { "type": "number", "required": false },
+        "childAdjustmentJPY": { "type": "number", "required": false },
+        "pricingMultiplier": { "type": "number", "required": false },
+        "priority": { "type": "number", "required": false },
+        "active": { "type": "boolean", "required": true },
+        "notes": { "type": "string", "required": false }
+      }
+    },
+    "RailMarkupRule": {
+      "collection": "rail_markup_rules",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "b2bAgentMarkupPercent": { "type": "number", "required": true },
+        "buyerMarkupPercent": { "type": "number", "required": true },
+        "minMarginJPY": { "type": "number", "required": true },
+        "taxPercent": { "type": "number", "required": true },
+        "lastUpdated": { "type": "string", "required": true }
       }
     }
   }

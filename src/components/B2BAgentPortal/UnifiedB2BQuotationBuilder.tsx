@@ -74,7 +74,10 @@ import { useQuotation } from '../../context/QuotationContext';
 import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
 import { ProposalDocumentView } from '../ProposalDocumentView';
 import { ProductDetailModal } from '../ProductDetailModal';
+import { RailJourneyModal } from '../RailJourneyModal';
 import { PricingCalculatorModal } from '../PricingCalculatorModal';
+import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
+import { isRailProduct, isRailQuoteItem } from '../../services/rail/JapanRailJourneyDataService';
 import { ManualHotelFormModal } from './ManualHotelFormModal';
 import { VISA_CATALOG, VisaProduct } from './B2BVisaView';
 import { AddVisaToQuoteModal, visaProductToProduct } from './AddVisaToQuoteModal';
@@ -697,6 +700,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [filterByDayCityOnly, setFilterByDayCityOnly] = useState<boolean>(true);
   const [inspectingProduct, setInspectingProduct] = useState<Product | null>(null);
   const [calculatorProduct, setCalculatorProduct] = useState<Product | null>(null);
+  const [editingRailItem, setEditingRailItem] = useState<QuoteItem | null>(null);
 
   // Save as Package Modal State
   const [isSavePackageModalOpen, setIsSavePackageModalOpen] = useState(false);
@@ -733,25 +737,13 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
   };
 
-  // Inline Item Customizer Modal
-  const [editingItem, setEditingItem] = useState<QuoteItem | null>(null);
-  const [editFormData, setEditFormData] = useState<{
-    travelDate: string;
-    serviceTime: string;
-    adults: number;
-    children: number;
-    infants: number;
-    notes: string;
-    selectedAddonIds: string[];
-  }>({
-    travelDate: '',
-    serviceTime: '',
-    adults: 2,
-    children: 0,
-    infants: 0,
-    notes: '',
-    selectedAddonIds: []
-  });
+  // Dedicated Service Configurator State (Zero Generic Customizer Architecture)
+  const [editingServiceItem, setEditingServiceItem] = useState<QuoteItem | null>(null);
+  const [configuringQuickAddProduct, setConfiguringQuickAddProduct] = useState<{
+    product: Product;
+    dateString: string;
+    dayNum: number;
+  } | null>(null);
 
   // Email Proposal Modal
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
@@ -900,6 +892,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   // Silent Product Add (Suppresses Cart Drawer popup in builder)
   const handleAddProductToQuoteSilently = (product: Product, options?: any) => {
+    // Japan Rail / Shinkansen products MUST only use Shinkansen Dynamic Journey Configurator
+    if (isRailProduct(product)) {
+      setInspectingProduct(product);
+      return;
+    }
     addProductToQuote(product, { ...options, openDrawer: false });
     showBuilderToast(`✓ Added "${product.name}" to Option ${activeOptionTab}`, 'SUCCESS');
   };
@@ -1626,45 +1623,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
   };
 
-  // Open Edit Item Modal
+  // Open Dedicated Configurator for Service Item (Hotel -> Hotel Configurator, Rail -> Shinkansen Configurator, Activity -> Activity Configurator)
   const handleOpenEditItem = (item: QuoteItem) => {
-    setEditingItem(item);
-    setEditFormData({
-      travelDate: item.travelDate || '',
-      serviceTime: item.serviceTime || '09:30 AM',
-      adults: item.pax?.adults ?? 2,
-      children: item.pax?.children ?? 0,
-      infants: item.pax?.infants ?? 0,
-      notes: item.notes || '',
-      selectedAddonIds: item.selectedAddonIds || []
-    });
-  };
-
-  // Save Edit Item
-  const handleSaveEditItem = () => {
-    if (!editingItem) return;
-    if (updateItemFull) {
-      updateItemFull(editingItem.id, {
-        travelDate: editFormData.travelDate,
-        serviceTime: editFormData.serviceTime,
-        pax: {
-          adults: editFormData.adults,
-          children: editFormData.children,
-          infants: editFormData.infants
-        },
-        selectedAddonIds: editFormData.selectedAddonIds,
-        notes: editFormData.notes
-      });
-    } else {
-      updateItemTravelDate(editingItem.id, editFormData.travelDate);
-      updateItemPax(editingItem.id, {
-        adults: editFormData.adults,
-        children: editFormData.children,
-        infants: editFormData.infants
-      });
-      if (updateItemNotes) updateItemNotes(editingItem.id, editFormData.notes);
-    }
-    setEditingItem(null);
+    setEditingServiceItem(item);
   };
 
   // Download PDF Action
@@ -2389,7 +2350,13 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               }}
               onOpenQuickAddProductModal={handleOpenQuickAddModal}
               onOpenProductDetails={handleOpenProductDetails}
-              onOpenCalculator={(prod) => setCalculatorProduct(prod)}
+              onOpenCalculator={(prod) => {
+                if (isRailProduct(prod)) {
+                  setInspectingProduct(prod);
+                } else {
+                  setCalculatorProduct(prod);
+                }
+              }}
               onSaveDraft={() => handleSaveDraft(true)}
               onPreviewQuotation={() => {
                 handleSaveDraft(true);
@@ -2613,7 +2580,14 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                     <div className="flex items-center justify-end space-x-2 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
                       <button
                         type="button"
-                        onClick={() => handleOpenProductDetails(prod)}
+                        onClick={() => {
+                          if (isRailProduct(prod)) {
+                            setQuickAddModalDay(null);
+                            setInspectingProduct(prod);
+                          } else {
+                            handleOpenProductDetails(prod);
+                          }
+                        }}
                         className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1 border border-slate-200"
                         title="View Product Details, Inclusions, Schedule & Supplier terms"
                       >
@@ -2623,13 +2597,17 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                       <button
                         type="button"
                         onClick={() => {
-                          handleAddProductToQuoteSilently(prod, {
-                            adults: adultsCount,
-                            children: childrenCount,
-                            infants: infantsCount,
-                            travelDate: quickAddModalDay.dateString
-                          });
-                          setQuickAddModalDay(null);
+                          if (isRailProduct(prod)) {
+                            setQuickAddModalDay(null);
+                            setInspectingProduct(prod);
+                          } else {
+                            setConfiguringQuickAddProduct({
+                              product: prod,
+                              dateString: quickAddModalDay.dateString,
+                              dayNum: quickAddModalDay.dayNum
+                            });
+                            setQuickAddModalDay(null);
+                          }
                         }}
                         className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00A88F] text-white font-bold text-xs transition-colors cursor-pointer shadow-xs flex items-center space-x-1"
                       >
@@ -2646,158 +2624,49 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL: INLINE SERVICE CUSTOMIZER */}
+      {/* DEDICATED SERVICE CONFIGURATOR ROUTING ENGINE (ZERO GENERIC CUSTOMIZER) */}
       {/* ========================================================================= */}
-      {editingItem && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-5 sm:p-6 space-y-4 border border-slate-200 shadow-2xl animate-scaleUp my-auto max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-teal-700 block">Service Customizer</span>
-                <h3 className="text-sm sm:text-base font-bold text-slate-900 truncate max-w-xs">{editingItem.product.name}</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setEditingItem(null)}
-                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {editingServiceItem && (
+        <GlobalConfiguratorRouter
+          isOpen={true}
+          itemOrProduct={editingServiceItem}
+          portalOrigin="B2B_QUOTE_BUILDER"
+          existingQuoteItemId={editingServiceItem.id}
+          initialTravelDate={editingServiceItem.travelDate}
+          initialAdults={editingServiceItem.pax?.adults || adultsCount}
+          initialChildren={editingServiceItem.pax?.children || childrenCount}
+          initialInfants={editingServiceItem.pax?.infants || infantsCount}
+          initialServiceTime={editingServiceItem.serviceTime}
+          initialNotes={editingServiceItem.notes}
+          onClose={() => setEditingServiceItem(null)}
+          onSuccess={() => {
+            setEditingServiceItem(null);
+            handleSaveDraft();
+            showBuilderToast('✓ Service configuration updated successfully', 'SUCCESS');
+          }}
+        />
+      )}
 
-            <div className="space-y-3 text-xs">
-              {/* Day / Date Reassignment */}
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Assigned Date & Day</label>
-                <select
-                  value={editFormData.travelDate}
-                  onChange={(e) => setEditFormData(prev => ({ ...prev, travelDate: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-[#00C6A6]"
-                >
-                  {daySlots.map(slot => (
-                    <option key={slot.dateString} value={slot.dateString}>
-                      Day {slot.dayNumber} ({slot.dayOfWeek}, {slot.formattedDate}) - {slot.hub?.hubName || 'General'}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Service Time */}
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Service Pickup / Activity Time</label>
-                <input
-                  type="text"
-                  placeholder="e.g. 09:30 AM or 14:00 PM"
-                  value={editFormData.serviceTime}
-                  onChange={(e) => setEditFormData(prev => ({ ...prev, serviceTime: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-[#00C6A6]"
-                />
-              </div>
-
-              {/* Pax for this item */}
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Participants for this Service</label>
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="bg-slate-50 p-2 rounded-xl border border-slate-200 flex items-center justify-between">
-                    <span className="text-[10px] text-slate-600 font-bold">Adults</span>
-                    <div className="flex items-center space-x-1">
-                      <button
-                        type="button"
-                        disabled={editFormData.adults <= 1}
-                        onClick={() => setEditFormData(prev => ({ ...prev, adults: Math.max(1, prev.adults - 1) }))}
-                        className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold cursor-pointer"
-                      >
-                        -
-                      </button>
-                      <span className="font-bold text-slate-900 w-4 text-center">{editFormData.adults}</span>
-                      <button
-                        type="button"
-                        onClick={() => setEditFormData(prev => ({ ...prev, adults: prev.adults + 1 }))}
-                        className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold cursor-pointer"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 p-2 rounded-xl border border-slate-200 flex items-center justify-between">
-                    <span className="text-[10px] text-slate-600 font-bold">Children</span>
-                    <div className="flex items-center space-x-1">
-                      <button
-                        type="button"
-                        disabled={editFormData.children <= 0}
-                        onClick={() => setEditFormData(prev => ({ ...prev, children: Math.max(0, prev.children - 1) }))}
-                        className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold cursor-pointer"
-                      >
-                        -
-                      </button>
-                      <span className="font-bold text-slate-900 w-4 text-center">{editFormData.children}</span>
-                      <button
-                        type="button"
-                        onClick={() => setEditFormData(prev => ({ ...prev, children: prev.children + 1 }))}
-                        className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold cursor-pointer"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 p-2 rounded-xl border border-slate-200 flex items-center justify-between">
-                    <span className="text-[10px] text-slate-600 font-bold">Infants</span>
-                    <div className="flex items-center space-x-1">
-                      <button
-                        type="button"
-                        disabled={editFormData.infants <= 0}
-                        onClick={() => setEditFormData(prev => ({ ...prev, infants: Math.max(0, prev.infants - 1) }))}
-                        className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold cursor-pointer"
-                      >
-                        -
-                      </button>
-                      <span className="font-bold text-slate-900 w-4 text-center">{editFormData.infants}</span>
-                      <button
-                        type="button"
-                        onClick={() => setEditFormData(prev => ({ ...prev, infants: prev.infants + 1 }))}
-                        className="w-5 h-5 rounded bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold cursor-pointer"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Notes */}
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Voucher Special Instructions</label>
-                <textarea
-                  rows={2}
-                  placeholder="e.g. Vegetarian lunch requested; meet driver at hotel lobby..."
-                  value={editFormData.notes}
-                  onChange={(e) => setEditFormData(prev => ({ ...prev, notes: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-[#00C6A6]"
-                />
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-200">
-              <button
-                type="button"
-                onClick={() => setEditingItem(null)}
-                className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold hover:bg-slate-200 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveEditItem}
-                className="px-5 py-2 rounded-xl bg-[#00C6A6] text-white text-xs font-bold hover:bg-[#00A88F] cursor-pointer shadow-xs"
-              >
-                Save Changes
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* ========================================================================= */}
+      {/* QUICK ADD SERVICE CONFIGURATION ROUTER */}
+      {/* ========================================================================= */}
+      {configuringQuickAddProduct && (
+        <GlobalConfiguratorRouter
+          isOpen={true}
+          itemOrProduct={configuringQuickAddProduct.product}
+          portalOrigin="B2B_QUOTE_BUILDER"
+          initialTravelDate={configuringQuickAddProduct.dateString}
+          initialAdults={adultsCount}
+          initialChildren={childrenCount}
+          initialInfants={infantsCount}
+          onClose={() => setConfiguringQuickAddProduct(null)}
+          onSuccess={() => {
+            const dayNum = configuringQuickAddProduct.dayNum;
+            setConfiguringQuickAddProduct(null);
+            handleSaveDraft();
+            showBuilderToast(`✓ Added configured service to Day ${dayNum}`, 'SUCCESS');
+          }}
+        />
       )}
 
       {/* ========================================================================= */}
@@ -2921,9 +2790,38 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       )}
 
       {/* ========================================================================= */}
+      {/* MODAL: JAPAN RAIL JOURNEY SELECTION & CONFIGURATOR */}
+      {/* ========================================================================= */}
+      {(inspectingProduct || editingRailItem) && (
+        (inspectingProduct && isRailProduct(inspectingProduct)) ||
+        editingRailItem
+      ) && (
+        <RailJourneyModal
+          product={editingRailItem?.product || inspectingProduct!}
+          portalOrigin="B2B_QUOTE_BUILDER"
+          existingQuoteItemId={editingRailItem?.id}
+          existingJourneySnapshot={editingRailItem?.japanRailJourneySnapshot || (editingRailItem as any)?.metadata?.journeySnapshot || (editingRailItem as any)?.railJourneyDetails}
+          initialOriginStationId={editingRailItem?.railJourneyDetails?.originStationId || 'JP-ST-TOKYO'}
+          initialDestinationStationId={editingRailItem?.railJourneyDetails?.destinationStationId || 'JP-ST-KYOTO'}
+          onClose={() => {
+            setInspectingProduct(null);
+            setEditingRailItem(null);
+          }}
+          onAddToQuote={(item) => {
+            if (editingRailItem) {
+              removeProductFromQuote(editingRailItem.id);
+            }
+            setInspectingProduct(null);
+            setEditingRailItem(null);
+            showBuilderToast(editingRailItem ? `✓ Updated Shinkansen Journey in Quote` : `✓ Added Shinkansen Journey to Quote`, 'SUCCESS');
+          }}
+        />
+      )}
+
+      {/* ========================================================================= */}
       {/* MODAL: PRODUCT DETAIL MODAL */}
       {/* ========================================================================= */}
-      {inspectingProduct && (
+      {inspectingProduct && !isRailProduct(inspectingProduct) && (
         <ProductDetailModal
           product={inspectingProduct}
           onClose={() => setInspectingProduct(null)}
@@ -2947,7 +2845,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       {/* ========================================================================= */}
       {/* MODAL: PRICING CALCULATOR MODAL */}
       {/* ========================================================================= */}
-      {calculatorProduct && (
+      {calculatorProduct && !isRailProduct(calculatorProduct) && (
         <PricingCalculatorModal
           product={calculatorProduct}
           onClose={() => setCalculatorProduct(null)}

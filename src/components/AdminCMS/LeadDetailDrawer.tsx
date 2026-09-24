@@ -342,7 +342,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
         className="w-full max-w-4xl bg-white h-full shadow-2xl flex flex-col overflow-hidden border-l border-slate-200"
       >
         {/* Top Header */}
-        <div className="p-6 bg-slate-900 text-white flex flex-col gap-4 border-b border-slate-800">
+        <div className="p-4 sm:p-6 bg-slate-900 text-white flex flex-col gap-3.5 sm:gap-4 border-b border-slate-800 shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="font-mono text-xs font-bold bg-white/10 text-[#00C6A6] px-2.5 py-1 rounded-md">
@@ -462,7 +462,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="bg-slate-100 px-6 py-2 border-b border-slate-200 flex items-center gap-2 overflow-x-auto">
+        <div className="bg-slate-100 px-3 sm:px-6 py-2 border-b border-slate-200 flex items-center gap-1.5 sm:gap-2 overflow-x-auto shrink-0 scrollbar-none">
           {[
             { id: 'overview', label: 'Overview', icon: Briefcase },
             { id: 'requirements', label: 'Travel Details', icon: Compass },

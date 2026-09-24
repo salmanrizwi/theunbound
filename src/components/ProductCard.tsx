@@ -17,7 +17,8 @@ import {
   ShieldCheck,
   Calendar,
   Zap,
-  Briefcase
+  Briefcase,
+  Train
 } from 'lucide-react';
 
 interface ProductCardProps {
@@ -49,6 +50,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
   const handleCalculatorClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (product.category === 'Rail' || product.productType === 'Rail' || product.id.startsWith('RAIL-JP')) {
+      onViewDetails(product);
+      return;
+    }
     if (!isAuthenticated) {
       openAuthModal(
         `Please sign in as a travel agent to calculate dynamic wholesale rates for "${product.name}".`,
@@ -61,6 +66,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
   const handleInstantBookClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (product.category === 'Rail' || product.productType === 'Rail' || product.id.startsWith('RAIL-JP')) {
+      onViewDetails(product);
+      return;
+    }
     if (onInstantBook) {
       onInstantBook(product);
     } else {
@@ -216,8 +225,17 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 onClick={handleCalculatorClick}
                 className="w-full flex items-center justify-center space-x-1 py-2 sm:py-2.5 px-2 sm:px-3 rounded-xl text-xs font-bold transition-all cursor-pointer bg-[#00C6A6] hover:bg-[#00b094] active:bg-[#009b82] text-slate-950 shadow-xs shadow-[#00C6A6]/20 active:scale-[0.98]"
               >
-                <Calculator className="w-3.5 h-3.5" />
-                <span className="truncate">B2B Quote</span>
+                {product.category === 'Rail' || product.productType === 'Rail' || product.id.startsWith('RAIL-JP') ? (
+                  <>
+                    <Train className="w-3.5 h-3.5" />
+                    <span className="truncate">Configure</span>
+                  </>
+                ) : (
+                  <>
+                    <Calculator className="w-3.5 h-3.5" />
+                    <span className="truncate">B2B Quote</span>
+                  </>
+                )}
               </button>
             ) : (
               <button
@@ -226,8 +244,17 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 className="w-full flex items-center justify-center space-x-1 py-2 sm:py-2.5 px-2 sm:px-3 rounded-xl text-xs font-bold transition-all cursor-pointer bg-slate-900 hover:bg-slate-800 active:bg-slate-950 text-white shadow-xs active:scale-[0.98]"
                 title="Instant Book with 24–48h Ground Update SLA Guarantee"
               >
-                <Zap className="w-3.5 h-3.5 text-[#00C6A6]" />
-                <span className="truncate">Instant Book</span>
+                {product.category === 'Rail' || product.productType === 'Rail' || product.id.startsWith('RAIL-JP') ? (
+                  <>
+                    <Train className="w-3.5 h-3.5 text-[#00C6A6]" />
+                    <span className="truncate">Configure</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-3.5 h-3.5 text-[#00C6A6]" />
+                    <span className="truncate">Instant Book</span>
+                  </>
+                )}
               </button>
             )}
           </div>

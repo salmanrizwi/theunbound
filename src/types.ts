@@ -1,5 +1,7 @@
 export * from './types/seo';
+export * from './types/rail';
 import type { EntitySEO } from './types/seo';
+import type { RailBookingItemDetails } from './types/rail';
 
 export type UserCategory = 'EXTERNAL' | 'INTERNAL';
 
@@ -859,6 +861,7 @@ export interface Product {
   isManualHotel?: boolean;
   manualHotelDetails?: ManualHotelDetails;
   seo?: EntitySEO;
+  metadata?: Record<string, any>;
 }
 
 export type ProductPricingMethod = 'per_person' | 'capacity_based' | 'fixed_stay';
@@ -1146,6 +1149,10 @@ export interface QuoteItem {
   manualHotelDetails?: ManualHotelDetails;
   source?: QuoteItemSource;
   aiSuggested?: boolean;
+  railJourneyDetails?: RailBookingItemDetails;
+  japanRailJourneySnapshot?: any;
+  shinkansenJourneyPayload?: any;
+  metadata?: Record<string, any>;
 }
 
 export type QuoteStatus = 
@@ -5035,6 +5042,167 @@ export interface FooterConfig {
 // ----------------------------------------------------
 export type VisaEntryType = 'SINGLE_ENTRY' | 'MULTIPLE_ENTRY' | 'DOUBLE_ENTRY';
 
+export type RequirementCategory = 
+  | 'IDENTITY'
+  | 'FINANCIAL'
+  | 'TRAVEL'
+  | 'SUPPORTING'
+  | 'APPLICATION'
+  | 'OTHER';
+
+export type RequirementRequiredStatus = 'REQUIRED' | 'OPTIONAL' | 'CONDITIONAL';
+
+export interface StructuredVisaRequirement {
+  id: string; // e.g. REQ-JPN-PPT-01
+  visaId: string; // FK to VisaProduct
+  name: string; // e.g. "Original Passport"
+  category: RequirementCategory;
+  description: string;
+  requiredStatus: RequirementRequiredStatus;
+  applicableNationality: string[]; // e.g. ['ALL'] or ['Indian', 'All Eligible']
+  applicableVisaType?: string; // 'ALL' or specific
+  applicableTravellerType?: ('ADULT' | 'CHILD' | 'INFANT' | 'MINOR' | 'STUDENT' | 'EMPLOYED' | 'SELF_EMPLOYED' | 'RETIRED' | 'SPONSORED' | 'ALL')[];
+  conditionRule?: {
+    conditionType: 'EMPLOYMENT_STATUS' | 'TRAVELLER_TYPE' | 'SPONSORSHIP' | 'PREVIOUS_PASSPORT' | 'CUSTOM';
+    conditionValue: string;
+    description: string;
+  };
+  documentConditions?: {
+    originalRequired?: boolean;
+    copyRequired?: boolean;
+    translationRequired?: boolean;
+    attestationRequired?: boolean;
+    minValidityMonths?: number;
+    blankPages?: number;
+    copiesCount?: number;
+    photoQuantity?: number;
+    photoSize?: string;
+    photoBackground?: string;
+    bankStatementPeriodMonths?: number;
+    fileFormatsAccepted?: string[];
+  };
+  notes?: string;
+  displayOrder: number;
+  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  version: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface VisaAssistanceService {
+  id: string;
+  visaId?: string;
+  name: string;
+  serviceType: 'DOCUMENT_VETTING' | 'FORM_FILLING' | 'APPOINTMENT_BOOKING' | 'BIOMETRIC_CONCIERGE' | 'EXPRESS_SUBMISSION' | 'STATUS_TRACKING' | 'FULL_CONCIERGE';
+  description: string;
+  netCost: number;
+  serviceFee: number;
+  sellingPrice: number;
+  currency: CurrencyCode;
+  includedInBaseFee: boolean;
+  status: 'ACTIVE' | 'INACTIVE';
+  displayOrder?: number;
+}
+
+export interface TravelProtectionPlan {
+  id: string;
+  serviceName: string;
+  provider: string;
+  coverageArea: string; // "Worldwide excl. US/Canada" | "Worldwide incl. US/Canada" | "Schengen" | "Asia Regional"
+  destinationId?: string;
+  medicalCoverageAmount: number;
+  emergencyAssistanceIncluded: boolean;
+  evacuationCoverageAmount: number;
+  tripCancellationAmount: number;
+  baggageLossAmount: number;
+  validityDaysMax: number;
+  eligibilityAgeMin: number;
+  eligibilityAgeMax: number;
+  netCostPerDay: number;
+  netCostPerTrip: number;
+  sellingPricePerDay: number;
+  sellingPricePerTrip: number;
+  currency: CurrencyCode;
+  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  terms: string;
+  customerDescription: string;
+  inclusions: string[];
+  displayOrder?: number;
+  updatedAt?: string;
+}
+
+export interface VipGroundService {
+  id: string;
+  name: string;
+  serviceType: 'MEET_AND_GREET' | 'VIP_TRANSFER' | 'CHAUFFEUR' | 'FAST_TRACK' | 'LOUNGE_ACCESS' | 'PORTERAGE' | 'CONCIERGE';
+  destinationId: string;
+  hubId?: string;
+  supplierId?: string;
+  supplierName: string;
+  shortDesc: string;
+  longDesc: string;
+  netCost: number;
+  defaultMarkupPercent: number;
+  sellingPrice: number;
+  pricingType: 'PER_PAX' | 'PER_VEHICLE' | 'FIXED';
+  currency: CurrencyCode;
+  inclusions: string[];
+  badge?: string;
+  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  displayOrder?: number;
+  updatedAt?: string;
+}
+
+export interface ConnectivityPlan {
+  id: string;
+  name: string;
+  type: 'ESIM' | 'PHYSICAL_SIM';
+  coverageZone: string;
+  dataAllowance: string;
+  validityDays: number;
+  networkSpeed: string; // e.g. "5G / 4G LTE"
+  netCost: number;
+  sellingPrice: number;
+  currency: CurrencyCode;
+  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  inclusions: string[];
+  displayOrder?: number;
+  updatedAt?: string;
+}
+
+export interface QuoteVisaSnapshot {
+  visaId: string;
+  visaName: string;
+  destination: string;
+  visaType: string;
+  applicantNationality: string;
+  applicantProfile?: string;
+  selectedAssistanceServices?: VisaAssistanceService[];
+  applicableChecklist: StructuredVisaRequirement[];
+  pricing: {
+    embassyFee: number;
+    serviceFee: number;
+    assistanceFee: number;
+    totalSellingPrice: number;
+  };
+  currency: CurrencyCode;
+  requirementVersion: number;
+  capturedAt: string;
+}
+
+export interface BookingVisaChecklistItem {
+  requirementId: string;
+  requirementName: string;
+  category: RequirementCategory;
+  requiredStatus: RequirementRequiredStatus;
+  status: 'PENDING' | 'REQUESTED' | 'RECEIVED' | 'UNDER_REVIEW' | 'ACCEPTED' | 'REJECTED' | 'NOT_APPLICABLE';
+  documentUrl?: string;
+  documentName?: string;
+  uploadedAt?: string;
+  rejectionReason?: string;
+  notes?: string;
+}
+
 export interface VisaDocumentRequirement {
   id: string;
   name: string;
@@ -5062,6 +5230,9 @@ export interface VisaProduct {
   currency: CurrencyCode;
   description: string;
   documentsChecklist: string[];
+  structuredRequirements?: StructuredVisaRequirement[];
+  assistanceServices?: VisaAssistanceService[];
+  requirementVersion?: number;
   detailedRequirements?: VisaDocumentRequirement[];
   submissionSteps: string[];
   eligibilityNotes: string[];

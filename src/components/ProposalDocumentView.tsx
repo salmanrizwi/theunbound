@@ -26,8 +26,10 @@ import {
   PlaneTakeoff,
   Award,
   Globe,
-  MessageCircle
+  MessageCircle,
+  Train
 } from 'lucide-react';
+import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
 
 interface ProposalDocumentViewProps {
   quote: Quotation;
@@ -208,7 +210,15 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
         badgeColor: 'bg-amber-100 text-amber-900'
       };
     }
-    if (cat.includes('transfer') || cat.includes('transport') || cat.includes('vehicle') || cat.includes('rail') || cat.includes('train')) {
+    if (cat.includes('rail') || cat.includes('train') || cat.includes('shinkansen')) {
+      return {
+        icon: Train,
+        label: 'High-Speed Shinkansen Bullet Train',
+        color: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+        badgeColor: 'bg-indigo-100 text-indigo-900'
+      };
+    }
+    if (cat.includes('transfer') || cat.includes('transport') || cat.includes('vehicle')) {
       return {
         icon: Car,
         label: 'Private Ground Transfer',
@@ -633,10 +643,34 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                                 </div>
 
                                 <h4 className="text-sm font-bold text-slate-900">
-                                  {item.product.name}
+                                  {item.customTitle || item.title || item.product.name}
                                 </h4>
 
-                                {item.product.shortDescription && (
+                                {/* Shinkansen Bullet Train Route & Allotment Box */}
+                                {isRailQuoteItem(item) && item.railJourneyDetails && (
+                                  <div className="mt-1.5 p-2.5 rounded-xl bg-indigo-50/80 border border-indigo-200 text-xs text-indigo-950 space-y-1">
+                                    <div className="flex flex-wrap items-center gap-2 font-bold text-indigo-900">
+                                      <span className="flex items-center gap-1">
+                                        <Train className="w-3.5 h-3.5 text-indigo-700" />
+                                        <span>{item.railJourneyDetails.originStationName} ({item.railJourneyDetails.originStationCode}) → {item.railJourneyDetails.destinationStationName} ({item.railJourneyDetails.destinationStationCode})</span>
+                                      </span>
+                                      <span>•</span>
+                                      <span>{item.railJourneyDetails.carType} Car ({item.railJourneyDetails.seatType})</span>
+                                      <span>•</span>
+                                      <span>{item.railJourneyDetails.serviceGroup === 'NOZOMI_MIZUHO' ? 'Nozomi Super Express' : 'Hikari/Kodama'}</span>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-indigo-700">
+                                      {item.railJourneyDetails.seatPreference && (
+                                        <span>Seat Preference: <strong>{item.railJourneyDetails.seatPreference}</strong></span>
+                                      )}
+                                      {item.railJourneyDetails.pnrReference && (
+                                        <span>SmartEX PNR: <strong className="font-mono">{item.railJourneyDetails.pnrReference}</strong></span>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {item.product.shortDescription && !isRailQuoteItem(item) && (
                                   <p className="text-xs text-slate-600 leading-relaxed">
                                     {item.product.shortDescription}
                                   </p>

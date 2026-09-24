@@ -329,68 +329,73 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
 
       {/* Edit / Add Modal */}
       {isEditing && editingHub && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-6">
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-xl w-full max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-slate-200">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-4 sm:p-6 pb-3.5 border-b border-slate-100 shrink-0 bg-white">
               <div>
-                <div className="flex items-center space-x-2 text-[#00C6A6] font-bold text-xs uppercase tracking-wider mb-1">
+                <div className="flex items-center space-x-2 text-[#00C6A6] font-bold text-xs uppercase tracking-wider mb-0.5">
                   <Building2 className="w-4 h-4" />
                   <span>Tier 3: City Hub Linkage</span>
                 </div>
-                <h3 className="text-lg font-bold text-slate-900">
+                <h3 className="text-base sm:text-lg font-bold text-slate-900">
                   {editingHub.name ? `Edit City Hub: ${editingHub.name}` : 'Add New City Hub'}
                 </h3>
               </div>
               <button 
                 onClick={() => setIsEditing(false)} 
-                className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Live Hierarchy Breadcrumb Preview */}
-            <div className="mb-5 p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center gap-2 text-xs flex-wrap">
-              <span className="font-bold text-slate-400 uppercase text-[10px]">Hierarchy Path:</span>
-              <span className="font-bold text-[#008f77] flex items-center gap-1">
-                <Globe2 className="w-3 h-3" />
-                {editingHub.regionName || 'Select Region'}
-              </span>
-              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-              <span className="font-bold text-slate-800 flex items-center gap-1">
-                <MapPin className="w-3 h-3 text-[#00C6A6]" />
-                {editingHub.destinationName || 'Select Destination'}
-              </span>
-              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-              <span className="font-bold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-200">
-                {editingHub.name || 'City Hub'}
-              </span>
+            {/* Context & Subtabs */}
+            <div className="p-3 sm:px-6 py-2 bg-slate-50 border-b border-slate-200 shrink-0 space-y-2">
+              {/* Live Hierarchy Breadcrumb Preview */}
+              <div className="p-2 rounded-lg bg-white border border-slate-200 flex items-center gap-1.5 text-[11px] flex-wrap">
+                <span className="font-bold text-slate-400 uppercase text-[9px]">Hierarchy:</span>
+                <span className="font-bold text-[#008f77] flex items-center gap-1">
+                  <Globe2 className="w-3 h-3" />
+                  {editingHub.regionName || 'Select Region'}
+                </span>
+                <ChevronRight className="w-3 h-3 text-slate-400" />
+                <span className="font-bold text-slate-800 flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-[#00C6A6]" />
+                  {editingHub.destinationName || 'Select Destination'}
+                </span>
+                <ChevronRight className="w-3 h-3 text-slate-400" />
+                <span className="font-bold text-slate-900 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
+                  {editingHub.name || 'City Hub'}
+                </span>
+              </div>
+
+              {/* Modal Subtabs */}
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setModalTab('CONTENT')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    modalTab === 'CONTENT' ? 'bg-[#00C6A6] text-slate-950 shadow-xs' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  City Hub Details
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModalTab('SEO')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                    modalTab === 'SEO' ? 'bg-[#00C6A6] text-slate-950 shadow-xs' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  <Globe2 className="w-3.5 h-3.5" />
+                  <span>SEO & Search Indexing</span>
+                </button>
+              </div>
             </div>
 
-            {/* Modal Subtabs */}
-            <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
-              <button
-                type="button"
-                onClick={() => setModalTab('CONTENT')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  modalTab === 'CONTENT' ? 'bg-[#00C6A6] text-slate-950 shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                City Hub Details
-              </button>
-              <button
-                type="button"
-                onClick={() => setModalTab('SEO')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
-                  modalTab === 'SEO' ? 'bg-[#00C6A6] text-slate-950 shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                <Globe2 className="w-3.5 h-3.5" />
-                <span>SEO & Search Indexing</span>
-              </button>
-            </div>
-
-            <form onSubmit={handleSave} className="space-y-4">
+            <form onSubmit={handleSave} className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 modal-body-scroll text-xs">
               {saveError && (
                 <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2.5 text-rose-800 text-xs">
                   <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
@@ -622,41 +627,43 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
               </div>
               </>
               )}
+              </div>
 
-              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-                <div>
+              {/* Actions Footer */}
+              <div className="flex flex-col sm:flex-row items-center justify-between p-4 sm:px-6 py-3 border-t border-slate-100 bg-white/95 backdrop-blur-xs shrink-0 gap-3">
+                <div className="w-full sm:w-auto">
                   {editingHub?.id && cityHubs.some(h => h.id === editingHub.id) && (
                     <button
                       type="button"
                       onClick={() => handleDelete(editingHub.id!)}
-                      className="px-4 py-2.5 rounded-xl border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 font-bold text-sm cursor-pointer flex items-center space-x-1.5"
+                      className="w-full sm:w-auto px-4 py-2 rounded-xl border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 font-bold text-xs cursor-pointer flex items-center justify-center space-x-1.5"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                       <span>Delete City Hub</span>
                     </button>
                   )}
                 </div>
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-2.5 w-full sm:w-auto justify-end">
                   <button
                     type="button"
                     onClick={() => setIsEditing(false)}
-                    className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-sm cursor-pointer"
+                    className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs cursor-pointer text-center"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={isSaving}
-                    className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] disabled:opacity-50 text-slate-950 font-bold text-sm cursor-pointer shadow-md shadow-[#00C6A6]/20 flex items-center space-x-1.5"
+                    className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] disabled:opacity-50 text-slate-950 font-bold text-xs cursor-pointer shadow-xs flex items-center justify-center space-x-1.5 text-center"
                   >
                     {isSaving ? (
                       <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Persisting to Firestore...</span>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Persisting...</span>
                       </>
                     ) : (
                       <>
-                        <CheckCircle2 className="w-4 h-4" />
+                        <CheckCircle2 className="w-3.5 h-3.5" />
                         <span>Save City Hub</span>
                       </>
                     )}

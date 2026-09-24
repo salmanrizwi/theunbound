@@ -17,8 +17,10 @@ import { B2BTasksManagerView } from './B2BTasksManagerView';
 import { B2BAccountView } from './B2BAccountView';
 import { HotelDetailModal } from '../HotelDetailModal';
 import { ProductDetailModal } from '../ProductDetailModal';
+import { RailJourneyModal } from '../RailJourneyModal';
 import { PackageDetailModal } from '../PackageDetailModal';
 import { PricingCalculatorModal } from '../PricingCalculatorModal';
+import { isRailProduct } from '../../services/rail/JapanRailJourneyDataService';
 import { BookingModal } from '../BookingModal';
 import { BookingConfirmationModal } from '../BookingConfirmationModal';
 import { QuoteBuilderDrawer } from '../QuoteBuilderDrawer';
@@ -388,7 +390,13 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
             onViewProductDetails={(prod) => setInspectingProduct(prod)}
             onViewHotelDetails={(hotel) => setInspectingHotel(hotel)}
             onViewPackageDetails={(pkg) => setInspectingPackage(pkg)}
-            onOpenCalculator={(prod) => setCalculatorProduct(prod)}
+            onOpenCalculator={(prod) => {
+              if (isRailProduct(prod)) {
+                setInspectingProduct(prod);
+              } else {
+                setCalculatorProduct(prod);
+              }
+            }}
             onItemAddedToQuote={(itemName) => showToast('Added to Quotation', itemName)}
           />
         )}
@@ -519,8 +527,25 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
         />
       )}
 
+      {/* Dynamic Japan Rail Journey Configurator */}
+      {inspectingProduct && isRailProduct(inspectingProduct) && (
+        <RailJourneyModal
+          product={inspectingProduct}
+          portalOrigin="B2B_AGENT"
+          onClose={() => setInspectingProduct(null)}
+          onAddToQuote={() => {
+            setInspectingProduct(null);
+            setIsQuoteDrawerOpen(true);
+          }}
+          onInstantBook={(p) => {
+            setInspectingProduct(null);
+            handleBookProductDirect(p);
+          }}
+        />
+      )}
+
       {/* Global Product Details Modal */}
-      {inspectingProduct && (
+      {inspectingProduct && !isRailProduct(inspectingProduct) && (
         <ProductDetailModal
           product={inspectingProduct}
           onClose={() => setInspectingProduct(null)}
@@ -533,7 +558,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
       )}
 
       {/* Global Pricing Calculator Modal */}
-      {calculatorProduct && (
+      {calculatorProduct && !isRailProduct(calculatorProduct) && (
         <PricingCalculatorModal
           product={calculatorProduct}
           onClose={() => setCalculatorProduct(null)}

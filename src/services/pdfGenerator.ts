@@ -537,16 +537,20 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
         const cat = (item.product.category || item.product.productType || 'EXPERIENCE').toUpperCase();
         doc.setFillColor(241, 245, 249);
         doc.roundedRect(margin + 4, currentY + 2, 24, 4.5, 0.5, 0.5, 'F');
+        // Category tag pill text
+        const isRail = item.category === 'Rail' || Boolean(item.railJourneyDetails) || (item.product?.category === 'Rail');
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(5.5);
         doc.setTextColor(51, 65, 85);
-        doc.text(cat.substring(0, 16), margin + 16, currentY + 5, { align: 'center' });
+        doc.text(isRail ? 'SHINKANSEN' : cat.substring(0, 16), margin + 16, currentY + 5, { align: 'center' });
 
         // Service Name (Bold)
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(8);
         doc.setTextColor(15, 23, 42);
-        const pName = item.product.name || 'Curated Experience';
+        const pName = isRail && item.railJourneyDetails
+          ? `Shinkansen: ${item.railJourneyDetails.originStationName} to ${item.railJourneyDetails.destinationStationName}`
+          : (item.product.name || 'Curated Experience');
         const truncatedName = pName.length > 55 ? pName.substring(0, 52) + '...' : pName;
         doc.text(truncatedName, margin + 31, currentY + 5.5);
 
@@ -554,12 +558,20 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(6.5);
         doc.setTextColor(100, 116, 139);
-        const subDetails = [
-          item.serviceTime ? `Time: ${item.serviceTime}` : null,
-          item.product.duration ? `Duration: ${item.product.duration}` : null,
-          `${item.pax?.adults || 2} Adults${item.pax?.children ? `, ${item.pax.children} Ch` : ''}`,
-          item.product.city || dayCity
-        ].filter(Boolean).join(' • ');
+        const subDetails = isRail && item.railJourneyDetails
+          ? [
+              item.serviceTime ? `Dep: ${item.serviceTime}` : null,
+              `${item.railJourneyDetails.carType} Class (${item.railJourneyDetails.seatType})`,
+              item.railJourneyDetails.serviceGroup === 'NOZOMI_MIZUHO' ? 'Nozomi Super Express' : 'Hikari/Kodama',
+              `Seat: ${item.railJourneyDetails.seatPreference || 'Reserved'}`,
+              `${item.pax?.adults || 2} Adults${item.pax?.children ? `, ${item.pax.children} Ch` : ''}`
+            ].filter(Boolean).join(' • ')
+          : [
+              item.serviceTime ? `Time: ${item.serviceTime}` : null,
+              item.product.duration ? `Duration: ${item.product.duration}` : null,
+              `${item.pax?.adults || 2} Adults${item.pax?.children ? `, ${item.pax.children} Ch` : ''}`,
+              item.product.city || dayCity
+            ].filter(Boolean).join(' • ');
         doc.text(subDetails, margin + 31, currentY + 10);
 
         // Price

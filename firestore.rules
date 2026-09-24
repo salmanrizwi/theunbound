@@ -433,7 +433,58 @@ service cloud.firestore {
       allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
     }
 
+    match /travel_protection_plans/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+    }
+
+    match /vip_ground_services/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+    }
+
+    match /connectivity_plans/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+    }
+
     match /visa_rates/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+    }
+
+    // =========================================================================
+    // JAPAN RAIL INVENTORY & DYNAMIC PRICING ENGINE
+    // =========================================================================
+    match /rail_stations/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+    }
+
+    match /rail_routes/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+    }
+
+    match /rail_rates/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+    }
+
+    match /rail_markup_rules/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+    }
+
+    match /rail_seasons/{document=**} {
       allow read: if true;
       allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
       allow delete: if canAccessCMSOperations() || isResourceAdminOwned();

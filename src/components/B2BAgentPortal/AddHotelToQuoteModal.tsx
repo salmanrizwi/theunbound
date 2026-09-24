@@ -187,13 +187,48 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
       roomsCount
     );
 
+    const hotelConfigPayload = {
+      configurationType: 'HOTEL' as const,
+      configurator: 'HOTEL_CONFIGURATOR' as const,
+      hotelId: hotel.id,
+      hotelName: hotel.name,
+      starRating: hotel.starRating,
+      city: hotel.cityName || hotel.city,
+      country: hotel.country || 'Japan',
+      roomId: selectedRoom.id,
+      roomName: selectedRoom.name,
+      rateId: activeRate?.id,
+      rateName: (activeRate as any)?.name || (activeRate as any)?.rateName || (activeRate as any)?.seasonName || 'Standard Rate',
+      mealPlan: activeRate?.mealPlan || 'BB',
+      mealPlanLabel: getMealPlanLabel(activeRate?.mealPlan || 'BB'),
+      checkInDate,
+      checkOutDate,
+      nights,
+      roomsCount,
+      occupancy: `${adults} Adults${children ? `, ${children} Children` : ''}${infants ? `, ${infants} Infants` : ''}`,
+      adults,
+      children,
+      infants,
+      bedPreference,
+      specialRequests: specialRequests.trim(),
+      pricing: stayCalculation,
+      version: 1,
+      configuredAt: new Date().toISOString()
+    };
+
     const fullNotes = [
       bedPreference !== 'NO_PREF' ? `Bed Preference: ${bedPreference === 'KING' ? '1 King Bed' : 'Twin Beds'}` : '',
       specialRequests.trim()
     ].filter(Boolean).join(' | ');
 
     if (existingItemId) {
-      updateQuoteItem(existingItemId, hotelProduct, {
+      updateQuoteItem(existingItemId, {
+        ...hotelProduct,
+        metadata: {
+          ...(hotelProduct as any).metadata,
+          hotelConfigurationPayload: hotelConfigPayload
+        }
+      }, {
         adults,
         children,
         infants,
@@ -201,7 +236,13 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
         notes: fullNotes || undefined
       });
     } else {
-      addProductToQuote(hotelProduct, {
+      addProductToQuote({
+        ...hotelProduct,
+        metadata: {
+          ...(hotelProduct as any).metadata,
+          hotelConfigurationPayload: hotelConfigPayload
+        }
+      }, {
         adults,
         children,
         infants,
@@ -229,29 +270,33 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 md:p-6 animate-in fade-in duration-200">
       <div 
         id="add-hotel-to-quote-modal"
-        className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-3xl w-full overflow-hidden flex flex-col max-h-[92vh] animate-scaleUp"
+        className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 max-w-3xl w-full overflow-hidden flex flex-col max-h-[94dvh] sm:max-h-[92dvh] animate-scaleUp"
       >
         {/* Fixed Top Header */}
-        <div className="bg-slate-900 text-white p-5 sm:p-6 flex items-start justify-between shrink-0">
-          <div className="flex items-start space-x-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 mt-0.5">
-              <Building2 className="w-6 h-6" />
+        <div className="bg-slate-900 text-white p-3.5 sm:p-5 flex items-start justify-between shrink-0 border-b border-slate-800">
+          <div className="flex items-start space-x-2.5 sm:space-x-3.5 min-w-0">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 mt-0.5">
+              <Building2 className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black uppercase tracking-wider">
-                  {hotel.starRating || 5}★ Luxury Accommodation
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <span className="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-widest text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/30">
+                  Hotel Configurator
                 </span>
-                <span className="text-xs text-slate-300 font-medium flex items-center space-x-1">
-                  <MapPin className="w-3.5 h-3.5 text-[#00E5C0]" />
+                <span className="px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[9px] sm:text-[10px] font-black uppercase tracking-wider">
+                  {hotel.starRating || 5}★ Luxury
+                </span>
+                <span className="text-[11px] sm:text-xs text-slate-300 font-medium flex items-center space-x-1">
+                  <MapPin className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#00E5C0]" />
                   <span>{hotel.cityName || hotel.city}, {hotel.country || 'Japan'}</span>
                 </span>
               </div>
-              <h2 className="text-lg sm:text-xl font-bold text-white mt-1 leading-snug font-sans">
-                {hotel.name}
+              <h2 className="text-sm sm:text-xl font-bold text-white mt-1 leading-snug font-sans flex items-center gap-1.5 truncate">
+                <span className="truncate">{hotel.name}</span>
+                <span className="text-xs font-semibold text-slate-400 shrink-0">({nights} {nights === 1 ? 'Night' : 'Nights'})</span>
               </h2>
             </div>
           </div>
@@ -259,14 +304,14 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
           <button
             id="close-add-hotel-modal-btn"
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors cursor-pointer shrink-0 ml-2"
+            className="p-1.5 sm:p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors cursor-pointer shrink-0 ml-2"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Scrollable Content */}
-        <div className="p-5 sm:p-6 space-y-5 overflow-y-auto flex-1 bg-slate-50/50">
+        <div className="p-3.5 sm:p-6 space-y-4 sm:space-y-5 overflow-y-auto flex-1 bg-slate-50/50 modal-body-scroll">
           {errorMsg && (
             <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-2xl flex items-center space-x-2 text-xs font-bold animate-in fade-in">
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
@@ -646,11 +691,11 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
         </div>
 
         {/* Fixed Footer */}
-        <div className="p-4 sm:p-5 bg-white border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
+        <div className="p-3.5 sm:p-5 bg-white border-t border-slate-200 flex items-center justify-between gap-2.5 sm:gap-3 shrink-0 pb-safe">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-bold transition-colors cursor-pointer"
+            className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-bold transition-colors cursor-pointer shrink-0"
           >
             Cancel
           </button>
@@ -659,13 +704,19 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
             type="button"
             id="confirm-add-hotel-to-quote-btn"
             onClick={handleConfirmAddHotel}
-            className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition-all flex items-center space-x-2 cursor-pointer shadow-md hover:shadow-lg"
+            className="px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition-all flex items-center space-x-1.5 sm:space-x-2 cursor-pointer shadow-md hover:shadow-lg whitespace-nowrap min-w-0"
           >
-            {existingItemId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-            <span>{existingItemId ? 'Update Hotel Stay' : 'Add Hotel Stay to Cart'} ({formatCurrency(stayCalculation?.finalTotalSellingPrice || 0, currency)})</span>
+            {existingItemId ? <Check className="w-4 h-4 shrink-0" /> : <Plus className="w-4 h-4 shrink-0" />}
+            <span className="truncate">
+              <span className="hidden sm:inline">{existingItemId ? 'Update Hotel Stay' : 'Add Hotel Stay to Cart'}</span>
+              <span className="sm:hidden">{existingItemId ? 'Update Stay' : 'Add Stay'}</span> ({formatCurrency(stayCalculation?.finalTotalSellingPrice || 0, currency)})
+            </span>
           </button>
         </div>
       </div>
     </div>
   );
 };
+
+export const HotelConfigurator = AddHotelToQuoteModal;
+export default AddHotelToQuoteModal;

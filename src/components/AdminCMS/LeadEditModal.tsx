@@ -152,28 +152,29 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl max-w-3xl w-full max-h-[90vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+      <div className="bg-white rounded-2xl sm:rounded-3xl max-w-3xl w-full max-h-[94dvh] sm:max-h-[90vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in zoom-in-95 duration-150">
         {/* Modal Header */}
-        <div className="p-6 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
+        <div className="p-4 sm:p-6 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
           <div>
-            <span className="text-[#00C6A6] text-xs font-bold uppercase tracking-wider block">
+            <span className="text-[#00C6A6] text-[10px] sm:text-xs font-bold uppercase tracking-wider block">
               Lead Management CRM
             </span>
-            <h2 className="text-xl font-bold text-white">
+            <h2 className="text-base sm:text-xl font-bold text-white">
               {formData.id && formData.contactName ? `Edit Lead: ${formData.contactName}` : 'Capture New Travel Lead'}
             </h2>
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+            className="p-1.5 sm:p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Modal Form */}
-        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto flex-1 space-y-6 bg-slate-50/50">
+        <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-hidden">
+          <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4 sm:space-y-6 bg-slate-50/50 modal-body-scroll text-xs">
           {/* Section 1: Customer Info */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
             <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Contact & Commercial Profile</h3>
@@ -469,19 +470,20 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
               />
             </div>
           </div>
+        </div>
 
           {/* Modal Footer */}
-          <div className="flex items-center justify-end gap-3 pt-2">
+          <div className="flex flex-col sm:flex-row items-center justify-end gap-2.5 sm:gap-3 p-4 sm:px-6 py-3 border-t border-slate-200 bg-white shrink-0">
             <button
               type="button"
               onClick={onClose}
-              className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-100 transition-colors cursor-pointer"
+              className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50 transition-colors cursor-pointer text-center"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-xs shadow-md shadow-[#00C6A6]/20 transition-all cursor-pointer flex items-center gap-1.5"
+              className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-xs shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 text-center"
             >
               <Save className="w-4 h-4" />
               <span>Save Lead Profile</span>

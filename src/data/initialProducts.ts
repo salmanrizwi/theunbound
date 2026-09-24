@@ -1,6 +1,130 @@
 import { Product } from '../types';
 
 export const INITIAL_PRODUCTS: Product[] = [
+  // --- JAPAN RAIL MASTER PRODUCTS (Dynamic smartEX Shinkansen Inventory) ---
+  {
+    id: 'RAIL-JP-ORD-RESERVED',
+    sku: 'JP-SHINKANSEN-ORD-RES',
+    destinationId: 'dest-japan',
+    destinationName: 'Japan',
+    country: 'Japan',
+    city: 'Tokyo, Kyoto, Osaka & National Network',
+    productType: 'Rail',
+    name: 'Ordinary Car — Reserved Seat',
+    shortDescription: 'Guaranteed reserved seating on high-speed Shinkansen bullet trains across Tokyo, Kyoto, Osaka, Hiroshima & beyond via dynamic smartEX inventory.',
+    longDescription: 'Experience the world-renowned Shinkansen high-speed bullet train with guaranteed reserved seating in the Ordinary Car. Powered by dynamic smartEX real-time inventory, select your exact origin and destination stations across the Tokaido, Sanyo, and Kyushu lines (Nozomi, Mizuho, Hikari, Kodama, Sakura). Includes oversized baggage allotment support and scenic Mt. Fuji side window seat allocation.',
+    supplierId: 'sup-jp-smartex',
+    supplierName: 'smartEX / JR Central & JR West',
+    supplierProductCode: 'SMARTEX-ORD-RES',
+    category: 'Rail',
+    subcategory: 'Shinkansen High-Speed Rail',
+    duration: 'Flexible by Route (e.g., 2h 15m Tokyo–Kyoto)',
+    operatingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+    operatingHours: '06:00 - 23:30 (Every 3-5 minutes)',
+    adultNetPrice: 13970, // Regular baseline reference
+    childNetPrice: 6980,
+    infantNetPrice: 0,
+    currency: 'JPY',
+    defaultMarkupPercent: 18,
+    buyerMarkupPercent: 18,
+    b2bAgentMarkupPercent: 12,
+    taxPercent: 10,
+    commissionPercent: 10,
+    serviceFeeFixed: 0,
+    sellingPriceStartingFrom: 16480,
+    season: 'All Year',
+    validityFrom: '2024-01-01',
+    validityTo: '2030-12-31',
+    minPax: 1,
+    maxPax: 20,
+    availability: 'INSTANT',
+    bookingRequiredDays: 0,
+    cancellationPolicy: 'Cancellations permitted prior to train departure subject to JR refund fee. 100% non-refundable after scheduled departure.',
+    inclusions: [
+      'Guaranteed reserved seat on scheduled Shinkansen bullet train',
+      'High-speed travel up to 300 km/h with 99.9% on-time reliability',
+      'Free onboard Wi-Fi, AC power outlets, and spacious legroom (104cm pitch)',
+      'Direct digital QR code / smartEX mobile boarding voucher'
+    ],
+    exclusions: [
+      'Meals and beverages (available for purchase onboard or at station kiosks)',
+      'Transfer from hotel to train station (can be bundled with private chauffeur)'
+    ],
+    importantInformation: [
+      'Passengers with total baggage dimensions exceeding 160 cm must select the Oversized Baggage Area reservation during checkout.',
+      'Children aged 6–11 require a Child ticket (50% fare). Children under 6 travel free on lap unless occupying an individual reserved seat.',
+      'Mt. Fuji view is on Seat E (2-row side) on westbound trains (Tokyo to Kyoto/Osaka) and Seat A on eastbound trains.'
+    ],
+    meetingPoint: 'Dedicated Shinkansen ticket gates at your selected origin station.',
+    heroImage: 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1600&q=80',
+    images: [
+      'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1600&q=80',
+      'https://images.unsplash.com/photo-1538332576228-eb5b4c4de6f5?auto=format&fit=crop&w=1600&q=80'
+    ],
+    status: 'ACTIVE'
+  },
+  {
+    id: 'RAIL-JP-GREEN-RESERVED',
+    sku: 'JP-SHINKANSEN-GRN-RES',
+    destinationId: 'dest-japan',
+    destinationName: 'Japan',
+    country: 'Japan',
+    city: 'Tokyo, Kyoto, Osaka & National Network',
+    productType: 'Rail',
+    name: 'Green Car — First Class / Reserved Seat',
+    shortDescription: 'First-class luxury Shinkansen travel with 2x2 executive seating, hot oshibori towel service, reading lamps, and quiet car atmosphere.',
+    longDescription: 'Upgrade your clients to the pinnacle of Japanese high-speed rail comfort. The Green Car features ultra-wide plush reclining seats in an exclusive 2x2 configuration with generous 116cm legroom, individual footrests, personal reading lamps, and complimentary moist towel service. Perfect for VIP travelers, business leaders, and discerning luxury holidaymakers between Tokyo, Kyoto, Osaka, Hiroshima and Hakata.',
+    supplierId: 'sup-jp-smartex',
+    supplierName: 'smartEX / JR Central & JR West',
+    supplierProductCode: 'SMARTEX-GRN-RES',
+    category: 'Rail',
+    subcategory: 'First Class Shinkansen High-Speed Rail',
+    duration: 'Flexible by Route (e.g., 2h 15m Tokyo–Kyoto)',
+    operatingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+    operatingHours: '06:00 - 23:30 (Every 3-5 minutes)',
+    adultNetPrice: 19040, // Regular baseline reference
+    childNetPrice: 12050,
+    infantNetPrice: 0,
+    currency: 'JPY',
+    defaultMarkupPercent: 18,
+    buyerMarkupPercent: 18,
+    b2bAgentMarkupPercent: 12,
+    taxPercent: 10,
+    commissionPercent: 10,
+    serviceFeeFixed: 0,
+    sellingPriceStartingFrom: 22460,
+    season: 'All Year',
+    validityFrom: '2024-01-01',
+    validityTo: '2030-12-31',
+    minPax: 1,
+    maxPax: 20,
+    availability: 'INSTANT',
+    bookingRequiredDays: 0,
+    cancellationPolicy: 'Cancellations permitted prior to departure subject to JR standard refund policies.',
+    inclusions: [
+      'First Class Green Car reserved seat with luxurious 2x2 wide seating layout',
+      'Personal footrest, reading light, private power outlet, and seat heater',
+      'Dedicated Green Car attendant service with hot oshibori towel presentation',
+      'Whisper-quiet cabin ambiance ideal for VIPs and executives',
+      'Digital QR code / smartEX instant mobile boarding pass'
+    ],
+    exclusions: [
+      'Meals and drinks (refreshment cart service available onboard)',
+      'Porter baggage service at train platforms'
+    ],
+    importantInformation: [
+      'Oversized baggage rules apply for suitcases over 160cm total dimensions.',
+      'Green Car tickets require full Green surcharge for children occupying their own seat.',
+      'Scenic Mt. Fuji view is on Seat D on westbound trains (Tokyo to Kyoto/Osaka).'
+    ],
+    meetingPoint: 'Dedicated Shinkansen ticket gates at your selected origin station.',
+    heroImage: 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?auto=format&fit=crop&w=1600&q=80',
+    images: [
+      'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?auto=format&fit=crop&w=1600&q=80',
+      'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=1600&q=80'
+    ],
+    status: 'ACTIVE'
+  },
   // --- JAPAN PRODUCTS ---
   {
     id: 'jp-tok-01',
@@ -824,7 +948,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     supplierId: 'sup-eu-02',
     supplierName: 'Swiss Alpine Panorama Rail & Hospitality Group',
     supplierProductCode: 'SBB-GLAC-EXCEL',
-    category: 'Rail',
+    category: 'Day Trips',
     subcategory: 'Luxury Scenic Rail',
     duration: '8.5 Hours',
     operatingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],

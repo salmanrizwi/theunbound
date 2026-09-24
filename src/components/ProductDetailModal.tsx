@@ -33,6 +33,11 @@ import {
   Globe2,
   ChevronDown
 } from 'lucide-react';
+import { RailJourneyModal } from './RailJourneyModal';
+import { isRailProduct } from '../services/rail/JapanRailJourneyDataService';
+import { isHotelService, isVisaService } from '../services/configuratorRoutingEngine';
+import { HotelConfigurator } from './B2BAgentPortal/AddHotelToQuoteModal';
+import { VisaServiceAndFacilitationConfigurator } from './Configurators/VisaServiceAndFacilitationConfigurator';
 
 interface ProductDetailModalProps {
   product: Product;
@@ -50,6 +55,81 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   hidePrice = false
 }) => {
   const { user, isAuthenticated, openAuthModal, role } = useAuth();
+
+  // NON-NEGOTIABLE RULE: Japan Rail / Shinkansen products MUST only use Shinkansen Dynamic Journey Configurator
+  if (isRailProduct(product)) {
+    return (
+      <RailJourneyModal
+        product={product}
+        portalOrigin={role === 'BUYER' ? 'BUYER' : 'B2B_AGENT'}
+        onClose={onClose}
+        onAddToQuote={() => {
+          onClose();
+        }}
+      />
+    );
+  }
+
+  // NON-NEGOTIABLE RULE: Hotel / Accommodation products MUST only use Hotel Configurator
+  if (isHotelService(product)) {
+    return (
+      <HotelConfigurator
+        hotel={{
+          id: product.id,
+          name: product.name,
+          city: product.city || 'Tokyo',
+          country: product.country || 'Japan',
+          destinationId: product.destinationId || 'dest-japan',
+          starRating: 5,
+          roomTypes: [
+            {
+              id: `room-${product.id}`,
+              name: 'Standard Room',
+              rates: [
+                {
+                  id: `rate-${product.id}`,
+                  name: 'Wholesale Rate',
+                  mealPlan: 'BB',
+                  singleNetRate: product.adultNetPrice || 250,
+                  doubleNetRate: product.adultNetPrice || 300,
+                  tripleNetRate: (product.adultNetPrice || 300) * 1.4,
+                  extraBedRate: 80,
+                  childRate: 40,
+                  markupPercent: product.defaultMarkupPercent || 15,
+                  taxPercent: 10,
+                  feePercent: 2.5,
+                  currency: product.currency || 'USD',
+                  validityFrom: '2026-01-01',
+                  validityTo: '2026-12-31'
+                }
+              ]
+            }
+          ]
+        } as any}
+        isOpen={true}
+        onClose={onClose}
+        onSuccess={() => {
+          onClose();
+        }}
+      />
+    );
+  }
+
+  // NON-NEGOTIABLE RULE: Visa Service & Facilitation products MUST only use Visa Service & Facilitation Configurator
+  if (isVisaService(product)) {
+    return (
+      <VisaServiceAndFacilitationConfigurator
+        isOpen={true}
+        itemOrProduct={product}
+        portalOrigin={role === 'BUYER' ? 'BUYER' : 'B2B_AGENT'}
+        onClose={onClose}
+        onSuccess={() => {
+          onClose();
+        }}
+      />
+    );
+  }
+
   const isAuthorized = canUserAccessB2BInventory(user).allowed;
 
   if (!isAuthorized) {
@@ -159,10 +239,10 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-6 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
       <div 
         id="product-detail-modal"
-        className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 max-w-5xl w-full overflow-hidden flex flex-col max-h-[96vh] sm:max-h-[94vh]"
+        className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 max-w-5xl w-full overflow-hidden flex flex-col max-h-[94dvh] sm:max-h-[90vh]"
       >
         {/* Modal Top Nav Bar */}
         <div className="bg-slate-900 text-white px-3.5 sm:px-6 py-2.5 sm:py-4 flex items-center justify-between border-b border-slate-800 shrink-0">

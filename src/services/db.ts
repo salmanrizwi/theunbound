@@ -141,7 +141,12 @@ import {
   BookingProgressStage,
   OperationsCalendarEvent,
   PaymentSchedule,
-  BookingFinancialProfitability
+  BookingFinancialProfitability,
+  TravelProtectionPlan,
+  VipGroundService,
+  ConnectivityPlan,
+  StructuredVisaRequirement,
+  VisaAssistanceService
 } from '../types';
 import {
   DEFAULT_LEAD_STAGES,
@@ -170,9 +175,20 @@ import { INITIAL_HOMEPAGE_CONFIG } from '../data/initialHomepage';
 import { INITIAL_CAMPAIGNS } from '../data/initialCampaigns';
 import { INITIAL_ROSTER_RESOURCES } from '../data/initialRoster';
 import { INITIAL_VISAS } from '../data/initialVisas';
+import { 
+  INITIAL_TRAVEL_PROTECTION_PLANS, 
+  INITIAL_VIP_GROUND_SERVICES, 
+  INITIAL_CONNECTIVITY_PLANS 
+} from '../data/initialAncillaryServices';
 import { INITIAL_FOOTER_CONFIG } from '../data/initialFooter';
 import { INITIAL_B2B_PACKAGES } from '../data/initialPackages';
 import { INITIAL_LEADS } from '../data/initialLeads';
+import { INITIAL_RAIL_STATIONS } from '../data/initialRailStations';
+import { INITIAL_RAIL_ROUTES } from '../data/initialRailRoutes';
+import { INITIAL_RAIL_RATES } from '../data/initialRailRates';
+import { INITIAL_RAIL_SEASON_CALENDAR } from '../data/initialRailSeasons';
+import { INITIAL_RAIL_MARKUP_RULE } from '../data/initialRailMarkup';
+import { RailStation, RailRoute, RailRate, RailMarkupRule, RailSeasonCalendarPeriod } from '../types/rail';
 import { EmailNotificationService } from './emailNotificationService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { googleBusinessService } from './googleBusinessService';
@@ -1423,10 +1439,17 @@ export class AppDatabase {
       this.syncCollectionSafely<DestinationFAQ>('faqs', 'destination_faqs');
       this.syncCollectionSafely<B2BPackage>('b2b_packages', 'b2b_packages');
       this.syncCollectionSafely<VisaProduct>('visas', 'visas');
+      this.syncCollectionSafely<TravelProtectionPlan>('travel_protection_plans', 'travel_protection_plans');
+      this.syncCollectionSafely<VipGroundService>('vip_ground_services', 'vip_ground_services');
+      this.syncCollectionSafely<ConnectivityPlan>('connectivity_plans', 'connectivity_plans');
       this.syncCollectionSafely<Promotion>('promotions', 'promotions');
       this.syncCollectionSafely<GalleryImage>('gallery_items', 'gallery');
       this.syncCollectionSafely<GoogleReview>('google_reviews', 'reviews');
       this.syncCollectionSafely<BlogArticle>('blog_articles', 'blogs');
+      this.syncCollectionSafely<RailStation>('rail_stations', 'rail_stations');
+      this.syncCollectionSafely<RailRoute>('rail_routes', 'rail_routes');
+      this.syncCollectionSafely<RailRate>('rail_rates', 'rail_rates');
+      this.syncCollectionSafely<RailSeasonCalendarPeriod>('rail_seasons', 'rail_seasons');
 
       // Check if user is already authenticated at init
       if (auth.currentUser) {
@@ -4261,8 +4284,312 @@ export class AppDatabase {
   // ==========================================
   public getProducts(): Product[] {
     const raw = this.getItem<Product[]>('products', envService.allowDemoData() ? INITIAL_PRODUCTS : []);
+    // Ensure the two commercial Japan Rail master products are always present and active
+    const hasOrd = raw.some(p => p.id === 'RAIL-JP-ORD-RESERVED');
+    const hasGrn = raw.some(p => p.id === 'RAIL-JP-GREEN-RESERVED');
+    if (!hasOrd || !hasGrn) {
+      const missing = INITIAL_PRODUCTS.filter(p => (p.id === 'RAIL-JP-ORD-RESERVED' && !hasOrd) || (p.id === 'RAIL-JP-GREEN-RESERVED' && !hasGrn));
+      raw.unshift(...missing);
+    }
     const deletedSet = this.getDeletedEntityIds();
     return raw.filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Product_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED');
+  }
+
+  // ==========================================
+  // JAPAN RAIL INVENTORY & DYNAMIC PRICING CRUD
+  // ==========================================
+  public getRailStations(): RailStation[] {
+    const deleted = this.getDeletedEntityIds();
+    const raw = this.getItem<RailStation[]>('rail_stations', INITIAL_RAIL_STATIONS);
+    return raw.filter(s => s && s.stationId && !deleted.has(s.stationId) && !deleted.has(`rail_stations_${s.stationId}`) && !deleted.has(`RailStation_${s.stationId}`));
+  }
+
+  public saveRailStation(station: RailStation, user?: User | null): void {
+    if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER') {
+      throw new Error('Unauthorized: Only administrators may modify Japan Rail stations.');
+    }
+    const list = this.getRailStations();
+    const idx = list.findIndex(s => s.stationId === station.stationId);
+    const now = new Date().toISOString();
+    const updated: RailStation = {
+      ...station,
+      active: station.active !== false,
+      updatedAt: now
+    };
+    if (idx >= 0) {
+      list[idx] = updated;
+    } else {
+      updated.createdAt = now;
+      list.push(updated);
+    }
+    this.unmarkEntityDeleted('rail_stations', station.stationId);
+    this.setItem('rail_stations', list);
+    this.syncFirestoreDoc('rail_stations', station.stationId, updated);
+    this.logAudit(
+      user || null,
+      (idx >= 0 ? 'SETTINGS_UPDATED' : 'PRODUCT_CREATED') as any,
+      'Product' as any,
+      station.stationId,
+      `Saved Japan Rail station: ${station.displayName || station.stationName} (${station.stationCode})`
+    );
+    this.notify();
+  }
+
+  public async deleteRailStationAsync(stationId: string, user?: User | null): Promise<boolean> {
+    if (user && (user.role === 'B2B_AGENT' || user.role === 'BUYER')) {
+      throw new Error('Permission Denied: B2B Agents and Buyers cannot delete Japan Rail inventory.');
+    }
+    const list = this.getRailStations();
+    const target = list.find(s => s.stationId === stationId);
+    if (!target) return false;
+
+    const filtered = list.filter(s => s.stationId !== stationId);
+    this.setItem('rail_stations', filtered);
+    this.markEntityDeleted('rail_stations', stationId, { name: target.stationName, code: target.stationCode });
+    await this.deleteFirestoreDocAsync('rail_stations', stationId);
+    this.logAudit(
+      user || null,
+      'PRODUCT_ARCHIVED' as any,
+      'Product' as any,
+      stationId,
+      `Deleted Japan Rail station: ${target.displayName || target.stationName} (${target.stationCode})`
+    );
+    this.notify();
+    return true;
+  }
+
+  public deleteRailStation(stationId: string, user?: User | null): void {
+    this.deleteRailStationAsync(stationId, user).catch(err => {
+      console.error('[DB] deleteRailStation error:', err);
+    });
+  }
+
+  public getRailRoutes(): RailRoute[] {
+    const deleted = this.getDeletedEntityIds();
+    const raw = this.getItem<RailRoute[]>('rail_routes', INITIAL_RAIL_ROUTES);
+    return raw.filter(r => r && r.routeId && !deleted.has(r.routeId) && !deleted.has(`rail_routes_${r.routeId}`) && !deleted.has(`RailRoute_${r.routeId}`));
+  }
+
+  public saveRailRoute(route: RailRoute, user?: User | null): void {
+    if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER') {
+      throw new Error('Unauthorized: Only administrators may modify Japan Rail routes.');
+    }
+    const list = this.getRailRoutes();
+    const idx = list.findIndex(r => r.routeId === route.routeId);
+    const now = new Date().toISOString();
+    const updated: RailRoute = {
+      ...route,
+      active: route.active !== false,
+      updatedAt: now
+    };
+    if (idx >= 0) {
+      list[idx] = updated;
+    } else {
+      updated.createdAt = now;
+      list.push(updated);
+    }
+    this.unmarkEntityDeleted('rail_routes', route.routeId);
+    this.setItem('rail_routes', list);
+    this.syncFirestoreDoc('rail_routes', route.routeId, updated);
+    this.logAudit(
+      user || null,
+      (idx >= 0 ? 'SETTINGS_UPDATED' : 'PRODUCT_CREATED') as any,
+      'Product' as any,
+      route.routeId,
+      `Saved Japan Rail route: ${route.originStationName} -> ${route.destinationStationName}`
+    );
+    this.notify();
+  }
+
+  public async deleteRailRouteAsync(routeId: string, user?: User | null): Promise<boolean> {
+    if (user && (user.role === 'B2B_AGENT' || user.role === 'BUYER')) {
+      throw new Error('Permission Denied: B2B Agents and Buyers cannot delete Japan Rail inventory.');
+    }
+    const list = this.getRailRoutes();
+    const target = list.find(r => r.routeId === routeId);
+    if (!target) return false;
+
+    const filtered = list.filter(r => r.routeId !== routeId);
+    this.setItem('rail_routes', filtered);
+    this.markEntityDeleted('rail_routes', routeId, { origin: target.originStationName, dest: target.destinationStationName });
+    await this.deleteFirestoreDocAsync('rail_routes', routeId);
+    this.logAudit(
+      user || null,
+      'PRODUCT_ARCHIVED' as any,
+      'Product' as any,
+      routeId,
+      `Deleted Japan Rail route: ${target.originStationName} -> ${target.destinationStationName} (${routeId})`
+    );
+    this.notify();
+    return true;
+  }
+
+  public deleteRailRoute(routeId: string, user?: User | null): void {
+    this.deleteRailRouteAsync(routeId, user).catch(err => {
+      console.error('[DB] deleteRailRoute error:', err);
+    });
+  }
+
+  public getRailRates(): RailRate[] {
+    const deleted = this.getDeletedEntityIds();
+    const raw = this.getItem<RailRate[]>('rail_rates', INITIAL_RAIL_RATES);
+    return raw.filter(r => r && r.rateId && !deleted.has(r.rateId) && !deleted.has(`rail_rates_${r.rateId}`) && !deleted.has(`RailRate_${r.rateId}`));
+  }
+
+  public saveRailRate(rate: RailRate, user?: User | null): void {
+    if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER') {
+      throw new Error('Unauthorized: Only administrators may modify Japan Rail rates.');
+    }
+    const list = this.getRailRates();
+    const idx = list.findIndex(r => r.rateId === rate.rateId);
+    const now = new Date().toISOString();
+    const updated: RailRate = {
+      ...rate,
+      active: rate.active !== false,
+      updatedAt: now
+    };
+    if (idx >= 0) {
+      list[idx] = updated;
+    } else {
+      updated.createdAt = now;
+      list.push(updated);
+    }
+    this.unmarkEntityDeleted('rail_rates', rate.rateId);
+    this.setItem('rail_rates', list);
+    this.syncFirestoreDoc('rail_rates', rate.rateId, updated);
+    this.logAudit(
+      user || null,
+      (idx >= 0 ? 'SETTINGS_UPDATED' : 'PRODUCT_CREATED') as any,
+      'Product' as any,
+      rate.rateId,
+      `Saved Japan Rail rate: ${rate.rateId} (${rate.carType} Car, regular total: ¥${rate.regularTotalFareJPY})`
+    );
+    this.notify();
+  }
+
+  public async deleteRailRateAsync(rateId: string, user?: User | null): Promise<boolean> {
+    if (user && (user.role === 'B2B_AGENT' || user.role === 'BUYER')) {
+      throw new Error('Permission Denied: B2B Agents and Buyers cannot delete Japan Rail inventory.');
+    }
+    const list = this.getRailRates();
+    const target = list.find(r => r.rateId === rateId);
+    if (!target) return false;
+
+    const filtered = list.filter(r => r.rateId !== rateId);
+    this.setItem('rail_rates', filtered);
+    this.markEntityDeleted('rail_rates', rateId, { carType: target.carType, fare: target.regularTotalFareJPY });
+    await this.deleteFirestoreDocAsync('rail_rates', rateId);
+    this.logAudit(
+      user || null,
+      'PRODUCT_ARCHIVED' as any,
+      'Product' as any,
+      rateId,
+      `Deleted Japan Rail rate record: ${rateId}`
+    );
+    this.notify();
+    return true;
+  }
+
+  public deleteRailRate(rateId: string, user?: User | null): void {
+    this.deleteRailRateAsync(rateId, user).catch(err => {
+      console.error('[DB] deleteRailRate error:', err);
+    });
+  }
+
+  public getRailSeasons(): RailSeasonCalendarPeriod[] {
+    const deleted = this.getDeletedEntityIds();
+    const raw = this.getItem<RailSeasonCalendarPeriod[]>('rail_seasons', INITIAL_RAIL_SEASON_CALENDAR);
+    return raw.filter(s => s && s.id && !deleted.has(s.id) && !deleted.has(`rail_seasons_${s.id}`) && !deleted.has(`RailSeason_${s.id}`));
+  }
+
+  public saveRailSeason(season: RailSeasonCalendarPeriod, user?: User | null): void {
+    if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER') {
+      throw new Error('Unauthorized: Only administrators may configure Japan Rail season calendars.');
+    }
+    if (!season.startDate || !season.endDate) {
+      throw new Error('Season start date and end date are required.');
+    }
+    if (season.endDate < season.startDate) {
+      throw new Error('Invalid season date range: End date cannot be earlier than start date.');
+    }
+
+    const list = this.getRailSeasons();
+    const idx = list.findIndex(s => s.id === season.id);
+    const now = new Date().toISOString();
+    const updated: RailSeasonCalendarPeriod = {
+      ...season,
+      active: season.active !== false,
+      priority: typeof season.priority === 'number' ? season.priority : 50,
+      updatedAt: now
+    };
+    if (idx >= 0) {
+      list[idx] = updated;
+    } else {
+      updated.createdAt = now;
+      list.unshift(updated);
+    }
+
+    this.unmarkEntityDeleted('rail_seasons', season.id);
+    this.setItem('rail_seasons', list);
+    this.syncFirestoreDoc('rail_seasons', season.id, updated);
+    this.logAudit(
+      user || null,
+      (idx >= 0 ? 'SETTINGS_UPDATED' : 'PRODUCT_CREATED') as any,
+      'Product' as any,
+      season.id,
+      `Saved Japan Rail season: ${season.title} (${season.startDate} → ${season.endDate})`
+    );
+    this.notify();
+  }
+
+  public async deleteRailSeasonAsync(seasonId: string, user?: User | null): Promise<boolean> {
+    if (user && (user.role === 'B2B_AGENT' || user.role === 'BUYER')) {
+      throw new Error('Permission Denied: B2B Agents and Buyers cannot delete Japan Rail season configurations.');
+    }
+    const list = this.getRailSeasons();
+    const target = list.find(s => s.id === seasonId);
+    if (!target) return false;
+
+    const filtered = list.filter(s => s.id !== seasonId);
+    this.setItem('rail_seasons', filtered);
+    this.markEntityDeleted('rail_seasons', seasonId, { title: target.title, range: `${target.startDate} to ${target.endDate}` });
+    await this.deleteFirestoreDocAsync('rail_seasons', seasonId);
+    this.logAudit(
+      user || null,
+      'PRODUCT_ARCHIVED' as any,
+      'Product' as any,
+      seasonId,
+      `Deleted Japan Rail season: ${target.title} (${target.startDate} → ${target.endDate})`
+    );
+    this.notify();
+    return true;
+  }
+
+  public deleteRailSeason(seasonId: string, user?: User | null): void {
+    this.deleteRailSeasonAsync(seasonId, user).catch(err => {
+      console.error('[DB] deleteRailSeason error:', err);
+    });
+  }
+
+  public getRailMarkupRule(): RailMarkupRule {
+    return this.getItem<RailMarkupRule>('rail_markup_rules', INITIAL_RAIL_MARKUP_RULE);
+  }
+
+  public saveRailMarkupRule(rule: RailMarkupRule, user?: User | null): void {
+    if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER') {
+      throw new Error('Unauthorized: Only administrators may modify Japan Rail markup rules.');
+    }
+    const updated = { ...rule, lastUpdated: new Date().toISOString() };
+    this.setItem('rail_markup_rules', updated);
+    this.syncFirestoreDoc('rail_markup_rules', rule.id || 'markup-jp-rail-default', updated);
+    this.logAudit(
+      user || null,
+      'SETTINGS_UPDATED' as any,
+      'Product' as any,
+      rule.id || 'markup-jp-rail-default',
+      `Updated Japan Rail dynamic markup rules (B2B: ${rule.b2bAgentMarkupPercent}%, Buyer: ${rule.buyerMarkupPercent}%, Min margin: ¥${rule.minMarginJPY})`
+    );
+    this.notify();
   }
 
   public getProductById(id: string): Product | undefined {
@@ -15511,6 +15838,123 @@ export class AppDatabase {
     this.deleteFirestoreDoc('visas', visaId);
     if (target) {
       this.logAudit(user || null, 'PRODUCT_ARCHIVED', 'VisaProduct', visaId, `Deleted visa product: ${target.country} - ${target.visaType}`);
+    }
+  }
+
+  // ==========================================
+  // TRAVEL PROTECTION & INTERNATIONAL MEDICAL
+  // ==========================================
+  public getTravelProtectionPlans(): TravelProtectionPlan[] {
+    return this.getItem<TravelProtectionPlan[]>('travel_protection_plans', envService.allowDemoData() ? INITIAL_TRAVEL_PROTECTION_PLANS : []);
+  }
+
+  public getTravelProtectionPlanById(id: string): TravelProtectionPlan | undefined {
+    return this.getTravelProtectionPlans().find(p => p.id === id);
+  }
+
+  public saveTravelProtectionPlan(plan: TravelProtectionPlan, user?: User | null): void {
+    const plans = this.getTravelProtectionPlans();
+    const index = plans.findIndex(p => p.id === plan.id);
+    const now = new Date().toISOString();
+    let saved: TravelProtectionPlan;
+    if (index >= 0) {
+      saved = { ...plan, updatedAt: now };
+      plans[index] = saved;
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', plan.id, `Updated travel protection: ${plan.serviceName}`);
+    } else {
+      saved = { ...plan, id: plan.id || `PROT-${Date.now()}`, updatedAt: now };
+      plans.unshift(saved);
+      this.logAudit(user || null, 'PRODUCT_CREATED', 'Product', saved.id, `Created travel protection: ${plan.serviceName}`);
+    }
+    this.syncFirestoreDoc('travel_protection_plans', saved.id, saved);
+    this.setItem('travel_protection_plans', plans);
+  }
+
+  public deleteTravelProtectionPlan(id: string, user?: User | null): void {
+    const plans = this.getTravelProtectionPlans();
+    const target = plans.find(p => p.id === id);
+    this.setItem('travel_protection_plans', plans.filter(p => p.id !== id));
+    this.deleteFirestoreDoc('travel_protection_plans', id);
+    if (target) {
+      this.logAudit(user || null, 'PRODUCT_ARCHIVED', 'Product', id, `Deleted travel protection: ${target.serviceName}`);
+    }
+  }
+
+  // ==========================================
+  // VIP GROUND SERVICES
+  // ==========================================
+  public getVipGroundServices(): VipGroundService[] {
+    return this.getItem<VipGroundService[]>('vip_ground_services', envService.allowDemoData() ? INITIAL_VIP_GROUND_SERVICES : []);
+  }
+
+  public getVipGroundServiceById(id: string): VipGroundService | undefined {
+    return this.getVipGroundServices().find(s => s.id === id);
+  }
+
+  public saveVipGroundService(service: VipGroundService, user?: User | null): void {
+    const services = this.getVipGroundServices();
+    const index = services.findIndex(s => s.id === service.id);
+    const now = new Date().toISOString();
+    let saved: VipGroundService;
+    if (index >= 0) {
+      saved = { ...service, updatedAt: now };
+      services[index] = saved;
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', service.id, `Updated VIP ground service: ${service.name}`);
+    } else {
+      saved = { ...service, id: service.id || `VIP-${Date.now()}`, updatedAt: now };
+      services.unshift(saved);
+      this.logAudit(user || null, 'PRODUCT_CREATED', 'Product', saved.id, `Created VIP ground service: ${service.name}`);
+    }
+    this.syncFirestoreDoc('vip_ground_services', saved.id, saved);
+    this.setItem('vip_ground_services', services);
+  }
+
+  public deleteVipGroundService(id: string, user?: User | null): void {
+    const services = this.getVipGroundServices();
+    const target = services.find(s => s.id === id);
+    this.setItem('vip_ground_services', services.filter(s => s.id !== id));
+    this.deleteFirestoreDoc('vip_ground_services', id);
+    if (target) {
+      this.logAudit(user || null, 'PRODUCT_ARCHIVED', 'Product', id, `Deleted VIP ground service: ${target.name}`);
+    }
+  }
+
+  // ==========================================
+  // 5G CONNECTIVITY & eSIM PACKAGES
+  // ==========================================
+  public getConnectivityPlans(): ConnectivityPlan[] {
+    return this.getItem<ConnectivityPlan[]>('connectivity_plans', envService.allowDemoData() ? INITIAL_CONNECTIVITY_PLANS : []);
+  }
+
+  public getConnectivityPlanById(id: string): ConnectivityPlan | undefined {
+    return this.getConnectivityPlans().find(c => c.id === id);
+  }
+
+  public saveConnectivityPlan(plan: ConnectivityPlan, user?: User | null): void {
+    const plans = this.getConnectivityPlans();
+    const index = plans.findIndex(c => c.id === plan.id);
+    const now = new Date().toISOString();
+    let saved: ConnectivityPlan;
+    if (index >= 0) {
+      saved = { ...plan, updatedAt: now };
+      plans[index] = saved;
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', plan.id, `Updated 5G connectivity: ${plan.name}`);
+    } else {
+      saved = { ...plan, id: plan.id || `ESIM-${Date.now()}`, updatedAt: now };
+      plans.unshift(saved);
+      this.logAudit(user || null, 'PRODUCT_CREATED', 'Product', saved.id, `Created 5G connectivity: ${plan.name}`);
+    }
+    this.syncFirestoreDoc('connectivity_plans', saved.id, saved);
+    this.setItem('connectivity_plans', plans);
+  }
+
+  public deleteConnectivityPlan(id: string, user?: User | null): void {
+    const plans = this.getConnectivityPlans();
+    const target = plans.find(c => c.id === id);
+    this.setItem('connectivity_plans', plans.filter(c => c.id !== id));
+    this.deleteFirestoreDoc('connectivity_plans', id);
+    if (target) {
+      this.logAudit(user || null, 'PRODUCT_ARCHIVED', 'Product', id, `Deleted 5G connectivity: ${target.name}`);
     }
   }
 

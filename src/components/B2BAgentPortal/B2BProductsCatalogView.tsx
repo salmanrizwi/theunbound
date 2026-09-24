@@ -24,6 +24,7 @@ import { Product, Destination } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { formatCurrency } from '../../services/pricingEngine';
 import { AddProductToQuoteModal } from './AddProductToQuoteModal';
+import { isRailProduct } from '../../services/rail/JapanRailJourneyDataService';
 
 interface B2BProductsCatalogViewProps {
   products: Product[];
@@ -45,6 +46,14 @@ export const B2BProductsCatalogView: React.FC<B2BProductsCatalogViewProps> = ({
   const [selectedProductDetails, setSelectedProductDetails] = useState<Product | null>(null);
   const [selectedProductForQuoteModal, setSelectedProductForQuoteModal] = useState<Product | null>(null);
   const [quoteSuccessNotification, setQuoteSuccessNotification] = useState<{ product: Product; details: any } | null>(null);
+
+  const handleOpenProductDetails = (prod: Product) => {
+    if (isRailProduct(prod)) {
+      setSelectedProductForQuoteModal(prod);
+    } else {
+      setSelectedProductDetails(prod);
+    }
+  };
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -302,7 +311,7 @@ export const B2BProductsCatalogView: React.FC<B2BProductsCatalogViewProps> = ({
 
                     {/* Card Actions: View Details & Configure */}
                     <button
-                      onClick={() => setSelectedProductDetails(prod)}
+                      onClick={() => handleOpenProductDetails(prod)}
                       className="w-full py-2 px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
                     >
                       <Eye className="w-3.5 h-3.5 text-slate-500" />
@@ -362,7 +371,7 @@ export const B2BProductsCatalogView: React.FC<B2BProductsCatalogViewProps> = ({
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end space-x-2">
                           <button
-                            onClick={() => setSelectedProductDetails(prod)}
+                            onClick={() => handleOpenProductDetails(prod)}
                             className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
                             title="View Details"
                           >

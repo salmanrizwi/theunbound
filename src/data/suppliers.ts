@@ -84,5 +84,19 @@ export const SUPPLIERS: Supplier[] = [
     contractStatus: 'ACTIVE',
     paymentTerms: 'Instant Ticket Issuance / Direct Billing',
     cancellationTerms: 'Exchangeable with 10% fee up to 24h prior'
+  },
+  {
+    id: 'sup-jp-smartex',
+    name: 'smartEX / Central Japan Railway & West Japan Railway',
+    country: 'Japan',
+    destination: 'Japan',
+    contactPerson: 'JR Shinkansen B2B Desk',
+    email: 'b2b-ticketing@smartex.jr-central.co.jp',
+    phone: '+81 3 3212 2121',
+    website: 'https://smart-ex.jp',
+    currency: 'JPY',
+    contractStatus: 'ACTIVE',
+    paymentTerms: 'Real-time API / Net 15 Days Commercial Settlement',
+    cancellationTerms: 'Free change before departure, standard JR refund policy'
   }
 ];

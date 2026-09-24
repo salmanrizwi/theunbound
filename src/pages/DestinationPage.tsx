@@ -362,8 +362,14 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
       }
 
       // City filter
-      if (filters.city && p.city.toLowerCase() !== filters.city.toLowerCase()) {
-        return false;
+      if (filters.city) {
+        const cityLower = filters.city.toLowerCase();
+        const pCityLower = p.city.toLowerCase();
+        const matchesExact = pCityLower === cityLower;
+        const matchesSub = pCityLower.includes(cityLower) || p.category === 'Rail';
+        if (!matchesExact && !matchesSub) {
+          return false;
+        }
       }
 
       // Category filter

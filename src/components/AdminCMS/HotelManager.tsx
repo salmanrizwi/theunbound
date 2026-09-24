@@ -1100,9 +1100,9 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
       {/* MODAL 1: SINGLE DATE PRICE OVERRIDE & NIGHTLY COST EDITOR                 */}
       {/* ========================================================================= */}
       {selectedDateForPrice && activeCalendarHotel && activeCalendarRoom && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-5">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-lg w-full max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 shrink-0 bg-slate-50/50">
               <div>
                 <span className="text-[10px] font-bold uppercase tracking-wider text-[#008972] block">
                   Calendar Daily Rate Override
@@ -1114,12 +1114,12 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                   Property: {activeCalendarHotel.name}
                 </span>
               </div>
-              <button onClick={() => setSelectedDateForPrice(null)} className="p-1 text-slate-400 hover:text-slate-600">
+              <button onClick={() => setSelectedDateForPrice(null)} className="p-1 text-slate-400 hover:text-slate-600 rounded-lg">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-4">
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-4 modal-body-scroll flex-1 text-xs">
               {/* Rate Label / Season */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Season / Rate Title</label>
@@ -1172,7 +1172,7 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                       type="number"
                       value={overrideExtraBed}
                       onChange={e => setOverrideExtraBed(Number(e.target.value))}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs font-bold font-mono text-slate-900"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs font-mono font-bold text-slate-900"
                     />
                   </div>
                 </div>
@@ -1213,27 +1213,27 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
             </div>
 
             {/* Modal Actions */}
-            <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+            <div className="flex flex-col sm:flex-row items-center justify-between p-4 sm:px-6 py-3 border-t border-slate-100 bg-slate-50 shrink-0 gap-2">
               <button
                 type="button"
                 onClick={() => handleResetDatePrice(selectedDateForPrice)}
-                className="text-xs font-bold text-rose-600 hover:text-rose-800 cursor-pointer"
+                className="text-xs font-bold text-rose-600 hover:text-rose-800 cursor-pointer w-full sm:w-auto text-left"
               >
                 Reset to Standard Base Rate
               </button>
 
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
                 <button
                   type="button"
                   onClick={() => setSelectedDateForPrice(null)}
-                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-200/60 cursor-pointer w-full sm:w-auto text-center"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleSaveDatePriceOverride}
-                  className="px-5 py-2 rounded-xl text-xs font-bold bg-[#008972] text-white hover:bg-[#00C6A6] cursor-pointer shadow-xs"
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-[#008972] text-white hover:bg-[#00C6A6] cursor-pointer shadow-xs w-full sm:w-auto text-center"
                 >
                   Save Nightly Price
                 </button>
@@ -1247,9 +1247,9 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
       {/* MODAL 2: BULK DATE RANGE PRICING TOOL                                      */}
       {/* ========================================================================= */}
       {isBulkPricingOpen && activeCalendarHotel && activeCalendarRoom && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-5">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-lg w-full max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 shrink-0 bg-slate-50/50">
               <div>
                 <span className="text-[10px] font-bold uppercase tracking-wider text-[#008972] block">
                   Bulk Rate Applicator
@@ -1258,12 +1258,12 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                   Set Date Range Prices for {activeCalendarRoom.roomName}
                 </h3>
               </div>
-              <button onClick={() => setIsBulkPricingOpen(false)} className="p-1 text-slate-400 hover:text-slate-600">
+              <button onClick={() => setIsBulkPricingOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 rounded-lg">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-4">
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-4 modal-body-scroll flex-1 text-xs">
               {/* Date Range Selector */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1366,18 +1366,18 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
               </div>
             </div>
 
-            <div className="flex items-center justify-end space-x-2 pt-4 border-t border-slate-100">
+            <div className="flex flex-col sm:flex-row items-center justify-end space-y-2 sm:space-y-0 sm:space-x-2 p-4 sm:px-6 py-3 border-t border-slate-100 bg-slate-50 shrink-0">
               <button
                 type="button"
                 onClick={() => setIsBulkPricingOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-200/60 cursor-pointer text-center"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleApplyBulkPricing}
-                className="px-5 py-2 rounded-xl text-xs font-bold bg-[#008972] text-white hover:bg-[#00C6A6] cursor-pointer shadow-xs"
+                className="w-full sm:w-auto px-5 py-2 rounded-xl text-xs font-bold bg-[#008972] text-white hover:bg-[#00C6A6] cursor-pointer shadow-xs text-center"
               >
                 Apply Range Rates to Calendar
               </button>
@@ -1390,45 +1390,44 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
       {/* MODAL 3: FULL HOTEL PROPERTY & PER-NIGHT ROOM EDIT MODAL                  */}
       {/* ========================================================================= */}
       {isEditing && editingHotel && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-4xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto flex flex-col justify-between">
-            <div>
-              {/* Modal Header */}
-              <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-6">
-                <div>
-                  <div className="flex items-center space-x-2 text-[#008972] font-bold text-xs uppercase tracking-wider">
-                    <HotelIcon className="w-4 h-4" />
-                    <span>{editingHotel.id ? 'Configure Hotel & Per-Night Rates' : 'Create New Hotel'}</span>
-                  </div>
-                  <h3 className="text-lg font-bold text-slate-900 mt-1">
-                    {editingHotel.name || 'New Accommodations Contract'}
-                  </h3>
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-4xl w-full max-h-[94dvh] sm:max-h-[90vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-4 sm:p-6 pb-4 border-b border-slate-100 shrink-0 bg-white">
+              <div>
+                <div className="flex items-center space-x-2 text-[#008972] font-bold text-xs uppercase tracking-wider">
+                  <HotelIcon className="w-4 h-4" />
+                  <span>{editingHotel.id ? 'Configure Hotel & Per-Night Rates' : 'Create New Hotel'}</span>
                 </div>
-                <button onClick={() => setIsEditing(false)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
-                  <X className="w-6 h-6" />
-                </button>
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 mt-1">
+                  {editingHotel.name || 'New Accommodations Contract'}
+                </h3>
               </div>
+              <button onClick={() => setIsEditing(false)} className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 cursor-pointer">
+                <X className="w-5 h-5 sm:w-6 sm:h-6" />
+              </button>
+            </div>
 
-              {/* Sub-tabs */}
-              <div className="flex items-center space-x-2 border-b border-slate-200 pb-3 mb-6">
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('DETAILS')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                    activeSubTab === 'DETAILS'
-                      ? 'bg-[#008972] text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  1. Property Overview
-                </button>
+            {/* Sub-tabs */}
+            <div className="flex items-center space-x-2 border-b border-slate-200 px-4 sm:px-6 py-2.5 bg-slate-50 overflow-x-auto shrink-0 scrollbar-none">
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('DETAILS')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                  activeSubTab === 'DETAILS'
+                    ? 'bg-[#008972] text-white shadow-xs'
+                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                }`}
+              >
+                1. Property Overview
+              </button>
                 <button
                   type="button"
                   onClick={() => setActiveSubTab('ROOMS')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                     activeSubTab === 'ROOMS'
                       ? 'bg-[#008972] text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
                   }`}
                 >
                   2. Room Categories & Per-Night Rates ({editingHotel.roomTypes?.length || 0})
@@ -1436,10 +1435,10 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                 <button
                   type="button"
                   onClick={() => setActiveSubTab('LOCATION')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                     activeSubTab === 'LOCATION'
                       ? 'bg-[#008972] text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
                   }`}
                 >
                   3. Location & Transfers
@@ -1447,10 +1446,10 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                 <button
                   type="button"
                   onClick={() => setActiveSubTab('SEO')}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 whitespace-nowrap shrink-0 ${
                     activeSubTab === 'SEO'
                       ? 'bg-[#008972] text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
                   }`}
                 >
                   <Globe2 className="w-3.5 h-3.5" />
@@ -1458,7 +1457,9 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                 </button>
               </div>
 
-              {/* Tab 1: Details */}
+              {/* Scrollable Modal Body */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 modal-body-scroll text-xs">
+                {/* Tab 1: Details */}
               {activeSubTab === 'DETAILS' && (
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -2257,42 +2258,42 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                   onChange={(newSeo) => setEditingHotel(prev => prev ? ({ ...prev, seo: newSeo, slug: newSeo.slug || prev.slug }) : null)}
                 />
               )}
-            </div>
+              </div>
 
-            {/* Modal Bottom Save Bar */}
-            <div className="flex items-center justify-between pt-6 border-t border-slate-100 mt-6">
-              <div>
-                {editingHotel?.id && (
+              {/* Sticky / Fixed Footer Actions */}
+              <div className="p-4 sm:px-6 py-3 border-t border-slate-100 bg-white/95 backdrop-blur-xs shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="w-full sm:w-auto">
+                  {editingHotel?.id && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(editingHotel.id)}
+                      className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs border border-rose-200 cursor-pointer flex items-center justify-center space-x-1.5 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Hotel</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center space-x-2.5 w-full sm:w-auto justify-end">
                   <button
                     type="button"
-                    onClick={() => handleDelete(editingHotel.id)}
-                    className="px-4 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs border border-rose-200 cursor-pointer flex items-center space-x-1.5 transition-colors"
+                    onClick={() => setIsEditing(false)}
+                    className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-100 cursor-pointer text-center"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Delete Hotel</span>
+                    Cancel
                   </button>
-                )}
-              </div>
-              <div className="flex items-center space-x-3">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(false)}
-                  className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  className="px-8 py-2.5 rounded-xl bg-[#008972] hover:bg-[#00C6A6] text-white font-bold text-xs shadow-xs cursor-pointer flex items-center space-x-2"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>Save Hotel Property</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    className="w-full sm:w-auto px-8 py-2.5 rounded-xl bg-[#008972] hover:bg-[#00C6A6] text-white font-bold text-xs shadow-xs cursor-pointer flex items-center justify-center space-x-2 text-center"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>Save Hotel Property</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
       )}
 
       {/* Delete Confirmation Modal */}

@@ -239,7 +239,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           unitNetPrice: item.calculation.totalNetCost,
           unitSellingPrice: item.calculation.finalTotalSellingPrice,
           totalPrice: item.calculation.finalTotalSellingPrice,
-          currency: quotation.currency
+          currency: quotation.currency,
+          railJourneyDetails: item.railJourneyDetails,
+          japanRailJourneySnapshot: item.japanRailJourneySnapshot,
+          shinkansenJourneyPayload: (item as any).shinkansenJourneyPayload || (item as any).metadata?.shinkansenJourneyPayload,
+          serviceTime: item.serviceTime,
+          notes: item.notes
         }));
 
         if (qItems.length > 0) {
@@ -343,8 +348,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-3xl w-full overflow-hidden my-auto max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 max-w-3xl w-full overflow-hidden my-auto max-h-[94dvh] sm:max-h-[90vh] flex flex-col">
         
         {/* Modal Header */}
         <div className="bg-slate-900 text-white p-5 sm:p-6 flex items-center justify-between shrink-0 border-b-2 border-[#00C6A6]">
@@ -389,13 +394,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         </div>
 
         {/* Modal Body / Scroll Area */}
-        <form onSubmit={handleSubmitBooking} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
-          {errorMessage && (
-            <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center space-x-2">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-              <span>{errorMessage}</span>
-            </div>
-          )}
+        <form onSubmit={handleSubmitBooking} className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6 modal-body-scroll text-xs">
+            {errorMessage && (
+              <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
 
           {/* Product / Package / Itinerary Summary Section */}
           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-4">
@@ -761,9 +767,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </span>
             </label>
           </div>
+        </div>
 
           {/* Modal Footer Actions */}
-          <div className="pt-2 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2 sm:gap-3">
+          <div className="p-4 sm:px-6 py-3 border-t border-slate-200 bg-slate-50 shrink-0 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2 sm:gap-3">
             <button
               type="button"
               onClick={onClose}

@@ -27,6 +27,11 @@ import { Product, CurrencyCode } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
 import { calculateProductPrice, formatCurrency, convertCurrency } from '../../services/pricingEngine';
+import { RailJourneyModal } from '../RailJourneyModal';
+import { isRailProduct } from '../../services/rail/JapanRailJourneyDataService';
+import { isHotelService, isVisaService } from '../../services/configuratorRoutingEngine';
+import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
+import { VisaServiceAndFacilitationConfigurator } from '../Configurators/VisaServiceAndFacilitationConfigurator';
 
 interface AddProductToQuoteModalProps {
   product: Product | null;
@@ -59,6 +64,120 @@ export const AddProductToQuoteModal: React.FC<AddProductToQuoteModalProps> = ({
 }) => {
   const { user } = useAuth();
   const { currency, addProductToQuote, updateQuoteItem } = useQuotation();
+
+  // NON-NEGOTIABLE RULE: Japan Rail / Shinkansen products MUST only use Shinkansen Dynamic Journey Configurator
+  if (product && isRailProduct(product)) {
+    if (!isOpen) return null;
+    return (
+      <RailJourneyModal
+        product={product}
+        portalOrigin="B2B_AGENT"
+        existingQuoteItemId={existingItemId}
+        onClose={onClose}
+        onAddToQuote={(item) => {
+          onClose();
+          if (onSuccess && product) {
+            onSuccess(product, {
+              travelDate: item.travelDate || initialTravelDate || '',
+              adults: item.pax?.adults || initialAdults,
+              children: item.pax?.children || initialChildren,
+              infants: item.pax?.infants || initialInfants
+            });
+          }
+        }}
+      />
+    );
+  }
+
+  // NON-NEGOTIABLE RULE: Hotel / Accommodation products MUST only use Hotel Configurator
+  if (product && isHotelService(product)) {
+    if (!isOpen) return null;
+    return (
+      <AddHotelToQuoteModal
+        hotel={{
+          id: product.id,
+          name: product.name,
+          city: product.city || 'Tokyo',
+          country: product.country || 'Japan',
+          destinationId: product.destinationId || 'dest-japan',
+          starRating: 5,
+          roomTypes: [
+            {
+              id: `room-${product.id}`,
+              name: 'Standard Room',
+              rates: [
+                {
+                  id: `rate-${product.id}`,
+                  name: 'Wholesale Rate',
+                  mealPlan: 'BB',
+                  singleNetRate: product.adultNetPrice || 250,
+                  doubleNetRate: product.adultNetPrice || 300,
+                  tripleNetRate: (product.adultNetPrice || 300) * 1.4,
+                  extraBedRate: 80,
+                  childRate: 40,
+                  markupPercent: product.defaultMarkupPercent || 15,
+                  taxPercent: 10,
+                  feePercent: 2.5,
+                  currency: product.currency || 'USD',
+                  validityFrom: '2026-01-01',
+                  validityTo: '2026-12-31'
+                }
+              ]
+            }
+          ]
+        } as any}
+        isOpen={isOpen}
+        existingItemId={existingItemId}
+        initialCheckInDate={initialTravelDate}
+        initialAdults={initialAdults}
+        initialChildren={initialChildren}
+        initialInfants={initialInfants}
+        initialSpecialRequests={initialNotes}
+        onClose={onClose}
+        onSuccess={() => {
+          onClose();
+          if (onSuccess && product) {
+            onSuccess(product, {
+              travelDate: initialTravelDate || '',
+              adults: initialAdults,
+              children: initialChildren,
+              infants: initialInfants
+            });
+          }
+        }}
+      />
+    );
+  }
+
+  // NON-NEGOTIABLE RULE: Visa Service & Facilitation products MUST only use Visa Service & Facilitation Configurator
+  if (product && isVisaService(product)) {
+    if (!isOpen) return null;
+    return (
+      <VisaServiceAndFacilitationConfigurator
+        isOpen={isOpen}
+        itemOrProduct={product}
+        portalOrigin="B2B_AGENT"
+        existingQuoteItemId={existingItemId}
+        initialTravelDate={initialTravelDate}
+        initialAdults={initialAdults}
+        initialChildren={initialChildren}
+        initialInfants={initialInfants}
+        initialNotes={initialNotes}
+        onClose={onClose}
+        onSuccess={(configuredProduct, details) => {
+          onClose();
+          if (onSuccess && product) {
+            onSuccess(product, {
+              travelDate: details?.travelDate || initialTravelDate || '',
+              adults: details?.applicants || initialAdults,
+              children: initialChildren,
+              infants: initialInfants
+            });
+          }
+        }}
+      />
+    );
+  }
 
   const [adults, setAdults] = useState<number>(initialAdults);
   const [children, setChildren] = useState<number>(initialChildren);
@@ -185,8 +304,39 @@ export const AddProductToQuoteModal: React.FC<AddProductToQuoteModalProps> = ({
 
     const compiledNotes = specificNoteParts.join(' | ') || undefined;
 
+    const activityConfigPayload = {
+      configurationType: 'ACTIVITY_EXPERIENCE' as const,
+      configurator: 'ACTIVITY_EXPERIENCE_CONFIGURATOR' as const,
+      productId: product.id,
+      productName: product.name,
+      category: product.category || 'Activity',
+      city: product.city,
+      country: product.country,
+      travelDate,
+      serviceTime,
+      duration: product.duration || 'Half Day',
+      pax: { adults, children, infants, totalPax: adults + children + infants },
+      selectedAddonIds,
+      pickupLocation,
+      dropoffLocation,
+      flightNumber,
+      luggageCount,
+      guideLanguage,
+      dietaryRequirements,
+      notes: compiledNotes,
+      pricing: calculation,
+      version: 1,
+      configuredAt: new Date().toISOString()
+    };
+
     if (existingItemId) {
-      updateQuoteItem(existingItemId, product, {
+      updateQuoteItem(existingItemId, {
+        ...product,
+        metadata: {
+          ...(product as any).metadata,
+          activityConfigurationPayload: activityConfigPayload
+        }
+      }, {
         adults,
         children,
         infants,
@@ -196,7 +346,13 @@ export const AddProductToQuoteModal: React.FC<AddProductToQuoteModalProps> = ({
         selectedAddonIds
       });
     } else {
-      addProductToQuote(product, {
+      addProductToQuote({
+        ...product,
+        metadata: {
+          ...(product as any).metadata,
+          activityConfigurationPayload: activityConfigPayload
+        }
+      }, {
         adults,
         children,
         infants,
@@ -224,31 +380,34 @@ export const AddProductToQuoteModal: React.FC<AddProductToQuoteModalProps> = ({
   const dayOfWeek = travelDate ? new Date(travelDate).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }) : '';
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 sm:p-6 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 md:p-6 animate-in fade-in duration-200">
       <div 
         id="add-product-to-quote-modal"
-        className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden flex flex-col max-h-[92vh] animate-scaleUp"
+        className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden flex flex-col max-h-[94dvh] sm:max-h-[92dvh] animate-scaleUp"
       >
         {/* Modal Header */}
-        <div className="bg-slate-900 text-white p-5 sm:p-6 flex items-start justify-between">
-          <div className="flex items-start space-x-3.5">
-            <div className="w-11 h-11 rounded-2xl bg-[#00C6A6]/20 border border-[#00C6A6]/40 flex items-center justify-center text-[#00E5C0] shrink-0 mt-0.5">
-              <Compass className="w-6 h-6" />
+        <div className="bg-slate-900 text-white p-3.5 sm:p-5 flex items-start justify-between border-b border-slate-800 shrink-0">
+          <div className="flex items-start space-x-2.5 sm:space-x-3.5 min-w-0">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-[#00C6A6]/20 border border-[#00C6A6]/40 flex items-center justify-center text-[#00E5C0] shrink-0 mt-0.5">
+              <Compass className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="px-2 py-0.5 rounded-full bg-[#00C6A6] text-slate-950 text-[10px] font-black uppercase tracking-wider">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <span className="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-widest text-[#00E5C0] bg-[#00E5C0]/10 px-2 py-0.5 rounded border border-[#00E5C0]/30">
+                  Activity & Experience Configurator
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-[#00C6A6] text-slate-950 text-[9px] sm:text-[10px] font-black uppercase tracking-wider">
                   {product.category || 'Tour & Activity'}
                 </span>
                 {product.city && (
-                  <span className="text-xs text-slate-300 font-medium flex items-center space-x-1">
+                  <span className="text-[11px] sm:text-xs text-slate-300 font-medium flex items-center space-x-1">
                     <MapPin className="w-3 h-3 text-[#00E5C0]" />
                     <span>{product.city}, {product.country}</span>
                   </span>
                 )}
-                <span className="text-xs text-slate-400 font-mono">({product.sku || product.id})</span>
+                <span className="text-[10px] sm:text-xs text-slate-400 font-mono">({product.sku || product.id})</span>
               </div>
-              <h2 className="text-base sm:text-lg font-bold text-white mt-1 leading-snug">
+              <h2 className="text-sm sm:text-lg font-bold text-white mt-1 leading-snug truncate">
                 {product.name}
               </h2>
             </div>
@@ -257,14 +416,14 @@ export const AddProductToQuoteModal: React.FC<AddProductToQuoteModalProps> = ({
           <button
             id="close-add-quote-modal-btn"
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors cursor-pointer shrink-0 ml-2"
+            className="p-1.5 sm:p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors cursor-pointer shrink-0 ml-2"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Modal Scrollable Body */}
-        <div className="p-5 sm:p-6 space-y-5 overflow-y-auto flex-1 bg-slate-50/50">
+        <div className="p-3.5 sm:p-6 space-y-4 sm:space-y-5 overflow-y-auto flex-1 bg-slate-50/50 modal-body-scroll">
           {errorMsg && (
             <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-2xl flex items-center space-x-2 text-xs font-bold animate-in fade-in">
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
@@ -661,11 +820,11 @@ export const AddProductToQuoteModal: React.FC<AddProductToQuoteModalProps> = ({
         </div>
 
         {/* Modal Footer Actions */}
-        <div className="p-4 sm:p-5 bg-white border-t border-slate-200 flex items-center justify-between gap-3">
+        <div className="p-3.5 sm:p-5 bg-white border-t border-slate-200 flex items-center justify-between gap-2.5 sm:gap-3 shrink-0 pb-safe">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-bold transition-colors cursor-pointer"
+            className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-bold transition-colors cursor-pointer shrink-0"
           >
             Cancel
           </button>
@@ -674,13 +833,19 @@ export const AddProductToQuoteModal: React.FC<AddProductToQuoteModalProps> = ({
             type="button"
             id="confirm-add-to-quote-btn"
             onClick={handleConfirmAdd}
-            className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00A88F] text-slate-950 text-xs font-black transition-all flex items-center space-x-2 cursor-pointer shadow-md hover:shadow-lg"
+            className="px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00A88F] text-slate-950 text-xs font-black transition-all flex items-center space-x-1.5 sm:space-x-2 cursor-pointer shadow-md hover:shadow-lg whitespace-nowrap min-w-0"
           >
-            {existingItemId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-            <span>{existingItemId ? 'Update Item' : 'Add to Cart'} ({formatCurrency(calculation?.finalTotalSellingPrice || 0, currency)})</span>
+            {existingItemId ? <Check className="w-4 h-4 shrink-0" /> : <Plus className="w-4 h-4 shrink-0" />}
+            <span className="truncate">
+              <span className="hidden sm:inline">{existingItemId ? 'Update Item' : 'Add to Cart'}</span>
+              <span className="sm:hidden">{existingItemId ? 'Update' : 'Add'}</span> ({formatCurrency(calculation?.finalTotalSellingPrice || 0, currency)})
+            </span>
           </button>
         </div>
       </div>
     </div>
   );
 };
+
+export const ActivityExperienceConfigurator = AddProductToQuoteModal;
+export default AddProductToQuoteModal;

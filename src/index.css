@@ -64,10 +64,45 @@
 }
 
 /* Touch target accessibility for mobile & tablet */
-@media (pointer: coarse) {
-  button, [role="button"], a, input, select, textarea {
-    min-height: 38px;
+@media (pointer: coarse), (max-width: 768px) {
+  button, [role="button"], a.btn, input:not([type="checkbox"]):not([type="radio"]), select, textarea {
+    min-height: 42px;
   }
+}
+
+/* Safe area insets for modern mobile viewports */
+.pb-safe {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+}
+.pt-safe {
+  padding-top: max(0.75rem, env(safe-area-inset-top, 0px));
+}
+.pl-safe {
+  padding-left: max(0.5rem, env(safe-area-inset-left, 0px));
+}
+.pr-safe {
+  padding-right: max(0.5rem, env(safe-area-inset-right, 0px));
+}
+
+/* Responsive Table Wrapper with smooth touch momentum scrolling */
+.table-responsive, .responsive-table-container {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+/* Modal Body Touch Momentum Scrolling & Boundary Containment */
+.modal-body-scroll {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
+
+/* Smooth mobile tap highlight prevention & touch ergonomics */
+button, a, select, input {
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* Custom scrollbars for data tables and filter panels */

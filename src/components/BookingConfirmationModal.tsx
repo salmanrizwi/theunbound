@@ -45,24 +45,24 @@ export const BookingConfirmationModal: React.FC<BookingConfirmationModalProps> =
   const dmcEmail = booking.notificationEmailsSent.find(e => e.recipientType === 'DMC_OPS');
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-3xl w-full overflow-hidden my-auto max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 max-w-3xl w-full overflow-hidden my-auto max-h-[94dvh] sm:max-h-[92dvh] flex flex-col">
         
         {/* Modal Header Banner */}
-        <div className="bg-slate-900 text-white p-6 relative overflow-hidden shrink-0 border-b-2 border-[#00C6A6]">
+        <div className="bg-slate-900 text-white p-4 sm:p-6 relative overflow-hidden shrink-0 border-b-2 border-[#00C6A6]">
           <div className="flex items-start justify-between relative z-10">
-            <div className="flex items-center space-x-3.5">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
-                <CheckCircle2 className="w-7 h-7" />
+            <div className="flex items-center space-x-3 sm:space-x-3.5 min-w-0">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
+                <CheckCircle2 className="w-6 h-6 sm:w-7 sm:h-7" />
               </div>
-              <div>
-                <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#00E5C0] bg-white/10 px-2 py-0.5 rounded-md">
+              <div className="min-w-0">
+                <span className="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-widest text-[#00E5C0] bg-white/10 px-2 py-0.5 rounded-md">
                   Reservation Received
                 </span>
-                <h2 className="text-2xl font-black font-sans mt-1 text-white">
+                <h2 className="text-lg sm:text-2xl font-black font-sans mt-1 text-white truncate">
                   Booking Request Submitted!
                 </h2>
-                <p className="text-xs text-slate-300 mt-0.5">
+                <p className="text-[11px] sm:text-xs text-slate-300 mt-0.5 truncate">
                   Reference: <span className="font-mono font-bold text-white">{booking.bookingReference}</span>
                 </p>
               </div>
@@ -70,7 +70,7 @@ export const BookingConfirmationModal: React.FC<BookingConfirmationModalProps> =
 
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition-colors cursor-pointer"
+              className="text-slate-400 hover:text-white p-1.5 sm:p-2 rounded-xl hover:bg-white/10 transition-colors cursor-pointer shrink-0 ml-2"
             >
               <X className="w-5 h-5" />
             </button>
@@ -78,20 +78,20 @@ export const BookingConfirmationModal: React.FC<BookingConfirmationModalProps> =
         </div>
 
         {/* 24-48 Hour SLA Notification Alert Banner */}
-        <div className="bg-emerald-50 border-b border-emerald-200 p-4 sm:p-5 flex items-start space-x-3.5 shrink-0">
-          <Clock className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+        <div className="bg-emerald-50 border-b border-emerald-200 p-3.5 sm:p-5 flex items-start space-x-3 sm:space-x-3.5 shrink-0">
+          <Clock className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600 shrink-0 mt-0.5" />
           <div className="space-y-1">
-            <span className="text-xs font-black text-emerald-950 uppercase tracking-wider block">
+            <span className="text-[11px] sm:text-xs font-black text-emerald-950 uppercase tracking-wider block">
               24–48 Hours Update Notice
             </span>
-            <p className="text-xs text-emerald-800 leading-relaxed font-medium">
+            <p className="text-[11px] sm:text-xs text-emerald-800 leading-relaxed font-medium">
               Your booking has been submitted and will be updated in <strong>24–48 Hrs</strong>. Automated confirmation emails have been dispatched to <strong>{booking.customer.email}</strong> and <strong>sales@theunbound.in</strong>.
             </p>
           </div>
         </div>
 
         {/* Scrollable Content Area */}
-        <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6 modal-body-scroll">
           
           {/* Quick Info Ribbon */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

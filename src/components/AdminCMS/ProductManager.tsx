@@ -37,11 +37,15 @@ import {
   Users,
   Calculator,
   ShieldAlert,
-  Gauge
+  Gauge,
+  Train,
+  Sliders
 } from 'lucide-react';
 import { fileToDataUrl, convertUnsplashUrl, fetchUnsplashImagesByQuery } from '../../utils/imageUtils';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
+import { JapanRailJourneyConfigurator } from '../JapanRail/JapanRailJourneyConfigurator';
+import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 
 interface ProductManagerProps {
   destinations: Destination[];
@@ -89,6 +93,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [modalTab, setModalTab] = useState<'CONTENT' | 'SEO'>('CONTENT');
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [testingRailProduct, setTestingRailProduct] = useState<Product | null>(null);
+  const [testingConfigProduct, setTestingConfigProduct] = useState<Product | null>(null);
 
   // Form State
   const [formData, setFormData] = useState<Partial<Product>>({
@@ -668,6 +674,23 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   </td>
                   <td className="py-3.5 px-4 text-right">
                     <div className="flex items-center justify-end space-x-1.5">
+                      {(product.category === 'Rail' || product.id.startsWith('RAIL-JP')) ? (
+                        <button
+                          onClick={() => setTestingRailProduct(product)}
+                          className="p-1.5 text-[#00A88F] hover:text-[#008F77] bg-[#00C6A6]/10 hover:bg-[#00C6A6]/20 border border-[#00C6A6]/30 rounded-lg transition-colors cursor-pointer"
+                          title="Open Japan Rail Dynamic Journey Configurator"
+                        >
+                          <Train className="w-3.5 h-3.5" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setTestingConfigProduct(product)}
+                          className="p-1.5 text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/50 rounded-lg transition-colors cursor-pointer"
+                          title="Open Dedicated Configurator"
+                        >
+                          <Sliders className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                       {onViewProduct && (
                         <button
                           onClick={() => onViewProduct(product)}
@@ -745,30 +768,31 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
 
       {/* Edit / Create Product Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 p-6 sm:p-8 space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-4xl w-full max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-slate-200">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 p-4 sm:p-6 pb-4 shrink-0 bg-white">
               <div>
-                <h3 className="text-lg font-bold text-slate-900">
+                <h3 className="text-base sm:text-lg font-bold text-slate-900">
                   {editingProduct ? `Edit Product: ${editingProduct.name}` : 'Create New Ground Product'}
                 </h3>
                 <p className="text-xs text-slate-500">Configure SKU, net pricing formulas, inclusions, and operational parameters.</p>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="text-slate-400 hover:text-slate-700 p-2 rounded-full cursor-pointer"
+                className="text-slate-400 hover:text-slate-700 p-1.5 sm:p-2 rounded-xl hover:bg-slate-100 cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
             {/* Modal Subtabs */}
-            <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
+            <div className="flex items-center space-x-2 border-b border-slate-200 px-4 sm:px-6 py-2.5 shrink-0 bg-slate-50 overflow-x-auto">
               <button
                 type="button"
                 onClick={() => setModalTab('CONTENT')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  modalTab === 'CONTENT' ? 'bg-[#00C6A6] text-slate-950 shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                  modalTab === 'CONTENT' ? 'bg-[#00C6A6] text-slate-950 shadow-xs' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
                 }`}
               >
                 Product Details & Pricing
@@ -776,8 +800,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
               <button
                 type="button"
                 onClick={() => setModalTab('SEO')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
-                  modalTab === 'SEO' ? 'bg-[#008972] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 whitespace-nowrap ${
+                  modalTab === 'SEO' ? 'bg-[#008972] text-white shadow-xs' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
                 }`}
               >
                 <Globe2 className="w-3.5 h-3.5" />
@@ -785,7 +809,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
               </button>
             </div>
 
-            <form onSubmit={handleSave} className="space-y-4 text-xs">
+            <form onSubmit={handleSave} className="flex-1 flex flex-col overflow-hidden text-xs">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 modal-body-scroll">
               {modalTab === 'SEO' ? (
                 <EntitySEOSettingsTab
                   entityType="PRODUCT"
@@ -1657,6 +1682,51 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   </div>
                 </div>
 
+                {/* Japan Rail Journey Configurator Integration Card */}
+                {(formData.category === 'Rail' || formData.id?.startsWith('RAIL-JP')) && (
+                  <div className="p-4 rounded-xl bg-gradient-to-r from-slate-900 to-indigo-950 border border-slate-800 text-white space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-8 h-8 rounded-lg bg-[#00C6A6]/20 border border-[#00C6A6]/40 flex items-center justify-center text-[#00E5C0]">
+                          <Train className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-white uppercase tracking-wider">
+                            Japan Rail Dynamic Journey Engine Attached
+                          </h4>
+                          <span className="text-[10px] text-slate-300">
+                            Shared across Buyer Portal, B2B Quote Builder, B2B Agent Portal & Admin CMS
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const tempProd: Product = {
+                            ...(editingProduct || {}),
+                            id: formData.id || 'RAIL-JP-ORD-RESERVED',
+                            name: formData.name || 'Japan Rail High-Speed Dynamic Journey',
+                            category: 'Rail',
+                            destinationId: 'dest-japan',
+                            country: 'Japan'
+                          } as Product;
+                          setTestingRailProduct(tempProd);
+                        }}
+                        className="px-3.5 py-1.5 rounded-lg bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-xs hover:scale-[1.02]"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Launch Journey Configurator</span>
+                      </button>
+                    </div>
+
+                    <div className="text-[11px] text-slate-300 bg-slate-800/80 p-2.5 rounded-lg border border-slate-700/80 space-y-1">
+                      <div>• <strong>Master Commercial Product:</strong> Operates under the two-product inventory architecture (Ordinary Reserved vs Green Car First Class) without route explosion.</div>
+                      <div>• <strong>Real-Time Rules:</strong> Dynamically checks route availability, calendar seasons (Regular, Low, High, Peak), and passenger eligibility across Tokaido, Sanyo, and Kyushu lines.</div>
+                    </div>
+                  </div>
+                )}
+
                 {/* 3. Dual Live Preview */}
                 <div className="pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs border-t border-slate-800 bg-slate-950/60 p-3 rounded-xl">
                   <div>
@@ -2043,32 +2113,33 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
               </div>
               </>
               )}
+              </div>
 
-              {/* Actions */}
-              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-                <div>
+              {/* Actions Footer */}
+              <div className="flex flex-col sm:flex-row items-center justify-between p-4 sm:px-6 py-3 border-t border-slate-100 bg-white/95 backdrop-blur-xs shrink-0 gap-3">
+                <div className="w-full sm:w-auto">
                   {editingProduct && (
                     <button
                       type="button"
                       onClick={() => handleDelete(editingProduct.id)}
-                      className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer border border-rose-200"
+                      className="w-full sm:w-auto px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl flex items-center justify-center space-x-1.5 transition-colors cursor-pointer border border-rose-200"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       <span>Delete Product</span>
                     </button>
                   )}
                 </div>
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-3 w-full sm:w-auto justify-end">
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}
-                    className="px-4 py-2 text-slate-600 hover:text-slate-800 font-semibold cursor-pointer"
+                    className="w-full sm:w-auto px-5 py-2.5 text-slate-600 hover:text-slate-800 font-semibold cursor-pointer border border-slate-200 rounded-xl hover:bg-slate-50 text-center"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-6 py-2.5 bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold rounded-xl shadow-md cursor-pointer transition-colors"
+                    className="w-full sm:w-auto px-6 py-2.5 bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold rounded-xl shadow-md cursor-pointer transition-colors text-center"
                   >
                     {editingProduct ? 'Update Product' : 'Save & Publish Product'}
                   </button>
@@ -2095,6 +2166,26 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
           recordId={deleteTarget.id}
           recordTitle={deleteTarget.name}
           user={user}
+        />
+      )}
+
+      {/* Shared Japan Rail Dynamic Journey Configurator Modal */}
+      {testingRailProduct && (
+        <JapanRailJourneyConfigurator
+          portalOrigin="PRODUCT_MANAGEMENT"
+          initialProduct={testingRailProduct}
+          onClose={() => setTestingRailProduct(null)}
+        />
+      )}
+
+      {/* Shared Dedicated Configurator Router for CMS Admin */}
+      {testingConfigProduct && (
+        <GlobalConfiguratorRouter
+          isOpen={true}
+          itemOrProduct={testingConfigProduct}
+          portalOrigin="ADMIN_CMS"
+          onClose={() => setTestingConfigProduct(null)}
+          onSuccess={() => setTestingConfigProduct(null)}
         />
       )}
     </div>

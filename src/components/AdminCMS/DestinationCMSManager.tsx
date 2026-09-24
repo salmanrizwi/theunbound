@@ -477,9 +477,9 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
 
       {/* Modal Dialog */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-3xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 p-6 sm:p-8 space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-3xl w-full max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-100 p-4 sm:p-6 pb-4 shrink-0 bg-white">
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900">
@@ -487,26 +487,26 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
                   </span>
                   <span className="text-[11px] text-slate-400">Child of Master Region</span>
                 </div>
-                <h3 className="text-lg font-bold text-slate-900">
+                <h3 className="text-base sm:text-lg font-bold text-slate-900">
                   {editingDest ? `Edit Destination: ${editingDest.name}` : 'Add New Destination'}
                 </h3>
                 <p className="text-xs text-slate-500">Configure Master Region parent linkage, country details, hero imagery, and selling points.</p>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="text-slate-400 hover:text-slate-700 p-2 rounded-full cursor-pointer"
+                className="text-slate-400 hover:text-slate-700 p-1.5 sm:p-2 rounded-xl hover:bg-slate-100 cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
             {/* Modal Subtabs */}
-            <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
+            <div className="flex items-center space-x-2 border-b border-slate-200 px-4 sm:px-6 py-2.5 bg-slate-50 shrink-0 overflow-x-auto">
               <button
                 type="button"
                 onClick={() => setModalTab('CONTENT')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  modalTab === 'CONTENT' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                  modalTab === 'CONTENT' ? 'bg-amber-500 text-slate-950 shadow-xs' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
                 }`}
               >
                 Content & Highlights
@@ -514,8 +514,8 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
               <button
                 type="button"
                 onClick={() => setModalTab('SEO')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
-                  modalTab === 'SEO' ? 'bg-[#008972] text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 whitespace-nowrap ${
+                  modalTab === 'SEO' ? 'bg-[#008972] text-white shadow-xs' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
                 }`}
               >
                 <Globe2 className="w-3.5 h-3.5" />
@@ -523,7 +523,8 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleSave} className="space-y-4 text-xs">
+            <form onSubmit={handleSave} className="flex-1 flex flex-col overflow-hidden text-xs">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 modal-body-scroll">
               {saveError && (
                 <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2.5 text-rose-800 text-xs">
                   <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
@@ -884,38 +885,39 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
               </div>
               </>
               )}
+              </div>
 
-              {/* Action Buttons */}
-              <div className="flex items-center justify-between pt-6 border-t border-slate-100">
-                <div>
+              {/* Action Buttons Footer */}
+              <div className="flex flex-col sm:flex-row items-center justify-between p-4 sm:px-6 py-3 border-t border-slate-100 bg-white/95 backdrop-blur-xs shrink-0 gap-3">
+                <div className="w-full sm:w-auto">
                   {editingDest?.id && (
                     <button
                       type="button"
                       onClick={() => handleDelete(editingDest.id)}
-                      className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer border border-red-200"
+                      className="w-full sm:w-auto px-4 py-2.5 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl flex items-center justify-center space-x-1.5 transition-colors cursor-pointer border border-red-200"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       <span>Delete Destination</span>
                     </button>
                   )}
                 </div>
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-2.5 w-full sm:w-auto justify-end">
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}
-                    className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 font-semibold hover:bg-slate-50 cursor-pointer text-xs"
+                    className="w-full sm:w-auto px-5 py-2.5 border border-slate-200 rounded-xl text-slate-600 font-semibold hover:bg-slate-50 cursor-pointer text-xs text-center"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={isSaving}
-                    className="px-5 py-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold rounded-xl shadow-sm transition-all cursor-pointer text-xs flex items-center space-x-1.5"
+                    className="w-full sm:w-auto px-6 py-2.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold rounded-xl shadow-xs transition-all cursor-pointer text-xs flex items-center justify-center space-x-1.5 text-center"
                   >
                     {isSaving ? (
                       <>
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        <span>Persisting to Firestore...</span>
+                        <span>Persisting...</span>
                       </>
                     ) : (
                       <>

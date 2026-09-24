@@ -20,7 +20,9 @@ import { VisaPage } from './pages/VisaPage';
 import { CustomPageView } from './pages/CustomPageView';
 import { AboutUsPage } from './pages/AboutUsPage';
 import { ProductDetailModal } from './components/ProductDetailModal';
+import { RailJourneyModal } from './components/RailJourneyModal';
 import { PricingCalculatorModal } from './components/PricingCalculatorModal';
+import { isRailProduct } from './services/rail/JapanRailJourneyDataService';
 import { QuoteBuilderDrawer } from './components/QuoteBuilderDrawer';
 import { AuthModal } from './components/AuthModal';
 import { AdminDashboard } from './components/AdminDashboard';
@@ -471,7 +473,13 @@ const MainAppContent: React.FC = () => {
                 }
               }}
               onOpenCalculator={(p) => {
-                if (isB2BAuthorized) setCalculatorProduct(p);
+                if (isB2BAuthorized) {
+                  if (isRailProduct(p)) {
+                    setInspectingProduct(p);
+                  } else {
+                    setCalculatorProduct(p);
+                  }
+                }
               }}
               onInstantBook={(p) => {
                 if (isB2BAuthorized) handleOpenProductBooking(p);
@@ -617,8 +625,29 @@ const MainAppContent: React.FC = () => {
         onSelectCustomPage={handleSelectCustomPage}
       />
 
-      {/* Global Overlays & Modals - RESTRICTED TO AUTHORIZED B2B AGENTS */}
-      {inspectingProduct && isB2BAuthorized && (
+      {/* Dynamic Japan Rail Journey Selection Interface */}
+      {inspectingProduct && isRailProduct(inspectingProduct) && (
+        <RailJourneyModal
+          product={inspectingProduct}
+          portalOrigin="BUYER"
+          onClose={() => setInspectingProduct(null)}
+          onAddToQuote={() => {
+            setInspectingProduct(null);
+            setIsQuoteDrawerOpen(true);
+          }}
+          onInstantBook={(p) => {
+            setInspectingProduct(null);
+            if (isB2BAuthorized) {
+              handleOpenProductBooking(p);
+            } else {
+              setIsQuoteDrawerOpen(true);
+            }
+          }}
+        />
+      )}
+
+      {/* Global Overlays & Modals - Standard Product Details */}
+      {inspectingProduct && isB2BAuthorized && !isRailProduct(inspectingProduct) && (
         <ProductDetailModal
           product={inspectingProduct}
           hidePrice={inspectingProductHidePrice}
@@ -631,7 +660,7 @@ const MainAppContent: React.FC = () => {
         />
       )}
 
-      {calculatorProduct && isB2BAuthorized && (
+      {calculatorProduct && isB2BAuthorized && !isRailProduct(calculatorProduct) && (
         <PricingCalculatorModal
           product={calculatorProduct}
           onClose={() => setCalculatorProduct(null)}

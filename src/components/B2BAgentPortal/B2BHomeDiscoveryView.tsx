@@ -38,7 +38,7 @@ import { useQuotation } from '../../context/QuotationContext';
 import { formatCurrency, calculatePackagePrice } from '../../services/pricingEngine';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
-import { VISA_CATALOG, VisaProduct } from './B2BVisaView';
+import { VisaProduct } from './B2BVisaView';
 import { DestinationHubsContextView, HubProductsContextView } from './B2BContextualExplorer';
 import { AddProductToQuoteModal } from './AddProductToQuoteModal';
 import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
@@ -198,11 +198,10 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
       pkg.routeSummary.some(r => r.toLowerCase().includes(q))
     );
 
-    const matchedVisas = VISA_CATALOG.filter(v => 
+    const matchedVisas = db.getVisas().filter(v => v.status === 'ACTIVE' && (
       v.country.toLowerCase().includes(q) ||
-      v.visaType.toLowerCase().includes(q) ||
-      v.category.toLowerCase().includes(q)
-    );
+      v.visaType.toLowerCase().includes(q)
+    ));
 
     const totalCount = 
       matchedDestinations.length + 

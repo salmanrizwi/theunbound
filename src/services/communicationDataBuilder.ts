@@ -465,7 +465,15 @@ export function buildDayWiseItinerary(
       const pType = p.productType || '';
       const cat = p.category || '';
 
-      if (pType === 'TRANSFER' || cat === 'Transfers' || cat === 'Transport') {
+      if (cat === 'Rail' || pType === 'Rail' || it.category === 'Rail' || it.railJourneyDetails) {
+        const rail = it.railJourneyDetails;
+        transportServices.push({
+          title: rail ? `Shinkansen: ${rail.originStationName} → ${rail.destinationStationName}` : p.name,
+          route: rail ? `${rail.originStationName} (${rail.originStationCode}) → ${rail.destinationStationName} (${rail.destinationStationCode})` : undefined,
+          departureTime: rail?.departureTime || it.serviceTime || '09:00',
+          classType: rail ? `${rail.carType} Class (${rail.seatType}) - ${rail.serviceGroup === 'NOZOMI_MIZUHO' ? 'Nozomi Super Express' : 'Hikari/Kodama'}` : 'High-Speed Shinkansen Bullet Train'
+        });
+      } else if (pType === 'TRANSFER' || cat === 'Transfers' || cat === 'Transport') {
         transfers.push({
           id: it.id,
           title: p.name,
@@ -685,7 +693,22 @@ export function buildQuoteCommunicationPayload(
     const pType = p.productType || '';
     const cat = p.category || '';
 
-    if (pType === 'TRANSFER' || cat === 'Transfers' || cat === 'Transport') {
+    if (cat === 'Rail' || pType === 'Rail' || it.category === 'Rail' || it.railJourneyDetails) {
+      const rail = it.railJourneyDetails;
+      transfers.push({
+        id: it.id,
+        serviceName: rail ? `High-Speed Shinkansen: ${rail.originStationName} → ${rail.destinationStationName}` : p.name,
+        date: it.travelDate || quote.travelStartDate || 'As per itinerary',
+        pickupLocation: rail ? `${rail.originStationName} Shinkansen Station (${rail.originStationCode})` : `${p.city || quote.destination} Station`,
+        dropLocation: rail ? `${rail.destinationStationName} Shinkansen Station (${rail.destinationStationCode})` : 'Destination Station',
+        pickupTime: rail?.departureTime || (it as any).pickupTime || undefined,
+        vehicleType: rail ? `JR Bullet Train (${rail.carType} Car Reserved)` : 'High-Speed Shinkansen',
+        capacity: `${it.pax?.adults || adultsCount} Passengers`,
+        passengerCount: it.pax?.adults || adultsCount,
+        transferType: rail ? (rail.serviceGroup === 'NOZOMI_MIZUHO' ? 'Nozomi Super Express (Reserved Seat)' : 'Hikari / Kodama Express') : 'High-Speed Shinkansen Bullet Train',
+        instructions: rail ? `Seat Preference: ${rail.seatPreference || 'Standard Reserved'}. PNR: ${rail.pnrReference || 'Confirmed Allotment'}. SmartEX electronic ticketing.` : undefined
+      });
+    } else if (pType === 'TRANSFER' || cat === 'Transfers' || cat === 'Transport') {
       transfers.push({
         id: it.id,
         serviceName: p.name,

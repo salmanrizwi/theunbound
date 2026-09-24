@@ -32,7 +32,6 @@ import { useQuotation } from '../../context/QuotationContext';
 import { B2BTabType, CurrencyCode, SUPPORTED_CURRENCIES } from '../../types';
 import { formatCurrency } from '../../services/pricingEngine';
 import { AppDatabase } from '../../services/db';
-import { VISA_CATALOG } from './B2BVisaView';
 import { navigateTo } from '../../services/portalRouter';
 
 export type { B2BTabType };
@@ -85,7 +84,7 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
   const packagesCount = db.getPackages().length;
   const productsCount = db.getProducts().length;
   const hotelsCount = db.getHotels().length;
-  const visasCount = VISA_CATALOG.length;
+  const visasCount = db.getVisas().filter(v => v.status === 'ACTIVE').length;
   const quotesCount = user ? db.getQuotesForUser(user).length : db.getAllSavedQuotes().length;
   const authorizedBookings = user ? db.getBookingsForUser(user) : [];
   const bookingsCount = authorizedBookings.length;

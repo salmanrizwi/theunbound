@@ -44,8 +44,10 @@ import {
   MessageCircle,
   Lock,
   Save,
-  Percent
+  Percent,
+  Train
 } from 'lucide-react';
+import { isRailQuoteItem } from '../../services/rail/JapanRailJourneyDataService';
 import { 
   QuoteItem, 
   QuotationOption, 
@@ -2283,20 +2285,32 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                 className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 hover:border-slate-300 hover:bg-white transition-all flex flex-wrap items-center justify-between gap-3 shadow-2xs"
                               >
                                 <div className="flex items-center space-x-3 min-w-0 flex-1">
-                                  <div className="w-8 h-8 rounded-lg bg-teal-50 border border-teal-200 text-[#00A88F] flex items-center justify-center shrink-0">
-                                    {item.product.category === 'Transfer' || item.product.category === 'Transport' ? (
+                                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                    isRailQuoteItem(item)
+                                      ? 'bg-indigo-50 border border-indigo-200 text-indigo-700'
+                                      : item.product.category === 'Transfer' || item.product.category === 'Transport'
+                                      ? 'bg-teal-50 border border-teal-200 text-[#00A88F]'
+                                      : 'bg-teal-50 border border-teal-200 text-[#00A88F]'
+                                  }`}>
+                                    {isRailQuoteItem(item) ? (
+                                      <Train className="w-4 h-4" />
+                                    ) : item.product.category === 'Transfer' || item.product.category === 'Transport' ? (
                                       <Car className="w-3.5 h-3.5" />
                                     ) : (
                                       <Compass className="w-3.5 h-3.5" />
                                     )}
                                   </div>
-                                  <div className="min-w-0">
+                                  <div className="min-w-0 flex-1">
                                     <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                                       <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200">
                                         {item.serviceTime || '09:30 AM'}
                                       </span>
-                                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-white text-slate-600 border border-slate-200">
-                                        {item.product.category}
+                                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                        isRailQuoteItem(item)
+                                          ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                          : 'bg-white text-slate-600 border border-slate-200'
+                                      }`}>
+                                        {isRailQuoteItem(item) ? '🚄 Shinkansen Rail' : item.product.category}
                                       </span>
                                       {item.product.city && (
                                         <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
@@ -2304,13 +2318,39 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                         </span>
                                       )}
                                       <h4 className="text-xs sm:text-sm font-bold text-slate-900 truncate">
-                                        {item.product.name}
+                                        {item.customTitle || item.title || item.product.name}
                                       </h4>
                                     </div>
+
+                                    {/* Shinkansen Route & Seat Specifications */}
+                                    {isRailQuoteItem(item) && item.railJourneyDetails && (
+                                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-700 bg-indigo-50/70 border border-indigo-100 px-2 py-1 rounded-lg">
+                                        <span className="font-extrabold text-indigo-900">
+                                          {item.railJourneyDetails.originStationName} → {item.railJourneyDetails.destinationStationName}
+                                        </span>
+                                        <span>•</span>
+                                        <span className="font-semibold text-slate-700">
+                                          {item.railJourneyDetails.carType} Class ({item.railJourneyDetails.seatType})
+                                        </span>
+                                        <span>•</span>
+                                        <span className="text-indigo-800 font-medium">
+                                          {item.railJourneyDetails.serviceGroup === 'NOZOMI_MIZUHO' ? 'Nozomi Super Express' : 'Hikari/Kodama'}
+                                        </span>
+                                        {item.railJourneyDetails.seatPreference && (
+                                          <>
+                                            <span>•</span>
+                                            <span className="text-slate-500">Seat: {item.railJourneyDetails.seatPreference}</span>
+                                          </>
+                                        )}
+                                      </div>
+                                    )}
+
                                     <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 mt-1">
-                                      <span>Duration: {item.product.duration || 'Half Day'}</span>
                                       <span>Pax: {item.pax.adults} Adults{item.pax.children > 0 ? `, ${item.pax.children} Ch` : ''}</span>
-                                      {item.notes && (
+                                      {!isRailQuoteItem(item) && item.product.duration && (
+                                        <span>Duration: {item.product.duration}</span>
+                                      )}
+                                      {item.notes && !isRailQuoteItem(item) && (
                                         <span className="text-amber-700 font-mono">Note: {item.notes}</span>
                                       )}
                                     </div>

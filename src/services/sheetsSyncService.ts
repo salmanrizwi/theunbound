@@ -28,6 +28,10 @@ import {
   MealPlanCode
 } from '../types';
 import { MASTER_SHEETS_TAB_DEFINITIONS, getTabSchemaByName } from '../data/googleSheetsTemplate';
+import { 
+  createDefaultRequirementsForVisa, 
+  createDefaultAssistanceServices 
+} from './visaRequirementService';
 
 export interface RawMultiTabData {
   [tabName: string]: string[][] | Record<string, any>[];
@@ -1006,27 +1010,43 @@ export class SheetsSyncService {
         }));
         logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.transferRates.length} Transfer Rates.`);
       } else if (tabKey === 'VISA') {
-        payload.visas = objects.map(v => ({
-          id: v.visa_id || v.id,
-          destinationId: v.destination_id || 'dest-japan',
-          country: v.country || 'Japan',
-          visaType: v.visa_type || 'Tourist E-Visa',
-          entryType: (v.entry_type || 'SINGLE_ENTRY') as any,
-          validityDays: Number(v.validity_days) || 90,
-          stayDurationDays: Number(v.stay_days) || 30,
-          processingTimeDays: Number(v.processing_days) || 5,
-          expressProcessingAvailable: String(v.express_available).toUpperCase() === 'TRUE',
-          embassyFee: Number(v.embassy_fee) || 25,
-          serviceFee: Number(v.service_fee) || 70,
-          currency: (v.currency || 'USD') as CurrencyCode,
-          description: v.service_description || v.description || 'Comprehensive diplomatic visa submission and concierge handling.',
-          documentsChecklist: (v.documentation || 'Original Passport;Passport Photos;Flight Itinerary;Hotel Confirmation').split(';').map((s: string) => s.trim()).filter(Boolean),
-          submissionSteps: ['Document Review & Digital Verification', 'Biometrics & Consulate Appointment', 'Passport Stamping & Delivery'],
-          eligibilityNotes: ['Valid for tourism and leisure travel', 'Passport must have at least 6 months validity'],
-          status: 'ACTIVE',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }));
+        const existingVisasMap = new Map(db.getVisas().map(v => [v.id, v]));
+        payload.visas = objects.map(v => {
+          const visaId = v.visa_id || v.id;
+          const country = v.country || 'Japan';
+          const visaType = v.visa_type || 'Tourist E-Visa';
+          const existing = existingVisasMap.get(visaId);
+          const docList = (v.documentation || 'Original Passport;Passport Photos;Flight Itinerary;Hotel Confirmation').split(';').map((s: string) => s.trim()).filter(Boolean);
+
+          return {
+            id: visaId,
+            destinationId: v.destination_id || 'dest-japan',
+            country,
+            visaType,
+            entryType: (v.entry_type || 'SINGLE_ENTRY') as any,
+            validityDays: Number(v.validity_days) || 90,
+            stayDurationDays: Number(v.stay_days) || 30,
+            processingTimeDays: Number(v.processing_days) || 5,
+            expressProcessingAvailable: String(v.express_available).toUpperCase() === 'TRUE',
+            embassyFee: Number(v.embassy_fee) || 25,
+            serviceFee: Number(v.service_fee) || 70,
+            currency: (v.currency || 'USD') as CurrencyCode,
+            description: v.service_description || v.description || 'Comprehensive diplomatic visa submission and concierge handling.',
+            documentsChecklist: docList,
+            structuredRequirements: existing?.structuredRequirements && existing.structuredRequirements.length > 0
+              ? existing.structuredRequirements
+              : createDefaultRequirementsForVisa(visaId, country, visaType),
+            assistanceServices: existing?.assistanceServices && existing.assistanceServices.length > 0
+              ? existing.assistanceServices
+              : createDefaultAssistanceServices(visaId),
+            requirementVersion: existing?.requirementVersion || 1,
+            submissionSteps: existing?.submissionSteps || ['Document Review & Digital Verification', 'Biometrics & Consulate Appointment', 'Passport Stamping & Delivery'],
+            eligibilityNotes: existing?.eligibilityNotes || ['Valid for tourism and leisure travel', 'Passport must have at least 6 months validity'],
+            status: 'ACTIVE',
+            createdAt: existing?.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+        });
         logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.visas.length} Visas.`);
       } else if (tabKey === 'PACKAGES') {
         payload.packages = objects.map(pkg => ({

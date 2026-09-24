@@ -26,6 +26,8 @@ import { Product, CurrencyCode, QuoteItem, Destination, VisaProduct } from '../.
 import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
 import { B2B_INSURANCE_PLANS, B2B_ESIM_PLANS } from '../../utils/b2bQuotationHelpers';
 import { DestinationRelevanceService } from '../../services/destinationRelevanceService';
+import { AppDatabase } from '../../services/db';
+import { VisaServiceAndFacilitationConfigurator } from '../Configurators/VisaServiceAndFacilitationConfigurator';
 
 export interface VisaServicesAndFacilitationSectionProps {
   currentDestination: Destination;
@@ -75,8 +77,17 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<'ALL' | 'VISA' | 'PROTECTION' | 'GROUND'>('ALL');
+  const [activeConfiguringVisa, setActiveConfiguringVisa] = useState<VisaProduct | null>(null);
   const totalPayingPax = Math.max(1, adultsCount + childrenCount);
   const totalTripDays = Math.max(1, tripNights + 1);
+
+  // Live database subscription for real-time sync with CMS Admin
+  const db = AppDatabase.getInstance();
+  const [dbTick, setDbTick] = useState<number>(0);
+
+  React.useEffect(() => {
+    return db.subscribe(() => setDbTick(t => t + 1));
+  }, [db]);
 
   // Filter items in quote related to this section
   const visaItemsInQuote = useMemo(() => {
@@ -121,10 +132,10 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
     return DestinationRelevanceService.getInstance().getRelevantVisas(currentDestination.id);
   }, [currentDestination]);
 
-  // Standard Ground Services Catalog tailored to destination
+  // Standard Ground Services Catalog tailored to destination with CMS Admin DB sync
   const groundServicesCatalog: GroundServiceOption[] = useMemo(() => {
     const dest = currentDestination.name;
-    return [
+    const baseList: GroundServiceOption[] = [
       {
         id: `svc-meet-assist-${currentDestination.id}`,
         name: `VIP Airport Meet & Assist (${dest})`,
@@ -218,7 +229,84 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
         icon: 'concierge'
       }
     ];
-  }, [currentDestination]);
+
+    // Merge with DB VIP Ground Services
+    const dbVips = db.getVipGroundServices().filter(s => s.status === 'ACTIVE');
+    const dynamicVips: GroundServiceOption[] = dbVips.map(s => {
+      let iconType: GroundServiceOption['icon'] = 'meet_assist';
+      if (s.serviceType === 'FAST_TRACK') iconType = 'fast_track';
+      else if (s.serviceType === 'LOUNGE_ACCESS') iconType = 'lounge';
+      else if (s.serviceType === 'PORTERAGE') iconType = 'porter';
+      else if (s.serviceType === 'CONCIERGE') iconType = 'concierge';
+
+      return {
+        id: s.id,
+        name: s.name,
+        category: 'GROUND_SERVICES',
+        subcategory: 'Ground VIP Services',
+        shortDesc: s.shortDesc || `VIP service by ${s.supplierName}`,
+        longDesc: s.longDesc || s.shortDesc || '',
+        unitNetCostUSD: s.netCost,
+        defaultMarkupPercent: s.defaultMarkupPercent || 20,
+        pricingType: (s.pricingType === 'PER_VEHICLE' || s.pricingType === 'FIXED') ? 'PER_GROUP' : 'PER_PAX',
+        badge: s.badge || 'VIP SERVICE',
+        inclusions: s.inclusions || [],
+        icon: iconType
+      };
+    });
+
+    const map = new Map<string, GroundServiceOption>();
+    baseList.forEach(opt => map.set(opt.id, opt));
+    dynamicVips.forEach(opt => map.set(opt.id, opt));
+    return Array.from(map.values());
+  }, [currentDestination, db, dbTick]);
+
+  // Dynamic Travel Protection Plans from DB / Canonical Store
+  const activeInsurancePlans = useMemo(() => {
+    const dbPlans = db.getTravelProtectionPlans().filter(p => p.status === 'ACTIVE');
+    if (dbPlans && dbPlans.length > 0) {
+      return dbPlans.map(p => ({
+        id: p.id,
+        name: p.serviceName,
+        provider: p.provider,
+        coverageArea: p.coverageArea,
+        coverageAmountUSD: p.medicalCoverageAmount,
+        coverageSummary: p.customerDescription || `${p.coverageArea} Comprehensive Medical & Travel Cover`,
+        costPerDayAdultUSD: p.netCostPerDay || 4,
+        costPerDayChildUSD: Math.round((p.netCostPerDay || 4) * 0.7),
+        sellingPricePerDayAdultUSD: p.sellingPricePerDay || 8,
+        sellingPricePerDayChildUSD: Math.round((p.sellingPricePerDay || 8) * 0.7),
+        medicalEmergencyCoverage: `$${(p.medicalCoverageAmount / 1000).toFixed(0)}k Emergency Hospitalization & Medical`,
+        tripCancellationCoverage: `$${(p.tripCancellationAmount / 1000).toFixed(0)}k Trip Cancellation / Curtailment`,
+        baggageLossCoverage: `$${(p.baggageLossAmount / 1000).toFixed(0)}k Lost Baggage & Passport Protection`,
+        inclusions: p.inclusions || []
+      }));
+    }
+    return B2B_INSURANCE_PLANS;
+  }, [db, dbTick]);
+
+  // Dynamic 5G eSIM Connectivity Plans from DB / Canonical Store
+  const activeEsimPlans = useMemo(() => {
+    const dbPlans = db.getConnectivityPlans().filter(c => c.status === 'ACTIVE');
+    if (dbPlans && dbPlans.length > 0) {
+      return dbPlans.map(c => ({
+        id: c.id,
+        destination: c.coverageZone || currentDestination.name,
+        dataAllowance: c.dataAllowance,
+        validityDays: c.validityDays,
+        carrier: '5G Regional Direct Roaming',
+        sellingPriceUSD: c.sellingPrice,
+        wholesaleNetUSD: c.netCost,
+        features: [
+          `${c.dataAllowance} High-Speed 5G Roaming`,
+          `${c.validityDays} Days Continuous Validity`,
+          c.networkSpeed || '5G / 4G LTE Direct Connectivity',
+          'Instant QR delivery to traveler email'
+        ]
+      }));
+    }
+    return B2B_ESIM_PLANS;
+  }, [currentDestination, db, dbTick]);
 
   // Helper to add Ground Service
   const handleAddGroundService = (svc: GroundServiceOption) => {
@@ -272,7 +360,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
   };
 
   // Helper to add Insurance Plan
-  const handleAddInsurancePlan = (plan: typeof B2B_INSURANCE_PLANS[0]) => {
+  const handleAddInsurancePlan = (plan: any) => {
     const totalAdultCost = plan.costPerDayAdultUSD * totalTripDays;
     const totalChildCost = plan.costPerDayChildUSD * totalTripDays;
 
@@ -327,7 +415,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
   };
 
   // Helper to add eSIM
-  const handleAddEsimPlan = (plan: typeof B2B_ESIM_PLANS[0]) => {
+  const handleAddEsimPlan = (plan: any) => {
     const prod = {
       id: `prod-esim-${plan.id}-${Date.now()}`,
       sku: `ESIM-${plan.id.toUpperCase().slice(0, 8)}`,
@@ -372,59 +460,9 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
     });
   };
 
-  // Helper to add Visa from Destination
+  // Helper to open dedicated Visa Service & Facilitation Configurator
   const handleAddDestinationVisa = (visa: VisaProduct) => {
-    const isEvisa = visa.visaType.toLowerCase().includes('evisa') || visa.visaType.toLowerCase().includes('electronic');
-    const totalNetPerPerson = (visa.embassyFee || 45) + (visa.serviceFee || 25);
-    const countryCode = visa.countryCode || visa.country.slice(0, 3).toUpperCase();
-
-    const prod = {
-      id: `prod-visa-${visa.id}-${Date.now()}`,
-      sku: `VSA-${countryCode}-${visa.id.slice(0, 4).toUpperCase()}`,
-      destinationId: currentDestination.id,
-      destinationName: visa.country,
-      country: visa.country,
-      city: `${visa.country} Visa Desk`,
-      productType: `${visa.visaType} (${visa.validityDays || 30} Days)`,
-      name: `${visa.country} ${visa.visaType} Facilitation`,
-      shortDescription: `Official B2B embassy documentation verification, application submission, and passport return logistics.`,
-      longDescription: `Full end-to-end visa facilitation for ${visa.country}. Includes government consulate fee, appointment scheduling, biometrics briefing, and application review.`,
-      supplierId: 'sup-visa-consular',
-      supplierName: 'TheUnbound Global Visa & Consular Network',
-      category: 'Travel Services',
-      subcategory: 'Visa Documentation & Facilitation',
-      adultNetPrice: totalNetPerPerson,
-      childNetPrice: Math.round(totalNetPerPerson * 0.8),
-      infantNetPrice: Math.round(totalNetPerPerson * 0.3),
-      currency: 'USD',
-      defaultMarkupPercent: 20,
-      taxPercent: 0,
-      commissionPercent: 10,
-      serviceFeeFixed: 0,
-      season: 'All Year',
-      validityFrom: '2026-01-01',
-      validityTo: '2026-12-31',
-      minPax: 1,
-      maxPax: 50,
-      availability: 'INSTANT',
-      inclusions: [
-        `Official Government / Consulate Visa Fee included ($${visa.embassyFee || 45} USD)`,
-        'Document verification and checklist audit by certified visa specialist',
-        'Embassy / VFS appointment scheduling & biometrics guidance',
-        'Express status tracking and instant approval notification'
-      ],
-      exclusions: ['Courier shipping for original passports outside capital cities'],
-      heroImage: visa.heroImage || 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?q=80&w=800&auto=format&fit=crop',
-      galleryImages: ['https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?q=80&w=800&auto=format&fit=crop']
-    } as unknown as Product;
-
-    onAddProduct(prod, {
-      adults: adultsCount,
-      children: childrenCount,
-      infants: infantsCount,
-      travelDate: startDate,
-      openDrawer: false
-    });
+    setActiveConfiguringVisa(visa);
   };
 
   return (
@@ -744,7 +782,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {B2B_INSURANCE_PLANS.map((plan) => {
+                {activeInsurancePlans.map((plan) => {
                   const isInQuote = items.some(it => it.product.id.includes(plan.id) || it.product.name.includes(plan.name));
                   const totalEstimatedSelling = ((plan.sellingPricePerDayAdultUSD * adultsCount) + (plan.sellingPricePerDayChildUSD * childrenCount)) * totalTripDays;
 
@@ -830,7 +868,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
 
               {/* eSIM Cards */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {B2B_ESIM_PLANS.slice(0, 2).map((plan) => {
+                {activeEsimPlans.map((plan) => {
                   const isInQuote = items.some(it => it.product.id.includes(plan.id) || it.product.name.includes(plan.dataAllowance));
 
                   return (
@@ -962,6 +1000,23 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
             </div>
           )}
         </div>
+      )}
+
+      {/* Dedicated Visa Service & Facilitation Configurator Modal */}
+      {activeConfiguringVisa && (
+        <VisaServiceAndFacilitationConfigurator
+          isOpen={Boolean(activeConfiguringVisa)}
+          visa={activeConfiguringVisa}
+          portalOrigin="B2B_QUOTE_BUILDER"
+          initialTravelDate={startDate}
+          initialAdults={adultsCount}
+          initialChildren={childrenCount}
+          initialInfants={infantsCount}
+          onClose={() => setActiveConfiguringVisa(null)}
+          onSuccess={() => {
+            setActiveConfiguringVisa(null);
+          }}
+        />
       )}
     </section>
   );

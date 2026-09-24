@@ -1,6 +1,10 @@
 import { VisaProduct } from '../types';
+import { 
+  createDefaultRequirementsForVisa, 
+  createDefaultAssistanceServices 
+} from '../services/visaRequirementService';
 
-export const INITIAL_VISAS: VisaProduct[] = [
+const RAW_VISAS: VisaProduct[] = [
   {
     id: 'visa-jp-tourist',
     country: 'Japan',
@@ -300,3 +304,11 @@ export const INITIAL_VISAS: VisaProduct[] = [
     updatedAt: '2026-03-01T00:00:00Z'
   }
 ];
+
+export const INITIAL_VISAS: VisaProduct[] = RAW_VISAS.map(v => ({
+  ...v,
+  structuredRequirements: v.structuredRequirements || createDefaultRequirementsForVisa(v.id, v.country, v.visaType),
+  assistanceServices: v.assistanceServices || createDefaultAssistanceServices(v.id),
+  requirementVersion: v.requirementVersion || 1
+}));
+
