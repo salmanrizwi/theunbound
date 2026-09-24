@@ -25,6 +25,7 @@ import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
+import { MasterDataDiagnosticBanner } from './MasterDataDiagnosticBanner';
 
 interface RegionCMSManagerProps {
   onNavigateToDestinations?: (regionId?: string) => void;
@@ -48,6 +49,8 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
   const [selectedRegion, setSelectedRegion] = useState<MasterRegion | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [modalTab, setModalTab] = useState<'CONTENT' | 'SEO'>('CONTENT');
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
@@ -113,6 +116,7 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
   };
 
   const handleCreateNew = () => {
+    setSaveError(null);
     setFormData({
       id: `reg-${Date.now()}`,
       name: '',
@@ -133,6 +137,7 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
   };
 
   const handleEdit = (reg: MasterRegion) => {
+    setSaveError(null);
     setFormData({ ...reg });
     setModalTab('CONTENT');
     setIsEditing(true);
@@ -150,15 +155,17 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
     }));
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSaveError(null);
+
     if (!formData.name?.trim()) {
-      alert('Region Name is required.');
+      setSaveError('Master Region Name is required.');
       return;
     }
 
     const regId = formData.id || `reg-${(formData.slug || Date.now()).toString()}`;
-    const slug = formData.slug?.trim() || formData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const slug = (formData.slug?.trim() || formData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')).replace(/(^-|-$)/g, '');
     const code = formData.code?.trim().toUpperCase() || 'REG';
 
     const newRegion: MasterRegion = {
@@ -178,12 +185,20 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
       updatedAt: new Date().toISOString()
     };
 
-    db.saveMasterRegion(newRegion, user);
-    loadData();
-    setIsCreating(false);
-    setIsEditing(false);
-    setSaveSuccessMsg(`Region "${newRegion.name}" saved successfully to Firebase!`);
-    setTimeout(() => setSaveSuccessMsg(null), 4000);
+    setIsSaving(true);
+    try {
+      await db.saveMasterRegionAsync(newRegion, user);
+      loadData();
+      setIsCreating(false);
+      setIsEditing(false);
+      setSaveSuccessMsg(`Master Region "${newRegion.name}" successfully created and saved to Firestore!`);
+      setTimeout(() => setSaveSuccessMsg(null), 5000);
+    } catch (err: any) {
+      console.error('[RegionCMS] Save error:', err);
+      setSaveError(err?.message || 'Failed to persist Master Region to Firebase Firestore.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleDelete = (id: string) => {
@@ -205,6 +220,8 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
 
   return (
     <div id="region-cms-manager" className="space-y-6">
+      <MasterDataDiagnosticBanner />
+
       {/* Top Architecture Banner */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 text-white shadow-xl">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
@@ -545,6 +562,15 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
 
             {/* Modal Form */}
             <form onSubmit={handleSave} className="p-6 overflow-y-auto space-y-4 flex-1">
+              {saveError && (
+                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2.5 text-rose-800 text-xs">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="font-bold block">Action Failed</strong>
+                    <span>{saveError}</span>
+                  </div>
+                </div>
+              )}
               {modalTab === 'SEO' ? (
                 <EntitySEOSettingsTab
                   entityType="REGION"
@@ -737,10 +763,20 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow transition-colors cursor-pointer flex items-center gap-1.5"
+                    disabled={isSaving}
+                    className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold text-xs shadow transition-colors cursor-pointer flex items-center gap-1.5"
                   >
-                    <CheckCircle2 className="w-4 h-4" />
-                    {isCreating ? 'Create Master Region' : 'Save Region Changes'}
+                    {isSaving ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Persisting to Firestore...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>{isCreating ? 'Create Master Region' : 'Save Region Changes'}</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>

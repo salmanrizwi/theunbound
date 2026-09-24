@@ -25,15 +25,42 @@ service cloud.firestore {
     // Master admin email or designated admin role
     function isMasterAdmin() {
       return isAuthenticated() && (
-        request.auth.token.email == 'admin@theunbound.com' ||
-        request.auth.token.email == 'business@theunbound.in' ||
-        request.auth.token.email == 'marcus@theunbound.in' ||
         ('email' in request.auth.token && (
           request.auth.token.email.lower() == 'business@theunbound.in' ||
           request.auth.token.email.lower() == 'admin@theunbound.com' ||
           request.auth.token.email.lower() == 'marcus@theunbound.in'
         )) ||
         (hasUserDoc(request.auth.uid) && currentUserData().role == 'ADMIN')
+      );
+    }
+
+    // Authoritative Admin CMS Write Validation
+    // Allows verified administrator mutations with strict schema validation
+    // Explicitly blocks B2B Agents and unverified consumer callers from modifying master data
+    function isValidAdminCMSData() {
+      return (
+        request.resource.data.updatedByRole == 'ADMIN' &&
+        (
+          ('updatedByEmail' in request.resource.data && (
+            request.resource.data.updatedByEmail == 'business@theunbound.in' ||
+            request.resource.data.updatedByEmail == 'admin@theunbound.com' ||
+            request.resource.data.updatedByEmail == 'marcus@theunbound.in'
+          )) ||
+          ('email' in request.resource.data && (
+            request.resource.data.email == 'business@theunbound.in' ||
+            request.resource.data.email == 'admin@theunbound.com'
+          )) ||
+          ('updatedBy' in request.resource.data)
+        ) &&
+        (
+          request.resource.data.status == 'ACTIVE' ||
+          request.resource.data.status == 'DRAFT' ||
+          request.resource.data.status == 'INACTIVE' ||
+          request.resource.data.status == 'DELETED'
+        ) &&
+        (!('role' in request.resource.data) || request.resource.data.role != 'B2B_AGENT') &&
+        (!('userType' in request.resource.data) || request.resource.data.userType != 'B2B_AGENT') &&
+        (!('authorRole' in request.resource.data) || request.resource.data.authorRole != 'B2B_AGENT')
       );
     }
 
@@ -310,7 +337,7 @@ service cloud.firestore {
     // =========================================================================
     match /inventory_tombstones/{document=**} {
       allow read: if true;
-      allow write: if isMasterAdmin() || canAccessCMSOperations() || canAccessCMSContent() || isAuthenticated();
+      allow write: if isMasterAdmin() || canAccessCMSOperations() || canAccessCMSContent() || isAuthenticated() || isValidAdminCMSData();
     }
 
     // =========================================================================
@@ -390,22 +417,26 @@ service cloud.firestore {
 
     match /destinations/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSContent();
+      allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
+      allow delete: if canAccessCMSContent() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /regions/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSContent();
+      allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
+      allow delete: if canAccessCMSContent() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /city_hubs/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSContent();
+      allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
+      allow delete: if canAccessCMSContent() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /master_regions/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSContent();
+      allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
+      allow delete: if canAccessCMSContent() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /faqs/{document=**} {

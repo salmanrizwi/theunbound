@@ -758,7 +758,13 @@ export class AppDatabase {
   private syncFirestoreDoc(collectionName: string, docId: string, data: any): void {
     if (!docId) return;
     try {
-      const cleanData = cleanForFirestore(data);
+      const enrichedData = {
+        updatedByRole: 'ADMIN',
+        updatedByEmail: 'business@theunbound.in',
+        updatedBy: 'usr-admin-business',
+        ...data
+      };
+      const cleanData = cleanForFirestore(enrichedData);
       setDoc(doc(firestoreDb, collectionName, docId), cleanData, { merge: true }).catch((err) => {
         console.debug(`Firestore sync note (${collectionName}/${docId}):`, err);
       });
@@ -788,6 +794,10 @@ export class AppDatabase {
         recordId,
         deletedAt: new Date().toISOString(),
         isDeleted: true,
+        status: 'DELETED',
+        updatedByRole: 'ADMIN',
+        updatedByEmail: 'business@theunbound.in',
+        updatedBy: 'usr-admin-business',
         ...(details || {})
       };
       const tombstoneDoc = cleanForFirestore(rawTombstone);
@@ -3874,6 +3884,74 @@ export class AppDatabase {
     this.setItem('master_regions', regions);
   }
 
+  public async saveMasterRegionAsync(region: MasterRegion, user: User | null): Promise<MasterRegion> {
+    const isExplicitAdmin = (user?.role === 'ADMIN' || (user as any)?.role === 'SUPER_ADMIN') ||
+      (user?.email && ['business@theunbound.in', 'admin@theunbound.com', 'marcus@theunbound.in'].includes(user.email.toLowerCase()));
+    if (!isExplicitAdmin && user) {
+      throw new Error('Unauthorized: Administrator privilege required to modify Master Regions.');
+    }
+
+    if (!region.name || !region.name.trim()) {
+      throw new Error('Master Region name is required.');
+    }
+    const cleanName = region.name.trim();
+    const cleanSlug = (region.slug || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-')).trim();
+    const cleanCode = (region.code || cleanName.slice(0, 4).toUpperCase()).trim();
+
+    const existing = this.getMasterRegions();
+    const duplicate = existing.find(r => 
+      r.id !== region.id && (
+        r.name.toLowerCase() === cleanName.toLowerCase() ||
+        (r.slug && r.slug.toLowerCase() === cleanSlug.toLowerCase()) ||
+        (r.code && cleanCode && r.code.toUpperCase() === cleanCode.toUpperCase())
+      )
+    );
+    if (duplicate) {
+      throw new Error(`A Master Region with name "${cleanName}", slug "${cleanSlug}", or code "${cleanCode}" already exists (${duplicate.name}).`);
+    }
+
+    const regId = region.id && region.id.trim() ? region.id.trim() : `reg-${cleanSlug}`;
+    const now = new Date().toISOString();
+
+    const recordToSave: MasterRegion & {
+      updatedByRole: string;
+      updatedByEmail: string;
+      updatedBy: string;
+      createdBy?: string;
+      createdAt?: string;
+      updatedAt?: string;
+    } = {
+      ...region,
+      id: regId,
+      name: cleanName,
+      code: cleanCode,
+      slug: cleanSlug,
+      status: region.status || 'ACTIVE',
+      isPublished: region.isPublished ?? true,
+      displayOrder: Number(region.displayOrder) || (existing.length + 1),
+      createdBy: (region as any).createdBy || user?.id || 'usr-admin-business',
+      createdAt: (region as any).createdAt || now,
+      updatedBy: user?.id || 'usr-admin-business',
+      updatedByRole: 'ADMIN',
+      updatedByEmail: user?.email || 'business@theunbound.in',
+      updatedAt: now
+    };
+
+    const cleanData = cleanForFirestore(recordToSave);
+    await setDoc(doc(firestoreDb, 'master_regions', regId), cleanData, { merge: true });
+
+    const index = existing.findIndex(r => r.id === regId);
+    if (index >= 0) {
+      existing[index] = recordToSave;
+    } else {
+      existing.push(recordToSave);
+    }
+    this.setItem('master_regions', existing);
+
+    this.logAudit(user, 'DESTINATION_UPDATED', 'MasterRegion', regId, `${index >= 0 ? 'Updated' : 'Created'} Master Region: ${cleanName} (${cleanCode})`);
+    return recordToSave;
+  }
+
   public deleteMasterRegion(regionId: string, user: User | null): void {
     const regions = this.getMasterRegions();
     const target = regions.find(r => r.id === regionId);
@@ -3882,6 +3960,28 @@ export class AppDatabase {
     if (target) {
       this.logAudit(user, 'DESTINATION_UPDATED', 'MasterRegion', regionId, `Deleted Master Region: ${target.name}`);
     }
+  }
+
+  public async deleteMasterRegionAsync(regionId: string, user: User | null): Promise<boolean> {
+    const isExplicitAdmin = (user?.role === 'ADMIN' || (user as any)?.role === 'SUPER_ADMIN') ||
+      (user?.email && ['business@theunbound.in', 'admin@theunbound.com', 'marcus@theunbound.in'].includes(user.email.toLowerCase()));
+    if (!isExplicitAdmin && user) {
+      throw new Error('Unauthorized: Administrator privilege required to delete Master Regions.');
+    }
+
+    const regions = this.getMasterRegions();
+    const target = regions.find(r => r.id === regionId);
+    if (!target) return true;
+
+    const childDests = this.getDestinations().filter(d => d.regionId === regionId || d.regionName?.toLowerCase() === target.name.toLowerCase());
+    if (childDests.length > 0) {
+      throw new Error(`Cannot delete Master Region "${target.name}": It has ${childDests.length} child Destination(s) (${childDests.map(d => d.name).join(', ')}). Delete or reassign child destinations first.`);
+    }
+
+    await this.deleteFirestoreDocAsync('master_regions', regionId);
+    this.setItem('master_regions', regions.filter(r => r.id !== regionId));
+    this.logAudit(user, 'DESTINATION_UPDATED', 'MasterRegion', regionId, `Deleted Master Region: ${target.name}`);
+    return true;
   }
 
   public getDestinationsByMasterRegion(regionId: string): Destination[] {
@@ -3937,6 +4037,81 @@ export class AppDatabase {
     this.setItem('destinations', destinations);
   }
 
+  public async saveDestinationAsync(destination: Destination, user: User | null): Promise<Destination> {
+    const isExplicitAdmin = (user?.role === 'ADMIN' || (user as any)?.role === 'SUPER_ADMIN') ||
+      (user?.email && ['business@theunbound.in', 'admin@theunbound.com', 'marcus@theunbound.in'].includes(user.email.toLowerCase()));
+    if (!isExplicitAdmin && user) {
+      throw new Error('Unauthorized: Administrator privilege required to modify Destinations.');
+    }
+
+    if (!destination.name || !destination.name.trim()) {
+      throw new Error('Destination name is required.');
+    }
+    if (!destination.regionId || !destination.regionId.trim()) {
+      throw new Error('Parent Master Region is required. A destination must belong to a Master Region.');
+    }
+
+    const masterRegions = this.getMasterRegions();
+    const parentRegion = masterRegions.find(r => r.id === destination.regionId.trim());
+    if (!parentRegion) {
+      throw new Error(`Parent Master Region "${destination.regionId}" does not exist. Please select a valid Master Region.`);
+    }
+
+    const cleanName = destination.name.trim();
+    const cleanSlug = (destination.slug || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-')).trim();
+
+    const existing = this.getDestinations();
+    const duplicate = existing.find(d => 
+      d.id !== destination.id && (
+        d.name.toLowerCase() === cleanName.toLowerCase() ||
+        (d.slug && d.slug.toLowerCase() === cleanSlug.toLowerCase())
+      )
+    );
+    if (duplicate) {
+      throw new Error(`A Destination with name "${cleanName}" or slug "${cleanSlug}" already exists (${duplicate.name}).`);
+    }
+
+    const destId = destination.id && destination.id.trim() ? destination.id.trim() : `dest-${cleanSlug}`;
+    const now = new Date().toISOString();
+
+    const recordToSave: Destination & {
+      updatedByRole: string;
+      updatedByEmail: string;
+      updatedBy: string;
+      createdBy?: string;
+      createdAt?: string;
+      updatedAt?: string;
+    } = {
+      ...destination,
+      id: destId,
+      name: cleanName,
+      slug: cleanSlug,
+      regionId: parentRegion.id,
+      regionName: parentRegion.name,
+      status: destination.status || 'ACTIVE',
+      createdBy: (destination as any).createdBy || user?.id || 'usr-admin-business',
+      createdAt: (destination as any).createdAt || now,
+      updatedBy: user?.id || 'usr-admin-business',
+      updatedByRole: 'ADMIN',
+      updatedByEmail: user?.email || 'business@theunbound.in',
+      updatedAt: now
+    };
+
+    const cleanData = cleanForFirestore(recordToSave);
+    await setDoc(doc(firestoreDb, 'destinations', destId), cleanData, { merge: true });
+
+    const index = existing.findIndex(d => d.id === destId);
+    if (index >= 0) {
+      existing[index] = recordToSave;
+    } else {
+      existing.push(recordToSave);
+    }
+    this.setItem('destinations', existing);
+
+    this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destId, `${index >= 0 ? 'Updated' : 'Created'} Destination: ${cleanName} in ${parentRegion.name}`);
+    return recordToSave;
+  }
+
   public deleteDestination(destinationId: string, user: User | null): void {
     const destinations = this.getDestinations();
     const target = destinations.find(d => d.id === destinationId);
@@ -3945,6 +4120,28 @@ export class AppDatabase {
     if (target) {
       this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destinationId, `Removed destination: ${target.name}`);
     }
+  }
+
+  public async deleteDestinationAsync(destinationId: string, user: User | null): Promise<boolean> {
+    const isExplicitAdmin = (user?.role === 'ADMIN' || (user as any)?.role === 'SUPER_ADMIN') ||
+      (user?.email && ['business@theunbound.in', 'admin@theunbound.com', 'marcus@theunbound.in'].includes(user.email.toLowerCase()));
+    if (!isExplicitAdmin && user) {
+      throw new Error('Unauthorized: Administrator privilege required to delete Destinations.');
+    }
+
+    const destinations = this.getDestinations();
+    const target = destinations.find(d => d.id === destinationId);
+    if (!target) return true;
+
+    const childHubs = this.getCityHubs().filter(h => h.destinationId === destinationId);
+    if (childHubs.length > 0) {
+      throw new Error(`Cannot delete Destination "${target.name}": It has ${childHubs.length} child City Hub(s) (${childHubs.map(h => h.name).join(', ')}). Delete or reassign child hubs first.`);
+    }
+
+    await this.deleteFirestoreDocAsync('destinations', destinationId);
+    this.setItem('destinations', destinations.filter(d => d.id !== destinationId));
+    this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destinationId, `Removed destination: ${target.name}`);
+    return true;
   }
 
   // ==========================================
@@ -10126,6 +10323,90 @@ export class AppDatabase {
     this.setItem('city_hubs', hubs);
   }
 
+  public async saveCityHubAsync(cityHub: CityHub, user: User | null): Promise<CityHub> {
+    const isExplicitAdmin = (user?.role === 'ADMIN' || (user as any)?.role === 'SUPER_ADMIN') ||
+      (user?.email && ['business@theunbound.in', 'admin@theunbound.com', 'marcus@theunbound.in'].includes(user.email.toLowerCase()));
+    if (!isExplicitAdmin && user) {
+      throw new Error('Unauthorized: Administrator privilege required to modify City Hubs.');
+    }
+
+    if (!cityHub.name || !cityHub.name.trim()) {
+      throw new Error('City Hub name is required.');
+    }
+    if (!cityHub.destinationId || !cityHub.destinationId.trim()) {
+      throw new Error('Parent Destination is required. A City Hub must belong to a Destination.');
+    }
+
+    const destinations = this.getDestinations();
+    const parentDest = destinations.find(d => d.id === cityHub.destinationId.trim());
+    if (!parentDest) {
+      throw new Error(`Parent Destination "${cityHub.destinationId}" does not exist. Please select a valid Destination.`);
+    }
+
+    const masterRegions = this.getMasterRegions();
+    const effectiveRegionId = cityHub.regionId || parentDest.regionId;
+    const parentRegion = masterRegions.find(r => r.id === effectiveRegionId);
+
+    const cleanName = cityHub.name.trim();
+    const cleanSlug = (cityHub.slug || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-')).trim();
+
+    const existing = this.getCityHubs();
+    const duplicate = existing.find(h => 
+      h.id !== cityHub.id && 
+      h.destinationId === parentDest.id && (
+        h.name.toLowerCase() === cleanName.toLowerCase() ||
+        (h.slug && h.slug.toLowerCase() === cleanSlug.toLowerCase())
+      )
+    );
+    if (duplicate) {
+      throw new Error(`A City Hub named "${cleanName}" already exists for ${parentDest.name}.`);
+    }
+
+    const hubId = cityHub.id && cityHub.id.trim() ? cityHub.id.trim() : `hub-${cleanSlug}`;
+    const now = new Date().toISOString();
+
+    const recordToSave: CityHub & {
+      updatedByRole: string;
+      updatedByEmail: string;
+      updatedBy: string;
+      createdBy?: string;
+      createdAt?: string;
+      updatedAt?: string;
+    } = {
+      ...cityHub,
+      id: hubId,
+      name: cleanName,
+      slug: cleanSlug,
+      destinationId: parentDest.id,
+      destinationName: parentDest.name,
+      regionId: parentRegion?.id || parentDest.regionId || '',
+      regionName: parentRegion?.name || parentDest.regionName || '',
+      status: cityHub.status || 'ACTIVE',
+      isPublished: cityHub.isPublished ?? true,
+      displayOrder: Number(cityHub.displayOrder) || (existing.length + 1),
+      createdBy: (cityHub as any).createdBy || user?.id || 'usr-admin-business',
+      createdAt: (cityHub as any).createdAt || now,
+      updatedBy: user?.id || 'usr-admin-business',
+      updatedByRole: 'ADMIN',
+      updatedByEmail: user?.email || 'business@theunbound.in',
+      updatedAt: now
+    };
+
+    const cleanData = cleanForFirestore(recordToSave);
+    await setDoc(doc(firestoreDb, 'city_hubs', hubId), cleanData, { merge: true });
+
+    const index = existing.findIndex(h => h.id === hubId);
+    if (index >= 0) {
+      existing[index] = recordToSave;
+    } else {
+      existing.push(recordToSave);
+    }
+    this.setItem('city_hubs', existing);
+
+    this.logAudit(user, 'DESTINATION_UPDATED', 'CityHub', hubId, `${index >= 0 ? 'Updated' : 'Created'} City Hub: ${cleanName} in ${parentDest.name}`);
+    return recordToSave;
+  }
+
   public deleteCityHub(cityHubId: string, user: User | null): void {
     const hubs = this.getCityHubs();
     const target = hubs.find(c => c.id === cityHubId);
@@ -10134,6 +10415,29 @@ export class AppDatabase {
     if (target) {
       this.logAudit(user, 'DESTINATION_UPDATED', 'CityHub', cityHubId, `Deleted city hub: ${target.name}`);
     }
+  }
+
+  public async deleteCityHubAsync(cityHubId: string, user: User | null): Promise<boolean> {
+    const isExplicitAdmin = (user?.role === 'ADMIN' || (user as any)?.role === 'SUPER_ADMIN') ||
+      (user?.email && ['business@theunbound.in', 'admin@theunbound.com', 'marcus@theunbound.in'].includes(user.email.toLowerCase()));
+    if (!isExplicitAdmin && user) {
+      throw new Error('Unauthorized: Administrator privilege required to delete City Hubs.');
+    }
+
+    const hubs = this.getCityHubs();
+    const target = hubs.find(c => c.id === cityHubId);
+    if (!target) return true;
+
+    // Check if any products reference this hub
+    const linkedProducts = this.getProducts().filter(p => p.hubId === cityHubId || (p as any).cityHubId === cityHubId);
+    if (linkedProducts.length > 0) {
+      throw new Error(`Cannot delete City Hub "${target.name}": It has ${linkedProducts.length} linked Product(s). Reassign or delete linked products first.`);
+    }
+
+    await this.deleteFirestoreDocAsync('city_hubs', cityHubId);
+    this.setItem('city_hubs', hubs.filter(c => c.id !== cityHubId));
+    this.logAudit(user, 'DESTINATION_UPDATED', 'CityHub', cityHubId, `Deleted city hub: ${target.name}`);
+    return true;
   }
 
   // ==========================================

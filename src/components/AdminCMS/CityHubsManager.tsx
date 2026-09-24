@@ -19,8 +19,11 @@ import {
   Compass,
   Layers,
   Globe2,
-  ChevronRight
+  ChevronRight,
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
+import { MasterDataDiagnosticBanner } from './MasterDataDiagnosticBanner';
 
 interface CityHubsManagerProps {
   destinations?: Destination[];
@@ -36,6 +39,9 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
   const [selectedRegionFilter, setSelectedRegionFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [editingHub, setEditingHub] = useState<Partial<CityHub> | null>(null);
   const [modalTab, setModalTab] = useState<'CONTENT' | 'SEO'>('CONTENT');
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
@@ -63,16 +69,18 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
   });
 
   const handleOpenAdd = () => {
-    const firstRegion = masterRegions[0] || { id: 'reg-east-asia', name: 'East Asia' };
-    const regionDests = destinations.filter(d => !d.regionId || d.regionId === firstRegion.id);
-    const firstDest = regionDests[0] || destinations[0] || { id: 'japan', name: 'Japan', regionId: firstRegion.id, regionName: firstRegion.name };
+    setSaveError(null);
+    const activeMasterRegions = masterRegions.filter(r => r.status === 'ACTIVE');
+    const firstRegion = activeMasterRegions[0] || masterRegions[0];
+    const regionDests = firstRegion ? destinations.filter(d => d.regionId === firstRegion.id) : destinations;
+    const firstDest = regionDests[0] || destinations[0];
     
     setEditingHub({
       id: `hub-${Date.now()}`,
-      regionId: firstDest.regionId || firstRegion.id,
-      regionName: firstDest.regionName || firstRegion.name,
-      destinationId: firstDest.id,
-      destinationName: firstDest.name,
+      regionId: firstDest?.regionId || firstRegion?.id || '',
+      regionName: firstDest?.regionName || firstRegion?.name || '',
+      destinationId: firstDest?.id || '',
+      destinationName: firstDest?.name || '',
       name: '',
       tagline: '',
       description: '',
@@ -89,37 +97,66 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
     setIsEditing(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingHub || !editingHub.name || !editingHub.destinationId) return;
+    setSaveError(null);
+
+    if (!editingHub || !editingHub.name?.trim()) {
+      setSaveError('City Hub Name is required.');
+      return;
+    }
+
+    if (!editingHub.destinationId?.trim()) {
+      setSaveError('Parent Destination is required. Please select a Destination.');
+      return;
+    }
 
     const targetDest = destinations.find(d => d.id === editingHub.destinationId);
-    const targetRegion = masterRegions.find(r => r.id === (editingHub.regionId || targetDest?.regionId));
+    if (!targetDest) {
+      setSaveError('Selected Destination was not found. Please select a valid Destination.');
+      return;
+    }
+
+    const targetRegion = masterRegions.find(r => r.id === (editingHub.regionId || targetDest.regionId));
+
+    const cleanName = editingHub.name.trim();
+    const cleanSlug = (editingHub.slug?.trim() || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-')).replace(/(^-|-$)/g, '');
 
     const completeHub: CityHub = {
-      id: editingHub.id || `hub-${Date.now()}`,
-      destinationId: editingHub.destinationId,
-      destinationName: targetDest?.name || editingHub.destinationName || 'Destination',
-      regionId: targetRegion?.id || targetDest?.regionId || editingHub.regionId || '',
-      regionName: targetRegion?.name || targetDest?.regionName || editingHub.regionName || '',
-      name: editingHub.name,
-      slug: editingHub.slug || editingHub.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
-      tagline: editingHub.tagline || '',
-      description: editingHub.description || '',
+      id: editingHub.id || `hub-${cleanSlug}`,
+      destinationId: targetDest.id,
+      destinationName: targetDest.name,
+      regionId: targetRegion?.id || targetDest.regionId || '',
+      regionName: targetRegion?.name || targetDest.regionName || '',
+      name: cleanName,
+      slug: cleanSlug,
+      tagline: editingHub.tagline?.trim() || '',
+      description: editingHub.description?.trim() || '',
       heroImage: editingHub.heroImage || 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1200&auto=format&fit=crop',
       images: editingHub.images || [],
       productCount: Number(editingHub.productCount || 0),
       hotelCount: Number(editingHub.hotelCount || 0),
       displayOrder: Number(editingHub.displayOrder || 1),
-      highlights: Array.isArray(editingHub.highlights) ? editingHub.highlights : (editingHub.highlights as string || '').split(',').map((s: string) => s.trim()),
+      highlights: Array.isArray(editingHub.highlights) ? editingHub.highlights : (editingHub.highlights as string || '').split(',').map((s: string) => s.trim()).filter(Boolean),
       isPublished: editingHub.isPublished !== undefined ? editingHub.isPublished : true,
       status: editingHub.status || 'ACTIVE',
       seo: editingHub.seo
     };
 
-    db.saveCityHub(completeHub, user);
-    setIsEditing(false);
-    setEditingHub(null);
+    setIsSaving(true);
+    try {
+      await db.saveCityHubAsync(completeHub, user);
+      setCityHubs(db.getCityHubs());
+      setIsEditing(false);
+      setEditingHub(null);
+      setSaveSuccessMsg(`City Hub "${completeHub.name}" successfully saved to Firestore!`);
+      setTimeout(() => setSaveSuccessMsg(null), 5000);
+    } catch (err: any) {
+      console.error('[CityHubsCMS] Save error:', err);
+      setSaveError(err?.message || 'Failed to save City Hub to Firestore.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleDelete = (id: string) => {
@@ -134,6 +171,15 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
 
   return (
     <div className="space-y-6">
+      <MasterDataDiagnosticBanner />
+
+      {saveSuccessMsg && (
+        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-3 text-emerald-800 text-sm font-semibold shadow-xs animate-in fade-in">
+          <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+          <span>{saveSuccessMsg}</span>
+        </div>
+      )}
+
       {/* Header & Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
@@ -344,6 +390,15 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
             </div>
 
             <form onSubmit={handleSave} className="space-y-4">
+              {saveError && (
+                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2.5 text-rose-800 text-xs">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="font-bold block">Action Failed</strong>
+                    <span>{saveError}</span>
+                  </div>
+                </div>
+              )}
               {modalTab === 'SEO' ? (
                 <EntitySEOSettingsTab
                   entityType="HUB"
@@ -590,9 +645,20 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
                   </button>
                   <button
                     type="submit"
-                    className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-sm cursor-pointer shadow-md shadow-[#00C6A6]/20"
+                    disabled={isSaving}
+                    className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] disabled:opacity-50 text-slate-950 font-bold text-sm cursor-pointer shadow-md shadow-[#00C6A6]/20 flex items-center space-x-1.5"
                   >
-                    Save City Hub
+                    {isSaving ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Persisting to Firestore...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Save City Hub</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>

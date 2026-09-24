@@ -21,9 +21,11 @@ import {
   Clock,
   Building2,
   Filter,
-  RefreshCw
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
+import { MasterDataDiagnosticBanner } from './MasterDataDiagnosticBanner';
 
 interface DestinationCMSManagerProps {
   onSelectDestination?: (slug: string) => void;
@@ -48,6 +50,9 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
   const [selectedRegionFilter, setSelectedRegionFilter] = useState<string>(initialRegionFilter);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalTab, setModalTab] = useState<'CONTENT' | 'SEO'>('CONTENT');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [editingDest, setEditingDest] = useState<Destination | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
@@ -90,15 +95,17 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
   }, [db]);
 
   const handleOpenCreate = () => {
-    const defaultRegion = masterRegions[0] || { id: 'reg-east-asia', name: 'East Asia' };
+    setSaveError(null);
+    const activeMasterRegions = masterRegions.filter(r => r.status === 'ACTIVE');
+    const defaultRegion = activeMasterRegions[0] || masterRegions[0];
     setEditingDest(null);
     setModalTab('CONTENT');
     setFormData({
       name: '',
       slug: '',
       country: '',
-      regionId: defaultRegion.id,
-      regionName: defaultRegion.name,
+      regionId: defaultRegion ? defaultRegion.id : '',
+      regionName: defaultRegion ? defaultRegion.name : '',
       region: 'JAPAN',
       heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1600&auto=format&fit=crop',
       heroImageAlt: 'Destination Ground Operations',
@@ -125,6 +132,7 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
   };
 
   const handleOpenEdit = (dest: Destination) => {
+    setSaveError(null);
     setEditingDest(dest);
     setModalTab('CONTENT');
     setFormData({ ...dest });
@@ -140,20 +148,34 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
     }));
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.slug) return;
+    setSaveError(null);
 
-    const matchedRegion = masterRegions.find(r => r.id === formData.regionId) || masterRegions[0];
+    if (!formData.name?.trim()) {
+      setSaveError('Destination Name is required.');
+      return;
+    }
 
-    const slug = (formData.slug || formData.name || 'destination').toLowerCase().replace(/\s+/g, '-');
+    if (!formData.regionId?.trim()) {
+      setSaveError('Parent Master Region is required. Please select a Master Region.');
+      return;
+    }
+
+    const matchedRegion = masterRegions.find(r => r.id === formData.regionId);
+    if (!matchedRegion) {
+      setSaveError('Selected Master Region was not found. Please select a valid Master Region.');
+      return;
+    }
+
+    const slug = (formData.slug?.trim() || formData.name || 'destination').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const destToSave: Destination = {
       id: editingDest ? editingDest.id : `dest-${slug}`,
-      name: formData.name || '',
+      name: formData.name.trim(),
       slug,
-      country: formData.country || formData.name || '',
-      regionId: formData.regionId || matchedRegion?.id || 'reg-east-asia',
-      regionName: formData.regionName || matchedRegion?.name || 'East Asia',
+      country: formData.country?.trim() || formData.name.trim(),
+      regionId: matchedRegion.id,
+      regionName: matchedRegion.name,
       region: (formData.region as DestinationRegion) || 'JAPAN',
       heroImage: formData.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1600&auto=format&fit=crop',
       heroImageAlt: formData.heroImageAlt || `${formData.name || 'Destination'} Travel Ground Operations`,
@@ -179,9 +201,19 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
       seo: formData.seo
     };
 
-    db.saveDestination(destToSave, user);
-    refresh();
-    setIsModalOpen(false);
+    setIsSaving(true);
+    try {
+      await db.saveDestinationAsync(destToSave, user);
+      refresh();
+      setIsModalOpen(false);
+      setSaveSuccessMsg(`Destination "${destToSave.name}" successfully saved to Firestore!`);
+      setTimeout(() => setSaveSuccessMsg(null), 5000);
+    } catch (err: any) {
+      console.error('[DestinationCMS] Save error:', err);
+      setSaveError(err?.message || 'Failed to save Destination to Firestore.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleDelete = (destId: string) => {
@@ -240,6 +272,15 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
 
   return (
     <div className="space-y-6">
+      <MasterDataDiagnosticBanner />
+
+      {saveSuccessMsg && (
+        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-3 text-emerald-800 text-sm font-semibold shadow-xs animate-in fade-in">
+          <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+          <span>{saveSuccessMsg}</span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
@@ -479,6 +520,16 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
             </div>
 
             <form onSubmit={handleSave} className="space-y-4 text-xs">
+              {saveError && (
+                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2.5 text-rose-800 text-xs">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="font-bold block">Action Failed</strong>
+                    <span>{saveError}</span>
+                  </div>
+                </div>
+              )}
+
               {modalTab === 'SEO' ? (
                 <EntitySEOSettingsTab
                   entityType="DESTINATION"
@@ -490,22 +541,40 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
                 <>
                   {/* Hierarchy Selection - Parent Master Region */}
               <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
-                <label className="block text-xs font-bold text-amber-900 uppercase tracking-wider mb-1.5">
-                  1. Parent Master Region (Tier 1) *
-                </label>
-                <select
-                  required
-                  value={formData.regionId || ''}
-                  onChange={(e) => handleRegionSelect(e.target.value)}
-                  className="w-full p-2.5 bg-white border border-amber-300 rounded-xl font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                >
-                  <option value="" disabled>Select Master Region...</option>
-                  {masterRegions.map(reg => (
-                    <option key={reg.id} value={reg.id}>
-                      {reg.name} ({reg.code}) — {reg.tagline || reg.description?.slice(0, 40)}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-amber-900 uppercase tracking-wider">
+                    1. Parent Master Region (Tier 1) *
+                  </label>
+                  {masterRegions.length === 0 && onNavigateToRegions && (
+                    <button
+                      type="button"
+                      onClick={() => { setIsModalOpen(false); onNavigateToRegions(); }}
+                      className="text-[11px] font-bold text-amber-800 underline hover:text-amber-950"
+                    >
+                      Create Master Region First →
+                    </button>
+                  )}
+                </div>
+
+                {masterRegions.length === 0 ? (
+                  <div className="p-3 bg-amber-100/70 border border-amber-300 rounded-xl text-amber-900 text-xs font-medium">
+                    No Master Regions exist in Firestore. Destinations require a parent Master Region. Please create a Master Region first.
+                  </div>
+                ) : (
+                  <select
+                    required
+                    value={formData.regionId || ''}
+                    onChange={(e) => handleRegionSelect(e.target.value)}
+                    className="w-full p-2.5 bg-white border border-amber-300 rounded-xl font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  >
+                    <option value="" disabled>Select Master Region...</option>
+                    {masterRegions.map(reg => (
+                      <option key={reg.id} value={reg.id}>
+                        {reg.name} ({reg.code}) — {reg.tagline || reg.description?.slice(0, 40)}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <div className="text-[11px] text-amber-800 mt-1">
                   Selected Parent: <span className="font-bold">{formData.regionName || 'None'}</span>
                 </div>
@@ -836,9 +905,20 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl shadow-sm transition-all cursor-pointer text-xs"
+                    disabled={isSaving}
+                    className="px-5 py-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold rounded-xl shadow-sm transition-all cursor-pointer text-xs flex items-center space-x-1.5"
                   >
-                    {editingDest ? 'Save Destination' : 'Create Destination'}
+                    {isSaving ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Persisting to Firestore...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>{editingDest ? 'Save Destination' : 'Create Destination'}</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
