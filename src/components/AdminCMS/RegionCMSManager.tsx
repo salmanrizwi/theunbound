@@ -118,7 +118,7 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
   const handleCreateNew = () => {
     setSaveError(null);
     setFormData({
-      id: `reg-${Date.now()}`,
+      id: '',
       name: '',
       code: '',
       slug: '',
@@ -164,9 +164,9 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
       return;
     }
 
-    const regId = formData.id || `reg-${(formData.slug || Date.now()).toString()}`;
     const slug = (formData.slug?.trim() || formData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')).replace(/(^-|-$)/g, '');
     const code = formData.code?.trim().toUpperCase() || 'REG';
+    const regId = formData.id && !formData.id.startsWith('reg-17') ? formData.id : `reg-${slug || Date.now()}`;
 
     const newRegion: MasterRegion = {
       id: regId,

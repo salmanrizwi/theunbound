@@ -76,7 +76,7 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
     const firstDest = regionDests[0] || destinations[0];
     
     setEditingHub({
-      id: `hub-${Date.now()}`,
+      id: '',
       regionId: firstDest?.regionId || firstRegion?.id || '',
       regionName: firstDest?.regionName || firstRegion?.name || '',
       destinationId: firstDest?.id || '',
@@ -121,9 +121,10 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
 
     const cleanName = editingHub.name.trim();
     const cleanSlug = (editingHub.slug?.trim() || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-')).replace(/(^-|-$)/g, '');
+    const hubId = editingHub.id && !editingHub.id.startsWith('hub-17') ? editingHub.id : `hub-${cleanSlug}`;
 
     const completeHub: CityHub = {
-      id: editingHub.id || `hub-${cleanSlug}`,
+      id: hubId,
       destinationId: targetDest.id,
       destinationName: targetDest.name,
       regionId: targetRegion?.id || targetDest.regionId || '',

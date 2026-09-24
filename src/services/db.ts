@@ -761,16 +761,29 @@ export class AppDatabase {
     if (!docId) return;
     try {
       this.unmarkEntityDeleted(collectionName, docId);
-      const effectiveUid = auth.currentUser?.uid || currentAuthUser?.id || data?.updatedBy || data?.createdBy || data?.agentId || 'usr-admin-business';
-      const effectiveRole = currentAuthUser?.role || (auth.currentUser ? 'B2B_AGENT' : 'ADMIN');
-      const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || 'business@theunbound.in';
+      const isMasterAdminEmail = (email?: string) => {
+        const lower = (email || '').toLowerCase().trim();
+        return lower === 'business@theunbound.in' || lower === 'admin@theunbound.com' || lower === 'marcus@theunbound.in';
+      };
+      const cmsCollections = [
+        'master_regions', 'destinations', 'city_hubs', 'regions', 'products', 'hotels',
+        'hotel_rooms', 'hotel_rates', 'hotel_meal_plans', 'transfer_routes', 'transfer_rates',
+        'product_pricing_rates', 'product_capacities', 'b2b_packages', 'package_items',
+        'visas', 'visa_rates', 'custom_pages', 'blog_articles', 'inventory_tombstones'
+      ];
+      const isAdminCollection = cmsCollections.includes(collectionName);
+      const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || data?.updatedByEmail || 'business@theunbound.in';
+      const effectiveRole = (data?.updatedByRole === 'ADMIN' || isAdminCollection || isMasterAdminEmail(effectiveEmail) || currentAuthUser?.role === 'ADMIN' || (currentAuthUser?.role as any) === 'SUPER_ADMIN')
+        ? 'ADMIN'
+        : (currentAuthUser?.role || (auth.currentUser ? 'B2B_AGENT' : 'ADMIN'));
+      const effectiveUid = auth.currentUser?.uid || currentAuthUser?.id || data?.updatedBy || data?.createdBy || 'usr-admin-business';
 
       const enrichedData = {
+        ...data,
         updatedByRole: effectiveRole,
         updatedByEmail: effectiveEmail,
         updatedBy: effectiveUid,
-        isDeleted: false,
-        ...data
+        isDeleted: false
       };
       const cleanData = cleanForFirestore(enrichedData);
       setDoc(doc(firestoreDb, collectionName, docId), cleanData, { merge: true }).catch((err) => {
@@ -785,16 +798,29 @@ export class AppDatabase {
     if (!docId) return false;
     try {
       this.unmarkEntityDeleted(collectionName, docId);
-      const effectiveUid = auth.currentUser?.uid || currentAuthUser?.id || data?.updatedBy || data?.createdBy || data?.agentId || 'usr-admin-business';
-      const effectiveRole = currentAuthUser?.role || (auth.currentUser ? 'B2B_AGENT' : 'ADMIN');
-      const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || 'business@theunbound.in';
+      const isMasterAdminEmail = (email?: string) => {
+        const lower = (email || '').toLowerCase().trim();
+        return lower === 'business@theunbound.in' || lower === 'admin@theunbound.com' || lower === 'marcus@theunbound.in';
+      };
+      const cmsCollections = [
+        'master_regions', 'destinations', 'city_hubs', 'regions', 'products', 'hotels',
+        'hotel_rooms', 'hotel_rates', 'hotel_meal_plans', 'transfer_routes', 'transfer_rates',
+        'product_pricing_rates', 'product_capacities', 'b2b_packages', 'package_items',
+        'visas', 'visa_rates', 'custom_pages', 'blog_articles', 'inventory_tombstones'
+      ];
+      const isAdminCollection = cmsCollections.includes(collectionName);
+      const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || data?.updatedByEmail || 'business@theunbound.in';
+      const effectiveRole = (data?.updatedByRole === 'ADMIN' || isAdminCollection || isMasterAdminEmail(effectiveEmail) || currentAuthUser?.role === 'ADMIN' || (currentAuthUser?.role as any) === 'SUPER_ADMIN')
+        ? 'ADMIN'
+        : (currentAuthUser?.role || (auth.currentUser ? 'B2B_AGENT' : 'ADMIN'));
+      const effectiveUid = auth.currentUser?.uid || currentAuthUser?.id || data?.updatedBy || data?.createdBy || 'usr-admin-business';
 
       const enrichedData = {
+        ...data,
         updatedByRole: effectiveRole,
         updatedByEmail: effectiveEmail,
         updatedBy: effectiveUid,
-        isDeleted: false,
-        ...data
+        isDeleted: false
       };
       const cleanData = cleanForFirestore(enrichedData);
       await setDoc(doc(firestoreDb, collectionName, docId), cleanData, { merge: true });
@@ -845,30 +871,45 @@ export class AppDatabase {
     if (!recordId) return;
     const current = this.getItem<string[]>('inventory_tombstones', []);
     const set = new Set(current);
-    set.delete(recordId);
-    set.delete(`${collectionOrType}_${recordId}`);
-    set.delete(`Product_${recordId}`);
-    set.delete(`Hotel_${recordId}`);
-    set.delete(`Destination_${recordId}`);
-    set.delete(`CityHub_${recordId}`);
-    set.delete(`MasterRegion_${recordId}`);
-    set.delete(`Package_${recordId}`);
-    set.delete(`B2BPackage_${recordId}`);
-    set.delete(`Visa_${recordId}`);
-    set.delete(`Booking_${recordId}`);
-    set.delete(`Lead_${recordId}`);
-    set.delete(`TravelLead_${recordId}`);
-    set.delete(`CustomPage_${recordId}`);
-    set.delete(`BlogArticle_${recordId}`);
-    set.delete(`User_${recordId}`);
+    const keysToDelete = [
+      recordId,
+      `${collectionOrType}_${recordId}`,
+      `Product_${recordId}`,
+      `products_${recordId}`,
+      `Hotel_${recordId}`,
+      `hotels_${recordId}`,
+      `Destination_${recordId}`,
+      `destinations_${recordId}`,
+      `CityHub_${recordId}`,
+      `city_hubs_${recordId}`,
+      `MasterRegion_${recordId}`,
+      `master_regions_${recordId}`,
+      `regions_${recordId}`,
+      `DestinationRegion_${recordId}`,
+      `Package_${recordId}`,
+      `b2b_packages_${recordId}`,
+      `B2BPackage_${recordId}`,
+      `Visa_${recordId}`,
+      `visas_${recordId}`,
+      `Booking_${recordId}`,
+      `Lead_${recordId}`,
+      `leads_${recordId}`,
+      `TravelLead_${recordId}`,
+      `CustomPage_${recordId}`,
+      `custom_pages_${recordId}`,
+      `BlogArticle_${recordId}`,
+      `blog_articles_${recordId}`,
+      `User_${recordId}`
+    ];
+    keysToDelete.forEach(k => set.delete(k));
     this.setItem('inventory_tombstones', Array.from(set));
 
-    // Remove tombstone document from Firestore
+    // Remove tombstone documents from Firestore
     try {
-      deleteDoc(doc(firestoreDb, 'inventory_tombstones', `${collectionOrType}_${recordId}`)).catch(err => {
-        console.debug('Firestore tombstone delete note:', err);
+      const uniqueKeys = Array.from(new Set(keysToDelete));
+      uniqueKeys.forEach(tombstoneId => {
+        deleteDoc(doc(firestoreDb, 'inventory_tombstones', tombstoneId)).catch(() => {});
       });
-      deleteDoc(doc(firestoreDb, 'inventory_tombstones', recordId)).catch(() => {});
     } catch (e) {
       console.debug('Tombstone local clear error:', e);
     }
@@ -895,7 +936,10 @@ export class AppDatabase {
         await setDoc(doc(firestoreDb, collectionName, docId), {
           isDeleted: true,
           status: 'DELETED',
-          deletedAt: new Date().toISOString()
+          deletedAt: new Date().toISOString(),
+          updatedByRole: 'ADMIN',
+          updatedByEmail: 'business@theunbound.in',
+          updatedBy: 'usr-admin-business'
         }, { merge: true });
         return true;
       } catch (innerErr) {
@@ -1248,7 +1292,17 @@ export class AppDatabase {
         snapshot.forEach(docSnap => {
           const raw = docSnap.data();
           if (raw.isDeleted === true || raw.status === 'DELETED') return;
-          if (deletedSet.has(docSnap.id) || (raw.id && deletedSet.has(raw.id))) return;
+          if (deletedSet.has(docSnap.id) || (raw.id && deletedSet.has(raw.id))) {
+            const isExplicitlyActive = raw.isDeleted === false || raw.status === 'ACTIVE' || raw.status === 'DRAFT' || raw.status === 'PUBLISHED';
+            if (isExplicitlyActive) {
+              deletedSet.delete(docSnap.id);
+              if (raw.id) deletedSet.delete(raw.id);
+              this.unmarkEntityDeleted(collectionName, docSnap.id);
+              if (raw.id && raw.id !== docSnap.id) this.unmarkEntityDeleted(collectionName, raw.id);
+            } else {
+              return;
+            }
+          }
 
           const item = transformDoc ? transformDoc(raw, docSnap.id) : (raw as T);
           if (item) {

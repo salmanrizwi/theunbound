@@ -222,10 +222,14 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
     setDeleteTarget({ id: destId, name: targetName });
   };
 
-  const handleToggleStatus = (dest: Destination) => {
+  const handleToggleStatus = async (dest: Destination) => {
     const nextStatus = dest.status === 'ACTIVE' ? 'COMING_SOON' : 'ACTIVE';
-    db.saveDestination({ ...dest, status: nextStatus }, user);
-    refresh();
+    try {
+      await db.saveDestinationAsync({ ...dest, status: nextStatus }, user);
+      refresh();
+    } catch (err: any) {
+      console.error('[DestinationCMS] Toggle status error:', err);
+    }
   };
 
   const addSellingPoint = () => {

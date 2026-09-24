@@ -8,10 +8,13 @@ async function bootstrap() {
   if (!isTsx && fs.existsSync(distBundlePath)) {
     // Plain Node runtime (production deployment via "node server.ts"):
     // Execute high-performance compiled bundle
-    await import(`file://${distBundlePath}`);
+    const bundle = await import(`file://${distBundlePath}`);
+    if (typeof bundle.startServer === "function") {
+      await bundle.startServer();
+    }
   } else {
     // Development runtime (via tsx dev server):
-    const { startServer } = await import("./server/main");
+    const { startServer } = await import("./server/main.ts");
     await startServer();
   }
 }
