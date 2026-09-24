@@ -177,7 +177,9 @@ import { EmailNotificationService } from './emailNotificationService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { googleBusinessService } from './googleBusinessService';
 import { envService } from './environment';
-import { db as firestoreDb } from './firebase';
+import { auth, db as firestoreDb } from './firebase';
+
+let currentAuthUser: User | null = null;
 import { 
   collection, 
   doc, 
@@ -758,10 +760,16 @@ export class AppDatabase {
   private syncFirestoreDoc(collectionName: string, docId: string, data: any): void {
     if (!docId) return;
     try {
+      this.unmarkEntityDeleted(collectionName, docId);
+      const effectiveUid = auth.currentUser?.uid || currentAuthUser?.id || data?.updatedBy || data?.createdBy || data?.agentId || 'usr-admin-business';
+      const effectiveRole = currentAuthUser?.role || (auth.currentUser ? 'B2B_AGENT' : 'ADMIN');
+      const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || 'business@theunbound.in';
+
       const enrichedData = {
-        updatedByRole: 'ADMIN',
-        updatedByEmail: 'business@theunbound.in',
-        updatedBy: 'usr-admin-business',
+        updatedByRole: effectiveRole,
+        updatedByEmail: effectiveEmail,
+        updatedBy: effectiveUid,
+        isDeleted: false,
         ...data
       };
       const cleanData = cleanForFirestore(enrichedData);
@@ -770,6 +778,30 @@ export class AppDatabase {
       });
     } catch (e) {
       console.debug(`Firestore sync error (${collectionName}/${docId}):`, e);
+    }
+  }
+
+  public async syncFirestoreDocAsync(collectionName: string, docId: string, data: any): Promise<boolean> {
+    if (!docId) return false;
+    try {
+      this.unmarkEntityDeleted(collectionName, docId);
+      const effectiveUid = auth.currentUser?.uid || currentAuthUser?.id || data?.updatedBy || data?.createdBy || data?.agentId || 'usr-admin-business';
+      const effectiveRole = currentAuthUser?.role || (auth.currentUser ? 'B2B_AGENT' : 'ADMIN');
+      const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || 'business@theunbound.in';
+
+      const enrichedData = {
+        updatedByRole: effectiveRole,
+        updatedByEmail: effectiveEmail,
+        updatedBy: effectiveUid,
+        isDeleted: false,
+        ...data
+      };
+      const cleanData = cleanForFirestore(enrichedData);
+      await setDoc(doc(firestoreDb, collectionName, docId), cleanData, { merge: true });
+      return true;
+    } catch (e: any) {
+      console.warn(`[DB] Firestore syncDocAsync note (${collectionName}/${docId}):`, e?.message || e);
+      return false;
     }
   }
 
@@ -806,6 +838,39 @@ export class AppDatabase {
       });
     } catch (e) {
       console.debug('Tombstone local error:', e);
+    }
+  }
+
+  public unmarkEntityDeleted(collectionOrType: string, recordId: string): void {
+    if (!recordId) return;
+    const current = this.getItem<string[]>('inventory_tombstones', []);
+    const set = new Set(current);
+    set.delete(recordId);
+    set.delete(`${collectionOrType}_${recordId}`);
+    set.delete(`Product_${recordId}`);
+    set.delete(`Hotel_${recordId}`);
+    set.delete(`Destination_${recordId}`);
+    set.delete(`CityHub_${recordId}`);
+    set.delete(`MasterRegion_${recordId}`);
+    set.delete(`Package_${recordId}`);
+    set.delete(`B2BPackage_${recordId}`);
+    set.delete(`Visa_${recordId}`);
+    set.delete(`Booking_${recordId}`);
+    set.delete(`Lead_${recordId}`);
+    set.delete(`TravelLead_${recordId}`);
+    set.delete(`CustomPage_${recordId}`);
+    set.delete(`BlogArticle_${recordId}`);
+    set.delete(`User_${recordId}`);
+    this.setItem('inventory_tombstones', Array.from(set));
+
+    // Remove tombstone document from Firestore
+    try {
+      deleteDoc(doc(firestoreDb, 'inventory_tombstones', `${collectionOrType}_${recordId}`)).catch(err => {
+        console.debug('Firestore tombstone delete note:', err);
+      });
+      deleteDoc(doc(firestoreDb, 'inventory_tombstones', recordId)).catch(() => {});
+    } catch (e) {
+      console.debug('Tombstone local clear error:', e);
     }
   }
 
@@ -877,6 +942,294 @@ export class AppDatabase {
   }
 
   /**
+   * Authoritative Server-Side Duplicate Detection Engine
+   * Validates uniqueness across all master catalog and transactional entities.
+   * Accurately distinguishes between:
+   * 1. EXACT DUPLICATE: Same unique business identity (SKU, code, slug, email, or exact name in same scope)
+   * 2. STRONG DUPLICATE CANDIDATE: Similar name in another destination/scope
+   * 3. VALID SIMILAR RECORD / RECREATED RECORD: Different attributes or previously legitimately deleted records
+   */
+  public checkDuplicateRecord(
+    entityType: 'Product' | 'Hotel' | 'Package' | 'MasterRegion' | 'Destination' | 'CityHub' | 'CustomPage' | 'BlogArticle' | 'User' | 'TravelLead' | 'Booking',
+    input: {
+      id?: string;
+      name?: string;
+      title?: string;
+      sku?: string;
+      code?: string;
+      slug?: string;
+      email?: string;
+      phone?: string;
+      destinationId?: string;
+      regionId?: string;
+      hubId?: string;
+      airportCode?: string;
+      bookingReference?: string;
+    }
+  ): {
+    isDuplicate: boolean;
+    duplicateType: 'EXACT' | 'STRONG_CANDIDATE' | 'NONE';
+    existingRecord?: any;
+    message?: string;
+  } {
+    const norm = (s?: string) => (s || '').trim().toLowerCase();
+
+    switch (entityType) {
+      case 'Product': {
+        const products = this.getProducts().filter(p => !input.id || p.id !== input.id);
+        if (input.sku && input.sku.trim()) {
+          const skuMatch = products.find(p => norm(p.sku) === norm(input.sku));
+          if (skuMatch) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'EXACT',
+              existingRecord: skuMatch,
+              message: `An active product with SKU "${input.sku}" already exists: "${skuMatch.name}" (ID: ${skuMatch.id}).`
+            };
+          }
+        }
+        if (input.name && input.name.trim()) {
+          const exactScopeMatch = products.find(p => 
+            norm(p.name) === norm(input.name) && 
+            (!input.destinationId || norm(p.destinationId) === norm(input.destinationId))
+          );
+          if (exactScopeMatch) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'EXACT',
+              existingRecord: exactScopeMatch,
+              message: `An active product with name "${input.name}" already exists in this destination (ID: ${exactScopeMatch.id}).`
+            };
+          }
+          const otherScopeMatch = products.find(p => norm(p.name) === norm(input.name));
+          if (otherScopeMatch) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'STRONG_CANDIDATE',
+              existingRecord: otherScopeMatch,
+              message: `A similar product named "${input.name}" already exists in ${otherScopeMatch.destinationName || otherScopeMatch.destinationId} (ID: ${otherScopeMatch.id}).`
+            };
+          }
+        }
+        break;
+      }
+
+      case 'Hotel': {
+        const hotels = this.getHotels().filter(h => !input.id || h.id !== input.id);
+        if (input.code && input.code.trim()) {
+          const codeMatch = hotels.find(h => norm(h.code) === norm(input.code));
+          if (codeMatch) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'EXACT',
+              existingRecord: codeMatch,
+              message: `An active hotel with code "${input.code}" already exists: "${codeMatch.name}" (ID: ${codeMatch.id}).`
+            };
+          }
+        }
+        if (input.name && input.name.trim()) {
+          const scopeMatch = hotels.find(h => 
+            norm(h.name) === norm(input.name) && 
+            (!input.hubId || norm(h.cityId) === norm(input.hubId))
+          );
+          if (scopeMatch) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'EXACT',
+              existingRecord: scopeMatch,
+              message: `An active hotel named "${input.name}" already exists in this hub/city (ID: ${scopeMatch.id}).`
+            };
+          }
+          const globalMatch = hotels.find(h => norm(h.name) === norm(input.name));
+          if (globalMatch) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'STRONG_CANDIDATE',
+              existingRecord: globalMatch,
+              message: `A hotel named "${input.name}" exists in ${globalMatch.cityName || globalMatch.city} (ID: ${globalMatch.id}).`
+            };
+          }
+        }
+        break;
+      }
+
+      case 'Package': {
+        const pkgs = this.getPackages().filter(p => !input.id || p.id !== input.id);
+        if (input.slug && input.slug.trim()) {
+          const slugMatch = pkgs.find(p => norm(p.slug) === norm(input.slug));
+          if (slugMatch) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'EXACT',
+              existingRecord: slugMatch,
+              message: `An active curated package with slug "${input.slug}" already exists: "${slugMatch.title}".`
+            };
+          }
+        }
+        if (input.title && input.title.trim()) {
+          const titleMatch = pkgs.find(p => norm(p.title) === norm(input.title));
+          if (titleMatch) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'EXACT',
+              existingRecord: titleMatch,
+              message: `An active curated package titled "${input.title}" already exists (ID: ${titleMatch.id}).`
+            };
+          }
+        }
+        break;
+      }
+
+      case 'MasterRegion': {
+        const regions = this.getMasterRegions().filter(r => !input.id || r.id !== input.id);
+        const nameMatch = regions.find(r => 
+          (input.name && norm(r.name) === norm(input.name)) ||
+          (input.slug && norm(r.slug) === norm(input.slug)) ||
+          (input.code && norm(r.code) === norm(input.code))
+        );
+        if (nameMatch) {
+          return {
+            isDuplicate: true,
+            duplicateType: 'EXACT',
+            existingRecord: nameMatch,
+            message: `A Master Region with matching name, slug, or code already exists: "${nameMatch.name}".`
+          };
+        }
+        break;
+      }
+
+      case 'Destination': {
+        const dests = this.getDestinations().filter(d => !input.id || d.id !== input.id);
+        const match = dests.find(d => 
+          (input.slug && norm(d.slug) === norm(input.slug)) ||
+          (input.name && norm(d.name) === norm(input.name) && (!input.regionId || norm(d.regionId) === norm(input.regionId)))
+        );
+        if (match) {
+          return {
+            isDuplicate: true,
+            duplicateType: 'EXACT',
+            existingRecord: match,
+            message: `A Destination with matching name or slug already exists: "${match.name}".`
+          };
+        }
+        break;
+      }
+
+      case 'CityHub': {
+        const hubs = this.getCityHubs().filter(h => !input.id || h.id !== input.id);
+        if (input.airportCode && input.airportCode.trim()) {
+          const codeMatch = hubs.find(h => norm(h.airportCode) === norm(input.airportCode));
+          if (codeMatch) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'EXACT',
+              existingRecord: codeMatch,
+              message: `A City Hub with airport code "${input.airportCode.toUpperCase()}" already exists: "${codeMatch.name}".`
+            };
+          }
+        }
+        if (input.name && input.name.trim()) {
+          const match = hubs.find(h => 
+            norm(h.name) === norm(input.name) && 
+            (!input.destinationId || norm(h.destinationId) === norm(input.destinationId))
+          );
+          if (match) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'EXACT',
+              existingRecord: match,
+              message: `A City Hub named "${input.name}" already exists in this destination.`
+            };
+          }
+        }
+        break;
+      }
+
+      case 'CustomPage': {
+        const pages = this.getCustomPages().filter(p => !input.id || p.id !== input.id);
+        if (input.slug && input.slug.trim()) {
+          const match = pages.find(p => norm(p.slug) === norm(input.slug));
+          if (match) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'EXACT',
+              existingRecord: match,
+              message: `A CMS Page with slug "${input.slug}" already exists: "${match.title}".`
+            };
+          }
+        }
+        break;
+      }
+
+      case 'BlogArticle': {
+        const blogs = this.getBlogs().filter(b => !input.id || b.id !== input.id);
+        if (input.slug && input.slug.trim()) {
+          const match = blogs.find(b => norm(b.slug) === norm(input.slug));
+          if (match) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'EXACT',
+              existingRecord: match,
+              message: `A Blog Article with slug "${input.slug}" already exists: "${match.title}".`
+            };
+          }
+        }
+        break;
+      }
+
+      case 'User': {
+        const users = this.getUsers().filter(u => !input.id || u.id !== input.id);
+        if (input.email && input.email.trim()) {
+          const match = users.find(u => norm(u.email) === norm(input.email));
+          if (match) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'EXACT',
+              existingRecord: match,
+              message: `A user account with email "${input.email}" already exists: ${match.name || match.email}.`
+            };
+          }
+        }
+        break;
+      }
+
+      case 'Booking': {
+        if (input.bookingReference && input.bookingReference.trim()) {
+          const bookings = this.getBookings().filter(b => !input.id || b.id !== input.id);
+          const match = bookings.find(b => norm(b.bookingReference) === norm(input.bookingReference));
+          if (match) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'EXACT',
+              existingRecord: match,
+              message: `A booking with reference "${input.bookingReference}" already exists.`
+            };
+          }
+        }
+        break;
+      }
+
+      case 'TravelLead': {
+        if (input.email && input.email.trim()) {
+          const leads = this.getLeads().filter(l => !input.id || l.id !== input.id);
+          const match = leads.find(l => norm(l.email) === norm(input.email) && l.status !== 'LOST' && l.status !== 'ARCHIVED');
+          if (match) {
+            return {
+              isDuplicate: true,
+              duplicateType: 'STRONG_CANDIDATE',
+              existingRecord: match,
+              message: `An active CRM lead for "${input.email}" is already open (Lead: ${match.leadNumber}).`
+            };
+          }
+        }
+        break;
+      }
+    }
+
+    return { isDuplicate: false, duplicateType: 'NONE' };
+  }
+
+  /**
    * Authoritative real-time Firestore listener:
    * When snapshot is non-empty, updates local storage with authoritative cloud data.
    * In Production mode: If Firestore returns 0 documents, commits [] so UI renders legitimate empty state.
@@ -887,8 +1240,8 @@ export class AppDatabase {
     collectionName: string,
     storageKey: string,
     transformDoc?: (docData: any, docId: string) => T | null
-  ): void {
-    onSnapshot(collection(firestoreDb, collectionName), (snapshot) => {
+  ): () => void {
+    return onSnapshot(collection(firestoreDb, collectionName), (snapshot) => {
       const deletedSet = this.getDeletedEntityIds();
       const list: T[] = [];
       if (!snapshot.empty) {
@@ -913,6 +1266,66 @@ export class AppDatabase {
     }, (err) => {
       console.debug(`Firestore ${collectionName} sync note (non-blocking):`, err?.message || err);
     });
+  }
+
+  private authenticatedUnsubscribers: Array<() => void> = [];
+
+  public onAuthUserChanged(user: User | null, fbUser: any): void {
+    currentAuthUser = user;
+
+    // Clean up any existing authenticated collection listeners
+    if (this.authenticatedUnsubscribers.length > 0) {
+      this.authenticatedUnsubscribers.forEach(unsub => {
+        try { unsub(); } catch (e) {}
+      });
+      this.authenticatedUnsubscribers = [];
+    }
+
+    if (!user || !fbUser) {
+      console.log('[DB] Auth user cleared. Resetting private session records.');
+      return;
+    }
+
+    console.log(`[DB] Establishing live authenticated Firestore listeners for ${user.email} (${user.role}) [UID: ${fbUser.uid}]`);
+
+    try {
+      this.authenticatedUnsubscribers.push(
+        this.syncCollectionSafely<User>('users', 'system_users'),
+        this.syncCollectionSafely<Company>('companies', 'companies'),
+        this.syncCollectionSafely<Quotation>('quotations', 'saved_quotes'),
+        this.syncCollectionSafely<Booking>('bookings', 'bookings'),
+        this.syncCollectionSafely<TravelLead>('leads', 'leads'),
+        this.syncCollectionSafely<B2BCustomer>('b2b_customers', 'b2b_customers'),
+        this.syncCollectionSafely<B2BTask>('b2b_tasks', 'b2b_tasks'),
+        this.syncCollectionSafely<CalendarTask>('calendar_tasks', 'calendar_tasks'),
+        this.syncCollectionSafely<WishlistFolder>('wishlist_folders', 'wishlist_folders'),
+        this.syncCollectionSafely<WishlistItem>('wishlist_items', 'wishlist_items'),
+        this.syncCollectionSafely<HotelRoomType>('hotel_rooms', 'hotel_rooms'),
+        this.syncCollectionSafely<HotelRate>('hotel_rates', 'hotel_rates'),
+        this.syncCollectionSafely<HotelMealPlanItem>('hotel_meal_plans', 'hotel_meal_plans'),
+        this.syncCollectionSafely<TransferRoute>('transfer_routes', 'transfer_routes'),
+        this.syncCollectionSafely<TransferRate>('transfer_rates', 'transfer_rates'),
+        this.syncCollectionSafely<ProductPricingRate>('product_pricing_rates', 'product_pricing_rates'),
+        this.syncCollectionSafely<ProductCapacityItem>('product_capacities', 'product_capacities'),
+        this.syncCollectionSafely<VisaRateItem>('visa_rates', 'visa_rates'),
+        this.syncCollectionSafely<PackageItemRef>('package_items', 'package_items'),
+        this.syncCollectionSafely<BookingInvoice>('invoices', 'invoices'),
+        this.syncCollectionSafely<BookingUploadedInvoice>('uploaded_invoices', 'uploaded_invoices'),
+        this.syncCollectionSafely<BookingVoucher>('vouchers', 'vouchers'),
+        this.syncCollectionSafely<JobSheet>('job_sheets', 'job_sheets'),
+        this.syncCollectionSafely<RosterResource>('roster_resources', 'roster_resources'),
+        this.syncCollectionSafely<SLAAutomationRule>('sla_automation_rules', 'sla_automation_rules'),
+        this.syncCollectionSafely<AdminActivityRecord>('admin_activities', 'admin_activities'),
+        this.syncCollectionSafely<CampaignEvent>('campaign_events', 'campaign_events'),
+        this.syncCollectionSafely<EmailCampaignConfig>('campaigns', 'campaigns'),
+        this.syncCollectionSafely<SEORedirect>('seo_redirects', 'seo_redirects'),
+        this.syncCollectionSafely<Supplier>('suppliers', 'suppliers'),
+        this.syncCollectionSafely<SupplierRequest>('supplier_requests', 'supplier_requests'),
+        this.syncCollectionSafely<LeadStageConfig>('lead_stages', 'lead_stages')
+      );
+    } catch (err) {
+      console.warn('[DB] Error establishing authenticated sync listeners:', err);
+    }
   }
 
   private async initFirestoreSync(): Promise<void> {
@@ -952,43 +1365,10 @@ export class AppDatabase {
       this.syncCollectionSafely<GoogleReview>('google_reviews', 'reviews');
       this.syncCollectionSafely<BlogArticle>('blog_articles', 'blogs');
 
-      // 2. User Accounts & Transactions (Preserved across all deployments)
-      this.syncCollectionSafely<User>('users', 'system_users');
-      this.syncCollectionSafely<Company>('companies', 'companies');
-      this.syncCollectionSafely<Quotation>('quotations', 'saved_quotes');
-      this.syncCollectionSafely<Booking>('bookings', 'bookings');
-      this.syncCollectionSafely<TravelLead>('leads', 'leads');
-      this.syncCollectionSafely<B2BCustomer>('b2b_customers', 'b2b_customers');
-      this.syncCollectionSafely<B2BTask>('b2b_tasks', 'b2b_tasks');
-      this.syncCollectionSafely<CalendarTask>('calendar_tasks', 'calendar_tasks');
-      this.syncCollectionSafely<WishlistFolder>('wishlist_folders', 'wishlist_folders');
-      this.syncCollectionSafely<WishlistItem>('wishlist_items', 'wishlist_items');
-
-      // 3. Hotel & Transport Contracting Rates
-      this.syncCollectionSafely<HotelRoomType>('hotel_rooms', 'hotel_rooms');
-      this.syncCollectionSafely<HotelRate>('hotel_rates', 'hotel_rates');
-      this.syncCollectionSafely<HotelMealPlanItem>('hotel_meal_plans', 'hotel_meal_plans');
-      this.syncCollectionSafely<TransferRoute>('transfer_routes', 'transfer_routes');
-      this.syncCollectionSafely<TransferRate>('transfer_rates', 'transfer_rates');
-      this.syncCollectionSafely<ProductPricingRate>('product_pricing_rates', 'product_pricing_rates');
-      this.syncCollectionSafely<ProductCapacityItem>('product_capacities', 'product_capacities');
-      this.syncCollectionSafely<VisaRateItem>('visa_rates', 'visa_rates');
-      this.syncCollectionSafely<PackageItemRef>('package_items', 'package_items');
-
-      // 4. Operations, Financials & Logistics
-      this.syncCollectionSafely<BookingInvoice>('invoices', 'invoices');
-      this.syncCollectionSafely<BookingUploadedInvoice>('uploaded_invoices', 'uploaded_invoices');
-      this.syncCollectionSafely<BookingVoucher>('vouchers', 'vouchers');
-      this.syncCollectionSafely<JobSheet>('job_sheets', 'job_sheets');
-      this.syncCollectionSafely<RosterResource>('roster_resources', 'roster_resources');
-      this.syncCollectionSafely<SLAAutomationRule>('sla_automation_rules', 'sla_automation_rules');
-      this.syncCollectionSafely<AdminActivityRecord>('admin_activities', 'admin_activities');
-      this.syncCollectionSafely<CampaignEvent>('campaign_events', 'campaign_events');
-      this.syncCollectionSafely<EmailCampaignConfig>('campaigns', 'campaigns');
-      this.syncCollectionSafely<SEORedirect>('seo_redirects', 'seo_redirects');
-      this.syncCollectionSafely<Supplier>('suppliers', 'suppliers');
-      this.syncCollectionSafely<SupplierRequest>('supplier_requests', 'supplier_requests');
-      this.syncCollectionSafely<LeadStageConfig>('lead_stages', 'lead_stages');
+      // Check if user is already authenticated at init
+      if (auth.currentUser) {
+        this.onAuthUserChanged(currentAuthUser, auth.currentUser);
+      }
 
       // 5. Navigation & Institutional Content with Local Deleted Tombstone Handling
       onSnapshot(collection(firestoreDb, 'menu_items'), (snapshot) => {
@@ -3497,6 +3877,58 @@ export class AppDatabase {
     };
   }
 
+  public deleteRecord(
+    entityType: CMSDeletableEntityType,
+    recordId: string,
+    user: User | null
+  ): SecureDeleteResult {
+    return this.secureDeleteRecord(entityType, recordId, user);
+  }
+
+  public async deleteRecordAsync(
+    entityType: CMSDeletableEntityType,
+    recordId: string,
+    user: User | null
+  ): Promise<SecureDeleteResult> {
+    const res = this.secureDeleteRecord(entityType, recordId, user);
+    if (!res.success) {
+      return res;
+    }
+    try {
+      const colMap: Record<string, string> = {
+        Product: 'products',
+        Hotel: 'hotels',
+        Package: 'b2b_packages',
+        B2BPackage: 'b2b_packages',
+        MasterRegion: 'master_regions',
+        Destination: 'destinations',
+        CityHub: 'city_hubs',
+        CustomPage: 'custom_pages',
+        Blog: 'blog_articles',
+        BlogArticle: 'blog_articles',
+        User: 'users',
+        Booking: 'bookings',
+        Lead: 'leads',
+        TravelLead: 'leads',
+        HotelRoom: 'hotel_rooms',
+        HotelRate: 'hotel_rates',
+        HotelMealPlan: 'hotel_meal_plans',
+        ProductRate: 'product_pricing_rates',
+        ProductCapacity: 'product_capacities',
+        TransferRoute: 'transfer_routes',
+        TransferRate: 'transfer_rates',
+        Visa: 'visas',
+        VisaRate: 'visa_rates',
+        PackageItem: 'package_items'
+      };
+      const col = colMap[entityType] || entityType.toLowerCase() + 's';
+      await this.deleteFirestoreDocAsync(col, recordId, { entityType });
+    } catch (e: any) {
+      console.warn(`[DB] deleteRecordAsync note (${entityType}/${recordId}):`, e);
+    }
+    return res;
+  }
+
   // ==========================================
   // SAFE ARCHIVE WITH PERMISSION CONTROL
   // ==========================================
@@ -3786,11 +4218,14 @@ export class AppDatabase {
     const existingIndex = products.findIndex(p => p.id === product.id);
     const prev = existingIndex >= 0 ? products[existingIndex] : null;
 
+    const savedProd: Product = {
+      ...product,
+      product_id: product.id,
+      lastUpdated: new Date().toISOString().split('T')[0]
+    };
+
     if (existingIndex >= 0) {
-      products[existingIndex] = {
-        ...product,
-        lastUpdated: new Date().toISOString().split('T')[0]
-      };
+      products[existingIndex] = savedProd;
       this.logAudit(
         user,
         'PRODUCT_UPDATED',
@@ -3800,13 +4235,8 @@ export class AppDatabase {
         prev ? JSON.stringify({ name: prev.name, price: prev.adultNetPrice }) : undefined,
         JSON.stringify({ name: product.name, price: product.adultNetPrice })
       );
-      this.syncFirestoreDoc('products', product.id, products[existingIndex]);
     } else {
-      const newProd = {
-        ...product,
-        lastUpdated: new Date().toISOString().split('T')[0]
-      };
-      products.unshift(newProd);
+      products.unshift(savedProd);
       this.logAudit(
         user,
         'PRODUCT_CREATED',
@@ -3814,9 +4244,85 @@ export class AppDatabase {
         product.id,
         `Created new product: ${product.name} (SKU: ${product.sku})`
       );
-      this.syncFirestoreDoc('products', product.id, newProd);
     }
+    this.unmarkEntityDeleted('products', product.id);
+    this.unmarkEntityDeleted('Product', product.id);
+    this.syncFirestoreDoc('products', product.id, savedProd);
     this.setItem('products', products);
+  }
+
+  public async saveProductAsync(product: Product, user: User | null): Promise<Product> {
+    if (user) {
+      const auth = this.canUserWriteCMS(user, 'OPERATIONS', 'Product');
+      if (!auth.allowed) {
+        throw new Error(`Unauthorized write attempt: ${auth.reason}`);
+      }
+    }
+
+    if (!product.name || !product.name.trim()) {
+      throw new Error('Product name is required.');
+    }
+    if (!product.sku || !product.sku.trim()) {
+      throw new Error('Product SKU is required.');
+    }
+
+    const dup = this.checkDuplicateRecord('Product', {
+      id: product.id,
+      name: product.name,
+      sku: product.sku,
+      destinationId: product.destinationId,
+      hubId: product.hubId
+    });
+    if (dup.isDuplicate && dup.duplicateType === 'EXACT') {
+      throw new Error(dup.message || 'An active product with this SKU or Name already exists.');
+    }
+
+    const products = this.getProducts();
+    const existingIndex = products.findIndex(p => p.id === product.id);
+    const prev = existingIndex >= 0 ? products[existingIndex] : null;
+
+    const savedProd: Product = {
+      ...product,
+      product_id: product.id,
+      lastUpdated: new Date().toISOString().split('T')[0]
+    };
+
+    if (existingIndex >= 0) {
+      products[existingIndex] = savedProd;
+    } else {
+      products.unshift(savedProd);
+    }
+
+    this.setItem('products', products);
+
+    // Unmark any tombstone
+    this.unmarkEntityDeleted('products', savedProd.id);
+    this.unmarkEntityDeleted('Product', savedProd.id);
+
+    try {
+      const enrichedData = {
+        ...savedProd,
+        isDeleted: false,
+        updatedByRole: 'ADMIN',
+        updatedByEmail: 'business@theunbound.in',
+        updatedBy: 'usr-admin-business'
+      };
+      await setDoc(doc(firestoreDb, 'products', savedProd.id), cleanForFirestore(enrichedData), { merge: true });
+    } catch (err: any) {
+      console.warn(`[DB] Firestore saveProductAsync warning (${savedProd.id}):`, err?.message || err);
+    }
+
+    this.logAudit(
+      user,
+      existingIndex >= 0 ? 'PRODUCT_UPDATED' : 'PRODUCT_CREATED',
+      'Product',
+      savedProd.id,
+      `${existingIndex >= 0 ? 'Updated' : 'Created'} product: ${savedProd.name} (SKU: ${savedProd.sku})`,
+      prev ? JSON.stringify({ name: prev.name, price: prev.adultNetPrice }) : undefined,
+      JSON.stringify({ name: savedProd.name, price: savedProd.adultNetPrice })
+    );
+
+    return savedProd;
   }
 
   public duplicateProduct(productId: string, user: User | null): Product | null {
@@ -3851,6 +4357,61 @@ export class AppDatabase {
         `Archived/Deleted product: ${target.name} (SKU: ${target.sku})`
       );
     }
+  }
+
+  public async deleteProductAsync(productId: string, user: User | null): Promise<{ success: boolean; error?: string }> {
+    if (user) {
+      const auth = this.canUserWriteCMS(user, 'OPERATIONS', 'Product');
+      if (!auth.allowed) {
+        return { success: false, error: `Unauthorized delete attempt: ${auth.reason}` };
+      }
+    }
+
+    const products = this.getProducts();
+    const target = products.find(p => p.id === productId);
+    if (!target) {
+      return { success: false, error: 'Product not found.' };
+    }
+
+    // Check package references
+    const packages = this.getPackages();
+    const referencingPackages = packages.filter(pkg => 
+      pkg.productIds && pkg.productIds.includes(productId)
+    );
+    if (referencingPackages.length > 0) {
+      return {
+        success: false,
+        error: `Cannot delete product "${target.name}". It is referenced by ${referencingPackages.length} package(s): ${referencingPackages.map(p => p.title).slice(0, 3).join(', ')}`
+      };
+    }
+
+    // Check package line items
+    const pkgItems = this.getPackageItems();
+    const referencingItems = pkgItems.filter(pi => pi.itemId === productId && pi.itemType === 'product');
+    if (referencingItems.length > 0) {
+      return {
+        success: false,
+        error: `Cannot delete product "${target.name}". It is allocated in ${referencingItems.length} package line item(s).`
+      };
+    }
+
+    this.setItem('products', products.filter(p => p.id !== productId));
+
+    const deleted = await this.deleteFirestoreDocAsync('products', productId, {
+      productName: target.name,
+      sku: target.sku,
+      destinationId: target.destinationId
+    });
+
+    this.logAudit(
+      user,
+      'PRODUCT_ARCHIVED',
+      'Product',
+      productId,
+      `Deleted product: ${target.name} (SKU: ${target.sku})`
+    );
+
+    return { success: deleted };
   }
 
   // ==========================================
@@ -3936,6 +4497,9 @@ export class AppDatabase {
       updatedByEmail: user?.email || 'business@theunbound.in',
       updatedAt: now
     };
+
+    this.unmarkEntityDeleted('master_regions', regId);
+    this.unmarkEntityDeleted('MasterRegion', regId);
 
     const cleanData = cleanForFirestore(recordToSave);
     await setDoc(doc(firestoreDb, 'master_regions', regId), cleanData, { merge: true });
@@ -4096,6 +4660,9 @@ export class AppDatabase {
       updatedByEmail: user?.email || 'business@theunbound.in',
       updatedAt: now
     };
+
+    this.unmarkEntityDeleted('destinations', destId);
+    this.unmarkEntityDeleted('Destination', destId);
 
     const cleanData = cleanForFirestore(recordToSave);
     await setDoc(doc(firestoreDb, 'destinations', destId), cleanData, { merge: true });
@@ -4358,8 +4925,71 @@ export class AppDatabase {
       blogs.unshift(savedBlog);
       this.logAudit(user, 'BLOG_CREATED', 'Blog', blog.id, `Created blog article: ${blog.title}`);
     }
+    this.unmarkEntityDeleted('blog_articles', savedBlog.id);
+    this.unmarkEntityDeleted('BlogArticle', savedBlog.id);
     this.syncFirestoreDoc('blog_articles', savedBlog.id, savedBlog);
     this.setItem('blogs', blogs);
+  }
+
+  public async saveBlogAsync(blog: BlogArticle, user: User | null): Promise<BlogArticle> {
+    if (!blog.title || !blog.title.trim()) {
+      throw new Error('Blog title is required.');
+    }
+    if (!blog.slug || !blog.slug.trim()) {
+      throw new Error('Blog slug is required.');
+    }
+
+    const dup = this.checkDuplicateRecord('BlogArticle', {
+      id: blog.id,
+      slug: blog.slug
+    });
+    if (dup.isDuplicate && dup.duplicateType === 'EXACT') {
+      throw new Error(dup.message || 'An active blog article with this slug already exists.');
+    }
+
+    const blogs = this.getBlogs();
+    const index = blogs.findIndex(b => b.id === blog.id);
+    let savedBlog: BlogArticle;
+    if (index >= 0) {
+      savedBlog = { ...blog, updatedAt: new Date().toISOString() };
+      blogs[index] = savedBlog;
+    } else {
+      savedBlog = {
+        ...blog,
+        id: blog.id || `blog-${Date.now()}`,
+        createdAt: (blog as any).createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      blogs.unshift(savedBlog);
+    }
+
+    this.setItem('blogs', blogs);
+
+    this.unmarkEntityDeleted('blog_articles', savedBlog.id);
+    this.unmarkEntityDeleted('BlogArticle', savedBlog.id);
+
+    try {
+      const enrichedData = {
+        ...savedBlog,
+        isDeleted: false,
+        updatedByRole: 'ADMIN',
+        updatedByEmail: 'business@theunbound.in',
+        updatedBy: 'usr-admin-business'
+      };
+      await setDoc(doc(firestoreDb, 'blog_articles', savedBlog.id), cleanForFirestore(enrichedData), { merge: true });
+    } catch (err: any) {
+      console.warn(`[DB] Firestore saveBlogAsync warning (${savedBlog.id}):`, err?.message || err);
+    }
+
+    this.logAudit(
+      user,
+      index >= 0 ? 'BLOG_UPDATED' : 'BLOG_CREATED',
+      'Blog',
+      savedBlog.id,
+      `${index >= 0 ? 'Updated' : 'Created'} blog article: ${savedBlog.title}`
+    );
+
+    return savedBlog;
   }
 
   public deleteBlog(blogId: string, user: User | null): void {
@@ -4370,6 +5000,25 @@ export class AppDatabase {
     if (target) {
       this.logAudit(user, 'BLOG_UPDATED', 'Blog', blogId, `Deleted blog article: ${target.title}`);
     }
+  }
+
+  public async deleteBlogAsync(blogId: string, user: User | null): Promise<{ success: boolean; error?: string }> {
+    const blogs = this.getBlogs();
+    const target = blogs.find(b => b.id === blogId);
+    if (!target) {
+      return { success: false, error: 'Blog not found.' };
+    }
+
+    this.setItem('blogs', blogs.filter(b => b.id !== blogId));
+
+    const deleted = await this.deleteFirestoreDocAsync('blog_articles', blogId, {
+      title: target.title,
+      slug: target.slug
+    });
+
+    this.logAudit(user, 'BLOG_UPDATED', 'Blog', blogId, `Deleted blog article: ${target.title}`);
+
+    return { success: deleted };
   }
 
   public incrementBlogViews(blogId: string): void {
@@ -5247,6 +5896,17 @@ export class AppDatabase {
       : updatedQuote;
   }
 
+  public async saveQuoteAsync(
+    quote: Quotation, 
+    user: User | null, 
+    actionType: any = 'EDITED',
+    customDetails?: string
+  ): Promise<Quotation> {
+    const saved = this.saveQuote(quote, user, actionType, customDetails);
+    await this.syncFirestoreDocAsync('quotations', saved.id, saved);
+    return saved;
+  }
+
   public deleteQuote(quoteId: string, user: User | null): boolean {
     // Only Admin & Staff roles are permitted to delete quotes
     if (user && user.role !== 'ADMIN' && user.role !== 'DMC_STAFF' && user.role !== 'TEAM_MEMBER') {
@@ -5788,6 +6448,9 @@ export class AppDatabase {
     }
 
     this.setItem('b2b_packages', pkgs);
+    this.unmarkEntityDeleted('b2b_packages', pkg.id);
+    this.unmarkEntityDeleted('Package', pkg.id);
+    this.unmarkEntityDeleted('B2BPackage', pkg.id);
     this.syncFirestoreDoc('b2b_packages', pkg.id, updatedPkg);
 
     this.logAudit(
@@ -5797,6 +6460,85 @@ export class AppDatabase {
       pkg.id,
       `${isNew ? 'Created' : 'Updated'} package "${updatedPkg.title}" (${updatedPkg.destinationName})`
     );
+  }
+
+  public async savePackageAsync(pkg: B2BPackage, user?: User | null): Promise<B2BPackage> {
+    if (user) {
+      const auth = this.canUserWriteCMS(user, 'OPERATIONS', 'Package');
+      if (!auth.allowed) {
+        throw new Error(`Unauthorized write attempt: ${auth.reason}`);
+      }
+    }
+
+    if (!pkg.title || !pkg.title.trim()) {
+      throw new Error('Package title is required.');
+    }
+
+    const dup = this.checkDuplicateRecord('Package', {
+      id: pkg.id,
+      title: pkg.title,
+      slug: pkg.slug,
+      destinationId: pkg.destinationId
+    });
+    if (dup.isDuplicate && dup.duplicateType === 'EXACT') {
+      throw new Error(dup.message || 'An active package with this Title or Slug already exists.');
+    }
+
+    const pkgs = this.getPackages();
+    const idx = pkgs.findIndex(p => p.id === pkg.id);
+    const timestamp = new Date().toISOString();
+    const isNew = idx < 0;
+
+    const status = pkg.status || (pkg.isPublished ? 'PUBLISHED' : 'DRAFT');
+    const isPublished = status === 'PUBLISHED' || !!pkg.isPublished;
+
+    const updatedPkg: B2BPackage = {
+      ...pkg,
+      package_id: pkg.id,
+      title: pkg.title || pkg.name || 'Custom Package Itinerary',
+      name: pkg.title || pkg.name || 'Custom Package Itinerary',
+      status,
+      isPublished,
+      updatedBy: user?.name || user?.email || 'Admin CMS',
+      updatedAt: timestamp
+    };
+
+    if (isNew) {
+      updatedPkg.createdAt = pkg.createdAt || timestamp;
+      updatedPkg.createdBy = pkg.createdBy || user?.name || 'Admin CMS';
+      pkgs.unshift(updatedPkg);
+    } else {
+      pkgs[idx] = updatedPkg;
+    }
+
+    this.setItem('b2b_packages', pkgs);
+
+    this.unmarkEntityDeleted('b2b_packages', pkg.id);
+    this.unmarkEntityDeleted('Package', pkg.id);
+    this.unmarkEntityDeleted('B2BPackage', pkg.id);
+
+    try {
+      const enrichedData = {
+        ...updatedPkg,
+        isDeleted: false,
+        updatedByRole: 'ADMIN',
+        updatedByEmail: 'business@theunbound.in',
+        updatedBy: 'usr-admin-business'
+      };
+      await setDoc(doc(firestoreDb, 'b2b_packages', pkg.id), cleanForFirestore(enrichedData), { merge: true });
+    } catch (err: any) {
+      console.warn(`[DB] Firestore savePackageAsync warning (${pkg.id}):`, err?.message || err);
+    }
+
+    this.logAudit(
+      user || null,
+      isNew ? 'PACKAGE_CREATE' as any : 'PACKAGE_UPDATE' as any,
+      'Package',
+      pkg.id,
+      `${isNew ? 'Created' : 'Updated'} package "${updatedPkg.title}" (${updatedPkg.destinationName})`
+    );
+
+    return updatedPkg;
   }
 
   public duplicatePackage(id: string, user?: User | null): B2BPackage | null {
@@ -5855,6 +6597,32 @@ export class AppDatabase {
       id,
       `Deleted package "${pkg?.title || id}"`
     );
+  }
+
+  public async deletePackageAsync(id: string, user?: User | null): Promise<{ success: boolean; error?: string }> {
+    if (user) {
+      const auth = this.canUserWriteCMS(user, 'OPERATIONS', 'Package');
+      if (!auth.allowed) {
+        return { success: false, error: `Unauthorized delete attempt: ${auth.reason}` };
+      }
+    }
+
+    const packages = this.getPackages();
+    const target = packages.find(p => p.id === id);
+    if (!target) {
+      return { success: false, error: 'Package not found.' };
+    }
+
+    this.setItem('b2b_packages', packages.filter(p => p.id !== id));
+
+    const deleted = await this.deleteFirestoreDocAsync('b2b_packages', id, {
+      title: target.title,
+      destinationId: target.destinationId
+    });
+
+    this.logAudit(user || null, 'PACKAGE_DELETE' as any, 'Package', id, `Deleted package "${target.title}"`);
+
+    return { success: deleted };
   }
 
   // ==========================================
@@ -6035,12 +6803,15 @@ export class AppDatabase {
     }
     // B2B Agent visibility: submitted by this agent OR assigned to this agent
     if (user.role === 'B2B_AGENT') {
+      const userEmail = (user.email || '').toLowerCase().trim();
       const matching = all.filter(b => 
         b.submittedByUserId === user.id ||
         b.submittingAgentId === user.id ||
         b.assignedAgentId === user.id ||
         b.agentId === user.id ||
-        b.userId === user.id
+        b.userId === user.id ||
+        (userEmail && (b as any).agentEmail && (b as any).agentEmail.toLowerCase().trim() === userEmail) ||
+        (userEmail && (b as any).submittingAgentEmail && (b as any).submittingAgentEmail.toLowerCase().trim() === userEmail)
       );
       return matching.map(b => this.sanitizeBookingForExternalUser(b));
     }
@@ -6065,12 +6836,15 @@ export class AppDatabase {
 
     // B2B Agent authorization check
     if (user.role === 'B2B_AGENT') {
+      const userEmail = (user.email || '').toLowerCase().trim();
       const isAuthorized = 
         found.submittedByUserId === user.id ||
         found.submittingAgentId === user.id ||
         found.assignedAgentId === user.id ||
         found.agentId === user.id ||
-        found.userId === user.id;
+        found.userId === user.id ||
+        (userEmail && (found as any).agentEmail && (found as any).agentEmail.toLowerCase().trim() === userEmail) ||
+        (userEmail && (found as any).submittingAgentEmail && (found as any).submittingAgentEmail.toLowerCase().trim() === userEmail);
       if (!isAuthorized) return null;
       return this.sanitizeBookingForExternalUser(found);
     }
@@ -6846,6 +7620,12 @@ export class AppDatabase {
         console.error('Error in bookingSaveListener:', err);
       }
     });
+  }
+
+  public async saveBookingAsync(booking: Booking, user: User | null, options?: { isDocumentUpdate?: boolean }): Promise<Booking> {
+    this.saveBooking(booking, user, options);
+    await this.syncFirestoreDocAsync('bookings', booking.id, booking);
+    return booking;
   }
 
   // ----------------------------------------------------
@@ -10267,16 +11047,87 @@ export class AppDatabase {
     const index = hotels.findIndex(h => h.id === hotel.id);
     let savedHotel: Hotel;
     if (index >= 0) {
-      savedHotel = { ...hotel, updatedAt: new Date().toISOString() };
+      savedHotel = { ...hotel, hotel_id: hotel.id, updatedAt: new Date().toISOString() };
       hotels[index] = savedHotel;
       this.logAudit(user, 'PRODUCT_UPDATED', 'Hotel', hotel.id, `Updated hotel property: ${hotel.name} (${hotel.code})`);
     } else {
-      savedHotel = { ...hotel, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      savedHotel = { ...hotel, hotel_id: hotel.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
       hotels.unshift(savedHotel);
       this.logAudit(user, 'PRODUCT_CREATED', 'Hotel', hotel.id, `Created hotel property: ${hotel.name} (${hotel.code})`);
     }
+    this.unmarkEntityDeleted('hotels', savedHotel.id);
+    this.unmarkEntityDeleted('Hotel', savedHotel.id);
     this.syncFirestoreDoc('hotels', savedHotel.id, savedHotel);
     this.setItem('hotels', hotels);
+  }
+
+  public async saveHotelAsync(hotel: Hotel, user: User | null): Promise<Hotel> {
+    if (user) {
+      const auth = this.canUserWriteCMS(user, 'OPERATIONS', 'Hotel');
+      if (!auth.allowed) {
+        throw new Error(`Unauthorized write attempt: ${auth.reason}`);
+      }
+    }
+
+    if (!hotel.name || !hotel.name.trim()) {
+      throw new Error('Hotel name is required.');
+    }
+
+    const dup = this.checkDuplicateRecord('Hotel', {
+      id: hotel.id,
+      name: hotel.name,
+      code: hotel.code,
+      destinationId: hotel.destinationId,
+      hubId: hotel.cityId
+    });
+    if (dup.isDuplicate && dup.duplicateType === 'EXACT') {
+      throw new Error(dup.message || 'An active hotel with this Code or Name already exists.');
+    }
+
+    const hotels = this.getHotels();
+    const index = hotels.findIndex(h => h.id === hotel.id);
+    let savedHotel: Hotel;
+    if (index >= 0) {
+      savedHotel = { ...hotel, hotel_id: hotel.id, updatedAt: new Date().toISOString() };
+      hotels[index] = savedHotel;
+    } else {
+      savedHotel = {
+        ...hotel,
+        hotel_id: hotel.id,
+        createdAt: (hotel as any).createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      hotels.unshift(savedHotel);
+    }
+
+    this.setItem('hotels', hotels);
+
+    // Unmark any tombstone
+    this.unmarkEntityDeleted('hotels', savedHotel.id);
+    this.unmarkEntityDeleted('Hotel', savedHotel.id);
+
+    try {
+      const enrichedData = {
+        ...savedHotel,
+        isDeleted: false,
+        updatedByRole: 'ADMIN',
+        updatedByEmail: 'business@theunbound.in',
+        updatedBy: 'usr-admin-business'
+      };
+      await setDoc(doc(firestoreDb, 'hotels', savedHotel.id), cleanForFirestore(enrichedData), { merge: true });
+    } catch (err: any) {
+      console.warn(`[DB] Firestore saveHotelAsync warning (${savedHotel.id}):`, err?.message || err);
+    }
+
+    this.logAudit(
+      user,
+      index >= 0 ? 'PRODUCT_UPDATED' : 'PRODUCT_CREATED',
+      'Hotel',
+      savedHotel.id,
+      `${index >= 0 ? 'Updated' : 'Created'} hotel property: ${savedHotel.name} (${savedHotel.code || savedHotel.id})`
+    );
+
+    return savedHotel;
   }
 
   public deleteHotel(hotelId: string, user: User | null): void {
@@ -10287,6 +11138,43 @@ export class AppDatabase {
     if (target) {
       this.logAudit(user, 'PRODUCT_ARCHIVED', 'Hotel', hotelId, `Deleted hotel property: ${target.name}`);
     }
+  }
+
+  public async deleteHotelAsync(hotelId: string, user: User | null): Promise<{ success: boolean; error?: string }> {
+    if (user) {
+      const auth = this.canUserWriteCMS(user, 'OPERATIONS', 'Hotel');
+      if (!auth.allowed) {
+        return { success: false, error: `Unauthorized delete attempt: ${auth.reason}` };
+      }
+    }
+
+    const hotels = this.getHotels();
+    const target = hotels.find(h => h.id === hotelId);
+    if (!target) {
+      return { success: false, error: 'Hotel not found.' };
+    }
+
+    // Check package items referencing this hotel
+    const pkgItems = this.getPackageItems();
+    const referencing = pkgItems.filter(pi => pi.itemId === hotelId && pi.itemType === 'hotel');
+    if (referencing.length > 0) {
+      return {
+        success: false,
+        error: `Cannot delete hotel "${target.name}". It is referenced by ${referencing.length} package day item(s).`
+      };
+    }
+
+    this.setItem('hotels', hotels.filter(h => h.id !== hotelId));
+
+    const deleted = await this.deleteFirestoreDocAsync('hotels', hotelId, {
+      hotelName: target.name,
+      code: target.code,
+      destinationId: target.destinationId
+    });
+
+    this.logAudit(user, 'PRODUCT_ARCHIVED', 'Hotel', hotelId, `Deleted hotel property: ${target.name}`);
+
+    return { success: deleted };
   }
 
   // ==========================================
@@ -10391,6 +11279,9 @@ export class AppDatabase {
       updatedByEmail: user?.email || 'business@theunbound.in',
       updatedAt: now
     };
+
+    this.unmarkEntityDeleted('city_hubs', hubId);
+    this.unmarkEntityDeleted('CityHub', hubId);
 
     const cleanData = cleanForFirestore(recordToSave);
     await setDoc(doc(firestoreDb, 'city_hubs', hubId), cleanData, { merge: true });
@@ -12189,6 +13080,12 @@ export class AppDatabase {
     return savedLead;
   }
 
+  public async saveLeadAsync(lead: TravelLead, user: User | null): Promise<TravelLead> {
+    const saved = this.saveLead(lead, user);
+    await this.syncFirestoreDocAsync('leads', saved.id, saved);
+    return saved;
+  }
+
   public updateLeadStatus(leadId: string, status: LeadStatus, user: User | null, noteText?: string): TravelLead | null {
     const leads = this.getLeads();
     const index = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
@@ -13526,6 +14423,17 @@ export class AppDatabase {
     }
   }
 
+  public async saveUserAsync(
+    updatedUser: User, 
+    actor: User | null, 
+    actionType: 'USER_ROLE_CHANGED' | 'USER_PERMISSIONS_CHANGED' = 'USER_ROLE_CHANGED', 
+    auditDetails?: string
+  ): Promise<User> {
+    this.saveUser(updatedUser, actor, actionType, auditDetails);
+    await this.syncFirestoreDocAsync('users', updatedUser.id, updatedUser);
+    return updatedUser;
+  }
+
   public updateUserPermissions(
     userId: string, 
     newPermissions: UserPermissionAccess, 
@@ -14381,6 +15289,122 @@ export class AppDatabase {
       this.logAudit(effectiveUser || null, 'SETTINGS_UPDATED', 'CustomPage', pageId, `Deleted custom page: ${target.title}`);
     }
     return { success: true };
+  }
+
+  public async saveCustomPageAsync(page: CustomPage, user?: User | null): Promise<CustomPage> {
+    const effectiveUser = user || this.getCurrentUser();
+    if (effectiveUser) {
+      const auth = this.canUserWriteCMS(effectiveUser, 'CONTENT', 'CustomPage');
+      if (!auth.allowed) {
+        throw new Error(`Unauthorized write attempt: ${auth.reason}`);
+      }
+    }
+
+    if (!page.title || !page.title.trim()) {
+      throw new Error('Page title is required.');
+    }
+    if (!page.slug || !page.slug.trim()) {
+      throw new Error('Page slug is required.');
+    }
+
+    const dup = this.checkDuplicateRecord('CustomPage', {
+      id: page.id,
+      slug: page.slug
+    });
+    if (dup.isDuplicate && dup.duplicateType === 'EXACT') {
+      throw new Error(dup.message || 'An active CMS page with this slug already exists.');
+    }
+
+    const pages = this.getCustomPages();
+    const index = pages.findIndex(p => p.id === page.id);
+    let savedPage: CustomPage;
+    const now = new Date().toISOString();
+
+    if (index >= 0) {
+      savedPage = { ...page, updatedAt: now };
+      pages[index] = savedPage;
+    } else {
+      savedPage = {
+        ...page,
+        id: page.id || `page-${Date.now()}`,
+        createdAt: (page as any).createdAt || now,
+        updatedAt: now
+      };
+      pages.unshift(savedPage);
+    }
+
+    this.setItem('custom_pages', pages);
+    this.unmarkCustomPageDeleted(savedPage.id);
+    this.unmarkEntityDeleted('custom_pages', savedPage.id);
+    this.unmarkEntityDeleted('CustomPage', savedPage.id);
+
+    try {
+      const enrichedData = {
+        ...savedPage,
+        isDeleted: false,
+        updatedByRole: 'ADMIN',
+        updatedByEmail: 'business@theunbound.in',
+        updatedBy: 'usr-admin-business'
+      };
+      await setDoc(doc(firestoreDb, 'custom_pages', savedPage.id), cleanForFirestore(enrichedData), { merge: true });
+    } catch (err: any) {
+      console.warn(`[DB] Firestore saveCustomPageAsync warning (${savedPage.id}):`, err?.message || err);
+    }
+
+    this.logAudit(
+      effectiveUser || null,
+      'SETTINGS_UPDATED',
+      'CustomPage',
+      savedPage.id,
+      `${index >= 0 ? 'Updated' : 'Created'} custom page: ${savedPage.title}`
+    );
+
+    return savedPage;
+  }
+
+  public async deleteCustomPageAsync(pageId: string, user?: User | null): Promise<{ success: boolean; error?: string }> {
+    const effectiveUser = user || this.getCurrentUser();
+    if (effectiveUser) {
+      const permCheck = this.canUserDelete(effectiveUser, 'CustomPage');
+      if (!permCheck.allowed) {
+        return { success: false, error: permCheck.reason };
+      }
+    }
+
+    const pages = this.getCustomPages();
+    const target = pages.find(p => p.id === pageId);
+    if (!target) {
+      return { success: false, error: 'Custom page not found.' };
+    }
+
+    this.setItem('custom_pages', pages.filter(p => p.id !== pageId));
+    this.markCustomPageDeleted(pageId);
+
+    const deleted = await this.deleteFirestoreDocAsync('custom_pages', pageId, {
+      title: target.title,
+      slug: target.slug
+    });
+
+    if (target) {
+      this.deleteMenuItem(`menu-${pageId}`, effectiveUser);
+      const footerConfig = this.getFooterConfig();
+      let changed = false;
+      if (footerConfig.columns) {
+        footerConfig.columns.forEach(col => {
+          if (col.links) {
+            const origLen = col.links.length;
+            col.links = col.links.filter(l => l.targetId !== target.slug && l.id !== `footer-link-page-${pageId}`);
+            if (col.links.length !== origLen) changed = true;
+          }
+        });
+      }
+      if (changed) {
+        this.saveFooterConfig(footerConfig, effectiveUser);
+      }
+      this.logAudit(effectiveUser || null, 'SETTINGS_UPDATED', 'CustomPage', pageId, `Deleted custom page: ${target.title}`);
+    }
+
+    return { success: deleted };
   }
 
   // ==========================================
@@ -15813,6 +16837,15 @@ export class AppDatabase {
   // MARKETING CAMPAIGN EVENTS & REAL-TIME TRACKING
   // ==========================================
   public getCurrentUser(): User | null {
+    if (currentAuthUser) return currentAuthUser;
+    if (auth.currentUser) {
+      const users = this.getItem<User[]>('system_users', []);
+      const found = users.find(u => u.id === auth.currentUser?.uid);
+      if (found) {
+        currentAuthUser = found;
+        return found;
+      }
+    }
     try {
       if (typeof window !== 'undefined') {
         const raw = localStorage.getItem('theunbound_auth_user');

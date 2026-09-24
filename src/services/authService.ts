@@ -16,7 +16,8 @@ import {
   collection,
   query,
   where,
-  getDocs
+  getDocs,
+  onSnapshot
 } from 'firebase/firestore';
 import { auth, db as firestoreDb } from './firebase';
 import { AppDatabase, cleanForFirestore } from './db';
@@ -85,6 +86,7 @@ class AuthService {
   private currentUserProfile: User | null = null;
   private authError: string | null = null;
   private authListeners: Array<(user: User | null, state: AuthState, error?: string | null) => void> = [];
+  private profileUnsubscribe: (() => void) | null = null;
 
   // In-memory rate limiting and brute-force mitigation
   private failedAttemptsMap = new Map<string, { count: number; lockedUntil: number; windowStart: number }>();
@@ -159,10 +161,15 @@ class AuthService {
           } catch (e) {
             console.warn('[AUTH] Error during inactivity signOut:', e);
           }
+          if (this.profileUnsubscribe) {
+            try { this.profileUnsubscribe(); } catch (e) {}
+            this.profileUnsubscribe = null;
+          }
           this.currentFirebaseUser = null;
           this.currentUserProfile = null;
           this.authState = 'UNAUTHENTICATED';
           inactivityTracker.clear();
+          AppDatabase.getInstance().onAuthUserChanged(null, null);
           this.notifyListeners();
           return;
         }
@@ -171,6 +178,12 @@ class AuthService {
         this.currentFirebaseUser = fbUser;
         this.authState = 'AUTHENTICATED_PROFILE_LOADING';
         this.notifyListeners();
+
+        // Clean up previous real-time profile listener if any
+        if (this.profileUnsubscribe) {
+          try { this.profileUnsubscribe(); } catch (e) {}
+          this.profileUnsubscribe = null;
+        }
 
         // Step 3: Resolve Firestore /users/{uid} profile (Case A or Case B)
         try {
@@ -192,6 +205,7 @@ class AuthService {
               this.authState = 'UNAUTHENTICATED';
               this.authError = 'Direct consumer accounts are not supported on TheUnbound. Please contact business@theunbound.in or use an authorized B2B travel partner account.';
               inactivityTracker.clear();
+              AppDatabase.getInstance().onAuthUserChanged(null, null);
               this.notifyListeners();
               return;
             }
@@ -200,6 +214,7 @@ class AuthService {
             this.authState = 'AUTHENTICATED_READY';
             this.authError = null;
             AppDatabase.getInstance().saveUserLocally(profile);
+            AppDatabase.getInstance().onAuthUserChanged(profile, fbUser);
 
             // Step 4: Reset and start 24-hour inactivity monitoring
             inactivityTracker.reset();
@@ -208,7 +223,45 @@ class AuthService {
               this.logout('INACTIVITY_TIMEOUT');
             });
 
-            console.log(`[AUTH] Session restored successfully: ${profile.email} (${profile.role})`);
+            // Step 5: Establish live real-time onSnapshot listener on /users/{uid}
+            // Ensures role, permission, approvalStatus, or company changes made on another device propagate instantly!
+            try {
+              this.profileUnsubscribe = onSnapshot(doc(firestoreDb, 'users', fbUser.uid), (docSnap) => {
+                if (docSnap.exists()) {
+                  const data = docSnap.data() as User;
+                  const liveProfile: User = {
+                    ...data,
+                    id: fbUser.uid,
+                    email: normalizeEmail(data.email || fbUser.email || '')
+                  };
+
+                  if (liveProfile.role === 'BUYER' || (liveProfile as any).userType === 'BUYER') {
+                    console.warn('[AUTH] Profile changed to BUYER. Terminating session.');
+                    this.logout('DIRECT_BUYER_BLOCKED');
+                    return;
+                  }
+
+                  if ((liveProfile as any).isDeleted === true || (liveProfile as any).status === 'DELETED') {
+                    console.warn('[AUTH] User account deleted in Firestore. Terminating session.');
+                    this.logout('USER_DELETED');
+                    return;
+                  }
+
+                  this.currentUserProfile = liveProfile;
+                  this.authState = 'AUTHENTICATED_READY';
+                  this.authError = null;
+                  AppDatabase.getInstance().saveUserLocally(liveProfile);
+                  AppDatabase.getInstance().onAuthUserChanged(liveProfile, fbUser);
+                  this.notifyListeners();
+                }
+              }, (err) => {
+                console.debug('[AUTH] Real-time profile listener note:', err?.message || err);
+              });
+            } catch (listenerErr) {
+              console.warn('[AUTH] Could not attach profile snapshot listener:', listenerErr);
+            }
+
+            console.log(`[AUTH] Session restored successfully: ${profile.email} (${profile.role}) [UID: ${fbUser.uid}]`);
             this.notifyListeners();
             return;
           }
@@ -223,53 +276,22 @@ class AuthService {
       } else {
         console.log('[AUTH] Firebase Auth confirmed: No authenticated user.');
         
-        // Check if there is an active session stored in localStorage
-        let restoredSession = false;
-        if (typeof window !== 'undefined') {
-          try {
-            const cachedUserJson = localStorage.getItem('theunbound_auth_user');
-            if (cachedUserJson) {
-              const cachedUser: User = JSON.parse(cachedUserJson);
-              if (cachedUser && (cachedUser.role === 'BUYER' || (cachedUser as any).userType === 'BUYER')) {
-                // Reject legacy consumer cache
-                localStorage.removeItem('theunbound_auth_user');
-              } else if (cachedUser && cachedUser.email) {
-                // Check if user was inactive for >= 24 hours
-                if (inactivityTracker.isInactive()) {
-                  console.warn('[AUTH] Inactivity timeout reached for stored session. Clearing.');
-                  localStorage.removeItem('theunbound_auth_user');
-                  inactivityTracker.clear();
-                } else {
-                  // Session is active within 24h window!
-                  const freshUser = AppDatabase.getInstance().getUserByEmail(cachedUser.email) || cachedUser;
-                  this.currentUserProfile = freshUser;
-                  this.authState = 'AUTHENTICATED_READY';
-                  this.authError = null;
-                  inactivityTracker.reset();
-                  inactivityTracker.start(() => {
-                    console.warn('[AUTH] 24-hour continuous inactivity detected. Triggering auto-logout.');
-                    this.logout('INACTIVITY_TIMEOUT');
-                  });
-                  console.log(`[AUTH] Restored active session from persistent profile: ${freshUser.email} (${freshUser.role})`);
-                  restoredSession = true;
-                  this.notifyListeners();
-                  return;
-                }
-              }
-            }
-          } catch (storageErr) {
-            console.warn('[AUTH] Error checking cached session:', storageErr);
-          }
+        // Clean up real-time profile listener
+        if (this.profileUnsubscribe) {
+          try { this.profileUnsubscribe(); } catch (e) {}
+          this.profileUnsubscribe = null;
         }
 
-        if (!restoredSession) {
-          this.currentFirebaseUser = null;
-          this.currentUserProfile = null;
-          this.authState = 'UNAUTHENTICATED';
-          this.authError = null;
-          inactivityTracker.stop();
-          this.notifyListeners();
+        this.currentFirebaseUser = null;
+        this.currentUserProfile = null;
+        this.authState = 'UNAUTHENTICATED';
+        this.authError = null;
+        inactivityTracker.stop();
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('theunbound_auth_user');
         }
+        AppDatabase.getInstance().onAuthUserChanged(null, null);
+        this.notifyListeners();
       }
     });
   }
@@ -669,6 +691,9 @@ class AuthService {
     this.authState = 'AUTHENTICATED_READY';
     this.authError = null;
 
+    AppDatabase.getInstance().saveUserLocally(profile);
+    AppDatabase.getInstance().onAuthUserChanged(profile, fbUser);
+
     inactivityTracker.reset();
     inactivityTracker.start(() => {
       console.warn('[AUTH] 24-hour inactivity timeout reached. Logging out.');
@@ -849,6 +874,7 @@ class AuthService {
     this.authError = null;
 
     AppDatabase.getInstance().saveUserLocally(profile);
+    AppDatabase.getInstance().onAuthUserChanged(profile, this.currentFirebaseUser);
 
     if (typeof window !== 'undefined') {
       try {
@@ -1021,6 +1047,7 @@ class AuthService {
           this.currentUserProfile = newUser;
           this.authState = 'AUTHENTICATED_READY';
           this.authError = null;
+          AppDatabase.getInstance().onAuthUserChanged(newUser, this.currentFirebaseUser);
 
           inactivityTracker.reset();
           inactivityTracker.start(() => {
@@ -1130,6 +1157,7 @@ class AuthService {
       this.currentUserProfile = newUser;
       this.authState = 'AUTHENTICATED_READY';
       this.authError = null;
+      AppDatabase.getInstance().onAuthUserChanged(newUser, fbUser);
 
       inactivityTracker.reset();
       inactivityTracker.start(() => {
@@ -1154,6 +1182,11 @@ class AuthService {
   public async logout(reason = 'USER_INITIATED'): Promise<void> {
     console.log(`[AUTH] Universal logout requested. Reason: ${reason}`);
 
+    if (this.profileUnsubscribe) {
+      try { this.profileUnsubscribe(); } catch (e) {}
+      this.profileUnsubscribe = null;
+    }
+
     // Stop and clear inactivity tracking
     inactivityTracker.stop();
     inactivityTracker.clear();
@@ -1169,6 +1202,11 @@ class AuthService {
     this.authState = 'UNAUTHENTICATED';
     this.authError = null;
 
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('theunbound_auth_user');
+    }
+
+    AppDatabase.getInstance().onAuthUserChanged(null, null);
     this.notifyListeners();
   }
 

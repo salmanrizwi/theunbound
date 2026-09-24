@@ -37,24 +37,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authState, setAuthState] = useState<AuthState>(() => authService.getAuthState());
   const [authError, setAuthError] = useState<string | null>(() => authService.getAuthError());
 
-  // Initialize cached display user for initial render while verifying with Firebase Auth
-  const [user, setUser] = useState<User | null>(() => {
-    if (typeof window === 'undefined') return null;
-    const saved = localStorage.getItem(STORAGE_KEY_AUTH);
-    if (saved) {
-      try {
-        const parsed: User = JSON.parse(saved);
-        if (parsed && (parsed.role === 'BUYER' || (parsed as any).userType === 'BUYER')) {
-          localStorage.removeItem(STORAGE_KEY_AUTH);
-          return null;
-        }
-        return parsed;
-      } catch (e) {
-        console.error('[AUTH] Error parsing cached auth state:', e);
-      }
-    }
-    return null;
-  });
+  // Initialize user strictly from authoritative AuthService
+  const [user, setUser] = useState<User | null>(() => authService.getCurrentUser());
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalReason, setAuthModalReason] = useState<string>('Access Protected Pricing Calculator');

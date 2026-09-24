@@ -772,6 +772,7 @@ export interface ProductAddon {
 
 export interface Product {
   id: string;
+  product_id?: string;
   sku: string;
   destinationId: string;
   destinationName: string;
@@ -3638,6 +3639,7 @@ export interface HotelLocationDistances {
 
 export interface Hotel {
   id: string;
+  hotel_id?: string;
   name: string;
   code: string;
   destinationId: string;
@@ -3681,6 +3683,11 @@ export interface Hotel {
 // ----------------------------------------------------
 export interface CityHub {
   id: string;
+  hub_id?: string;
+  airportCode?: string;
+  railwayStation?: string;
+  latitude?: number;
+  longitude?: number;
   destinationId: string;
   destinationName: string;
   regionId?: string;
@@ -5537,6 +5544,7 @@ export interface PackageSEO {
 
 export interface B2BPackage {
   id: string;
+  package_id?: string;
   title: string;
   name?: string; // Alias for title
   slug: string;

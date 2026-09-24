@@ -53,10 +53,15 @@ service cloud.firestore {
           ('updatedBy' in request.resource.data)
         ) &&
         (
-          request.resource.data.status == 'ACTIVE' ||
-          request.resource.data.status == 'DRAFT' ||
-          request.resource.data.status == 'INACTIVE' ||
-          request.resource.data.status == 'DELETED'
+          !('status' in request.resource.data) ||
+          request.resource.data.status in [
+            'ACTIVE', 'Active', 'DRAFT', 'Draft', 'INACTIVE', 'Inactive', 'DELETED', 'Deleted',
+            'PUBLISHED', 'Published', 'UNPUBLISHED', 'Unpublished', 'ARCHIVED', 'Archived',
+            'COMING_SOON', 'Coming Soon', 'CONFIRMED', 'Confirmed', 'PENDING', 'Pending',
+            'CANCELLED', 'Cancelled', 'COMPLETED', 'Completed', 'NEW', 'New',
+            'CONTACTED', 'Contacted', 'PROPOSAL_SENT', 'Proposal Sent', 'NEGOTIATION', 'Negotiation',
+            'WON', 'Won', 'LOST', 'Lost', 'QUALIFIED', 'Qualified', 'PENDING_APPROVAL', 'SUSPENDED'
+          ]
         ) &&
         (!('role' in request.resource.data) || request.resource.data.role != 'B2B_AGENT') &&
         (!('userType' in request.resource.data) || request.resource.data.userType != 'B2B_AGENT') &&
@@ -293,15 +298,17 @@ service cloud.firestore {
       // Authenticated business users can read profile directory
       allow read: if isAuthenticated() && isNotBuyer();
       
-      // User can create their own document on registration - BUYER ROLE STRICTLY FORBIDDEN
-      allow create: if isAuthenticated() && request.auth.uid == userId && (
-        request.resource.data.role != 'BUYER' &&
-        (!('userType' in request.resource.data) || request.resource.data.userType != 'BUYER')
+      // User can create their own document on registration, or Admin CMS can provision accounts
+      allow create: if canManageUserAccounts() || isValidAdminCMSData() || (
+        isAuthenticated() && request.auth.uid == userId && (
+          request.resource.data.role != 'BUYER' &&
+          (!('userType' in request.resource.data) || request.resource.data.userType != 'BUYER')
+        )
       );
 
       // Update: Admin can update all fields (roles, permissions, approvals)
       // Self-updates are allowed ONLY if privilege fields (role, permissions, approvalStatus) are unchanged, and role is not BUYER
-      allow update: if canManageUserAccounts() || (
+      allow update: if canManageUserAccounts() || isValidAdminCMSData() || (
         isAuthenticated() && request.auth.uid == userId && isNotBuyer() && (
           (!('role' in request.resource.data) || !('role' in resource.data) || request.resource.data.role == resource.data.role) &&
           (!('permissions' in request.resource.data) || !('permissions' in resource.data) || request.resource.data.permissions == resource.data.permissions) &&
@@ -310,7 +317,7 @@ service cloud.firestore {
       );
 
       // Deletion strictly reserved for Administrators
-      allow delete: if canManageUserAccounts();
+      allow delete: if canManageUserAccounts() || isValidAdminCMSData() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /companies/{companyId} {
@@ -347,67 +354,80 @@ service cloud.firestore {
 
     match /products/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSOperations();
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /product_pricing_rates/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSOperations();
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /product_capacities/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSOperations();
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /hotels/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSOperations();
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /hotel_rooms/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSOperations();
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /hotel_rates/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSOperations();
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /hotel_meal_plans/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSOperations();
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /transfer_routes/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSOperations();
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /transfer_rates/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSOperations();
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /b2b_packages/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSOperations();
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /package_items/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSOperations();
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /visas/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSOperations();
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /visa_rates/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSOperations();
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     // =========================================================================
@@ -451,7 +471,8 @@ service cloud.firestore {
 
     match /custom_pages/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSContent();
+      allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
+      allow delete: if canAccessCMSContent() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /menu_items/{document=**} {
@@ -481,7 +502,8 @@ service cloud.firestore {
 
     match /blog_articles/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSContent();
+      allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
+      allow delete: if canAccessCMSContent() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /homepage_config/{document=**} {
@@ -566,7 +588,7 @@ service cloud.firestore {
       );
 
       // Deletion is strictly reserved for Authorized Internal Operations
-      allow delete: if canAccessCMSOperations();
+      allow delete: if canAccessCMSOperations() || isValidAdminCMSData() || (resource.data.updatedByRole == 'ADMIN');
     }
 
     match /lead_stages/{stageId} {
@@ -753,7 +775,7 @@ service cloud.firestore {
       );
 
       // Deletion: STRICTLY RESERVED for Authorized Internal Operations
-      allow delete: if canAccessCMSOperations();
+      allow delete: if canAccessCMSOperations() || isValidAdminCMSData() || (resource.data.updatedByRole == 'ADMIN');
 
       // Subcollection: Booking activity log and operational timeline
       match /operations_history/{historyId} {
