@@ -45,6 +45,7 @@ import {
   ParsedRoute 
 } from './services/portalRouter';
 import { canUserAccessCMS, canUserAccessQuoteBuilder, canUserAccessB2BInventory } from './services/permissionEngine';
+import { authDiagnostic } from './services/authDiagnostic';
 import { 
   Globe2, 
   ShieldCheck, 
@@ -111,6 +112,10 @@ const MainAppContent: React.FC = () => {
   const [footerConfig, setFooterConfig] = useState<FooterConfig>(() => db.getFooterConfig());
 
   // Synchronize route changes from browser navigation or programmatic navigateTo()
+  useEffect(() => {
+    authDiagnostic.markStage('T11');
+  }, [currentRoute.pathname]);
+
   useEffect(() => {
     const handleLocationChange = () => {
       const parsed = parseRoute(getCurrentPath());

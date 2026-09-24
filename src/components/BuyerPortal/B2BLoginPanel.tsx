@@ -22,6 +22,7 @@ import {
   UserCheck
 } from 'lucide-react';
 import { navigateTo } from '../../services/portalRouter';
+import { authDiagnostic } from '../../services/authDiagnostic';
 
 interface B2BLoginPanelProps {
   onSuccess?: () => void;
@@ -55,20 +56,25 @@ export const B2BLoginPanel: React.FC<B2BLoginPanelProps> = ({
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
+
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail || !password) {
       setErrorMsg('Please enter both your registered email and password.');
       return;
     }
 
-    setIsLoading(true);
-    setErrorMsg(null);
-
     // Auto-detect role if admin/team staff signs in from hero B2B panel
     let roleToSubmit: UserRole = 'B2B_AGENT';
     if (['admin@theunbound.com', 'business@theunbound.in', 'marcus@theunbound.in'].includes(cleanEmail) || cleanEmail.endsWith('@theunbound.in')) {
       roleToSubmit = cleanEmail === 'kenji.ops@theunbound.in' ? 'TEAM_MEMBER' : 'ADMIN';
     }
+
+    // Mark T0 = Login button clicked (Requirement #2, #37)
+    authDiagnostic.startLogin(cleanEmail, roleToSubmit);
+
+    setIsLoading(true);
+    setErrorMsg(null);
 
     try {
       const res = await login(cleanEmail, roleToSubmit, password);

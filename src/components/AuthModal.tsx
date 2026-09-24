@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { User, UserRole, UserCategory } from '../types';
+import { authDiagnostic } from '../services/authDiagnostic';
 import { 
   X, 
   Lock, 
@@ -238,6 +239,9 @@ export const AuthModal: React.FC = () => {
       return;
     }
 
+    // Prevent double login submissions (Requirement #25)
+    if (isSubmitting) return;
+
     // 3. LOGIN
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) {
@@ -256,7 +260,11 @@ export const AuthModal: React.FC = () => {
       roleToSubmit = cleanEmail === 'kenji.ops@theunbound.in' ? 'TEAM_MEMBER' : 'ADMIN';
     }
 
+    // Mark T0 = Login button clicked (Requirement #2, #37)
+    authDiagnostic.startLogin(cleanEmail, roleToSubmit);
+
     setIsSubmitting(true);
+    setErrorMessage(null);
     try {
       const res = await login(cleanEmail, roleToSubmit, password);
       if (!res.success) {

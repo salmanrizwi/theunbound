@@ -303,8 +303,8 @@ service cloud.firestore {
     // =========================================================================
 
     match /users/{userId} {
-      // Authenticated business users can read profile directory
-      allow read: if isAuthenticated() && isNotBuyer();
+      // Authenticated user can read their own profile directly, or business users can read profile directory
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isNotBuyer());
       
       // User can create their own document on registration, or Admin CMS can provision accounts
       allow create: if canManageUserAccounts() || isValidAdminCMSData() || (

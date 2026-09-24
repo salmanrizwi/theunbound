@@ -16,6 +16,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   authState: AuthState;
   isInitializing: boolean;
+  isProfileLoading: boolean;
   authError: string | null;
   role: UserRole;
   isAuthModalOpen: boolean;
@@ -95,7 +96,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => window.removeEventListener('theunbound_auth_changed', handleAuthChanged as EventListener);
   }, []);
 
-  const isInitializing = authState === 'AUTH_INITIALIZING' || authState === 'AUTHENTICATED_PROFILE_LOADING';
+  const isInitializing = authState === 'AUTH_INITIALIZING';
+  const isProfileLoading = authState === 'AUTHENTICATED_PROFILE_LOADING';
   const isAuthenticated = authState === 'AUTHENTICATED_READY' && !!user;
 
   /**
@@ -246,6 +248,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAuthenticated,
         authState,
         isInitializing,
+        isProfileLoading,
         authError,
         role: user ? user.role : 'PUBLIC',
         isAuthModalOpen,

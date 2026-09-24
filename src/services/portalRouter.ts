@@ -1,5 +1,6 @@
 import { User } from '../types';
 import { canUserAccessQuoteBuilder, canUserAccessCMS, canUserAccessB2BInventory } from './permissionEngine';
+import { authDiagnostic } from './authDiagnostic';
 
 export type PortalNamespace = 'PUBLIC' | 'B2B' | 'ADMIN' | 'BUYER';
 
@@ -338,6 +339,7 @@ export function navigateTo(path: string, options?: { replace?: boolean }): void 
   if (typeof window === 'undefined') return;
 
   const normalized = path.startsWith('/') ? path : `/${path}`;
+  authDiagnostic.markStage('T10');
 
   try {
     if (options?.replace) {

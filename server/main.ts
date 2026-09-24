@@ -49,11 +49,12 @@ export async function startServer() {
       app.get("/sitemap.xml", handleSitemapXml);
       app.get("/robots.txt", handleRobotsTxt);
 
-      // Robust environment detection: in production bundles, never load Vite dev server
-      const isCompiledBundle =
-        Boolean(process.argv[1] && (process.argv[1].includes("dist") || process.argv[1].endsWith(".cjs"))) ||
-        (typeof __filename !== "undefined" && __filename.endsWith(".cjs"));
-      const isProduction = process.env.NODE_ENV === "production" || isCompiledBundle;
+      // Robust environment detection: in production bundles or when dist build exists, never load Vite dev server
+      const distPath = path.resolve(process.cwd(), "dist");
+      const indexPath = path.join(distPath, "index.html");
+      const hasDistBuild = fs.existsSync(indexPath);
+      const isDev = process.env.NODE_ENV === "development" || process.env.npm_lifecycle_event === "dev";
+      const isProduction = process.env.NODE_ENV === "production" || (!isDev && hasDistBuild);
 
       if (!isProduction) {
         const { createServer: createViteServer } = await import("vite");
@@ -132,8 +133,11 @@ export async function startServer() {
         });
       }
 
-      // Listen on PORT specified by environment (Cloud Run uses 8080 or custom PORT), defaulting to 3000
-      const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+      // In AI Studio / Cloud Run container architecture:
+      // Nginx reverse proxy listens on external Cloud Run PORT (8080)
+      // and forwards all web and API traffic to Node on port 3000 (proxy_pass http://localhost:3000).
+      // Node MUST listen on port 3000 (never 8080, which is bound by Nginx).
+      const PORT = (process.env.PORT && process.env.PORT !== "8080") ? parseInt(process.env.PORT, 10) : 3000;
 
       const server = app.listen(PORT, "0.0.0.0", () => {
         console.log(`Server running on port ${PORT}`);
@@ -159,8 +163,7 @@ export async function startServer() {
 const isDirectEntrypoint = Boolean(
   process.argv[1] &&
   (process.argv[1].endsWith("server.cjs") ||
-   process.argv[1].endsWith("main.ts") ||
-   process.argv[1].endsWith("server.ts"))
+   process.argv[1].endsWith("main.ts"))
 );
 
 if (isDirectEntrypoint) {

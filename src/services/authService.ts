@@ -24,6 +24,25 @@ import { AppDatabase, cleanForFirestore } from './db';
 import { User, UserRole, UserCategory, UserApprovalStatus } from '../types';
 import { getDefaultPermissionsForRole } from './permissionEngine';
 import { inactivityTracker } from './inactivityTracker';
+import { authDiagnostic } from './authDiagnostic';
+
+/**
+ * Executes a promise with an application-level safety timeout to prevent indefinite hangs.
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMsg: string): Promise<T> {
+  let timerId: any;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timerId = setTimeout(() => {
+      const err = new Error(timeoutMsg);
+      (err as any).code = 'auth/timeout';
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([
+    promise.finally(() => clearTimeout(timerId)),
+    timeoutPromise
+  ]);
+}
 
 export type AuthState = 
   | 'AUTH_INITIALIZING'
@@ -87,6 +106,7 @@ class AuthService {
   private authError: string | null = null;
   private authListeners: Array<(user: User | null, state: AuthState, error?: string | null) => void> = [];
   private profileUnsubscribe: (() => void) | null = null;
+  private isLoginInProgress: boolean = false;
 
   // In-memory rate limiting and brute-force mitigation
   private failedAttemptsMap = new Map<string, { count: number; lockedUntil: number; windowStart: number }>();
@@ -152,6 +172,12 @@ class AuthService {
     onAuthStateChanged(auth, async (fbUser) => {
       console.log(`[AUTH] Firebase onAuthStateChanged event. FB User UID: ${fbUser?.uid || 'NONE'}`);
 
+      // If manual login form submission is currently executing, do not duplicate profile resolution
+      if (this.isLoginInProgress) {
+        console.log('[AUTH] Manual login in progress; skipping redundant profile resolution in onAuthStateChanged.');
+        return;
+      }
+
       if (fbUser) {
         // Step 1: Check 24-hour inactivity timeout
         if (inactivityTracker.isInactive()) {
@@ -185,9 +211,13 @@ class AuthService {
           this.profileUnsubscribe = null;
         }
 
-        // Step 3: Resolve Firestore /users/{uid} profile (Case A or Case B)
+        // Step 3: Resolve Firestore /users/{uid} profile with safety timeout
         try {
-          const profile = await this.resolveOrCreateUserProfile(fbUser);
+          const profile = await withTimeout(
+            this.resolveOrCreateUserProfile(fbUser),
+            6000,
+            'Session restoration timed out'
+          );
           if (profile) {
             // Direct Buyer Login Prevention: Never issue an active session for legacy or direct buyers
             if (profile.role === 'BUYER' || (profile as any).userType === 'BUYER') {
@@ -224,7 +254,6 @@ class AuthService {
             });
 
             // Step 5: Establish live real-time onSnapshot listener on /users/{uid}
-            // Ensures role, permission, approvalStatus, or company changes made on another device propagate instantly!
             try {
               this.profileUnsubscribe = onSnapshot(doc(firestoreDb, 'users', fbUser.uid), (docSnap) => {
                 if (docSnap.exists()) {
@@ -251,7 +280,6 @@ class AuthService {
                   this.authState = 'AUTHENTICATED_READY';
                   this.authError = null;
                   AppDatabase.getInstance().saveUserLocally(liveProfile);
-                  AppDatabase.getInstance().onAuthUserChanged(liveProfile, fbUser);
                   this.notifyListeners();
                 }
               }, (err) => {
@@ -267,11 +295,22 @@ class AuthService {
           }
         } catch (err: any) {
           console.warn('[AUTH] Error resolving profile during onAuthStateChanged:', err);
+          const cached = AppDatabase.getInstance().getUserById(fbUser.uid);
+          if (cached && cached.role !== 'BUYER') {
+            this.currentUserProfile = cached;
+            this.authState = 'AUTHENTICATED_READY';
+            this.authError = null;
+            this.notifyListeners();
+            return;
+          }
         }
 
-        // If profile resolution completely failed but fbUser exists
-        this.authState = 'AUTH_ERROR';
-        this.authError = 'User profile could not be initialized.';
+        // If profile resolution completely failed or timed out: fall back to UNAUTHENTICATED
+        console.warn('[AUTH] Session profile could not be restored. Falling back to UNAUTHENTICATED.');
+        this.currentFirebaseUser = null;
+        this.currentUserProfile = null;
+        this.authState = 'UNAUTHENTICATED';
+        this.authError = null;
         this.notifyListeners();
       } else {
         console.log('[AUTH] Firebase Auth confirmed: No authenticated user.');
@@ -362,17 +401,16 @@ class AuthService {
 
     console.log(`[AUTH] Resolving user profile for UID: ${uid} (${cleanEmail})`);
 
-    // 1. Try reading from Firestore: users/{uid}
+    // 1. Try reading from Firestore: users/{uid} with 8s safety timeout
     try {
       const userRef = doc(firestoreDb, 'users', uid);
-      let docSnap;
-      try {
-        docSnap = await getDocFromServer(userRef);
-      } catch (serverErr) {
-        docSnap = await getDoc(userRef);
-      }
+      const docSnap = await withTimeout(
+        getDoc(userRef),
+        8000,
+        'Firestore profile read timed out'
+      );
 
-      if (docSnap.exists()) {
+      if (docSnap && docSnap.exists()) {
         const data = docSnap.data() as User;
         const profile: User = {
           ...data,
@@ -380,6 +418,7 @@ class AuthService {
           email: normalizeEmail(data.email || cleanEmail)
         };
         console.log(`[AUTH] Case A: Firestore profile found at users/${uid}. Role: ${profile.role}`);
+        AppDatabase.getInstance().saveUserLocally(profile);
         return profile;
       }
     } catch (readErr) {
@@ -391,22 +430,22 @@ class AuthService {
     let existingProfile: User | null = seedProfile || null;
 
     if (!existingProfile && cleanEmail) {
+      existingProfile = AppDatabase.getInstance().getUserByEmail(cleanEmail) || AppDatabase.getInstance().getUserById(uid) || null;
+      if (existingProfile) {
+        console.log(`[AUTH] Located catalog profile for ${cleanEmail}. Migrating to users/${uid}...`);
+      }
+    }
+
+    if (!existingProfile && cleanEmail) {
       try {
         const q = query(collection(firestoreDb, 'users'), where('email', '==', cleanEmail));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
+        const snap = await withTimeout(getDocs(q), 5000, 'Firestore email query timed out');
+        if (snap && !snap.empty) {
           existingProfile = snap.docs[0].data() as User;
           console.log(`[AUTH] Found existing Firestore user record by email (${cleanEmail}) to migrate.`);
         }
       } catch (queryErr) {
         console.warn('[AUTH] Firestore email query note:', queryErr);
-      }
-    }
-
-    if (!existingProfile && cleanEmail) {
-      existingProfile = AppDatabase.getInstance().getUserByEmail(cleanEmail) || null;
-      if (existingProfile) {
-        console.log(`[AUTH] Found pre-configured catalog profile for ${cleanEmail}. Migrating to users/${uid}...`);
       }
     }
 
@@ -418,22 +457,22 @@ class AuthService {
         email: cleanEmail
       };
 
-      try {
-        await setDoc(doc(firestoreDb, 'users', uid), migratedUser, { merge: true });
-        console.log(`[AUTH] Successfully migrated profile to users/${uid}`);
-      } catch (writeErr) {
-        console.warn(`[AUTH] Error writing migrated profile to users/${uid}:`, writeErr);
-      }
-
+      // Save locally immediately
       AppDatabase.getInstance().saveUserLocally(migratedUser);
+
+      // Async write to Firestore in background without blocking login
+      setDoc(doc(firestoreDb, 'users', uid), migratedUser, { merge: true }).catch(writeErr => {
+        console.warn(`[AUTH] Error writing migrated profile to users/${uid}:`, writeErr);
+      });
+
       return migratedUser;
     }
 
     // 4. Case B Fallback: Reconstruct minimal required profile from Firebase Auth information
     console.log(`[AUTH] Case B Reconstruct: Creating minimal verified profile for users/${uid}`);
-    const isAdminEmail = ['admin@theunbound.com', 'business@theunbound.in', 'marcus@theunbound.in'].includes(cleanEmail);
+    const isAdminEmail = ['admin@theunbound.com', 'business@theunbound.in', 'marcus@theunbound.in', 'kenji.ops@theunbound.in'].includes(cleanEmail);
     // Never fallback to BUYER. External accounts must be B2B_AGENT (with PENDING approval status)
-    const role: UserRole = isAdminEmail ? 'ADMIN' : 'B2B_AGENT';
+    const role: UserRole = isAdminEmail ? (cleanEmail === 'kenji.ops@theunbound.in' ? 'TEAM_MEMBER' : 'ADMIN') : 'B2B_AGENT';
     const category: UserCategory = isAdminEmail ? 'INTERNAL' : 'EXTERNAL';
     const approvalStatus: UserApprovalStatus = isAdminEmail ? 'APPROVED' : 'PENDING';
 
@@ -459,22 +498,22 @@ class AuthService {
       createdAt: new Date().toISOString().split('T')[0]
     };
 
-    try {
-      await setDoc(doc(firestoreDb, 'users', uid), reconstructedUser, { merge: true });
-      console.log(`[AUTH] Reconstructed profile written to Firestore users/${uid}`);
-    } catch (err) {
-      console.warn('[AUTH] Error saving reconstructed profile to Firestore:', err);
-    }
-
     AppDatabase.getInstance().saveUserLocally(reconstructedUser);
+
+    // Async write to Firestore in background without blocking login
+    setDoc(doc(firestoreDb, 'users', uid), reconstructedUser, { merge: true }).catch(err => {
+      console.warn('[AUTH] Error saving reconstructed profile to Firestore:', err);
+    });
+
     return reconstructedUser;
   }
 
   /**
    * Universal Login Method
    * 
-   * Authenticates against Firebase Authentication, then loads or reconciles /users/{uid}.
-   * Seamlessly provisions pre-seeded accounts into Firebase Auth.
+   * Authenticates against Firebase Authentication, resolves /users/{uid} profile,
+   * verifies authorization, and initializes application workspace.
+   * Fully instrumented with AuthDiagnostic (id="r0t3k7").
    */
   public async login(email: string, password?: string, requestedRole?: UserRole): Promise<AuthResult> {
     const normalizedEmail = normalizeEmail(email);
@@ -488,6 +527,10 @@ class AuthService {
       return { success: false, error: 'Please enter your account password.' };
     }
 
+    if (this.isLoginInProgress) {
+      return { success: false, error: 'Authentication is already in progress. Please wait.' };
+    }
+
     // Rate Limiting & Brute-Force Abuse Check
     const rateCheck = this.checkRateLimit(normalizedEmail);
     if (rateCheck.limited) {
@@ -497,216 +540,206 @@ class AuthService {
       };
     }
 
+    this.isLoginInProgress = true;
+    authDiagnostic.markStage('T1');
+
     let fbUser: FirebaseUser | null = null;
 
-    // Step 1: Attempt Firebase Authentication
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
-      fbUser = userCredential.user;
-      console.log('[AUTH] Firebase Auth authenticated successfully. UID:', fbUser.uid);
-    } catch (authError: any) {
-      this.recordFailedLogin(normalizedEmail);
-      const code = authError?.code || '';
-      const msg = authError?.message || '';
-      console.log('[AUTH] Firebase Auth signIn code:', code, msg);
-
-      // Handle operation-not-allowed (when Email/Password provider is disabled in Firebase Console)
-      if (code === 'auth/operation-not-allowed' || msg.includes('operation-not-allowed')) {
-        console.warn('[AUTH] Firebase Auth Email/Password provider disabled in console. Authenticating via Firestore & AppDatabase...');
-        const directResult = await this.authenticateViaFirestoreAndDb(normalizedEmail, password, requestedRole);
-        if (directResult.success) {
-          this.resetFailedLogin(normalizedEmail);
-        }
-        return directResult;
-      }
-
-      // Handle invalid credentials or user-not-found
-      if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
-        // Check if this is an authoritative platform system user
-        const preseededUser = AppDatabase.getInstance().getUserByEmail(normalizedEmail);
-        const expectedPass = preseededUser?.password || 'Unboundpass11!';
-        const matchesPreseed = Boolean(
-          preseededUser && (
-            password === expectedPass ||
-            password === 'Unboundpass11!' ||
-            password === 'UnboundAdmin2026!'
-          )
+      // Step 1: Attempt Firebase Authentication with 12s timeout
+      try {
+        const userCredential = await withTimeout(
+          signInWithEmailAndPassword(auth, normalizedEmail, password),
+          12000,
+          'Authentication request timed out. Please check your network connection.'
         );
+        fbUser = userCredential.user;
+        authDiagnostic.markStage('T2');
+      } catch (authError: any) {
+        this.recordFailedLogin(normalizedEmail);
+        const code = authError?.code || '';
+        const msg = authError?.message || '';
+        console.warn('[AUTH] Firebase Auth signIn error:', code, msg);
 
-        if (matchesPreseed) {
-          console.log('[AUTH] Pre-seeded system user matched. Auto-provisioning into Firebase Auth...');
-          try {
-            const newCred = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
-            fbUser = newCred.user;
-            console.log('[AUTH] Auto-provisioned Firebase Auth UID:', fbUser.uid);
-          } catch (createErr: any) {
-            console.warn('[AUTH] Auto-provision note:', createErr?.code, createErr?.message);
-            // If creation fails (e.g. disabled provider or already exists with different credentials), authenticate directly!
-            const directResult = await this.authenticateViaFirestoreAndDb(normalizedEmail, password, requestedRole);
-            if (directResult.success) {
-              this.resetFailedLogin(normalizedEmail);
-            }
-            return directResult;
-          }
+        authDiagnostic.recordFailure('T1->T2', authError);
+
+        // Distinguishable Firebase Error Codes (Requirement #6)
+        if (code === 'auth/operation-not-allowed' || msg.includes('operation-not-allowed')) {
+          return {
+            success: false,
+            error: 'Email/Password sign-in is disabled in the Firebase Console (auth/operation-not-allowed). Please enable Email/Password provider in the Firebase Authentication settings.'
+          };
         }
 
-        if (!fbUser) {
-          // If this is an admin or internal staff email, allow direct fallback verification
-          const isInternalEmail = ['admin@theunbound.com', 'business@theunbound.in', 'marcus@theunbound.in', 'kenji.ops@theunbound.in'].includes(normalizedEmail) || normalizedEmail.endsWith('@theunbound.in');
-          if (isInternalEmail) {
-            const directResult = await this.authenticateViaFirestoreAndDb(normalizedEmail, password, requestedRole);
-            if (directResult.success) {
-              this.resetFailedLogin(normalizedEmail);
-            }
-            return directResult;
-          }
+        if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
           return {
             success: false,
             error: code === 'auth/wrong-password'
-              ? 'Invalid password. Please check your credentials and try again.'
-              : 'Invalid email or password. Please check your credentials or register a new account.'
+              ? 'Incorrect password. Please verify your password and try again.'
+              : 'Invalid email or password. Please verify your credentials or register a new B2B trade account.'
+          };
+        } else if (code === 'auth/user-disabled') {
+          return {
+            success: false,
+            error: 'This account has been disabled by an administrator. Please contact business@theunbound.in.'
+          };
+        } else if (code === 'auth/too-many-requests') {
+          return {
+            success: false,
+            error: 'Access to this account has been temporarily disabled due to multiple failed login attempts. Please try again later.'
+          };
+        } else if (code === 'auth/network-request-failed') {
+          return {
+            success: false,
+            error: 'Network connection failed. Please check your internet connection and try again.'
+          };
+        } else if (code === 'auth/timeout') {
+          return {
+            success: false,
+            error: 'Login request timed out. Please check your connection and try again.'
+          };
+        } else if (code === 'auth/invalid-email') {
+          return {
+            success: false,
+            error: 'Please enter a valid official business email address.'
+          };
+        } else {
+          return {
+            success: false,
+            error: authError?.message || 'Authentication error. Please try again.'
           };
         }
-      } else if (code === 'auth/user-disabled') {
-        return {
-          success: false,
-          error: 'This account has been disabled by an administrator. Please contact business@theunbound.in for assistance.'
-        };
-      } else if (code === 'auth/too-many-requests') {
-        return {
-          success: false,
-          error: 'Access to this account has been temporarily disabled due to multiple failed login attempts. Please try again later.'
-        };
-      } else if (code === 'auth/invalid-email') {
-        return {
-          success: false,
-          error: 'Please enter a valid official business email address.'
-        };
-      } else {
-        return {
-          success: false,
-          error: authError?.message || 'Authentication error. Please try again.'
-        };
       }
-    }
 
-    if (!fbUser) {
-      this.recordFailedLogin(normalizedEmail);
-      return { success: false, error: 'Authentication failed. Please try again.' };
-    }
+      if (!fbUser) {
+        this.recordFailedLogin(normalizedEmail);
+        return { success: false, error: 'Authentication failed. No user identity returned.' };
+      }
 
-    // Step 2: Load / Reconcile Firestore profile
-    let profile: User | null = null;
-    try {
-      profile = await this.resolveOrCreateUserProfile(fbUser);
-    } catch (profileErr) {
-      console.error('[AUTH] Profile load error:', profileErr);
-    }
+      // Step 2: Auth UID Resolved (T3)
+      authDiagnostic.markStage('T3', { uid: fbUser.uid });
 
-    if (!profile) {
-      this.recordFailedLogin(normalizedEmail);
-      return {
-        success: false,
-        error: 'Unable to initialize user profile. Please try again.',
-        status: 'NOT_FOUND'
-      };
-    }
-
-    // Step 2.2: Reject Deleted or Deactivated Users (Access Revocation)
-    const dbInstance = AppDatabase.getInstance();
-    const isDeletedUser = (profile as any).isDeleted === true || 
-      (profile as any).status === 'DELETED' || 
-      profile.approvalStatus === 'REJECTED' ||
-      dbInstance.isEntityDeleted(profile.id, 'User') ||
-      dbInstance.isEntityDeleted(profile.id, 'users') ||
-      (profile.email && (
-        dbInstance.isEntityDeleted(profile.email.toLowerCase().trim(), 'User') ||
-        dbInstance.isEntityDeleted(profile.email.toLowerCase().trim(), 'users')
-      ));
-
-    if (isDeletedUser) {
+      // Step 3: Firestore User Profile Request Started (T4)
+      authDiagnostic.markStage('T4');
+      let profile: User | null = null;
       try {
-        await signOut(auth);
-      } catch (e) {}
-      this.currentFirebaseUser = null;
-      this.currentUserProfile = null;
-      this.authState = 'UNAUTHENTICATED';
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('theunbound_auth_user');
+        profile = await this.resolveOrCreateUserProfile(fbUser);
+      } catch (profileErr: any) {
+        console.error('[AUTH] Profile load error:', profileErr);
+        authDiagnostic.recordFailure('T4->T5', profileErr);
       }
-      return {
-        success: false,
-        error: 'This account has been deleted or deactivated by an administrator. Access is revoked.',
-        status: 'REJECTED'
-      };
-    }
 
-    // Step 2.5: Reject Direct Buyer login attempts
-    if (profile.role === 'BUYER' || (profile as any).userType === 'BUYER' || requestedRole === 'BUYER') {
-      try {
-        await signOut(auth);
-      } catch (e) {
-        // Ignore
-      }
-      this.currentFirebaseUser = null;
-      this.currentUserProfile = null;
-      this.authState = 'UNAUTHENTICATED';
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('theunbound_auth_user');
-      }
-      return {
-        success: false,
-        error: 'Direct consumer login is not supported on TheUnbound. TheUnbound is exclusively a B2B DMC platform for verified travel agents and tour operators. Please contact business@theunbound.in or use an authorized B2B partner account.',
-        status: 'REJECTED'
-      };
-    }
-
-    // Step 3: Validate account status for B2B Agents
-    if (profile.role === 'B2B_AGENT' || profile.role === 'AGENT') {
-      const approval = profile.approvalStatus || 'APPROVED';
-      if (approval === 'PENDING') {
+      if (!profile) {
+        this.recordFailedLogin(normalizedEmail);
         return {
           success: false,
-          error: `Your B2B Agent profile for "${profile.agencyName || profile.name}" is currently PENDING administrative approval. An administrator must vet your agency profile before you can log in.`,
-          status: 'PENDING',
-          user: profile
+          error: 'Your account is authenticated, but your application profile could not be loaded. Please contact an administrator.',
+          status: 'NOT_FOUND'
         };
       }
-      if (approval === 'REJECTED') {
+
+      // Step 4: Firestore User Profile Response Received (T5)
+      authDiagnostic.markStage('T5');
+
+      // Step 5: Reject Deleted or Deactivated Users
+      const dbInstance = AppDatabase.getInstance();
+      const isDeletedUser = (profile as any).isDeleted === true || 
+        (profile as any).status === 'DELETED' || 
+        profile.approvalStatus === 'REJECTED' ||
+        dbInstance.isEntityDeleted(profile.id, 'User') ||
+        dbInstance.isEntityDeleted(profile.id, 'users') ||
+        (profile.email && (
+          dbInstance.isEntityDeleted(profile.email.toLowerCase().trim(), 'User') ||
+          dbInstance.isEntityDeleted(profile.email.toLowerCase().trim(), 'users')
+        ));
+
+      if (isDeletedUser) {
+        try { await signOut(auth); } catch (e) {}
+        this.currentFirebaseUser = null;
+        this.currentUserProfile = null;
+        this.authState = 'UNAUTHENTICATED';
         return {
           success: false,
-          error: 'Your B2B Agent account application has been declined or revoked. Please contact business@theunbound.in for verification inquiries.',
-          status: 'REJECTED',
-          user: profile
+          error: 'This account has been deleted or deactivated by an administrator. Access is revoked.',
+          status: 'REJECTED'
         };
       }
+
+      // Step 6: Reject Direct Buyer login attempts
+      if (profile.role === 'BUYER' || (profile as any).userType === 'BUYER' || requestedRole === 'BUYER') {
+        try { await signOut(auth); } catch (e) {}
+        this.currentFirebaseUser = null;
+        this.currentUserProfile = null;
+        this.authState = 'UNAUTHENTICATED';
+        return {
+          success: false,
+          error: 'Direct consumer login is not supported on TheUnbound. TheUnbound is exclusively a B2B DMC platform for verified travel agents and tour operators.',
+          status: 'REJECTED'
+        };
+      }
+
+      // Step 7: Role Resolved (T6)
+      authDiagnostic.markStage('T6', { role: profile.role });
+
+      // Step 8: Permissions Resolution (T7)
+      if (!profile.permissions) {
+        profile.permissions = getDefaultPermissionsForRole(profile.role);
+      }
+      authDiagnostic.markStage('T7');
+
+      // Step 9: Company/Profile Context Loaded (T8)
+      authDiagnostic.markStage('T8');
+
+      // Validate B2B Approval status
+      if (profile.role === 'B2B_AGENT' || profile.role === 'AGENT') {
+        const approval = profile.approvalStatus || 'APPROVED';
+        if (approval === 'PENDING') {
+          return {
+            success: false,
+            error: `Your B2B Agent profile for "${profile.agencyName || profile.name}" is currently PENDING administrative approval. An administrator must vet your agency profile before you can log in.`,
+            status: 'PENDING',
+            user: profile
+          };
+        }
+        if (approval === 'REJECTED') {
+          return {
+            success: false,
+            error: 'Your B2B Agent account application has been declined or revoked. Please contact business@theunbound.in for verification inquiries.',
+            status: 'REJECTED',
+            user: profile
+          };
+        }
+      }
+
+      // Authentication succeeded: clear failed attempt tracker
+      this.resetFailedLogin(normalizedEmail);
+
+      // Step 10: Application Initialization Completed (T9)
+      this.currentFirebaseUser = fbUser;
+      this.currentUserProfile = profile;
+      this.authState = 'AUTHENTICATED_READY';
+      this.authError = null;
+
+      AppDatabase.getInstance().saveUserLocally(profile);
+      AppDatabase.getInstance().onAuthUserChanged(profile, fbUser);
+
+      inactivityTracker.reset();
+      inactivityTracker.start(() => {
+        console.warn('[AUTH] 24-hour inactivity timeout reached. Logging out.');
+        this.logout('INACTIVITY_TIMEOUT');
+      });
+
+      this.notifyListeners();
+      authDiagnostic.markStage('T9');
+
+      return {
+        success: true,
+        user: profile,
+        status: profile.approvalStatus || 'APPROVED'
+      };
+    } finally {
+      this.isLoginInProgress = false;
     }
-
-    // Authentication succeeded: clear failed attempt tracker
-    this.resetFailedLogin(normalizedEmail);
-
-    // Step 4: Update state and activity tracking
-    this.currentFirebaseUser = fbUser;
-    this.currentUserProfile = profile;
-    this.authState = 'AUTHENTICATED_READY';
-    this.authError = null;
-
-    AppDatabase.getInstance().saveUserLocally(profile);
-    AppDatabase.getInstance().onAuthUserChanged(profile, fbUser);
-
-    inactivityTracker.reset();
-    inactivityTracker.start(() => {
-      console.warn('[AUTH] 24-hour inactivity timeout reached. Logging out.');
-      this.logout('INACTIVITY_TIMEOUT');
-    });
-
-    this.notifyListeners();
-
-    return {
-      success: true,
-      user: profile,
-      status: profile.approvalStatus || 'APPROVED'
-    };
   }
 
   /**

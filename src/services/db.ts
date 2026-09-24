@@ -1323,9 +1323,15 @@ export class AppDatabase {
   }
 
   private authenticatedUnsubscribers: Array<() => void> = [];
+  private authSyncTimeout: any = null;
 
   public onAuthUserChanged(user: User | null, fbUser: any): void {
     currentAuthUser = user;
+
+    if (this.authSyncTimeout) {
+      clearTimeout(this.authSyncTimeout);
+      this.authSyncTimeout = null;
+    }
 
     // Clean up any existing authenticated collection listeners
     if (this.authenticatedUnsubscribers.length > 0) {
@@ -1340,46 +1346,49 @@ export class AppDatabase {
       return;
     }
 
-    console.log(`[DB] Establishing live authenticated Firestore listeners for ${user.email} (${user.role}) [UID: ${fbUser.uid}]`);
+    // Decouple listener attachment to background microtask/timeout so login is NEVER blocked
+    this.authSyncTimeout = setTimeout(() => {
+      console.log(`[DB] Establishing background live authenticated Firestore listeners for ${user.email} (${user.role}) [UID: ${fbUser.uid}]`);
 
-    try {
-      this.authenticatedUnsubscribers.push(
-        this.syncCollectionSafely<User>('users', 'system_users'),
-        this.syncCollectionSafely<Company>('companies', 'companies'),
-        this.syncCollectionSafely<Quotation>('quotations', 'saved_quotes'),
-        this.syncCollectionSafely<Booking>('bookings', 'bookings'),
-        this.syncCollectionSafely<TravelLead>('leads', 'leads'),
-        this.syncCollectionSafely<B2BCustomer>('b2b_customers', 'b2b_customers'),
-        this.syncCollectionSafely<B2BTask>('b2b_tasks', 'b2b_tasks'),
-        this.syncCollectionSafely<CalendarTask>('calendar_tasks', 'calendar_tasks'),
-        this.syncCollectionSafely<WishlistFolder>('wishlist_folders', 'wishlist_folders'),
-        this.syncCollectionSafely<WishlistItem>('wishlist_items', 'wishlist_items'),
-        this.syncCollectionSafely<HotelRoomType>('hotel_rooms', 'hotel_rooms'),
-        this.syncCollectionSafely<HotelRate>('hotel_rates', 'hotel_rates'),
-        this.syncCollectionSafely<HotelMealPlanItem>('hotel_meal_plans', 'hotel_meal_plans'),
-        this.syncCollectionSafely<TransferRoute>('transfer_routes', 'transfer_routes'),
-        this.syncCollectionSafely<TransferRate>('transfer_rates', 'transfer_rates'),
-        this.syncCollectionSafely<ProductPricingRate>('product_pricing_rates', 'product_pricing_rates'),
-        this.syncCollectionSafely<ProductCapacityItem>('product_capacities', 'product_capacities'),
-        this.syncCollectionSafely<VisaRateItem>('visa_rates', 'visa_rates'),
-        this.syncCollectionSafely<PackageItemRef>('package_items', 'package_items'),
-        this.syncCollectionSafely<BookingInvoice>('invoices', 'invoices'),
-        this.syncCollectionSafely<BookingUploadedInvoice>('uploaded_invoices', 'uploaded_invoices'),
-        this.syncCollectionSafely<BookingVoucher>('vouchers', 'vouchers'),
-        this.syncCollectionSafely<JobSheet>('job_sheets', 'job_sheets'),
-        this.syncCollectionSafely<RosterResource>('roster_resources', 'roster_resources'),
-        this.syncCollectionSafely<SLAAutomationRule>('sla_automation_rules', 'sla_automation_rules'),
-        this.syncCollectionSafely<AdminActivityRecord>('admin_activities', 'admin_activities'),
-        this.syncCollectionSafely<CampaignEvent>('campaign_events', 'campaign_events'),
-        this.syncCollectionSafely<EmailCampaignConfig>('campaigns', 'campaigns'),
-        this.syncCollectionSafely<SEORedirect>('seo_redirects', 'seo_redirects'),
-        this.syncCollectionSafely<Supplier>('suppliers', 'suppliers'),
-        this.syncCollectionSafely<SupplierRequest>('supplier_requests', 'supplier_requests'),
-        this.syncCollectionSafely<LeadStageConfig>('lead_stages', 'lead_stages')
-      );
-    } catch (err) {
-      console.warn('[DB] Error establishing authenticated sync listeners:', err);
-    }
+      try {
+        this.authenticatedUnsubscribers.push(
+          this.syncCollectionSafely<User>('users', 'system_users'),
+          this.syncCollectionSafely<Company>('companies', 'companies'),
+          this.syncCollectionSafely<Quotation>('quotations', 'saved_quotes'),
+          this.syncCollectionSafely<Booking>('bookings', 'bookings'),
+          this.syncCollectionSafely<TravelLead>('leads', 'leads'),
+          this.syncCollectionSafely<B2BCustomer>('b2b_customers', 'b2b_customers'),
+          this.syncCollectionSafely<B2BTask>('b2b_tasks', 'b2b_tasks'),
+          this.syncCollectionSafely<CalendarTask>('calendar_tasks', 'calendar_tasks'),
+          this.syncCollectionSafely<WishlistFolder>('wishlist_folders', 'wishlist_folders'),
+          this.syncCollectionSafely<WishlistItem>('wishlist_items', 'wishlist_items'),
+          this.syncCollectionSafely<HotelRoomType>('hotel_rooms', 'hotel_rooms'),
+          this.syncCollectionSafely<HotelRate>('hotel_rates', 'hotel_rates'),
+          this.syncCollectionSafely<HotelMealPlanItem>('hotel_meal_plans', 'hotel_meal_plans'),
+          this.syncCollectionSafely<TransferRoute>('transfer_routes', 'transfer_routes'),
+          this.syncCollectionSafely<TransferRate>('transfer_rates', 'transfer_rates'),
+          this.syncCollectionSafely<ProductPricingRate>('product_pricing_rates', 'product_pricing_rates'),
+          this.syncCollectionSafely<ProductCapacityItem>('product_capacities', 'product_capacities'),
+          this.syncCollectionSafely<VisaRateItem>('visa_rates', 'visa_rates'),
+          this.syncCollectionSafely<PackageItemRef>('package_items', 'package_items'),
+          this.syncCollectionSafely<BookingInvoice>('invoices', 'invoices'),
+          this.syncCollectionSafely<BookingUploadedInvoice>('uploaded_invoices', 'uploaded_invoices'),
+          this.syncCollectionSafely<BookingVoucher>('vouchers', 'vouchers'),
+          this.syncCollectionSafely<JobSheet>('job_sheets', 'job_sheets'),
+          this.syncCollectionSafely<RosterResource>('roster_resources', 'roster_resources'),
+          this.syncCollectionSafely<SLAAutomationRule>('sla_automation_rules', 'sla_automation_rules'),
+          this.syncCollectionSafely<AdminActivityRecord>('admin_activities', 'admin_activities'),
+          this.syncCollectionSafely<CampaignEvent>('campaign_events', 'campaign_events'),
+          this.syncCollectionSafely<EmailCampaignConfig>('campaigns', 'campaigns'),
+          this.syncCollectionSafely<SEORedirect>('seo_redirects', 'seo_redirects'),
+          this.syncCollectionSafely<Supplier>('suppliers', 'suppliers'),
+          this.syncCollectionSafely<SupplierRequest>('supplier_requests', 'supplier_requests'),
+          this.syncCollectionSafely<LeadStageConfig>('lead_stages', 'lead_stages')
+        );
+      } catch (err) {
+        console.warn('[DB] Error establishing background authenticated sync listeners:', err);
+      }
+    }, 150);
   }
 
   private async initFirestoreSync(): Promise<void> {
