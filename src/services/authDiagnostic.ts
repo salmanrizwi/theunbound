@@ -150,7 +150,7 @@ class AuthDiagnosticService {
     this.currentTimeline.errorMessage = msg;
     this.currentTimeline.status = msg.toLowerCase().includes('timeout') ? 'TIMED_OUT' : 'FAILED';
 
-    console.error(`[AUTH-DIAGNOSTIC id="r0t3k7"] FAILED at stage ${stage} (+${elapsed}ms): ${msg}`, error);
+    console.warn(`[AUTH-DIAGNOSTIC id="r0t3k7"] FAILED at stage ${stage} (+${elapsed}ms): ${msg}`);
     this.logSummary();
 
     if (typeof window !== 'undefined') {
