@@ -79,7 +79,7 @@ import { PricingCalculatorModal } from '../PricingCalculatorModal';
 import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 import { isRailProduct, isRailQuoteItem } from '../../services/rail/JapanRailJourneyDataService';
 import { ManualHotelFormModal } from './ManualHotelFormModal';
-import { VISA_CATALOG, VisaProduct } from './B2BVisaView';
+import { VisaProduct } from '../../types';
 import { AddVisaToQuoteModal, visaProductToProduct } from './AddVisaToQuoteModal';
 import { AddAddonModal } from './AddAddonModal';
 import { ShareWhatsAppModal } from './ShareWhatsAppModal';
@@ -3035,8 +3035,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                   <Globe className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-white">Select Visa & Travel Facilitation</h3>
-                  <p className="text-xs text-slate-400">Browse verified B2B eVisas and consular facilitation packages.</p>
+                  <h3 className="text-base font-bold text-white">Visa & Ancillary Services Catalog</h3>
+                  <p className="text-xs text-slate-400">Browse verified B2B eVisas and consular facilitation from Master Inventory.</p>
                 </div>
               </div>
               <button
@@ -3062,7 +3062,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               </div>
 
               <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 sm:pb-0">
-                {['ALL', 'TOURIST', 'BUSINESS', 'TRANSIT', 'LONG_STAY'].map(cat => (
+                {['ALL', 'SINGLE_ENTRY', 'MULTIPLE_ENTRY'].map(cat => (
                   <button
                     key={cat}
                     type="button"
@@ -3073,7 +3073,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                         : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
                     }`}
                   >
-                    {cat}
+                    {cat === 'ALL' ? 'ALL' : cat.replace('_', ' ')}
                   </button>
                 ))}
               </div>
@@ -3081,18 +3081,30 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
             {/* List of Visas */}
             <div className="p-4 sm:p-6 overflow-y-auto space-y-3 flex-1">
-              {VISA_CATALOG
-                .filter(visa => {
+              {(() => {
+                const activeVisas = db.getVisas().filter(v => v.status === 'ACTIVE' || !v.status);
+                const filtered = activeVisas.filter(visa => {
                   const matchesSearch = !visaPickerSearch.trim() || 
                     visa.country.toLowerCase().includes(visaPickerSearch.toLowerCase()) ||
                     visa.visaType.toLowerCase().includes(visaPickerSearch.toLowerCase()) ||
-                    visa.category.toLowerCase().includes(visaPickerSearch.toLowerCase());
-                  const matchesCat = visaPickerCategory === 'ALL' || visa.category === visaPickerCategory;
+                    (visa.description || '').toLowerCase().includes(visaPickerSearch.toLowerCase());
+                  const matchesCat = visaPickerCategory === 'ALL' || visa.entryType === visaPickerCategory;
                   return matchesSearch && matchesCat;
-                })
-                .map(visa => {
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="p-8 text-center text-slate-500 space-y-2">
+                      <p className="text-xs font-bold">No active Visa & Ancillary Services are available.</p>
+                      <p className="text-[11px] text-slate-400">Products saved in Operations & Inventory → Visa & Ancillary Services will appear here dynamically.</p>
+                    </div>
+                  );
+                }
+
+                return filtered.map(visa => {
                   const isCurrentDest = visa.country.toLowerCase() === currentDestination.name.toLowerCase();
                   const alreadyInQuote = isVisaInQuote(visa.id);
+                  const totalFeeUSD = (visa.embassyFee || 0) + (visa.serviceFee || 0);
 
                   return (
                     <div
@@ -3116,42 +3128,48 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                             </span>
                           )}
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-white text-slate-600 border border-slate-200">
-                            {visa.category}
+                            {visa.entryType?.replace('_', ' ') || 'Single Entry'}
                           </span>
                         </div>
 
                         <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
                           <span className="flex items-center space-x-1">
                             <Clock className="w-3.5 h-3.5 text-slate-400" />
-                            <span>{visa.processingTimeDays}</span>
+                            <span>{visa.processingTimeDays} Days Processing</span>
                           </span>
                           <span>•</span>
-                          <span>{visa.entryType}</span>
+                          <span>Validity: {visa.validityDays} Days</span>
                           <span>•</span>
-                          <span>Validity: {visa.validity}</span>
-                          <span>•</span>
-                          <span className="text-teal-700 font-medium">{visa.embassySubmissionType}</span>
+                          <span>Stay: {visa.stayDurationDays} Days</span>
                         </div>
                       </div>
 
                       <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200">
                         <div className="text-left sm:text-right">
                           <span className="text-[10px] text-slate-400 uppercase font-bold block">Selling Price</span>
-                          <span className="text-sm font-black text-slate-900 font-mono">
-                            {formatCurrency(convertCurrency(visa.suggestedSellingUSD, 'USD', currency), currency)}
-                          </span>
+                          {totalFeeUSD > 0 ? (
+                            <span className="text-sm font-black text-slate-900 font-mono">
+                              {formatCurrency(convertCurrency(totalFeeUSD, visa.currency || 'USD', currency), currency)}
+                            </span>
+                          ) : (
+                            <span className="text-xs font-bold text-amber-700">Price unavailable for this service.</span>
+                          )}
                         </div>
 
                         <button
                           type="button"
+                          disabled={totalFeeUSD <= 0}
                           onClick={() => {
+                            if (totalFeeUSD <= 0) return;
                             setShowVisaPickerModal(false);
                             setSelectedVisaForQuoteModal(visa);
                           }}
-                          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs ${
-                            alreadyInQuote
-                              ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-300'
-                              : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs ${
+                            totalFeeUSD <= 0
+                              ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                              : alreadyInQuote
+                              ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-300 cursor-pointer'
+                              : 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer'
                           }`}
                         >
                           {alreadyInQuote ? 'Configure Additional' : 'Configure & Add'}
@@ -3159,13 +3177,14 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                       </div>
                     </div>
                   );
-                })}
+                });
+              })()}
             </div>
 
             {/* Modal Footer */}
             <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
               <span className="text-[11px] text-slate-500 font-medium">
-                Showing {VISA_CATALOG.length} verified visa facilitation pathways.
+                Showing {db.getVisas().filter(v => v.status === 'ACTIVE' || !v.status).length} verified production visa pathways from Master Inventory.
               </span>
               <button
                 type="button"

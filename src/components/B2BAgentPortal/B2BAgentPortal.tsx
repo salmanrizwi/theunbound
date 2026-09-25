@@ -221,7 +221,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
         mealPlans: { status: 'COMPLETE', label: 'Meal Plans', detail: 'Breakfast (CP) Included' },
         transfers: { status: 'COMPLETE', label: 'Ground Transfers', detail: 'All Transitions Routed' },
         activities: { status: 'COMPLETE', label: 'Tours & Experiences', detail: `${plan.items?.filter(i => i.product.category === 'Activities' || i.product.category === 'Private Tours' || i.product.category === 'Day Trips').length || 0} Excursions` },
-        visa: { status: 'COMPLETE', label: 'Visa Facilitation', detail: 'Integrated' },
+        visa: { status: 'COMPLETE', label: 'Visa & Ancillary Services', detail: 'Integrated' },
         optionalServices: { status: 'OPTIONAL', label: 'Addons & Insurance', detail: 'Available in Step 6' },
         feasibility: { status: 'PASSED', label: 'Feasibility Engine', detail: 'Geographic and schedule checks passed' },
         pricing: { status: 'CALCULATED', label: 'Contract Pricing', detail: 'Live calculations verified' },

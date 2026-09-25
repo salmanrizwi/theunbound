@@ -63,7 +63,7 @@ export function isShinkansenService(itemOrProduct: any): boolean {
 }
 
 /**
- * Detects whether any product, quote item, or visa object belongs to the Visa Service & Facilitation category.
+ * Detects whether any product, quote item, or visa object belongs to the Visa & Ancillary Services category.
  */
 export function isVisaService(itemOrProduct: any): boolean {
   if (!itemOrProduct) return false;

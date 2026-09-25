@@ -154,7 +154,7 @@ export const GlobalConfiguratorRouter: React.FC<GlobalConfiguratorRouterProps> =
     );
   }
 
-  // 3. Visa Service & Facilitation Configurator
+  // 3. Visa & Ancillary Services Configurator
   if (isVisaService(itemOrProduct)) {
     const qItem = itemOrProduct as QuoteItem;
     return (

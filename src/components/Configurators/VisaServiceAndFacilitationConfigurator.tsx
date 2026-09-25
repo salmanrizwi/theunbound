@@ -72,9 +72,9 @@ export interface VisaConfiguratorProps {
 
 export const visaProductToProduct = (visa: VisaProduct): Product => {
   const v = visa as any;
-  const embassy = v.embassyFee ?? v.embassyFeeUSD ?? 30;
-  const service = v.serviceFee ?? v.wholesaleNetUSD ?? 25;
-  const suggestedSelling = v.suggestedSellingUSD ?? (embassy + service * 1.3);
+  const embassy = typeof v.embassyFee === 'number' ? v.embassyFee : (typeof v.embassyFeeUSD === 'number' ? v.embassyFeeUSD : 0);
+  const service = typeof v.serviceFee === 'number' ? v.serviceFee : (typeof v.wholesaleNetUSD === 'number' ? v.wholesaleNetUSD : 0);
+  const suggestedSelling = typeof v.suggestedSellingUSD === 'number' ? v.suggestedSellingUSD : (embassy + service);
   const validity = v.validityDays ? `${v.validityDays} Days` : (v.validity || '30 Days');
   const stayDuration = v.stayDurationDays ? `${v.stayDurationDays} Days` : (v.stayDuration || '15 Days');
 
@@ -87,13 +87,13 @@ export const visaProductToProduct = (visa: VisaProduct): Product => {
     city: 'National Embassy / eVisa Desk',
     productType: 'Visa Service',
     name: `${v.country} ${v.visaType}`,
-    shortDescription: `Official B2B Visa Facilitation: ${v.entryType || 'Single Entry'}, ${v.processingTimeDays || 5} day turnaround. Validity: ${validity}.`,
+    shortDescription: `Official B2B Visa: ${v.entryType || 'Single Entry'}, ${v.processingTimeDays || 5} day turnaround. Validity: ${validity}.`,
     longDescription: `${v.visaType} for ${v.country}. Processing timeframe: ${v.processingTimeDays || 5} working days. Stay duration: ${stayDuration}. Validity: ${validity}. Submission Type: ${v.entryType || 'Online'}.`,
     supplierId: 'sup-visa-dmc',
     supplierName: 'TheUnbound Visa & Travel Desk',
     supplierProductCode: `VISA-${v.countryCode || 'INTL'}`,
-    category: 'Travel Services',
-    subcategory: 'Visa Facilitation',
+    category: 'Visa & Ancillary Services',
+    subcategory: 'Visa Services & Application Assistance',
     duration: `${v.processingTimeDays || 5} Days`,
     operatingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
     operatingHours: '09:00 - 18:00',
@@ -101,7 +101,7 @@ export const visaProductToProduct = (visa: VisaProduct): Product => {
     childNetPrice: embassy + service,
     infantNetPrice: 0,
     currency: v.currency || 'USD',
-    defaultMarkupPercent: Math.round(((suggestedSelling - (embassy + service)) / (embassy + service)) * 100) || 20,
+    defaultMarkupPercent: 20,
     taxPercent: 0,
     commissionPercent: 10,
     serviceFeeFixed: 0,
@@ -301,12 +301,15 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
     .reduce((sum, a) => sum + (a.sellingPrice || 0), 0);
   const extraAssistanceTotalUSD = extraAssistancePerApplicantUSD * totalApplicants;
 
-  // Pricing Architecture
-  const embassyFeeUSD = selectedVisa.embassyFee || (selectedVisa as any).embassyFeeUSD || 30;
-  const serviceFeeUSD = selectedVisa.serviceFee || (selectedVisa as any).wholesaleNetUSD || 25;
-  const suggestedSellingUSD = (selectedVisa as any).suggestedSellingUSD || (embassyFeeUSD + serviceFeeUSD * 1.3);
+  // Pricing Architecture - strictly authoritative from master production inventory
+  const embassyFeeUSD = typeof selectedVisa.embassyFee === 'number' ? selectedVisa.embassyFee : ((selectedVisa as any).embassyFeeUSD || 0);
+  const serviceFeeUSD = typeof selectedVisa.serviceFee === 'number' ? selectedVisa.serviceFee : ((selectedVisa as any).wholesaleNetUSD || 0);
+  const suggestedSellingUSD = typeof (selectedVisa as any).suggestedSellingUSD === 'number'
+    ? (selectedVisa as any).suggestedSellingUSD
+    : (embassyFeeUSD + serviceFeeUSD);
 
   const baseRatePerApplicantUSD = suggestedSellingUSD;
+  const hasValidPrice = baseRatePerApplicantUSD > 0;
   const totalRatePerApplicantUSD = baseRatePerApplicantUSD + extraAssistancePerApplicantUSD;
   const partyTotalSellingUSD = (baseRatePerApplicantUSD * totalApplicants) + extraAssistanceTotalUSD;
 
@@ -334,6 +337,11 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
   const handleConfirm = () => {
     if (totalApplicants < 1) {
       setErrorMsg('At least 1 visa applicant is required.');
+      return;
+    }
+
+    if (!hasValidPrice) {
+      setErrorMsg('Price unavailable for this service. Valid consular pricing must be established in master inventory.');
       return;
     }
 
@@ -403,8 +411,17 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
         travelDate,
         serviceTime: `${selectedVisa.processingTimeDays} Days Processing`,
         notes: compiledNotes,
-        selectedAddonIds: selectedAssistanceIds
-      });
+        selectedAddonIds: selectedAssistanceIds,
+        master_product_id: selectedVisa.id,
+        service_id: selectedVisa.id,
+        category: 'Visa & Ancillary Services',
+        service_type: 'VISA',
+        configuration_id: `cfg-visa-${selectedVisa.id}`,
+        configuration_snapshot: fullConfigurationPayload,
+        pricing_snapshot: visaSnapshot.pricing,
+        currency_snapshot: 'USD',
+        visaSnapshot
+      } as any);
     } else {
       addProductToQuote(prod, {
         adults: adultApplicants,
@@ -414,7 +431,16 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
         serviceTime: `${selectedVisa.processingTimeDays} Days Processing`,
         notes: compiledNotes,
         selectedAddonIds: selectedAssistanceIds,
-        openDrawer: false
+        openDrawer: false,
+        master_product_id: selectedVisa.id,
+        service_id: selectedVisa.id,
+        category: 'Visa & Ancillary Services',
+        service_type: 'VISA',
+        configuration_id: `cfg-visa-${selectedVisa.id}`,
+        configuration_snapshot: fullConfigurationPayload,
+        pricing_snapshot: visaSnapshot.pricing,
+        currency_snapshot: 'USD',
+        visaSnapshot
       });
     }
 
@@ -436,7 +462,7 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
         id="visa-service-and-facilitation-configurator"
         className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 max-w-4xl w-full overflow-hidden flex flex-col max-h-[94dvh] sm:max-h-[92dvh] animate-scaleUp"
       >
-        {/* Header: Dedicated Visa Service & Facilitation Configurator */}
+        {/* Header: Dedicated Visa & Ancillary Services Configurator */}
         <div className="bg-slate-900 text-white p-3.5 sm:p-5 flex items-start justify-between border-b border-slate-800 shrink-0">
           <div className="flex items-start space-x-2.5 sm:space-x-3.5 min-w-0">
             <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-[#00C6A6]/20 border border-[#00C6A6]/40 flex items-center justify-center text-[#00E5C0] shrink-0 mt-0.5">
@@ -445,7 +471,7 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                 <span className="px-2 py-0.5 rounded-full bg-[#00C6A6] text-slate-950 text-[9px] sm:text-[10px] font-black uppercase tracking-wider">
-                  Visa Service & Facilitation Configurator
+                  Visa & Ancillary Services Configurator
                 </span>
                 <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[9px] sm:text-[10px] font-bold border border-slate-700">
                   {selectedVisa.country}
@@ -1026,12 +1052,26 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
                 <span className="text-[10px] text-slate-400 block">Unit Rate / Applicant</span>
-                <span className="text-base font-bold text-slate-200 font-mono">
-                  {formatCurrency(convertedSellingRate, currency)}
-                </span>
-                <span className="text-[9px] text-slate-400 block mt-0.5">
-                  Embassy (${embassyFeeUSD}) + Service (${serviceFeeUSD}) {extraAssistancePerApplicantUSD > 0 ? `+ Add-ons ($${extraAssistancePerApplicantUSD})` : ''}
-                </span>
+                {hasValidPrice ? (
+                  <>
+                    <span className="text-base font-bold text-slate-200 font-mono">
+                      {formatCurrency(convertedSellingRate, currency)}
+                    </span>
+                    {role === 'ADMIN' ? (
+                      <span className="text-[9px] text-slate-400 block mt-0.5">
+                        Embassy (${embassyFeeUSD}) + Service (${serviceFeeUSD}) {extraAssistancePerApplicantUSD > 0 ? `+ Add-ons ($${extraAssistancePerApplicantUSD})` : ''}
+                      </span>
+                    ) : (
+                      <span className="text-[9px] text-slate-400 block mt-0.5">
+                        Base Selling Rate {extraAssistancePerApplicantUSD > 0 ? `+ Add-ons ($${extraAssistancePerApplicantUSD})` : ''}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-xs font-bold text-amber-400 block mt-1">
+                    Price unavailable for this service.
+                  </span>
+                )}
               </div>
 
               {/* Role-based Middle Card */}
@@ -1083,12 +1123,17 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
           <button
             type="button"
             onClick={handleConfirm}
-            className="px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00A88F] text-slate-950 text-xs font-black transition-all flex items-center space-x-1.5 sm:space-x-2 cursor-pointer shadow-md hover:shadow-lg whitespace-nowrap min-w-0"
+            disabled={!hasValidPrice}
+            className={`px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all flex items-center space-x-1.5 sm:space-x-2 whitespace-nowrap min-w-0 ${
+              hasValidPrice
+                ? 'bg-[#00C6A6] hover:bg-[#00A88F] text-slate-950 cursor-pointer shadow-md hover:shadow-lg'
+                : 'bg-slate-300 text-slate-500 cursor-not-allowed'
+            }`}
           >
             {existingQuoteItemId ? <Check className="w-4 h-4 stroke-[3] shrink-0" /> : <Plus className="w-4 h-4 stroke-[3] shrink-0" />}
             <span className="truncate">
               <span className="hidden sm:inline">{existingQuoteItemId ? 'Update Visa in Quote' : 'Add Visa to Quote'}</span>
-              <span className="sm:hidden">{existingQuoteItemId ? 'Update Visa' : 'Add to Quote'}</span> ({formatCurrency(convertedTotalPartySelling, currency)})
+              <span className="sm:hidden">{existingQuoteItemId ? 'Update Visa' : 'Add to Quote'}</span> {hasValidPrice ? `(${formatCurrency(convertedTotalPartySelling, currency)})` : ''}
             </span>
           </button>
         </div>

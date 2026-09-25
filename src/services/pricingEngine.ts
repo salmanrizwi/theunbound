@@ -1302,7 +1302,7 @@ export function getPricingSourceOfTruthMap(): PricingSourceOfTruthEntry[] {
       consumers: ['AI Planner Route Transitions', 'B2B Quote Builder Step 3 (Transfers)', 'Airport Fast-Track']
     },
     {
-      inventoryType: 'Visa Facilitation Services',
+      inventoryType: 'Visa & Ancillary Services',
       sheetTab: 'VISA_RATES',
       collection: 'visa_rates & visas',
       primaryKey: 'id (visa_rate_id)',
@@ -1312,7 +1312,7 @@ export function getPricingSourceOfTruthMap(): PricingSourceOfTruthEntry[] {
       effectiveDateField: 'Regulatory Validity',
       statusField: 'status (ACTIVE)',
       versionField: 'version',
-      consumers: ['B2B Quote Builder Step 5 (Visas)', 'AI Planner Requirements', 'Visa Submissions']
+      consumers: ['B2B Quote Builder Step 6 (Visa & Ancillary Services)', 'AI Planner Requirements', 'Visa Submissions']
     },
     {
       inventoryType: 'Fixed Packages & Circuit Itineraries',

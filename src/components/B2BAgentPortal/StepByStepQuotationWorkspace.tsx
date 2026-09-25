@@ -757,10 +757,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     },
     {
       id: 6,
-      name: 'Visa Services & Facilitation',
-      shortDesc: 'Visa, Travel Protection & VIP Ground Logistics',
+      name: 'Visa & Ancillary Services',
+      shortDesc: 'Official Visas, Travel Protection, 5G Connectivity & VIP Ground Services',
       status: stepStatuses.step6,
-      summary: `${addonItems.length + visaItems.length} Facilitation Services Selected`,
+      summary: `${addonItems.length + visaItems.length} Services Selected`,
       icon: ShieldCheck
     },
     {
@@ -2449,7 +2449,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             </div>
           )}
 
-          {/* STEP 6: VISA SERVICES & FACILITATION */}
+          {/* STEP 6: VISA & ANCILLARY SERVICES */}
           {activeStepId === 6 && (
             <div className="space-y-6 animate-fadeIn">
               <VisaServicesAndFacilitationSection
@@ -2534,7 +2534,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     const dayAccommodations = dayItems.filter(it => (it.product.category || '').toLowerCase().includes('hotel') || (it.product.category || '').toLowerCase().includes('accommodation') || it.isManualHotel);
                     const dayTransfers = dayItems.filter(it => (it.product as any).isTransfer || (it.product.category || '').toLowerCase().includes('transfer') || (it.product.category || '').toLowerCase().includes('transport'));
                     const dayActivities = dayItems.filter(it => (it.product.category || '').toLowerCase().includes('tour') || (it.product.category || '').toLowerCase().includes('activit') || (it.product.category || '').toLowerCase().includes('attraction'));
-                    const dayFacilitations = dayItems.filter(it => !dayAccommodations.includes(it) && !dayTransfers.includes(it) && !dayActivities.includes(it));
+                    const dayAncillaryItems = dayItems.filter(it => !dayAccommodations.includes(it) && !dayTransfers.includes(it) && !dayActivities.includes(it));
                     const dayTotalSelling = dayItems.reduce((acc, it) => acc + (it.calculation?.finalTotalSellingPrice || 0), 0);
 
                     return (
@@ -2626,7 +2626,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                 </span>
                               </div>
                             ))}
-                            {dayFacilitations.map((it, idx) => (
+                            {dayAncillaryItems.map((it, idx) => (
                               <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
                                 <div className="flex items-center space-x-2 truncate">
                                   <ShieldCheck className="w-4 h-4 text-teal-600 shrink-0" />
@@ -2704,7 +2704,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             setActiveStepId(3);
                           } else if (w.message.toLowerCase().includes('transfer') || w.message.toLowerCase().includes('airport')) {
                             setActiveStepId(4);
-                          } else if (w.message.toLowerCase().includes('visa')) {
+                          } else if (w.message.toLowerCase().includes('visa') || w.message.toLowerCase().includes('ancillary')) {
                             setActiveStepId(6);
                           } else {
                             setActiveStepId(2);
@@ -2861,7 +2861,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       )}
                       {(visaTotalSelling > 0 || otherTotalSelling > 0) && (
                         <div className="flex justify-between">
-                          <span>📋 Visa & Add-ons:</span>
+                          <span>📋 Visa & Ancillary Services:</span>
                           <span className="font-mono font-bold text-slate-800">{formatCurrency(visaTotalSelling + otherTotalSelling, currency)}</span>
                         </div>
                       )}

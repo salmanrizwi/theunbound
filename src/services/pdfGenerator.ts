@@ -109,11 +109,25 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
     }
   }
 
-  // Helper predicate for Visa quotation items
+  // Helper predicate for Visa & Ancillary quotation items
   const isVisaQuoteItem = (it: QuoteItem): boolean => {
-    return it.product.productType === 'Visa Service' || 
+    return it.service_type === 'VISA' ||
+           it.service_type === 'TRAVEL_PROTECTION' ||
+           it.service_type === 'VIP_GROUND' ||
+           it.service_type === 'CONNECTIVITY' ||
+           it.category === 'Visa & Ancillary Services' ||
+           it.product.productType === 'Visa Service' || 
+           it.product.productType === 'Travel Protection' ||
+           it.product.productType === '5G Connectivity' ||
            it.product.subcategory === 'Visa Facilitation' || 
+           it.product.subcategory === 'Travel Insurance' ||
+           it.product.subcategory === 'Ground VIP Services' ||
+           it.product.subcategory === 'eSIM Connectivity' ||
            it.product.sku?.startsWith('VSA-') ||
+           it.product.sku?.startsWith('VISA-') ||
+           it.product.sku?.startsWith('INS-') ||
+           it.product.sku?.startsWith('VIP-') ||
+           it.product.sku?.startsWith('ESIM-') ||
            (it.product.category === 'Travel Services' && it.product.name?.toLowerCase().includes('visa')) ||
            Boolean(it.product.name?.toLowerCase().includes('visa') && it.product.name?.toLowerCase().includes('entry'));
   };
@@ -399,9 +413,9 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     doc.setTextColor(255, 255, 255);
-    doc.text('VISA & TRAVEL DOCUMENTATION FACILITATION', margin + 3, currentY + 5);
+    doc.text('VISA & ANCILLARY SERVICES', margin + 3, currentY + 5);
     doc.setTextColor(110, 231, 183); // emerald-300
-    doc.text(`${visaItems.length} ${visaItems.length === 1 ? 'VISA SERVICE' : 'VISA SERVICES'} INCLUDED`, pageWidth - margin - 3, currentY + 5, { align: 'right' });
+    doc.text(`${visaItems.length} ${visaItems.length === 1 ? 'SERVICE' : 'SERVICES'} INCLUDED`, pageWidth - margin - 3, currentY + 5, { align: 'right' });
 
     currentY += 9;
 
@@ -418,7 +432,14 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(5.5);
       doc.setTextColor(6, 78, 59);
-      doc.text('VISA FACILITATION', margin + 15, currentY + 5, { align: 'center' });
+      const serviceBadgeText = vItem.service_type === 'TRAVEL_PROTECTION' || vItem.product.subcategory === 'Travel Insurance'
+        ? 'INSURANCE'
+        : vItem.service_type === 'CONNECTIVITY' || vItem.product.subcategory === 'eSIM Connectivity'
+        ? '5G CONNECTIVITY'
+        : vItem.service_type === 'VIP_GROUND' || vItem.product.subcategory === 'Ground VIP Services'
+        ? 'VIP GROUND'
+        : 'VISA SERVICE';
+      doc.text(serviceBadgeText, margin + 15, currentY + 5, { align: 'center' });
 
       // Name
       doc.setFont('helvetica', 'bold');

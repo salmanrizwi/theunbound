@@ -1541,6 +1541,9 @@ export class AppDatabase {
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'menu_items')) this.setItem('menu_items', INITIAL_MENU_ITEMS);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'custom_pages')) this.setItem('custom_pages', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'visas')) this.setItem('visas', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'travel_protection_plans')) this.setItem('travel_protection_plans', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'vip_ground_services')) this.setItem('vip_ground_services', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'connectivity_plans')) this.setItem('connectivity_plans', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'footer_config')) this.setItem('footer_config', INITIAL_FOOTER_CONFIG);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'calendar_tasks')) this.setItem('calendar_tasks', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'user_activities')) this.setItem('user_activities', []);

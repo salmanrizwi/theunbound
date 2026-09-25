@@ -28,7 +28,8 @@ export type ProductCategory =
   | 'Rail' 
   | 'Ferries' 
   | 'Guides' 
-  | 'Travel Services';
+  | 'Travel Services'
+  | 'Visa & Ancillary Services';
 
 export type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'JPY' | 'AED' | 'THB' | 'AUD' | 'CAD' | 'SGD' | 'INR' | 'CHF';
 
@@ -1152,6 +1153,14 @@ export interface QuoteItem {
   railJourneyDetails?: RailBookingItemDetails;
   japanRailJourneySnapshot?: any;
   shinkansenJourneyPayload?: any;
+  master_product_id?: string;
+  service_id?: string;
+  service_type?: 'VISA' | 'TRAVEL_PROTECTION' | 'VIP_GROUND' | 'CONNECTIVITY' | string;
+  configuration_id?: string;
+  configuration_snapshot?: any;
+  pricing_snapshot?: any;
+  currency_snapshot?: CurrencyCode | string;
+  visaSnapshot?: QuoteVisaSnapshot;
   metadata?: Record<string, any>;
 }
 

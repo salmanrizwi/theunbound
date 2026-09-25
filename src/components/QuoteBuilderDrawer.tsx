@@ -171,35 +171,28 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
       return;
     }
 
-    // Check if Visa
-    if (isVisaService(item) || cat === 'VISA' || cat === 'VISA SERVICE' || sku.startsWith('VSA-') || meta?.visaProductId) {
+    // Check if Visa & Ancillary Services
+    if (isVisaService(item) || cat === 'VISA' || cat === 'VISA SERVICE' || cat === 'VISA & ANCILLARY SERVICES' || sku.startsWith('VSA-') || meta?.visaProductId || item.master_product_id) {
+      const masterId = item.master_product_id || item.product.id || meta?.visaProductId;
       const visa = db.getVisas().find(v => 
-        v.id === item.product.id || 
+        v.id === masterId || 
         v.id === meta?.visaProductId ||
-        sku.includes(v.countryCode || '') ||
-        v.country.toLowerCase() === item.product.country.toLowerCase()
-      ) || {
-        id: item.product.id,
-        country: item.product.country,
-        countryCode: item.product.country.substring(0, 2).toUpperCase(),
-        visaType: item.product.name,
-        entryType: 'SINGLE_ENTRY',
-        validityDays: 90,
-        stayDurationDays: 15,
-        processingTimeDays: 5,
-        expressProcessingAvailable: true,
-        expressProcessingTimeDays: 2,
-        embassyFee: 30,
-        serviceFee: 25,
-        expressServiceFee: 50,
-        currency: 'USD',
-        description: item.product.shortDescription,
-        documentsChecklist: ['Valid Passport', 'Passport Photograph', 'Return Flight Ticket'],
-        category: 'Tourist',
-        validity: '90 Days'
-      } as unknown as VisaProduct;
-      setEditingVisa(visa);
-      return;
+        (v.countryCode && sku.includes(v.countryCode)) ||
+        (item.product.country && v.country.toLowerCase() === item.product.country.toLowerCase())
+      );
+      if (visa) {
+        if (visa.status === 'ACTIVE' || !visa.status) {
+          setEditingVisa(visa);
+          return;
+        } else {
+          // Requirement 26: If deactivated, notify user and preserve configuration
+          alert('This service is no longer active. The historical quote configuration has been preserved.');
+          return;
+        }
+      } else {
+        alert('This service is no longer active. The historical quote configuration has been preserved.');
+        return;
+      }
     }
 
     // Standard Tour / Transfer / Activity Product
@@ -526,7 +519,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                     }`}
                   >
                     <FileCheck className="w-3 h-3 text-blue-600" />
-                    <span>Visas ({categoryCounts.visas})</span>
+                    <span>Visa & Ancillary ({categoryCounts.visas})</span>
                   </button>
                 )}
                 {categoryCounts.packages > 0 && (
@@ -597,8 +590,8 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                     >
                       <FileCheck className="w-4 h-4 text-blue-600 group-hover:scale-110 transition-transform" />
                       <div>
-                        <span className="text-xs font-bold text-slate-900 block">Visa Services</span>
-                        <span className="text-[10px] text-slate-500">Express tourist e-visas</span>
+                        <span className="text-xs font-bold text-slate-900 block">Visa & Ancillary Services</span>
+                        <span className="text-[10px] text-slate-500">Official Visas, Protection & Ground</span>
                       </div>
                     </button>
 
@@ -692,7 +685,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                                       ? 'bg-blue-100 text-blue-900'
                                       : 'bg-slate-100 text-slate-800'
                                   }`}>
-                                    {isHotel ? 'HOTEL STAY' : isVisa ? 'VISA SERVICE' : item.product.category}
+                                    {isHotel ? 'HOTEL STAY' : isVisa ? 'VISA & ANCILLARY' : item.product.category}
                                   </span>
                                   <span className="text-[11px] text-slate-500 font-medium">
                                     {item.product.city || item.product.destinationName}

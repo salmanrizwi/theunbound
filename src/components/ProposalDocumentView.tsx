@@ -60,11 +60,25 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
     }
   };
 
-  // Helper predicate for Visa quotation items
+  // Helper predicate for Visa & Ancillary quotation items
   const isVisaQuoteItem = (it: QuoteItem): boolean => {
-    return it.product.productType === 'Visa Service' || 
+    return it.service_type === 'VISA' ||
+           it.service_type === 'TRAVEL_PROTECTION' ||
+           it.service_type === 'VIP_GROUND' ||
+           it.service_type === 'CONNECTIVITY' ||
+           it.category === 'Visa & Ancillary Services' ||
+           it.product.productType === 'Visa Service' || 
+           it.product.productType === 'Travel Protection' ||
+           it.product.productType === '5G Connectivity' ||
            it.product.subcategory === 'Visa Facilitation' || 
+           it.product.subcategory === 'Travel Insurance' ||
+           it.product.subcategory === 'Ground VIP Services' ||
+           it.product.subcategory === 'eSIM Connectivity' ||
            it.product.sku?.startsWith('VSA-') ||
+           it.product.sku?.startsWith('VISA-') ||
+           it.product.sku?.startsWith('INS-') ||
+           it.product.sku?.startsWith('VIP-') ||
+           it.product.sku?.startsWith('ESIM-') ||
            (it.product.category === 'Travel Services' && it.product.name?.toLowerCase().includes('visa')) ||
            Boolean(it.product.name?.toLowerCase().includes('visa') && it.product.name?.toLowerCase().includes('entry'));
   };
@@ -456,7 +470,7 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
       </div>
 
       {/* ---------------------------------------------------- */}
-      {/* 3.5. VISA & TRAVEL DOCUMENTATION SERVICES */}
+      {/* 3.5. VISA & ANCILLARY SERVICES */}
       {/* ---------------------------------------------------- */}
       {visaItems.length > 0 && (
         <div className="space-y-4 pt-2">
@@ -464,11 +478,11 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
             <div className="flex items-center space-x-2">
               <Globe className="w-5 h-5 text-emerald-600" />
               <h2 className="text-base font-black text-slate-950 uppercase tracking-wide">
-                Visa & Entry Documentation Facilitation
+                Visa & Ancillary Services
               </h2>
             </div>
             <span className="text-xs text-emerald-800 font-mono font-bold">
-              {visaItems.length} {visaItems.length === 1 ? 'Visa Service' : 'Visa Services'} Included
+              {visaItems.length} {visaItems.length === 1 ? 'Service' : 'Services'} Included
             </span>
           </div>
 
@@ -537,7 +551,7 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                     {item.pax?.adults || 2} Adults{item.pax?.children ? `, ${item.pax.children} Ch` : ''}
                   </div>
                   <span className="inline-block mt-1 text-[9px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300">
-                    Facilitation Handled
+                    Visa & Ancillary Included
                   </span>
                 </div>
               </div>

@@ -115,7 +115,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
     );
   }
 
-  // NON-NEGOTIABLE RULE: Visa Service & Facilitation products MUST only use Visa Service & Facilitation Configurator
+  // NON-NEGOTIABLE RULE: Visa & Ancillary Services products MUST only use Visa & Ancillary Services Configurator
   if (isVisaService(product)) {
     return (
       <VisaServiceAndFacilitationConfigurator

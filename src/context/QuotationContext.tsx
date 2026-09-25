@@ -27,6 +27,16 @@ interface QuotationContextType {
       openDrawer?: boolean;
       source?: QuoteItemSource;
       aiSuggested?: boolean;
+      master_product_id?: string;
+      service_id?: string;
+      category?: string;
+      service_type?: string;
+      configuration_id?: string;
+      configuration_snapshot?: any;
+      pricing_snapshot?: any;
+      currency_snapshot?: CurrencyCode | string;
+      visaSnapshot?: any;
+      metadata?: Record<string, any>;
     }
   ) => void;
   removeProductFromQuote: (itemId: string) => void;
@@ -247,6 +257,16 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       openDrawer?: boolean;
       source?: QuoteItemSource;
       aiSuggested?: boolean;
+      master_product_id?: string;
+      service_id?: string;
+      category?: string;
+      service_type?: string;
+      configuration_id?: string;
+      configuration_snapshot?: any;
+      pricing_snapshot?: any;
+      currency_snapshot?: CurrencyCode | string;
+      visaSnapshot?: any;
+      metadata?: Record<string, any>;
     }
   ) => {
     const adults = options?.adults ?? Math.max(1, product.minPax);
@@ -279,7 +299,21 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       selectedAddonIds,
       calculation,
       source: options?.source || 'USER',
-      aiSuggested: options?.aiSuggested ?? false
+      aiSuggested: options?.aiSuggested ?? false,
+      master_product_id: options?.master_product_id || (effectiveProduct as any).master_product_id || effectiveProduct.id,
+      service_id: options?.service_id || (effectiveProduct as any).service_id || effectiveProduct.id,
+      category: options?.category || effectiveProduct.category,
+      service_type: options?.service_type || (effectiveProduct as any).service_type,
+      configuration_id: options?.configuration_id,
+      configuration_snapshot: options?.configuration_snapshot,
+      pricing_snapshot: options?.pricing_snapshot || calculation,
+      currency_snapshot: options?.currency_snapshot || currency,
+      visaSnapshot: options?.visaSnapshot,
+      metadata: {
+        ...(options?.metadata || {}),
+        master_product_id: options?.master_product_id || (effectiveProduct as any).master_product_id || effectiveProduct.id,
+        service_id: options?.service_id || (effectiveProduct as any).service_id || effectiveProduct.id
+      }
     };
 
     setItems(prev => [...prev, newItem]);
@@ -405,6 +439,16 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       serviceTime?: string;
       notes?: string;
       selectedAddonIds?: string[];
+      master_product_id?: string;
+      service_id?: string;
+      category?: string;
+      service_type?: string;
+      configuration_id?: string;
+      configuration_snapshot?: any;
+      pricing_snapshot?: any;
+      currency_snapshot?: CurrencyCode | string;
+      visaSnapshot?: any;
+      metadata?: Record<string, any>;
     }
   ) => {
     const effectiveProduct = isAgent ? sanitizeProductForAgent(updatedProduct) : updatedProduct;
@@ -440,7 +484,22 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           selectedAddonIds,
           calculation,
           source: 'USER',
-          aiSuggested: false
+          aiSuggested: false,
+          master_product_id: options.master_product_id || item.master_product_id || (effectiveProduct as any).master_product_id || effectiveProduct.id,
+          service_id: options.service_id || item.service_id || (effectiveProduct as any).service_id || effectiveProduct.id,
+          category: options.category || item.category || effectiveProduct.category,
+          service_type: options.service_type || item.service_type || (effectiveProduct as any).service_type,
+          configuration_id: options.configuration_id || item.configuration_id,
+          configuration_snapshot: options.configuration_snapshot || item.configuration_snapshot,
+          pricing_snapshot: options.pricing_snapshot || calculation,
+          currency_snapshot: options.currency_snapshot || item.currency_snapshot || currency,
+          visaSnapshot: options.visaSnapshot || item.visaSnapshot,
+          metadata: {
+            ...(item.metadata || {}),
+            ...(options.metadata || {}),
+            master_product_id: options.master_product_id || item.master_product_id || effectiveProduct.id,
+            service_id: options.service_id || item.service_id || effectiveProduct.id
+          }
         };
       })
     );

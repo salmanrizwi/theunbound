@@ -433,7 +433,13 @@ service cloud.firestore {
       allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
     }
 
-    match /travel_protection_plans/{document=**} {
+    match /visa_rates/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+    }
+
+    match /travel_protection/{document=**} {
       allow read: if true;
       allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
       allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
@@ -446,12 +452,6 @@ service cloud.firestore {
     }
 
     match /connectivity_plans/{document=**} {
-      allow read: if true;
-      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
-      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
-    }
-
-    match /visa_rates/{document=**} {
       allow read: if true;
       allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
       allow delete: if canAccessCMSOperations() || isResourceAdminOwned();

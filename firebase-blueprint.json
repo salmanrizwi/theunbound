@@ -463,13 +463,16 @@
       }
     },
     "TravelProtectionPlan": {
-      "collection": "travel_protection_plans",
+      "collection": "travel_protection",
       "fields": {
         "id": { "type": "string", "required": true },
         "serviceName": { "type": "string", "required": true },
         "provider": { "type": "string", "required": true },
         "coverageArea": { "type": "string", "required": true },
         "medicalCoverageAmount": { "type": "number", "required": true },
+        "tripCancellationAmount": { "type": "number", "required": true },
+        "baggageLossAmount": { "type": "number", "required": true },
+        "netCostPerDay": { "type": "number", "required": true },
         "sellingPricePerDay": { "type": "number", "required": true },
         "currency": { "type": "string", "required": true },
         "status": { "type": "string", "required": true }
@@ -481,7 +484,11 @@
         "id": { "type": "string", "required": true },
         "name": { "type": "string", "required": true },
         "serviceType": { "type": "string", "required": true },
+        "destinationId": { "type": "string", "required": false },
+        "supplierName": { "type": "string", "required": true },
+        "netCost": { "type": "number", "required": true },
         "sellingPrice": { "type": "number", "required": true },
+        "pricingType": { "type": "string", "required": true },
         "currency": { "type": "string", "required": true },
         "status": { "type": "string", "required": true }
       }
@@ -491,10 +498,12 @@
       "fields": {
         "id": { "type": "string", "required": true },
         "name": { "type": "string", "required": true },
-        "type": { "type": "string", "required": true },
+        "coverageZone": { "type": "string", "required": true },
         "dataAllowance": { "type": "string", "required": true },
         "validityDays": { "type": "number", "required": true },
+        "netCost": { "type": "number", "required": true },
         "sellingPrice": { "type": "number", "required": true },
+        "currency": { "type": "string", "required": true },
         "status": { "type": "string", "required": true }
       }
     },

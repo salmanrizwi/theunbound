@@ -19,7 +19,7 @@ export interface AddVisaToQuoteModalProps {
 }
 
 /**
- * Dedicated Visa Service & Facilitation Configurator Entry Point
+ * Dedicated Visa & Ancillary Services Configurator Entry Point
  * 
  * Enforces: ZERO GENERIC CUSTOMIZER.
  * Connects directly to authoritative canonical Visa inventory and structured requirement engine.

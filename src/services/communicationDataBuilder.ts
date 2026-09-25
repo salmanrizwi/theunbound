@@ -764,7 +764,7 @@ export function buildQuoteCommunicationPayload(
     `24/7 dedicated local emergency ground assistance hotline & dispatch team`
   ];
   if (visaServices.length > 0) {
-    inclusions.push(`Comprehensive visa documentation filing and assistance for ${quote.destination}`);
+    inclusions.push(`Comprehensive visa & ancillary services assistance for ${quote.destination}`);
   }
 
   const exclusions: string[] = [
@@ -855,7 +855,7 @@ export function buildQuoteCommunicationPayload(
       travelStyle: quote.travelStyle || 'Private & Tailor-Made Luxury',
       keyExperiences: activities.slice(0, 4).map(a => a.activityName),
       transferStyle: transfers[0]?.transferType || 'Private Dedicated Vehicle',
-      visaRequirements: visaServices.length > 0 ? 'Visa Facilitation Included' : undefined
+      visaRequirements: visaServices.length > 0 ? 'Visa & Ancillary Services Included' : undefined
     },
     dayWisePlan,
     hotels,
@@ -1331,17 +1331,17 @@ export function formatWhatsAppQuoteFromPayload(
   }
   sections.push(exclusionLines.join('\n'));
 
-  // 6. Visa & Special Services (if applicable)
+  // 6. Visa & Ancillary Services (if applicable)
   if ((payload.visaServices && payload.visaServices.length > 0) || (payload.otherServices && payload.otherServices.length > 0)) {
     const visaLines: string[] = [
-      useEmojis ? `🛂 *VISA & CONCIERGE SERVICES*` : `*VISA & TRAVEL SERVICES*`
+      useEmojis ? `🛂 *VISA & ANCILLARY SERVICES*` : `*VISA & ANCILLARY SERVICES*`
     ];
     if (payload.visaServices) {
       payload.visaServices.forEach(v => {
         if (useEmojis) {
           visaLines.push(`• 📑 *${v.serviceName}* (${v.destination}) — ${v.applicability || 'Document verification & submission support'}`);
         } else {
-          visaLines.push(`• Visa: ${v.serviceName} (${v.destination}) — ${v.applicability || 'Documentation support'}`);
+          visaLines.push(`• Visa & Ancillary: ${v.serviceName} (${v.destination}) — ${v.applicability || 'Documentation support'}`);
         }
       });
     }
@@ -1575,6 +1575,26 @@ Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground 
               `).join('')}
             </tbody>
           </table>
+        </div>
+        ` : ''}
+
+        <!-- Visa & Ancillary Services Section -->
+        ${payload.visaServices && payload.visaServices.length > 0 ? `
+        <h3 style="margin: 0 0 12px 0; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b;">
+          Visa & Ancillary Services (${payload.visaServices.length} Attached)
+        </h3>
+        <div style="border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; margin-bottom: 24px; padding: 14px; background: #ffffff;">
+          ${payload.visaServices.map(v => `
+            <div style="border-bottom: 1px solid #f1f5f9; padding: 8px 0; display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <strong style="font-size: 12px; color: #0f172a;">${v.serviceName}</strong>
+                <div style="font-size: 11px; color: #008972;">${v.destination} • ${v.serviceType || 'Official E-Visa Assistance'}</div>
+              </div>
+              <span style="font-size: 10px; font-weight: 700; background: #ecfdf5; color: #047857; padding: 3px 8px; border-radius: 6px; border: 1px solid #a7f3d0;">
+                Included
+              </span>
+            </div>
+          `).join('')}
         </div>
         ` : ''}
 
