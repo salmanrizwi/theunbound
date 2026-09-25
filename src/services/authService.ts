@@ -215,7 +215,7 @@ class AuthService {
         try {
           const profile = await withTimeout(
             this.resolveOrCreateUserProfile(fbUser),
-            6000,
+            12000,
             'Session restoration timed out'
           );
           if (profile) {
@@ -295,11 +295,24 @@ class AuthService {
           }
         } catch (err: any) {
           console.warn('[AUTH] Error resolving profile during onAuthStateChanged:', err);
-          const cached = AppDatabase.getInstance().getUserById(fbUser.uid);
+          const cached = AppDatabase.getInstance().getUserById(fbUser.uid) || 
+            (fbUser.email ? AppDatabase.getInstance().getUserByEmail(fbUser.email) : undefined);
           if (cached && cached.role !== 'BUYER') {
             this.currentUserProfile = cached;
             this.authState = 'AUTHENTICATED_READY';
             this.authError = null;
+            AppDatabase.getInstance().onAuthUserChanged(cached, fbUser);
+            this.notifyListeners();
+            return;
+          }
+
+          // If fbUser is authenticated but network timed out, reconstruct verified session without logging out
+          const fallbackProfile = await this.resolveOrCreateUserProfile(fbUser).catch(() => null);
+          if (fallbackProfile && fallbackProfile.role !== 'BUYER') {
+            this.currentUserProfile = fallbackProfile;
+            this.authState = 'AUTHENTICATED_READY';
+            this.authError = null;
+            AppDatabase.getInstance().onAuthUserChanged(fallbackProfile, fbUser);
             this.notifyListeners();
             return;
           }
@@ -1059,111 +1072,7 @@ class AuthService {
     } catch (authErr: any) {
       const code = authErr?.code || '';
       const msg = authErr?.message || '';
-      console.log('[AUTH] Firebase Auth registration error code:', code, msg);
-
-      // Fallback if Email/Password registration is disabled in Firebase Console
-      if (code === 'auth/operation-not-allowed' || msg.includes('operation-not-allowed')) {
-        console.warn('[AUTH] Firebase Auth email registration disabled in console. Registering profile directly into Firestore & database...');
-        
-        // Check local database
-        const existingLocal = AppDatabase.getInstance().getUserByEmail(normalizedEmail);
-        if (existingLocal) {
-          return {
-            success: false,
-            error: 'An account with this email address already exists. Please sign in or use password reset.'
-          };
-        }
-
-        try {
-          const q = query(collection(firestoreDb, 'users'), where('email', '==', normalizedEmail));
-          const snap = await getDocs(q);
-          if (!snap.empty) {
-            return {
-              success: false,
-              error: 'An account with this email address already exists. Please sign in or use password reset.'
-            };
-          }
-        } catch (e) {
-          // Ignore
-        }
-
-        const newId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-        const approvalStatus: UserApprovalStatus = isB2BAgent ? 'PENDING' : 'APPROVED';
-        const category: UserCategory = isInternal ? 'INTERNAL' : 'EXTERNAL';
-
-        const newUser: User = {
-          id: newId,
-          name: trimmedName,
-          firstName: trimmedFirst || undefined,
-          lastName: trimmedLast || undefined,
-          email: normalizedEmail,
-          password,
-          role: profileData.role,
-          category,
-          agencyName: trimmedAgency,
-          companyName: trimmedAgency,
-          country: profileData.country?.trim() || 'Global',
-          contactNumber: profileData.contactNumber?.trim() || '',
-          jobTitle: profileData.jobTitle?.trim() || '',
-          businessType: profileData.businessType?.trim() || '',
-          taxOrGstNumber: profileData.taxOrGstNumber?.trim() || '',
-          iataOrAbtaNumber: profileData.iataOrAbtaNumber?.trim() || '',
-          createdAt: new Date().toISOString().split('T')[0],
-          approvalStatus,
-          customBuyerMarginPercent: 25,
-          customAgentMarginPercent: 10,
-          permissions: approvalStatus === 'APPROVED' 
-            ? getDefaultPermissionsForRole(profileData.role)
-            : {
-                ...getDefaultPermissionsForRole(profileData.role),
-                b2bQuoteBuilderAccess: false,
-                canAccessPricingCalculator: false,
-                canCreateBookings: false,
-                canExportPDF: false,
-                canViewWholesaleNetRates: false
-              }
-        };
-
-        try {
-          await setDoc(doc(firestoreDb, 'users', newUser.id), newUser);
-          console.log(`[AUTH] Direct user profile registered in Firestore users/${newUser.id}`);
-        } catch (fsErr) {
-          console.warn('[AUTH] Error writing profile to Firestore:', fsErr);
-        }
-
-        const db = AppDatabase.getInstance();
-        db.saveUserLocally(newUser);
-
-        db.logAudit(
-          newUser,
-          'USER_ROLE_CHANGED',
-          'UserAccessControl',
-          newUser.id,
-          `New user profile created: ${newUser.name} (${newUser.email}), Role=${newUser.role}, Status=${newUser.approvalStatus}, Agency=${newUser.agencyName || 'N/A'}`
-        );
-
-        if (approvalStatus === 'APPROVED') {
-          this.currentUserProfile = newUser;
-          this.authState = 'AUTHENTICATED_READY';
-          this.authError = null;
-          AppDatabase.getInstance().onAuthUserChanged(newUser, this.currentFirebaseUser);
-
-          inactivityTracker.reset();
-          inactivityTracker.start(() => {
-            console.warn('[AUTH] 24-hour continuous inactivity detected. Logging out.');
-            this.logout('INACTIVITY_TIMEOUT');
-          });
-
-          this.notifyListeners();
-        }
-
-        return {
-          success: true,
-          user: newUser,
-          requiresApproval: isB2BAgent,
-          status: approvalStatus
-        };
-      }
+      console.warn('[AUTH] Firebase Auth registration error code:', code, msg);
 
       if (code === 'auth/email-already-in-use') {
         return {
@@ -1181,6 +1090,12 @@ class AuthService {
         return {
           success: false,
           error: 'Please enter a valid official business email address.'
+        };
+      }
+      if (code === 'auth/operation-not-allowed' || msg.includes('operation-not-allowed')) {
+        return {
+          success: false,
+          error: 'Email/Password registration is currently disabled in the Firebase Console (auth/operation-not-allowed). Please contact business@theunbound.in.'
         };
       }
 

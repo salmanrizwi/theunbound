@@ -39,11 +39,15 @@ const firebaseConfig = {
   appId: firebaseConfigJson.appId || metaEnv.VITE_FIREBASE_APP_ID,
 };
 
+// Authoritative Firebase Project & Database Identifiers
+export const FIREBASE_PROJECT_ID = firebaseConfig.projectId || 'gen-lang-client-0981426327';
+export const FIRESTORE_DATABASE_ID = (firebaseConfigJson as any).firestoreDatabaseId || 'ai-studio-theunbounddmctra-384adde8-26cf-49a7-8158-336473069762';
+
 // Initialize Firebase App singleton
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
 // Initialize Firestore with robust multi-platform cache & auto long-polling
-const customDatabaseId = (firebaseConfigJson as any).firestoreDatabaseId;
+const customDatabaseId = FIRESTORE_DATABASE_ID;
 const dbTargetId = customDatabaseId && customDatabaseId !== '(default)' ? customDatabaseId : undefined;
 
 let firestoreInstance;
@@ -68,12 +72,25 @@ try {
     dbTargetId
   );
 } catch (e) {
-  // Fallback if already initialized or custom settings rejected
+  // If persistent cache initialization failed (e.g. on iOS Safari / restricted storage / multi-tab lock),
+  // attempt initialization with memoryLocalCache() preserving the exact same dbTargetId
   try {
-    firestoreInstance = dbTargetId ? getFirestore(app, dbTargetId) : getFirestore(app);
-  } catch (fallbackErr) {
-    console.warn('[FIREBASE] Firestore fallback init notice:', fallbackErr);
-    firestoreInstance = getFirestore(app);
+    firestoreInstance = initializeFirestore(
+      app,
+      {
+        experimentalAutoDetectLongPolling: true,
+        localCache: memoryLocalCache()
+      },
+      dbTargetId
+    );
+  } catch (memInitErr) {
+    // Fallback if already initialized by another module
+    try {
+      firestoreInstance = dbTargetId ? getFirestore(app, dbTargetId) : getFirestore(app);
+    } catch (fallbackErr) {
+      console.warn('[FIREBASE] Firestore fallback init notice:', fallbackErr);
+      firestoreInstance = dbTargetId ? getFirestore(app, dbTargetId) : getFirestore(app);
+    }
   }
 }
 

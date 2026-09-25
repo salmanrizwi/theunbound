@@ -433,13 +433,7 @@ service cloud.firestore {
       allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
     }
 
-    match /visa_rates/{document=**} {
-      allow read: if true;
-      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
-      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
-    }
-
-    match /travel_protection/{document=**} {
+    match /travel_protection_plans/{document=**} {
       allow read: if true;
       allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
       allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
@@ -452,6 +446,12 @@ service cloud.firestore {
     }
 
     match /connectivity_plans/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+    }
+
+    match /visa_rates/{document=**} {
       allow read: if true;
       allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
       allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
@@ -767,8 +767,8 @@ service cloud.firestore {
           request.resource.data.agentId == request.auth.uid ||
           request.resource.data.userId == request.auth.uid
         ) && (
-          request.resource.data.sourceType != 'INTERNAL_MANUAL' &&
-          request.resource.data.isInternalManualBooking != true &&
+          (!('sourceType' in request.resource.data) || request.resource.data.sourceType != 'INTERNAL_MANUAL') &&
+          (!('isInternalManualBooking' in request.resource.data) || request.resource.data.isInternalManualBooking != true) &&
           !('totalSupplierCost' in request.resource.data) &&
           !('internalNettCost' in request.resource.data) &&
           !('internalProfit' in request.resource.data) &&

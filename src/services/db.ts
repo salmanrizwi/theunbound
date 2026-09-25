@@ -204,7 +204,11 @@ import {
   deleteDoc, 
   onSnapshot, 
   getDocFromServer,
-  writeBatch 
+  writeBatch,
+  query,
+  where,
+  or,
+  type Query
 } from 'firebase/firestore';
 import { 
   getDefaultPermissionsForRole, 
@@ -1323,7 +1327,7 @@ export class AppDatabase {
           const item = transformDoc ? transformDoc(raw, docSnap.id) : (raw as T);
           if (item) {
             if ((item as any).isDeleted === true || (item as any).status === 'DELETED') return;
-            if (item.id && deletedSet.has(item.id)) return;
+            if ((item as any).id && deletedSet.has((item as any).id)) return;
             list.push(item);
           }
         });
@@ -1335,6 +1339,43 @@ export class AppDatabase {
       }
     }, (err) => {
       console.debug(`Firestore ${collectionName} sync note (non-blocking):`, err?.message || err);
+    });
+  }
+
+  private syncQuerySafely<T>(
+    queryRef: Query,
+    storageKey: string,
+    transformDoc?: (docData: any, docId: string) => T | null
+  ): () => void {
+    return onSnapshot(queryRef, (snapshot) => {
+      const deletedSet = this.getDeletedEntityIds();
+      const list: T[] = [];
+      if (!snapshot.empty) {
+        snapshot.forEach(docSnap => {
+          const raw = docSnap.data();
+          if (raw.isDeleted === true || raw.status === 'DELETED') return;
+          if (deletedSet.has(docSnap.id) || (raw.id && deletedSet.has(raw.id))) {
+            const isExplicitlyActive = raw.isDeleted === false || raw.status === 'ACTIVE' || raw.status === 'DRAFT' || raw.status === 'PUBLISHED';
+            if (isExplicitlyActive) {
+              deletedSet.delete(docSnap.id);
+              if (raw.id) deletedSet.delete(raw.id);
+            } else {
+              return;
+            }
+          }
+
+          const item = transformDoc ? transformDoc(raw, docSnap.id) : (raw as T);
+          if (item) {
+            if ((item as any).isDeleted === true || (item as any).status === 'DELETED') return;
+            if ((item as any).id && deletedSet.has((item as any).id)) return;
+            list.push(item);
+          }
+        });
+      }
+
+      this.setItem(storageKey, list, true);
+    }, (err) => {
+      console.debug(`[DB] Scoped query sync note (${storageKey}):`, err?.message || err);
     });
   }
 
@@ -1358,7 +1399,19 @@ export class AppDatabase {
     }
 
     if (!user || !fbUser) {
-      console.log('[DB] Auth user cleared. Resetting private session records.');
+      console.log('[DB] Auth user cleared. Purging private session records from device storage.');
+      this.setItem('bookings', [], true);
+      this.setItem('saved_quotes', [], true);
+      this.setItem('leads', [], true);
+      this.setItem('b2b_customers', [], true);
+      this.setItem('b2b_tasks', [], true);
+      this.setItem('calendar_tasks', [], true);
+      this.setItem('invoices', [], true);
+      this.setItem('uploaded_invoices', [], true);
+      this.setItem('vouchers', [], true);
+      this.setItem('job_sheets', [], true);
+      this.setItem('wishlist_folders', [], true);
+      this.setItem('wishlist_items', [], true);
       return;
     }
 
@@ -1366,41 +1419,127 @@ export class AppDatabase {
     this.authSyncTimeout = setTimeout(() => {
       console.log(`[DB] Establishing background live authenticated Firestore listeners for ${user.email} (${user.role}) [UID: ${fbUser.uid}]`);
 
+      const isInternal = user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF' || (user as any).role === 'SUPER_ADMIN';
+
       try {
-        this.authenticatedUnsubscribers.push(
-          this.syncCollectionSafely<User>('users', 'system_users'),
-          this.syncCollectionSafely<Company>('companies', 'companies'),
-          this.syncCollectionSafely<Quotation>('quotations', 'saved_quotes'),
-          this.syncCollectionSafely<Booking>('bookings', 'bookings'),
-          this.syncCollectionSafely<TravelLead>('leads', 'leads'),
-          this.syncCollectionSafely<B2BCustomer>('b2b_customers', 'b2b_customers'),
-          this.syncCollectionSafely<B2BTask>('b2b_tasks', 'b2b_tasks'),
-          this.syncCollectionSafely<CalendarTask>('calendar_tasks', 'calendar_tasks'),
-          this.syncCollectionSafely<WishlistFolder>('wishlist_folders', 'wishlist_folders'),
-          this.syncCollectionSafely<WishlistItem>('wishlist_items', 'wishlist_items'),
-          this.syncCollectionSafely<HotelRoomType>('hotel_rooms', 'hotel_rooms'),
-          this.syncCollectionSafely<HotelRate>('hotel_rates', 'hotel_rates'),
-          this.syncCollectionSafely<HotelMealPlanItem>('hotel_meal_plans', 'hotel_meal_plans'),
-          this.syncCollectionSafely<TransferRoute>('transfer_routes', 'transfer_routes'),
-          this.syncCollectionSafely<TransferRate>('transfer_rates', 'transfer_rates'),
-          this.syncCollectionSafely<ProductPricingRate>('product_pricing_rates', 'product_pricing_rates'),
-          this.syncCollectionSafely<ProductCapacityItem>('product_capacities', 'product_capacities'),
-          this.syncCollectionSafely<VisaRateItem>('visa_rates', 'visa_rates'),
-          this.syncCollectionSafely<PackageItemRef>('package_items', 'package_items'),
-          this.syncCollectionSafely<BookingInvoice>('invoices', 'invoices'),
-          this.syncCollectionSafely<BookingUploadedInvoice>('uploaded_invoices', 'uploaded_invoices'),
-          this.syncCollectionSafely<BookingVoucher>('vouchers', 'vouchers'),
-          this.syncCollectionSafely<JobSheet>('job_sheets', 'job_sheets'),
-          this.syncCollectionSafely<RosterResource>('roster_resources', 'roster_resources'),
-          this.syncCollectionSafely<SLAAutomationRule>('sla_automation_rules', 'sla_automation_rules'),
-          this.syncCollectionSafely<AdminActivityRecord>('admin_activities', 'admin_activities'),
-          this.syncCollectionSafely<CampaignEvent>('campaign_events', 'campaign_events'),
-          this.syncCollectionSafely<EmailCampaignConfig>('campaigns', 'campaigns'),
-          this.syncCollectionSafely<SEORedirect>('seo_redirects', 'seo_redirects'),
-          this.syncCollectionSafely<Supplier>('suppliers', 'suppliers'),
-          this.syncCollectionSafely<SupplierRequest>('supplier_requests', 'supplier_requests'),
-          this.syncCollectionSafely<LeadStageConfig>('lead_stages', 'lead_stages')
-        );
+        if (isInternal) {
+          // Internal operations staff can query full collections
+          this.authenticatedUnsubscribers.push(
+            this.syncCollectionSafely<User>('users', 'system_users'),
+            this.syncCollectionSafely<Company>('companies', 'companies'),
+            this.syncCollectionSafely<Quotation>('quotations', 'saved_quotes'),
+            this.syncCollectionSafely<Booking>('bookings', 'bookings'),
+            this.syncCollectionSafely<TravelLead>('leads', 'leads'),
+            this.syncCollectionSafely<B2BCustomer>('b2b_customers', 'b2b_customers'),
+            this.syncCollectionSafely<B2BTask>('b2b_tasks', 'b2b_tasks'),
+            this.syncCollectionSafely<CalendarTask>('calendar_tasks', 'calendar_tasks'),
+            this.syncCollectionSafely<WishlistFolder>('wishlist_folders', 'wishlist_folders'),
+            this.syncCollectionSafely<WishlistItem>('wishlist_items', 'wishlist_items'),
+            this.syncCollectionSafely<HotelRoomType>('hotel_rooms', 'hotel_rooms'),
+            this.syncCollectionSafely<HotelRate>('hotel_rates', 'hotel_rates'),
+            this.syncCollectionSafely<HotelMealPlanItem>('hotel_meal_plans', 'hotel_meal_plans'),
+            this.syncCollectionSafely<TransferRoute>('transfer_routes', 'transfer_routes'),
+            this.syncCollectionSafely<TransferRate>('transfer_rates', 'transfer_rates'),
+            this.syncCollectionSafely<ProductPricingRate>('product_pricing_rates', 'product_pricing_rates'),
+            this.syncCollectionSafely<ProductCapacityItem>('product_capacities', 'product_capacities'),
+            this.syncCollectionSafely<VisaRateItem>('visa_rates', 'visa_rates'),
+            this.syncCollectionSafely<PackageItemRef>('package_items', 'package_items'),
+            this.syncCollectionSafely<BookingInvoice>('invoices', 'invoices'),
+            this.syncCollectionSafely<BookingUploadedInvoice>('uploaded_invoices', 'uploaded_invoices'),
+            this.syncCollectionSafely<BookingVoucher>('vouchers', 'vouchers'),
+            this.syncCollectionSafely<JobSheet>('job_sheets', 'job_sheets'),
+            this.syncCollectionSafely<RosterResource>('roster_resources', 'roster_resources'),
+            this.syncCollectionSafely<SLAAutomationRule>('sla_automation_rules', 'sla_automation_rules'),
+            this.syncCollectionSafely<AdminActivityRecord>('admin_activities', 'admin_activities'),
+            this.syncCollectionSafely<CampaignEvent>('campaign_events', 'campaign_events'),
+            this.syncCollectionSafely<EmailCampaignConfig>('campaigns', 'campaigns'),
+            this.syncCollectionSafely<SEORedirect>('seo_redirects', 'seo_redirects'),
+            this.syncCollectionSafely<Supplier>('suppliers', 'suppliers'),
+            this.syncCollectionSafely<SupplierRequest>('supplier_requests', 'supplier_requests'),
+            this.syncCollectionSafely<LeadStageConfig>('lead_stages', 'lead_stages')
+          );
+        } else {
+          // External B2B Agents: Query strictly scoped to their own records to satisfy firestore.rules
+          const uid = fbUser.uid || user.id;
+
+          const scopedQuotesQuery = query(
+            collection(firestoreDb, 'quotations'),
+            or(
+              where('agentId', '==', uid),
+              where('userId', '==', uid),
+              where('buyerId', '==', uid)
+            )
+          );
+
+          const scopedBookingsQuery = query(
+            collection(firestoreDb, 'bookings'),
+            or(
+              where('submittedByUserId', '==', uid),
+              where('submittingAgentId', '==', uid),
+              where('assignedAgentId', '==', uid),
+              where('agentId', '==', uid),
+              where('userId', '==', uid)
+            )
+          );
+
+          const scopedLeadsQuery = query(
+            collection(firestoreDb, 'leads'),
+            or(
+              where('submittingAgentId', '==', uid),
+              where('assignedAgentId', '==', uid),
+              where('responsibleAgentId', '==', uid),
+              where('userId', '==', uid)
+            )
+          );
+
+          const scopedCustomersQuery = query(
+            collection(firestoreDb, 'b2b_customers'),
+            or(
+              where('agentId', '==', uid),
+              where('userId', '==', uid),
+              where('createdBy', '==', uid)
+            )
+          );
+
+          const scopedTasksQuery = query(
+            collection(firestoreDb, 'b2b_tasks'),
+            or(
+              where('agentId', '==', uid),
+              where('assignedTo', '==', uid),
+              where('userId', '==', uid)
+            )
+          );
+
+          const scopedWishlistFoldersQuery = query(
+            collection(firestoreDb, 'wishlist_folders'),
+            where('userId', '==', uid)
+          );
+
+          const scopedWishlistItemsQuery = query(
+            collection(firestoreDb, 'wishlist_items'),
+            where('userId', '==', uid)
+          );
+
+          this.authenticatedUnsubscribers.push(
+            this.syncQuerySafely<Quotation>(scopedQuotesQuery, 'saved_quotes'),
+            this.syncQuerySafely<Booking>(scopedBookingsQuery, 'bookings'),
+            this.syncQuerySafely<TravelLead>(scopedLeadsQuery, 'leads'),
+            this.syncQuerySafely<B2BCustomer>(scopedCustomersQuery, 'b2b_customers'),
+            this.syncQuerySafely<B2BTask>(scopedTasksQuery, 'b2b_tasks'),
+            this.syncQuerySafely<WishlistFolder>(scopedWishlistFoldersQuery, 'wishlist_folders'),
+            this.syncQuerySafely<WishlistItem>(scopedWishlistItemsQuery, 'wishlist_items'),
+            // B2B Catalog sub-collections (Public read permitted in rules)
+            this.syncCollectionSafely<HotelRoomType>('hotel_rooms', 'hotel_rooms'),
+            this.syncCollectionSafely<HotelRate>('hotel_rates', 'hotel_rates'),
+            this.syncCollectionSafely<HotelMealPlanItem>('hotel_meal_plans', 'hotel_meal_plans'),
+            this.syncCollectionSafely<TransferRoute>('transfer_routes', 'transfer_routes'),
+            this.syncCollectionSafely<TransferRate>('transfer_rates', 'transfer_rates'),
+            this.syncCollectionSafely<ProductPricingRate>('product_pricing_rates', 'product_pricing_rates'),
+            this.syncCollectionSafely<ProductCapacityItem>('product_capacities', 'product_capacities'),
+            this.syncCollectionSafely<VisaRateItem>('visa_rates', 'visa_rates'),
+            this.syncCollectionSafely<PackageItemRef>('package_items', 'package_items')
+          );
+        }
       } catch (err) {
         console.warn('[DB] Error establishing background authenticated sync listeners:', err);
       }
@@ -4287,12 +4426,14 @@ export class AppDatabase {
   // ==========================================
   public getProducts(): Product[] {
     const raw = this.getItem<Product[]>('products', envService.allowDemoData() ? INITIAL_PRODUCTS : []);
-    // Ensure the two commercial Japan Rail master products are always present and active
-    const hasOrd = raw.some(p => p.id === 'RAIL-JP-ORD-RESERVED');
-    const hasGrn = raw.some(p => p.id === 'RAIL-JP-GREEN-RESERVED');
-    if (!hasOrd || !hasGrn) {
-      const missing = INITIAL_PRODUCTS.filter(p => (p.id === 'RAIL-JP-ORD-RESERVED' && !hasOrd) || (p.id === 'RAIL-JP-GREEN-RESERVED' && !hasGrn));
-      raw.unshift(...missing);
+    if (envService.allowDemoData()) {
+      // In demo mode only: ensure commercial Japan Rail products are present
+      const hasOrd = raw.some(p => p.id === 'RAIL-JP-ORD-RESERVED');
+      const hasGrn = raw.some(p => p.id === 'RAIL-JP-GREEN-RESERVED');
+      if (!hasOrd || !hasGrn) {
+        const missing = INITIAL_PRODUCTS.filter(p => (p.id === 'RAIL-JP-ORD-RESERVED' && !hasOrd) || (p.id === 'RAIL-JP-GREEN-RESERVED' && !hasGrn));
+        raw.unshift(...missing);
+      }
     }
     const deletedSet = this.getDeletedEntityIds();
     return raw.filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Product_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED');
