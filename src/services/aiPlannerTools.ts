@@ -16,6 +16,7 @@ import { AppDatabase } from './db';
 import { calculateProductPrice, formatCurrency, convertCurrency, MasterPricingService, ControlledPriceResponse } from './pricingEngine';
 import { checkItineraryFeasibility } from '../utils/b2bQuotationHelpers';
 import { DestinationRelevanceService, matchesDestination } from './destinationRelevanceService';
+import { inventoryVisibilityService } from './inventoryVisibilityService';
 
 /**
  * CONTROLLED RETRIEVAL TOOLS FOR AI PLANNER
@@ -77,7 +78,9 @@ export class AiPlannerTools {
    * Tool 1: Search Destinations
    */
   public searchDestinations(query?: string): DestinationSearchResult[] {
-    const destinations = this.db.getDestinations().filter(d => d.status === 'ACTIVE' || !d.status);
+    const destinations = this.db.getDestinations().filter(d => 
+      inventoryVisibilityService.isDestinationEligible(d)
+    );
     const hubs = this.db.getCityHubs();
     const hotels = this.db.getHotels().filter(h => h.status === 'PUBLISHED' || !h.status);
     const products = this.db.getProducts().filter(p => p.status === 'ACTIVE' || !p.status);

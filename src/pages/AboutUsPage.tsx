@@ -28,6 +28,7 @@ import {
   Heart
 } from 'lucide-react';
 import { AppDatabase } from '../services/db';
+import { useInventoryVisibility } from '../services/inventoryVisibilityService';
 import { HeroTrustStrip } from '../components/Hero/HeroTrustStrip';
 import { WhyTheUnbound } from '../components/WhyTheUnbound';
 
@@ -45,6 +46,7 @@ export const AboutUsPage: React.FC<AboutUsPageProps> = ({
   onNavigateToContact
 }) => {
   const db = AppDatabase.getInstance();
+  const { visibleDestinations } = useInventoryVisibility();
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<number>(1);
   const [quickMessageSent, setQuickMessageSent] = useState(false);
   const [agentName, setAgentName] = useState('');
@@ -415,77 +417,44 @@ export const AboutUsPage: React.FC<AboutUsPageProps> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* United Kingdom */}
-          <div 
-            onClick={() => onSelectDestination && onSelectDestination('uk')}
-            className="group cursor-pointer bg-slate-50 rounded-3xl border border-slate-200 hover:border-teal-500 transition-all p-6 space-y-4 hover:shadow-md"
-          >
-            <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-700 border border-blue-200 flex items-center justify-center font-black text-xl">
-              🇬🇧
+          {visibleDestinations.map(dest => {
+            const flag = dest.slug === 'japan' ? '🇯🇵' : dest.slug === 'united-kingdom' || dest.slug === 'uk' ? '🇬🇧' : dest.slug === 'europe' ? '🇪🇺' : dest.slug === 'dubai' ? '🇦🇪' : dest.slug === 'thailand' ? '🇹🇭' : dest.slug === 'singapore' ? '🇸🇬' : dest.slug === 'bali-indonesia' ? '🇮🇩' : dest.slug === 'vietnam' ? '🇻🇳' : '🌐';
+            const cityList = dest.cities?.map(c => c.name).join(', ') || '';
+            return (
+              <div 
+                key={dest.id}
+                onClick={() => onSelectDestination && onSelectDestination(dest.slug)}
+                className="group cursor-pointer bg-slate-50 rounded-3xl border border-slate-200 hover:border-teal-500 transition-all p-6 space-y-4 hover:shadow-md flex flex-col justify-between"
+              >
+                <div className="space-y-4">
+                  <div className="w-12 h-12 rounded-2xl bg-teal-50 text-teal-700 border border-teal-200 flex items-center justify-center font-black text-xl">
+                    {flag}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900 group-hover:text-teal-700 transition-colors">
+                      {dest.name}
+                    </h3>
+                    {cityList && (
+                      <p className="text-xs text-slate-500 font-medium line-clamp-1">
+                        {cityList}
+                      </p>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed line-clamp-3">
+                    {dest.description || dest.tagline}
+                  </p>
+                </div>
+                <div className="pt-2 flex items-center text-xs font-bold text-teal-700 group-hover:translate-x-1 transition-transform">
+                  <span>Explore {dest.name} Hubs & Itineraries →</span>
+                </div>
+              </div>
+            );
+          })}
+          {visibleDestinations.length === 0 && (
+            <div className="md:col-span-3 text-center py-8 text-slate-500 text-xs italic bg-slate-50 border border-slate-200 rounded-3xl">
+              No active destination corridors are currently configured.
             </div>
-            <div>
-              <h3 className="text-lg font-black text-slate-900 group-hover:text-teal-700 transition-colors">
-                United Kingdom
-              </h3>
-              <p className="text-xs text-slate-500 font-medium">
-                London, Edinburgh, Cotswolds, Scottish Highlands, Bath, Oxford
-              </p>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Bespoke luxury touring featuring private chauffeur fleets, Blue Badge licensed guides, and historic country manor allocations.
-            </p>
-            <div className="pt-2 flex items-center text-xs font-bold text-teal-700 group-hover:translate-x-1 transition-transform">
-              <span>Explore UK Hubs & Itineraries →</span>
-            </div>
-          </div>
-
-          {/* Europe */}
-          <div 
-            onClick={() => onSelectDestination && onSelectDestination('europe')}
-            className="group cursor-pointer bg-slate-50 rounded-3xl border border-slate-200 hover:border-teal-500 transition-all p-6 space-y-4 hover:shadow-md"
-          >
-            <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-700 border border-indigo-200 flex items-center justify-center font-black text-xl">
-              🇪🇺
-            </div>
-            <div>
-              <h3 className="text-lg font-black text-slate-900 group-hover:text-teal-700 transition-colors">
-                Europe (Schengen)
-              </h3>
-              <p className="text-xs text-slate-500 font-medium">
-                France, Italy, Switzerland, Netherlands, Spain, Germany
-              </p>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Seamless cross-border European journeys, alpine panoramic rail bookings, private skip-the-line museum docents, and curated gastronomic experiences.
-            </p>
-            <div className="pt-2 flex items-center text-xs font-bold text-teal-700 group-hover:translate-x-1 transition-transform">
-              <span>Explore European Circuits →</span>
-            </div>
-          </div>
-
-          {/* Japan */}
-          <div 
-            onClick={() => onSelectDestination && onSelectDestination('japan')}
-            className="group cursor-pointer bg-slate-50 rounded-3xl border border-slate-200 hover:border-teal-500 transition-all p-6 space-y-4 hover:shadow-md"
-          >
-            <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-700 border border-rose-200 flex items-center justify-center font-black text-xl">
-              🇯🇵
-            </div>
-            <div>
-              <h3 className="text-lg font-black text-slate-900 group-hover:text-teal-700 transition-colors">
-                Japan
-              </h3>
-              <p className="text-xs text-slate-500 font-medium">
-                Tokyo, Kyoto, Osaka, Mt. Fuji, Hokkaido, Hiroshima, Nara
-              </p>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Authentic Japanese hospitality with traditional ryokans, private onsens, bullet train luggage forwardings, and bilingual local coordinators.
-            </p>
-            <div className="pt-2 flex items-center text-xs font-bold text-teal-700 group-hover:translate-x-1 transition-transform">
-              <span>Explore Japan Programs →</span>
-            </div>
-          </div>
+          )}
         </div>
       </section>
 

@@ -10,6 +10,7 @@ import {
   Trash2, 
   CheckCircle2, 
   XCircle, 
+  X,
   Eye, 
   Globe2, 
   Sparkles, 
@@ -223,7 +224,7 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
   };
 
   const handleToggleStatus = async (dest: Destination) => {
-    const nextStatus = dest.status === 'ACTIVE' ? 'COMING_SOON' : 'ACTIVE';
+    const nextStatus = dest.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
     try {
       await db.saveDestinationAsync({ ...dest, status: nextStatus }, user);
       refresh();
@@ -397,11 +398,25 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
                       onClick={() => handleToggleStatus(dest)}
                       className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-bold cursor-pointer transition-colors backdrop-blur-md ${
                         dest.status === 'ACTIVE'
-                          ? 'bg-emerald-500/90 text-white'
-                          : 'bg-amber-500/90 text-white'
+                          ? 'bg-emerald-500/90 text-white hover:bg-emerald-600/90'
+                          : dest.status === 'COMING_SOON'
+                          ? 'bg-blue-500/90 text-white hover:bg-blue-600/90'
+                          : dest.status === 'DRAFT'
+                          ? 'bg-slate-500/90 text-white hover:bg-slate-600/90'
+                          : dest.status === 'ARCHIVED'
+                          ? 'bg-red-500/90 text-white hover:bg-red-600/90'
+                          : 'bg-amber-500/90 text-white hover:bg-amber-600/90'
                       }`}
                     >
-                      {dest.status === 'ACTIVE' ? <CheckCircle2 className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
+                      {dest.status === 'ACTIVE' ? (
+                        <CheckCircle2 className="w-3 h-3" />
+                      ) : dest.status === 'COMING_SOON' ? (
+                        <Clock className="w-3 h-3" />
+                      ) : dest.status === 'ARCHIVED' ? (
+                        <X className="w-3 h-3" />
+                      ) : (
+                        <Clock className="w-3 h-3" />
+                      )}
                       <span>{dest.status}</span>
                     </button>
                   </div>
@@ -640,11 +655,14 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
                   <label className="font-semibold text-slate-700">Publish Status</label>
                   <select
                     value={formData.status}
-                    onChange={e => setFormData({ ...formData, status: e.target.value as 'ACTIVE' | 'COMING_SOON' })}
+                    onChange={e => setFormData({ ...formData, status: e.target.value as any })}
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl"
                   >
                     <option value="ACTIVE">Active (Live on Website)</option>
                     <option value="COMING_SOON">Coming Soon</option>
+                    <option value="DRAFT">Draft</option>
+                    <option value="INACTIVE">Inactive (Hidden)</option>
+                    <option value="ARCHIVED">Archived (Retired)</option>
                   </select>
                 </div>
               </div>

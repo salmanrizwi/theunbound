@@ -485,7 +485,7 @@ export interface Destination {
   cities: DestinationCity[];
   highlights: string[];
   featuredProductIds: string[];
-  status: 'ACTIVE' | 'COMING_SOON';
+  status: 'ACTIVE' | 'COMING_SOON' | 'DRAFT' | 'INACTIVE' | 'ARCHIVED';
   primaryCtaText?: string;
   showPrimaryCta?: boolean;
   secondaryCtaText?: string;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { QuotationProvider, useQuotation } from './context/QuotationContext';
 import { RosterProvider } from './context/RosterContext';
@@ -48,6 +48,7 @@ import {
 } from './services/portalRouter';
 import { canUserAccessCMS, canUserAccessQuoteBuilder, canUserAccessB2BInventory } from './services/permissionEngine';
 import { authDiagnostic } from './services/authDiagnostic';
+import { inventoryVisibilityService } from './services/inventoryVisibilityService';
 import { 
   Globe2, 
   ShieldCheck, 
@@ -236,9 +237,22 @@ const MainAppContent: React.FC = () => {
 
   // Active Destination object or 'all'
   const isAllDestinations = selectedDestinationSlug === 'all';
-  const currentDestination = isAllDestinations
+  const foundDestination = isAllDestinations
     ? null
-    : (destinations.find(d => d.slug === selectedDestinationSlug) || destinations[0]);
+    : destinations.find(d => d.slug === selectedDestinationSlug);
+
+  const isDestinationVisible = foundDestination
+    ? inventoryVisibilityService.isDestinationEligible(foundDestination, role)
+    : false;
+
+  const currentDestination = isDestinationVisible ? foundDestination : null;
+
+  // Filter only active/visible destinations for customer-facing views (Header, Footer, B2B Agent Portal, etc.)
+  const activeDestinations = useMemo(() => {
+    return destinations.filter(d => 
+      inventoryVisibilityService.isDestinationEligible(d, role)
+    );
+  }, [destinations, role]);
 
   const handleSelectDestination = (slug: string) => {
     setSelectedDestinationSlug(slug);
@@ -354,7 +368,7 @@ const MainAppContent: React.FC = () => {
 
       return (
         <B2BAgentPortal
-          destinations={destinations}
+          destinations={activeDestinations}
           hotels={hotels}
           products={products}
           onOpenBookingModal={handleOpenQuotationBooking}
@@ -423,7 +437,7 @@ const MainAppContent: React.FC = () => {
 
       {/* Top Main Navigation */}
       <Navbar
-        destinations={destinations}
+        destinations={activeDestinations}
         selectedDestinationSlug={selectedDestinationSlug}
         onSelectDestination={handleSelectDestination}
         activeTab={activeTab}
@@ -457,13 +471,13 @@ const MainAppContent: React.FC = () => {
           isAllDestinations ? (
             /* Authoritative Canonical Home Page — Used for ALL visitors (unauthenticated, B2B Agent, and Admin) */
             <LoggedOutBuyerHomepage
-              allDestinations={destinations}
+              allDestinations={activeDestinations}
               onSelectDestination={handleSelectDestination}
             />
-          ) : (
+          ) : currentDestination ? (
             <DestinationPage
               destination={currentDestination}
-              allDestinations={destinations}
+              allDestinations={activeDestinations}
               onSelectDestination={handleSelectDestination}
               products={isB2BAuthorized ? products : []}
               onViewProduct={(p) => {
@@ -482,13 +496,31 @@ const MainAppContent: React.FC = () => {
               }}
               onCustomizePackage={handleCustomizePackage}
             />
+          ) : (
+            <div className="max-w-4xl mx-auto px-4 py-16 text-center space-y-6">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-amber-50 text-amber-500 border border-amber-200">
+                <Globe2 className="w-8 h-8" />
+              </div>
+              <h2 className="text-2xl font-black font-sans text-slate-900 tracking-tight">
+                DESTINATION TEMPORARILY OFFLINE
+              </h2>
+              <p className="text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
+                This destination corridor is currently undergoing live operational synchronization and ground tariff adjustments. Please return to the Destination Explorer.
+              </p>
+              <button
+                onClick={() => handleSelectDestination('all')}
+                className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 text-xs sm:text-sm font-bold transition-all cursor-pointer inline-flex items-center space-x-2"
+              >
+                <span>Return to Destination Explorer</span>
+              </button>
+            </div>
           )
         )}
 
         {activeTab === 'B2B_BUILDER' && (
           canAccessB2B ? (
             <B2BQuotationBuilderPage
-              destinations={destinations}
+              destinations={activeDestinations}
               products={products}
               onViewProductDetails={(p) => {
                 setInspectingProductHidePrice(true);

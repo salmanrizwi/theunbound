@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Destination } from '../../types';
 import { AppDatabase } from '../../services/db';
+import { useInventoryVisibility } from '../../services/inventoryVisibilityService';
 
 interface BuyerFooterProps {
   onSelectDestination: (slug: string) => void;
@@ -30,6 +31,7 @@ export const BuyerFooter: React.FC<BuyerFooterProps> = ({
 }) => {
   const db = AppDatabase.getInstance();
   const footerConfig = db.getFooterConfig();
+  const { visibleDestinations } = useInventoryVisibility();
 
   return (
     <footer className="bg-slate-950 text-white border-t border-slate-800">
@@ -62,7 +64,13 @@ export const BuyerFooter: React.FC<BuyerFooterProps> = ({
                 <div className={`md:col-span-5 lg:col-span-6 grid grid-cols-2 ${liveColumns.length >= 3 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-6`}>
                   {liveColumns.map((col) => {
                     const activeLinks = (col.links || [])
-                      .filter(link => link.status !== 'INACTIVE')
+                      .filter(link => {
+                        if (link.status === 'INACTIVE') return false;
+                        if (link.type === 'DESTINATION' && link.targetId && link.targetId !== 'all') {
+                          return visibleDestinations.some(d => d.id === link.targetId || d.slug === link.targetId);
+                        }
+                        return true;
+                      })
                       .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
 
                     return (
@@ -134,7 +142,7 @@ export const BuyerFooter: React.FC<BuyerFooterProps> = ({
               );
             }
 
-            // Default standard columns fallback
+             // Default standard columns fallback
             return (
               <div className="md:col-span-5 lg:col-span-6 grid grid-cols-2 sm:grid-cols-3 gap-6">
                 <div className="space-y-3">
@@ -145,35 +153,21 @@ export const BuyerFooter: React.FC<BuyerFooterProps> = ({
                     <li>
                       <button 
                         onClick={() => onSelectDestination('all')}
-                        className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5 text-left"
                       >
                         <span>All Destinations (Global Overview)</span>
                       </button>
                     </li>
-                    <li>
-                      <button 
-                        onClick={() => onSelectDestination('japan')}
-                        className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                      >
-                        <span>Japan (Tokyo, Kyoto, Osaka, Mt. Fuji)</span>
-                      </button>
-                    </li>
-                    <li>
-                      <button 
-                        onClick={() => onSelectDestination('uk')}
-                        className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                      >
-                        <span>United Kingdom (London, Edinburgh, Highlands)</span>
-                      </button>
-                    </li>
-                    <li>
-                      <button 
-                        onClick={() => onSelectDestination('europe')}
-                        className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                      >
-                        <span>Europe (Paris, Rome, Amalfi, Swiss Alps)</span>
-                      </button>
-                    </li>
+                    {visibleDestinations.map(d => (
+                      <li key={`f-fallback-dest-${d.id}`}>
+                        <button 
+                          onClick={() => onSelectDestination(d.slug)}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5 text-left"
+                        >
+                          <span>{d.name} Portfolio</span>
+                        </button>
+                      </li>
+                    ))}
                   </ul>
                 </div>
 
@@ -182,37 +176,28 @@ export const BuyerFooter: React.FC<BuyerFooterProps> = ({
                     Consular & Visas
                   </h4>
                   <ul className="space-y-2 text-xs text-slate-400">
+                    {visibleDestinations.slice(0, 3).map(d => (
+                      <li key={`f-fallback-visa-${d.id}`}>
+                        <button 
+                          onClick={() => {
+                            onSelectTab('VISAS');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5 text-left"
+                        >
+                          <span>{d.name} Tourist Visa Checklist</span>
+                        </button>
+                      </li>
+                    ))}
                     <li>
                       <button 
                         onClick={() => {
                           onSelectTab('VISAS');
                           window.scrollTo({ top: 0, behavior: 'smooth' });
                         }}
-                        className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
+                        className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5 text-left"
                       >
-                        <span>Japan Tourist E-Visa Checklist</span>
-                      </button>
-                    </li>
-                    <li>
-                      <button 
-                        onClick={() => {
-                          onSelectTab('VISAS');
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
-                        className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                      >
-                        <span>UK Standard Visitor Visa Checklist</span>
-                      </button>
-                    </li>
-                    <li>
-                      <button 
-                        onClick={() => {
-                          onSelectTab('VISAS');
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
-                        className="hover:text-[#00C6A6] transition-colors cursor-pointer flex items-center space-x-1.5"
-                      >
-                        <span>Schengen Short-Stay Visa Requirements</span>
+                        <span>Global Visa Checklists Desk</span>
                       </button>
                     </li>
                   </ul>

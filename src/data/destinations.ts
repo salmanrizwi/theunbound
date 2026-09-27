@@ -147,7 +147,7 @@ export const DESTINATIONS: Destination[] = [
       }
     ],
     featuredProductIds: ['uk-lon-01', 'uk-cots-01', 'uk-edi-01', 'uk-trf-01'],
-    status: 'ACTIVE'
+    status: 'INACTIVE'
   },
   {
     id: 'dest-europe',
@@ -221,7 +221,7 @@ export const DESTINATIONS: Destination[] = [
       }
     ],
     featuredProductIds: ['eu-par-01', 'eu-rom-01', 'eu-swi-01', 'eu-bar-01'],
-    status: 'ACTIVE'
+    status: 'INACTIVE'
   },
   {
     id: 'dest-dubai',
@@ -271,7 +271,7 @@ export const DESTINATIONS: Destination[] = [
       }
     ],
     featuredProductIds: ['dxb-tour-01', 'dxb-yacht-01', 'dxb-trf-01'],
-    status: 'ACTIVE'
+    status: 'INACTIVE'
   },
   {
     id: 'dest-thailand',
@@ -322,7 +322,7 @@ export const DESTINATIONS: Destination[] = [
       }
     ],
     featuredProductIds: ['th-bkk-01', 'th-phu-01'],
-    status: 'ACTIVE'
+    status: 'INACTIVE'
   },
   {
     id: 'dest-malaysia',
@@ -366,7 +366,7 @@ export const DESTINATIONS: Destination[] = [
       { id: 'johor-bahru', name: 'Johor Bahru', tagline: 'Family theme parks, Desaru Coast and Johor Straits', image: 'https://images.unsplash.com/photo-1570789210967-2cac24afeb00?q=80&w=800&auto=format&fit=crop', productCount: 6 }
     ],
     featuredProductIds: ['my-kl-01', 'my-gent-01', 'my-lang-01'],
-    status: 'ACTIVE'
+    status: 'INACTIVE'
   },
   {
     id: 'dest-singapore',
@@ -406,7 +406,7 @@ export const DESTINATIONS: Destination[] = [
       { id: 'sentosa', name: 'Sentosa', tagline: 'Tropical theme parks, beaches and luxury island resorts', image: 'https://images.unsplash.com/photo-1506351421178-63b52a2d15c2?q=80&w=800&auto=format&fit=crop', productCount: 12 }
     ],
     featuredProductIds: ['sg-mbs-01', 'sg-uss-01', 'sg-gard-01'],
-    status: 'ACTIVE'
+    status: 'INACTIVE'
   },
   {
     id: 'dest-indonesia',
@@ -452,7 +452,7 @@ export const DESTINATIONS: Destination[] = [
       { id: 'uluwatu', name: 'Uluwatu', tagline: 'Limestone sea cliffs, world-class surf and ocean clubs', image: 'https://images.unsplash.com/photo-1539367628448-4bc5c9d171c8?q=80&w=800&auto=format&fit=crop', productCount: 9 }
     ],
     featuredProductIds: ['id-ubud-01', 'id-ulu-01', 'id-penida-01'],
-    status: 'ACTIVE'
+    status: 'INACTIVE'
   },
   {
     id: 'dest-vietnam',
@@ -495,7 +495,7 @@ export const DESTINATIONS: Destination[] = [
       { id: 'phu-quoc', name: 'Phu Quoc', tagline: 'Tropical white sand island with luxury beachfront resorts', image: 'https://images.unsplash.com/photo-1540555700478-4be289fbecef?q=80&w=800&auto=format&fit=crop', productCount: 7 }
     ],
     featuredProductIds: ['vn-han-01', 'vn-hal-01', 'vn-dan-01'],
-    status: 'ACTIVE'
+    status: 'INACTIVE'
   }
 ];
 

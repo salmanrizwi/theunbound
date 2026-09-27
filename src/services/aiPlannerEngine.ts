@@ -20,6 +20,7 @@ import { AiPlannerTools } from './aiPlannerTools';
 import { hotelToProduct } from '../utils/hotelHelpers';
 import { formatCurrency, convertCurrency, calculateProductPrice } from './pricingEngine';
 import { AppDatabase } from './db';
+import { inventoryVisibilityService } from './inventoryVisibilityService';
 
 /**
  * AI PLANNER INTELLIGENCE ENGINE
@@ -63,19 +64,21 @@ export class AiPlannerEngine {
 
     // 1. Destination Matching
     const allDestinations = this.db.getDestinations();
+    const activeDestinations = allDestinations.filter(d => 
+      inventoryVisibilityService.isDestinationEligible(d)
+    );
     let matchedDest: Destination | undefined;
 
-    for (const d of allDestinations) {
+    for (const d of activeDestinations) {
       if (textLower.includes(d.name.toLowerCase()) || textLower.includes(d.country.toLowerCase())) {
         matchedDest = d;
         break;
       }
     }
 
-    // Default fallback to Japan if not explicitly detected or first available destination
-    if (!matchedDest && allDestinations.length > 0) {
-      const japanDest = allDestinations.find(d => d.name.toLowerCase().includes('japan') || d.country.toLowerCase().includes('japan'));
-      matchedDest = japanDest || allDestinations[0];
+    // Default fallback to first active/eligible destination if not explicitly detected
+    if (!matchedDest && activeDestinations.length > 0) {
+      matchedDest = activeDestinations[0];
     }
 
     const destConfirmed = Boolean(
@@ -307,13 +310,15 @@ export class AiPlannerEngine {
       clientName = clientMatch[1].trim();
     }
 
+    const firstActiveDest = activeDestinations[0] || null;
+
     return {
       destination: {
-        value: matchedDest?.name || 'Japan',
+        value: matchedDest?.name || firstActiveDest?.name || 'Japan',
         status: destConfirmed ? 'CONFIRMED' : 'INFERRED',
         confidence: destConfirmed ? 0.95 : 0.65
       },
-      destinationId: matchedDest?.id || 'dest-japan',
+      destinationId: matchedDest?.id || firstActiveDest?.id || 'dest-japan',
       hubs: {
         value: matchedHubs.map(h => h.name),
         status: hubsConfirmed ? 'CONFIRMED' : 'INFERRED',
@@ -462,7 +467,9 @@ export class AiPlannerEngine {
     currency: CurrencyCode = 'USD',
     promptText: string = ''
   ): Promise<AiPlannerResult> {
-    const destinationId = requirements.destinationId || 'dest-japan';
+    const activeDests = this.db.getDestinations().filter(d => inventoryVisibilityService.isDestinationEligible(d));
+    const fallbackId = activeDests[0]?.id || 'dest-japan';
+    const destinationId = requirements.destinationId || fallbackId;
     const destName = requirements.destination.value;
     const nights = requirements.duration.nights.value;
     const totalDays = nights + 1;

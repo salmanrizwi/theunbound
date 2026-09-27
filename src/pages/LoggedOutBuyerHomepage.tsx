@@ -64,12 +64,9 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
 
   // Authoritative real-time destination inventory derivation (excluding virtual 'all')
   const baseDestinations = useMemo(() => {
-    // Rely primarily on inventoryVisibilityService
-    const sourceList = visibleDestinations && visibleDestinations.length > 0
-      ? visibleDestinations
-      : (allDestinations || []);
-    return sourceList.filter(d => d.slug !== 'all');
-  }, [visibleDestinations, allDestinations]);
+    // Rely exclusively on inventoryVisibilityService
+    return (visibleDestinations || []).filter(d => d.slug !== 'all');
+  }, [visibleDestinations]);
 
   // Order destinations according to HomepageConfig if defined
   const displayDestinations = useMemo(() => {

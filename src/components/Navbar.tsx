@@ -23,6 +23,7 @@ import { CurrencyCode, DestinationRegion, Destination, SUPPORTED_CURRENCIES, Men
 import { AppDatabase } from '../services/db';
 import { canUserAccessCMS, canUserAccessQuoteBuilder, canUserAccessB2BInventory } from '../services/permissionEngine';
 import { navigateTo } from '../services/portalRouter';
+import { useInventoryVisibility } from '../services/inventoryVisibilityService';
 
 export type MainNavTab = 'DESTINATIONS' | 'VISAS' | 'B2B_BUILDER' | 'ADMIN' | 'ACCOUNT' | 'BLOGS' | 'CONTACT' | 'TERMS' | 'PRIVACY' | 'REFUND' | 'COOKIES' | 'CUSTOM_PAGE' | 'ABOUT';
 
@@ -62,6 +63,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
+  const { visibleDestinations } = useInventoryVisibility({ userRole: role || user?.role });
+
   const db = AppDatabase.getInstance();
   const [cmsMenuItems, setCmsMenuItems] = useState<MenuItemConfig[]>(() => db.getMenuItems());
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
@@ -97,7 +100,18 @@ export const Navbar: React.FC<NavbarProps> = ({
   }, [headerMenuItems]);
 
   const getChildItems = (parentId: string) => {
-    return headerMenuItems.filter(m => m.parentId === parentId);
+    const staticChildren = headerMenuItems.filter(m => m.parentId === parentId);
+    if (parentId === 'menu-destinations') {
+      const dynamicChildren: MenuItemConfig[] = visibleDestinations.map(d => ({
+        id: `menu-dest-${d.slug}`,
+        label: d.name,
+        type: 'DESTINATION',
+        targetId: d.slug,
+        isVisible: true
+      }));
+      return [...dynamicChildren, ...staticChildren];
+    }
+    return staticChildren;
   };
 
   const handleMenuItemClick = (item: MenuItemConfig) => {
@@ -140,7 +154,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         if (onSelectTab) onSelectTab('DESTINATIONS');
         onSelectDestination('all');
         navigateTo('/');
-      } else if (target === 'japan' || target === 'united-kingdom' || target === 'europe') {
+      } else if (visibleDestinations.some(d => d.slug === target)) {
         if (onSelectTab) onSelectTab('DESTINATIONS');
         onSelectDestination(target);
       } else if (target === 'visas') {
