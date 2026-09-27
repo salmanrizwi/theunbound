@@ -224,7 +224,7 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
         <div className="flex items-center justify-between lg:justify-end gap-3 pt-3 lg:pt-0 border-t lg:border-t-0 border-slate-100">
           <div className="text-left lg:text-right">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-              Final Selling Price
+              Final Price
             </span>
             <div className="flex items-baseline space-x-1">
               <span className="text-sm sm:text-base font-black text-slate-900">
@@ -400,7 +400,7 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
                   <span className="font-semibold text-slate-800">{activeRate.mealPlanName || activeRate.mealPlan}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500">Final Selling Price:</span>{' '}
+                  <span className="text-slate-500">Final Price:</span>{' '}
                   <strong className="text-emerald-600 font-black text-sm">{formatCurrency(stayCalc.finalTotalSellingPrice, currency)}</strong>
                 </div>
               </div>

@@ -101,9 +101,9 @@ export const visaProductToProduct = (visa: VisaProduct): Product => {
     childNetPrice: embassy + service,
     infantNetPrice: 0,
     currency: v.currency || 'USD',
-    defaultMarkupPercent: 20,
+    defaultMarkupPercent: 0,
     taxPercent: 0,
-    commissionPercent: 10,
+    commissionPercent: 0,
     serviceFeeFixed: 0,
     sellingPriceStartingFrom: suggestedSelling,
     season: 'All Year',
@@ -164,7 +164,7 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
   onSuccess
 }) => {
   const { user, role } = useAuth();
-  const { currency, addProductToQuote, updateQuoteItem } = useQuotation();
+  const { currency, addProductToQuote, updateQuoteItem, items } = useQuotation();
   const db = AppDatabase.getInstance();
 
   // 1. Authoritative canonical Visas catalog from db
@@ -401,10 +401,26 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
       }
     };
 
-    const targetItemId = existingQuoteItemId || (itemOrProduct as any)?.id;
+    if (portalOrigin === 'ADMIN_CMS') {
+      const updated = db.saveProductConfiguration(prod.id, fullConfigurationPayload, user);
+      if (onSuccess) {
+        onSuccess(updated || prod, {
+          visa: selectedVisa,
+          snapshot: fullConfigurationPayload,
+          applicants: totalApplicants,
+          travelDate
+        });
+      }
+      onClose();
+      return;
+    }
 
-    if (targetItemId) {
-      updateQuoteItem(targetItemId, prod, {
+    const matchingExistingItem = (existingQuoteItemId && items.find(it => it.id === existingQuoteItemId))
+      || (itemOrProduct && (itemOrProduct as any).calculation && items.find(it => it.id === (itemOrProduct as any).id))
+      || null;
+
+    if (matchingExistingItem) {
+      updateQuoteItem(matchingExistingItem.id, prod, {
         adults: adultApplicants,
         children: childApplicants,
         infants: infantApplicants,
@@ -431,7 +447,7 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
         serviceTime: `${selectedVisa.processingTimeDays} Days Processing`,
         notes: compiledNotes,
         selectedAddonIds: selectedAssistanceIds,
-        openDrawer: false,
+        openDrawer: true,
         master_product_id: selectedVisa.id,
         service_id: selectedVisa.id,
         category: 'Visa & Ancillary Services',
@@ -470,8 +486,10 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
             </div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                <span className="px-2 py-0.5 rounded-full bg-[#00C6A6] text-slate-950 text-[9px] sm:text-[10px] font-black uppercase tracking-wider">
-                  Visa & Ancillary Services Configurator
+                <span className={`px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black uppercase tracking-wider ${
+                  portalOrigin === 'ADMIN_CMS' ? 'bg-rose-500 text-white' : 'bg-[#00C6A6] text-slate-950'
+                }`}>
+                  {portalOrigin === 'ADMIN_CMS' ? 'Admin Mode — Master Product Configuration' : 'Visa & Ancillary Services Configurator'}
                 </span>
                 <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[9px] sm:text-[10px] font-bold border border-slate-700">
                   {selectedVisa.country}
@@ -1098,7 +1116,7 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
               )}
 
               <div className="bg-teal-950/60 p-2.5 rounded-xl border border-teal-600/40">
-                <span className="text-[10px] text-teal-300 font-bold block">Party Final Selling Price</span>
+                <span className="text-[10px] text-teal-300 font-bold block">Total Final Price</span>
                 <span className="text-xl font-black text-[#00E5C0] font-mono">
                   {formatCurrency(convertedTotalPartySelling, currency)}
                 </span>
@@ -1130,10 +1148,16 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
                 : 'bg-slate-300 text-slate-500 cursor-not-allowed'
             }`}
           >
-            {existingQuoteItemId ? <Check className="w-4 h-4 stroke-[3] shrink-0" /> : <Plus className="w-4 h-4 stroke-[3] shrink-0" />}
+            {existingQuoteItemId || portalOrigin === 'ADMIN_CMS' ? <Check className="w-4 h-4 stroke-[3] shrink-0" /> : <Plus className="w-4 h-4 stroke-[3] shrink-0" />}
             <span className="truncate">
-              <span className="hidden sm:inline">{existingQuoteItemId ? 'Update Visa in Quote' : 'Add Visa to Quote'}</span>
-              <span className="sm:hidden">{existingQuoteItemId ? 'Update Visa' : 'Add to Quote'}</span> {hasValidPrice ? `(${formatCurrency(convertedTotalPartySelling, currency)})` : ''}
+              {portalOrigin === 'ADMIN_CMS' ? (
+                'Save Master Product Configuration'
+              ) : (
+                <>
+                  <span className="hidden sm:inline">{existingQuoteItemId ? 'Update Visa in Quote' : 'Add Visa to Quote'}</span>
+                  <span className="sm:hidden">{existingQuoteItemId ? 'Update Visa' : 'Add to Quote'}</span> {hasValidPrice ? `(${formatCurrency(convertedTotalPartySelling, currency)})` : ''}
+                </>
+              )}
             </span>
           </button>
         </div>

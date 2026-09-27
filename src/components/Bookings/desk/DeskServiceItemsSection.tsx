@@ -24,6 +24,7 @@ import {
   DollarSign,
   ChevronDown,
   Info,
+  Sliders,
   X
 } from 'lucide-react';
 import { 
@@ -32,6 +33,7 @@ import {
   ConfirmationOverrideModal 
 } from '../ServiceItemActionModals';
 import { VoucherDocumentView } from '../VoucherDocumentView';
+import { GlobalConfiguratorRouter } from '../../Configurators/GlobalConfiguratorRouter';
 
 interface DeskServiceItemsSectionProps {
   booking: Booking;
@@ -54,6 +56,7 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<BookingItem | null>(null);
+  const [configuringItem, setConfiguringItem] = useState<BookingItem | null>(null);
   const [selectedVoucherItem, setSelectedVoucherItem] = useState<BookingItem | null>(null);
   const [deletingItem, setDeletingItem] = useState<BookingItem | null>(null);
   const [overrideItem, setOverrideItem] = useState<BookingItem | null>(null);
@@ -454,6 +457,16 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
                       {/* Row Action Buttons */}
                       <td className="py-4 px-4 align-top text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
+                          {/* Dedicated Configurator Launcher */}
+                          <button
+                            id={`btn-config-item-${item.id}`}
+                            onClick={() => setConfiguringItem(item)}
+                            className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-teal-700 hover:text-teal-900 cursor-pointer"
+                            title="Launch Dedicated Category Configurator"
+                          >
+                            <Sliders className="w-3.5 h-3.5" />
+                          </button>
+
                           {/* Comprehensive Edit Modal Trigger */}
                           <button
                             id={`btn-edit-item-${item.id}`}
@@ -497,6 +510,32 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
       {/* ========================================================================= */}
       {/* MODALS */}
       {/* ========================================================================= */}
+
+      {/* 0. DEDICATED CATEGORY CONFIGURATOR ROUTER */}
+      {configuringItem && (
+        <GlobalConfiguratorRouter
+          isOpen={true}
+          itemOrProduct={{
+            ...configuringItem,
+            id: configuringItem.productId || configuringItem.id,
+            name: configuringItem.productName,
+            product_category: configuringItem.category,
+            category: configuringItem.category,
+            city: configuringItem.city,
+            destinationName: configuringItem.destinationName
+          }}
+          portalOrigin="ADMIN_CMS"
+          initialTravelDate={configuringItem.serviceDate || configuringItem.travelDate}
+          initialAdults={configuringItem.adults || configuringItem.totalPax}
+          initialChildren={configuringItem.children}
+          initialNotes={configuringItem.operationalInstructions || configuringItem.internalNotes}
+          onClose={() => setConfiguringItem(null)}
+          onSuccess={() => {
+            setConfiguringItem(null);
+            onRefresh();
+          }}
+        />
+      )}
 
       {/* 1. COMPREHENSIVE EDIT SERVICE ITEM MODAL */}
       {editingItem && (

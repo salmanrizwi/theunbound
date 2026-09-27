@@ -24,6 +24,8 @@ interface QuotationContextType {
       serviceTime?: string;
       notes?: string;
       selectedAddonIds?: string[];
+      selectedUpsellIds?: string[];
+      selectedUpsellSnapshots?: any;
       openDrawer?: boolean;
       source?: QuoteItemSource;
       aiSuggested?: boolean;
@@ -65,6 +67,18 @@ interface QuotationContextType {
       serviceTime?: string;
       notes?: string;
       selectedAddonIds?: string[];
+      selectedUpsellIds?: string[];
+      selectedUpsellSnapshots?: any;
+      master_product_id?: string;
+      service_id?: string;
+      category?: string;
+      service_type?: string;
+      configuration_id?: string;
+      configuration_snapshot?: any;
+      pricing_snapshot?: any;
+      currency_snapshot?: CurrencyCode | string;
+      visaSnapshot?: any;
+      metadata?: Record<string, any>;
     }
   ) => void;
   toggleItemAddon: (itemId: string, addonId: string) => void;

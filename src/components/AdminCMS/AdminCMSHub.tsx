@@ -43,6 +43,7 @@ import { SystemAnalysis } from './SystemAnalysis';
 import { SEOManager } from './SEOManager';
 import { SupplierManager } from './SupplierManager';
 import { RailManager } from './RailManager';
+import { OperationalAssetsManager } from './OperationalAssetsManager';
 import { GlobalRemindersBar } from '../GlobalRemindersBar';
 import { ActionCenterDrawer } from '../ActionCenter/ActionCenterDrawer';
 import { CalendarTask, TravelLead } from '../../types';
@@ -455,6 +456,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           description: 'Master ground tour inventory engine, SKU specifications, child/infant rates, and adult tiers.',
           subTabs: [
             { id: 'PRODUCTS', label: `Product Inventory (${counts.totalProducts})`, icon: Package },
+            { id: 'OPERATIONAL_ASSETS', label: 'Operational Asset Master', icon: Database },
             { id: 'VISAS', label: 'Visa Requirements & Checklists', icon: FileText }
           ]
         },
@@ -468,7 +470,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           subTabs: [
             { id: 'VISA_SERVICES', label: 'Visa Services & Assistance', icon: FileText },
             { id: 'TRAVEL_PROTECTION', label: 'Travel Protection & Medical', icon: ShieldCheck },
-            { id: 'VIP_CONNECTIVITY', label: 'VIP Ground & 5G eSIM', icon: Sparkles },
+            { id: 'GROUND_CONNECTIVITY', label: 'Ground & Connectivity', icon: Sparkles },
             { id: 'FIELD_PARITY', label: 'Field Contract Matrix', icon: FileSpreadsheet }
           ]
         },
@@ -1375,6 +1377,15 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             <>
               {activeSubTab === 'PRODUCTS' && (
                 <ProductManager destinations={destinations} onViewProduct={onViewProduct} />
+              )}
+              {activeSubTab === 'OPERATIONAL_ASSETS' && (
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                  <OperationalAssetsManager
+                    destinations={destinations}
+                    cityHubs={db.getCityHubs()}
+                    suppliers={db.getSuppliers()}
+                  />
+                </div>
               )}
               {activeSubTab === 'VISAS' && (
                 <VisaCMSManager 

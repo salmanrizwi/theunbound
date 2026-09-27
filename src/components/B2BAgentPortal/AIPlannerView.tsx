@@ -371,7 +371,7 @@ export const AIPlannerView: React.FC<AIPlannerViewProps> = ({
                 <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
                   <p className="text-xs font-semibold text-slate-500">Route Hubs</p>
                   <p className="mt-1 text-sm font-bold text-slate-900 truncate">
-                    {currentResult.requirements.hubs.value.join(' → ')}
+                    {Array.isArray(currentResult.requirements?.hubs?.value) ? currentResult.requirements.hubs.value.join(' → ') : (currentResult.requirements?.hubs?.value || '—')}
                   </p>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">

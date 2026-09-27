@@ -10,19 +10,23 @@ import {
   ConnectivityPlan,
   RequirementCategory,
   RequirementRequiredStatus,
-  CurrencyCode
+  CurrencyCode,
+  CommercialPricingDetails,
+  MarginType
 } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { ImageUploadOrUrlInput } from '../ImageUploadOrUrlInput';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
+import { AdminWorkspaceLayout } from '../common/AdminWorkspaceLayout';
+import { ModuleMasterSyncBar } from './common/ModuleMasterSyncBar';
 import { 
   createDefaultRequirementsForVisa, 
   createDefaultAssistanceServices,
   filterApplicableRequirements,
   generateCustomerVisaChecklist
 } from '../../services/visaRequirementService';
-import { formatCurrency } from '../../services/pricingEngine';
+import { formatCurrency, calculateUnifiedPrice } from '../../services/pricingEngine';
 import { 
   FileText, 
   Plus, 
@@ -62,7 +66,11 @@ import {
   FileSpreadsheet,
   AlertTriangle,
   Send,
-  UserCheck
+  UserCheck,
+  Percent,
+  Receipt,
+  Calculator,
+  ArrowRight
 } from 'lucide-react';
 
 interface VisaCMSManagerProps {
@@ -70,6 +78,8 @@ interface VisaCMSManagerProps {
   initialSubTab?: string;
   onSubTabChange?: (tab: string) => void;
 }
+
+export type AncillaryServiceCategory = 'VISA_SERVICES' | 'TRAVEL_PROTECTION' | 'GROUND_CONNECTIVITY' | 'FIELD_PARITY';
 
 export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({ 
   destinations, 
@@ -80,11 +90,11 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
   const db = AppDatabase.getInstance();
 
   // Primary Workspace Tabs
-  const [activeMainTab, setActiveMainTab] = useState<'VISA_SERVICES' | 'TRAVEL_PROTECTION' | 'VIP_CONNECTIVITY' | 'FIELD_PARITY'>(() => {
+  const [activeMainTab, setActiveMainTab] = useState<AncillaryServiceCategory>(() => {
     if (initialSubTab) {
       const upper = initialSubTab.toUpperCase();
       if (upper === 'TRAVEL_PROTECTION' || upper === 'PROTECTION' || upper === 'INSURANCE') return 'TRAVEL_PROTECTION';
-      if (upper === 'VIP_CONNECTIVITY' || upper === 'VIP' || upper === 'CONNECTIVITY' || upper === 'ESIM') return 'VIP_CONNECTIVITY';
+      if (upper === 'GROUND_CONNECTIVITY' || upper === 'VIP_CONNECTIVITY' || upper === 'VIP' || upper === 'CONNECTIVITY' || upper === 'ESIM' || upper === 'GROUND') return 'GROUND_CONNECTIVITY';
       if (upper === 'FIELD_PARITY' || upper === 'PARITY' || upper === 'SCHEMA') return 'FIELD_PARITY';
       return 'VISA_SERVICES';
     }
@@ -97,8 +107,8 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
       const upper = initialSubTab.toUpperCase();
       if (upper === 'TRAVEL_PROTECTION' || upper === 'PROTECTION' || upper === 'INSURANCE') {
         setActiveMainTab('TRAVEL_PROTECTION');
-      } else if (upper === 'VIP_CONNECTIVITY' || upper === 'VIP' || upper === 'CONNECTIVITY' || upper === 'ESIM') {
-        setActiveMainTab('VIP_CONNECTIVITY');
+      } else if (upper === 'GROUND_CONNECTIVITY' || upper === 'VIP_CONNECTIVITY' || upper === 'VIP' || upper === 'CONNECTIVITY' || upper === 'ESIM' || upper === 'GROUND') {
+        setActiveMainTab('GROUND_CONNECTIVITY');
       } else if (upper === 'FIELD_PARITY' || upper === 'PARITY' || upper === 'SCHEMA') {
         setActiveMainTab('FIELD_PARITY');
       } else if (upper === 'VISA_SERVICES' || upper === 'VISAS') {
@@ -107,7 +117,7 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
     }
   }, [initialSubTab]);
 
-  const handleTabSwitch = (tab: 'VISA_SERVICES' | 'TRAVEL_PROTECTION' | 'VIP_CONNECTIVITY' | 'FIELD_PARITY') => {
+  const handleTabSwitch = (tab: AncillaryServiceCategory) => {
     setActiveMainTab(tab);
     onSubTabChange?.(tab);
   };
@@ -120,12 +130,44 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
 
   // Search & Filter States
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCountry, setSelectedCountry] = useState<string>('all');
+  const [selectedDestination, setSelectedDestination] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'DRAFT' | 'ARCHIVED'>('ALL');
+  const [currencyFilter, setCurrencyFilter] = useState<string>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
-  // Active Workspace / Drawer State for a Visa
+  // Active Workspace / Drawer State for a Visa / Ancillary Service
   const [editingVisa, setEditingVisa] = useState<VisaProduct | null>(null);
-  const [workspaceTab, setWorkspaceTab] = useState<'OVERVIEW' | 'ELIGIBILITY' | 'REQUIREMENTS' | 'PROCESSING' | 'PRICING' | 'ASSISTANCE' | 'CUSTOMER_PREVIEW' | 'SEO' | 'AUDIT'>('OVERVIEW');
+  const [editingProtection, setEditingProtection] = useState<Partial<TravelProtectionPlan> | null>(null);
+  const [editingVip, setEditingVip] = useState<Partial<VipGroundService> | null>(null);
+  const [editingConnectivity, setEditingConnectivity] = useState<Partial<ConnectivityPlan> | null>(null);
+
+  // Generic Service Workspace Drawer State
+  const [isServiceDrawerOpen, setIsServiceDrawerOpen] = useState(false);
+  const [serviceDrawerCategory, setServiceDrawerCategory] = useState<'VISA' | 'PROTECTION' | 'VIP' | 'CONNECTIVITY'>('VISA');
+  const [workspaceTab, setWorkspaceTab] = useState<'BASIC' | 'COVERAGE' | 'CONFIG' | 'REQUIREMENTS' | 'PRICING' | 'ASSISTANCE' | 'UPSELLS' | 'CUSTOMER_PREVIEW' | 'SEO'>('PRICING');
+
+  // Commercial Pricing Form State for the currently edited item
+  const [pricingForm, setPricingForm] = useState<{
+    currency: CurrencyCode;
+    pricingUnit: string;
+    nettPrice: string; // string for input management
+    marginType: MarginType;
+    marginValue: string;
+    taxType: 'PERCENTAGE' | 'FIXED' | 'NOT_APPLICABLE';
+    taxValue: string;
+    serviceChargeType: 'PERCENTAGE' | 'FIXED' | 'NOT_APPLICABLE';
+    serviceChargeValue: string;
+  }>({
+    currency: 'USD',
+    pricingUnit: 'Per Applicant',
+    nettPrice: '',
+    marginType: 'PERCENTAGE',
+    marginValue: '25',
+    taxType: 'PERCENTAGE',
+    taxValue: '10',
+    serviceChargeType: 'FIXED',
+    serviceChargeValue: '15'
+  });
 
   // Requirements Builder Modal State (Inside Visa Workspace)
   const [isRequirementModalOpen, setIsRequirementModalOpen] = useState(false);
@@ -135,16 +177,6 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
   // Assistance Service Modal State
   const [isAssistanceModalOpen, setIsAssistanceModalOpen] = useState(false);
   const [editingAssistance, setEditingAssistance] = useState<VisaAssistanceService | null>(null);
-
-  // Protection Plan Modal State
-  const [isProtectionModalOpen, setIsProtectionModalOpen] = useState(false);
-  const [editingProtection, setEditingProtection] = useState<Partial<TravelProtectionPlan> | null>(null);
-
-  // VIP Ground / 5G Connectivity Modal State
-  const [isVipModalOpen, setIsVipModalOpen] = useState(false);
-  const [editingVip, setEditingVip] = useState<Partial<VipGroundService> | null>(null);
-  const [isConnectivityModalOpen, setIsConnectivityModalOpen] = useState(false);
-  const [editingConnectivity, setEditingConnectivity] = useState<Partial<ConnectivityPlan> | null>(null);
 
   // Delete target modal
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; type: 'VISA' | 'PROTECTION' | 'VIP' | 'CONNECTIVITY' } | null>(null);
@@ -159,102 +191,532 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
     });
   }, [db]);
 
-  // Filtered Visas
-  const filteredVisas = useMemo(() => {
-    return visas.filter(v => {
-      const matchesCountry = selectedCountry === 'all' || v.country.toLowerCase() === selectedCountry.toLowerCase();
-      const matchesStatus = statusFilter === 'ALL' || v.status === statusFilter;
-      const q = searchQuery.toLowerCase();
-      const matchesSearch = 
-        v.country.toLowerCase().includes(q) ||
-        v.visaType.toLowerCase().includes(q) ||
-        (v.description && v.description.toLowerCase().includes(q));
-      return matchesCountry && matchesStatus && matchesSearch;
+  // Unified Ancillary Inventory Items for the combined view
+  const allAncillaryItems = useMemo(() => {
+    const list: Array<{
+      id: string;
+      name: string;
+      category: 'Visa Services' | 'Travel Protection' | 'Ground & Connectivity';
+      rawCategory: 'VISA' | 'PROTECTION' | 'VIP' | 'CONNECTIVITY';
+      serviceType: string;
+      destination: string;
+      provider: string;
+      currency: CurrencyCode;
+      nettPrice?: number;
+      finalPrice: number;
+      status: 'ACTIVE' | 'DRAFT' | 'ARCHIVED';
+      updatedAt?: string;
+      originalItem: any;
+      heroImage?: string;
+    }> = [];
+
+    // 1. Visas
+    visas.forEach(v => {
+      const finalPrice = v.pricing?.finalPrice ?? ((v.embassyFee || 0) + (v.serviceFee || 0));
+      list.push({
+        id: v.id,
+        name: `${v.country} - ${v.visaType}`,
+        category: 'Visa Services',
+        rawCategory: 'VISA',
+        serviceType: v.visaType,
+        destination: v.country,
+        provider: 'Consular Embassy & DMC Desk',
+        currency: v.currency || 'USD',
+        nettPrice: v.pricing?.nettPrice ?? v.embassyFee,
+        finalPrice,
+        status: v.status || 'ACTIVE',
+        updatedAt: v.updatedAt || v.createdAt,
+        originalItem: v,
+        heroImage: v.heroImage
+      });
     });
-  }, [visas, selectedCountry, statusFilter, searchQuery]);
 
-  // Overall Stats
-  const totalRequirementsCount = useMemo(() => {
-    return visas.reduce((sum, v) => sum + (v.structuredRequirements?.length || 0), 0);
-  }, [visas]);
+    // 2. Travel Protection
+    protectionPlans.forEach(p => {
+      const finalPrice = p.pricing?.finalPrice ?? p.sellingPricePerTrip;
+      list.push({
+        id: p.id,
+        name: p.serviceName,
+        category: 'Travel Protection',
+        rawCategory: 'PROTECTION',
+        serviceType: 'International Medical & Trip Insurance',
+        destination: p.coverageArea || 'Worldwide',
+        provider: p.provider || 'Approved Underwriter',
+        currency: p.currency || 'USD',
+        nettPrice: p.pricing?.nettPrice ?? p.netCostPerTrip,
+        finalPrice,
+        status: p.status || 'ACTIVE',
+        updatedAt: p.updatedAt,
+        originalItem: p
+      });
+    });
+
+    // 3. VIP Ground Services
+    vipServices.forEach(vip => {
+      const finalPrice = vip.pricing?.finalPrice ?? vip.sellingPrice;
+      const destName = destinations.find(d => d.id === vip.destinationId)?.name || 'International Hub';
+      list.push({
+        id: vip.id,
+        name: vip.name,
+        category: 'Ground & Connectivity',
+        rawCategory: 'VIP',
+        serviceType: vip.serviceType.replace(/_/g, ' '),
+        destination: destName,
+        provider: vip.supplierName || 'Executive Ground Partner',
+        currency: vip.currency || 'USD',
+        nettPrice: vip.pricing?.nettPrice ?? vip.netCost,
+        finalPrice,
+        status: vip.status || 'ACTIVE',
+        updatedAt: vip.updatedAt,
+        originalItem: vip
+      });
+    });
+
+    // 4. 5G Connectivity
+    connectivityPlans.forEach(c => {
+      const finalPrice = c.pricing?.finalPrice ?? c.sellingPrice;
+      list.push({
+        id: c.id,
+        name: c.name,
+        category: 'Ground & Connectivity',
+        rawCategory: 'CONNECTIVITY',
+        serviceType: `5G eSIM (${c.dataAllowance} / ${c.validityDays} Days)`,
+        destination: c.coverageZone || 'Regional',
+        provider: 'TheUnbound Telecom Partner',
+        currency: c.currency || 'USD',
+        nettPrice: c.pricing?.nettPrice ?? c.netCost,
+        finalPrice,
+        status: c.status || 'ACTIVE',
+        updatedAt: c.updatedAt,
+        originalItem: c
+      });
+    });
+
+    return list;
+  }, [visas, protectionPlans, vipServices, connectivityPlans, destinations]);
+
+  // Filtered Items
+  const filteredItems = useMemo(() => {
+    return allAncillaryItems.filter(item => {
+      // Main tab filter
+      if (activeMainTab === 'VISA_SERVICES' && item.rawCategory !== 'VISA') return false;
+      if (activeMainTab === 'TRAVEL_PROTECTION' && item.rawCategory !== 'PROTECTION') return false;
+      if (activeMainTab === 'GROUND_CONNECTIVITY' && item.rawCategory !== 'VIP' && item.rawCategory !== 'CONNECTIVITY') return false;
+
+      // Category filter dropdown
+      if (categoryFilter !== 'all' && item.category !== categoryFilter) return false;
+
+      // Destination filter
+      if (selectedDestination !== 'all' && !item.destination.toLowerCase().includes(selectedDestination.toLowerCase())) {
+        return false;
+      }
+
+      // Status filter
+      if (statusFilter !== 'ALL' && item.status !== statusFilter) return false;
+
+      // Currency filter
+      if (currencyFilter !== 'all' && item.currency !== currencyFilter) return false;
+
+      // Search Query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matches = 
+          item.name.toLowerCase().includes(q) ||
+          item.id.toLowerCase().includes(q) ||
+          item.destination.toLowerCase().includes(q) ||
+          item.provider.toLowerCase().includes(q) ||
+          item.serviceType.toLowerCase().includes(q);
+        if (!matches) return false;
+      }
+
+      return true;
+    });
+  }, [allAncillaryItems, activeMainTab, categoryFilter, selectedDestination, statusFilter, currencyFilter, searchQuery]);
+
+  // Central Live Pricing Calculation for the Active Form
+  const livePricingCalculation = useMemo(() => {
+    const rawNett = parseFloat(pricingForm.nettPrice);
+    if (isNaN(rawNett) || rawNett <= 0) {
+      return null;
+    }
+
+    const marginVal = parseFloat(pricingForm.marginValue) || 0;
+    const taxVal = pricingForm.taxType === 'NOT_APPLICABLE' ? 0 : (parseFloat(pricingForm.taxValue) || 0);
+    const feeVal = pricingForm.serviceChargeType === 'NOT_APPLICABLE' ? 0 : (parseFloat(pricingForm.serviceChargeValue) || 0);
+
+    return calculateUnifiedPrice({
+      nettPrice: rawNett,
+      marginType: pricingForm.marginType,
+      marginValue: marginVal,
+      serviceChargeType: pricingForm.serviceChargeType === 'NOT_APPLICABLE' ? 'FIXED' : pricingForm.serviceChargeType,
+      serviceChargeValue: feeVal,
+      taxPercent: taxVal,
+      taxApplication: 'ON_MARGIN',
+      currency: pricingForm.currency
+    });
+  }, [pricingForm]);
 
   // --------------------------------------------------------------------------
-  // VISA CRUD OPERATIONS
+  // OPEN SERVICE FOR EDITING OR CREATING
   // --------------------------------------------------------------------------
-  const handleOpenCreateVisa = () => {
+  const handleOpenCreateService = (category: 'VISA' | 'PROTECTION' | 'VIP' | 'CONNECTIVITY') => {
     const defaultDest = destinations[0] || { id: 'dest-japan', name: 'Japan' };
-    const newId = `visa-${Date.now()}`;
-    const newVisa: VisaProduct = {
-      id: newId,
-      country: defaultDest.name,
-      countryCode: 'INTL',
-      destinationId: defaultDest.id,
-      visaType: 'Tourist E-Visa (Single Entry)',
-      entryType: 'SINGLE_ENTRY',
-      validityDays: 90,
-      stayDurationDays: 30,
-      processingTimeDays: 5,
-      expressProcessingAvailable: true,
-      expressProcessingTimeDays: 2,
-      embassyFee: 35,
-      serviceFee: 25,
-      expressServiceFee: 50,
-      currency: 'USD',
-      description: 'Official electronic tourist visa for international leisure travel with complete document verification and DMC liaison.',
-      documentsChecklist: [
-        'Original Passport with minimum 6 months validity',
-        '2 Recent passport photos on white background',
-        'Confirmed flight and hotel accommodation vouchers',
-        'Last 3 to 6 months bank statements'
-      ],
-      structuredRequirements: createDefaultRequirementsForVisa(newId, defaultDest.name, 'Tourist E-Visa'),
-      assistanceServices: createDefaultAssistanceServices(newId),
-      requirementVersion: 1,
-      submissionSteps: [
-        'Upload traveler details and scanned credentials',
-        'DMC Visa Operations scrutiny & appointment scheduling',
-        'Consulate lodgement & continuous tracking',
-        'Electronic Visa grant dispatch'
-      ],
-      eligibilityNotes: [
-        'Applicable for leisure tourism, trade fairs, and short visits',
-        'Travelers must have clean travel history and verified hotel vouchers'
-      ],
-      downloadableForms: [],
-      faqs: [],
-      heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
-      status: 'ACTIVE',
-      featured: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+    setServiceDrawerCategory(category);
+    setWorkspaceTab('BASIC');
 
-    setEditingVisa(newVisa);
-    setWorkspaceTab('OVERVIEW');
+    if (category === 'VISA') {
+      const newId = `visa-${Date.now()}`;
+      const newVisa: VisaProduct = {
+        id: newId,
+        country: defaultDest.name,
+        countryCode: 'INTL',
+        destinationId: defaultDest.id,
+        visaType: 'Tourist E-Visa (Single Entry)',
+        entryType: 'SINGLE_ENTRY',
+        validityDays: 90,
+        stayDurationDays: 30,
+        processingTimeDays: 5,
+        expressProcessingAvailable: true,
+        expressProcessingTimeDays: 2,
+        embassyFee: 35,
+        serviceFee: 25,
+        expressServiceFee: 50,
+        currency: 'USD',
+        description: 'Official electronic tourist visa for international leisure travel with complete document verification and DMC liaison.',
+        documentsChecklist: [
+          'Original Passport with minimum 6 months validity',
+          '2 Recent passport photos on white background',
+          'Confirmed flight and hotel accommodation vouchers',
+          'Last 3 to 6 months bank statements'
+        ],
+        structuredRequirements: createDefaultRequirementsForVisa(newId, defaultDest.name, 'Tourist E-Visa'),
+        assistanceServices: createDefaultAssistanceServices(newId),
+        requirementVersion: 1,
+        submissionSteps: [
+          'Upload traveler details and scanned credentials',
+          'DMC Visa Operations scrutiny & appointment scheduling',
+          'Consulate lodgement & continuous tracking',
+          'Electronic Visa grant dispatch'
+        ],
+        eligibilityNotes: [
+          'Applicable for leisure tourism, trade fairs, and short visits',
+          'Travelers must have clean travel history and verified hotel vouchers'
+        ],
+        downloadableForms: [],
+        faqs: [],
+        heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
+        status: 'ACTIVE',
+        featured: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      setEditingVisa(newVisa);
+      setEditingProtection(null);
+      setEditingVip(null);
+      setEditingConnectivity(null);
+
+      // Populate pricing form
+      setPricingForm({
+        currency: newVisa.currency || 'USD',
+        pricingUnit: 'Per Applicant',
+        nettPrice: newVisa.embassyFee ? String(newVisa.embassyFee) : '',
+        marginType: 'PERCENTAGE',
+        marginValue: '25',
+        taxType: 'PERCENTAGE',
+        taxValue: '10',
+        serviceChargeType: 'FIXED',
+        serviceChargeValue: newVisa.serviceFee ? String(newVisa.serviceFee) : '15'
+      });
+    } else if (category === 'PROTECTION') {
+      const newPlan: TravelProtectionPlan = {
+        id: `prot-${Date.now()}`,
+        serviceName: 'Comprehensive International Travel Insurance',
+        provider: 'Allianz Global Assistance / Vetted Underwriter',
+        coverageArea: 'Worldwide excl. US/Canada',
+        medicalCoverageAmount: 250000,
+        emergencyAssistanceIncluded: true,
+        evacuationCoverageAmount: 100000,
+        tripCancellationAmount: 5000,
+        baggageLossAmount: 1500,
+        validityDaysMax: 30,
+        eligibilityAgeMin: 1,
+        eligibilityAgeMax: 70,
+        netCostPerDay: 2,
+        netCostPerTrip: 30,
+        sellingPricePerDay: 3.5,
+        sellingPricePerTrip: 45,
+        currency: 'USD',
+        status: 'ACTIVE',
+        terms: 'Complies with European Schengen Regulation (EC) 810/2009. 24/7 cashless medical network.',
+        customerDescription: 'Consular-approved travel medical protection with cashless hospitalization and flight delay compensation.',
+        inclusions: ['Cashless In-Patient Hospitalization', 'Emergency Medical Evacuation', 'Trip Interruption', 'Baggage Loss & Delay Compensation'],
+        updatedAt: new Date().toISOString()
+      };
+      setEditingProtection(newPlan);
+      setEditingVisa(null);
+      setEditingVip(null);
+      setEditingConnectivity(null);
+
+      setPricingForm({
+        currency: newPlan.currency || 'USD',
+        pricingUnit: 'Per Traveller',
+        nettPrice: String(newPlan.netCostPerTrip),
+        marginType: 'PERCENTAGE',
+        marginValue: '30',
+        taxType: 'PERCENTAGE',
+        taxValue: '10',
+        serviceChargeType: 'FIXED',
+        serviceChargeValue: '5'
+      });
+    } else if (category === 'VIP') {
+      const newVip: VipGroundService = {
+        id: `vip-${Date.now()}`,
+        name: 'VIP Airport Meet & Assist (Arrival / Fast-Track)',
+        serviceType: 'MEET_AND_GREET',
+        destinationId: defaultDest.id,
+        supplierName: 'Executive Ground Logistics Partner',
+        shortDesc: 'Airside greeting at aerobridge gate with electric buggy and fast-track immigration escort.',
+        longDesc: 'Premium airside meet and greet with dedicated concierge, priority immigration clearance, luggage assistance, and seamless chauffeur handover.',
+        netCost: 120,
+        defaultMarkupPercent: 25,
+        sellingPrice: 150,
+        pricingType: 'PER_PAX',
+        currency: 'USD',
+        inclusions: ['Airside Gate Greeting', 'Electric Buggy Transfer', 'Fast-Track Customs / Immigration', 'Luggage Porterage', 'Chauffeur Handover'],
+        status: 'ACTIVE',
+        updatedAt: new Date().toISOString()
+      };
+      setEditingVip(newVip);
+      setEditingVisa(null);
+      setEditingProtection(null);
+      setEditingConnectivity(null);
+
+      setPricingForm({
+        currency: newVip.currency || 'USD',
+        pricingUnit: 'Per Service',
+        nettPrice: String(newVip.netCost),
+        marginType: 'PERCENTAGE',
+        marginValue: '25',
+        taxType: 'PERCENTAGE',
+        taxValue: '10',
+        serviceChargeType: 'NOT_APPLICABLE',
+        serviceChargeValue: '0'
+      });
+    } else if (category === 'CONNECTIVITY') {
+      const newConn: ConnectivityPlan = {
+        id: `conn-${Date.now()}`,
+        name: 'Japan & Asia Regional 5G Unlimited eSIM',
+        type: 'ESIM',
+        coverageZone: 'Japan, South Korea, Taiwan, Singapore, Thailand',
+        dataAllowance: '10GB High-Speed 5G',
+        validityDays: 15,
+        networkSpeed: '5G / 4G LTE High-Speed',
+        netCost: 14,
+        sellingPrice: 22,
+        currency: 'USD',
+        inclusions: ['Instant QR Code Activation', 'Zero Physical SIM Swapping', 'Hotspot / Tethering Enabled', 'Multi-Network Auto-Roaming'],
+        status: 'ACTIVE',
+        updatedAt: new Date().toISOString()
+      };
+      setEditingConnectivity(newConn);
+      setEditingVisa(null);
+      setEditingProtection(null);
+      setEditingVip(null);
+
+      setPricingForm({
+        currency: newConn.currency || 'USD',
+        pricingUnit: 'Per Unit',
+        nettPrice: String(newConn.netCost),
+        marginType: 'FIXED',
+        marginValue: '6',
+        taxType: 'PERCENTAGE',
+        taxValue: '10',
+        serviceChargeType: 'NOT_APPLICABLE',
+        serviceChargeValue: '0'
+      });
+    }
+
+    setIsServiceDrawerOpen(true);
   };
 
-  const handleSaveVisa = (visaToSave?: VisaProduct) => {
-    const target = visaToSave || editingVisa;
-    if (!target || !target.country || !target.visaType) return;
+  const handleEditServiceItem = (item: any) => {
+    setServiceDrawerCategory(item.rawCategory);
+    setWorkspaceTab('PRICING');
 
-    // Keep checklist string array aligned with structured requirements
-    const syncedChecklist = target.structuredRequirements && target.structuredRequirements.length > 0
-      ? target.structuredRequirements.map(r => r.name)
-      : target.documentsChecklist || [];
+    if (item.rawCategory === 'VISA') {
+      const v: VisaProduct = item.originalItem;
+      setEditingVisa(v);
+      setEditingProtection(null);
+      setEditingVip(null);
+      setEditingConnectivity(null);
 
-    const updatedVisa: VisaProduct = {
-      ...target,
-      documentsChecklist: syncedChecklist,
-      requirementVersion: (target.requirementVersion || 1) + 1,
-      updatedAt: new Date().toISOString()
-    };
+      const existingPricing = v.pricing;
+      setPricingForm({
+        currency: existingPricing?.currency || v.currency || 'USD',
+        pricingUnit: existingPricing?.pricingUnit || 'Per Applicant',
+        nettPrice: existingPricing?.nettPrice !== undefined ? String(existingPricing.nettPrice) : String(v.embassyFee || ''),
+        marginType: (existingPricing?.marginType as MarginType) || 'PERCENTAGE',
+        marginValue: existingPricing?.marginValue !== undefined ? String(existingPricing.marginValue) : '25',
+        taxType: existingPricing?.taxType || 'PERCENTAGE',
+        taxValue: existingPricing?.taxValue !== undefined ? String(existingPricing.taxValue) : '10',
+        serviceChargeType: existingPricing?.serviceChargeType || 'FIXED',
+        serviceChargeValue: existingPricing?.serviceChargeValue !== undefined ? String(existingPricing.serviceChargeValue) : String(v.serviceFee || '15')
+      });
+    } else if (item.rawCategory === 'PROTECTION') {
+      const p: TravelProtectionPlan = item.originalItem;
+      setEditingProtection(p);
+      setEditingVisa(null);
+      setEditingVip(null);
+      setEditingConnectivity(null);
 
-    db.saveVisa(updatedVisa, user);
-    setEditingVisa(updatedVisa);
+      const existingPricing = p.pricing;
+      setPricingForm({
+        currency: existingPricing?.currency || p.currency || 'USD',
+        pricingUnit: existingPricing?.pricingUnit || 'Per Traveller',
+        nettPrice: existingPricing?.nettPrice !== undefined ? String(existingPricing.nettPrice) : String(p.netCostPerTrip || ''),
+        marginType: (existingPricing?.marginType as MarginType) || 'PERCENTAGE',
+        marginValue: existingPricing?.marginValue !== undefined ? String(existingPricing.marginValue) : '30',
+        taxType: existingPricing?.taxType || 'PERCENTAGE',
+        taxValue: existingPricing?.taxValue !== undefined ? String(existingPricing.taxValue) : '10',
+        serviceChargeType: existingPricing?.serviceChargeType || 'FIXED',
+        serviceChargeValue: existingPricing?.serviceChargeValue !== undefined ? String(existingPricing.serviceChargeValue) : '5'
+      });
+    } else if (item.rawCategory === 'VIP') {
+      const vip: VipGroundService = item.originalItem;
+      setEditingVip(vip);
+      setEditingVisa(null);
+      setEditingProtection(null);
+      setEditingConnectivity(null);
+
+      const existingPricing = vip.pricing;
+      setPricingForm({
+        currency: existingPricing?.currency || vip.currency || 'USD',
+        pricingUnit: existingPricing?.pricingUnit || 'Per Service',
+        nettPrice: existingPricing?.nettPrice !== undefined ? String(existingPricing.nettPrice) : String(vip.netCost || ''),
+        marginType: (existingPricing?.marginType as MarginType) || 'PERCENTAGE',
+        marginValue: existingPricing?.marginValue !== undefined ? String(existingPricing.marginValue) : String(vip.defaultMarkupPercent || '25'),
+        taxType: existingPricing?.taxType || 'PERCENTAGE',
+        taxValue: existingPricing?.taxValue !== undefined ? String(existingPricing.taxValue) : '10',
+        serviceChargeType: existingPricing?.serviceChargeType || 'NOT_APPLICABLE',
+        serviceChargeValue: existingPricing?.serviceChargeValue !== undefined ? String(existingPricing.serviceChargeValue) : '0'
+      });
+    } else if (item.rawCategory === 'CONNECTIVITY') {
+      const conn: ConnectivityPlan = item.originalItem;
+      setEditingConnectivity(conn);
+      setEditingVisa(null);
+      setEditingProtection(null);
+      setEditingVip(null);
+
+      const existingPricing = conn.pricing;
+      setPricingForm({
+        currency: existingPricing?.currency || conn.currency || 'USD',
+        pricingUnit: existingPricing?.pricingUnit || 'Per Unit',
+        nettPrice: existingPricing?.nettPrice !== undefined ? String(existingPricing.nettPrice) : String(conn.netCost || ''),
+        marginType: (existingPricing?.marginType as MarginType) || 'FIXED',
+        marginValue: existingPricing?.marginValue !== undefined ? String(existingPricing.marginValue) : '6',
+        taxType: existingPricing?.taxType || 'PERCENTAGE',
+        taxValue: existingPricing?.taxValue !== undefined ? String(existingPricing.taxValue) : '10',
+        serviceChargeType: existingPricing?.serviceChargeType || 'NOT_APPLICABLE',
+        serviceChargeValue: existingPricing?.serviceChargeValue !== undefined ? String(existingPricing.serviceChargeValue) : '0'
+      });
+    }
+
+    setIsServiceDrawerOpen(true);
   };
 
   // --------------------------------------------------------------------------
-  // REQUIREMENTS BUILDER ACTIONS (Constitution Section 16 & 17)
+  // SAVE SERVICE WITH AUTHORITATIVE PRICING SNAPSHOT
+  // --------------------------------------------------------------------------
+  const handleSaveCurrentService = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+
+    const calc = livePricingCalculation;
+    const finalPriceToSave = calc ? calc.finalPrice : 0;
+
+    const pricingSnapshot: CommercialPricingDetails = {
+      currency: pricingForm.currency,
+      pricingUnit: pricingForm.pricingUnit,
+      nettPrice: calc ? calc.nettPrice : (parseFloat(pricingForm.nettPrice) || 0),
+      marginType: pricingForm.marginType,
+      marginValue: parseFloat(pricingForm.marginValue) || 0,
+      marginAmount: calc ? calc.marginAmount : 0,
+      serviceChargeType: pricingForm.serviceChargeType,
+      serviceChargeValue: parseFloat(pricingForm.serviceChargeValue) || 0,
+      serviceChargeAmount: calc ? calc.serviceChargeAmount : 0,
+      taxType: pricingForm.taxType,
+      taxValue: parseFloat(pricingForm.taxValue) || 0,
+      taxAmount: calc ? calc.taxAmount : 0,
+      finalPrice: finalPriceToSave,
+      pricingVersion: 1,
+      lastUpdatedAt: new Date().toISOString()
+    };
+
+    if (serviceDrawerCategory === 'VISA' && editingVisa) {
+      if (!editingVisa.country || !editingVisa.visaType) return;
+      const syncedChecklist = editingVisa.structuredRequirements && editingVisa.structuredRequirements.length > 0
+        ? editingVisa.structuredRequirements.map(r => r.name)
+        : editingVisa.documentsChecklist || [];
+
+      const updatedVisa: VisaProduct = {
+        ...editingVisa,
+        documentsChecklist: syncedChecklist,
+        requirementVersion: (editingVisa.requirementVersion || 1) + 1,
+        embassyFee: calc ? calc.nettPrice : (parseFloat(pricingForm.nettPrice) || editingVisa.embassyFee || 0),
+        serviceFee: calc ? (calc.marginAmount + calc.serviceChargeAmount) : (editingVisa.serviceFee || 0),
+        sellingPrice: finalPriceToSave,
+        currency: pricingForm.currency,
+        pricing: pricingSnapshot,
+        updatedAt: new Date().toISOString()
+      };
+
+      db.saveVisa(updatedVisa, user);
+      setEditingVisa(updatedVisa);
+    } else if (serviceDrawerCategory === 'PROTECTION' && editingProtection) {
+      if (!editingProtection.serviceName || !editingProtection.provider) return;
+      const updatedProtection: TravelProtectionPlan = {
+        ...(editingProtection as TravelProtectionPlan),
+        currency: pricingForm.currency,
+        netCostPerTrip: calc ? calc.nettPrice : (parseFloat(pricingForm.nettPrice) || 30),
+        sellingPricePerTrip: finalPriceToSave,
+        pricing: pricingSnapshot,
+        updatedAt: new Date().toISOString()
+      };
+
+      db.saveTravelProtectionPlan(updatedProtection, user);
+      setEditingProtection(updatedProtection);
+    } else if (serviceDrawerCategory === 'VIP' && editingVip) {
+      if (!editingVip.name || !editingVip.supplierName) return;
+      const updatedVip: VipGroundService = {
+        ...(editingVip as VipGroundService),
+        currency: pricingForm.currency,
+        netCost: calc ? calc.nettPrice : (parseFloat(pricingForm.nettPrice) || 100),
+        sellingPrice: finalPriceToSave,
+        pricing: pricingSnapshot,
+        updatedAt: new Date().toISOString()
+      };
+
+      db.saveVipGroundService(updatedVip, user);
+      setEditingVip(updatedVip);
+    } else if (serviceDrawerCategory === 'CONNECTIVITY' && editingConnectivity) {
+      if (!editingConnectivity.name || !editingConnectivity.dataAllowance) return;
+      const updatedConn: ConnectivityPlan = {
+        ...(editingConnectivity as ConnectivityPlan),
+        currency: pricingForm.currency,
+        netCost: calc ? calc.nettPrice : (parseFloat(pricingForm.nettPrice) || 10),
+        sellingPrice: finalPriceToSave,
+        pricing: pricingSnapshot,
+        updatedAt: new Date().toISOString()
+      };
+
+      db.saveConnectivityPlan(updatedConn, user);
+      setEditingConnectivity(updatedConn);
+    }
+
+    setIsServiceDrawerOpen(false);
+  };
+
+  // --------------------------------------------------------------------------
+  // REQUIREMENTS BUILDER ACTIONS (FOR VISA SERVICES)
   // --------------------------------------------------------------------------
   const handleOpenAddRequirement = () => {
     if (!editingVisa) return;
@@ -292,7 +754,6 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
     const trimmedName = editingRequirement.name.trim();
     const existingReqs = editingVisa.structuredRequirements || [];
 
-    // Duplicate prevention check (Constitution Section 17)
     const isDuplicate = existingReqs.some(
       r => r.id !== editingRequirement.id && r.name.toLowerCase() === trimmedName.toLowerCase()
     );
@@ -316,7 +777,6 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
       updatedReqs = [...existingReqs, { ...editingRequirement, name: trimmedName }];
     }
 
-    // Sort by display order
     updatedReqs.sort((a, b) => a.displayOrder - b.displayOrder);
 
     const updatedVisa = {
@@ -326,7 +786,7 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
     };
 
     setEditingVisa(updatedVisa);
-    handleSaveVisa(updatedVisa);
+    db.saveVisa(updatedVisa, user);
     setIsRequirementModalOpen(false);
     setEditingRequirement(null);
     setRequirementDuplicateWarning(null);
@@ -350,7 +810,7 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
       documentsChecklist: updated.map(r => r.name)
     };
     setEditingVisa(updatedVisa);
-    handleSaveVisa(updatedVisa);
+    db.saveVisa(updatedVisa, user);
   };
 
   const handleReorderRequirement = (reqId: string, direction: 'UP' | 'DOWN') => {
@@ -366,7 +826,6 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
     reqs[index] = reqs[targetIndex];
     reqs[targetIndex] = temp;
 
-    // Reassign clean 1-based displayOrder
     reqs.forEach((r, i) => {
       r.displayOrder = i + 1;
     });
@@ -377,7 +836,7 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
       documentsChecklist: reqs.map(r => r.name)
     };
     setEditingVisa(updatedVisa);
-    handleSaveVisa(updatedVisa);
+    db.saveVisa(updatedVisa, user);
   };
 
   const handleToggleRequirementStatus = (reqId: string) => {
@@ -394,7 +853,7 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
       documentsChecklist: reqs.filter(r => r.status === 'ACTIVE').map(r => r.name)
     };
     setEditingVisa(updatedVisa);
-    handleSaveVisa(updatedVisa);
+    db.saveVisa(updatedVisa, user);
   };
 
   const handleDeleteRequirement = (reqId: string) => {
@@ -407,121 +866,102 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
       documentsChecklist: reqs.map(r => r.name)
     };
     setEditingVisa(updatedVisa);
-    handleSaveVisa(updatedVisa);
+    db.saveVisa(updatedVisa, user);
   };
 
-  // --------------------------------------------------------------------------
-  // APPLICATION ASSISTANCE SERVICES ACTIONS (Constitution Section 19)
-  // --------------------------------------------------------------------------
-  const handleOpenAddAssistance = () => {
-    if (!editingVisa) return;
-    setEditingAssistance({
-      id: `ASST-${editingVisa.id}-${Date.now().toString(36).toUpperCase()}`,
-      visaId: editingVisa.id,
-      name: '',
-      serviceType: 'DOCUMENT_VETTING',
-      description: '',
-      netCost: 10,
-      serviceFee: 15,
-      sellingPrice: 25,
-      currency: editingVisa.currency || 'USD',
-      includedInBaseFee: false,
-      status: 'ACTIVE',
-      displayOrder: (editingVisa.assistanceServices?.length || 0) + 1
-    });
-    setIsAssistanceModalOpen(true);
-  };
-
-  const handleSaveAssistance = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingVisa || !editingAssistance || !editingAssistance.name.trim()) return;
-
-    const existing = editingVisa.assistanceServices || [];
-    let updated: VisaAssistanceService[];
-    const idx = existing.findIndex(a => a.id === editingAssistance.id);
-    if (idx >= 0) {
-      updated = [...existing];
-      updated[idx] = editingAssistance;
-    } else {
-      updated = [...existing, editingAssistance];
-    }
-
-    const updatedVisa = {
-      ...editingVisa,
-      assistanceServices: updated
-    };
-    setEditingVisa(updatedVisa);
-    handleSaveVisa(updatedVisa);
-    setIsAssistanceModalOpen(false);
-    setEditingAssistance(null);
-  };
-
-  const handleDeleteAssistance = (id: string) => {
-    if (!editingVisa) return;
-    const updated = (editingVisa.assistanceServices || []).filter(a => a.id !== id);
-    const updatedVisa = {
-      ...editingVisa,
-      assistanceServices: updated
-    };
-    setEditingVisa(updatedVisa);
-    handleSaveVisa(updatedVisa);
-  };
-
-  // --------------------------------------------------------------------------
-  // FIELD PARITY CONTRACT MATRIX (Constitution Section 26)
-  // --------------------------------------------------------------------------
+  // Field Parity Table Definition
   const fieldParityRows = [
     { category: 'Visa Product', cmsField: 'Visa ID', sheetTab: 'VISA', sheetColumn: 'visa_id', firestoreField: 'id', dataType: 'String', required: 'Yes', syncStatus: 'VERIFIED' },
     { category: 'Visa Product', cmsField: 'Destination ID', sheetTab: 'VISA', sheetColumn: 'destination_id', firestoreField: 'destinationId', dataType: 'String', required: 'Yes', syncStatus: 'VERIFIED' },
     { category: 'Visa Product', cmsField: 'Country / Jurisdiction', sheetTab: 'VISA', sheetColumn: 'country', firestoreField: 'country', dataType: 'String', required: 'Yes', syncStatus: 'VERIFIED' },
     { category: 'Visa Product', cmsField: 'Visa Classification', sheetTab: 'VISA', sheetColumn: 'visa_type', firestoreField: 'visaType', dataType: 'String', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Visa Product', cmsField: 'Target Nationality', sheetTab: 'VISA', sheetColumn: 'nationality', firestoreField: 'eligibilityNotes[0]', dataType: 'String', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Visa Product', cmsField: 'Entry Type', sheetTab: 'VISA', sheetColumn: 'entry_type', firestoreField: 'entryType', dataType: 'Enum (SINGLE/MULTI)', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Visa Product', cmsField: 'Validity Days', sheetTab: 'VISA', sheetColumn: 'validity', firestoreField: 'validityDays', dataType: 'Number', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Visa Product', cmsField: 'Permitted Stay Days', sheetTab: 'VISA', sheetColumn: 'stay_duration', firestoreField: 'stayDurationDays', dataType: 'Number', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Visa Product', cmsField: 'Processing Turnaround', sheetTab: 'VISA', sheetColumn: 'processing_days', firestoreField: 'processingTimeDays', dataType: 'Number', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Visa Product', cmsField: 'Documentation Checklist', sheetTab: 'VISA', sheetColumn: 'documentation', firestoreField: 'documentsChecklist / structuredRequirements', dataType: 'Delimited / Array', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Visa Rates', cmsField: 'Consular Embassy Fee', sheetTab: 'VISA_RATES', sheetColumn: 'adult_nett', firestoreField: 'embassyFee', dataType: 'Number (Net Tariff)', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Visa Rates', cmsField: 'DMC Processing Fee', sheetTab: 'VISA_RATES', sheetColumn: 'service_fee', firestoreField: 'serviceFee', dataType: 'Number (DMC Fee)', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Visa Rates', cmsField: 'Wholesale Markup Agent', sheetTab: 'VISA_RATES', sheetColumn: 'markup_agent', firestoreField: 'markupAgent', dataType: 'Percentage (%)', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Travel Protection', cmsField: 'Medical Cover Amount', sheetTab: 'N/A (Operational Master)', sheetColumn: 'coverage_amount', firestoreField: 'medicalCoverageAmount', dataType: 'Number', required: 'Yes', syncStatus: 'DATABASE_BACKED' },
+    { category: 'Commercial Pricing', cmsField: 'Nett Price', sheetTab: 'VISA_RATES', sheetColumn: 'adult_nett', firestoreField: 'pricing.nettPrice / embassyFee', dataType: 'Number (Cost)', required: 'Yes', syncStatus: 'CENTRALIZED' },
+    { category: 'Commercial Pricing', cmsField: 'Margin (Type & Value)', sheetTab: 'VISA_RATES', sheetColumn: 'markup_agent', firestoreField: 'pricing.marginValue / marginType', dataType: 'Percent / Fixed', required: 'Yes', syncStatus: 'CENTRALIZED' },
+    { category: 'Commercial Pricing', cmsField: 'Service Charge', sheetTab: 'VISA_RATES', sheetColumn: 'service_fee', firestoreField: 'pricing.serviceChargeValue', dataType: 'Number / Percent', required: 'Yes', syncStatus: 'CENTRALIZED' },
+    { category: 'Commercial Pricing', cmsField: 'Final Selling Price', sheetTab: 'VISA_RATES', sheetColumn: 'selling_price', firestoreField: 'pricing.finalPrice', dataType: 'Calculated Engine Output', required: 'Yes', syncStatus: 'AUTHORITATIVE' },
+    { category: 'Travel Protection', cmsField: 'Medical Cover Amount', sheetTab: 'PROTECTION', sheetColumn: 'coverage_amount', firestoreField: 'medicalCoverageAmount', dataType: 'Number', required: 'Yes', syncStatus: 'DATABASE_BACKED' },
     { category: 'VIP Ground', cmsField: 'VIP Service Type', sheetTab: 'TRANSFER_ROUTES', sheetColumn: 'service_type', firestoreField: 'serviceType', dataType: 'Enum', required: 'Yes', syncStatus: 'VERIFIED' },
     { category: '5G Connectivity', cmsField: 'Data Allowance', sheetTab: 'PRODUCTS', sheetColumn: 'description', firestoreField: 'dataAllowance', dataType: 'String (e.g. 10GB)', required: 'Yes', syncStatus: 'DATABASE_BACKED' }
   ];
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      {/* Module Title Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-6 rounded-3xl shadow-xl border border-slate-800">
+    <div className="space-y-6 animate-in fade-in duration-200">
+      
+      {/* ========================================================================= */}
+      {/* TOP HEADER BANNER (THEUNBOUND BRANDED)                                    */}
+      {/* ========================================================================= */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 text-white p-6 sm:p-7 rounded-3xl shadow-xl border border-slate-800">
         <div>
-          <div className="flex items-center space-x-2 mb-1">
-            <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-black uppercase tracking-wider">
+          <div className="flex items-center space-x-2 mb-2">
+            <span className="px-2.5 py-0.5 rounded-full bg-[#00C6A6]/20 text-[#00E5C0] border border-[#00C6A6]/30 text-[10px] font-black uppercase tracking-wider">
               Operations & Inventory
             </span>
-            <span className="text-xs text-slate-400 font-mono">Tier-1 Consular & Protection Desk</span>
+            <span className="text-xs text-slate-400 font-mono">Consular • Protection • Ground Desk</span>
           </div>
-          <h1 className="text-2xl font-black tracking-tight flex items-center gap-2">
-            <FileCheck className="w-7 h-7 text-[#00C6A6]" />
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white flex items-center gap-2.5">
+            <FileCheck className="w-8 h-8 text-[#00C6A6]" />
             <span>Visa & Ancillary Services</span>
           </h1>
-          <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
-            Database-driven operational engine managing official visa requirements, applicant document vetting, global travel protection plans, airport fast-track meet & assist, and 5G regional eSIMs.
+          <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl leading-relaxed">
+            Centralized inventory management for Consular Visa applications, international travel insurance, VIP airport ground assistance, and regional 5G eSIM connectivity with authoritative commercial pricing.
           </p>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            onClick={handleOpenCreateVisa}
-            className="px-4 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-bold text-xs rounded-xl shadow-lg transition-all flex items-center gap-2 cursor-pointer active:scale-95"
-          >
-            <Plus className="w-4 h-4" />
-            <span>New Visa Product</span>
-          </button>
+        <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+          {activeMainTab === 'VISA_SERVICES' && (
+            <button
+              onClick={() => handleOpenCreateService('VISA')}
+              className="px-4 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Add Visa Service</span>
+            </button>
+          )}
+          {activeMainTab === 'TRAVEL_PROTECTION' && (
+            <button
+              onClick={() => handleOpenCreateService('PROTECTION')}
+              className="px-4 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Add Protection Plan</span>
+            </button>
+          )}
+          {activeMainTab === 'GROUND_CONNECTIVITY' && (
+            <>
+              <button
+                onClick={() => handleOpenCreateService('VIP')}
+                className="px-4 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Add VIP Ground Service</span>
+              </button>
+              <button
+                onClick={() => handleOpenCreateService('CONNECTIVITY')}
+                className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-black text-xs rounded-xl shadow-lg transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 border border-slate-700"
+              >
+                <Plus className="w-4 h-4 text-[#00C6A6]" />
+                <span>+ Add eSIM Plan</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Top Main Navigation Tabs */}
-      <div className="flex border-b border-slate-200 bg-white rounded-2xl p-1.5 shadow-xs overflow-x-auto">
+      {/* Google Sheets Master Sync Bar */}
+      <ModuleMasterSyncBar 
+        moduleType="VISA_ANCILLARY" 
+        onSyncCompleted={() => {
+          setVisas(db.getVisas());
+          setProtectionPlans(db.getTravelProtectionPlans());
+          setVipServices(db.getVipGroundServices());
+          setConnectivityPlans(db.getConnectivityPlans());
+        }}
+      />
+
+      {/* ========================================================================= */}
+      {/* CATEGORY WORKSPACE NAVIGATION TABS                                        */}
+      {/* ========================================================================= */}
+      <div className="flex border-b border-slate-200 bg-white rounded-2xl p-1.5 shadow-xs overflow-x-auto gap-1">
         <button
           onClick={() => handleTabSwitch('VISA_SERVICES')}
           className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 shrink-0 cursor-pointer ${
@@ -531,7 +971,7 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
           }`}
         >
           <FileText className="w-4 h-4 text-[#00C6A6]" />
-          <span>1. Visa Services & Application Assistance ({visas.length})</span>
+          <span>Visa Services ({visas.length})</span>
         </button>
 
         <button
@@ -543,19 +983,19 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
           }`}
         >
           <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          <span>2. Travel Protection & Medical Coverage ({protectionPlans.length})</span>
+          <span>Travel Protection ({protectionPlans.length})</span>
         </button>
 
         <button
-          onClick={() => handleTabSwitch('VIP_CONNECTIVITY')}
+          onClick={() => handleTabSwitch('GROUND_CONNECTIVITY')}
           className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 shrink-0 cursor-pointer ${
-            activeMainTab === 'VIP_CONNECTIVITY'
+            activeMainTab === 'GROUND_CONNECTIVITY'
               ? 'bg-slate-900 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
           }`}
         >
           <Sparkles className="w-4 h-4 text-amber-400" />
-          <span>3. VIP Ground Services & 5G Connectivity ({vipServices.length + connectivityPlans.length})</span>
+          <span>Ground & Connectivity ({vipServices.length + connectivityPlans.length})</span>
         </button>
 
         <button
@@ -567,761 +1007,968 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
           }`}
         >
           <FileSpreadsheet className="w-4 h-4 text-indigo-400" />
-          <span>Google Sheets Field Parity Matrix</span>
+          <span>Master Schema Matrix</span>
         </button>
       </div>
 
       {/* ========================================================================= */}
-      {/* TAB 1: VISA SERVICES & APPLICATION ASSISTANCE                             */}
+      {/* SEARCH & FILTERS TOOLBAR                                                  */}
       {/* ========================================================================= */}
-      {activeMainTab === 'VISA_SERVICES' && (
-        <div className="space-y-6">
-          {/* Quick Metrics */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Configured Visas</span>
-              <div className="text-2xl font-black text-slate-900 mt-1">{visas.length}</div>
-              <span className="text-[11px] text-emerald-600 font-medium">All Consular Jurisdictions</span>
-            </div>
-
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Structured Requirements</span>
-              <div className="text-2xl font-black text-slate-900 mt-1">{totalRequirementsCount}</div>
-              <span className="text-[11px] text-indigo-600 font-medium">Zero hardcoded checklist items</span>
-            </div>
-
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Express Turnaround</span>
-              <div className="text-2xl font-black text-slate-900 mt-1">
-                {visas.filter(v => v.expressProcessingAvailable).length}
-              </div>
-              <span className="text-[11px] text-amber-600 font-medium">24–48h SLA Priority Options</span>
-            </div>
-
-            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Application Assistance</span>
-              <div className="text-2xl font-black text-slate-900 mt-1">
-                {visas.reduce((s, v) => s + (v.assistanceServices?.length || 0), 0)}
-              </div>
-              <span className="text-[11px] text-[#00A88F] font-medium">Vetting & Concierge Options</span>
-            </div>
+      {activeMainTab !== 'FIELD_PARITY' && (
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex-1 relative">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+            <input
+              type="text"
+              placeholder="Search services by name, product ID, destination, or provider..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#00C6A6] focus:bg-white"
+            />
           </div>
 
-          {/* Search & Filter Toolbar */}
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <div className="flex-1 relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-              <input
-                type="text"
-                placeholder="Search visa by country, type, or documents..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#00C6A6] focus:bg-white"
-              />
-            </div>
+          <div className="flex items-center gap-2 overflow-x-auto flex-wrap sm:flex-nowrap">
+            {/* Category Filter */}
+            <select
+              value={categoryFilter}
+              onChange={e => setCategoryFilter(e.target.value)}
+              className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 outline-none focus:border-[#00C6A6] cursor-pointer"
+            >
+              <option value="all">All Service Categories</option>
+              <option value="Visa Services">Visa Services</option>
+              <option value="Travel Protection">Travel Protection</option>
+              <option value="Ground & Connectivity">Ground & Connectivity</option>
+            </select>
 
-            <div className="flex items-center gap-2 overflow-x-auto">
-              <select
-                value={selectedCountry}
-                onChange={e => setSelectedCountry(e.target.value)}
-                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 outline-none focus:border-[#00C6A6]"
-              >
-                <option value="all">All Destinations</option>
-                {Array.from(new Set(visas.map(v => v.country))).map(c => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
+            {/* Destination Filter */}
+            <select
+              value={selectedDestination}
+              onChange={e => setSelectedDestination(e.target.value)}
+              className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 outline-none focus:border-[#00C6A6] cursor-pointer"
+            >
+              <option value="all">All Destinations</option>
+              {destinations.map(d => (
+                <option key={d.id} value={d.name}>{d.name}</option>
+              ))}
+            </select>
 
-              <select
-                value={statusFilter}
-                onChange={e => setStatusFilter(e.target.value as any)}
-                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 outline-none focus:border-[#00C6A6]"
-              >
-                <option value="ALL">All Statuses</option>
-                <option value="ACTIVE">Active Only</option>
-                <option value="DRAFT">Drafts</option>
-                <option value="ARCHIVED">Archived</option>
-              </select>
-            </div>
+            {/* Status Filter */}
+            <select
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value as any)}
+              className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 outline-none focus:border-[#00C6A6] cursor-pointer"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="ACTIVE">Active Only</option>
+              <option value="DRAFT">Drafts</option>
+              <option value="ARCHIVED">Archived</option>
+            </select>
+
+            {/* Currency Filter */}
+            <select
+              value={currencyFilter}
+              onChange={e => setCurrencyFilter(e.target.value)}
+              className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 outline-none focus:border-[#00C6A6] cursor-pointer font-mono"
+            >
+              <option value="all">All Currencies</option>
+              <option value="USD">USD ($)</option>
+              <option value="JPY">JPY (¥)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="INR">INR (₹)</option>
+            </select>
           </div>
+        </div>
+      )}
 
-          {/* Visas Grid / Table */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50/80 border-b border-slate-200 text-slate-500 uppercase text-[10px] tracking-wider font-bold">
+      {/* ========================================================================= */}
+      {/* MAIN LISTING TABLE & CARDS                                                */}
+      {/* ========================================================================= */}
+      {activeMainTab !== 'FIELD_PARITY' && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50/90 border-b border-slate-200 text-slate-500 uppercase text-[10px] tracking-wider font-bold">
+                <tr>
+                  <th className="py-3.5 px-4">Service Name & Identifier</th>
+                  <th className="py-3.5 px-4">Category</th>
+                  <th className="py-3.5 px-4">Destination / Coverage</th>
+                  <th className="py-3.5 px-4">Supplier / Provider</th>
+                  <th className="py-3.5 px-4">Final Selling Price</th>
+                  <th className="py-3.5 px-4">Status</th>
+                  <th className="py-3.5 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredItems.length === 0 ? (
                   <tr>
-                    <th className="py-3 px-4">Jurisdiction & Visa Type</th>
-                    <th className="py-3 px-4">Classification</th>
-                    <th className="py-3 px-4">Turnaround SLA</th>
-                    <th className="py-3 px-4">Commercial Pricing</th>
-                    <th className="py-3 px-4">Requirements</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4 text-right">Actions</th>
+                    <td colSpan={7} className="py-12 text-center text-slate-400">
+                      No services match your active search or filter criteria.
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredVisas.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="py-12 text-center text-slate-400">
-                        No Visa configurations match the current filter.
+                ) : (
+                  filteredItems.map(item => (
+                    <tr key={item.id} className="hover:bg-slate-50/70 transition-colors">
+                      {/* Name & ID */}
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center space-x-3">
+                          {item.heroImage ? (
+                            <img
+                              src={item.heroImage}
+                              alt={item.name}
+                              className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 shrink-0 font-bold">
+                              {item.rawCategory === 'VISA' && <FileText className="w-5 h-5 text-[#00C6A6]" />}
+                              {item.rawCategory === 'PROTECTION' && <ShieldCheck className="w-5 h-5 text-emerald-500" />}
+                              {item.rawCategory === 'VIP' && <Plane className="w-5 h-5 text-amber-500" />}
+                              {item.rawCategory === 'CONNECTIVITY' && <Smartphone className="w-5 h-5 text-indigo-500" />}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <span className="font-bold text-slate-900 block text-sm truncate max-w-xs sm:max-w-md">
+                              {item.name}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-400 block">
+                              ID: {item.id} • {item.serviceType}
+                            </span>
+                          </div>
+                        </div>
                       </td>
-                    </tr>
-                  ) : (
-                    filteredVisas.map(v => {
-                      const totalSelling = (v.embassyFee || 0) + (v.serviceFee || 0);
-                      const reqCount = v.structuredRequirements?.length || 0;
-                      return (
-                        <tr key={v.id} className="hover:bg-slate-50/70 transition-colors">
-                          <td className="py-3.5 px-4">
-                            <div className="flex items-center space-x-3">
-                              <img
-                                src={v.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=200'}
-                                alt={v.country}
-                                className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0"
-                              />
-                              <div>
-                                <span className="font-bold text-slate-900 block text-sm">{v.country}</span>
-                                <span className="text-[11px] text-slate-500 truncate max-w-xs block">{v.visaType}</span>
-                              </div>
-                            </div>
-                          </td>
 
-                          <td className="py-3.5 px-4 font-mono text-[11px]">
-                            <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 font-bold">
-                              {v.entryType}
-                            </span>
-                            <span className="text-[10px] text-slate-400 block mt-0.5">Stay: {v.stayDurationDays}d | Valid: {v.validityDays}d</span>
-                          </td>
+                      {/* Category Badge */}
+                      <td className="py-3.5 px-4">
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                          item.rawCategory === 'VISA' ? 'bg-[#00C6A6]/10 text-[#008F77] border-[#00C6A6]/30' :
+                          item.rawCategory === 'PROTECTION' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                          item.rawCategory === 'VIP' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                          'bg-indigo-50 text-indigo-700 border-indigo-200'
+                        }`}>
+                          {item.category}
+                        </span>
+                      </td>
 
-                          <td className="py-3.5 px-4">
-                            <div className="flex items-center space-x-1 text-slate-700 font-medium">
-                              <Clock className="w-3.5 h-3.5 text-slate-400" />
-                              <span>{v.processingTimeDays} Business Days</span>
-                            </div>
-                            {v.expressProcessingAvailable && (
-                              <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-1.5 py-0.5 rounded mt-0.5 inline-block">
-                                Express: {v.expressProcessingTimeDays}d SLA
-                              </span>
-                            )}
-                          </td>
+                      {/* Destination / Coverage */}
+                      <td className="py-3.5 px-4 font-medium text-slate-700">
+                        <div className="flex items-center space-x-1.5">
+                          <Globe2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span className="truncate max-w-xs">{item.destination}</span>
+                        </div>
+                      </td>
 
-                          <td className="py-3.5 px-4">
-                            <div className="font-bold text-slate-900">
-                              {formatCurrency(totalSelling, v.currency || 'USD')}
-                            </div>
-                            <span className="text-[10px] text-slate-400 block">
-                              Consular: ${v.embassyFee} | DMC Fee: ${v.serviceFee}
-                            </span>
-                          </td>
+                      {/* Supplier / Provider */}
+                      <td className="py-3.5 px-4 text-slate-600">
+                        <span className="text-xs truncate block max-w-xs">{item.provider}</span>
+                      </td>
 
-                          <td className="py-3.5 px-4">
-                            <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-bold">
-                              {reqCount} Structured Docs
-                            </span>
-                            <span className="text-[10px] text-slate-400 block mt-0.5">
-                              {v.assistanceServices?.length || 0} Assistance Add-ons
-                            </span>
-                          </td>
+                      {/* Authoritative Final Selling Price */}
+                      <td className="py-3.5 px-4">
+                        <div className="font-black text-slate-900 text-sm font-mono text-[#008972]">
+                          {formatCurrency(item.finalPrice, item.currency)}
+                        </div>
+                        {item.nettPrice !== undefined && (
+                          <span className="text-[9px] text-slate-400 block font-mono">
+                            Nett Base: {formatCurrency(item.nettPrice, item.currency)}
+                          </span>
+                        )}
+                      </td>
 
-                          <td className="py-3.5 px-4">
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                              v.status === 'ACTIVE'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : v.status === 'DRAFT'
-                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                : 'bg-slate-100 text-slate-500 border border-slate-200'
-                            }`}>
-                              {v.status}
-                            </span>
-                          </td>
+                      {/* Status */}
+                      <td className="py-3.5 px-4">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                          item.status === 'ACTIVE'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : item.status === 'DRAFT'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                            : 'bg-slate-100 text-slate-500 border border-slate-200'
+                        }`}>
+                          {item.status}
+                        </span>
+                      </td>
 
-                          <td className="py-3.5 px-4 text-right">
+                      {/* Actions */}
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="flex items-center justify-end space-x-1.5">
+                          <button
+                            onClick={() => handleEditServiceItem(item)}
+                            className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs transition-all cursor-pointer flex items-center space-x-1"
+                            title="Edit Service & Commercial Pricing"
+                          >
+                            <Edit className="w-3.5 h-3.5 text-slate-600" />
+                            <span>Edit</span>
+                          </button>
+
+                          {item.rawCategory === 'VISA' && (
                             <button
                               onClick={() => {
-                                setEditingVisa(v);
+                                handleEditServiceItem(item);
                                 setWorkspaceTab('REQUIREMENTS');
                               }}
-                              className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
+                              title="Manage Requirements"
                             >
-                              Manage Checklist
+                              Checklist
                             </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+                          )}
+
+                          <button
+                            onClick={() => setDeleteTarget({ id: item.id, name: item.name, type: item.rawCategory })}
+                            className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors cursor-pointer"
+                            title="Delete Service"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 2: TRAVEL PROTECTION & INTERNATIONAL MEDICAL COVERAGE (Sec 21 & 22)   */}
-      {/* ========================================================================= */}
-      {activeMainTab === 'TRAVEL_PROTECTION' && (
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center space-x-2 mb-1">
-                <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase tracking-wider border border-emerald-200">
-                  Global Travel Protection
-                </span>
-                <span className="text-xs text-slate-400 font-mono">Consular-Approved Cashless Policies</span>
-              </div>
-              <h2 className="text-xl font-black text-slate-900">International Medical & Trip Protection Plans</h2>
-              <p className="text-xs text-slate-500 mt-1 max-w-xl">
-                Configured emergency medical hospitalization coverage, European Schengen Regulation (EC) 810/2009 compliance, baggage delay compensation, and 24/7 multilingual evacuation.
-              </p>
-            </div>
-
-            <button
-              onClick={() => {
-                setEditingProtection({
-                  id: `PROT-${Date.now()}`,
-                  serviceName: 'Worldwide Elite Protection Plan',
-                  provider: 'Allianz Global Assistance',
-                  coverageArea: 'Worldwide excl. US/Canada',
-                  medicalCoverageAmount: 250000,
-                  emergencyAssistanceIncluded: true,
-                  evacuationCoverageAmount: 100000,
-                  tripCancellationAmount: 5000,
-                  baggageLossAmount: 1500,
-                  validityDaysMax: 30,
-                  eligibilityAgeMin: 0,
-                  eligibilityAgeMax: 80,
-                  netCostPerDay: 3.5,
-                  netCostPerTrip: 28,
-                  sellingPricePerDay: 5.5,
-                  sellingPricePerTrip: 45,
-                  currency: 'USD',
-                  status: 'ACTIVE',
-                  terms: 'Includes cashless hospitalization, medical evacuation, and lost luggage cover.',
-                  customerDescription: 'Comprehensive global travel protection with zero deductible and instant policy issuance.',
-                  inclusions: [
-                    'USD 250,000 Emergency Medical Cover',
-                    'USD 100,000 Evacuation & Repatriation',
-                    'USD 1,500 Checked Luggage cover'
-                  ],
-                  displayOrder: protectionPlans.length + 1
-                });
-                setIsProtectionModalOpen(true);
-              }}
-              className="px-4 py-2.5 bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add Protection Plan</span>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {protectionPlans.map(plan => (
-              <div key={plan.id} className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4 hover:border-slate-300 transition-all flex flex-col justify-between">
-                <div className="space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-bold uppercase tracking-wider border border-blue-200 block w-fit mb-1.5">
-                        {plan.coverageArea}
-                      </span>
-                      <h3 className="text-base font-black text-slate-900">{plan.serviceName}</h3>
-                      <p className="text-xs text-slate-400 font-medium">Provider: {plan.provider}</p>
-                    </div>
-
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                      plan.status === 'ACTIVE'
-                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                        : 'bg-slate-100 text-slate-500 border border-slate-200'
-                    }`}>
-                      {plan.status}
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                    {plan.customerDescription}
-                  </p>
-
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div className="p-2.5 bg-emerald-50/50 border border-emerald-100 rounded-xl">
-                      <span className="text-[10px] font-bold uppercase text-emerald-800 block">Medical Coverage</span>
-                      <span className="text-sm font-black text-emerald-950 font-mono">
-                        ${plan.medicalCoverageAmount.toLocaleString()}
-                      </span>
-                    </div>
-
-                    <div className="p-2.5 bg-indigo-50/50 border border-indigo-100 rounded-xl">
-                      <span className="text-[10px] font-bold uppercase text-indigo-800 block">Emergency Evacuation</span>
-                      <span className="text-sm font-black text-indigo-950 font-mono">
-                        ${plan.evacuationCoverageAmount.toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5 pt-2">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Key Policy Inclusions</span>
-                    <ul className="text-xs text-slate-600 space-y-1">
-                      {plan.inclusions?.map((inc, i) => (
-                        <li key={i} className="flex items-center space-x-1.5">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                          <span>{inc}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-
-                <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] text-slate-400 block uppercase font-bold">Client Tariff</span>
-                    <div className="flex items-baseline space-x-1">
-                      <span className="text-lg font-black text-slate-900 font-mono">
-                        ${plan.sellingPricePerTrip}
-                      </span>
-                      <span className="text-xs text-slate-500">/ trip (${plan.sellingPricePerDay}/day)</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={() => {
-                        setEditingProtection(plan);
-                        setIsProtectionModalOpen(true);
-                      }}
-                      className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
-                      title="Edit Plan"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => setDeleteTarget({ id: plan.id, name: plan.serviceName, type: 'PROTECTION' })}
-                      className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors cursor-pointer"
-                      title="Delete Plan"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 3: VIP GROUND SERVICES & 5G CONNECTIVITY (Sec 23 & 24)                */}
-      {/* ========================================================================= */}
-      {activeMainTab === 'VIP_CONNECTIVITY' && (
-        <div className="space-y-8">
-          {/* Section A: VIP Ground Services */}
-          <div className="space-y-4">
-            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center space-x-2 mb-1">
-                  <span className="px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold uppercase tracking-wider border border-amber-200">
-                    VIP Ground Logistics
-                  </span>
-                  <span className="text-xs text-slate-400 font-mono">White-Glove Airport & Station Concierge</span>
-                </div>
-                <h2 className="text-xl font-black text-slate-900">VIP Airport & Station Concierge Services</h2>
-                <p className="text-xs text-slate-500 mt-1 max-w-xl">
-                  Airside jet bridge meet & assist, electric buggy transfers, dedicated passport control fast-track lanes, and bullet train platform luggage porterage.
-                </p>
-              </div>
-
-              <button
-                onClick={() => {
-                  setEditingVip({
-                    id: `VIP-${Date.now()}`,
-                    name: 'Tokyo Narita Airside VIP Meet & Fast Track',
-                    serviceType: 'MEET_AND_GREET',
-                    destinationId: 'dest-japan',
-                    supplierName: 'Nippon Luxury Transit Concierge',
-                    shortDesc: 'Dedicated tarmac gate greeting with golf buggy transfer and express customs escort.',
-                    longDesc: 'Our certified multilingual docent meets passengers immediately at the aircraft jet bridge with a personalized name board.',
-                    netCost: 140,
-                    defaultMarkupPercent: 25,
-                    sellingPrice: 175,
-                    pricingType: 'PER_PAX',
-                    currency: 'USD',
-                    badge: 'Fast Track Gate Escort',
-                    inclusions: [
-                      'Personalized jet bridge greeting',
-                      'Express biometric & customs clearance lane'
-                    ],
-                    status: 'ACTIVE',
-                    displayOrder: vipServices.length + 1
-                  });
-                  setIsVipModalOpen(true);
-                }}
-                className="px-4 py-2.5 bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Add VIP Ground Service</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {vipServices.map(service => (
-                <div key={service.id} className="bg-white rounded-3xl border border-slate-200 p-5 shadow-xs space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 text-[10px] font-bold uppercase border border-amber-200 inline-block mb-1">
-                        {service.badge || service.serviceType}
-                      </span>
-                      <h4 className="font-black text-slate-900 text-sm">{service.name}</h4>
-                      <p className="text-[11px] text-slate-400">Supplier: {service.supplierName}</p>
-                    </div>
-
-                    <div className="text-right">
-                      <span className="text-base font-black text-slate-900 font-mono">${service.sellingPrice}</span>
-                      <span className="text-[10px] text-slate-400 block capitalize">{service.pricingType?.toLowerCase().replace('_', ' ')}</span>
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-slate-600">{service.shortDesc}</p>
-
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                    <span className="text-[10px] text-slate-400 font-mono">Net: ${service.netCost} | Markup: {service.defaultMarkupPercent}%</span>
-                    <div className="flex items-center space-x-1.5">
-                      <button
-                        onClick={() => {
-                          setEditingVip(service);
-                          setIsVipModalOpen(true);
-                        }}
-                        className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
-                        title="Edit Service"
-                      >
-                        <Edit className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => setDeleteTarget({ id: service.id, name: service.name, type: 'VIP' })}
-                        className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 cursor-pointer"
-                        title="Delete Service"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Section B: 5G Connectivity & eSIM Packages */}
-          <div className="space-y-4">
-            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center space-x-2 mb-1">
-                  <span className="px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-700 text-[10px] font-bold uppercase tracking-wider border border-teal-200">
-                    5G High-Speed Connectivity
-                  </span>
-                  <span className="text-xs text-slate-400 font-mono">Instant Digital QR-Code Activation</span>
-                </div>
-                <h2 className="text-xl font-black text-slate-900">Regional & Global 5G eSIM Packages</h2>
-                <p className="text-xs text-slate-500 mt-1 max-w-xl">
-                  Automated wholesale eSIM profile provisioning supporting Asia 14 countries, Schengen Europe, and Global 140 countries.
-                </p>
-              </div>
-
-              <button
-                onClick={() => {
-                  setEditingConnectivity({
-                    id: `ESIM-${Date.now()}`,
-                    name: '5G Regional eSIM - Asia 14 Destinations (10GB / 15 Days)',
-                    type: 'ESIM',
-                    coverageZone: 'Japan, Thailand, Singapore, UAE, South Korea',
-                    dataAllowance: '10GB High-Speed 5G',
-                    validityDays: 15,
-                    networkSpeed: '5G / 4G LTE',
-                    netCost: 12,
-                    sellingPrice: 18,
-                    currency: 'USD',
-                    status: 'ACTIVE',
-                    inclusions: [
-                      'Instant QR-code delivery via email',
-                      'Personal hotspot and tethering enabled'
-                    ],
-                    displayOrder: connectivityPlans.length + 1
-                  });
-                  setIsConnectivityModalOpen(true);
-                }}
-                className="px-4 py-2.5 bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Add 5G eSIM Package</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {connectivityPlans.map(conn => (
-                <div key={conn.id} className="bg-white rounded-3xl border border-slate-200 p-5 shadow-xs space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <span className="px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 text-[10px] font-bold uppercase border border-teal-200 inline-block mb-1">
-                        {conn.dataAllowance}
-                      </span>
-                      <h4 className="font-black text-slate-900 text-sm">{conn.name}</h4>
-                      <p className="text-[11px] text-slate-400">Coverage: {conn.coverageZone}</p>
-                    </div>
-
-                    <div className="text-right">
-                      <span className="text-base font-black text-slate-900 font-mono">${conn.sellingPrice}</span>
-                      <span className="text-[10px] text-slate-400 block">{conn.validityDays} Days Validity</span>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                    <span className="text-[10px] text-slate-400 font-mono">Wholesale Net: ${conn.netCost} | Speed: {conn.networkSpeed}</span>
-                    <div className="flex items-center space-x-1.5">
-                      <button
-                        onClick={() => {
-                          setEditingConnectivity(conn);
-                          setIsConnectivityModalOpen(true);
-                        }}
-                        className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
-                        title="Edit Package"
-                      >
-                        <Edit className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => setDeleteTarget({ id: conn.id, name: conn.name, type: 'CONNECTIVITY' })}
-                        className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 cursor-pointer"
-                        title="Delete Package"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 4: GOOGLE SHEETS FIELD PARITY MATRIX (Constitution Section 26)        */}
+      {/* TAB: GOOGLE SHEETS & FIREBASE MASTER PARITY MATRIX                         */}
       {/* ========================================================================= */}
       {activeMainTab === 'FIELD_PARITY' && (
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-2">
-            <div className="flex items-center space-x-2">
-              <span className="px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-bold uppercase tracking-wider border border-indigo-200">
-                Canonical Data Contract
-              </span>
-              <span className="text-xs text-slate-400 font-mono">Master Sync Architecture</span>
-            </div>
-            <h2 className="text-xl font-black text-slate-900">Google Sheets & Firestore Field Parity Matrix</h2>
-            <p className="text-xs text-slate-600 max-w-3xl leading-relaxed">
-              Every synced Visa, Protection, and Ground SKU field maps strictly between Master Google Sheets tabs, Sync Engine staging, and live Firestore collections. Zero frontend-only mock fields exist in this architecture.
+        <div className="space-y-4">
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+            <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+              <FileSpreadsheet className="w-5 h-5 text-indigo-600" />
+              <span>Canonical Schema & Field Parity Architecture</span>
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">
+              Guarantees strict bidirectional synchronization between Master Google Sheets (VISA, VISA_RATES, PROTECTION), Firebase Firestore, and the Admin Commercial Pricing Engine.
             </p>
           </div>
 
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-900 text-white text-[10px] uppercase font-bold tracking-wider">
-                  <tr>
-                    <th className="py-3 px-4">Service Category</th>
-                    <th className="py-3 px-4">CMS Field Name</th>
-                    <th className="py-3 px-4">Google Sheet Tab</th>
-                    <th className="py-3 px-4">Google Sheet Column</th>
-                    <th className="py-3 px-4">Firestore Schema Key</th>
-                    <th className="py-3 px-4">Data Type</th>
-                    <th className="py-3 px-4">Parity Status</th>
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase text-[10px] tracking-wider font-bold">
+                <tr>
+                  <th className="py-3 px-4">Entity</th>
+                  <th className="py-3 px-4">CMS Field Label</th>
+                  <th className="py-3 px-4">Google Sheet Tab</th>
+                  <th className="py-3 px-4">Sheet Column</th>
+                  <th className="py-3 px-4">Firestore Field Path</th>
+                  <th className="py-3 px-4">Data Type</th>
+                  <th className="py-3 px-4">Parity Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
+                {fieldParityRows.map((row, idx) => (
+                  <tr key={idx} className="hover:bg-slate-50/50">
+                    <td className="py-3 px-4 font-sans font-bold text-slate-800">{row.category}</td>
+                    <td className="py-3 px-4 font-sans text-slate-700">{row.cmsField}</td>
+                    <td className="py-3 px-4 text-indigo-700 bg-indigo-50/40">{row.sheetTab}</td>
+                    <td className="py-3 px-4 text-slate-600">{row.sheetColumn}</td>
+                    <td className="py-3 px-4 text-emerald-700">{row.firestoreField}</td>
+                    <td className="py-3 px-4 text-slate-500 font-sans">{row.dataType}</td>
+                    <td className="py-3 px-4">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        {row.syncStatus}
+                      </span>
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                  {fieldParityRows.map((row, i) => (
-                    <tr key={i} className="hover:bg-slate-50 transition-colors">
-                      <td className="py-3 px-4 font-sans font-bold text-slate-800">{row.category}</td>
-                      <td className="py-3 px-4 font-sans text-slate-900">{row.cmsField}</td>
-                      <td className="py-3 px-4 text-emerald-700 font-bold">{row.sheetTab}</td>
-                      <td className="py-3 px-4 text-slate-600">{row.sheetColumn}</td>
-                      <td className="py-3 px-4 text-indigo-700 font-bold">{row.firestoreField}</td>
-                      <td className="py-3 px-4 text-slate-500 font-sans">{row.dataType}</td>
-                      <td className="py-3 px-4 font-sans">
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
-                          ✓ {row.syncStatus}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* DRAWER / MODAL: VISA WORKSPACE (Full 9-Section Workspace)                 */}
+      {/* WORKSPACE DRAWER / MODAL FOR ADDING & EDITING SERVICES                    */}
       {/* ========================================================================= */}
-      {editingVisa && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-5xl w-full p-6 space-y-6 border border-slate-200 shadow-2xl animate-scaleUp my-auto max-h-[92vh] flex flex-col">
+      {isServiceDrawerOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-6xl w-full overflow-hidden shadow-2xl border border-slate-200 flex flex-col max-h-[94vh] my-auto">
             
-            {/* Workspace Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-slate-200 shrink-0">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-2xl bg-[#00C6A6]/10 text-[#00a88c] flex items-center justify-center font-bold">
-                  <FileText className="w-5 h-5" />
+            {/* DRAWER HEADER */}
+            <div className="bg-slate-900 text-white p-4 sm:p-5 flex items-center justify-between shrink-0 border-b border-slate-800">
+              <div className="flex items-center space-x-3 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-[#00C6A6]/20 border border-[#00C6A6]/30 flex items-center justify-center text-[#00E5C0] shrink-0">
+                  {serviceDrawerCategory === 'VISA' && <FileText className="w-5 h-5" />}
+                  {serviceDrawerCategory === 'PROTECTION' && <ShieldCheck className="w-5 h-5" />}
+                  {serviceDrawerCategory === 'VIP' && <Plane className="w-5 h-5" />}
+                  {serviceDrawerCategory === 'CONNECTIVITY' && <Smartphone className="w-5 h-5" />}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <div className="flex items-center space-x-2">
-                    <span className="text-[10px] uppercase font-bold text-slate-400">Visa Detail Workspace</span>
-                    <span className="px-2 py-0.2 rounded bg-slate-100 font-mono text-[10px] font-bold text-slate-600">v{editingVisa.requirementVersion || 1}</span>
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#00C6A6] text-slate-950">
+                      {serviceDrawerCategory === 'VISA' ? 'Visa Service' :
+                       serviceDrawerCategory === 'PROTECTION' ? 'Travel Protection' :
+                       serviceDrawerCategory === 'VIP' ? 'VIP Ground Service' : '5G eSIM Package'}
+                    </span>
+                    <span className="text-xs text-slate-400 font-mono">
+                      ID: {editingVisa?.id || editingProtection?.id || editingVip?.id || editingConnectivity?.id || 'NEW'}
+                    </span>
                   </div>
-                  <h3 className="text-base font-black text-slate-900">{editingVisa.country} — {editingVisa.visaType}</h3>
+                  <h2 className="text-base sm:text-lg font-bold text-white truncate mt-0.5">
+                    {editingVisa?.country ? `${editingVisa.country} - ${editingVisa.visaType}` :
+                     editingProtection?.serviceName || editingVip?.name || editingConnectivity?.name || 'Configure Service'}
+                  </h2>
                 </div>
               </div>
 
-              <div className="flex items-center space-x-2">
-                <button
-                  type="button"
-                  onClick={() => handleSaveVisa()}
-                  className="px-4 py-2 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>Save Workspace</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingVisa(null)}
-                  className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setIsServiceDrawerOpen(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
-            {/* Workspace Navigation Subtabs */}
-            <div className="flex border-b border-slate-100 overflow-x-auto space-x-1 shrink-0 pb-1">
-              {[
-                { id: 'OVERVIEW', label: 'Overview & Basics', icon: Info },
-                { id: 'REQUIREMENTS', label: `Requirements Builder (${editingVisa.structuredRequirements?.length || 0})`, icon: CheckSquare },
-                { id: 'ELIGIBILITY', label: 'Eligibility Rules', icon: UserCheck },
-                { id: 'PROCESSING', label: 'SLA & Processing Steps', icon: Clock },
-                { id: 'PRICING', label: 'Pricing & Tariffs', icon: DollarSign },
-                { id: 'ASSISTANCE', label: `Assistance Services (${editingVisa.assistanceServices?.length || 0})`, icon: Sparkles },
-                { id: 'CUSTOMER_PREVIEW', label: 'Customer-Facing Preview', icon: Eye },
-                { id: 'SEO', label: 'SEO Settings', icon: Globe2 }
-              ].map(tab => {
-                const Icon = tab.icon;
-                const active = workspaceTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setWorkspaceTab(tab.id as any)}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 shrink-0 cursor-pointer ${
-                      active
-                        ? 'bg-slate-900 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    <span>{tab.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Workspace Tab Content */}
-            <div className="flex-1 overflow-y-auto pr-1 space-y-6">
-
-              {/* SECTION: OVERVIEW */}
-              {workspaceTab === 'OVERVIEW' && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs font-bold text-slate-700 block mb-1">Country / Destination Name *</label>
-                      <input
-                        type="text"
-                        value={editingVisa.country}
-                        onChange={e => setEditingVisa({ ...editingVisa, country: e.target.value })}
-                        className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
-                      />
+            {/* DRAWER BODY & DUAL COLUMN WORKSPACE */}
+            <div className="p-5 sm:p-6 overflow-y-auto flex-1">
+              <AdminWorkspaceLayout
+                sidebar={
+                  <div className="space-y-6">
+                    {/* Compact Identity & Preview Context Panel */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 shadow-xs text-xs text-slate-700">
+                      <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Context Summary</h4>
+                      <div className="space-y-2">
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Service</span>
+                          <span className="font-bold text-slate-900 leading-snug">
+                            {editingVisa?.country ? `${editingVisa.country} - ${editingVisa.visaType}` :
+                             editingProtection?.serviceName || editingVip?.name || editingConnectivity?.name || 'New Service'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Category</span>
+                          <span className="font-medium text-slate-800">
+                            {serviceDrawerCategory === 'VISA' ? 'Visa Services' :
+                             serviceDrawerCategory === 'PROTECTION' ? 'Travel Protection' :
+                             serviceDrawerCategory === 'VIP' ? 'VIP Ground Service' : '5G eSIM Package'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Destination / Coverage</span>
+                          <span className="font-medium text-slate-800">
+                            {editingVisa?.country || editingProtection?.coverageArea || editingVip?.destinationId || editingConnectivity?.coverageZone || 'Regional / Global'}
+                          </span>
+                        </div>
+                        <div className="pt-2.5 border-t border-slate-200">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Authoritative Final Price</span>
+                          <div className="text-base font-black text-[#008972] font-mono mt-0.5">
+                            {formatCurrency(livePricingCalculation?.finalPrice || 0, pricingForm.currency)}
+                          </div>
+                        </div>
+                      </div>
                     </div>
 
-                    <div>
-                      <label className="text-xs font-bold text-slate-700 block mb-1">Visa Classification Title *</label>
-                      <input
-                        type="text"
-                        value={editingVisa.visaType}
-                        onChange={e => setEditingVisa({ ...editingVisa, visaType: e.target.value })}
-                        className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
-                      />
+                    {/* Vertical Side Steps Selector */}
+                    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs divide-y divide-slate-100">
+                      <button
+                        type="button"
+                        onClick={() => setWorkspaceTab('BASIC')}
+                        className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center space-x-2.5 cursor-pointer ${
+                          workspaceTab === 'BASIC'
+                            ? 'bg-[#00C6A6]/10 text-slate-950 font-black border-l-4 border-[#00C6A6]'
+                            : 'hover:bg-slate-50 text-slate-600'
+                        }`}
+                      >
+                        <Layers className="w-4 h-4 text-slate-400" />
+                        <span>1. Basic Info</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setWorkspaceTab('COVERAGE')}
+                        className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center space-x-2.5 cursor-pointer ${
+                          workspaceTab === 'COVERAGE'
+                            ? 'bg-[#00C6A6]/10 text-slate-950 font-black border-l-4 border-[#00C6A6]'
+                            : 'hover:bg-slate-50 text-slate-600'
+                        }`}
+                      >
+                        <Globe2 className="w-4 h-4 text-slate-400" />
+                        <span>2. Destination & Coverage</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setWorkspaceTab('CONFIG')}
+                        className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center space-x-2.5 cursor-pointer ${
+                          workspaceTab === 'CONFIG'
+                            ? 'bg-[#00C6A6]/10 text-slate-950 font-black border-l-4 border-[#00C6A6]'
+                            : 'hover:bg-slate-50 text-slate-600'
+                        }`}
+                      >
+                        <Sliders className="w-4 h-4 text-slate-400" />
+                        <span>3. Configuration</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setWorkspaceTab('PRICING')}
+                        className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center space-x-2.5 cursor-pointer ${
+                          workspaceTab === 'PRICING'
+                            ? 'bg-[#00C6A6]/10 text-[#008F77] font-black border-l-4 border-[#00C6A6]'
+                            : 'hover:bg-slate-50 text-slate-600'
+                        }`}
+                      >
+                        <Calculator className="w-4 h-4 text-slate-400" />
+                        <span>4. Commercial Pricing</span>
+                      </button>
+
+                      {serviceDrawerCategory === 'VISA' && (
+                        <button
+                          type="button"
+                          onClick={() => setWorkspaceTab('REQUIREMENTS')}
+                          className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center space-x-2.5 cursor-pointer ${
+                            workspaceTab === 'REQUIREMENTS'
+                              ? 'bg-[#00C6A6]/10 text-slate-950 font-black border-l-4 border-[#00C6A6]'
+                              : 'hover:bg-slate-50 text-slate-600'
+                          }`}
+                        >
+                          <FileText className="w-4 h-4 text-slate-400" />
+                          <span>5. Requirements ({editingVisa?.structuredRequirements?.length || 0})</span>
+                        </button>
+                      )}
+
+                      {serviceDrawerCategory === 'VISA' && (
+                        <button
+                          type="button"
+                          onClick={() => setWorkspaceTab('CUSTOMER_PREVIEW')}
+                          className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center space-x-2.5 cursor-pointer ${
+                            workspaceTab === 'CUSTOMER_PREVIEW'
+                              ? 'bg-[#00C6A6]/10 text-slate-950 font-black border-l-4 border-[#00C6A6]'
+                              : 'hover:bg-slate-50 text-slate-600'
+                          }`}
+                        >
+                          <Eye className="w-4 h-4 text-slate-400" />
+                          <span>Checklist Preview</span>
+                        </button>
+                      )}
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                }
+                content={
+                  <div className="space-y-6">
+                    {/* Dynamic Step Content Workspace */}
+              
+              {/* ================================================================= */}
+              {/* WORKSPACE TAB 1: BASIC INFORMATION                               */}
+              {/* ================================================================= */}
+              {workspaceTab === 'BASIC' && (
+                <div className="space-y-4 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="text-xs font-bold text-slate-700 block mb-1">Entry Permission Type</label>
-                      <select
-                        value={editingVisa.entryType}
-                        onChange={e => setEditingVisa({ ...editingVisa, entryType: e.target.value as any })}
-                        className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
-                      >
-                        <option value="SINGLE_ENTRY">Single Entry</option>
-                        <option value="MULTIPLE_ENTRY">Multiple Entry</option>
-                        <option value="DOUBLE_ENTRY">Double Entry</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-bold text-slate-700 block mb-1">Total Validity (Days)</label>
+                      <label className="font-bold text-slate-700 block mb-1">Service Title / Name *</label>
                       <input
-                        type="number"
-                        value={editingVisa.validityDays}
-                        onChange={e => setEditingVisa({ ...editingVisa, validityDays: Number(e.target.value) })}
+                        type="text"
+                        required
+                        value={
+                          serviceDrawerCategory === 'VISA' ? (editingVisa?.country ? `${editingVisa.country} - ${editingVisa.visaType}` : '') :
+                          serviceDrawerCategory === 'PROTECTION' ? (editingProtection?.serviceName || '') :
+                          serviceDrawerCategory === 'VIP' ? (editingVip?.name || '') :
+                          (editingConnectivity?.name || '')
+                        }
+                        onChange={e => {
+                          const val = e.target.value;
+                          if (serviceDrawerCategory === 'VISA' && editingVisa) {
+                            setEditingVisa({ ...editingVisa, visaType: val });
+                          } else if (serviceDrawerCategory === 'PROTECTION' && editingProtection) {
+                            setEditingProtection({ ...editingProtection, serviceName: val });
+                          } else if (serviceDrawerCategory === 'VIP' && editingVip) {
+                            setEditingVip({ ...editingVip, name: val });
+                          } else if (serviceDrawerCategory === 'CONNECTIVITY' && editingConnectivity) {
+                            setEditingConnectivity({ ...editingConnectivity, name: val });
+                          }
+                        }}
                         className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
                       />
                     </div>
 
                     <div>
-                      <label className="text-xs font-bold text-slate-700 block mb-1">Max Stay Duration (Days)</label>
+                      <label className="font-bold text-slate-700 block mb-1">Service Category</label>
                       <input
-                        type="number"
-                        value={editingVisa.stayDurationDays}
-                        onChange={e => setEditingVisa({ ...editingVisa, stayDurationDays: Number(e.target.value) })}
-                        className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
+                        type="text"
+                        disabled
+                        value={
+                          serviceDrawerCategory === 'VISA' ? 'Visa Services' :
+                          serviceDrawerCategory === 'PROTECTION' ? 'Travel Protection' :
+                          serviceDrawerCategory === 'VIP' ? 'Ground & Connectivity (VIP Ground)' :
+                          'Ground & Connectivity (5G eSIM)'
+                        }
+                        className="w-full px-3.5 py-2 rounded-xl bg-slate-100 border border-slate-200 text-xs text-slate-500 font-bold"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1">Public & B2B Service Description</label>
+                    <label className="font-bold text-slate-700 block mb-1">Description</label>
                     <textarea
                       rows={3}
-                      value={editingVisa.description}
-                      onChange={e => setEditingVisa({ ...editingVisa, description: e.target.value })}
+                      value={
+                        serviceDrawerCategory === 'VISA' ? (editingVisa?.description || '') :
+                        serviceDrawerCategory === 'PROTECTION' ? (editingProtection?.customerDescription || '') :
+                        serviceDrawerCategory === 'VIP' ? (editingVip?.longDesc || editingVip?.shortDesc || '') :
+                        (editingConnectivity?.inclusions?.join('\n') || '')
+                      }
+                      onChange={e => {
+                        const val = e.target.value;
+                        if (serviceDrawerCategory === 'VISA' && editingVisa) {
+                          setEditingVisa({ ...editingVisa, description: val });
+                        } else if (serviceDrawerCategory === 'PROTECTION' && editingProtection) {
+                          setEditingProtection({ ...editingProtection, customerDescription: val });
+                        } else if (serviceDrawerCategory === 'VIP' && editingVip) {
+                          setEditingVip({ ...editingVip, longDesc: val, shortDesc: val });
+                        }
+                      }}
                       className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1">Hero / Banner Image</label>
+                    <label className="font-bold text-slate-700 block mb-1">Hero Image URL</label>
                     <ImageUploadOrUrlInput
-                      value={editingVisa.heroImage || ''}
-                      onChange={url => setEditingVisa({ ...editingVisa, heroImage: url })}
-                      label="Upload or enter Visa banner image URL"
+                      value={editingVisa?.heroImage || ''}
+                      onChange={url => {
+                        if (editingVisa) setEditingVisa({ ...editingVisa, heroImage: url });
+                      }}
+                      label="Service Visual Banner"
                     />
                   </div>
                 </div>
               )}
 
-              {/* SECTION: REQUIREMENTS BUILDER (Section 16 & 17) */}
-              {workspaceTab === 'REQUIREMENTS' && (
+              {/* ================================================================= */}
+              {/* WORKSPACE TAB 2: DESTINATION & COVERAGE                           */}
+              {/* ================================================================= */}
+              {workspaceTab === 'COVERAGE' && (
+                <div className="space-y-4 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">Destination Master Jurisdiction</label>
+                      <select
+                        value={
+                          serviceDrawerCategory === 'VISA' ? (editingVisa?.destinationId || '') :
+                          serviceDrawerCategory === 'VIP' ? (editingVip?.destinationId || '') :
+                          (destinations[0]?.id || '')
+                        }
+                        onChange={e => {
+                          const dId = e.target.value;
+                          const found = destinations.find(d => d.id === dId);
+                          if (serviceDrawerCategory === 'VISA' && editingVisa) {
+                            setEditingVisa({
+                              ...editingVisa,
+                              destinationId: dId,
+                              country: found?.name || editingVisa.country
+                            });
+                          } else if (serviceDrawerCategory === 'VIP' && editingVip) {
+                            setEditingVip({ ...editingVip, destinationId: dId });
+                          }
+                        }}
+                        className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6] cursor-pointer"
+                      >
+                        {destinations.map(d => (
+                          <option key={d.id} value={d.id}>{d.name} ({d.country || 'International'})</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">Coverage Area Description</label>
+                      <input
+                        type="text"
+                        value={
+                          serviceDrawerCategory === 'PROTECTION' ? (editingProtection?.coverageArea || '') :
+                          serviceDrawerCategory === 'CONNECTIVITY' ? (editingConnectivity?.coverageZone || '') :
+                          (editingVisa?.country || 'Jurisdiction Specific')
+                        }
+                        onChange={e => {
+                          const val = e.target.value;
+                          if (serviceDrawerCategory === 'PROTECTION' && editingProtection) {
+                            setEditingProtection({ ...editingProtection, coverageArea: val });
+                          } else if (serviceDrawerCategory === 'CONNECTIVITY' && editingConnectivity) {
+                            setEditingConnectivity({ ...editingConnectivity, coverageZone: val });
+                          }
+                        }}
+                        placeholder="e.g. Worldwide excl. US/Canada, Schengen, Tokyo Haneda Airport"
+                        className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ================================================================= */}
+              {/* WORKSPACE TAB 3: SERVICE CONFIGURATION                            */}
+              {/* ================================================================= */}
+              {workspaceTab === 'CONFIG' && (
+                <div className="space-y-4 text-xs">
+                  {serviceDrawerCategory === 'VISA' && editingVisa && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">Entry Classification</label>
+                        <select
+                          value={editingVisa.entryType}
+                          onChange={e => setEditingVisa({ ...editingVisa, entryType: e.target.value as any })}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                        >
+                          <option value="SINGLE_ENTRY">Single Entry</option>
+                          <option value="DOUBLE_ENTRY">Double Entry</option>
+                          <option value="MULTIPLE_ENTRY">Multiple Entry</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">Validity (Days)</label>
+                        <input
+                          type="number"
+                          value={editingVisa.validityDays}
+                          onChange={e => setEditingVisa({ ...editingVisa, validityDays: Number(e.target.value) })}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">Permitted Stay (Days)</label>
+                        <input
+                          type="number"
+                          value={editingVisa.stayDurationDays}
+                          onChange={e => setEditingVisa({ ...editingVisa, stayDurationDays: Number(e.target.value) })}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {serviceDrawerCategory === 'PROTECTION' && editingProtection && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">Underwriter / Provider</label>
+                        <input
+                          type="text"
+                          value={editingProtection.provider || ''}
+                          onChange={e => setEditingProtection({ ...editingProtection, provider: e.target.value })}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">Medical Coverage Limit ($)</label>
+                        <input
+                          type="number"
+                          value={editingProtection.medicalCoverageAmount || 250000}
+                          onChange={e => setEditingProtection({ ...editingProtection, medicalCoverageAmount: Number(e.target.value) })}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {serviceDrawerCategory === 'VIP' && editingVip && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">VIP Service Subcategory</label>
+                        <select
+                          value={editingVip.serviceType || 'MEET_AND_GREET'}
+                          onChange={e => setEditingVip({ ...editingVip, serviceType: e.target.value as any })}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                        >
+                          <option value="MEET_AND_GREET">Meet & Greet Concierge</option>
+                          <option value="FAST_TRACK">Fast Track Immigration</option>
+                          <option value="VIP_TRANSFER">Airside Transfer</option>
+                          <option value="LOUNGE_ACCESS">Executive Lounge Access</option>
+                          <option value="PORTERAGE">Baggage Porterage</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">Executive Ground Partner</label>
+                        <input
+                          type="text"
+                          value={editingVip.supplierName || ''}
+                          onChange={e => setEditingVip({ ...editingVip, supplierName: e.target.value })}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {serviceDrawerCategory === 'CONNECTIVITY' && editingConnectivity && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">Data Allowance</label>
+                        <input
+                          type="text"
+                          value={editingConnectivity.dataAllowance || ''}
+                          onChange={e => setEditingConnectivity({ ...editingConnectivity, dataAllowance: e.target.value })}
+                          placeholder="e.g. 10GB High-Speed, Unlimited"
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">Validity (Days)</label>
+                        <input
+                          type="number"
+                          value={editingConnectivity.validityDays || 15}
+                          onChange={e => setEditingConnectivity({ ...editingConnectivity, validityDays: Number(e.target.value) })}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ================================================================= */}
+              {/* WORKSPACE TAB 4: COMMERCIAL PRICING (THE CORE UPDATE)             */}
+              {/* ================================================================= */}
+              {workspaceTab === 'PRICING' && (
+                <div className="space-y-6">
+                  <div className="bg-slate-900 text-white p-5 sm:p-6 rounded-3xl border border-slate-800 shadow-xl space-y-6">
+                    
+                    {/* Header */}
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                      <div>
+                        <span className="text-[10px] font-black uppercase tracking-wider text-[#00E5C0] block">
+                          Central Commercial Pricing Engine
+                        </span>
+                        <h3 className="text-lg font-black text-white flex items-center gap-2">
+                          <Receipt className="w-5 h-5 text-[#00C6A6]" />
+                          <span>Commercial Tariff Configuration</span>
+                        </h3>
+                      </div>
+                      <span className="text-xs text-slate-400 font-mono">
+                        Nett + Margin + Service Charge = Final Price
+                      </span>
+                    </div>
+
+                    {/* Inputs Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+                      
+                      {/* Currency */}
+                      <div>
+                        <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 block mb-1.5">
+                          Currency
+                        </label>
+                        <select
+                          value={pricingForm.currency}
+                          onChange={e => setPricingForm({ ...pricingForm, currency: e.target.value as CurrencyCode })}
+                          className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-bold outline-none focus:border-[#00C6A6] cursor-pointer"
+                        >
+                          <option value="USD">USD ($)</option>
+                          <option value="JPY">JPY (¥)</option>
+                          <option value="EUR">EUR (€)</option>
+                          <option value="GBP">GBP (£)</option>
+                          <option value="INR">INR (₹)</option>
+                          <option value="AED">AED (AED)</option>
+                          <option value="THB">THB (฿)</option>
+                          <option value="SGD">SGD (S$)</option>
+                        </select>
+                      </div>
+
+                      {/* Pricing Unit */}
+                      <div>
+                        <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 block mb-1.5">
+                          Pricing Unit
+                        </label>
+                        <select
+                          value={pricingForm.pricingUnit}
+                          onChange={e => setPricingForm({ ...pricingForm, pricingUnit: e.target.value })}
+                          className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-bold outline-none focus:border-[#00C6A6] cursor-pointer"
+                        >
+                          <option value="Per Applicant">Per Applicant</option>
+                          <option value="Per Traveller">Per Traveller</option>
+                          <option value="Per Trip">Per Trip</option>
+                          <option value="Per Service">Per Service</option>
+                          <option value="Per Unit">Per Unit</option>
+                          <option value="Per Day">Per Day</option>
+                        </select>
+                      </div>
+
+                      {/* Nett Price (Required Base Cost) */}
+                      <div>
+                        <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 block mb-1.5 flex items-center justify-between">
+                          <span>Nett Price (Base Cost) *</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            placeholder="e.g. 5000"
+                            value={pricingForm.nettPrice}
+                            onChange={e => setPricingForm({ ...pricingForm, nettPrice: e.target.value })}
+                            className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-mono font-bold outline-none focus:border-[#00C6A6]"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Margin Type */}
+                      <div>
+                        <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 block mb-1.5">
+                          Margin Type
+                        </label>
+                        <select
+                          value={pricingForm.marginType}
+                          onChange={e => setPricingForm({ ...pricingForm, marginType: e.target.value as MarginType })}
+                          className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-bold outline-none focus:border-[#00C6A6] cursor-pointer"
+                        >
+                          <option value="PERCENTAGE">Percentage (%)</option>
+                          <option value="FIXED">Fixed Amount</option>
+                        </select>
+                      </div>
+
+                      {/* Margin Value */}
+                      <div>
+                        <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 block mb-1.5">
+                          Margin {pricingForm.marginType === 'PERCENTAGE' ? '(%)' : '(Fixed Amount)'}
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={pricingForm.marginValue}
+                          onChange={e => setPricingForm({ ...pricingForm, marginValue: e.target.value })}
+                          className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-mono font-bold outline-none focus:border-[#00C6A6]"
+                        />
+                      </div>
+
+                      {/* TAX Type */}
+                      <div>
+                        <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 block mb-1.5">
+                          TAX Type
+                        </label>
+                        <select
+                          value={pricingForm.taxType}
+                          onChange={e => setPricingForm({ ...pricingForm, taxType: e.target.value as any })}
+                          className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-bold outline-none focus:border-[#00C6A6] cursor-pointer"
+                        >
+                          <option value="PERCENTAGE">Percentage (%) on Margin</option>
+                          <option value="NOT_APPLICABLE">Not Applicable (0%)</option>
+                        </select>
+                      </div>
+
+                      {/* TAX Value */}
+                      {pricingForm.taxType !== 'NOT_APPLICABLE' && (
+                        <div>
+                          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 block mb-1.5">
+                            TAX (%)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={pricingForm.taxValue}
+                            onChange={e => setPricingForm({ ...pricingForm, taxValue: e.target.value })}
+                            className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-mono font-bold outline-none focus:border-[#00C6A6]"
+                          />
+                        </div>
+                      )}
+
+                      {/* Service Charge Type */}
+                      <div>
+                        <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 block mb-1.5">
+                          Service Charge Type
+                        </label>
+                        <select
+                          value={pricingForm.serviceChargeType}
+                          onChange={e => setPricingForm({ ...pricingForm, serviceChargeType: e.target.value as any })}
+                          className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-bold outline-none focus:border-[#00C6A6] cursor-pointer"
+                        >
+                          <option value="FIXED">Fixed Amount</option>
+                          <option value="PERCENTAGE">Percentage (%)</option>
+                          <option value="NOT_APPLICABLE">Not Applicable (0)</option>
+                        </select>
+                      </div>
+
+                      {/* Service Charge Value */}
+                      {pricingForm.serviceChargeType !== 'NOT_APPLICABLE' && (
+                        <div>
+                          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-300 block mb-1.5">
+                            Service Charge Value
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={pricingForm.serviceChargeValue}
+                            onChange={e => setPricingForm({ ...pricingForm, serviceChargeValue: e.target.value })}
+                            className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white font-mono font-bold outline-none focus:border-[#00C6A6]"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* LIVE PRICING PREVIEW (ADMIN ONLY) */}
+                    <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 space-y-3">
+                      <div className="flex items-center justify-between text-xs border-b border-slate-800 pb-2">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center space-x-1.5">
+                          <ShieldCheck className="w-4 h-4 text-[#00C6A6]" />
+                          <span>Internal Pricing Breakdown (Admin Only)</span>
+                        </span>
+                        <span className="text-[10px] text-[#00E5C0] font-mono">
+                          Protected from B2B Agent View
+                        </span>
+                      </div>
+
+                      {livePricingCalculation ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2">
+                          <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                            <span className="text-[10px] text-slate-400 block">1. Nett Base Cost</span>
+                            <span className="text-sm font-bold text-slate-200 font-mono">
+                              {formatCurrency(livePricingCalculation.nettPrice, pricingForm.currency)}
+                            </span>
+                          </div>
+
+                          <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                            <span className="text-[10px] text-slate-400 block">2. Margin</span>
+                            <span className="text-sm font-bold text-slate-200 font-mono">
+                              +{formatCurrency(livePricingCalculation.marginAmount, pricingForm.currency)}
+                            </span>
+                          </div>
+
+                          <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                            <span className="text-[10px] text-slate-400 block">3. Service Charge</span>
+                            <span className="text-sm font-bold text-slate-200 font-mono">
+                              +{formatCurrency(livePricingCalculation.serviceChargeAmount, pricingForm.currency)}
+                            </span>
+                          </div>
+
+                          <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                            <span className="text-[10px] text-slate-400 block">4. Tax Amount</span>
+                            <span className="text-sm font-bold text-slate-200 font-mono">
+                              +{formatCurrency(livePricingCalculation.taxAmount, pricingForm.currency)}
+                            </span>
+                          </div>
+
+                          <div className="bg-emerald-950/70 p-2.5 rounded-xl border border-emerald-500/40 col-span-2 sm:col-span-1">
+                            <span className="text-[10px] text-[#00E5C0] font-bold block">FINAL SELLING PRICE</span>
+                            <span className="text-base sm:text-lg font-black text-[#00E5C0] font-mono">
+                              {formatCurrency(livePricingCalculation.finalPrice, pricingForm.currency)}
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="py-4 text-center text-slate-400 text-xs">
+                          Complete the Nett Price and commercial fields above to calculate the Final Price.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ================================================================= */}
+              {/* WORKSPACE TAB 5: REQUIREMENTS (FOR VISA SERVICES)                 */}
+              {/* ================================================================= */}
+              {workspaceTab === 'REQUIREMENTS' && serviceDrawerCategory === 'VISA' && editingVisa && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between bg-slate-50 p-4 rounded-2xl border border-slate-200">
                     <div>
-                      <h4 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
-                        <CheckSquare className="w-4 h-4 text-[#00A88F]" />
-                        <span>Structured Visa Requirements Checklist</span>
-                      </h4>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        Configure category-specific documents, conditions, attestation, and eligibility rules.
+                      <h4 className="text-sm font-black text-slate-900">Structured Consular Requirements</h4>
+                      <p className="text-[11px] text-slate-500">
+                        Total {editingVisa.structuredRequirements?.length || 0} authoritative document checklist criteria.
                       </p>
                     </div>
 
@@ -1331,313 +1978,65 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
                       className="px-3.5 py-2 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>+ Add Requirement</span>
+                      <span>Add Requirement</span>
                     </button>
                   </div>
 
-                  {/* Requirements List */}
                   <div className="space-y-2.5">
-                    {(editingVisa.structuredRequirements || []).length === 0 ? (
-                      <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-slate-400 text-xs">
-                        No structured requirements defined. Click "+ Add Requirement" to create one.
-                      </div>
-                    ) : (
-                      editingVisa.structuredRequirements!.map((req, idx) => (
-                        <div
-                          key={req.id}
-                          className={`p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                            req.status === 'ACTIVE'
-                              ? 'bg-white border-slate-200 shadow-xs'
-                              : 'bg-slate-50/70 border-slate-200 text-slate-400 opacity-60'
-                          }`}
-                        >
-                          <div className="flex items-start space-x-3">
-                            <span className="w-6 h-6 rounded-lg bg-slate-100 text-slate-700 font-mono text-xs font-bold flex items-center justify-center shrink-0">
-                              {req.displayOrder || idx + 1}
-                            </span>
-
-                            <div className="space-y-1">
-                              <div className="flex items-center space-x-2">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                                  req.category === 'IDENTITY' ? 'bg-purple-100 text-purple-800' :
-                                  req.category === 'FINANCIAL' ? 'bg-emerald-100 text-emerald-800' :
-                                  req.category === 'TRAVEL' ? 'bg-blue-100 text-blue-800' :
-                                  req.category === 'SUPPORTING' ? 'bg-amber-100 text-amber-800' :
-                                  'bg-slate-100 text-slate-700'
-                                }`}>
-                                  {req.category}
-                                </span>
-
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
-                                  req.requiredStatus === 'REQUIRED' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
-                                  req.requiredStatus === 'CONDITIONAL' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
-                                  'bg-slate-100 text-slate-600'
-                                }`}>
-                                  {req.requiredStatus}
-                                </span>
-
-                                <span className="text-xs font-black text-slate-900">{req.name}</span>
-                              </div>
-
-                              <p className="text-[11px] text-slate-600 max-w-xl">{req.description}</p>
-
-                              {/* Document condition tags */}
-                              {req.documentConditions && (
-                                <div className="flex flex-wrap gap-1.5 pt-1 text-[10px] text-slate-500">
-                                  {req.documentConditions.originalRequired && <span className="bg-slate-100 px-1.5 py-0.5 rounded">Original Required</span>}
-                                  {req.documentConditions.copyRequired && <span className="bg-slate-100 px-1.5 py-0.5 rounded">Copy Required</span>}
-                                  {req.documentConditions.minValidityMonths && <span className="bg-slate-100 px-1.5 py-0.5 rounded">{req.documentConditions.minValidityMonths}m Min Validity</span>}
-                                  {req.documentConditions.attestationRequired && <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-bold">Attested</span>}
-                                  {req.documentConditions.bankStatementPeriodMonths && <span className="bg-slate-100 px-1.5 py-0.5 rounded">{req.documentConditions.bankStatementPeriodMonths}m Statements</span>}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Requirement Actions */}
-                          <div className="flex items-center space-x-1 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                            <button
-                              type="button"
-                              onClick={() => handleReorderRequirement(req.id, 'UP')}
-                              disabled={idx === 0}
-                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 disabled:opacity-30 cursor-pointer"
-                              title="Move Up"
-                            >
-                              <ChevronUp className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleReorderRequirement(req.id, 'DOWN')}
-                              disabled={idx === editingVisa.structuredRequirements!.length - 1}
-                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 disabled:opacity-30 cursor-pointer"
-                              title="Move Down"
-                            >
-                              <ChevronDown className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDuplicateRequirement(req)}
-                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
-                              title="Duplicate"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingRequirement(req);
-                                setRequirementDuplicateWarning(null);
-                                setIsRequirementModalOpen(true);
-                              }}
-                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
-                              title="Edit Requirement"
-                            >
-                              <Edit className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleToggleRequirementStatus(req.id)}
-                              className={`p-1.5 rounded-lg cursor-pointer ${
-                                req.status === 'ACTIVE' ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
-                              }`}
-                              title={req.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
-                            >
-                              <UserCheck className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteRequirement(req.id)}
-                              className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 cursor-pointer"
-                              title="Delete Requirement"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* SECTION: ELIGIBILITY */}
-              {workspaceTab === 'ELIGIBILITY' && (
-                <div className="space-y-4 text-xs">
-                  <div>
-                    <label className="font-bold text-slate-700 block mb-1">Applicable Nationalities (Comma-separated or 'ALL')</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Indian, All Eligible Passports, UK, GCC"
-                      value={editingVisa.eligibilityNotes?.[0] || 'All Eligible Passports'}
-                      onChange={e => {
-                        const notes = [...(editingVisa.eligibilityNotes || [])];
-                        notes[0] = e.target.value;
-                        setEditingVisa({ ...editingVisa, eligibilityNotes: notes });
-                      }}
-                      className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="font-bold text-slate-700 block mb-1">Consular Guidelines & Applicant Scrutiny Rules</label>
-                    <textarea
-                      rows={4}
-                      value={(editingVisa.eligibilityNotes || []).slice(1).join('\n')}
-                      onChange={e => {
-                        const first = editingVisa.eligibilityNotes?.[0] || 'All Eligible Passports';
-                        const rest = e.target.value.split('\n').filter(Boolean);
-                        setEditingVisa({ ...editingVisa, eligibilityNotes: [first, ...rest] });
-                      }}
-                      placeholder="One rule per line (e.g. Clean immigration history; Travel must take place inside validity period)"
-                      className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* SECTION: PROCESSING */}
-              {workspaceTab === 'PROCESSING' && (
-                <div className="space-y-4 text-xs">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">Standard Processing (Days)</label>
-                      <input
-                        type="number"
-                        value={editingVisa.processingTimeDays}
-                        onChange={e => setEditingVisa({ ...editingVisa, processingTimeDays: Number(e.target.value) })}
-                        className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">Express SLA Turnaround (Days)</label>
-                      <input
-                        type="number"
-                        value={editingVisa.expressProcessingTimeDays || 2}
-                        onChange={e => setEditingVisa({ ...editingVisa, expressProcessingTimeDays: Number(e.target.value) })}
-                        className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                      />
-                    </div>
-
-                    <div className="flex items-center space-x-2 pt-6">
-                      <input
-                        type="checkbox"
-                        id="express_avail_chk"
-                        checked={editingVisa.expressProcessingAvailable}
-                        onChange={e => setEditingVisa({ ...editingVisa, expressProcessingAvailable: e.target.checked })}
-                        className="w-4 h-4 rounded text-[#00C6A6] focus:ring-0 cursor-pointer"
-                      />
-                      <label htmlFor="express_avail_chk" className="font-bold text-slate-700 cursor-pointer">
-                        Enable Express 24-48h SLA Option
-                      </label>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="font-bold text-slate-700 block mb-1">Operational Submission Steps (Chronological Sequence)</label>
-                    <textarea
-                      rows={5}
-                      value={(editingVisa.submissionSteps || []).join('\n')}
-                      onChange={e => setEditingVisa({ ...editingVisa, submissionSteps: e.target.value.split('\n').filter(Boolean) })}
-                      placeholder="Step 1: Upload credentials&#10;Step 2: Scrutiny by DMC team&#10;Step 3: Biometric appointment"
-                      className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* SECTION: PRICING & TARIFFS */}
-              {workspaceTab === 'PRICING' && (
-                <div className="space-y-4 text-xs">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">Government Consular Fee ($)</label>
-                      <input
-                        type="number"
-                        value={editingVisa.embassyFee}
-                        onChange={e => setEditingVisa({ ...editingVisa, embassyFee: Number(e.target.value) })}
-                        className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">DMC Processing Service Fee ($)</label>
-                      <input
-                        type="number"
-                        value={editingVisa.serviceFee}
-                        onChange={e => setEditingVisa({ ...editingVisa, serviceFee: Number(e.target.value) })}
-                        className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">Express Fast-Track Surcharge ($)</label>
-                      <input
-                        type="number"
-                        value={editingVisa.expressServiceFee || 0}
-                        onChange={e => setEditingVisa({ ...editingVisa, expressServiceFee: Number(e.target.value) })}
-                        className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-emerald-800">Total Standard Selling Price</span>
-                      <div className="text-xl font-black text-emerald-950 font-mono">
-                        ${(editingVisa.embassyFee || 0) + (editingVisa.serviceFee || 0)} {editingVisa.currency || 'USD'}
-                      </div>
-                    </div>
-                    <span className="text-xs text-emerald-700 font-medium">Includes Consular Net + DMC Processing Margin</span>
-                  </div>
-                </div>
-              )}
-
-              {/* SECTION: ASSISTANCE SERVICES (Section 19) */}
-              {workspaceTab === 'ASSISTANCE' && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                    <div>
-                      <h4 className="text-sm font-black text-slate-900">Application Assistance Options</h4>
-                      <p className="text-[11px] text-slate-500">Document vetting, form filing, VFS biometric concierge, and appointment scheduling.</p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleOpenAddAssistance}
-                      className="px-3.5 py-2 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Add Assistance Option</span>
-                    </button>
-                  </div>
-
-                  <div className="space-y-3">
-                    {(editingVisa.assistanceServices || []).map(asst => (
-                      <div key={asst.id} className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between gap-3">
+                    {(editingVisa.structuredRequirements || []).map((req, idx) => (
+                      <div
+                        key={req.id}
+                        className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                      >
                         <div className="space-y-1">
                           <div className="flex items-center space-x-2">
-                            <span className="text-xs font-black text-slate-900">{asst.name}</span>
-                            {asst.includedInBaseFee && (
-                              <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-bold border border-emerald-200">
-                                Included in Base Fee
-                              </span>
-                            )}
+                            <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-700 font-black text-[10px] flex items-center justify-center font-mono">
+                              {idx + 1}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                              req.requiredStatus === 'REQUIRED' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                              req.requiredStatus === 'CONDITIONAL' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                              'bg-slate-100 text-slate-600'
+                            }`}>
+                              {req.requiredStatus}
+                            </span>
+                            <span className="font-black text-slate-900">{req.name}</span>
                           </div>
-                          <p className="text-xs text-slate-500">{asst.description}</p>
+                          <p className="text-[11px] text-slate-500">{req.description || 'Standard requirement'}</p>
                         </div>
 
-                        <div className="flex items-center space-x-3 shrink-0">
-                          <div className="text-right">
-                            <span className="text-sm font-black text-slate-900 font-mono">${asst.sellingPrice}</span>
-                            <span className="text-[10px] text-slate-400 block">Cost: ${asst.netCost}</span>
-                          </div>
-
+                        <div className="flex items-center space-x-1.5 shrink-0">
                           <button
                             type="button"
-                            onClick={() => handleDeleteAssistance(asst.id)}
+                            onClick={() => handleReorderRequirement(req.id, 'UP')}
+                            disabled={idx === 0}
+                            className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 disabled:opacity-30 cursor-pointer"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleReorderRequirement(req.id, 'DOWN')}
+                            disabled={idx === editingVisa.structuredRequirements!.length - 1}
+                            className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 disabled:opacity-30 cursor-pointer"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingRequirement(req);
+                              setRequirementDuplicateWarning(null);
+                              setIsRequirementModalOpen(true);
+                            }}
+                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteRequirement(req.id)}
                             className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 cursor-pointer"
-                            title="Delete"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1648,19 +2047,21 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
                 </div>
               )}
 
-              {/* SECTION: CUSTOMER PREVIEW (Section 35) */}
-              {workspaceTab === 'CUSTOMER_PREVIEW' && (
+              {/* ================================================================= */}
+              {/* WORKSPACE TAB: CUSTOMER CHECKLIST PREVIEW                         */}
+              {/* ================================================================= */}
+              {workspaceTab === 'CUSTOMER_PREVIEW' && serviceDrawerCategory === 'VISA' && editingVisa && (
                 <div className="space-y-4">
                   <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-2xl text-xs text-indigo-900">
                     <span className="font-bold block">Live Customer-Facing Document Checklist Preview</span>
-                    This is how the structured requirement data renders on proposal PDFs, client WhatsApp summaries, and B2B Agent portal vouchers.
+                    This preview represents how the requirement checklist is presented to B2B Agents, Client Proposal PDFs, and WhatsApp dispatches.
                   </div>
 
-                  <div className="bg-slate-50 p-6 rounded-3xl border border-slate-200 space-y-6">
+                  <div className="bg-slate-50 p-5 rounded-3xl border border-slate-200 space-y-4">
                     {generateCustomerVisaChecklist(editingVisa).map((group, gIdx) => (
                       <div key={gIdx} className="space-y-2">
                         <h5 className="font-black text-xs uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <CheckCircle2 className="w-3.5 h-3.5 text-[#00A88F]" />
                           <span>{group.categoryTitle}</span>
                         </h5>
 
@@ -1686,17 +2087,42 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
                   </div>
                 </div>
               )}
-
-              {/* SECTION: SEO SETTINGS */}
-              {workspaceTab === 'SEO' && (
-                <EntitySEOSettingsTab
-                  entityType="VISA"
-                  entity={editingVisa}
-                  seo={editingVisa.seo}
-                  onChange={newSeo => setEditingVisa({ ...editingVisa, seo: newSeo, slug: newSeo.slug || editingVisa.slug })}
-                />
-              )}
+                  </div>
+                }
+              />
             </div>
+
+            {/* DRAWER FOOTER */}
+            <div className="p-4 sm:p-5 bg-slate-900 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                  Authoritative Selling Price
+                </span>
+                <div className="text-xl font-black text-[#00E5C0] font-mono">
+                  {formatCurrency(livePricingCalculation?.finalPrice || 0, pricingForm.currency)}
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2.5 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsServiceDrawerOpen(false)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSaveCurrentService}
+                  className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs shadow-lg transition-all cursor-pointer flex items-center space-x-1.5"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>Save Service & Pricing</span>
+                </button>
+              </div>
+            </div>
+
           </div>
         </div>
       )}
@@ -1708,38 +2134,35 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
         <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
           <form onSubmit={handleSaveRequirement} className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 border border-slate-200 shadow-2xl animate-scaleUp my-auto max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <h3 className="text-sm font-black text-slate-900">Configure Structured Requirement</h3>
+              <h3 className="text-sm font-black text-slate-900">Configure Requirement Checklist Item</h3>
               <button
                 type="button"
                 onClick={() => {
                   setIsRequirementModalOpen(false);
                   setEditingRequirement(null);
                 }}
-                className="p-1 rounded-xl text-slate-400 hover:text-slate-700"
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {requirementDuplicateWarning && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 font-medium flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
                 <span>{requirementDuplicateWarning}</span>
               </div>
             )}
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Requirement Name *</label>
+                <label className="font-bold text-slate-700 block mb-1">Requirement Title *</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Original Passport, Bank Statement, ITR"
                   value={editingRequirement.name}
-                  onChange={e => {
-                    setEditingRequirement({ ...editingRequirement, name: e.target.value });
-                    setRequirementDuplicateWarning(null);
-                  }}
+                  onChange={e => setEditingRequirement({ ...editingRequirement, name: e.target.value })}
+                  placeholder="e.g. Original Passport with 6-month validity"
                   className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
                 />
               </div>
@@ -1749,15 +2172,16 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
                   <label className="font-bold text-slate-700 block mb-1">Category</label>
                   <select
                     value={editingRequirement.category}
-                    onChange={e => setEditingRequirement({ ...editingRequirement, category: e.target.value as any })}
+                    onChange={e => setEditingRequirement({ ...editingRequirement, category: e.target.value as RequirementCategory })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
                   >
-                    <option value="IDENTITY">Identity Documents</option>
-                    <option value="FINANCIAL">Financial Documents</option>
-                    <option value="TRAVEL">Travel Documents</option>
-                    <option value="SUPPORTING">Supporting Documents</option>
-                    <option value="APPLICATION">Application Documents</option>
-                    <option value="OTHER">Other / Consular</option>
+                    <option value="IDENTITY">Identity & Passport</option>
+                    <option value="FINANCIAL">Financial Proof</option>
+                    <option value="EMPLOYMENT">Employment / Business</option>
+                    <option value="ACCOMMODATION">Accommodation / Itinerary</option>
+                    <option value="TRAVEL_HISTORY">Travel History</option>
+                    <option value="BIOMETRIC">Photos & Biometrics</option>
+                    <option value="LEGAL">Forms & Declarations</option>
                   </select>
                 </div>
 
@@ -1765,83 +2189,24 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
                   <label className="font-bold text-slate-700 block mb-1">Required Status</label>
                   <select
                     value={editingRequirement.requiredStatus}
-                    onChange={e => setEditingRequirement({ ...editingRequirement, requiredStatus: e.target.value as any })}
+                    onChange={e => setEditingRequirement({ ...editingRequirement, requiredStatus: e.target.value as RequirementRequiredStatus })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
                   >
-                    <option value="REQUIRED">Required (Mandatory)</option>
+                    <option value="REQUIRED">Mandatory (Required)</option>
+                    <option value="CONDITIONAL">Conditional</option>
                     <option value="OPTIONAL">Optional</option>
-                    <option value="CONDITIONAL">Conditional (Rules-based)</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Detailed Description & Guidance</label>
+                <label className="font-bold text-slate-700 block mb-1">Detailed Instructions for Applicant</label>
                 <textarea
                   rows={2}
                   value={editingRequirement.description}
                   onChange={e => setEditingRequirement({ ...editingRequirement, description: e.target.value })}
-                  placeholder="e.g. Must have 6 months validity with at least 2 blank pages"
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
                 />
-              </div>
-
-              {/* Document Conditions */}
-              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-                <span className="font-bold text-slate-700 block text-[11px] uppercase tracking-wider">Document Conditions</span>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={editingRequirement.documentConditions?.originalRequired || false}
-                      onChange={e => setEditingRequirement({
-                        ...editingRequirement,
-                        documentConditions: { ...editingRequirement.documentConditions, originalRequired: e.target.checked }
-                      })}
-                      className="w-3.5 h-3.5 text-[#00C6A6]"
-                    />
-                    <span>Original Required</span>
-                  </label>
-
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={editingRequirement.documentConditions?.attestationRequired || false}
-                      onChange={e => setEditingRequirement({
-                        ...editingRequirement,
-                        documentConditions: { ...editingRequirement.documentConditions, attestationRequired: e.target.checked }
-                      })}
-                      className="w-3.5 h-3.5 text-[#00C6A6]"
-                    />
-                    <span>Bank / Notary Attestation</span>
-                  </label>
-
-                  <div>
-                    <span className="text-[10px] text-slate-500 block">Min Validity (Months)</span>
-                    <input
-                      type="number"
-                      value={editingRequirement.documentConditions?.minValidityMonths || 6}
-                      onChange={e => setEditingRequirement({
-                        ...editingRequirement,
-                        documentConditions: { ...editingRequirement.documentConditions, minValidityMonths: Number(e.target.value) }
-                      })}
-                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs"
-                    />
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] text-slate-500 block">Statement Duration (Months)</span>
-                    <input
-                      type="number"
-                      value={editingRequirement.documentConditions?.bankStatementPeriodMonths || 3}
-                      onChange={e => setEditingRequirement({
-                        ...editingRequirement,
-                        documentConditions: { ...editingRequirement.documentConditions, bankStatementPeriodMonths: Number(e.target.value) }
-                      })}
-                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs"
-                    />
-                  </div>
-                </div>
               </div>
             </div>
 
@@ -1852,470 +2217,15 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
                   setIsRequirementModalOpen(false);
                   setEditingRequirement(null);
                 }}
-                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 text-xs font-bold shadow-xs"
+                className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 text-xs font-black shadow-xs cursor-pointer"
               >
                 Save Requirement
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* MODAL: ADD / EDIT ASSISTANCE SERVICE                                      */}
-      {/* ========================================================================= */}
-      {isAssistanceModalOpen && editingAssistance && (
-        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <form onSubmit={handleSaveAssistance} className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 border border-slate-200 shadow-2xl animate-scaleUp my-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <h3 className="text-sm font-black text-slate-900">Application Assistance Option</h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsAssistanceModalOpen(false);
-                  setEditingAssistance(null);
-                }}
-                className="p-1 rounded-xl text-slate-400 hover:text-slate-700"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Service Title *</label>
-                <input
-                  type="text"
-                  required
-                  value={editingAssistance.name}
-                  onChange={e => setEditingAssistance({ ...editingAssistance, name: e.target.value })}
-                  placeholder="e.g. Priority Dossier Vetting, Biometrics Escort"
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Service Description</label>
-                <textarea
-                  rows={2}
-                  value={editingAssistance.description}
-                  onChange={e => setEditingAssistance({ ...editingAssistance, description: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Selling Price ($)</label>
-                  <input
-                    type="number"
-                    value={editingAssistance.sellingPrice}
-                    onChange={e => setEditingAssistance({ ...editingAssistance, sellingPrice: Number(e.target.value) })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Net Cost ($)</label>
-                  <input
-                    type="number"
-                    value={editingAssistance.netCost}
-                    onChange={e => setEditingAssistance({ ...editingAssistance, netCost: Number(e.target.value) })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-200">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsAssistanceModalOpen(false);
-                  setEditingAssistance(null);
-                }}
-                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 text-xs font-bold shadow-xs"
-              >
-                Save Option
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* MODAL: ADD / EDIT TRAVEL PROTECTION PLAN                                  */}
-      {/* ========================================================================= */}
-      {isProtectionModalOpen && editingProtection && (
-        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!editingProtection.serviceName || !editingProtection.provider) return;
-              db.saveTravelProtectionPlan(editingProtection as TravelProtectionPlan, user);
-              setIsProtectionModalOpen(false);
-              setEditingProtection(null);
-            }}
-            className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 border border-slate-200 shadow-2xl animate-scaleUp my-auto max-h-[90vh] overflow-y-auto"
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <h3 className="text-sm font-black text-slate-900">Configure Travel Protection Plan</h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsProtectionModalOpen(false);
-                  setEditingProtection(null);
-                }}
-                className="p-1 rounded-xl text-slate-400 hover:text-slate-700"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Plan Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={editingProtection.serviceName || ''}
-                  onChange={e => setEditingProtection({ ...editingProtection, serviceName: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Provider *</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingProtection.provider || ''}
-                    onChange={e => setEditingProtection({ ...editingProtection, provider: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Coverage Area</label>
-                  <input
-                    type="text"
-                    value={editingProtection.coverageArea || ''}
-                    onChange={e => setEditingProtection({ ...editingProtection, coverageArea: e.target.value })}
-                    placeholder="Worldwide excl. US/Canada"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Medical Coverage ($)</label>
-                  <input
-                    type="number"
-                    value={editingProtection.medicalCoverageAmount || 250000}
-                    onChange={e => setEditingProtection({ ...editingProtection, medicalCoverageAmount: Number(e.target.value) })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Selling Price Per Trip ($)</label>
-                  <input
-                    type="number"
-                    value={editingProtection.sellingPricePerTrip || 45}
-                    onChange={e => setEditingProtection({ ...editingProtection, sellingPricePerTrip: Number(e.target.value) })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Customer Description</label>
-                <textarea
-                  rows={2}
-                  value={editingProtection.customerDescription || ''}
-                  onChange={e => setEditingProtection({ ...editingProtection, customerDescription: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-200">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsProtectionModalOpen(false);
-                  setEditingProtection(null);
-                }}
-                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 text-xs font-bold shadow-xs"
-              >
-                Save Plan
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* MODAL: ADD / EDIT VIP GROUND SERVICE                                      */}
-      {/* ========================================================================= */}
-      {isVipModalOpen && editingVip && (
-        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!editingVip.name || !editingVip.supplierName) return;
-              db.saveVipGroundService(editingVip as VipGroundService, user);
-              setIsVipModalOpen(false);
-              setEditingVip(null);
-            }}
-            className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 border border-slate-200 shadow-2xl animate-scaleUp my-auto max-h-[90vh] overflow-y-auto"
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <h3 className="text-sm font-black text-slate-900">Configure VIP Ground Service</h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsVipModalOpen(false);
-                  setEditingVip(null);
-                }}
-                className="p-1 rounded-xl text-slate-400 hover:text-slate-700"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Service Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={editingVip.name || ''}
-                  onChange={e => setEditingVip({ ...editingVip, name: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Service Type</label>
-                  <select
-                    value={editingVip.serviceType || 'MEET_AND_GREET'}
-                    onChange={e => setEditingVip({ ...editingVip, serviceType: e.target.value as any })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  >
-                    <option value="MEET_AND_GREET">Meet & Greet</option>
-                    <option value="FAST_TRACK">Fast Track Clearance</option>
-                    <option value="VIP_TRANSFER">VIP Airport Transfer</option>
-                    <option value="LOUNGE_ACCESS">Lounge Access</option>
-                    <option value="PORTERAGE">Station Porterage</option>
-                    <option value="CHAUFFEUR">Private Chauffeur</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Supplier Name *</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingVip.supplierName || ''}
-                    onChange={e => setEditingVip({ ...editingVip, supplierName: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Client Price ($)</label>
-                  <input
-                    type="number"
-                    value={editingVip.sellingPrice || 150}
-                    onChange={e => setEditingVip({ ...editingVip, sellingPrice: Number(e.target.value) })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Net Cost ($)</label>
-                  <input
-                    type="number"
-                    value={editingVip.netCost || 120}
-                    onChange={e => setEditingVip({ ...editingVip, netCost: Number(e.target.value) })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Short Description</label>
-                <textarea
-                  rows={2}
-                  value={editingVip.shortDesc || ''}
-                  onChange={e => setEditingVip({ ...editingVip, shortDesc: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-200">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsVipModalOpen(false);
-                  setEditingVip(null);
-                }}
-                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 text-xs font-bold shadow-xs"
-              >
-                Save VIP Service
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* MODAL: ADD / EDIT CONNECTIVITY PLAN                                       */}
-      {/* ========================================================================= */}
-      {isConnectivityModalOpen && editingConnectivity && (
-        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!editingConnectivity.name || !editingConnectivity.dataAllowance) return;
-              db.saveConnectivityPlan(editingConnectivity as ConnectivityPlan, user);
-              setIsConnectivityModalOpen(false);
-              setEditingConnectivity(null);
-            }}
-            className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 border border-slate-200 shadow-2xl animate-scaleUp my-auto max-h-[90vh] overflow-y-auto"
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <h3 className="text-sm font-black text-slate-900">Configure 5G eSIM Package</h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsConnectivityModalOpen(false);
-                  setEditingConnectivity(null);
-                }}
-                className="p-1 rounded-xl text-slate-400 hover:text-slate-700"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Package Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={editingConnectivity.name || ''}
-                  onChange={e => setEditingConnectivity({ ...editingConnectivity, name: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Data Allowance *</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingConnectivity.dataAllowance || ''}
-                    onChange={e => setEditingConnectivity({ ...editingConnectivity, dataAllowance: e.target.value })}
-                    placeholder="e.g. 10GB High-Speed, Unlimited"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Validity (Days) *</label>
-                  <input
-                    type="number"
-                    required
-                    value={editingConnectivity.validityDays || 15}
-                    onChange={e => setEditingConnectivity({ ...editingConnectivity, validityDays: Number(e.target.value) })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Coverage Zone Countries</label>
-                <input
-                  type="text"
-                  value={editingConnectivity.coverageZone || ''}
-                  onChange={e => setEditingConnectivity({ ...editingConnectivity, coverageZone: e.target.value })}
-                  placeholder="e.g. Japan, Thailand, Singapore, UAE"
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Client Selling Price ($)</label>
-                  <input
-                    type="number"
-                    value={editingConnectivity.sellingPrice || 18}
-                    onChange={e => setEditingConnectivity({ ...editingConnectivity, sellingPrice: Number(e.target.value) })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Wholesale Net Cost ($)</label>
-                  <input
-                    type="number"
-                    value={editingConnectivity.netCost || 12}
-                    onChange={e => setEditingConnectivity({ ...editingConnectivity, netCost: Number(e.target.value) })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-200">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsConnectivityModalOpen(false);
-                  setEditingConnectivity(null);
-                }}
-                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 text-xs font-bold shadow-xs"
-              >
-                Save Package
               </button>
             </div>
           </form>
@@ -2352,6 +2262,7 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
           user={user}
         />
       )}
+
     </div>
   );
 };

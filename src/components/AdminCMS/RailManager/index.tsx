@@ -20,6 +20,7 @@ import {
 import { railPricingEngine } from '../../../services/railPricingEngine';
 import { formatCurrency } from '../../../services/currencyEngine';
 import { AppDatabase } from '../../../services/db';
+import { SheetsSyncService } from '../../../services/sheetsSyncService';
 import { useAuth } from '../../../context/AuthContext';
 import { 
   Train, 
@@ -55,8 +56,10 @@ import {
 } from 'lucide-react';
 
 import { JapanRailJourneyConfigurator } from '../../JapanRail/JapanRailJourneyConfigurator';
+import { AdminWorkspaceLayout } from '../../common/AdminWorkspaceLayout';
+import { ModuleMasterSyncBar } from '../common/ModuleMasterSyncBar';
 
-type RailTab = 'OVERVIEW' | 'JOURNEY_CONFIGURATOR' | 'STATIONS' | 'ROUTES' | 'RATES' | 'SEASONS' | 'MARKUP' | 'SHEETS_SYNC';
+type RailTab = 'OVERVIEW' | 'STATIONS' | 'ROUTES' | 'RATES' | 'SEASONS' | 'MARKUP' | 'SHEETS_SYNC';
 
 interface RailManagerProps {
   initialTab?: string;
@@ -173,11 +176,628 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
   });
   const [seasonFormErrors, setSeasonFormErrors] = useState<string[]>([]);
 
-  // Google Sheets import/export state
+  // Google Sheets import/export & dynamic sync state
   const [csvText, setCsvText] = useState('');
   const [syncStatus, setSyncStatus] = useState<'IDLE' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [syncMessage, setSyncMessage] = useState('');
   const [isMarkupSavedFeedback, setIsMarkupSavedFeedback] = useState(false);
+
+  // Japan Rail Sheet URL state (persistent and reactive)
+  const [japanRailSheetUrl, setJapanRailSheetUrl] = useState(() => {
+    const config = db.getMasterGoogleSheetConfig();
+    return (config as any).japanRailSheetUrl || 'https://docs.google.com/spreadsheets/d/1C8I2TOnc_7_u07_G_Pz705yGg4Y6U5BPyY4t-rG9Hzo/edit#gid=0';
+  });
+
+  useEffect(() => {
+    const config = db.getMasterGoogleSheetConfig();
+    if ((config as any).japanRailSheetUrl) {
+      setJapanRailSheetUrl((config as any).japanRailSheetUrl);
+    }
+  }, [dbVersion, db]);
+
+  const [isSyncingRail, setIsSyncingRail] = useState(false);
+  const [syncReportCard, setSyncReportCard] = useState<{
+    status: 'SUCCESS' | 'WARNING' | 'CRITICAL_ERROR';
+    stationsCount: { created: number; updated: number };
+    routesCount: { created: number; updated: number };
+    ratesCount: { created: number; updated: number };
+    seasonsCount: { created: number; updated: number };
+    errors: string[];
+    warnings: string[];
+    logs: { type: 'success' | 'warning' | 'error' | 'info'; text: string }[];
+  } | null>(null);
+
+  // Helper converters
+  const extractSpreadsheetId = (url: string): string => {
+    const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    return match ? match[1] : url.trim();
+  };
+
+  const convertUrlToCsvExport = (url: string): string => {
+    const sheetId = extractSpreadsheetId(url);
+    if (!sheetId) return url;
+    const gidMatch = url.match(/[#&]gid=([0-9]+)/);
+    const gid = gidMatch ? gidMatch[1] : '0';
+    return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+  };
+
+  // Normalization Helpers
+  const normalizeStationRow = (row: Record<string, any>): RailStation => {
+    const stationId = (row.station_id || row.stationId || '').trim();
+    const stationCode = (row.station_code || row.stationCode || '').trim().toUpperCase();
+    const stationName = (row.station_name || row.stationName || '').trim();
+    const displayName = (row.station_name_local || row.displayName || '').trim() || `${stationName} (${stationCode})`;
+    return {
+      stationId,
+      stationCode,
+      stationName,
+      displayName,
+      searchAliases: [stationName, stationCode].filter(Boolean),
+      country: 'Japan',
+      regionId: 'reg-east-asia',
+      destinationId: 'dest-japan',
+      city: (row.city || '').trim() || 'Japan',
+      railOperator: (row.rail_operator || row.railOperator || 'JR Central').trim(),
+      latitude: Number(row.latitude) || 35.0,
+      longitude: Number(row.longitude) || 135.0,
+      timezone: 'Asia/Tokyo',
+      active: String(row.status || row.active || 'ACTIVE').toUpperCase().includes('ACT') || row.active === true || row.active === 'true',
+      shinkansenLine: (row.shinkansen_line || row.shinkansenLine || 'Tokaido Shinkansen').trim()
+    };
+  };
+
+  const validateStation = (st: RailStation): string[] => {
+    const errors: string[] = [];
+    if (!st.stationId) errors.push("Station ID is required.");
+    if (!st.stationCode || st.stationCode.length < 2) errors.push("Station Code must be at least 2 characters.");
+    if (!st.stationName) errors.push("Station Name is required.");
+    if (st.latitude < 30.0 || st.latitude > 45.0) {
+      errors.push(`Latitude ${st.latitude} is outside Japan bounds (30.0 to 45.0).`);
+    }
+    if (st.longitude < 128.0 || st.longitude > 146.0) {
+      errors.push(`Longitude ${st.longitude} is outside Japan bounds (128.0 to 146.0).`);
+    }
+    return errors;
+  };
+
+  const normalizeRouteRow = (row: Record<string, any>): RailRoute => {
+    const routeId = (row.route_id || row.routeId || '').trim();
+    const originStationId = (row.origin_station_id || row.originStationId || '').trim();
+    const destinationStationId = (row.destination_station_id || row.destinationStationId || '').trim();
+    return {
+      routeId,
+      originStationId,
+      destinationStationId,
+      originStationName: (row.origin_station_name || row.originStationName || '').trim() || originStationId.replace('JP-ST-', ''),
+      destinationStationName: (row.destination_station_name || row.destinationStationName || '').trim() || destinationStationId.replace('JP-ST-', ''),
+      country: 'Japan',
+      destinationId: 'dest-japan',
+      railOperator: (row.rail_operator || row.railOperator || 'JR Central / JR West').trim(),
+      availableProductIds: ['RAIL-JP-ORD-RESERVED', 'RAIL-JP-GREEN-RESERVED'],
+      availableServiceGroups: ['NOZOMI_MIZUHO', 'HIKARI_KODAMA_SAKURA_TSUBAME'],
+      distanceKm: Number(row.distance_km || row.distanceKm) || 0,
+      durationMinutes: Number(row.duration_minutes || row.durationMinutes) || 120,
+      active: String(row.status || row.active || 'ACTIVE').toUpperCase().includes('ACT') || row.active === true || row.active === 'true'
+    };
+  };
+
+  const validateRoute = (rt: RailRoute, validStationIds: Set<string>): string[] => {
+    const errors: string[] = [];
+    if (!rt.routeId) errors.push("Route ID is required.");
+    if (!rt.originStationId) errors.push("Origin Station ID is required.");
+    if (!rt.destinationStationId) errors.push("Destination Station ID is required.");
+    if (rt.distanceKm && rt.distanceKm <= 0) errors.push(`Distance ${rt.distanceKm} km must be a positive number.`);
+    if (!validStationIds.has(rt.originStationId)) {
+      errors.push(`Origin station '${rt.originStationId}' does not exist in stations master.`);
+    }
+    if (!validStationIds.has(rt.destinationStationId)) {
+      errors.push(`Destination station '${rt.destinationStationId}' does not exist in stations master.`);
+    }
+    return errors;
+  };
+
+  const normalizeRateRow = (row: Record<string, any>, effectiveDate: string): RailRate => {
+    const rateId = (row.rate_id || row.rateId || '').trim();
+    const routeId = (row.route_id || row.routeId || '').trim();
+    const originStationId = (row.origin_station_id || row.originStationId || '').trim();
+    const destinationStationId = (row.destination_station_id || row.destinationStationId || '').trim();
+    const productId = (row.product_id || row.productId || '').trim() || 'RAIL-JP-ORD-RESERVED';
+    const carType = (row.car_type || row.carType || 'Ordinary').trim() as any;
+    const seatType = (row.seat_type || row.seatType || 'Reserved').trim() as any;
+    const serviceGroup = (row.service_group || row.serviceGroup || 'NOZOMI_MIZUHO').trim() as any;
+    const passengerType = (row.passenger_type || row.passengerType || 'ADULT').trim() as any;
+    
+    const baseFareJPY = Number(row.base_fare_jpy || row.baseFareJPY) || 0;
+    const superExpressSurchargeJPY = Number(row.super_express_surcharge_jpy || row.superExpressSurchargeJPY) || 0;
+    const greenCarSurchargeJPY = Number(row.green_car_surcharge_jpy || row.greenCarSurchargeJPY) || 0;
+    const regularTotalFareJPY = Number(row.regular_total_fare_jpy || row.regularTotalFareJPY) || (baseFareJPY + superExpressSurchargeJPY + greenCarSurchargeJPY);
+
+    return {
+      rateId,
+      routeId,
+      originStationId,
+      destinationStationId,
+      productId: productId as any,
+      carType,
+      seatType,
+      serviceGroup,
+      passengerType,
+      currency: 'JPY',
+      baseFareJPY,
+      superExpressSurchargeJPY,
+      greenCarSurchargeJPY,
+      regularTotalFareJPY,
+      supplierId: 'sup-jp-smartex',
+      supplierName: (row.supplier_name || row.supplierName || 'smartEX / JR Central & JR West').trim(),
+      effectiveDate,
+      active: true
+    };
+  };
+
+  const validateRate = (rate: RailRate, validStationIds: Set<string>, validRouteIds: Set<string>): string[] => {
+    const errors: string[] = [];
+    if (!rate.rateId) errors.push("Rate ID is required.");
+    if (!rate.productId || (rate.productId !== 'RAIL-JP-ORD-RESERVED' && rate.productId !== 'RAIL-JP-GREEN-RESERVED')) {
+      errors.push(`Product ID '${rate.productId}' must be either RAIL-JP-ORD-RESERVED or RAIL-JP-GREEN-RESERVED.`);
+    }
+    if (rate.passengerType !== 'ADULT' && rate.passengerType !== 'CHILD' && rate.passengerType !== 'ADT' && rate.passengerType !== 'CNB') {
+      errors.push(`Passenger Type '${rate.passengerType}' must be ADULT or CHILD.`);
+    }
+    if (rate.regularTotalFareJPY <= 0) {
+      errors.push(`Regular Total Fare JPY (${rate.regularTotalFareJPY}) must be positive.`);
+    }
+    if (rate.regularTotalFareJPY > 100000) {
+      errors.push(`Regular Total Fare JPY (${rate.regularTotalFareJPY}) exceeds safety upper limit of 100,000 JPY.`);
+    }
+    if (!validStationIds.has(rate.originStationId)) {
+      errors.push(`Origin station '${rate.originStationId}' does not exist.`);
+    }
+    if (!validStationIds.has(rate.destinationStationId)) {
+      errors.push(`Destination station '${rate.destinationStationId}' does not exist.`);
+    }
+    if (!validRouteIds.has(rate.routeId)) {
+      errors.push(`Route ID '${rate.routeId}' does not exist.`);
+    }
+    return errors;
+  };
+
+  const normalizeSeasonRow = (row: Record<string, any>): RailSeasonCalendarPeriod => {
+    const id = (row.season_id || row.id || '').trim();
+    const seasonType = (row.season_type || row.seasonType || 'HIGH').trim() as any;
+    const startDate = (row.start_date || row.startDate || '').trim();
+    return {
+      id,
+      seasonType,
+      title: (row.title || row.season_name || 'Season Calendar Period').trim(),
+      startDate,
+      endDate: (row.end_date || row.endDate || '').trim(),
+      adultAdjustmentJPY: Number(row.adult_adjustment_jpy || row.adultAdjustmentJPY) || 0,
+      childAdjustmentJPY: Number(row.child_adjustment_jpy || row.childAdjustmentJPY) || 0,
+      pricingMultiplier: Number(row.pricing_multiplier || row.pricingMultiplier) || 1.0,
+      priority: Number(row.priority) || 50,
+      active: String(row.status || row.active || 'ACTIVE').toUpperCase().includes('ACT') || row.active === true || row.active === 'true',
+      notes: (row.notes || '').trim(),
+      applicableYear: startDate ? parseInt(startDate.substring(0, 4)) : undefined
+    };
+  };
+
+  const validateSeason = (season: RailSeasonCalendarPeriod): string[] => {
+    const errors: string[] = [];
+    if (!season.id) errors.push("Season ID is required.");
+    if (!season.startDate) errors.push("Start Date is required.");
+    if (!season.endDate) errors.push("End Date is required.");
+    if (season.startDate && season.endDate && season.endDate < season.startDate) {
+      errors.push(`End Date '${season.endDate}' cannot be earlier than Start Date '${season.startDate}'.`);
+    }
+    return errors;
+  };
+
+  const handleSaveSheetUrl = () => {
+    try {
+      db.saveMasterGoogleSheetConfig({
+        ...db.getMasterGoogleSheetConfig(),
+        japanRailSheetUrl
+      } as any, user);
+      setSuccessToast('Google Sheet URL saved persistently in Firebase!');
+    } catch (err: any) {
+      alert(`Save error: ${err?.message || err}`);
+    }
+  };
+
+  const handleSyncFromGoogleSheets = async () => {
+    if (!japanRailSheetUrl.trim()) {
+      alert('Please enter a valid Google Sheets URL.');
+      return;
+    }
+
+    setIsSyncingRail(true);
+    setSyncReportCard(null);
+
+    const logs: { type: 'success' | 'warning' | 'error' | 'info'; text: string }[] = [];
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    
+    let stationsCreated = 0;
+    let stationsUpdated = 0;
+    let routesCreated = 0;
+    let routesUpdated = 0;
+    let ratesCreated = 0;
+    let ratesUpdated = 0;
+    let seasonsCreated = 0;
+    let seasonsUpdated = 0;
+
+    const addLog = (text: string, type: 'success' | 'warning' | 'error' | 'info' = 'info') => {
+      logs.push({ type, text: `[${new Date().toLocaleTimeString()}] ${text}` });
+      if (type === 'error') errors.push(text);
+      if (type === 'warning') warnings.push(text);
+    };
+
+    addLog(`Initiating Japan Rail Google Sheets Sync pipeline...`, 'info');
+    addLog(`Target URL: ${japanRailSheetUrl}`, 'info');
+
+    // Extract Spreadsheet ID
+    const spreadsheetId = extractSpreadsheetId(japanRailSheetUrl);
+
+    if (!spreadsheetId) {
+      addLog(`Failed to extract a valid Google Spreadsheet ID from the URL. Please verify the URL structure.`, 'error');
+      setIsSyncingRail(false);
+      setSyncReportCard({
+        status: 'CRITICAL_ERROR',
+        stationsCount: { created: 0, updated: 0 },
+        routesCount: { created: 0, updated: 0 },
+        ratesCount: { created: 0, updated: 0 },
+        seasonsCount: { created: 0, updated: 0 },
+        errors,
+        warnings,
+        logs
+      });
+      return;
+    }
+
+    addLog(`Extracted Spreadsheet ID: ${spreadsheetId}`, 'info');
+
+    try {
+      const syncService = SheetsSyncService.getInstance();
+      addLog(`Checking for distinct Japan Rail database tabs...`, 'info');
+      
+      let railStationsData: string[][] | null = null;
+      let railRoutesData: string[][] | null = null;
+      let railRatesData: string[][] | null = null;
+      let railSeasonsData: string[][] | null = null;
+
+      try {
+        addLog(`Attempting to fetch RAIL_STATIONS tab...`, 'info');
+        railStationsData = await syncService.fetchRemoteWorksheet(spreadsheetId, 'RAIL_STATIONS');
+        if (!railStationsData) {
+          addLog(`RAIL_STATIONS tab not found. Trying fallback 'Japan Rail Stations'...`, 'info');
+          railStationsData = await syncService.fetchRemoteWorksheet(spreadsheetId, '18. Japan Rail Stations (RAIL_STATIONS)');
+        }
+      } catch (e) {
+        addLog(`Fetch error for RAIL_STATIONS: ${e instanceof Error ? e.message : String(e)}`, 'warning');
+      }
+
+      try {
+        addLog(`Attempting to fetch RAIL_ROUTES tab...`, 'info');
+        railRoutesData = await syncService.fetchRemoteWorksheet(spreadsheetId, 'RAIL_ROUTES');
+        if (!railRoutesData) {
+          addLog(`RAIL_ROUTES tab not found. Trying fallback 'Japan Rail Routes'...`, 'info');
+          railRoutesData = await syncService.fetchRemoteWorksheet(spreadsheetId, '19. Japan Rail Routes (RAIL_ROUTES)');
+        }
+      } catch (e) {
+        addLog(`Fetch error for RAIL_ROUTES: ${e instanceof Error ? e.message : String(e)}`, 'warning');
+      }
+
+      try {
+        addLog(`Attempting to fetch RAIL_RATES tab...`, 'info');
+        railRatesData = await syncService.fetchRemoteWorksheet(spreadsheetId, 'RAIL_RATES');
+        if (!railRatesData) {
+          addLog(`RAIL_RATES tab not found. Trying fallback RAIL_FARES...`, 'info');
+          railRatesData = await syncService.fetchRemoteWorksheet(spreadsheetId, 'RAIL_FARES');
+          if (!railRatesData) {
+            addLog(`RAIL_FARES tab not found. Trying '21. Japan Rail Fares & Pricing (RAIL_FARES)'...`, 'info');
+            railRatesData = await syncService.fetchRemoteWorksheet(spreadsheetId, '21. Japan Rail Fares & Pricing (RAIL_FARES)');
+          }
+        }
+      } catch (e) {
+        addLog(`Fetch error for RAIL_RATES: ${e instanceof Error ? e.message : String(e)}`, 'warning');
+      }
+
+      try {
+        addLog(`Attempting to fetch RAIL_SEASONS tab...`, 'info');
+        railSeasonsData = await syncService.fetchRemoteWorksheet(spreadsheetId, 'RAIL_SEASONS');
+        if (!railSeasonsData) {
+          addLog(`RAIL_SEASONS tab not found. Trying fallback RAIL_CLASS_RULES...`, 'info');
+          railSeasonsData = await syncService.fetchRemoteWorksheet(spreadsheetId, 'RAIL_CLASS_RULES');
+          if (!railSeasonsData) {
+            addLog(`RAIL_CLASS_RULES tab not found. Trying '22. Japan Rail Season Calendar & Rules (RAIL_CLASS_RULES)'...`, 'info');
+            railSeasonsData = await syncService.fetchRemoteWorksheet(spreadsheetId, '22. Japan Rail Season Calendar & Rules (RAIL_CLASS_RULES)');
+          }
+        }
+      } catch (e) {
+        addLog(`Fetch error for RAIL_SEASONS: ${e instanceof Error ? e.message : String(e)}`, 'warning');
+      }
+
+      const hasMultipleTabs = railStationsData || railRoutesData || railRatesData || railSeasonsData;
+
+      if (hasMultipleTabs) {
+        addLog(`Multi-sheet layout detected. Running Multi-Sheet Sync Algorithm...`, 'success');
+        
+        // 1. Process STATIONS
+        const validStationIds = new Set<string>();
+        if (railStationsData && railStationsData.length > 1) {
+          addLog(`Processing ${railStationsData.length - 1} station rows...`, 'info');
+          const objects = syncService.rowsToObjects(railStationsData);
+          for (const obj of objects) {
+            try {
+              const station = normalizeStationRow(obj);
+              const valErrors = validateStation(station);
+              if (valErrors.length > 0) {
+                addLog(`Station validation skipped row ${obj._rowIndex || '?'}: ${valErrors.join('; ')}`, 'warning');
+                continue;
+              }
+              const isNew = !db.getRailStations().some(s => s.stationId === station.stationId);
+              db.saveRailStation(station, user);
+              validStationIds.add(station.stationId);
+              if (isNew) stationsCreated++; else stationsUpdated++;
+            } catch (err: any) {
+              addLog(`Failed to sync station row: ${err?.message || err}`, 'warning');
+            }
+          }
+          addLog(`Stations sync complete. Created: ${stationsCreated}, Updated: ${stationsUpdated}`, 'success');
+        } else {
+          addLog(`No valid Station tab data found or empty. Using existing stations from database.`, 'info');
+          db.getRailStations().forEach(s => validStationIds.add(s.stationId));
+        }
+
+        // 2. Process ROUTES
+        const validRouteIds = new Set<string>();
+        if (railRoutesData && railRoutesData.length > 1) {
+          addLog(`Processing ${railRoutesData.length - 1} route rows...`, 'info');
+          const objects = syncService.rowsToObjects(railRoutesData);
+          for (const obj of objects) {
+            try {
+              const route = normalizeRouteRow(obj);
+              const valErrors = validateRoute(route, validStationIds);
+              if (valErrors.length > 0) {
+                addLog(`Route validation skipped row ${obj._rowIndex || '?'}: ${valErrors.join('; ')}`, 'warning');
+                continue;
+              }
+              const isNew = !db.getRailRoutes().some(r => r.routeId === route.routeId);
+              db.saveRailRoute(route, user);
+              validRouteIds.add(route.routeId);
+              if (isNew) routesCreated++; else routesUpdated++;
+            } catch (err: any) {
+              addLog(`Failed to sync route row: ${err?.message || err}`, 'warning');
+            }
+          }
+          addLog(`Routes sync complete. Created: ${routesCreated}, Updated: ${routesUpdated}`, 'success');
+        } else {
+          addLog(`No valid Route tab data found or empty. Using existing routes from database.`, 'info');
+          db.getRailRoutes().forEach(r => validRouteIds.add(r.routeId));
+        }
+
+        // 3. Process RATES
+        const effectiveDate = new Date().toISOString().split('T')[0];
+        if (railRatesData && railRatesData.length > 1) {
+          addLog(`Processing ${railRatesData.length - 1} rate rows...`, 'info');
+          const objects = syncService.rowsToObjects(railRatesData);
+          for (const obj of objects) {
+            try {
+              const rate = normalizeRateRow(obj, effectiveDate);
+              const valErrors = validateRate(rate, validStationIds, validRouteIds);
+              if (valErrors.length > 0) {
+                addLog(`Rate validation skipped row ${obj._rowIndex || '?'}: ${valErrors.join('; ')}`, 'warning');
+                continue;
+              }
+              const isNew = !db.getRailRates().some(r => r.rateId === rate.rateId);
+              db.saveRailRate(rate, user);
+              if (isNew) ratesCreated++; else ratesUpdated++;
+            } catch (err: any) {
+              addLog(`Failed to sync rate row: ${err?.message || err}`, 'warning');
+            }
+          }
+          addLog(`Rates sync complete. Created: ${ratesCreated}, Updated: ${ratesUpdated}`, 'success');
+        } else {
+          addLog(`No valid Rates/Fares tab data found.`, 'warning');
+        }
+
+        // 4. Process SEASONS
+        if (railSeasonsData && railSeasonsData.length > 1) {
+          addLog(`Processing ${railSeasonsData.length - 1} season rows...`, 'info');
+          const objects = syncService.rowsToObjects(railSeasonsData);
+          for (const obj of objects) {
+            try {
+              const season = normalizeSeasonRow(obj);
+              const valErrors = validateSeason(season);
+              if (valErrors.length > 0) {
+                addLog(`Season validation skipped row ${obj._rowIndex || '?'}: ${valErrors.join('; ')}`, 'warning');
+                continue;
+              }
+              const isNew = !db.getRailSeasons().some(s => s.id === season.id);
+              db.saveRailSeason(season, user);
+              if (isNew) seasonsCreated++; else seasonsUpdated++;
+            } catch (err: any) {
+              addLog(`Failed to sync season row: ${err?.message || err}`, 'warning');
+            }
+          }
+          addLog(`Seasons sync complete. Created: ${seasonsCreated}, Updated: ${seasonsUpdated}`, 'success');
+        } else {
+          addLog(`No valid Season tab data found or empty.`, 'info');
+        }
+
+      } else {
+        // Fallback: single consolidated rate sheet
+        addLog(`No distinct tabs detected. Executing Single-Sheet Consolidated Fallback Sync...`, 'info');
+        addLog(`Fetching direct CSV export endpoint of single sheet...`, 'info');
+        
+        const exportUrl = convertUrlToCsvExport(japanRailSheetUrl);
+        const res = await fetch(exportUrl);
+        if (!res.ok) {
+          throw new Error(`Failed to fetch CSV export. Status: ${res.status}`);
+        }
+        
+        const csvContent = await res.text();
+        const rows = syncService.parseCsvToRows(csvContent);
+        
+        if (rows.length < 2) {
+          throw new Error('Retrieved CSV does not contain a header and record rows.');
+        }
+
+        addLog(`Fetched ${rows.length - 1} records from consolidated sheet. Parsing & reconstructing hierarchy...`, 'info');
+        const objects = syncService.rowsToObjects(rows);
+        
+        const validStationIds = new Set<string>(db.getRailStations().map(s => s.stationId));
+        const validRouteIds = new Set<string>(db.getRailRoutes().map(r => r.routeId));
+        const effectiveDate = new Date().toISOString().split('T')[0];
+
+        for (const obj of objects) {
+          try {
+            // 1. Reconstruct Station (Origin)
+            const originId = (obj.origin_station_id || obj.originStationId || '').trim();
+            if (originId && !validStationIds.has(originId)) {
+              const derivedCode = originId.replace('JP-ST-', '').substring(0, 4).toUpperCase();
+              const derivedName = originId.replace('JP-ST-', '').split('-').map((s: string) => s.charAt(0).toUpperCase() + s.substring(1).toLowerCase()).join(' ');
+              const newStation: RailStation = {
+                stationId: originId,
+                stationCode: derivedCode || 'STN',
+                stationName: derivedName || 'Derived Station',
+                displayName: `${derivedName} (${derivedCode})`,
+                searchAliases: [derivedName, derivedCode].filter(Boolean),
+                city: derivedName,
+                country: 'Japan',
+                regionId: 'reg-east-asia',
+                destinationId: 'dest-japan',
+                railOperator: 'JR Central',
+                latitude: 35.0,
+                longitude: 135.0,
+                timezone: 'Asia/Tokyo',
+                active: true,
+                shinkansenLine: 'Tokaido Shinkansen'
+              };
+              db.saveRailStation(newStation, user);
+              validStationIds.add(originId);
+              stationsCreated++;
+              addLog(`Dynamically reconstructed Station: ${originId}`, 'success');
+            }
+
+            // Reconstruct Station (Destination)
+            const destId = (obj.destination_station_id || obj.destinationStationId || '').trim();
+            if (destId && !validStationIds.has(destId)) {
+              const derivedCode = destId.replace('JP-ST-', '').substring(0, 4).toUpperCase();
+              const derivedName = destId.replace('JP-ST-', '').split('-').map((s: string) => s.charAt(0).toUpperCase() + s.substring(1).toLowerCase()).join(' ');
+              const newStation: RailStation = {
+                stationId: destId,
+                stationCode: derivedCode || 'STN',
+                stationName: derivedName || 'Derived Station',
+                displayName: `${derivedName} (${derivedCode})`,
+                searchAliases: [derivedName, derivedCode].filter(Boolean),
+                city: derivedName,
+                country: 'Japan',
+                regionId: 'reg-east-asia',
+                destinationId: 'dest-japan',
+                railOperator: 'JR Central',
+                latitude: 35.0,
+                longitude: 135.0,
+                timezone: 'Asia/Tokyo',
+                active: true,
+                shinkansenLine: 'Tokaido Shinkansen'
+              };
+              db.saveRailStation(newStation, user);
+              validStationIds.add(destId);
+              stationsCreated++;
+              addLog(`Dynamically reconstructed Station: ${destId}`, 'success');
+            }
+
+            // 2. Reconstruct Route
+            const routeId = (obj.route_id || obj.routeId || '').trim();
+            if (routeId && !validRouteIds.has(routeId)) {
+              const newRoute: RailRoute = {
+                routeId,
+                originStationId: originId,
+                destinationStationId: destId,
+                originStationName: originId.replace('JP-ST-', ''),
+                destinationStationName: destId.replace('JP-ST-', ''),
+                country: 'Japan',
+                destinationId: 'dest-japan',
+                railOperator: 'JR Central / JR West',
+                availableProductIds: ['RAIL-JP-ORD-RESERVED', 'RAIL-JP-GREEN-RESERVED'],
+                availableServiceGroups: ['NOZOMI_MIZUHO', 'HIKARI_KODAMA_SAKURA_TSUBAME'],
+                distanceKm: Number(obj.distance_km || obj.distanceKm) || 100,
+                durationMinutes: Number(obj.duration_minutes || obj.durationMinutes) || 60,
+                active: true
+              };
+              db.saveRailRoute(newRoute, user);
+              validRouteIds.add(routeId);
+              routesCreated++;
+              addLog(`Dynamically reconstructed Route: ${routeId}`, 'success');
+            }
+
+            // 3. Process Rail Rate
+            const rate = normalizeRateRow(obj, effectiveDate);
+            const valErrors = validateRate(rate, validStationIds, validRouteIds);
+            if (valErrors.length > 0) {
+              addLog(`Consolidated rate validation skipped row ${obj._rowIndex || '?'}: ${valErrors.join('; ')}`, 'warning');
+              continue;
+            }
+            const isNew = !db.getRailRates().some(r => r.rateId === rate.rateId);
+            db.saveRailRate(rate, user);
+            if (isNew) ratesCreated++; else ratesUpdated++;
+          } catch (err: any) {
+            addLog(`Failed to process row in single sheet parser: ${err?.message || err}`, 'warning');
+          }
+        }
+      }
+
+      // Save URL config persistently in Firebase
+      db.saveMasterGoogleSheetConfig({
+        ...db.getMasterGoogleSheetConfig(),
+        japanRailSheetUrl
+      } as any, user);
+
+      const status = errors.length > 0 ? 'CRITICAL_ERROR' : (warnings.length > 0 ? 'WARNING' : 'SUCCESS');
+      
+      addLog(`Japan Rail inventory synchronization finalized successfully!`, 'success');
+      
+      // Save global audit log
+      db.logAudit(
+        user || null,
+        'GOOGLE_SHEETS_SYNC',
+        'JapanRailInventory',
+        spreadsheetId,
+        `Synced Japan Rail inventory from Sheet URL. Stations (+${stationsCreated}/~${stationsUpdated}), Routes (+${routesCreated}/~${routesUpdated}), Rates (+${ratesCreated}/~${ratesUpdated}), Seasons (+${seasonsCreated}/~${seasonsUpdated})`
+      );
+
+      setSyncReportCard({
+        status,
+        stationsCount: { created: stationsCreated, updated: stationsUpdated },
+        routesCount: { created: routesCreated, updated: routesUpdated },
+        ratesCount: { created: ratesCreated, updated: ratesUpdated },
+        seasonsCount: { created: seasonsCreated, updated: seasonsUpdated },
+        errors,
+        warnings,
+        logs
+      });
+
+      setSuccessToast(`Synchronized ${stationsCreated + routesCreated + ratesCreated + seasonsCreated} items to active database!`);
+
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
+      addLog(`CRITICAL ERROR during sync: ${errMsg}`, 'error');
+      
+      setSyncReportCard({
+        status: 'CRITICAL_ERROR',
+        stationsCount: { created: 0, updated: 0 },
+        routesCount: { created: 0, updated: 0 },
+        ratesCount: { created: 0, updated: 0 },
+        seasonsCount: { created: 0, updated: 0 },
+        errors,
+        warnings,
+        logs
+      });
+    } finally {
+      setIsSyncingRail(false);
+    }
+  };
 
   // Dismiss toast automatically
   useEffect(() => {
@@ -667,43 +1287,120 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
         </div>
       </div>
 
-      {/* Navigation Sub-Tabs Bar */}
-      <div className="flex items-center space-x-1 border-b border-slate-200 overflow-x-auto pb-1 scrollbar-none">
-        {[
-          { id: 'OVERVIEW', label: 'Master Products & Engine', icon: Train },
-          { id: 'JOURNEY_CONFIGURATOR', label: 'Journey Configurator Engine', icon: Sparkles },
-          { id: 'STATIONS', label: `Station Master (${stations.length})`, icon: MapPin },
-          { id: 'ROUTES', label: `Route Network (${routes.length})`, icon: RouteIcon },
-          { id: 'RATES', label: `Rate Explorer (${rates.length})`, icon: DollarSign },
-          { id: 'SEASONS', label: `Season Calendar (${seasons.length})`, icon: Calendar },
-          { id: 'MARKUP', label: 'Dynamic Markup & Rules', icon: Percent },
-          { id: 'SHEETS_SYNC', label: 'Google Sheets Sync', icon: FileSpreadsheet }
-        ].map(tab => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => handleTabChange(tab.id as RailTab)}
-              className={`flex items-center space-x-2 px-4 py-2.5 border-b-2 font-bold text-xs whitespace-nowrap transition-all cursor-pointer ${
-                isActive
-                  ? 'border-[#00C6A6] text-slate-900 bg-teal-50/40 rounded-t-lg'
-                  : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50 rounded-t-lg'
-              }`}
-            >
-              <Icon className={`w-4 h-4 ${isActive ? 'text-[#00C6A6]' : 'text-slate-400'}`} />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      {/* Google Sheets Master Sync Bar */}
+      <ModuleMasterSyncBar 
+        moduleType="JAPAN_RAIL" 
+        onSyncCompleted={() => {
+          setStations(db.getRailStations());
+          setRoutes(db.getRailRoutes());
+          setRates(db.getRailRates());
+          setSeasons(db.getRailSeasons());
+        }}
+      />
 
-      {/* ========================================================================= */}
-      {/* TAB 1: OVERVIEW & MASTER PRODUCTS */}
-      {/* ========================================================================= */}
-      {activeTab === 'OVERVIEW' && (
-        <div className="space-y-6">
+      {/* Navigation Sub-Tabs Bar & Workspace */}
+      <AdminWorkspaceLayout
+        sidebar={
+          <div className="space-y-6">
+            
+            {/* Live Journey & Season Surcharge Evaluator */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4.5 space-y-3.5 shadow-xs text-xs text-slate-700">
+              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Journey Context</h4>
+              
+              <div className="space-y-2.5">
+                <div>
+                  <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">Origin Station</label>
+                  <select
+                    value={rateOriginFilter}
+                    onChange={(e) => setRateOriginFilter(e.target.value)}
+                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-[#00C6A6] cursor-pointer"
+                  >
+                    {stations.map(st => (
+                      <option key={st.stationId} value={st.stationId}>{st.displayName}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">Destination Station</label>
+                  <select
+                    value={rateDestFilter}
+                    onChange={(e) => setRateDestFilter(e.target.value)}
+                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-[#00C6A6] cursor-pointer"
+                  >
+                    {stations.map(st => (
+                      <option key={st.stationId} value={st.stationId}>{st.displayName}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">Test Travel Date</label>
+                  <input
+                    type="date"
+                    value={testDate}
+                    onChange={(e) => setTestDate(e.target.value)}
+                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-[#00C6A6]"
+                  />
+                </div>
+
+                <div className="pt-2.5 border-t border-slate-200 space-y-1">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Season Assessment</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      evaluatedTestSeason ? 'bg-[#00C6A6]/10 text-[#008F77]' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      {evaluatedTestSeason ? `${evaluatedTestSeason.seasonType} SEASON` : 'REGULAR SEASON'}
+                    </span>
+                  </div>
+                  {evaluatedTestSeason && (
+                    <div className="text-[10px] text-slate-500 leading-snug">
+                      <p className="font-semibold text-slate-700">{evaluatedTestSeason.title}</p>
+                      <p className="mt-0.5 font-mono">Adult: +¥{evaluatedTestSeason.adultAdjustmentJPY.toLocaleString()}</p>
+                      <p className="font-mono">Multiplier: {evaluatedTestSeason.pricingMultiplier}x</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Vertical Sub-Tabs List */}
+            <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs divide-y divide-slate-100">
+              {[
+                { id: 'OVERVIEW', label: 'Master Products', icon: Train },
+                { id: 'STATIONS', label: `Stations (${stations.length})`, icon: MapPin },
+                { id: 'ROUTES', label: `Routes (${routes.length})`, icon: RouteIcon },
+                { id: 'RATES', label: `Rate Explorer (${rates.length})`, icon: DollarSign },
+                { id: 'SEASONS', label: `Seasons (${seasons.length})`, icon: Calendar },
+                { id: 'MARKUP', label: 'Markup & Rules', icon: Percent },
+                { id: 'SHEETS_SYNC', label: 'Google Sheets Sync', icon: FileSpreadsheet }
+              ].map(tab => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => handleTabChange(tab.id as RailTab)}
+                    className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center space-x-2.5 cursor-pointer ${
+                      isActive
+                        ? 'bg-[#00C6A6]/10 text-slate-950 font-black border-l-4 border-[#00C6A6]'
+                        : 'hover:bg-slate-50 text-slate-600'
+                    }`}
+                  >
+                    <Icon className={`w-4 h-4 ${isActive ? 'text-[#00C6A6]' : 'text-slate-400'}`} />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+          </div>
+        }
+        content={
+          <div className="space-y-6">
+            {activeTab === 'OVERVIEW' && (
+              <div className="space-y-6">
           
           {/* Architectural Principle Notice Card */}
           <div className="bg-indigo-50/70 border border-indigo-200 rounded-2xl p-5 text-indigo-950 flex flex-col md:flex-row items-start gap-4 shadow-xs">
@@ -855,74 +1552,6 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* TAB 2: JOURNEY CONFIGURATOR ENGINE */}
-      {/* ========================================================================= */}
-      {activeTab === 'JOURNEY_CONFIGURATOR' && (
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-              <div className="space-y-1">
-                <span className="text-[10px] font-black uppercase tracking-wider text-[#00A88F] bg-[#00C6A6]/10 px-2 py-0.5 rounded border border-[#00C6A6]/30">
-                  Authoritative Cross-Portal Component
-                </span>
-                <h2 className="text-lg font-black text-slate-900 font-sans flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-[#00C6A6]" />
-                  Japan Rail Dynamic Journey Configurator Engine
-                </h2>
-                <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
-                  Single authoritative engine used across Buyer Portal, B2B Quote Builder, Product Management, B2B Agent Portal, and Admin CMS. Supports dynamic sector creation (Tokyo ➔ Kyoto ➔ Osaka ➔ Hiroshima), real-time smartEX tariffs, calendar-based seasonal pricing, and role-based margins.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedProductForConfig(masterProducts[0]);
-                  setIsJourneyConfiguratorOpen(true);
-                }}
-                className="px-5 py-3 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer shrink-0 hover:scale-[1.02]"
-              >
-                <Train className="w-4 h-4" />
-                <span>LAUNCH JOURNEY CONFIGURATOR</span>
-              </button>
-            </div>
-
-            {/* Architecture Overview Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                <div className="flex items-center space-x-2 text-slate-900 font-bold text-xs">
-                  <Compass className="w-4 h-4 text-indigo-600" />
-                  <span>Dynamic Multi-Sector Builder</span>
-                </div>
-                <p className="text-[11px] text-slate-600 leading-relaxed">
-                  Allows adding, removing, and reordering arbitrary journey sectors. Auto-chains consecutive stations (e.g. Sector 1 arrives at Kyoto ➔ Sector 2 departs from Kyoto).
-                </p>
-              </div>
-
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                <div className="flex items-center space-x-2 text-slate-900 font-bold text-xs">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  <span>Authoritative Validation Engine</span>
-                </div>
-                <p className="text-[11px] text-slate-600 leading-relaxed">
-                  Enforces origin ≠ destination, valid station IDs, route network connectivity, chronological date sequencing, and Tokaido oversized baggage rules without silent corrections.
-                </p>
-              </div>
-
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                <div className="flex items-center space-x-2 text-slate-900 font-bold text-xs">
-                  <DollarSign className="w-4 h-4 text-[#00A88F]" />
-                  <span>Unified Role-Aware Pricing</span>
-                </div>
-                <p className="text-[11px] text-slate-600 leading-relaxed">
-                  Computes smartEX regular fares, seasonal calendar adjustments from live Firestore configurations, and DMC markups while projecting clean wholesale/retail prices by user role.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ========================================================================= */}
       {/* TAB 3: STATION MASTER */}
@@ -1605,55 +2234,151 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
           <div className="space-y-1">
             <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
               <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
-              <span>Google Sheets & CSV Rail Rate Sync</span>
+              <span>Japan Rail Google Sheets Sync Engine</span>
             </h3>
             <p className="text-xs text-slate-500">
-              Seamlessly sync, validate, and update Japan Rail fare matrices directly from Google Sheets or CSV exports.
+              Synchronize Japan Rail Stations, Routes, Rates, and Surcharge Seasons directly from an authoritative Google Sheets URL.
             </p>
           </div>
 
-          <div className="space-y-3">
-            <label className="block text-xs font-bold text-slate-700">
-              Paste CSV / Google Sheets Tab Data:
-            </label>
-            <textarea
-              rows={8}
-              value={csvText}
-              onChange={(e) => setCsvText(e.target.value)}
-              placeholder="Paste rate rows exported from Google Sheets..."
-              className="w-full text-xs font-mono p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#00C6A6]"
-            />
-
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={handleImportRatesCsv}
-                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                <Upload className="w-4 h-4 text-[#00C6A6]" />
-                <span>Validate & Sync Rates</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleExportRatesCsv}
-                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <Download className="w-4 h-4" />
-                <span>Download Rates Template (CSV)</span>
-              </button>
+          <div className="space-y-4">
+            {/* Google Sheets URL input */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">
+                Authoritative Google Sheets URL:
+              </label>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={japanRailSheetUrl}
+                    onChange={(e) => setJapanRailSheetUrl(e.target.value)}
+                    placeholder="https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit#gid=0"
+                    className="w-full text-xs p-2.5 pl-9 rounded-xl border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#00C6A6]"
+                  />
+                  <FileSpreadsheet className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleSaveSheetUrl}
+                    className="px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Save URL</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSyncingRail}
+                    onClick={handleSyncFromGoogleSheets}
+                    className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-xs"
+                  >
+                    {isSyncingRail ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin text-[#00C6A6]" />
+                        <span>Synchronizing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-4 h-4 text-[#00C6A6]" />
+                        <span>Sync From Google Sheets</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-400">
+                Default Fallback: <span className="font-mono text-slate-600">https://docs.google.com/spreadsheets/d/1C8I2TOnc_7_u07_G_Pz705yGg4Y6U5BPyY4t-rG9Hzo/edit#gid=0</span>
+              </p>
             </div>
 
-            {syncStatus !== 'IDLE' && (
-              <div className={`p-4 rounded-xl text-xs flex items-center gap-2 ${
-                syncStatus === 'SUCCESS' ? 'bg-emerald-50 text-emerald-900 border border-emerald-200' : 'bg-rose-50 text-rose-900 border border-rose-200'
-              }`}>
-                {syncStatus === 'SUCCESS' ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />}
-                <span>{syncMessage}</span>
+            {/* Sync Report Card */}
+            {syncReportCard && (
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className={`w-3 h-3 rounded-full ${
+                      syncReportCard.status === 'SUCCESS' ? 'bg-emerald-500 animate-pulse' :
+                      syncReportCard.status === 'WARNING' ? 'bg-amber-500 animate-pulse' : 'bg-rose-500 animate-pulse'
+                    }`} />
+                    <div>
+                      <h4 className="text-xs font-black text-slate-900 uppercase tracking-wide">
+                        Operational Sync Status
+                      </h4>
+                      <span className={`text-[11px] font-bold ${
+                        syncReportCard.status === 'SUCCESS' ? 'text-emerald-700' :
+                        syncReportCard.status === 'WARNING' ? 'text-amber-700' : 'text-rose-700'
+                      }`}>
+                        {syncReportCard.status === 'SUCCESS' && 'SUCCESS (0 Errors)'}
+                        {syncReportCard.status === 'WARNING' && `COMPLETED WITH ${syncReportCard.warnings.length} WARNINGS`}
+                        {syncReportCard.status === 'CRITICAL_ERROR' && 'CRITICAL ERROR (Sync Halted)'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-slate-400 font-mono">
+                    Batch: sync-{Date.now().toString().substring(6)}
+                  </div>
+                </div>
+
+                {/* Counts Summary Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center shadow-xs">
+                    <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Stations</span>
+                    <span className="text-sm font-black text-slate-900">
+                      +{syncReportCard.stationsCount.created} / ~{syncReportCard.stationsCount.updated}
+                    </span>
+                    <span className="text-[9px] text-slate-400 block mt-0.5">Created / Updated</span>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center shadow-xs">
+                    <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Routes</span>
+                    <span className="text-sm font-black text-slate-900">
+                      +{syncReportCard.routesCount.created} / ~{syncReportCard.routesCount.updated}
+                    </span>
+                    <span className="text-[9px] text-slate-400 block mt-0.5">Created / Updated</span>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center shadow-xs">
+                    <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Rates</span>
+                    <span className="text-sm font-black text-slate-900">
+                      +{syncReportCard.ratesCount.created} / ~{syncReportCard.ratesCount.updated}
+                    </span>
+                    <span className="text-[9px] text-slate-400 block mt-0.5">Created / Updated</span>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center shadow-xs">
+                    <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Seasons</span>
+                    <span className="text-sm font-black text-slate-900">
+                      +{syncReportCard.seasonsCount.created} / ~{syncReportCard.seasonsCount.updated}
+                    </span>
+                    <span className="text-[9px] text-slate-400 block mt-0.5">Created / Updated</span>
+                  </div>
+                </div>
+
+                {/* Black Scrollable Console Logs */}
+                <div className="space-y-1.5">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Chronological Audit Trail / Logs:</span>
+                  <div className="bg-slate-950 text-slate-300 font-mono text-[11px] p-4 rounded-xl border border-slate-800 h-64 overflow-y-auto space-y-1 leading-normal shadow-inner animate-in fade-in duration-300">
+                    {syncReportCard.logs.map((log, index) => {
+                      const colorClass = 
+                        log.type === 'success' ? 'text-emerald-400' :
+                        log.type === 'warning' ? 'text-amber-400' :
+                        log.type === 'error' ? 'text-rose-400 font-bold' : 'text-slate-400';
+                      return (
+                        <div key={index} className={`${colorClass} whitespace-pre-wrap`}>
+                          {log.text}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             )}
           </div>
         </div>
       )}
+          </div>
+        }
+      />
 
       {/* ========================================================================= */}
       {/* UNIVERSAL PRODUCTION DELETE CONFIRMATION MODAL */}

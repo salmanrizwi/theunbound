@@ -146,8 +146,17 @@ import {
   VipGroundService,
   ConnectivityPlan,
   StructuredVisaRequirement,
-  VisaAssistanceService
+  VisaAssistanceService,
+  MasterProductConfiguration,
+  VehicleMaster,
+  YachtMaster,
+  FerryMaster
 } from '../types';
+import {
+  resolveAuthoritativeCategory,
+  buildMasterProductConfiguration,
+  ensureMasterProductConfiguration
+} from './configuratorRegistry';
 import {
   DEFAULT_LEAD_STAGES,
   CUSTOMER_PROGRESS_STAGES,
@@ -188,7 +197,10 @@ import { INITIAL_RAIL_ROUTES } from '../data/initialRailRoutes';
 import { INITIAL_RAIL_RATES } from '../data/initialRailRates';
 import { INITIAL_RAIL_SEASON_CALENDAR } from '../data/initialRailSeasons';
 import { INITIAL_RAIL_MARKUP_RULE } from '../data/initialRailMarkup';
-import { RailStation, RailRoute, RailRate, RailMarkupRule, RailSeasonCalendarPeriod } from '../types/rail';
+import { INITIAL_VEHICLES } from '../data/initialVehicles';
+import { INITIAL_YACHTS } from '../data/initialYachts';
+import { INITIAL_FERRIES } from '../data/initialFerries';
+import { RailStation, RailService, RailRoute, RailFare, RailRate, RailMarkupRule, RailSeasonCalendarPeriod } from '../types/rail';
 import { EmailNotificationService } from './emailNotificationService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { googleBusinessService } from './googleBusinessService';
@@ -4440,6 +4452,193 @@ export class AppDatabase {
   }
 
   // ==========================================
+  // OPERATIONAL ASSET MASTERS (Vehicles, Yachts, Ferries)
+  // Authoritative operational master inventory
+  // ==========================================
+  public getVehicles(): VehicleMaster[] {
+    const deleted = this.getDeletedEntityIds();
+    const raw = this.getItem<VehicleMaster[]>('master_vehicles', INITIAL_VEHICLES);
+    return raw.filter(v => v && v.id && !deleted.has(v.id) && !deleted.has(`VehicleMaster_${v.id}`));
+  }
+
+  public saveVehicle(vehicle: VehicleMaster, user?: User | null): VehicleMaster {
+    if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER') {
+      throw new Error('Unauthorized: Only administrators may modify Vehicle Master records.');
+    }
+    const list = this.getVehicles();
+    const idx = list.findIndex(v => v.id === vehicle.id);
+    const now = new Date().toISOString();
+    const updated: VehicleMaster = {
+      ...vehicle,
+      id: vehicle.id || `veh-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      updatedAt: now,
+      createdAt: vehicle.createdAt || now
+    };
+    if (idx >= 0) {
+      list[idx] = updated;
+    } else {
+      list.push(updated);
+    }
+    this.unmarkEntityDeleted('master_vehicles', updated.id);
+    this.setItem('master_vehicles', list);
+    this.syncFirestoreDoc('master_vehicles', updated.id, updated);
+    this.logAudit(
+      user || null,
+      (idx >= 0 ? 'PRODUCT_UPDATED' : 'PRODUCT_CREATED') as any,
+      'Product' as any,
+      updated.id,
+      `Saved Vehicle Master record: ${updated.name} (${updated.model})`
+    );
+    this.notify();
+    return updated;
+  }
+
+  public deleteVehicle(id: string, user?: User | null): boolean {
+    if (user && (user.role === 'B2B_AGENT' || user.role === 'BUYER')) {
+      throw new Error('Permission Denied: B2B Agents and Buyers cannot delete Vehicle inventory.');
+    }
+    const list = this.getVehicles();
+    const target = list.find(v => v.id === id);
+    if (!target) return false;
+
+    const filtered = list.filter(v => v.id !== id);
+    this.setItem('master_vehicles', filtered);
+    this.markEntityDeleted('master_vehicles', id, { name: target.name, model: target.model });
+    this.deleteFirestoreDocAsync('master_vehicles', id);
+    this.logAudit(
+      user || null,
+      'PRODUCT_ARCHIVED' as any,
+      'Product' as any,
+      id,
+      `Deleted Vehicle Master record: ${target.name} (${target.model})`
+    );
+    this.notify();
+    return true;
+  }
+
+  public getYachts(): YachtMaster[] {
+    const deleted = this.getDeletedEntityIds();
+    const raw = this.getItem<YachtMaster[]>('master_yachts', INITIAL_YACHTS);
+    return raw.filter(y => y && y.id && !deleted.has(y.id) && !deleted.has(`YachtMaster_${y.id}`));
+  }
+
+  public saveYacht(yacht: YachtMaster, user?: User | null): YachtMaster {
+    if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER') {
+      throw new Error('Unauthorized: Only administrators may modify Yacht Master records.');
+    }
+    const list = this.getYachts();
+    const idx = list.findIndex(y => y.id === yacht.id);
+    const now = new Date().toISOString();
+    const updated: YachtMaster = {
+      ...yacht,
+      id: yacht.id || `yacht-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      updatedAt: now,
+      createdAt: yacht.createdAt || now
+    };
+    if (idx >= 0) {
+      list[idx] = updated;
+    } else {
+      list.push(updated);
+    }
+    this.unmarkEntityDeleted('master_yachts', updated.id);
+    this.setItem('master_yachts', list);
+    this.syncFirestoreDoc('master_yachts', updated.id, updated);
+    this.logAudit(
+      user || null,
+      (idx >= 0 ? 'PRODUCT_UPDATED' : 'PRODUCT_CREATED') as any,
+      'Product' as any,
+      updated.id,
+      `Saved Yacht Master record: ${updated.name} (${updated.model})`
+    );
+    this.notify();
+    return updated;
+  }
+
+  public deleteYacht(id: string, user?: User | null): boolean {
+    if (user && (user.role === 'B2B_AGENT' || user.role === 'BUYER')) {
+      throw new Error('Permission Denied: B2B Agents and Buyers cannot delete Yacht inventory.');
+    }
+    const list = this.getYachts();
+    const target = list.find(y => y.id === id);
+    if (!target) return false;
+
+    const filtered = list.filter(y => y.id !== id);
+    this.setItem('master_yachts', filtered);
+    this.markEntityDeleted('master_yachts', id, { name: target.name, model: target.model });
+    this.deleteFirestoreDocAsync('master_yachts', id);
+    this.logAudit(
+      user || null,
+      'PRODUCT_ARCHIVED' as any,
+      'Product' as any,
+      id,
+      `Deleted Yacht Master record: ${target.name} (${target.model})`
+    );
+    this.notify();
+    return true;
+  }
+
+  public getFerries(): FerryMaster[] {
+    const deleted = this.getDeletedEntityIds();
+    const raw = this.getItem<FerryMaster[]>('master_ferries', INITIAL_FERRIES);
+    return raw.filter(f => f && f.id && !deleted.has(f.id) && !deleted.has(`FerryMaster_${f.id}`));
+  }
+
+  public saveFerry(ferry: FerryMaster, user?: User | null): FerryMaster {
+    if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER') {
+      throw new Error('Unauthorized: Only administrators may modify Ferry Master records.');
+    }
+    const list = this.getFerries();
+    const idx = list.findIndex(f => f.id === ferry.id);
+    const now = new Date().toISOString();
+    const updated: FerryMaster = {
+      ...ferry,
+      id: ferry.id || `ferry-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      updatedAt: now,
+      createdAt: ferry.createdAt || now
+    };
+    if (idx >= 0) {
+      list[idx] = updated;
+    } else {
+      list.push(updated);
+    }
+    this.unmarkEntityDeleted('master_ferries', updated.id);
+    this.setItem('master_ferries', list);
+    this.syncFirestoreDoc('master_ferries', updated.id, updated);
+    this.logAudit(
+      user || null,
+      (idx >= 0 ? 'PRODUCT_UPDATED' : 'PRODUCT_CREATED') as any,
+      'Product' as any,
+      updated.id,
+      `Saved Ferry Master record: ${updated.name} (${updated.route})`
+    );
+    this.notify();
+    return updated;
+  }
+
+  public deleteFerry(id: string, user?: User | null): boolean {
+    if (user && (user.role === 'B2B_AGENT' || user.role === 'BUYER')) {
+      throw new Error('Permission Denied: B2B Agents and Buyers cannot delete Ferry inventory.');
+    }
+    const list = this.getFerries();
+    const target = list.find(f => f.id === id);
+    if (!target) return false;
+
+    const filtered = list.filter(f => f.id !== id);
+    this.setItem('master_ferries', filtered);
+    this.markEntityDeleted('master_ferries', id, { name: target.name, route: target.route });
+    this.deleteFirestoreDocAsync('master_ferries', id);
+    this.logAudit(
+      user || null,
+      'PRODUCT_ARCHIVED' as any,
+      'Product' as any,
+      id,
+      `Deleted Ferry Master record: ${target.name} (${target.route})`
+    );
+    this.notify();
+    return true;
+  }
+
+  // ==========================================
   // JAPAN RAIL INVENTORY & DYNAMIC PRICING CRUD
   // ==========================================
   public getRailStations(): RailStation[] {
@@ -4752,8 +4951,17 @@ export class AppDatabase {
     const existingIndex = products.findIndex(p => p.id === product.id);
     const prev = existingIndex >= 0 ? products[existingIndex] : null;
 
+    const chosenCurrency = (product.nativeCurrency || product.currency) as CurrencyCode;
+    if (!chosenCurrency) {
+      throw new Error('Product Currency (Native Currency) is required.');
+    }
+
+    const productWithMasterConfig = ensureMasterProductConfiguration(product, user);
+
     const savedProd: Product = {
-      ...product,
+      ...productWithMasterConfig,
+      currency: chosenCurrency,
+      nativeCurrency: chosenCurrency,
       product_id: product.id,
       lastUpdated: new Date().toISOString().split('T')[0]
     };
@@ -4785,6 +4993,41 @@ export class AppDatabase {
     this.setItem('products', products);
   }
 
+  public saveProductConfiguration(
+    productId: string,
+    configurationData: Record<string, any>,
+    user: User | null
+  ): Product | null {
+    const product = this.getProductById(productId);
+    if (!product) return null;
+    const category = resolveAuthoritativeCategory(product);
+    const masterConfig = buildMasterProductConfiguration(
+      category,
+      product,
+      configurationData,
+      user,
+      product.configuration
+    );
+    const updated: Product = {
+      ...product,
+      category: category as any,
+      configuration: masterConfig,
+      lastUpdated: new Date().toISOString().split('T')[0]
+    };
+    this.saveProduct(updated, user);
+    return updated;
+  }
+
+  public getProductConfiguration(productId: string): MasterProductConfiguration | null {
+    const product = this.getProductById(productId);
+    if (!product) return null;
+    if (!product.configuration) {
+      const updated = ensureMasterProductConfiguration(product);
+      return updated.configuration || null;
+    }
+    return product.configuration;
+  }
+
   public async saveProductAsync(product: Product, user: User | null): Promise<Product> {
     if (user) {
       const auth = this.canUserWriteCMS(user, 'OPERATIONS', 'Product');
@@ -4798,6 +5041,11 @@ export class AppDatabase {
     }
     if (!product.sku || !product.sku.trim()) {
       throw new Error('Product SKU is required.');
+    }
+
+    const chosenCurrency = (product.nativeCurrency || product.currency) as CurrencyCode;
+    if (!chosenCurrency) {
+      throw new Error('Product Currency (Native Currency) is required.');
     }
 
     const dup = this.checkDuplicateRecord('Product', {
@@ -4817,6 +5065,8 @@ export class AppDatabase {
 
     const savedProd: Product = {
       ...product,
+      currency: chosenCurrency,
+      nativeCurrency: chosenCurrency,
       product_id: product.id,
       lastUpdated: new Date().toISOString().split('T')[0]
     };
@@ -17924,6 +18174,167 @@ export class AppDatabase {
     this.syncFirestoreDoc('package_items', item.id, item);
   }
 
+  // ==========================================
+  // JAPAN RAIL INVENTORY & DYNAMIC PRICING CRUD
+  // ==========================================
+
+  // Rail Services (Timetable & Trains)
+  public getRailServices(): RailService[] {
+    return this.getItem<RailService[]>('rail_services', [
+      {
+        serviceId: 'SRV-TYO-OSA-NZ1',
+        operatorId: 'JR-CENTRAL',
+        serviceName: 'Nozomi 1 Super Express',
+        serviceType: 'NOZOMI',
+        trainNumber: '1A',
+        originStationId: 'JP-ST-TOKYO',
+        destinationStationId: 'JP-ST-SHIN-OSAKA',
+        routeId: 'JP-RT-TOKYO-SHIN-OSAKA',
+        departureTime: '06:00',
+        arrivalTime: '08:28',
+        durationMinutes: 148,
+        operatingDays: 'Mon;Tue;Wed;Thu;Fri;Sat;Sun',
+        status: 'ACTIVE',
+        effectiveFrom: '2026-01-01',
+        effectiveTo: '2026-12-31'
+      },
+      {
+        serviceId: 'SRV-TYO-KYO-HK1',
+        operatorId: 'JR-CENTRAL',
+        serviceName: 'Hikari 501 Express',
+        serviceType: 'HIKARI',
+        trainNumber: '501A',
+        originStationId: 'JP-ST-TOKYO',
+        destinationStationId: 'JP-ST-KYOTO',
+        routeId: 'JP-RT-TOKYO-KYOTO',
+        departureTime: '06:33',
+        arrivalTime: '09:12',
+        durationMinutes: 159,
+        operatingDays: 'Mon;Tue;Wed;Thu;Fri;Sat;Sun',
+        status: 'ACTIVE',
+        effectiveFrom: '2026-01-01',
+        effectiveTo: '2026-12-31'
+      }
+    ]);
+  }
+
+  public saveRailService(service: RailService, user?: User | null): void {
+    const list = this.getRailServices();
+    const idx = list.findIndex(s => s.serviceId === service.serviceId || (s as any).id === service.serviceId);
+    const now = new Date().toISOString();
+    const toSave = { ...service, updatedAt: now };
+    if (idx >= 0) {
+      list[idx] = toSave;
+    } else {
+      list.push({ ...toSave, createdAt: service.createdAt || now });
+    }
+    this.setItem('rail_services', list, false);
+    this.syncFirestoreDoc('rail_services', service.serviceId, toSave);
+  }
+
+  public deleteRailService(serviceId: string, user?: User | null): void {
+    const list = this.getRailServices();
+    const filtered = list.filter(s => s.serviceId !== serviceId && (s as any).id !== serviceId);
+    this.setItem('rail_services', filtered, false);
+    this.deleteFirestoreDoc('rail_services', serviceId);
+  }
+
+  // Rail Fares
+  public getRailFares(): RailFare[] {
+    return this.getItem<RailFare[]>('rail_fares', [
+      {
+        railFareId: 'FARE-TYO-KYO-ORD-ADT',
+        routeId: 'JP-RT-TOKYO-KYOTO',
+        originStationId: 'JP-ST-TOKYO',
+        destinationStationId: 'JP-ST-KYOTO',
+        productId: 'RAIL-JP-ORD-RESERVED',
+        carType: 'Ordinary',
+        seatType: 'Reserved',
+        fareType: 'Standard',
+        passengerType: 'ADULT',
+        currency: 'JPY',
+        nettPrice: 13320,
+        marginType: 'PERCENTAGE',
+        marginValue: 15,
+        taxType: 'PERCENTAGE',
+        taxValue: 10,
+        serviceChargeType: 'FIXED',
+        serviceChargeValue: 500,
+        finalPrice: 15818,
+        effectiveFrom: '2026-01-01',
+        effectiveTo: '2026-12-31',
+        status: 'ACTIVE'
+      },
+      {
+        railFareId: 'FARE-TYO-KYO-ORD-CHD',
+        routeId: 'JP-RT-TOKYO-KYOTO',
+        originStationId: 'JP-ST-TOKYO',
+        destinationStationId: 'JP-ST-KYOTO',
+        productId: 'RAIL-JP-ORD-RESERVED',
+        carType: 'Ordinary',
+        seatType: 'Reserved',
+        fareType: 'Standard',
+        passengerType: 'CHILD',
+        currency: 'JPY',
+        nettPrice: 6660,
+        marginType: 'PERCENTAGE',
+        marginValue: 15,
+        taxType: 'PERCENTAGE',
+        taxValue: 10,
+        serviceChargeType: 'FIXED',
+        serviceChargeValue: 250,
+        finalPrice: 7909,
+        effectiveFrom: '2026-01-01',
+        effectiveTo: '2026-12-31',
+        status: 'ACTIVE'
+      },
+      {
+        railFareId: 'FARE-TYO-OSA-ORD-ADT',
+        routeId: 'JP-RT-TOKYO-SHIN-OSAKA',
+        originStationId: 'JP-ST-TOKYO',
+        destinationStationId: 'JP-ST-SHIN-OSAKA',
+        productId: 'RAIL-JP-ORD-RESERVED',
+        carType: 'Ordinary',
+        seatType: 'Reserved',
+        fareType: 'Standard',
+        passengerType: 'ADULT',
+        currency: 'JPY',
+        nettPrice: 13870,
+        marginType: 'PERCENTAGE',
+        marginValue: 15,
+        taxType: 'PERCENTAGE',
+        taxValue: 10,
+        serviceChargeType: 'FIXED',
+        serviceChargeValue: 500,
+        finalPrice: 16451,
+        effectiveFrom: '2026-01-01',
+        effectiveTo: '2026-12-31',
+        status: 'ACTIVE'
+      }
+    ]);
+  }
+
+  public saveRailFare(fare: RailFare, user?: User | null): void {
+    const list = this.getRailFares();
+    const idx = list.findIndex(f => f.railFareId === fare.railFareId || (f as any).id === fare.railFareId);
+    const now = new Date().toISOString();
+    const toSave = { ...fare, updatedAt: now };
+    if (idx >= 0) {
+      list[idx] = toSave;
+    } else {
+      list.push({ ...toSave, createdAt: fare.createdAt || now });
+    }
+    this.setItem('rail_fares', list, false);
+    this.syncFirestoreDoc('rail_fares', fare.railFareId, toSave);
+  }
+
+  public deleteRailFare(fareId: string, user?: User | null): void {
+    const list = this.getRailFares();
+    const filtered = list.filter(f => f.railFareId !== fareId && (f as any).id !== fareId);
+    this.setItem('rail_fares', filtered, false);
+    this.deleteFirestoreDoc('rail_fares', fareId);
+  }
+
   // Master Google Sheet Authoritative Configuration
   public getMasterGoogleSheetConfig(): MasterGoogleSheetConfig {
     const defaultConfig: MasterGoogleSheetConfig = {
@@ -17995,6 +18406,15 @@ export class AppDatabase {
     transferRates?: TransferRate[];
     packages?: B2BPackage[];
     packageItems?: PackageItemRef[];
+    railStations?: RailStation[];
+    railServices?: RailService[];
+    railRoutes?: RailRoute[];
+    railFares?: RailFare[];
+    railRates?: RailRate[];
+    railSeasons?: RailSeasonCalendarPeriod[];
+    travelProtectionPlans?: TravelProtectionPlan[];
+    vipGroundServices?: VipGroundService[];
+    connectivityPlans?: ConnectivityPlan[];
   }, user?: User | null): void {
     const deletedSet = this.getDeletedEntityIds();
 
@@ -18173,6 +18593,157 @@ export class AppDatabase {
         }
       }
     }
+
+    // --- JAPAN RAIL INVENTORY & DYNAMIC PRICING ENTITIES ---
+    if (syncedData.railStations && syncedData.railStations.length > 0) {
+      const existing = this.getRailStations();
+      const normalizedIncoming = syncedData.railStations.map(s => ({
+        ...s,
+        id: s.stationId || (s as any).id,
+        stationId: s.stationId || (s as any).id
+      }));
+      const merged = this.mergeEntitiesById(
+        existing.map(s => ({ ...s, id: s.stationId || (s as any).id })),
+        normalizedIncoming,
+        'RailStation'
+      );
+      this.setItem('rail_stations', merged, false);
+      for (const s of merged) {
+        if (!deletedSet.has(s.stationId)) {
+          this.syncFirestoreDoc('rail_stations', s.stationId, s);
+        }
+      }
+    }
+
+    if (syncedData.railServices && syncedData.railServices.length > 0) {
+      const existing = this.getRailServices();
+      const normalizedIncoming = syncedData.railServices.map(srv => ({
+        ...srv,
+        id: srv.serviceId || (srv as any).id,
+        serviceId: srv.serviceId || (srv as any).id
+      }));
+      const merged = this.mergeEntitiesById(
+        existing.map(srv => ({ ...srv, id: srv.serviceId || (srv as any).id })),
+        normalizedIncoming,
+        'RailService'
+      );
+      this.setItem('rail_services', merged, false);
+      for (const srv of merged) {
+        if (!deletedSet.has(srv.serviceId)) {
+          this.syncFirestoreDoc('rail_services', srv.serviceId, srv);
+        }
+      }
+    }
+
+    if (syncedData.railRoutes && syncedData.railRoutes.length > 0) {
+      const existing = this.getRailRoutes();
+      const normalizedIncoming = syncedData.railRoutes.map(r => ({
+        ...r,
+        id: r.routeId || (r as any).id,
+        routeId: r.routeId || (r as any).id
+      }));
+      const merged = this.mergeEntitiesById(
+        existing.map(r => ({ ...r, id: r.routeId || (r as any).id })),
+        normalizedIncoming,
+        'RailRoute'
+      );
+      this.setItem('rail_routes', merged, false);
+      for (const r of merged) {
+        if (!deletedSet.has(r.routeId)) {
+          this.syncFirestoreDoc('rail_routes', r.routeId, r);
+        }
+      }
+    }
+
+    if (syncedData.railFares && syncedData.railFares.length > 0) {
+      const existing = this.getRailFares();
+      const normalizedIncoming = syncedData.railFares.map(f => ({
+        ...f,
+        id: f.railFareId || (f as any).id,
+        railFareId: f.railFareId || (f as any).id
+      }));
+      const merged = this.mergeEntitiesById(
+        existing.map(f => ({ ...f, id: f.railFareId || (f as any).id })),
+        normalizedIncoming,
+        'RailFare'
+      );
+      this.setItem('rail_fares', merged, false);
+      for (const f of merged) {
+        if (!deletedSet.has(f.railFareId)) {
+          this.syncFirestoreDoc('rail_fares', f.railFareId, f);
+        }
+      }
+    }
+
+    if (syncedData.railRates && syncedData.railRates.length > 0) {
+      const existing = this.getRailRates();
+      const normalizedIncoming = syncedData.railRates.map(r => ({
+        ...r,
+        id: r.rateId || (r as any).id,
+        rateId: r.rateId || (r as any).id
+      }));
+      const merged = this.mergeEntitiesById(
+        existing.map(r => ({ ...r, id: r.rateId || (r as any).id })),
+        normalizedIncoming,
+        'RailRate'
+      );
+      this.setItem('rail_rates', merged, false);
+      for (const r of merged) {
+        if (!deletedSet.has(r.rateId)) {
+          this.syncFirestoreDoc('rail_rates', r.rateId, r);
+        }
+      }
+    }
+
+    if (syncedData.railSeasons && syncedData.railSeasons.length > 0) {
+      const existing = this.getRailSeasons();
+      const merged = this.mergeEntitiesById(existing, syncedData.railSeasons, 'RailSeasonCalendarPeriod');
+      this.setItem('rail_seasons', merged, false);
+      for (const s of merged) {
+        if (!deletedSet.has(s.id)) {
+          this.syncFirestoreDoc('rail_seasons', s.id, s);
+        }
+      }
+    }
+
+    // --- TRAVEL PROTECTION PLANS ---
+    if (syncedData.travelProtectionPlans && syncedData.travelProtectionPlans.length > 0) {
+      const existing = this.getTravelProtectionPlans();
+      const merged = this.mergeEntitiesById(existing, syncedData.travelProtectionPlans, 'TravelProtectionPlan');
+      this.setItem('travel_protection_plans', merged, false);
+      for (const p of merged) {
+        if (!deletedSet.has(p.id) && !deletedSet.has(`TravelProtectionPlan_${p.id}`)) {
+          this.syncFirestoreDoc('travel_protection_plans', p.id, p);
+        }
+      }
+    }
+
+    // --- VIP GROUND & CONCIERGE SERVICES ---
+    if (syncedData.vipGroundServices && syncedData.vipGroundServices.length > 0) {
+      const existing = this.getVipGroundServices();
+      const merged = this.mergeEntitiesById(existing, syncedData.vipGroundServices, 'VipGroundService');
+      this.setItem('vip_ground_services', merged, false);
+      for (const v of merged) {
+        if (!deletedSet.has(v.id) && !deletedSet.has(`VipGroundService_${v.id}`)) {
+          this.syncFirestoreDoc('vip_ground_services', v.id, v);
+        }
+      }
+    }
+
+    // --- CONNECTIVITY & eSIM PLANS ---
+    if (syncedData.connectivityPlans && syncedData.connectivityPlans.length > 0) {
+      const existing = this.getConnectivityPlans();
+      const merged = this.mergeEntitiesById(existing, syncedData.connectivityPlans, 'ConnectivityPlan');
+      this.setItem('connectivity_plans', merged, false);
+      for (const c of merged) {
+        if (!deletedSet.has(c.id) && !deletedSet.has(`ConnectivityPlan_${c.id}`)) {
+          this.syncFirestoreDoc('connectivity_plans', c.id, c);
+        }
+      }
+    }
+
+    // Notify all UI subscribers of state updates across all modules
+    this.notify();
   }
 
   private mergeEntitiesById<T extends { id: string }>(existing: T[], incoming: T[], entityType?: string): T[] {

@@ -432,7 +432,7 @@ export class AiPlannerEngine {
         field: 'travelers.childAges',
         question: `What are the ages of the ${requirements.travelers.children.value} children?`,
         placeholder: 'e.g., 6, 9',
-        currentValue: requirements.travelers.childAges.value.join(', '),
+        currentValue: Array.isArray(requirements.travelers?.childAges?.value) ? requirements.travelers.childAges.value.join(', ') : '',
         resolved: false
       });
     }
@@ -613,8 +613,9 @@ export class AiPlannerEngine {
     if (requirements.destination.status === 'CONFIRMED') confirmedSummary.push(`Destination: ${requirements.destination.value}`);
     else inferredSummary.push(`Destination inferred as ${requirements.destination.value}`);
 
-    if (requirements.hubs.status === 'CONFIRMED') confirmedSummary.push(`Route Hubs: ${requirements.hubs.value.join(' → ')}`);
-    else inferredSummary.push(`Route Hubs inferred: ${requirements.hubs.value.join(' → ')}`);
+    const hubsList = Array.isArray(requirements.hubs?.value) ? requirements.hubs.value.join(' → ') : (requirements.hubs?.value || '');
+    if (requirements.hubs.status === 'CONFIRMED') confirmedSummary.push(`Route Hubs: ${hubsList}`);
+    else inferredSummary.push(`Route Hubs inferred: ${hubsList}`);
 
     if (requirements.duration.nights.status === 'CONFIRMED') confirmedSummary.push(`Duration: ${requirements.duration.nights.value} Nights (${totalDays} Days)`);
     else inferredSummary.push(`Duration: ${requirements.duration.nights.value} Nights (${totalDays} Days)`);
@@ -1101,7 +1102,7 @@ export class AiPlannerEngine {
       perPersonSellingPrice,
       currency,
       feasibility,
-      reasoning: `Selected based on client requirement for ${requirements.travelStyle.value.join(', ')} travel style, with ${requirements.transportPreference.value.toLowerCase()} ground transport and optimal daily travel buffers.`,
+      reasoning: `Selected based on client requirement for ${Array.isArray(requirements.travelStyle?.value) ? requirements.travelStyle.value.join(', ') : (requirements.travelStyle?.value || 'Luxury')} travel style, with ${(requirements.transportPreference?.value || 'Private').toLowerCase()} ground transport and optimal daily travel buffers.`,
       highlights,
       appliedRefinements: [],
       dismissedRefinements: [],

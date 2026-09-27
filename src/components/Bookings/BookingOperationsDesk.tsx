@@ -42,6 +42,7 @@ import { DeskPassengersDocsSection } from './desk/DeskPassengersDocsSection';
 import { DeskNotesSection } from './desk/DeskNotesSection';
 import { DeskTimelineSection } from './desk/DeskTimelineSection';
 import { OperationalHorizonDesk } from './OperationalHorizonDesk';
+import { AdminWorkspaceLayout } from '../common/AdminWorkspaceLayout';
 import { Compass } from 'lucide-react';
 
 export type DeskSection = 
@@ -317,194 +318,203 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
             </button>
           </div>
         </div>
-
-        {/* ========================================================================= */}
-        {/* 2. ONE AUTHORITATIVE BOOKING SUMMARY (COMPACT & SCANNABLE) */}
-        {/* ========================================================================= */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 pt-4 border-t border-slate-100 text-xs">
-          <div>
-            <span className="text-[10px] text-slate-400 font-bold uppercase block">Travel Dates</span>
-            <span className="font-bold text-slate-800 mt-0.5 block truncate">
-              {booking.travelStartDate || 'TBA'} → {booking.travelEndDate || 'TBA'}
-            </span>
-          </div>
-
-          <div>
-            <span className="text-[10px] text-slate-400 font-bold uppercase block">Destination</span>
-            <span className="font-bold text-slate-800 mt-0.5 block truncate">
-              {booking.destinationName || booking.destination || 'Japan'}
-            </span>
-          </div>
-
-          <div>
-            <span className="text-[10px] text-slate-400 font-bold uppercase block">Passengers</span>
-            <span className="font-bold text-slate-800 mt-0.5 block">
-              {(booking.customer?.totalAdults || 0) + (booking.customer?.totalChildren || 0) || 1} Pax
-            </span>
-          </div>
-
-          <div>
-            <span className="text-[10px] text-slate-400 font-bold uppercase block">Selling Total</span>
-            <span className="font-bold text-slate-900 mt-0.5 block font-mono">
-              {formatCurrency(booking.totalAmount || 0, booking.currency)}
-            </span>
-          </div>
-
-          <div>
-            <span className="text-[10px] text-slate-400 font-bold uppercase block">Payment Status</span>
-            <span className={`font-bold mt-0.5 block ${
-              booking.paymentStatus === 'PAID' ? 'text-emerald-700' : 'text-blue-700'
-            }`}>
-              {booking.paymentStatus || 'PENDING'}
-            </span>
-          </div>
-
-          <div>
-            <span className="text-[10px] text-slate-400 font-bold uppercase block">Channel</span>
-            <span className="font-bold text-slate-800 mt-0.5 block truncate">
-              {booking.agencyName || booking.agentName || 'Direct VIP'}
-            </span>
-          </div>
-        </div>
       </div>
 
-      {/* ========================================================================= */}
-      {/* 3. SECTION NAVIGATION (EXACT PERMITTED SECTIONS ONLY) */}
-      {/* ========================================================================= */}
-      <div className="flex items-center gap-1.5 overflow-x-auto p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200">
-        {navItems.map(item => {
-          const Icon = item.icon;
-          const isActive = currentSection === item.id;
-
-          return (
-            <button
-              key={item.id}
-              id={`desk-nav-btn-${item.id.toLowerCase()}`}
-              onClick={() => handleNavigateSection(item.id)}
-              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-                isActive 
-                  ? 'bg-[#008f77] text-white shadow-xs' 
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-              }`}
-            >
-              <Icon className="w-4 h-4 shrink-0" />
-              <span>{item.label}</span>
-              {item.badge && (
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                  isActive ? 'bg-white/20 text-white' : item.badgeColor
+      <AdminWorkspaceLayout
+        sidebar={
+          <div className="space-y-6">
+            {/* 1. Authoritative Booking Context Preview Card */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3.5 shadow-xs text-xs text-slate-700">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Booking Summary</span>
+                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                  booking.status === 'CONFIRMED'
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : 'bg-amber-50 text-amber-800 border-amber-200'
                 }`}>
-                  {item.badge}
+                  {booking.status}
                 </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
+              </div>
 
-      {/* ========================================================================= */}
-      {/* 4. ACTIVE SECTION CONTENT (ONLY ONE SECTION DETAILED AT A TIME) */}
-      {/* ========================================================================= */}
-      <div id="desk-active-section-viewport">
-        {currentSection === 'OVERVIEW' && (
-          <DeskOverviewSection
-            booking={booking}
-            currentUser={currentUser}
-            onNavigateToSection={handleNavigateSection}
-            onRefresh={handleRefresh}
-          />
-        )}
+              <div className="space-y-2.5">
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Travel Dates</span>
+                  <span className="font-bold text-slate-900 leading-snug">
+                    {booking.travelStartDate || 'TBA'} ➔ {booking.travelEndDate || 'TBA'}
+                  </span>
+                </div>
 
-        {isInternal && currentSection === 'ASSIGNMENT' && (
-          <DeskAssignmentSection
-            booking={booking}
-            currentUser={currentUser}
-            onRefresh={handleRefresh}
-          />
-        )}
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Destination</span>
+                  <span className="font-semibold text-slate-800">{booking.destinationName || booking.destination || 'Japan'}</span>
+                </div>
 
-        {isInternal && currentSection === 'SERVICES' && (
-          <DeskServiceItemsSection
-            booking={booking}
-            currentUser={currentUser}
-            onRefresh={handleRefresh}
-          />
-        )}
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Group Size</span>
+                  <span className="font-semibold text-slate-800">
+                    {(booking.customer?.totalAdults || 0) + (booking.customer?.totalChildren || 0) || 1} Passengers
+                  </span>
+                </div>
 
-        {isInternal && currentSection === 'OPERATIONAL_HORIZON' && (
-          <OperationalHorizonDesk
-            currentUser={currentUser}
-            initialDate={booking.travelStartDate || undefined}
-            onOpenBooking={(bId) => {
-              setActiveBookingId(bId);
-              setActiveSection('OVERVIEW');
-            }}
-            onBackToAllocationDesk={() => setActiveSection('SERVICES')}
-          />
-        )}
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Channel & Agent</span>
+                  <span className="font-semibold text-slate-800 block truncate">{booking.agencyName || booking.agentName || 'Direct VIP'}</span>
+                </div>
 
-        {isInternal && (currentSection === 'FINANCIALS' || currentSection === 'PAYMENTS') && (
-          <DeskFinancialsSection
-            booking={booking}
-            currentUser={currentUser}
-            onRefresh={handleRefresh}
-          />
-        )}
+                <div className="pt-2.5 border-t border-slate-200">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Payment & Selling Total</span>
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-base font-black text-[#008f77] font-mono">
+                      {formatCurrency(booking.totalAmount || 0, booking.currency)}
+                    </span>
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${
+                      booking.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
+                    }`}>
+                      {booking.paymentStatus || 'PENDING'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
 
-        {isInternal && currentSection === 'ACTIVITY_VOUCHERS' && (
-          <DeskActivityVouchersSection
-            booking={booking}
-            currentUser={currentUser}
-            onRefresh={handleRefresh}
-          />
-        )}
+            {/* 2. Vertical Desk Navigation Section Tabs */}
+            <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs divide-y divide-slate-100">
+              {navItems.map(item => {
+                const Icon = item.icon;
+                const isActive = currentSection === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    id={`desk-nav-btn-${item.id.toLowerCase()}`}
+                    type="button"
+                    onClick={() => handleNavigateSection(item.id)}
+                    className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center justify-between cursor-pointer ${
+                      isActive
+                        ? 'bg-[#00C6A6]/10 text-slate-950 font-black border-l-4 border-[#00C6A6]'
+                        : 'hover:bg-slate-50 text-slate-600'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2.5 min-w-0">
+                      <Icon className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span className="truncate">{item.label}</span>
+                    </div>
+                    {item.badge && (
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        isActive ? 'bg-slate-900 text-white' : item.badgeColor
+                      }`}>
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        }
+        content={
+          <div id="desk-active-section-viewport" className="space-y-6">
+            {currentSection === 'OVERVIEW' && (
+              <DeskOverviewSection
+                booking={booking}
+                currentUser={currentUser}
+                onNavigateToSection={handleNavigateSection}
+                onRefresh={handleRefresh}
+              />
+            )}
 
-        {isInternal && currentSection === 'COMPLETE_VOUCHER' && (
-          <DeskCompleteVoucherSection
-            booking={booking}
-            currentUser={currentUser}
-            onRefresh={handleRefresh}
-          />
-        )}
+            {isInternal && currentSection === 'ASSIGNMENT' && (
+              <DeskAssignmentSection
+                booking={booking}
+                currentUser={currentUser}
+                onRefresh={handleRefresh}
+              />
+            )}
 
-        {isInternal && currentSection === 'PROFORMA_INVOICE' && (
-          <DeskProformaInvoiceSection
-            booking={booking}
-            currentUser={currentUser}
-            onRefresh={handleRefresh}
-          />
-        )}
+            {isInternal && currentSection === 'SERVICES' && (
+              <DeskServiceItemsSection
+                booking={booking}
+                currentUser={currentUser}
+                onRefresh={handleRefresh}
+              />
+            )}
 
-        {currentSection === 'PASSENGERS' && (
-          <DeskPassengersDocsSection
-            booking={booking}
-            currentUser={currentUser}
-            onRefresh={handleRefresh}
-          />
-        )}
+            {isInternal && currentSection === 'OPERATIONAL_HORIZON' && (
+              <OperationalHorizonDesk
+                currentUser={currentUser}
+                initialDate={booking.travelStartDate || undefined}
+                onOpenBooking={(bId) => {
+                  setActiveBookingId(bId);
+                  setActiveSection('OVERVIEW');
+                }}
+                onBackToAllocationDesk={() => setActiveSection('SERVICES')}
+              />
+            )}
 
-        {isInternal && currentSection === 'TASKS' && (
-          <DeskTasksSection
-            booking={booking}
-            currentUser={currentUser}
-            onRefresh={handleRefresh}
-          />
-        )}
+            {isInternal && (currentSection === 'FINANCIALS' || currentSection === 'PAYMENTS') && (
+              <DeskFinancialsSection
+                booking={booking}
+                currentUser={currentUser}
+                onRefresh={handleRefresh}
+              />
+            )}
 
-        {isInternal && currentSection === 'NOTES' && (
-          <DeskNotesSection
-            booking={booking}
-            currentUser={currentUser}
-            onRefresh={handleRefresh}
-          />
-        )}
+            {isInternal && currentSection === 'ACTIVITY_VOUCHERS' && (
+              <DeskActivityVouchersSection
+                booking={booking}
+                currentUser={currentUser}
+                onRefresh={handleRefresh}
+              />
+            )}
 
-        {isInternal && currentSection === 'TIMELINE' && (
-          <DeskTimelineSection
-            booking={booking}
-            currentUser={currentUser}
-          />
-        )}
-      </div>
+            {isInternal && currentSection === 'COMPLETE_VOUCHER' && (
+              <DeskCompleteVoucherSection
+                booking={booking}
+                currentUser={currentUser}
+                onRefresh={handleRefresh}
+              />
+            )}
+
+            {isInternal && currentSection === 'PROFORMA_INVOICE' && (
+              <DeskProformaInvoiceSection
+                booking={booking}
+                currentUser={currentUser}
+                onRefresh={handleRefresh}
+              />
+            )}
+
+            {currentSection === 'PASSENGERS' && (
+              <DeskPassengersDocsSection
+                booking={booking}
+                currentUser={currentUser}
+                onRefresh={handleRefresh}
+              />
+            )}
+
+            {isInternal && currentSection === 'TASKS' && (
+              <DeskTasksSection
+                booking={booking}
+                currentUser={currentUser}
+                onRefresh={handleRefresh}
+              />
+            )}
+
+            {isInternal && currentSection === 'NOTES' && (
+              <DeskNotesSection
+                booking={booking}
+                currentUser={currentUser}
+                onRefresh={handleRefresh}
+              />
+            )}
+
+            {isInternal && currentSection === 'TIMELINE' && (
+              <DeskTimelineSection
+                booking={booking}
+                currentUser={currentUser}
+              />
+            )}
+          </div>
+        }
+      />
     </div>
   );
 };

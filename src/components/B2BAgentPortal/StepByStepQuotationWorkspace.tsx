@@ -45,7 +45,8 @@ import {
   Lock,
   Save,
   Percent,
-  Train
+  Train,
+  X
 } from 'lucide-react';
 import { isRailQuoteItem } from '../../services/rail/JapanRailJourneyDataService';
 import { 
@@ -69,7 +70,9 @@ import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
 import { TransferSuggestion } from '../../utils/b2bQuotationHelpers';
 import { validateRoomOccupancy, hotelToProduct, manualHotelToProduct } from '../../utils/hotelHelpers';
 import { VisaServicesAndFacilitationSection } from './VisaServicesAndFacilitationSection';
-import { DestinationRelevanceService } from '../../services/destinationRelevanceService';
+import { DestinationRelevanceService, matchesDestination } from '../../services/destinationRelevanceService';
+import { AppDatabase } from '../../services/db';
+import { TransferConfigurator } from '../Configurators/TransferConfigurator';
 
 // Helper to check if a product matches a target city/hub
 export const isProductMatchingCity = (product: Product, targetCityName?: string, targetHubId?: string): boolean => {
@@ -192,9 +195,9 @@ export interface StepByStepQuotationWorkspaceProps {
   activeOptionTab: number;
   onSelectOptionTab: (optNum: number) => void;
 
-  // Transfer Recommendations
-  transferSuggestions: TransferSuggestion[];
-  onAddSuggestedTransfer: (s: TransferSuggestion) => void;
+  // Transfer Recommendations (Optional / Legacy Compatibility)
+  transferSuggestions?: TransferSuggestion[];
+  onAddSuggestedTransfer?: (s: TransferSuggestion) => void;
 
   // Feasibility
   feasibility: FeasibilityCheckResult;
@@ -375,10 +378,439 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   ), [items]);
 
   const transferItems = useMemo(() => items.filter(it => 
-    (it.product as any).isTransfer ||
+    Boolean((it.product as any).isTransfer) ||
     (it.product.category || '').toLowerCase().includes('transfer') ||
+    (it.product.productType || '').toLowerCase().includes('transfer') ||
+    (it.product.subcategory || '').toLowerCase().includes('transfer') ||
+    (it.product.subcategory || '').toLowerCase().includes('chauffeur') ||
     (it.product.category || '').toLowerCase().includes('transport')
   ), [items]);
+
+  // Master Transfer Products fetched dynamically from Product -> Category -> Transfers
+  const allMasterTransferProducts = useMemo(() => {
+    const directList = (products || []).filter(p => {
+      const cat = (p.category || '').toLowerCase();
+      const sub = (p.subcategory || '').toLowerCase();
+      const type = (p.productType || '').toLowerCase();
+      return (
+        cat === 'transfers' ||
+        cat === 'transfer' ||
+        cat.includes('transfer') ||
+        sub.includes('transfer') ||
+        sub.includes('chauffeur') ||
+        type.includes('transfer') ||
+        Boolean((p as any).isTransfer)
+      );
+    });
+    if (directList.length > 0) return directList;
+    
+    try {
+      const db = AppDatabase.getInstance();
+      return db.getProducts().filter(p => 
+        (p.status === 'ACTIVE' || !p.status) &&
+        matchesDestination(currentDestination?.id, p.destinationId, p.destinationName, p.country) &&
+        ((p.category || '').toLowerCase().includes('transfer') || Boolean((p as any).isTransfer))
+      );
+    } catch {
+      return [];
+    }
+  }, [products, currentDestination]);
+
+  // Hub Matching Algorithm for movements
+  const getMatchingTransfersForMovement = (
+    movement: { type: string; fromHubId?: string; toHubId?: string; fromHub?: TripRouteHub; toHub?: TripRouteHub; hub?: TripRouteHub },
+    allTransfers: Product[]
+  ): Product[] => {
+    return allTransfers.filter(p => {
+      const pName = (p.name || '').toLowerCase();
+      const pCity = (p.city || '').toLowerCase();
+      const pFrom = (p.fromHubName || '').toLowerCase();
+      const pTo = (p.toHubName || '').toLowerCase();
+      const pSub = (p.subcategory || '').toLowerCase();
+      const pType = (p.productType || '').toLowerCase();
+      const pRouteType = ((p as any).routeType || '').toUpperCase();
+
+      if (movement.type === 'ARRIVAL') {
+        const hubId = movement.hub?.hubId || movement.toHubId;
+        const hubName = (movement.hub?.hubName || '').toLowerCase();
+        
+        const idMatch = (p.hubId && p.hubId === hubId) || (p.toHubId && p.toHubId === hubId) || (p.fromHubId && p.fromHubId === hubId);
+        const nameMatch = hubName && (
+          pName.includes(hubName) || pCity.includes(hubName) || pFrom.includes(hubName) || pTo.includes(hubName)
+        );
+
+        const isIntercityOther = (pSub.includes('intercity') || pType.includes('intercity') || pRouteType === 'INTERCITY') &&
+          p.fromHubId && p.toHubId && p.fromHubId !== p.toHubId;
+
+        const isArrivalRelated = 
+          pRouteType === 'AIRPORT_ARRIVAL' ||
+          pSub.includes('airport') ||
+          pType.includes('airport') ||
+          pName.includes('airport') ||
+          pName.includes('arrival') ||
+          !isIntercityOther;
+
+        return (idMatch || nameMatch) && isArrivalRelated && !isIntercityOther;
+      }
+
+      if (movement.type === 'INTERCITY') {
+        const fromId = movement.fromHub?.hubId || movement.fromHubId;
+        const toId = movement.toHub?.hubId || movement.toHubId;
+        const fromName = (movement.fromHub?.hubName || '').toLowerCase();
+        const toName = (movement.toHub?.hubName || '').toLowerCase();
+
+        const idMatch = (
+          (p.fromHubId && p.toHubId && p.fromHubId === fromId && p.toHubId === toId) ||
+          (p.hubId && p.toHubId && p.hubId === fromId && p.toHubId === toId)
+        );
+
+        const nameMatch = fromName && toName && (
+          (pFrom.includes(fromName) || pCity.includes(fromName) || pName.includes(fromName)) &&
+          (pTo.includes(toName) || pName.includes(toName))
+        );
+
+        return Boolean(idMatch || nameMatch);
+      }
+
+      if (movement.type === 'DEPARTURE') {
+        const hubId = movement.hub?.hubId || movement.fromHubId;
+        const hubName = (movement.hub?.hubName || '').toLowerCase();
+
+        const idMatch = (p.hubId && p.hubId === hubId) || (p.fromHubId && p.fromHubId === hubId) || (p.toHubId && p.toHubId === hubId);
+        const nameMatch = hubName && (
+          pName.includes(hubName) || pCity.includes(hubName) || pFrom.includes(hubName) || pTo.includes(hubName)
+        );
+
+        const isIntercityOther = (pSub.includes('intercity') || pType.includes('intercity') || pRouteType === 'INTERCITY') &&
+          p.fromHubId && p.toHubId && p.fromHubId !== p.toHubId;
+
+        const isDepartureRelated = 
+          pRouteType === 'AIRPORT_DEPARTURE' ||
+          pSub.includes('airport') ||
+          pType.includes('airport') ||
+          pName.includes('departure') ||
+          pName.includes('airport') ||
+          pName.includes('kix') ||
+          pName.includes('hnd') ||
+          pName.includes('nrt') ||
+          !isIntercityOther;
+
+        return (idMatch || nameMatch) && isDepartureRelated && !isIntercityOther;
+      }
+
+      return false;
+    });
+  };
+
+  // Itinerary Route Movements
+  const transitMovements = useMemo(() => {
+    const sorted = [...routeHubs].sort((a, b) => a.order - b.order);
+    if (sorted.length === 0) return [];
+
+    const list: Array<{
+      id: string;
+      type: 'ARRIVAL' | 'INTERCITY' | 'DEPARTURE';
+      title: string;
+      badge: string;
+      fromName: string;
+      toName: string;
+      fromHubId?: string;
+      toHubId?: string;
+      fromHub?: TripRouteHub;
+      toHub?: TripRouteHub;
+      hub?: TripRouteHub;
+      suggestedDay: number;
+      suggestedDate: string;
+      matchingProducts: Product[];
+    }> = [];
+    const totalDays = calendarDays.length || (tripNights + 1);
+
+    // 1. Hub 1 Arrival
+    const firstHub = sorted[0];
+    const arrivalDate = firstHub.checkInDate || startDate || calendarDays[0]?.dateString || '';
+    list.push({
+      id: `mov-arr-${firstHub.id}`,
+      type: 'ARRIVAL',
+      title: `Day 1 Arrival: Gateway / Airport ➔ ${firstHub.hubName} Hotel`,
+      badge: 'Airport Gateway Arrival',
+      fromName: `${firstHub.hubName} International Gateway`,
+      toName: `${firstHub.hubName} Hotel / Accommodation`,
+      toHubId: firstHub.hubId || firstHub.id,
+      hub: firstHub,
+      suggestedDay: 1,
+      suggestedDate: arrivalDate,
+      matchingProducts: getMatchingTransfersForMovement({
+        type: 'ARRIVAL',
+        toHubId: firstHub.hubId || firstHub.id,
+        hub: firstHub
+      }, allMasterTransferProducts)
+    });
+
+    // 2. Inter-Hub Transit movements between consecutive hubs
+    let runningDays = 1 + (firstHub.nights || 1);
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const fromH = sorted[i];
+      const toH = sorted[i + 1];
+      const transDate = toH.checkInDate || fromH.checkOutDate || calendarDays[runningDays - 1]?.dateString || '';
+
+      list.push({
+        id: `mov-inter-${fromH.id}-${toH.id}`,
+        type: 'INTERCITY',
+        title: `Day ${runningDays} Inter-Hub: ${fromH.hubName} Hotel ➔ ${toH.hubName} Hotel`,
+        badge: 'Inter-Hub Transit',
+        fromName: `${fromH.hubName} Hotel`,
+        toName: `${toH.hubName} Hotel`,
+        fromHubId: fromH.hubId || fromH.id,
+        toHubId: toH.hubId || toH.id,
+        fromHub: fromH,
+        toHub: toH,
+        suggestedDay: runningDays,
+        suggestedDate: transDate,
+        matchingProducts: getMatchingTransfersForMovement({
+          type: 'INTERCITY',
+          fromHub: fromH,
+          toHub: toH,
+          fromHubId: fromH.hubId || fromH.id,
+          toHubId: toH.hubId || toH.id
+        }, allMasterTransferProducts)
+      });
+
+      runningDays += (toH.nights || 1);
+    }
+
+    // 3. Final Hub Departure
+    const lastHub = sorted[sorted.length - 1];
+    const departureDate = lastHub.checkOutDate || endDate || calendarDays[totalDays - 1]?.dateString || '';
+    list.push({
+      id: `mov-dep-${lastHub.id}`,
+      type: 'DEPARTURE',
+      title: `Day ${totalDays} Departure: ${lastHub.hubName} Hotel ➔ Gateway / Airport`,
+      badge: 'Airport Gateway Departure',
+      fromName: `${lastHub.hubName} Hotel`,
+      toName: `${lastHub.hubName} International Gateway`,
+      fromHubId: lastHub.hubId || lastHub.id,
+      hub: lastHub,
+      suggestedDay: totalDays,
+      suggestedDate: departureDate,
+      matchingProducts: getMatchingTransfersForMovement({
+        type: 'DEPARTURE',
+        fromHubId: lastHub.hubId || lastHub.id,
+        hub: lastHub
+      }, allMasterTransferProducts)
+    });
+
+    return list;
+  }, [routeHubs, calendarDays, startDate, endDate, tripNights, allMasterTransferProducts]);
+
+  // Route Conflict Detection: Incompatible transfers that no longer match the active route hubs
+  const activeHubIds = useMemo(() => new Set(routeHubs.map(h => (h.hubId || h.id).toLowerCase())), [routeHubs]);
+  const activeHubNames = useMemo(() => routeHubs.map(h => h.hubName.toLowerCase()), [routeHubs]);
+
+  const invalidTransfers = useMemo(() => {
+    if (routeHubs.length === 0) return transferItems;
+    return transferItems.filter(item => {
+      const p = item.product;
+      const pHubId = (p.hubId || '').toLowerCase();
+      const pFromId = (p.fromHubId || '').toLowerCase();
+      const pToId = (p.toHubId || '').toLowerCase();
+
+      const idMatches = 
+        (pHubId && activeHubIds.has(pHubId)) ||
+        (pFromId && activeHubIds.has(pFromId)) ||
+        (pToId && activeHubIds.has(pToId));
+      
+      if (idMatches) return false;
+
+      const pName = (p.name || '').toLowerCase();
+      const pCity = (p.city || '').toLowerCase();
+      const pFrom = (p.fromHubName || '').toLowerCase();
+      const pTo = (p.toHubName || '').toLowerCase();
+      const notes = (item.notes || '').toLowerCase();
+
+      const nameMatches = activeHubNames.some(name => 
+        pName.includes(name) || pCity.includes(name) || pFrom.includes(name) || pTo.includes(name) || notes.includes(name)
+      );
+
+      return !nameMatches;
+    });
+  }, [transferItems, routeHubs, activeHubIds, activeHubNames]);
+
+  // Financial summary for ground transfers
+  const totalTransfersSellingPrice = useMemo(() => {
+    return transferItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+  }, [transferItems]);
+
+  const totalTransfersNetCost = useMemo(() => {
+    return transferItems.reduce((sum, it) => sum + (it.calculation?.totalNetCost || 0), 0);
+  }, [transferItems]);
+
+  // Step 4 UI State
+  const [step4ViewTab, setStep4ViewTab] = useState<'ROUTE_MOVEMENTS' | 'ALL_FLEET'>('ROUTE_MOVEMENTS');
+  const [step4FleetSearch, setStep4FleetSearch] = useState('');
+  const [step4SelectedHubFilter, setStep4SelectedHubFilter] = useState<string>('ALL');
+
+  // Transfer Configurator Modal state
+  const [isTransferConfiguratorOpen, setIsTransferConfiguratorOpen] = useState(false);
+  const [selectedTransferProductForConfig, setSelectedTransferProductForConfig] = useState<Product | null>(null);
+  const [configuratorMovement, setConfiguratorMovement] = useState<any>(null);
+  const [editingTransferQuoteItemId, setEditingTransferQuoteItemId] = useState<string | undefined>(undefined);
+  const [editingTransferQuoteItem, setEditingTransferQuoteItem] = useState<QuoteItem | null>(null);
+
+  // Custom Transfer Service Modal state
+  const [isCustomTransferModalOpen, setIsCustomTransferModalOpen] = useState(false);
+  const [customTransferMovement, setCustomTransferMovement] = useState<any>(null);
+  const [customTransferForm, setCustomTransferForm] = useState({
+    routeName: '',
+    fromLocation: '',
+    toLocation: '',
+    travelDate: '',
+    serviceTime: '10:00 AM',
+    vehicleType: 'Executive MPV / Van (Toyota Alphard)',
+    maxPax: 6,
+    maxLuggage: 5,
+    netCost: 150,
+    currency: currency as CurrencyCode,
+    markupPercent: 15,
+    specialNotes: ''
+  });
+
+  const handleOpenConfigureTransfer = (prod: Product, movement?: any) => {
+    setEditingTransferQuoteItem(null);
+    setEditingTransferQuoteItemId(undefined);
+    setSelectedTransferProductForConfig(prod);
+    setConfiguratorMovement(movement || null);
+    setIsTransferConfiguratorOpen(true);
+  };
+
+  const handleOpenEditTransferConfig = (item: QuoteItem) => {
+    setEditingTransferQuoteItem(item);
+    setEditingTransferQuoteItemId(item.id);
+    setSelectedTransferProductForConfig(item.product);
+    setConfiguratorMovement(null);
+    setIsTransferConfiguratorOpen(true);
+  };
+
+  const handleQuickAddTransfer = (product: Product, movement?: any) => {
+    const totalPax = adultsCount + childrenCount;
+    const maxSeats = product.vehicleConfig?.maxSeats || product.vehicleConfig?.totalSeats || product.maxPax || 4;
+    const allowMulti = Boolean(product.vehicleConfig?.allowMultipleVehicles);
+    const vehiclesNeeded = (totalPax > maxSeats && allowMulti) ? Math.ceil(totalPax / maxSeats) : 1;
+
+    const fromText = movement?.fromName || product.fromHubName || 'Departure Hub';
+    const toText = movement?.toName || product.toHubName || 'Arrival Hub';
+    const travelDate = movement?.suggestedDate || startDate || new Date().toISOString().split('T')[0];
+
+    const notes = `${fromText} ➔ ${toText} • ${vehiclesNeeded > 1 ? `${vehiclesNeeded} × Vehicles Allocated` : (product.vehicleConfig?.vehicleName || product.name)}`;
+
+    addProductToQuote(product, {
+      travelDate,
+      adults: adultsCount,
+      children: childrenCount,
+      infants: infantsCount,
+      notes,
+      openDrawer: false
+    });
+  };
+
+  const handleOpenCustomTransferModal = (movement?: any) => {
+    setCustomTransferMovement(movement || null);
+    setCustomTransferForm({
+      routeName: movement ? `${movement.fromName} ➔ ${movement.toName}` : 'Custom Chauffeur Transfer',
+      fromLocation: movement ? movement.fromName : '',
+      toLocation: movement ? movement.toName : '',
+      travelDate: movement ? movement.suggestedDate : startDate,
+      serviceTime: '10:00 AM',
+      vehicleType: 'Executive MPV / Van (Toyota Alphard)',
+      maxPax: Math.max(4, adultsCount + childrenCount),
+      maxLuggage: 5,
+      netCost: 150,
+      currency: currency,
+      markupPercent: 15,
+      specialNotes: ''
+    });
+    setIsCustomTransferModalOpen(true);
+  };
+
+  const handleSaveCustomTransfer = () => {
+    if (!customTransferForm.routeName) return;
+    const net = Number(customTransferForm.netCost) || 100;
+    const markup = Number(customTransferForm.markupPercent) || 15;
+
+    const customProduct: Product = {
+      id: `prod-custom-transfer-${Date.now()}`,
+      sku: `TRF-CUST-${Date.now().toString().slice(-4)}`,
+      destinationId: currentDestination.id,
+      destinationName: currentDestination.name,
+      country: currentDestination.name,
+      city: customTransferMovement?.hub?.hubName || currentDestination.name,
+      hubId: customTransferMovement?.hub?.hubId || customTransferMovement?.hub?.id,
+      fromHubName: customTransferForm.fromLocation,
+      toHubName: customTransferForm.toLocation,
+      productType: 'Private Chauffeur Transfer',
+      isTransfer: true,
+      name: customTransferForm.routeName,
+      shortDescription: `Custom private transfer: ${customTransferForm.fromLocation} ➔ ${customTransferForm.toLocation} (${customTransferForm.vehicleType})`,
+      longDescription: `Tailored ground logistics service. Vehicle: ${customTransferForm.vehicleType}. Max ${customTransferForm.maxPax} passengers and ${customTransferForm.maxLuggage} luggage cases. Notes: ${customTransferForm.specialNotes || 'Direct private chauffeur'}.`,
+      supplierId: 'sup-custom-logistics',
+      supplierName: `${currentDestination.name} Ground Logistics Network`,
+      category: 'Transfers',
+      subcategory: customTransferMovement?.badge || 'Private Chauffeur',
+      duration: 'Scheduled Service',
+      pricingMethod: 'capacity_based',
+      adultNetPrice: net,
+      childNetPrice: 0,
+      infantNetPrice: 0,
+      currency: customTransferForm.currency,
+      defaultMarkupPercent: markup,
+      b2bAgentMarkupPercent: markup,
+      taxPercent: 0,
+      commissionPercent: 0,
+      serviceFeeFixed: 0,
+      season: 'All Year',
+      validityFrom: '2025-01-01',
+      validityTo: '2026-12-31',
+      minPax: 1,
+      maxPax: customTransferForm.maxPax,
+      availability: 'INSTANT',
+      bookingRequiredDays: 1,
+      cancellationPolicy: 'Free cancellation up to 24 hours prior.',
+      vehicleConfig: {
+        vehicleName: customTransferForm.vehicleType,
+        vehicleModel: customTransferForm.vehicleType,
+        vehicleType: customTransferForm.vehicleType,
+        maxSeats: customTransferForm.maxPax,
+        totalSeats: customTransferForm.maxPax,
+        maxLuggage: customTransferForm.maxLuggage,
+        unitVehicleNetCost: net,
+        totalTransferCost: net,
+        currency: customTransferForm.currency,
+        route: `${customTransferForm.fromLocation} ➔ ${customTransferForm.toLocation}`,
+        allowMultipleVehicles: true,
+        autoAllocateVehicles: true,
+        maxVehicles: 3,
+        pricingMethod: 'capacity_based'
+      },
+      inclusions: [
+        `Private Air-Conditioned ${customTransferForm.vehicleType}`,
+        'Uniformed Professional Chauffeur',
+        'Expressway Tolls, Fuel, and Luggage Porterage'
+      ],
+      exclusions: ['Gratuities and personal extras'],
+      status: 'ACTIVE'
+    } as unknown as Product;
+
+    addProductToQuote(customProduct, {
+      travelDate: customTransferForm.travelDate || customTransferMovement?.suggestedDate || startDate,
+      serviceTime: customTransferForm.serviceTime,
+      adults: adultsCount,
+      children: childrenCount,
+      infants: infantsCount,
+      notes: `${customTransferForm.fromLocation} ➔ ${customTransferForm.toLocation} | Time: ${customTransferForm.serviceTime} | ${customTransferForm.specialNotes || 'Custom Transfer'}`,
+      openDrawer: false
+    });
+
+    setIsCustomTransferModalOpen(false);
+  };
 
   const visaItems = useMemo(() => items.filter(it => 
     (it.product as any).isVisa ||
@@ -613,9 +1045,11 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
     // 4. Transfers & Transport
     let s4Status: 'COMPLETED' | 'IN_PROGRESS' | 'WARNING' | 'NOT_STARTED' = 'NOT_STARTED';
-    if (transferItems.length >= 2) {
+    if (invalidTransfers.length > 0) {
+      s4Status = 'WARNING';
+    } else if (transferItems.length >= transitMovements.length && transitMovements.length > 0) {
       s4Status = 'COMPLETED';
-    } else if (transferItems.length === 1) {
+    } else if (transferItems.length > 0) {
       s4Status = 'IN_PROGRESS';
     } else {
       s4Status = 'NOT_STARTED';
@@ -2009,116 +2443,667 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             </div>
           )}
 
-          {/* STEP 4: TRANSFERS & TRANSPORT */}
+          {/* STEP 4: TRANSFERS & GROUND LOGISTICS */}
           {activeStepId === 4 && (
             <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
-              <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              {/* Header */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
                 <div className="flex items-center space-x-3">
                   <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
                     <Car className="w-5 h-5" />
                   </div>
                   <div>
                     <h2 className="text-base font-black text-slate-900">Step 4: Transfers & Ground Logistics</h2>
-                    <p className="text-xs text-slate-500">Private chauffeurs, airport gateways, and intercity transit journeys.</p>
+                    <p className="text-xs text-slate-500">
+                      Master transfer inventory dynamically matched to your {routeHubs.length}-hub itinerary ({transitMovements.length} transit movements).
+                    </p>
                   </div>
                 </div>
-                <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                  Step 4 of 9
-                </span>
+                <div className="flex items-center space-x-2">
+                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                    Step 4 of 9
+                  </span>
+                  <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-slate-900 text-[#00E5C0]">
+                    {transferItems.length} Booked • {formatCurrency(totalTransfersSellingPrice, currency)}
+                  </span>
+                </div>
               </div>
 
-              {/* Intelligent Suggestions */}
-              {transferSuggestions.length > 0 && (
-                <div className="p-4 bg-teal-50/60 rounded-2xl border border-teal-200 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black text-teal-900 uppercase tracking-wider">
-                      Recommended Route Transfers:
-                    </span>
-                    <span className="text-[11px] text-teal-700 font-medium">
-                      Calculated automatically from your {routeHubs.length}-city itinerary.
-                    </span>
+              {/* Empty Route Hubs State */}
+              {routeHubs.length === 0 ? (
+                <div className="p-8 text-center bg-slate-50 rounded-3xl border border-dashed border-slate-300 space-y-3">
+                  <MapPin className="w-10 h-10 text-slate-400 mx-auto" />
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-black text-slate-800">No Itinerary Hubs Configured</h4>
+                    <p className="text-xs text-slate-500 max-w-md mx-auto">
+                      Please define destinations and cities in Step 2 (Route Builder) to automatically generate your ground transit movements and match contracted vehicle inventory.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveStepId(2)}
+                    className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5"
+                  >
+                    <span>Go to Step 2 (Route Builder)</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* Route Hub Change Conflict Notification Banner */}
+                  {invalidTransfers.length > 0 && (
+                    <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
+                      <div className="flex items-start space-x-3">
+                        <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <h4 className="text-xs font-black text-amber-900 uppercase tracking-wider">
+                            Route Hub Changed — Incompatible Transfers Detected
+                          </h4>
+                          <p className="text-xs text-amber-800 mt-0.5">
+                            {invalidTransfers.length} {invalidTransfers.length === 1 ? 'transfer' : 'transfers'} in your quote ({invalidTransfers.map(t => t.product.name).join(', ')}) belong to hubs that are no longer part of your active itinerary.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          invalidTransfers.forEach(t => removeProductFromQuote(t.id));
+                        }}
+                        className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shrink-0 transition-colors cursor-pointer shadow-2xs"
+                      >
+                        Remove Incompatible ({invalidTransfers.length})
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Navigation Tabs between Route Movements and All Fleet Browse */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pb-1 border-b border-slate-100">
+                    <div className="flex items-center space-x-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setStep4ViewTab('ROUTE_MOVEMENTS')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                          step4ViewTab === 'ROUTE_MOVEMENTS'
+                            ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        <Car className="w-3.5 h-3.5" />
+                        <span>Route Transit Movements ({transitMovements.length} Legs)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStep4ViewTab('ALL_FLEET')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                          step4ViewTab === 'ALL_FLEET'
+                            ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                        <span>All {currentDestination.name} Transfer Fleet ({allMasterTransferProducts.length})</span>
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleOpenCustomTransferModal()}
+                      className="px-3 py-1.5 rounded-xl bg-teal-50 hover:bg-[#00C6A6] text-teal-800 hover:text-white border border-teal-200 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ Custom Transfer Service</span>
+                    </button>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {transferSuggestions.map(s => {
-                      const alreadyInQuote = items.some(it => 
-                        (it.product.name.includes(s.fromCity || '') && it.product.name.includes(s.toCity || '')) ||
-                        (it.product.name.includes(s.title))
-                      );
+                  {/* TAB 1: ROUTE MOVEMENTS (Primary Itinerary Transit Flow) */}
+                  {step4ViewTab === 'ROUTE_MOVEMENTS' && (
+                    <div className="space-y-6">
+                      {transitMovements.map((movement, idx) => {
+                        const totalPax = adultsCount + childrenCount;
+                        // Check if an item is already added for this movement
+                        const existingCoveredItem = items.find(it => {
+                          const isTrf = (it.product as any).isTransfer || 
+                                        (it.product.category || '').toLowerCase().includes('transfer') ||
+                                        (it.product.productType || '').toLowerCase().includes('transfer');
+                          if (!isTrf) return false;
+                          
+                          if (movement.type === 'ARRIVAL') {
+                            return it.travelDate === movement.suggestedDate || 
+                                   (movement.toHubId && (it.product.toHubId === movement.toHubId || it.product.hubId === movement.toHubId)) ||
+                                   (movement.hub && it.notes?.includes(movement.hub.hubName));
+                          }
+                          if (movement.type === 'INTERCITY') {
+                            return (movement.fromHub && movement.toHub && 
+                                    it.notes?.includes(movement.fromHub.hubName) && it.notes?.includes(movement.toHub.hubName)) ||
+                                   (it.travelDate === movement.suggestedDate && (it.product.subcategory || '').toLowerCase().includes('intercity'));
+                          }
+                          if (movement.type === 'DEPARTURE') {
+                            return it.travelDate === movement.suggestedDate ||
+                                   (movement.fromHubId && (it.product.fromHubId === movement.fromHubId || it.product.hubId === movement.fromHubId)) ||
+                                   (movement.hub && it.notes?.includes(movement.hub.hubName) && (it.notes?.includes('Airport') || it.notes?.includes('Departure')));
+                          }
+                          return false;
+                        });
 
-                      return (
-                        <div key={s.id} className="bg-white p-3.5 rounded-xl border border-teal-200 flex flex-col justify-between space-y-2">
-                          <div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                                Day {s.dayNumber}
-                              </span>
-                              <span className="text-[10px] font-bold text-teal-700">
-                                {s.type === 'INTERCITY' ? 'Intercity Transit' : 'Airport Gateway'}
-                              </span>
+                        return (
+                          <div 
+                            key={movement.id}
+                            className={`p-5 rounded-3xl border transition-all ${
+                              existingCoveredItem 
+                                ? 'bg-emerald-50/40 border-emerald-200 shadow-2xs'
+                                : 'bg-slate-50/70 border-slate-200'
+                            }`}
+                          >
+                            {/* Movement Header */}
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200/80">
+                              <div className="space-y-1">
+                                <div className="flex items-center space-x-2">
+                                  <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-slate-900 text-[#00E5C0]">
+                                    Leg {idx + 1} • Day {movement.suggestedDay}
+                                  </span>
+                                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-teal-100 text-teal-800">
+                                    {movement.badge}
+                                  </span>
+                                  <span className="text-[11px] font-medium text-slate-500">
+                                    📅 {movement.suggestedDate ? new Date(movement.suggestedDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : `Day ${movement.suggestedDay}`}
+                                  </span>
+                                </div>
+                                <h3 className="text-sm font-black text-slate-900 flex items-center space-x-2">
+                                  <span>{movement.fromName}</span>
+                                  <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                                  <span>{movement.toName}</span>
+                                </h3>
+                              </div>
+
+                              {/* Status Badge */}
+                              <div>
+                                {existingCoveredItem ? (
+                                  <div className="flex items-center space-x-2 bg-emerald-100/80 px-3 py-1.5 rounded-xl border border-emerald-300">
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                                    <div className="text-left">
+                                      <div className="text-[10px] font-black uppercase text-emerald-800">Transfer Booked</div>
+                                      <div className="text-xs font-bold text-emerald-900 truncate max-w-[180px]">
+                                        {existingCoveredItem.product.name}
+                                      </div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenEditTransferConfig(existingCoveredItem)}
+                                      className="p-1 rounded-lg bg-emerald-200 text-emerald-900 hover:bg-emerald-300 text-[10px] font-bold cursor-pointer"
+                                      title="Edit Transfer Configuration"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeProductFromQuote(existingCoveredItem.id)}
+                                      className="p-1 rounded-lg bg-rose-100 text-rose-700 hover:bg-rose-200 text-[10px] font-bold cursor-pointer"
+                                      title="Remove from Quote"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="text-[11px] font-bold text-amber-700 bg-amber-100/70 px-2.5 py-1 rounded-lg border border-amber-200">
+                                    Pending Selection
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <h5 className="text-xs font-bold text-slate-900 mt-1">{s.title}</h5>
-                            <p className="text-[11px] text-slate-500 line-clamp-1">{s.description}</p>
-                          </div>
 
-                          <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                            <span className="text-xs font-black text-slate-900 font-mono">${s.estimatedCostUSD} USD</span>
-                            <button
-                              type="button"
-                              disabled={alreadyInQuote}
-                              onClick={() => onAddSuggestedTransfer(s)}
-                              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                                alreadyInQuote
-                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200 cursor-default'
-                                  : 'bg-slate-900 text-[#00E5C0] hover:bg-slate-800'
+                            {/* Matching Transfer Products Section */}
+                            <div className="mt-4 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-black uppercase tracking-wider text-slate-600">
+                                  Contracted Transfer Products Available ({movement.matchingProducts.length}):
+                                </span>
+                                <span className="text-[11px] text-slate-500">
+                                  Passenger Group: <strong className="text-slate-800">{totalPax} Pax</strong> ({adultsCount} Adults{childrenCount > 0 ? `, ${childrenCount} Children` : ''})
+                                </span>
+                              </div>
+
+                              {movement.matchingProducts.length === 0 ? (
+                                <div className="p-5 bg-white rounded-2xl border border-dashed border-slate-300 text-center space-y-2">
+                                  <div className="flex items-center justify-center space-x-2 text-slate-500">
+                                    <MapPin className="w-4 h-4 text-slate-400" />
+                                    <span className="text-xs font-bold text-slate-700">
+                                      No matching contracted transfer products found for this route leg.
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-slate-400 max-w-md mx-auto">
+                                    No pre-loaded master rate exists between {movement.fromName} and {movement.toName}. You can configure a bespoke chauffeur transit service with custom pricing.
+                                  </p>
+                                  <div className="pt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenCustomTransferModal(movement)}
+                                      className="px-3.5 py-1.5 rounded-xl bg-teal-50 hover:bg-[#00C6A6] text-teal-800 hover:text-white border border-teal-300 text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5"
+                                    >
+                                      <Plus className="w-3.5 h-3.5" />
+                                      <span>+ Add Custom Transfer Service</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                  {movement.matchingProducts.map(prod => {
+                                    const maxSeats = prod.vehicleConfig?.maxSeats || prod.vehicleConfig?.totalSeats || prod.maxPax || 4;
+                                    const maxLuggage = prod.vehicleConfig?.maxLuggage || 4;
+                                    const allowMulti = Boolean(prod.vehicleConfig?.allowMultipleVehicles);
+                                    const isCapacityExceeded = totalPax > maxSeats;
+                                    const vehiclesNeeded = (isCapacityExceeded && allowMulti) ? Math.ceil(totalPax / maxSeats) : 1;
+
+                                    const baseNet = prod.vehicleConfig?.unitVehicleNetCost || prod.adultNetPrice || 100;
+                                    const markupPct = prod.b2bAgentMarkupPercent || prod.defaultMarkupPercent || 15;
+                                    const unitSelling = Math.round(baseNet * (1 + markupPct / 100));
+                                    const totalSelling = unitSelling * vehiclesNeeded;
+                                    const convertedSelling = convertCurrency(totalSelling, prod.currency || 'USD', currency);
+
+                                    const isAlreadySelected = items.some(it => 
+                                      (it.product.id === prod.id || it.product.sku === prod.sku) &&
+                                      it.travelDate === movement.suggestedDate
+                                    );
+
+                                    return (
+                                      <div 
+                                        key={prod.id}
+                                        className={`bg-white rounded-2xl border p-4 flex flex-col justify-between space-y-3 transition-all ${
+                                          isAlreadySelected 
+                                            ? 'border-emerald-400 ring-2 ring-emerald-300/40 bg-emerald-50/20'
+                                            : 'border-slate-200 hover:border-teal-300 hover:shadow-xs'
+                                        }`}
+                                      >
+                                        <div className="space-y-2">
+                                          {/* Vehicle Category & Route Type */}
+                                          <div className="flex items-center justify-between">
+                                            <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                                              {prod.vehicleConfig?.vehicleType || prod.subcategory || 'Private Chauffeur'}
+                                            </span>
+                                            <span className="text-[10px] font-mono font-medium text-slate-400">
+                                              {prod.supplierName || 'Fleet Operator'}
+                                            </span>
+                                          </div>
+
+                                          {/* Product Name */}
+                                          <div>
+                                            <h4 className="text-xs font-black text-slate-900 leading-snug">
+                                              {prod.vehicleConfig?.vehicleName || prod.name}
+                                            </h4>
+                                            <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
+                                              {prod.shortDescription || prod.longDescription}
+                                            </p>
+                                          </div>
+
+                                          {/* Vehicle Specs & Capacity Pills */}
+                                          <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px] text-slate-600">
+                                            <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium flex items-center space-x-1">
+                                              <Users className="w-3 h-3 text-slate-500" />
+                                              <span>Max {maxSeats} Pax</span>
+                                            </span>
+                                            <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium flex items-center space-x-1">
+                                              <Luggage className="w-3 h-3 text-slate-500" />
+                                              <span>{maxLuggage} Large Bags</span>
+                                            </span>
+                                            {prod.duration && (
+                                              <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium flex items-center space-x-1">
+                                                <Clock className="w-3 h-3 text-slate-500" />
+                                                <span>{prod.duration}</span>
+                                              </span>
+                                            )}
+                                          </div>
+
+                                          {/* Passenger Capacity Validation Badge */}
+                                          <div className="pt-1">
+                                            {!isCapacityExceeded ? (
+                                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                                <Check className="w-3 h-3 text-emerald-600" />
+                                                <span>Accommodates Group ({totalPax} Pax / {maxSeats} Seats)</span>
+                                              </span>
+                                            ) : allowMulti ? (
+                                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-300">
+                                                <AlertTriangle className="w-3 h-3 text-amber-600" />
+                                                <span>Auto-Allocates {vehiclesNeeded} × Vehicles for {totalPax} Pax</span>
+                                              </span>
+                                            ) : (
+                                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 text-rose-800 border border-rose-300">
+                                                <AlertCircle className="w-3 h-3 text-rose-600" />
+                                                <span>Insufficient Capacity (Max {maxSeats} Seats)</span>
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+
+                                        {/* Pricing & Add Actions */}
+                                        <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                                          <div>
+                                            <div className="text-xs font-black text-slate-900 font-mono">
+                                              {formatCurrency(convertedSelling, currency)}
+                                            </div>
+                                            <div className="text-[10px] text-slate-400">
+                                              {vehiclesNeeded > 1 ? `${vehiclesNeeded} × Vehicles (${formatCurrency(convertCurrency(unitSelling, prod.currency || 'USD', currency), currency)}/veh)` : 'Contracted B2B Rate'}
+                                            </div>
+                                          </div>
+
+                                          <div className="flex items-center space-x-1.5">
+                                            <button
+                                              type="button"
+                                              onClick={() => onOpenProductDetails(prod)}
+                                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
+                                              title="View Product Specifications"
+                                            >
+                                              <Eye className="w-3.5 h-3.5" />
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => handleQuickAddTransfer(prod, movement)}
+                                              className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer"
+                                              title="Quick Add with Defaults"
+                                            >
+                                              + Quick Add
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => handleOpenConfigureTransfer(prod, movement)}
+                                              className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black transition-all cursor-pointer flex items-center space-x-1 shadow-2xs"
+                                            >
+                                              <Sliders className="w-3.5 h-3.5" />
+                                              <span>Configure</span>
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* TAB 2: ALL TRANSFER FLEET BROWSE (Full Master Inventory) */}
+                  {step4ViewTab === 'ALL_FLEET' && (
+                    <div className="space-y-4">
+                      {/* Search and Hub Filter Bar */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-200">
+                        <div className="flex items-center space-x-2 flex-1 max-w-md">
+                          <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                          <input
+                            type="text"
+                            placeholder="Search vehicle model, airport, route, or fleet supplier..."
+                            value={step4FleetSearch}
+                            onChange={(e) => setStep4FleetSearch(e.target.value)}
+                            className="w-full bg-transparent text-xs text-slate-900 outline-none placeholder:text-slate-400"
+                          />
+                          {step4FleetSearch && (
+                            <button type="button" onClick={() => setStep4FleetSearch('')} className="text-slate-400 hover:text-slate-600">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Hub Filter Pills */}
+                        <div className="flex items-center flex-wrap gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setStep4SelectedHubFilter('ALL')}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                              step4SelectedHubFilter === 'ALL'
+                                ? 'bg-slate-900 text-[#00E5C0]'
+                                : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                            }`}
+                          >
+                            All Hubs ({allMasterTransferProducts.length})
+                          </button>
+                          {routeHubs.map(hub => {
+                            const count = allMasterTransferProducts.filter(p => 
+                              p.hubId === hub.hubId || p.fromHubId === hub.hubId || p.toHubId === hub.hubId ||
+                              p.name.toLowerCase().includes(hub.hubName.toLowerCase()) ||
+                              (p.fromHubName && p.fromHubName.toLowerCase().includes(hub.hubName.toLowerCase())) ||
+                              (p.toHubName && p.toHubName.toLowerCase().includes(hub.hubName.toLowerCase()))
+                            ).length;
+                            return (
+                              <button
+                                key={hub.id}
+                                type="button"
+                                onClick={() => setStep4SelectedHubFilter(hub.hubId || hub.id)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                                  step4SelectedHubFilter === (hub.hubId || hub.id)
+                                    ? 'bg-slate-900 text-[#00E5C0]'
+                                    : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                                }`}
+                              >
+                                {hub.hubName} ({count})
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Fleet Grid */}
+                      {allMasterTransferProducts.length === 0 ? (
+                        <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300 text-xs text-slate-500">
+                          No transfer products found in master inventory for {currentDestination.name}.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {allMasterTransferProducts
+                            .filter(p => {
+                              if (step4FleetSearch) {
+                                const q = step4FleetSearch.toLowerCase();
+                                const matchesSearch = 
+                                  p.name.toLowerCase().includes(q) ||
+                                  (p.vehicleConfig?.vehicleName || '').toLowerCase().includes(q) ||
+                                  (p.vehicleConfig?.vehicleType || '').toLowerCase().includes(q) ||
+                                  (p.fromHubName || '').toLowerCase().includes(q) ||
+                                  (p.toHubName || '').toLowerCase().includes(q);
+                                if (!matchesSearch) return false;
+                              }
+                              if (step4SelectedHubFilter !== 'ALL') {
+                                const matchesH = 
+                                  p.hubId === step4SelectedHubFilter ||
+                                  p.fromHubId === step4SelectedHubFilter ||
+                                  p.toHubId === step4SelectedHubFilter;
+                                if (!matchesH) return false;
+                              }
+                              return true;
+                            })
+                            .map(prod => {
+                              const totalPax = adultsCount + childrenCount;
+                              const maxSeats = prod.vehicleConfig?.maxSeats || prod.vehicleConfig?.totalSeats || prod.maxPax || 4;
+                              const maxLuggage = prod.vehicleConfig?.maxLuggage || 4;
+                              const allowMulti = Boolean(prod.vehicleConfig?.allowMultipleVehicles);
+                              const isExceeded = totalPax > maxSeats;
+                              const vehiclesNeeded = isExceeded && allowMulti ? Math.ceil(totalPax / maxSeats) : 1;
+
+                              const baseNet = prod.vehicleConfig?.unitVehicleNetCost || prod.adultNetPrice || 100;
+                              const markupPct = prod.b2bAgentMarkupPercent || prod.defaultMarkupPercent || 15;
+                              const unitSelling = Math.round(baseNet * (1 + markupPct / 100));
+                              const totalSelling = unitSelling * vehiclesNeeded;
+                              const convertedSelling = convertCurrency(totalSelling, prod.currency || 'USD', currency);
+
+                              return (
+                                <div key={prod.id} className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col justify-between space-y-3 hover:shadow-xs transition-shadow">
+                                  <div className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                                        {prod.vehicleConfig?.vehicleType || prod.subcategory || 'Private Chauffeur'}
+                                      </span>
+                                      <span className="text-[10px] text-teal-700 font-bold">
+                                        {prod.fromHubName && prod.toHubName ? `${prod.fromHubName} ➔ ${prod.toHubName}` : prod.city || currentDestination.name}
+                                      </span>
+                                    </div>
+
+                                    <div>
+                                      <h4 className="text-xs font-black text-slate-900 leading-snug">
+                                        {prod.vehicleConfig?.vehicleName || prod.name}
+                                      </h4>
+                                      <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
+                                        {prod.shortDescription || prod.longDescription}
+                                      </p>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600">
+                                      <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium">👥 Max {maxSeats} Pax</span>
+                                      <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium">🧳 {maxLuggage} Luggage</span>
+                                      {prod.duration && <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium">⏱️ {prod.duration}</span>}
+                                    </div>
+
+                                    <div className="pt-1">
+                                      {!isExceeded ? (
+                                        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                                          ✓ Fits Group ({totalPax} / {maxSeats})
+                                        </span>
+                                      ) : allowMulti ? (
+                                        <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                                          ⚠️ Requires {vehiclesNeeded} Vehicles
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] font-bold text-rose-800 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
+                                          ⛔ Max {maxSeats} Seats
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                                    <div>
+                                      <div className="text-xs font-black text-slate-900 font-mono">
+                                        {formatCurrency(convertedSelling, currency)}
+                                      </div>
+                                      <div className="text-[10px] text-slate-400">
+                                        {vehiclesNeeded > 1 ? `${vehiclesNeeded} Vehicles` : 'B2B Wholesale Price'}
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center space-x-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleQuickAddTransfer(prod)}
+                                        className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer"
+                                      >
+                                        + Quick Add
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenConfigureTransfer(prod)}
+                                        className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black transition-all cursor-pointer flex items-center space-x-1"
+                                      >
+                                        <Sliders className="w-3.5 h-3.5" />
+                                        <span>Configure</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Ground Transfers Included in Current Quotation */}
+                  <div className="mt-6 pt-6 border-t border-slate-200/80 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-slate-800 uppercase tracking-wider block">
+                        Transfers Included in Quotation ({transferItems.length}):
+                      </span>
+                      <span className="text-xs font-mono font-bold text-teal-700">
+                        Total Ground Logistics: {formatCurrency(totalTransfersSellingPrice, currency)}
+                      </span>
+                    </div>
+
+                    {transferItems.length === 0 ? (
+                      <div className="p-6 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300 text-xs text-slate-500">
+                        No ground transfers added yet. Click "Configure" or "+ Quick Add" on any movement leg above.
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5">
+                        {transferItems.map(item => {
+                          const isInvalid = invalidTransfers.some(inv => inv.id === item.id);
+
+                          return (
+                            <div 
+                              key={item.id} 
+                              className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all ${
+                                isInvalid 
+                                  ? 'bg-amber-50/70 border-amber-300'
+                                  : 'bg-slate-50 border-slate-200'
                               }`}
                             >
-                              {alreadyInQuote ? '✓ Added' : '+ Add Transfer'}
-                            </button>
+                              <div className="space-y-1">
+                                <div className="flex items-center space-x-2">
+                                  <h4 className="text-xs font-black text-slate-900">{item.product.name}</h4>
+                                  {isInvalid && (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-200 text-amber-900">
+                                      ⚠️ Route Hub Removed
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-slate-500">
+                                  Date: <strong className="text-slate-700">{item.travelDate || startDate}</strong>
+                                  {item.serviceTime && ` • Time: ${item.serviceTime}`}
+                                  {item.notes && ` • Notes: ${item.notes}`}
+                                </p>
+                                <span className="text-xs font-mono font-bold text-teal-700 block">
+                                  {formatCurrency(item.calculation.finalTotalSellingPrice, currency)}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center space-x-2 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditTransferConfig(item)}
+                                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                  <span>Edit Config</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => removeProductFromQuote(item.id)}
+                                  className="p-2 rounded-xl bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 cursor-pointer"
+                                  title="Remove from Quote"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* Ground Logistics Financial Summary Card */}
+                        <div className="p-4 bg-slate-900 text-white rounded-2xl flex flex-wrap items-center justify-between gap-4 mt-3">
+                          <div>
+                            <div className="text-[10px] uppercase font-bold text-slate-400">Total Ground Logistics</div>
+                            <div className="text-sm font-black font-mono text-[#00E5C0]">
+                              {formatCurrency(totalTransfersSellingPrice, currency)}
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-6 text-xs font-mono">
+                            <div>
+                              <span className="text-slate-400 text-[10px] block">Wholesale Net</span>
+                              <span>{formatCurrency(totalTransfersNetCost, currency)}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 text-[10px] block">Margin</span>
+                              <span className="text-emerald-400">+{formatCurrency(totalTransfersSellingPrice - totalTransfersNetCost, currency)}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 text-[10px] block">Movements Covered</span>
+                              <span>{transferItems.length} / {transitMovements.length}</span>
+                            </div>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Current Transfers in Quote */}
-              <div className="space-y-3">
-                <span className="text-xs font-black text-slate-700 uppercase tracking-wider block">
-                  Transfers Included in Quotation ({transferItems.length}):
-                </span>
-
-                {transferItems.length === 0 ? (
-                  <div className="p-6 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300 text-xs text-slate-500">
-                    No ground transfers added yet. Click "+ Add Transfer" from recommendations above.
-                  </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    {transferItems.map(item => (
-                      <div key={item.id} className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between">
-                        <div className="space-y-0.5">
-                          <h4 className="text-xs font-bold text-slate-900">{item.product.name}</h4>
-                          <p className="text-[11px] text-slate-500">
-                            Service Date: {item.travelDate || startDate} • Vehicle: Private Chauffeur
-                          </p>
-                          <span className="text-xs font-mono font-bold text-teal-700">
-                            {formatCurrency(item.calculation.finalTotalSellingPrice, currency)}
-                          </span>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => removeProductFromQuote(item.id)}
-                          className="p-2 rounded-lg bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
                       </div>
-                    ))}
+                    )}
                   </div>
-                )}
-              </div>
+                </>
+              )}
             </div>
           )}
 
@@ -2914,7 +3899,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             type="number"
                             min="0"
                             step={effectiveMarginType === 'PERCENTAGE' ? '0.5' : '10'}
-                            value={effectiveMarginValue}
+                            value={Number.isNaN(effectiveMarginValue) ? 0 : (effectiveMarginValue ?? 0)}
                             onChange={(e) => handleUpdateMarginValue(parseFloat(e.target.value) || 0)}
                             className={`w-full text-base font-black font-mono text-slate-900 bg-slate-50 border rounded-xl px-3 py-2 outline-none transition-all ${
                               isNegativeMargin ? 'border-rose-400 bg-rose-50' : 'border-slate-300 focus:border-teal-500 focus:bg-white'
@@ -3206,6 +4191,236 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
           </div>
         </div>
       </div>
+
+      {/* ========================================================================= */}
+      {/* DEDICATED TRANSFER CONFIGURATOR MODAL */}
+      {/* ========================================================================= */}
+      {isTransferConfiguratorOpen && selectedTransferProductForConfig && (
+        <TransferConfigurator
+          isOpen={isTransferConfiguratorOpen}
+          itemOrProduct={editingTransferQuoteItem || selectedTransferProductForConfig}
+          portalOrigin="B2B_QUOTE_BUILDER"
+          existingQuoteItemId={editingTransferQuoteItemId}
+          initialTravelDate={editingTransferQuoteItem?.travelDate || configuratorMovement?.suggestedDate || startDate}
+          initialAdults={editingTransferQuoteItem?.pax?.adults ?? adultsCount}
+          initialChildren={editingTransferQuoteItem?.pax?.children ?? childrenCount}
+          initialInfants={editingTransferQuoteItem?.pax?.infants ?? infantsCount}
+          initialServiceTime={editingTransferQuoteItem?.serviceTime || '10:00 AM'}
+          initialNotes={editingTransferQuoteItem?.notes || (configuratorMovement ? `${configuratorMovement.fromName} ➔ ${configuratorMovement.toName}` : '')}
+          onClose={() => {
+            setIsTransferConfiguratorOpen(false);
+            setSelectedTransferProductForConfig(null);
+            setEditingTransferQuoteItem(null);
+            setEditingTransferQuoteItemId(undefined);
+            setConfiguratorMovement(null);
+          }}
+          onSuccess={() => {
+            setIsTransferConfiguratorOpen(false);
+            setSelectedTransferProductForConfig(null);
+            setEditingTransferQuoteItem(null);
+            setEditingTransferQuoteItemId(undefined);
+            setConfiguratorMovement(null);
+          }}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* CUSTOM TRANSFER SERVICE MODAL (For routes without master products) */}
+      {/* ========================================================================= */}
+      {isCustomTransferModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-xl w-full border border-slate-200 shadow-2xl overflow-hidden flex flex-col my-auto max-h-[92vh] animate-in fade-in zoom-in-95">
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-gradient-to-r from-teal-900 to-slate-900 text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center space-x-3">
+                <div className="w-9 h-9 rounded-xl bg-[#00E5C0]/20 border border-[#00E5C0]/30 text-[#00E5C0] flex items-center justify-center">
+                  <Car className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black tracking-wide">Add Custom Transfer Service</h3>
+                  <p className="text-[11px] text-teal-300">
+                    Bespoke ground logistics for routes with custom supplier rates
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCustomTransferModalOpen(false)}
+                className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Transfer Service / Route Name *</label>
+                <input
+                  type="text"
+                  value={customTransferForm.routeName}
+                  onChange={(e) => setCustomTransferForm(prev => ({ ...prev, routeName: e.target.value }))}
+                  placeholder="e.g. Hiroshima Station ➔ Grand Prince Hotel Executive Chauffeur"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-900 outline-none focus:bg-white focus:border-teal-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Pickup Location / Gateway</label>
+                  <input
+                    type="text"
+                    value={customTransferForm.fromLocation}
+                    onChange={(e) => setCustomTransferForm(prev => ({ ...prev, fromLocation: e.target.value }))}
+                    placeholder="e.g. Hiroshima Station Shinkansen Exit"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Drop-off Destination / Hotel</label>
+                  <input
+                    type="text"
+                    value={customTransferForm.toLocation}
+                    onChange={(e) => setCustomTransferForm(prev => ({ ...prev, toLocation: e.target.value }))}
+                    placeholder="e.g. Grand Prince Hotel Hiroshima"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Service Date</label>
+                  <input
+                    type="date"
+                    value={customTransferForm.travelDate}
+                    onChange={(e) => setCustomTransferForm(prev => ({ ...prev, travelDate: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Scheduled Time</label>
+                  <input
+                    type="text"
+                    value={customTransferForm.serviceTime}
+                    onChange={(e) => setCustomTransferForm(prev => ({ ...prev, serviceTime: e.target.value }))}
+                    placeholder="e.g. 10:30 AM"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-1">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Vehicle Class</label>
+                  <select
+                    value={customTransferForm.vehicleType}
+                    onChange={(e) => setCustomTransferForm(prev => ({ ...prev, vehicleType: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-teal-500 cursor-pointer"
+                  >
+                    <option value="Executive MPV / Van (Toyota Alphard)">Executive MPV (Alphard)</option>
+                    <option value="Executive Sedan (Lexus / Crown)">Executive Sedan</option>
+                    <option value="Minibus / Sprinter (HiAce 10 Pax)">Minibus (HiAce 10 Pax)</option>
+                    <option value="Luxury Coach (20+ Pax)">Luxury Coach</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Max Pax Capacity</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={customTransferForm.maxPax ?? 4}
+                    onChange={(e) => setCustomTransferForm(prev => ({ ...prev, maxPax: Number(e.target.value) || 1 }))}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Max Luggage Bags</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={customTransferForm.maxLuggage ?? 4}
+                    onChange={(e) => setCustomTransferForm(prev => ({ ...prev, maxLuggage: Number(e.target.value) || 1 }))}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-teal-500"
+                  />
+                </div>
+              </div>
+
+              {/* Pricing calculation row */}
+              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Wholesale Net Cost</label>
+                  <div className="flex items-center space-x-1">
+                    <span className="text-xs font-bold text-slate-500 font-mono">{customTransferForm.currency}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={customTransferForm.netCost ?? 0}
+                      onChange={(e) => setCustomTransferForm(prev => ({ ...prev, netCost: Number(e.target.value) || 0 }))}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-900 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Markup %</label>
+                  <div className="flex items-center space-x-1">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={customTransferForm.markupPercent ?? 0}
+                      onChange={(e) => setCustomTransferForm(prev => ({ ...prev, markupPercent: Number(e.target.value) || 0 }))}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-900 font-mono"
+                    />
+                    <span className="text-xs font-bold text-slate-500">%</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-[10px] text-slate-500 font-bold uppercase">Client Selling Price</div>
+                  <div className="text-sm font-black text-teal-700 font-mono">
+                    {formatCurrency(Math.round(customTransferForm.netCost * (1 + customTransferForm.markupPercent / 100)), customTransferForm.currency)}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Dispatch Notes & Special Requests</label>
+                <textarea
+                  rows={2}
+                  value={customTransferForm.specialNotes}
+                  onChange={(e) => setCustomTransferForm(prev => ({ ...prev, specialNotes: e.target.value }))}
+                  placeholder="e.g. Flight JL044 tracking, driver meets at central gate with client nameboard..."
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-teal-500"
+                />
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-3.5 bg-slate-100 border-t border-slate-200 flex items-center justify-between shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsCustomTransferModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveCustomTransfer}
+                disabled={!customTransferForm.routeName}
+                className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] disabled:opacity-50 text-slate-950 text-xs font-black transition-all cursor-pointer shadow-xs flex items-center space-x-1.5"
+              >
+                <Check className="w-4 h-4 stroke-[3]" />
+                <span>Confirm & Add to Quotation</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

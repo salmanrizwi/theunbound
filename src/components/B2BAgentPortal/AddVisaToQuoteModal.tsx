@@ -42,7 +42,7 @@ export const AddVisaToQuoteModal: React.FC<AddVisaToQuoteModalProps> = ({
     <VisaServiceAndFacilitationConfigurator
       isOpen={isOpen}
       visa={visa}
-      itemOrProduct={visa}
+      itemOrProduct={null}
       portalOrigin="B2B_AGENT"
       existingQuoteItemId={existingItemId || existingQuoteItemId}
       initialTravelDate={initialTravelDate}

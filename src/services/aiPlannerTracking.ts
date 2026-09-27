@@ -150,14 +150,14 @@ export class AiPlannerTrackingService {
       travelStartDate: requirements.travelDates.startDate.value || timestamp.split('T')[0],
       travelDates: requirements.travelDates.startDate.value || timestamp.split('T')[0],
       numberOfNights: requirements.duration.nights.value,
-      travelRequirements: `AI Planner generated ${plan.badge} itinerary (${plan.routeSummary.join(' → ')})`,
+      travelRequirements: `AI Planner generated ${plan.badge} itinerary (${(plan.routeSummary || []).join(' → ')})`,
       quoteId: quoteId,
       notes: [
         {
           id: `note-${Date.now()}`,
           authorId: user?.id || 'ai-planner',
           authorName: 'TheUnbound AI Planner',
-          text: `AI Planner generated ${plan.badge} itinerary (${plan.routeSummary.join(' → ')}) for ${requirements.travelers.adults.value} Adults. Total Estimated Selling: ${plan.currency} ${plan.totalSellingPrice.toLocaleString()}.`,
+          text: `AI Planner generated ${plan.badge} itinerary (${(plan.routeSummary || []).join(' → ')}) for ${requirements.travelers.adults.value} Adults. Total Estimated Selling: ${plan.currency} ${plan.totalSellingPrice.toLocaleString()}.`,
           timestamp
         }
       ],

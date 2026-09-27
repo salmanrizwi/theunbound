@@ -1520,7 +1520,7 @@ Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground 
             </tr>
             <tr>
               <td style="padding: 5px 0; color: #64748b;">Cities & Route:</td>
-              <td style="padding: 5px 0; font-weight: 600; color: #008972;">${payload.tripSummary.citiesHubs.join(' → ')}</td>
+              <td style="padding: 5px 0; font-weight: 600; color: #008972;">${(payload.tripSummary?.citiesHubs || []).join(' → ')}</td>
             </tr>
             <tr>
               <td style="padding: 5px 0; color: #64748b;">Travel Dates:</td>
@@ -1630,7 +1630,7 @@ Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground 
                   </div>
                 ` : ''}
                 <div style="margin: 2px 0; font-size: 11px; color: #64748b;">
-                  🍽️ Meals: ${day.meals.join(', ')} • 🌙 Overnight: <strong>${day.overnight}</strong>
+                  🍽️ Meals: ${(day.meals || []).join(', ')} • 🌙 Overnight: <strong>${day.overnight || ''}</strong>
                 </div>
               </div>
             </div>

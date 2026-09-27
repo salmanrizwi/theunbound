@@ -514,7 +514,7 @@ export const SupplierManager: React.FC<SupplierManagerProps> = ({
                             <MapPin className="w-3 h-3 text-slate-400" />
                             {s.destination}
                           </span>
-                          {s.hubs && s.hubs.length > 0 && (
+                          {Array.isArray(s.hubs) && s.hubs.length > 0 && (
                             <p className="text-[10px] text-slate-400 truncate max-w-[150px]">
                               {s.hubs.join(', ')}
                             </p>

@@ -465,11 +465,123 @@ export const MASTER_SHEETS_TAB_DEFINITIONS: MasterSheetTabDefinition[] = [
   },
 
   // ----------------------------------------------------
-  // 13. TRANSFER_ROUTES TAB (Tier 4: Airport & Intercity Transfers)
+  // 13. TRAVEL_PROTECTION TAB (Tier 4: Insurance & Medical)
+  // ----------------------------------------------------
+  {
+    tabName: 'TRAVEL_PROTECTION',
+    displayName: '13. Travel Protection & Medical (TRAVEL_PROTECTION)',
+    description: 'International travel insurance, emergency medical cover, trip interruption, and consular compliant protection plans.',
+    hierarchyLevel: 4,
+    parentTab: 'DESTINATIONS',
+    primaryKey: 'protection_id',
+    columns: [
+      { name: 'protection_id', key: 'protection_id', type: 'string', required: true, sampleValue: 'PROT-GLB-COMP-01', description: 'Unique stable Protection Plan ID' },
+      { name: 'service_name', key: 'service_name', type: 'string', required: true, sampleValue: 'Worldwide Comprehensive Platinum Shield', description: 'Display Plan Name' },
+      { name: 'provider', key: 'provider', type: 'string', required: true, sampleValue: 'Allianz Global Assistance', description: 'Insurance Underwriter / Provider' },
+      { name: 'coverage_area', key: 'coverage_area', type: 'string', required: true, sampleValue: 'Worldwide incl. US/Canada', description: 'Jurisdiction or geographic zone' },
+      { name: 'destination_id', key: 'destination_id', type: 'string', required: false, sampleValue: 'dest-japan', description: 'Destination FK if country-specific' },
+      { name: 'medical_coverage_amount', key: 'medical_coverage_amount', type: 'number', required: true, sampleValue: '500000', description: 'Medical coverage limit in currency' },
+      { name: 'emergency_assistance_included', key: 'emergency_assistance_included', type: 'boolean', required: true, sampleValue: 'TRUE', description: 'TRUE or FALSE' },
+      { name: 'evacuation_coverage_amount', key: 'evacuation_coverage_amount', type: 'number', required: false, sampleValue: '250000', description: 'Evacuation & repatriation limit' },
+      { name: 'trip_cancellation_amount', key: 'trip_cancellation_amount', type: 'number', required: false, sampleValue: '10000', description: 'Cancellation limit' },
+      { name: 'baggage_loss_amount', key: 'baggage_loss_amount', type: 'number', required: false, sampleValue: '3000', description: 'Luggage loss reimbursement' },
+      { name: 'validity_days_max', key: 'validity_days_max', type: 'number', required: true, sampleValue: '45', description: 'Maximum trip days covered' },
+      { name: 'eligibility_age_min', key: 'eligibility_age_min', type: 'number', required: false, sampleValue: '0', description: 'Minimum age eligibility' },
+      { name: 'eligibility_age_max', key: 'eligibility_age_max', type: 'number', required: false, sampleValue: '85', description: 'Maximum age eligibility' },
+      { name: 'currency', key: 'currency', type: 'enum', required: true, sampleValue: 'USD', description: 'Currency code', allowedValues: ['USD', 'EUR', 'GBP', 'JPY', 'AED', 'THB', 'SGD', 'CHF', 'INR', 'AUD', 'CAD'] },
+      { name: 'net_cost_per_day', key: 'net_cost_per_day', type: 'number', required: false, sampleValue: '4.5', description: 'Per day net cost' },
+      { name: 'net_cost_per_trip', key: 'net_cost_per_trip', type: 'number', required: true, sampleValue: '35', description: 'Per trip fixed net cost' },
+      { name: 'selling_price_per_day', key: 'selling_price_per_day', type: 'number', required: false, sampleValue: '7.0', description: 'Per day selling price' },
+      { name: 'selling_price_per_trip', key: 'selling_price_per_trip', type: 'number', required: true, sampleValue: '55', description: 'Per trip selling price' },
+      { name: 'inclusions', key: 'inclusions', type: 'array', required: true, sampleValue: 'USD 500,000 Medical Cover; USD 250,000 Evacuation; 24/7 Helpline', description: 'Semicolon-separated inclusions' },
+      { name: 'customer_description', key: 'customer_description', type: 'string', required: true, sampleValue: 'Premium global travel protection with cashless claims.', description: 'Client overview' },
+      { name: 'terms', key: 'terms', type: 'string', required: false, sampleValue: 'Covers emergency hospitalization, delayed transit, and COVID treatment.', description: 'Policy terms & conditions' },
+      { name: 'status', key: 'status', type: 'enum', required: true, sampleValue: 'ACTIVE', description: 'ACTIVE / INACTIVE / ARCHIVED', allowedValues: ['ACTIVE', 'INACTIVE', 'ARCHIVED'] },
+      { name: 'display_order', key: 'display_order', type: 'number', required: false, sampleValue: '1', description: 'Display sequence' }
+    ],
+    sampleRows: [
+      ['PROT-GLB-COMP-01', 'Worldwide Comprehensive Platinum Shield', 'Allianz Global Assistance', 'Worldwide incl. US/Canada', '', '500000', 'TRUE', '250000', '10000', '3000', '45', '0', '85', 'USD', '4.5', '35', '7.0', '55', 'USD 500,000 Medical Cover; USD 250,000 Evacuation; 24/7 Helpline', 'Premium global travel protection with cashless claims.', 'Covers emergency hospitalization, delayed transit, and COVID treatment.', 'ACTIVE', '1'],
+      ['PROT-GLB-STD-02', 'Worldwide Classic Leisure Shield', 'Allianz Global Assistance', 'Worldwide excl. US/Canada', '', '250000', 'TRUE', '100000', '5000', '1500', '30', '0', '75', 'USD', '2.8', '22', '4.5', '38', 'USD 250,000 Medical Cover; USD 100,000 Evacuation; USD 5,000 Interruption', 'Essential medical emergency and luggage protection for leisure touring.', 'Covers accidental injury, acute illness, and delayed transit.', 'ACTIVE', '2'],
+      ['PROT-EU-SCHENGEN-03', 'European Schengen Visa Compliant Shield', 'AXA Assistance Schengen', 'Schengen (29 European Nations)', 'dest-europe', '50000', 'TRUE', '50000', '2500', '1000', '90', '0', '80', 'USD', '2.0', '18', '3.5', '30', 'EUR 30,000 / USD 50,000 Consular compliant medical cover; Zero deductible', 'Official embassy-approved Schengen travel insurance certificate.', 'Fully compliant with EU Regulation (EC) No 810/2009.', 'ACTIVE', '3'],
+      ['PROT-ASIA-REG-04', 'Asia Regional Explorer Shield', 'Sompo Japan / Care Health', 'Asia Regional (Japan, Thailand, UAE, Singapore)', 'dest-japan', '100000', 'TRUE', '50000', '3000', '1000', '21', '0', '75', 'USD', '1.8', '14', '3.0', '25', 'USD 100,000 Asian regional hospitalization; Cashless hospital admission', 'Tailored Asian holiday coverage including street food digestive cover.', 'Specialized low-tariff protection policy for Far East vacation circuits.', 'ACTIVE', '4']
+    ]
+  },
+
+  // ----------------------------------------------------
+  // 14. VIP_GROUND TAB (Tier 4: Airport & Station Concierge)
+  // ----------------------------------------------------
+  {
+    tabName: 'VIP_GROUND',
+    displayName: '14. VIP Ground & Concierge (VIP_GROUND)',
+    description: 'VIP airport fast track, meet-and-greet, luxury chauffeur airport escorts, and train station porterage.',
+    hierarchyLevel: 4,
+    parentTab: 'DESTINATIONS',
+    primaryKey: 'vip_id',
+    columns: [
+      { name: 'vip_id', key: 'vip_id', type: 'string', required: true, sampleValue: 'VIP-TYO-NRT-01', description: 'Unique stable VIP Service ID' },
+      { name: 'name', key: 'name', type: 'string', required: true, sampleValue: 'Tokyo Narita (NRT) Airside VIP Meet & Fast Track', description: 'Service Name' },
+      { name: 'service_type', key: 'service_type', type: 'enum', required: true, sampleValue: 'MEET_AND_GREET', description: 'MEET_AND_GREET / VIP_TRANSFER / CHAUFFEUR / FAST_TRACK / LOUNGE_ACCESS / PORTERAGE / CONCIERGE', allowedValues: ['MEET_AND_GREET', 'VIP_TRANSFER', 'CHAUFFEUR', 'FAST_TRACK', 'LOUNGE_ACCESS', 'PORTERAGE', 'CONCIERGE'] },
+      { name: 'destination_id', key: 'destination_id', type: 'string', required: true, sampleValue: 'DST-JPN', description: 'FK to DESTINATIONS tab', foreignKeyTab: 'DESTINATIONS', foreignKeyColumn: 'destination_id' },
+      { name: 'hub_id', key: 'hub_id', type: 'string', required: false, sampleValue: 'HUB-TYO', description: 'FK to HUBS tab', foreignKeyTab: 'HUBS', foreignKeyColumn: 'hub_id' },
+      { name: 'supplier_name', key: 'supplier_name', type: 'string', required: true, sampleValue: 'Nippon Luxury Transit Concierge', description: 'Contracted VIP Ground Supplier' },
+      { name: 'pricing_type', key: 'pricing_type', type: 'enum', required: true, sampleValue: 'PER_PAX', description: 'PER_PAX / PER_VEHICLE / FIXED', allowedValues: ['PER_PAX', 'PER_VEHICLE', 'FIXED'] },
+      { name: 'currency', key: 'currency', type: 'enum', required: true, sampleValue: 'USD', description: 'Settlement Currency', allowedValues: ['USD', 'EUR', 'GBP', 'JPY', 'AED', 'THB', 'SGD', 'CHF', 'INR', 'AUD', 'CAD'] },
+      { name: 'net_cost', key: 'net_cost', type: 'number', required: true, sampleValue: '140', description: 'Confidential net supplier cost' },
+      { name: 'default_markup_percent', key: 'default_markup_percent', type: 'number', required: true, sampleValue: '25', description: 'Default commercial markup %' },
+      { name: 'selling_price', key: 'selling_price', type: 'number', required: true, sampleValue: '175', description: 'Final published selling price' },
+      { name: 'badge', key: 'badge', type: 'string', required: false, sampleValue: 'Fast Track Gate Escort', description: 'Marketing feature badge' },
+      { name: 'short_desc', key: 'short_desc', type: 'string', required: true, sampleValue: 'Dedicated tarmac gate greeting with golf buggy transfer and express customs escort.', description: 'Brief description' },
+      { name: 'long_desc', key: 'long_desc', type: 'string', required: false, sampleValue: 'Our certified multilingual docent meets passengers immediately at the aircraft jet bridge with a personalized name board.', description: 'Full service specification' },
+      { name: 'inclusions', key: 'inclusions', type: 'array', required: true, sampleValue: 'Jet bridge greeting; Express customs clearance; Porter service; Curbside handover', description: 'Semicolon-separated inclusions' },
+      { name: 'status', key: 'status', type: 'enum', required: true, sampleValue: 'ACTIVE', description: 'ACTIVE / INACTIVE / ARCHIVED', allowedValues: ['ACTIVE', 'INACTIVE', 'ARCHIVED'] },
+      { name: 'display_order', key: 'display_order', type: 'number', required: false, sampleValue: '1', description: 'Sequence order' }
+    ],
+    sampleRows: [
+      ['VIP-TYO-NRT-01', 'Tokyo Narita (NRT) Airside VIP Meet & Fast Track', 'MEET_AND_GREET', 'DST-JPN', 'HUB-TYO', 'Nippon Luxury Transit Concierge', 'PER_PAX', 'USD', '140', '25', '175', 'Fast Track Gate Escort', 'Dedicated tarmac gate greeting with golf buggy transfer and express customs escort.', 'Personalized jet bridge greeting and escort through fast track.', 'Personalized jet bridge greeting; Express customs clearance; Porter service; Curbside handover', 'ACTIVE', '1'],
+      ['VIP-TYO-HND-02', 'Tokyo Haneda (HND) VIP Chauffeur & Curbside Greeting', 'VIP_TRANSFER', 'DST-JPN', 'HUB-TYO', 'Tokyo Executive Chauffeur Guild', 'PER_VEHICLE', 'USD', '180', '22', '220', 'Executive MPV', 'Mercedes S-Class or Toyota Alphard luxury MPV airport transfer with white-glove driver.', 'Seamless luxury arrival experience with certified chauffeur.', 'Flight tracking with 90-min wait time; Luxury Toyota Alphard; Tolls & parking included', 'ACTIVE', '2'],
+      ['VIP-DXB-MA-03', 'Dubai International (DXB) Ahlan VIP Lounge & Escort', 'LOUNGE_ACCESS', 'DST-UAE', 'HUB-DXB', 'Emirates VIP Logistics', 'PER_PAX', 'USD', '95', '20', '115', 'VIP Lounge Entry', 'Exclusive Ahlan arrival lounge access, immigration fast track, and flower bouquet.', 'Arrive in Dubai with access to Ahlan private reception lounge.', 'Private immigration counter; Ahlan Lounge buffet; Dedicated porter', 'ACTIVE', '3'],
+      ['VIP-KYO-STN-04', 'Kyoto Station Shinkansen Platform VIP Porterage & Concierge', 'PORTERAGE', 'DST-JPN', 'HUB-KYO', 'Kyoto Hospitality Desk', 'FIXED', 'USD', '45', '30', '60', 'Station Porter Escort', 'Train platform meet-and-assist, bullet train seat escort, and hotel luggage delivery.', 'Meet concierge directly on Shinkansen platform.', 'Platform door greeting; Station-to-hotel luggage forwarding; Private transfer escort', 'ACTIVE', '4']
+    ]
+  },
+
+  // ----------------------------------------------------
+  // 15. CONNECTIVITY TAB (Tier 4: 5G eSIM & Roaming)
+  // ----------------------------------------------------
+  {
+    tabName: 'CONNECTIVITY',
+    displayName: '15. 5G Connectivity & eSIM (CONNECTIVITY)',
+    description: 'International eSIM profiles, high-speed regional data bundles, and physical SIM inventory.',
+    hierarchyLevel: 4,
+    primaryKey: 'connectivity_id',
+    columns: [
+      { name: 'connectivity_id', key: 'connectivity_id', type: 'string', required: true, sampleValue: 'ESIM-ASIA-10GB', description: 'Unique stable Connectivity Plan ID' },
+      { name: 'name', key: 'name', type: 'string', required: true, sampleValue: '5G Regional eSIM - Asia 14 Destinations (10GB / 15 Days)', description: 'Plan Name' },
+      { name: 'type', key: 'type', type: 'enum', required: true, sampleValue: 'ESIM', description: 'ESIM / PHYSICAL_SIM', allowedValues: ['ESIM', 'PHYSICAL_SIM'] },
+      { name: 'coverage_zone', key: 'coverage_zone', type: 'string', required: true, sampleValue: 'Japan, Thailand, Singapore, UAE, South Korea + 8 Countries', description: 'Eligible countries / roaming area' },
+      { name: 'data_allowance', key: 'data_allowance', type: 'string', required: true, sampleValue: '10GB High-Speed 5G', description: 'Data quota specification' },
+      { name: 'validity_days', key: 'validity_days', type: 'number', required: true, sampleValue: '15', description: 'Plan duration in days' },
+      { name: 'network_speed', key: 'network_speed', type: 'string', required: true, sampleValue: '5G Ultra Wideband / 4G LTE', description: 'Carrier speed tier' },
+      { name: 'currency', key: 'currency', type: 'enum', required: true, sampleValue: 'USD', description: 'Currency code', allowedValues: ['USD', 'EUR', 'GBP', 'JPY', 'AED', 'THB', 'SGD', 'CHF', 'INR', 'AUD', 'CAD'] },
+      { name: 'net_cost', key: 'net_cost', type: 'number', required: true, sampleValue: '12', description: 'Confidential net supplier cost' },
+      { name: 'selling_price', key: 'selling_price', type: 'number', required: true, sampleValue: '18', description: 'Final published selling price' },
+      { name: 'inclusions', key: 'inclusions', type: 'array', required: true, sampleValue: 'Instant QR-code delivery; Zero physical SIM swapping; Personal hotspot enabled', description: 'Semicolon-separated features' },
+      { name: 'status', key: 'status', type: 'enum', required: true, sampleValue: 'ACTIVE', description: 'ACTIVE / INACTIVE / ARCHIVED', allowedValues: ['ACTIVE', 'INACTIVE', 'ARCHIVED'] },
+      { name: 'display_order', key: 'display_order', type: 'number', required: false, sampleValue: '1', description: 'Display order' }
+    ],
+    sampleRows: [
+      ['ESIM-ASIA-10GB', '5G Regional eSIM - Asia 14 Destinations (10GB / 15 Days)', 'ESIM', 'Japan, Thailand, Singapore, UAE, South Korea + 8 Countries', '10GB High-Speed 5G', '15', '5G Ultra Wideband / 4G LTE', 'USD', '12', '18', 'Instant QR-code delivery; Zero physical SIM swapping; Personal hotspot enabled', 'ACTIVE', '1'],
+      ['ESIM-ASIA-UNLIM', '5G Regional eSIM - Asia Unlimited (Unlimited Data / 10 Days)', 'ESIM', 'Japan, Singapore, Thailand, UAE, Vietnam, Malaysia', 'Unlimited 5G Data', '10', '5G Uncapped', 'USD', '20', '32', 'Truly uncapped 5G speeds; Operates on tier-1 carriers; Instant automated provisioning', 'ACTIVE', '2'],
+      ['ESIM-GLB-20GB', '5G Global Elite eSIM - 140 Countries (20GB / 30 Days)', 'ESIM', 'Global 140 Countries (Japan, UK, Schengen, UAE, USA, APAC)', '20GB High-Speed 5G', '30', '5G / 4G LTE Multi-Network', 'USD', '32', '48', 'Seamless multi-country roaming; 30 days validity; Priority routing on national carriers', 'ACTIVE', '3'],
+      ['ESIM-JPN-5GB', '5G Japan Express Local eSIM (5GB / 7 Days)', 'ESIM', 'Japan Nationwide (NTT Docomo 5G)', '5GB High-Speed 5G', '7', 'NTT Docomo 5G Native', 'USD', '8', '14', 'Native Japanese IP routing; Ideal for short Shinkansen circuit tours; Hotspot enabled', 'ACTIVE', '4']
+    ]
+  },
+
+  // ----------------------------------------------------
+  // 16. TRANSFER_ROUTES TAB (Tier 4: Airport & Intercity Transfers)
   // ----------------------------------------------------
   {
     tabName: 'TRANSFER_ROUTES',
-    displayName: '13. Transfer Routes (TRANSFER_ROUTES)',
+    displayName: '16. Transfer Routes (TRANSFER_ROUTES)',
     description: 'Airport arrivals, departures, intercity transfers, and point-to-point private logistics.',
     hierarchyLevel: 4,
     parentTab: 'DESTINATIONS',
@@ -612,6 +724,186 @@ export const MASTER_SHEETS_TAB_DEFINITIONS: MasterSheetTabDefinition[] = [
       ['USD_INR', 'USD', 'INR', 'Indian Rupee', '=GOOGLEFINANCE("CURRENCY:USDINR")', '95.11', '=GOOGLEFINANCE("CURRENCY:INRUSD")', '0.0105', '0.00', '=F10+I10', '=NOW()'],
       ['USD_CHF', 'USD', 'CHF', 'Swiss Franc', '=GOOGLEFINANCE("CURRENCY:USDCHF")', '0.8086', '=GOOGLEFINANCE("CURRENCY:CHFUSD")', '1.2367', '0.00', '=F11+I11', '=NOW()']
     ]
+  },
+
+  // ----------------------------------------------------
+  // 18. RAIL_STATIONS TAB (Japan Rail Stations Master)
+  // ----------------------------------------------------
+  {
+    tabName: 'RAIL_STATIONS',
+    displayName: '18. Japan Rail Stations (RAIL_STATIONS)',
+    description: 'Master Shinkansen and express train stations across Japan network (Tokyo, Kyoto, Shin-Osaka, Nagoya, etc.).',
+    hierarchyLevel: 3,
+    parentTab: 'DESTINATIONS',
+    primaryKey: 'station_id',
+    columns: [
+      { name: 'station_id', key: 'station_id', type: 'string', required: true, sampleValue: 'JP-ST-TOKYO', description: 'Unique stable Station ID (e.g. JP-ST-TOKYO, JP-ST-KYOTO)' },
+      { name: 'station_code', key: 'station_code', type: 'string', required: true, sampleValue: 'TYO', description: '3-letter official station code' },
+      { name: 'station_name', key: 'station_name', type: 'string', required: true, sampleValue: 'Tokyo', description: 'English display name' },
+      { name: 'station_name_local', key: 'station_name_local', type: 'string', required: false, sampleValue: '東京', description: 'Kanji / local script name' },
+      { name: 'country', key: 'country', type: 'string', required: true, sampleValue: 'Japan', description: 'Country name' },
+      { name: 'region_id', key: 'region_id', type: 'string', required: true, sampleValue: 'reg-east-asia', description: 'FK to REGIONS tab', foreignKeyTab: 'REGIONS', foreignKeyColumn: 'region_id' },
+      { name: 'destination_id', key: 'destination_id', type: 'string', required: true, sampleValue: 'dest-japan', description: 'FK to DESTINATIONS tab', foreignKeyTab: 'DESTINATIONS', foreignKeyColumn: 'destination_id' },
+      { name: 'hub_id', key: 'hub_id', type: 'string', required: false, sampleValue: 'hub-tokyo', description: 'FK to HUBS tab', foreignKeyTab: 'HUBS', foreignKeyColumn: 'hub_id' },
+      { name: 'city', key: 'city', type: 'string', required: true, sampleValue: 'Tokyo', description: 'City name' },
+      { name: 'rail_operator', key: 'rail_operator', type: 'string', required: true, sampleValue: 'JR Central', description: 'JR Operating Company (JR Central, JR West, JR East, JR Kyushu)' },
+      { name: 'latitude', key: 'latitude', type: 'number', required: false, sampleValue: '35.681236', description: 'GPS Latitude' },
+      { name: 'longitude', key: 'longitude', type: 'number', required: false, sampleValue: '139.767125', description: 'GPS Longitude' },
+      { name: 'timezone', key: 'timezone', type: 'string', required: false, sampleValue: 'Asia/Tokyo', description: 'IANA Timezone' },
+      { name: 'shinkansen_line', key: 'shinkansen_line', type: 'string', required: false, sampleValue: 'Tokaido Shinkansen', description: 'Main Shinkansen Line' },
+      { name: 'is_major_hub', key: 'is_major_hub', type: 'boolean', required: false, sampleValue: 'TRUE', description: 'TRUE if principal interchange station' },
+      { name: 'status', key: 'status', type: 'enum', required: true, sampleValue: 'ACTIVE', description: 'ACTIVE / INACTIVE / ARCHIVED', allowedValues: ['ACTIVE', 'INACTIVE', 'ARCHIVED'] },
+      { name: 'display_order', key: 'display_order', type: 'number', required: false, sampleValue: '1', description: 'Ordering sequence' }
+    ],
+    sampleRows: [
+      ['JP-ST-TOKYO', 'TYO', 'Tokyo', '東京', 'Japan', 'reg-east-asia', 'dest-japan', 'hub-tokyo', 'Tokyo', 'JR Central', '35.681236', '139.767125', 'Asia/Tokyo', 'Tokaido Shinkansen', 'TRUE', 'ACTIVE', '1'],
+      ['JP-ST-SHIN-OSAKA', 'OSA', 'Shin-Osaka', '新大阪', 'Japan', 'reg-east-asia', 'dest-japan', 'hub-osaka', 'Osaka', 'JR Central / JR West', '34.733481', '135.500109', 'Asia/Tokyo', 'Tokaido / Sanyo Shinkansen', 'TRUE', 'ACTIVE', '2'],
+      ['JP-ST-KYOTO', 'KYO', 'Kyoto', '京都', 'Japan', 'reg-east-asia', 'dest-japan', 'hub-kyoto', 'Kyoto', 'JR Central / JR West', '34.985849', '135.758767', 'Asia/Tokyo', 'Tokaido Shinkansen', 'TRUE', 'ACTIVE', '3'],
+      ['JP-ST-NAGOYA', 'NGO', 'Nagoya', '名古屋', 'Japan', 'reg-east-asia', 'dest-japan', 'hub-nagoya', 'Nagoya', 'JR Central', '35.170915', '136.881537', 'Asia/Tokyo', 'Tokaido Shinkansen', 'TRUE', 'ACTIVE', '4'],
+      ['JP-ST-HIROSHIMA', 'HIJ', 'Hiroshima', '広島', 'Japan', 'reg-east-asia', 'dest-japan', 'hub-hiroshima', 'Hiroshima', 'JR West', '34.397667', '132.475306', 'Asia/Tokyo', 'Sanyo Shinkansen', 'TRUE', 'ACTIVE', '5'],
+      ['JP-ST-HAKATA', 'FUK', 'Hakata (Fukuoka)', '博多', 'Japan', 'reg-east-asia', 'dest-japan', 'hub-fukuoka', 'Fukuoka', 'JR West / JR Kyushu', '33.590033', '130.420658', 'Asia/Tokyo', 'Sanyo / Kyushu Shinkansen', 'TRUE', 'ACTIVE', '6']
+    ]
+  },
+
+  // ----------------------------------------------------
+  // 19. RAIL_ROUTES TAB (Japan Rail Connected Segments)
+  // ----------------------------------------------------
+  {
+    tabName: 'RAIL_ROUTES',
+    displayName: '19. Japan Rail Routes (RAIL_ROUTES)',
+    description: 'City-pair route segments and travel characteristics across the Shinkansen network.',
+    hierarchyLevel: 4,
+    parentTab: 'RAIL_STATIONS',
+    primaryKey: 'route_id',
+    columns: [
+      { name: 'route_id', key: 'route_id', type: 'string', required: true, sampleValue: 'JP-RT-TOKYO-KYOTO', description: 'Unique stable Route ID (e.g. JP-RT-TOKYO-KYOTO)' },
+      { name: 'origin_station_id', key: 'origin_station_id', type: 'string', required: true, sampleValue: 'JP-ST-TOKYO', description: 'FK to RAIL_STATIONS tab', foreignKeyTab: 'RAIL_STATIONS', foreignKeyColumn: 'station_id' },
+      { name: 'destination_station_id', key: 'destination_station_id', type: 'string', required: true, sampleValue: 'JP-ST-KYOTO', description: 'FK to RAIL_STATIONS tab', foreignKeyTab: 'RAIL_STATIONS', foreignKeyColumn: 'station_id' },
+      { name: 'origin_station_name', key: 'origin_station_name', type: 'string', required: true, sampleValue: 'Tokyo', description: 'Origin Station Display Name' },
+      { name: 'destination_station_name', key: 'destination_station_name', type: 'string', required: true, sampleValue: 'Kyoto', description: 'Destination Station Display Name' },
+      { name: 'destination_id', key: 'destination_id', type: 'string', required: true, sampleValue: 'dest-japan', description: 'FK to DESTINATIONS tab', foreignKeyTab: 'DESTINATIONS', foreignKeyColumn: 'destination_id' },
+      { name: 'rail_operator', key: 'rail_operator', type: 'string', required: true, sampleValue: 'JR Central / JR West / smartEX', description: 'Ticketing and Operating Authority' },
+      { name: 'distance_km', key: 'distance_km', type: 'number', required: false, sampleValue: '513.6', description: 'Kilometer track distance' },
+      { name: 'duration_minutes', key: 'duration_minutes', type: 'number', required: false, sampleValue: '135', description: 'Average express travel time in minutes' },
+      { name: 'status', key: 'status', type: 'enum', required: true, sampleValue: 'ACTIVE', description: 'ACTIVE / INACTIVE', allowedValues: ['ACTIVE', 'INACTIVE'] }
+    ],
+    sampleRows: [
+      ['JP-RT-TOKYO-KYOTO', 'JP-ST-TOKYO', 'JP-ST-KYOTO', 'Tokyo', 'Kyoto', 'dest-japan', 'JR Central / JR West / smartEX', '513.6', '135', 'ACTIVE'],
+      ['JP-RT-TOKYO-SHIN-OSAKA', 'JP-ST-TOKYO', 'JP-ST-SHIN-OSAKA', 'Tokyo', 'Shin-Osaka', 'dest-japan', 'JR Central / JR West / smartEX', '552.6', '150', 'ACTIVE'],
+      ['JP-RT-TOKYO-NAGOYA', 'JP-ST-TOKYO', 'JP-ST-NAGOYA', 'Tokyo', 'Nagoya', 'dest-japan', 'JR Central / smartEX', '366.0', '96', 'ACTIVE'],
+      ['JP-RT-TOKYO-HIROSHIMA', 'JP-ST-TOKYO', 'JP-ST-HIROSHIMA', 'Tokyo', 'Hiroshima', 'dest-japan', 'JR Central / JR West', '894.2', '235', 'ACTIVE'],
+      ['JP-RT-SHIN-OSAKA-KYOTO', 'JP-ST-SHIN-OSAKA', 'JP-ST-KYOTO', 'Shin-Osaka', 'Kyoto', 'dest-japan', 'JR Central / JR West', '39.0', '15', 'ACTIVE'],
+      ['JP-RT-SHIN-OSAKA-HAKATA', 'JP-ST-SHIN-OSAKA', 'JP-ST-HAKATA', 'Shin-Osaka', 'Hakata', 'dest-japan', 'JR West / JR Kyushu', '622.3', '150', 'ACTIVE']
+    ]
+  },
+
+  // ----------------------------------------------------
+  // 20. RAIL_SERVICES TAB (Japan Rail Timetable & Trains)
+  // ----------------------------------------------------
+  {
+    tabName: 'RAIL_SERVICES',
+    displayName: '20. Japan Rail Services (RAIL_SERVICES)',
+    description: 'Authoritative train schedules, service classes (Nozomi, Hikari, Kodama, Mizuho, Sakura), and operating frequencies.',
+    hierarchyLevel: 4,
+    parentTab: 'RAIL_ROUTES',
+    primaryKey: 'service_id',
+    columns: [
+      { name: 'service_id', key: 'service_id', type: 'string', required: true, sampleValue: 'SRV-TYO-OSA-NZ1', description: 'Unique stable Service ID (e.g. SRV-TYO-OSA-NZ1)' },
+      { name: 'operator_id', key: 'operator_id', type: 'string', required: false, sampleValue: 'JR-CENTRAL', description: 'Operator ID' },
+      { name: 'service_name', key: 'service_name', type: 'string', required: true, sampleValue: 'Nozomi 1 Super Express', description: 'Train Name & Run' },
+      { name: 'service_type', key: 'service_type', type: 'enum', required: true, sampleValue: 'NOZOMI', description: 'Service Type Group', allowedValues: ['NOZOMI', 'HIKARI', 'KODAMA', 'MIZUHO', 'SAKURA', 'TSUBAME'] },
+      { name: 'train_number', key: 'train_number', type: 'string', required: false, sampleValue: '1A', description: 'Train Number' },
+      { name: 'origin_station_id', key: 'origin_station_id', type: 'string', required: true, sampleValue: 'JP-ST-TOKYO', description: 'FK to RAIL_STATIONS tab', foreignKeyTab: 'RAIL_STATIONS', foreignKeyColumn: 'station_id' },
+      { name: 'destination_station_id', key: 'destination_station_id', type: 'string', required: true, sampleValue: 'JP-ST-SHIN-OSAKA', description: 'FK to RAIL_STATIONS tab', foreignKeyTab: 'RAIL_STATIONS', foreignKeyColumn: 'station_id' },
+      { name: 'route_id', key: 'route_id', type: 'string', required: false, sampleValue: 'JP-RT-TOKYO-SHIN-OSAKA', description: 'FK to RAIL_ROUTES tab', foreignKeyTab: 'RAIL_ROUTES', foreignKeyColumn: 'route_id' },
+      { name: 'departure_time', key: 'departure_time', type: 'string', required: true, sampleValue: '06:00', description: 'Departure time (HH:mm)' },
+      { name: 'arrival_time', key: 'arrival_time', type: 'string', required: true, sampleValue: '08:28', description: 'Arrival time (HH:mm)' },
+      { name: 'duration_minutes', key: 'duration_minutes', type: 'number', required: false, sampleValue: '148', description: 'Travel duration in minutes' },
+      { name: 'operating_days', key: 'operating_days', type: 'string', required: false, sampleValue: 'Mon;Tue;Wed;Thu;Fri;Sat;Sun', description: 'Operating days separated by semicolons' },
+      { name: 'status', key: 'status', type: 'enum', required: true, sampleValue: 'ACTIVE', description: 'ACTIVE / INACTIVE / SUSPENDED', allowedValues: ['ACTIVE', 'INACTIVE', 'SUSPENDED'] },
+      { name: 'effective_from', key: 'effective_from', type: 'date', required: false, sampleValue: '2026-01-01', description: 'Timetable effective start date' },
+      { name: 'effective_to', key: 'effective_to', type: 'date', required: false, sampleValue: '2026-12-31', description: 'Timetable effective end date' }
+    ],
+    sampleRows: [
+      ['SRV-TYO-OSA-NZ1', 'JR-CENTRAL', 'Nozomi 1 Super Express', 'NOZOMI', '1A', 'JP-ST-TOKYO', 'JP-ST-SHIN-OSAKA', 'JP-RT-TOKYO-SHIN-OSAKA', '06:00', '08:28', '148', 'Mon;Tue;Wed;Thu;Fri;Sat;Sun', 'ACTIVE', '2026-01-01', '2026-12-31'],
+      ['SRV-TYO-KYO-HK1', 'JR-CENTRAL', 'Hikari 501 Express', 'HIKARI', '501A', 'JP-ST-TOKYO', 'JP-ST-KYOTO', 'JP-RT-TOKYO-KYOTO', '06:33', '09:12', '159', 'Mon;Tue;Wed;Thu;Fri;Sat;Sun', 'ACTIVE', '2026-01-01', '2026-12-31'],
+      ['SRV-TYO-NGO-NZ3', 'JR-CENTRAL', 'Nozomi 3 Super Express', 'NOZOMI', '3A', 'JP-ST-TOKYO', 'JP-ST-NAGOYA', 'JP-RT-TOKYO-NAGOYA', '06:15', '07:51', '96', 'Mon;Tue;Wed;Thu;Fri;Sat;Sun', 'ACTIVE', '2026-01-01', '2026-12-31'],
+      ['SRV-OSA-HKT-MZ1', 'JR-WEST', 'Mizuho 601 Super Express', 'MIZUHO', '601A', 'JP-ST-SHIN-OSAKA', 'JP-ST-HAKATA', 'JP-RT-SHIN-OSAKA-HAKATA', '06:06', '08:34', '148', 'Mon;Tue;Wed;Thu;Fri;Sat;Sun', 'ACTIVE', '2026-01-01', '2026-12-31']
+    ]
+  },
+
+  // ----------------------------------------------------
+  // 21. RAIL_FARES TAB (Commercial Rates & Pricing Formula)
+  // ----------------------------------------------------
+  {
+    tabName: 'RAIL_FARES',
+    displayName: '21. Japan Rail Fares & Pricing (RAIL_FARES)',
+    description: 'Authoritative point-to-point fares governing Nett Cost + Margin + Tax + Service Charge = Final Selling Price.',
+    hierarchyLevel: 5,
+    parentTab: 'RAIL_ROUTES',
+    primaryKey: 'rail_fare_id',
+    columns: [
+      { name: 'rail_fare_id', key: 'rail_fare_id', type: 'string', required: true, sampleValue: 'FARE-TYO-KYO-ORD-RES', description: 'Unique stable Rail Fare ID' },
+      { name: 'route_id', key: 'route_id', type: 'string', required: true, sampleValue: 'JP-RT-TOKYO-KYOTO', description: 'FK to RAIL_ROUTES tab', foreignKeyTab: 'RAIL_ROUTES', foreignKeyColumn: 'route_id' },
+      { name: 'origin_station_id', key: 'origin_station_id', type: 'string', required: true, sampleValue: 'JP-ST-TOKYO', description: 'FK to RAIL_STATIONS tab', foreignKeyTab: 'RAIL_STATIONS', foreignKeyColumn: 'station_id' },
+      { name: 'destination_station_id', key: 'destination_station_id', type: 'string', required: true, sampleValue: 'JP-ST-KYOTO', description: 'FK to RAIL_STATIONS tab', foreignKeyTab: 'RAIL_STATIONS', foreignKeyColumn: 'station_id' },
+      { name: 'product_id', key: 'product_id', type: 'enum', required: true, sampleValue: 'RAIL-JP-ORD-RESERVED', description: 'Rail Product ID', allowedValues: ['RAIL-JP-ORD-RESERVED', 'RAIL-JP-GREEN-RESERVED'] },
+      { name: 'car_type', key: 'car_type', type: 'enum', required: true, sampleValue: 'Ordinary', description: 'Ordinary or Green Car', allowedValues: ['Ordinary', 'Green'] },
+      { name: 'seat_type', key: 'seat_type', type: 'enum', required: true, sampleValue: 'Reserved', description: 'Reserved or Non-Reserved', allowedValues: ['Reserved', 'Non-Reserved'] },
+      { name: 'fare_type', key: 'fare_type', type: 'string', required: false, sampleValue: 'Standard', description: 'Standard / Express / Discount' },
+      { name: 'passenger_type', key: 'passenger_type', type: 'enum', required: true, sampleValue: 'ADULT', description: 'ADULT or CHILD (ADT/CWB)', allowedValues: ['ADULT', 'CHILD', 'ADT', 'CWB', 'CNB', 'INF'] },
+      { name: 'currency', key: 'currency', type: 'enum', required: true, sampleValue: 'JPY', description: 'Currency Code', allowedValues: ['JPY', 'USD', 'EUR', 'GBP', 'AED', 'SGD', 'THB'] },
+      { name: 'nett_price', key: 'nett_price', type: 'number', required: true, sampleValue: '13320', description: 'Base Authoritative Supplier Cost in JPY' },
+      { name: 'margin_type', key: 'margin_type', type: 'enum', required: true, sampleValue: 'PERCENTAGE', description: 'PERCENTAGE or FIXED', allowedValues: ['PERCENTAGE', 'FIXED'] },
+      { name: 'margin_value', key: 'margin_value', type: 'number', required: true, sampleValue: '15', description: 'Commercial Margin Value (% or fixed JPY)' },
+      { name: 'tax_type', key: 'tax_type', type: 'enum', required: false, sampleValue: 'PERCENTAGE', description: 'PERCENTAGE / FIXED / NOT_APPLICABLE', allowedValues: ['PERCENTAGE', 'FIXED', 'NOT_APPLICABLE'] },
+      { name: 'tax_value', key: 'tax_value', type: 'number', required: false, sampleValue: '10', description: 'Tax Rate (% or fixed JPY)' },
+      { name: 'service_charge_type', key: 'service_charge_type', type: 'enum', required: false, sampleValue: 'FIXED', description: 'PERCENTAGE / FIXED / NOT_APPLICABLE', allowedValues: ['PERCENTAGE', 'FIXED', 'NOT_APPLICABLE'] },
+      { name: 'service_charge_value', key: 'service_charge_value', type: 'number', required: false, sampleValue: '500', description: 'Service charge value in JPY' },
+      { name: 'final_price', key: 'final_price', type: 'number', required: true, sampleValue: '15818', description: 'Calculated Selling Price (Nett + Margin + Tax + Service Charge)' },
+      { name: 'effective_from', key: 'effective_from', type: 'date', required: true, sampleValue: '2026-01-01', description: 'Rate validity start date' },
+      { name: 'effective_to', key: 'effective_to', type: 'date', required: true, sampleValue: '2026-12-31', description: 'Rate validity end date' },
+      { name: 'status', key: 'status', type: 'enum', required: true, sampleValue: 'ACTIVE', description: 'ACTIVE / INACTIVE', allowedValues: ['ACTIVE', 'INACTIVE'] }
+    ],
+    sampleRows: [
+      ['FARE-TYO-KYO-ORD-ADT', 'JP-RT-TOKYO-KYOTO', 'JP-ST-TOKYO', 'JP-ST-KYOTO', 'RAIL-JP-ORD-RESERVED', 'Ordinary', 'Reserved', 'Standard', 'ADULT', 'JPY', '13320', 'PERCENTAGE', '15', 'PERCENTAGE', '10', 'FIXED', '500', '15818', '2026-01-01', '2026-12-31', 'ACTIVE'],
+      ['FARE-TYO-KYO-ORD-CHD', 'JP-RT-TOKYO-KYOTO', 'JP-ST-TOKYO', 'JP-ST-KYOTO', 'RAIL-JP-ORD-RESERVED', 'Ordinary', 'Reserved', 'Standard', 'CHILD', 'JPY', '6660', 'PERCENTAGE', '15', 'PERCENTAGE', '10', 'FIXED', '250', '7909', '2026-01-01', '2026-12-31', 'ACTIVE'],
+      ['FARE-TYO-KYO-GRN-ADT', 'JP-RT-TOKYO-KYOTO', 'JP-ST-TOKYO', 'JP-ST-KYOTO', 'RAIL-JP-GREEN-RESERVED', 'Green', 'Reserved', 'Standard', 'ADULT', 'JPY', '19040', 'PERCENTAGE', '15', 'PERCENTAGE', '10', 'FIXED', '500', '22396', '2026-01-01', '2026-12-31', 'ACTIVE'],
+      ['FARE-TYO-OSA-ORD-ADT', 'JP-RT-TOKYO-SHIN-OSAKA', 'JP-ST-TOKYO', 'JP-ST-SHIN-OSAKA', 'RAIL-JP-ORD-RESERVED', 'Ordinary', 'Reserved', 'Standard', 'ADULT', 'JPY', '13870', 'PERCENTAGE', '15', 'PERCENTAGE', '10', 'FIXED', '500', '16451', '2026-01-01', '2026-12-31', 'ACTIVE'],
+      ['FARE-TYO-OSA-GRN-ADT', 'JP-RT-TOKYO-SHIN-OSAKA', 'JP-ST-TOKYO', 'JP-ST-SHIN-OSAKA', 'RAIL-JP-GREEN-RESERVED', 'Green', 'Reserved', 'Standard', 'ADULT', 'JPY', '19590', 'PERCENTAGE', '15', 'PERCENTAGE', '10', 'FIXED', '500', '23029', '2026-01-01', '2026-12-31', 'ACTIVE'],
+      ['FARE-TYO-NGO-ORD-ADT', 'JP-RT-TOKYO-NAGOYA', 'JP-ST-TOKYO', 'JP-ST-NAGOYA', 'RAIL-JP-ORD-RESERVED', 'Ordinary', 'Reserved', 'Standard', 'ADULT', 'JPY', '10560', 'PERCENTAGE', '15', 'PERCENTAGE', '10', 'FIXED', '500', '12644', '2026-01-01', '2026-12-31', 'ACTIVE']
+    ]
+  },
+
+  // ----------------------------------------------------
+  // 22. RAIL_CLASS_RULES TAB (Seasonality & Calendar Rules)
+  // ----------------------------------------------------
+  {
+    tabName: 'RAIL_CLASS_RULES',
+    displayName: '22. Japan Rail Season Calendar & Rules (RAIL_CLASS_RULES)',
+    description: 'smartEX official seasonal surcharge rules, holiday calendars, and dynamic pricing multipliers.',
+    hierarchyLevel: 5,
+    primaryKey: 'season_id',
+    columns: [
+      { name: 'season_id', key: 'season_id', type: 'string', required: true, sampleValue: 'SEAS-2026-PEAK-GW', description: 'Unique stable Season Rule ID' },
+      { name: 'season_type', key: 'season_type', type: 'enum', required: true, sampleValue: 'PEAK_HIGH', description: 'Season Type Classification', allowedValues: ['REGULAR', 'LOW', 'HIGH', 'PEAK_HIGH', 'HOLIDAY', 'SPECIAL'] },
+      { name: 'title', key: 'title', type: 'string', required: true, sampleValue: 'Golden Week Peak High Season 2026', description: 'Season Name / Description' },
+      { name: 'start_date', key: 'start_date', type: 'date', required: true, sampleValue: '2026-04-25', description: 'Start Date (YYYY-MM-DD)' },
+      { name: 'end_date', key: 'end_date', type: 'date', required: true, sampleValue: '2026-05-06', description: 'End Date (YYYY-MM-DD)' },
+      { name: 'adult_adjustment_jpy', key: 'adult_adjustment_jpy', type: 'number', required: true, sampleValue: '400', description: 'Adult Tariff Adjustment in JPY (+400, +200, 0, -200)' },
+      { name: 'child_adjustment_jpy', key: 'child_adjustment_jpy', type: 'number', required: true, sampleValue: '200', description: 'Child Tariff Adjustment in JPY (+200, +100, 0, -100)' },
+      { name: 'pricing_multiplier', key: 'pricing_multiplier', type: 'number', required: false, sampleValue: '1.0', description: 'Dynamic multiplier ratio (default 1.0)' },
+      { name: 'priority', key: 'priority', type: 'number', required: false, sampleValue: '10', description: 'Resolution precedence during overlapping calendar dates' },
+      { name: 'status', key: 'status', type: 'enum', required: true, sampleValue: 'ACTIVE', description: 'ACTIVE / INACTIVE', allowedValues: ['ACTIVE', 'INACTIVE'] },
+      { name: 'notes', key: 'notes', type: 'string', required: false, sampleValue: 'smartEX official nationwide Golden Week peak surcharge window', description: 'Operational notes' }
+    ],
+    sampleRows: [
+      ['SEAS-2026-REG', 'REGULAR', 'Regular Baseline Season 2026', '2026-01-01', '2026-12-31', '0', '0', '1.0', '1', 'ACTIVE', 'Authoritative JR baseline tariff'],
+      ['SEAS-2026-PEAK-GW', 'PEAK_HIGH', 'Golden Week Peak High Season 2026', '2026-04-25', '2026-05-06', '400', '200', '1.0', '10', 'ACTIVE', 'smartEX official nationwide Golden Week peak surcharge window'],
+      ['SEAS-2026-HIGH-OBON', 'HIGH', 'Obon Summer High Season 2026', '2026-08-08', '2026-08-17', '200', '100', '1.0', '8', 'ACTIVE', 'Summer peak homecoming period'],
+      ['SEAS-2026-LOW-JAN', 'LOW', 'Winter Low Season 2026', '2026-01-16', '2026-02-28', '-200', '-100', '1.0', '5', 'ACTIVE', 'Winter low season discount window'],
+      ['SEAS-2026-PEAK-NY', 'PEAK_HIGH', 'New Year Peak Season 2026', '2026-12-26', '2026-12-31', '400', '200', '1.0', '10', 'ACTIVE', 'Year-end holiday travel window']
+    ]
   }
 ];
 
@@ -620,7 +912,11 @@ export function getTabSchemaByName(tabName: string): MasterSheetTabDefinition | 
   const cleanName = tabName.trim().toUpperCase().replace(/[\s-]+/g, '_');
   return MASTER_SHEETS_TAB_DEFINITIONS.find(t => 
     t.tabName.toUpperCase() === cleanName || 
-    t.displayName.toUpperCase().includes(cleanName)
+    t.displayName.toUpperCase().includes(cleanName) ||
+    (cleanName === 'PROTECTION' && t.tabName === 'TRAVEL_PROTECTION') ||
+    (cleanName === 'VIP_SERVICES' && t.tabName === 'VIP_GROUND') ||
+    (cleanName === 'CONNECTIVITY_PLANS' && t.tabName === 'CONNECTIVITY') ||
+    (cleanName === 'ESIM' && t.tabName === 'CONNECTIVITY')
   );
 }
 
@@ -649,7 +945,7 @@ export function generateAllTabsCsvBundle(): Record<string, string> {
 }
 
 /**
- * Approved canonical 16-worksheet column headers for TheUnbound production schema.
+ * Approved canonical 25-worksheet column headers for TheUnbound production schema.
  */
 export const CANONICAL_SCHEMA_HEADERS: Record<MasterSheetTabName, string[]> = {
   REGIONS: ['region_id', 'region_name', 'slug', 'description', 'status', 'sort_order', 'seo_title', 'seo_description'],
@@ -664,11 +960,19 @@ export const CANONICAL_SCHEMA_HEADERS: Record<MasterSheetTabName, string[]> = {
   HOTEL_RATES: ['hotel_rate_id', 'hotel_id', 'room_id', 'meal_plan_id', 'currency', 'rate_type', 'nett_cost', 'buyer_markup_pct', 'b2b_markup_pct', 'selling_price_override', 'valid_from', 'valid_to', 'min_nights', 'status'],
   VISA: ['visa_id', 'destination_id', 'visa_name', 'visa_type', 'nationality_scope', 'description', 'processing_time', 'validity', 'status', 'seo_title', 'seo_description'],
   VISA_RATES: ['visa_rate_id', 'visa_id', 'currency', 'nett_cost', 'buyer_markup_pct', 'b2b_markup_pct', 'selling_price_override', 'valid_from', 'valid_to', 'status'],
+  TRAVEL_PROTECTION: ['protection_id', 'service_name', 'provider', 'coverage_area', 'destination_id', 'medical_coverage_amount', 'emergency_assistance_included', 'evacuation_coverage_amount', 'trip_cancellation_amount', 'baggage_loss_amount', 'validity_days_max', 'eligibility_age_min', 'eligibility_age_max', 'currency', 'net_cost_per_day', 'net_cost_per_trip', 'selling_price_per_day', 'selling_price_per_trip', 'inclusions', 'customer_description', 'terms', 'status', 'display_order'],
+  VIP_GROUND: ['vip_id', 'name', 'service_type', 'destination_id', 'hub_id', 'supplier_name', 'pricing_type', 'currency', 'net_cost', 'default_markup_percent', 'selling_price', 'badge', 'short_desc', 'long_desc', 'inclusions', 'status', 'display_order'],
+  CONNECTIVITY: ['connectivity_id', 'name', 'type', 'coverage_zone', 'data_allowance', 'validity_days', 'network_speed', 'currency', 'net_cost', 'selling_price', 'inclusions', 'status', 'display_order'],
   TRANSFER_ROUTES: ['transfer_route_id', 'destination_id', 'from_hub_id', 'to_hub_id', 'route_name', 'distance_km', 'estimated_duration_minutes', 'status'],
   TRANSFER_RATES: ['transfer_rate_id', 'transfer_route_id', 'capacity', 'vehicle_model', 'currency', 'nett_cost', 'buyer_markup_pct', 'b2b_markup_pct', 'selling_price_override', 'valid_from', 'valid_to', 'status'],
   PACKAGES: ['package_id', 'destination_id', 'package_name', 'slug', 'duration_nights', 'duration_days', 'description', 'package_type', 'status', 'is_featured', 'seo_title', 'seo_description'],
   PACKAGE_ITEMS: ['package_item_id', 'package_id', 'day_number', 'item_type', 'item_id', 'hub_id', 'sequence', 'notes', 'is_optional', 'status'],
-  FX_RATES: ['pair_id', 'from_currency', 'to_currency', 'currency_name', 'googlefinance_formula', 'live_rate', 'inverse_formula', 'inverse_rate', 'manual_adjustment', 'effective_rate', 'last_synced_at']
+  FX_RATES: ['pair_id', 'from_currency', 'to_currency', 'currency_name', 'googlefinance_formula', 'live_rate', 'inverse_formula', 'inverse_rate', 'manual_adjustment', 'effective_rate', 'last_synced_at'],
+  RAIL_STATIONS: ['station_id', 'station_code', 'station_name', 'station_name_local', 'country', 'region_id', 'destination_id', 'hub_id', 'city', 'rail_operator', 'latitude', 'longitude', 'timezone', 'shinkansen_line', 'is_major_hub', 'status', 'display_order'],
+  RAIL_ROUTES: ['route_id', 'origin_station_id', 'destination_station_id', 'origin_station_name', 'destination_station_name', 'destination_id', 'rail_operator', 'distance_km', 'duration_minutes', 'status'],
+  RAIL_SERVICES: ['service_id', 'operator_id', 'service_name', 'service_type', 'train_number', 'origin_station_id', 'destination_station_id', 'route_id', 'departure_time', 'arrival_time', 'duration_minutes', 'operating_days', 'status', 'effective_from', 'effective_to'],
+  RAIL_FARES: ['rail_fare_id', 'route_id', 'origin_station_id', 'destination_station_id', 'product_id', 'car_type', 'seat_type', 'fare_type', 'passenger_type', 'currency', 'nett_price', 'margin_type', 'margin_value', 'tax_type', 'tax_value', 'service_charge_type', 'service_charge_value', 'final_price', 'effective_from', 'effective_to', 'status'],
+  RAIL_CLASS_RULES: ['season_id', 'season_type', 'title', 'start_date', 'end_date', 'adult_adjustment_jpy', 'child_adjustment_jpy', 'pricing_multiplier', 'priority', 'status', 'notes']
 };
 
 /**
@@ -687,15 +991,23 @@ export const CANONICAL_TAB_PROCESSING_ORDER: MasterSheetTabName[] = [
   'HOTEL_RATES',
   'VISA',
   'VISA_RATES',
+  'TRAVEL_PROTECTION',
+  'VIP_GROUND',
+  'CONNECTIVITY',
   'TRANSFER_ROUTES',
   'TRANSFER_RATES',
   'PACKAGES',
   'PACKAGE_ITEMS',
-  'FX_RATES'
+  'FX_RATES',
+  'RAIL_STATIONS',
+  'RAIL_ROUTES',
+  'RAIL_SERVICES',
+  'RAIL_FARES',
+  'RAIL_CLASS_RULES'
 ];
 
 /**
- * Generates an authentic .xlsx workbook containing exactly the canonical 16 worksheets.
+ * Generates an authentic .xlsx workbook containing exactly the canonical worksheets.
  * Each worksheet contains the approved column headers and schema.
  * Blank templates are provided without mock/fake production records.
  */

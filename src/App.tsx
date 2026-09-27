@@ -474,11 +474,7 @@ const MainAppContent: React.FC = () => {
               }}
               onOpenCalculator={(p) => {
                 if (isB2BAuthorized) {
-                  if (isRailProduct(p)) {
-                    setInspectingProduct(p);
-                  } else {
-                    setCalculatorProduct(p);
-                  }
+                  setCalculatorProduct(p);
                 }
               }}
               onInstantBook={(p) => {
@@ -660,7 +656,7 @@ const MainAppContent: React.FC = () => {
         />
       )}
 
-      {calculatorProduct && isB2BAuthorized && !isRailProduct(calculatorProduct) && (
+      {calculatorProduct && isB2BAuthorized && (
         <PricingCalculatorModal
           product={calculatorProduct}
           onClose={() => setCalculatorProduct(null)}

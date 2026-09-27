@@ -1073,12 +1073,34 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     );
   }, [routeHubs, items, calendarDays.length, tripNights, visaAssistanceChoice, hasInsurance, hasEsim]);
 
-  // Add Suggested Transfer Helper
+  // Add Suggested Transfer Helper (Prefers Authoritative Master Products from availableProducts)
   const handleAddSuggestedTransfer = (s: TransferSuggestion) => {
     const targetDay = calendarDays.find(d => d.dayNumber === s.dayNumber);
     const dateStr = targetDay?.dateString || startDate;
 
-    const prod = {
+    const sFrom = (s.fromCity || '').toLowerCase();
+    const sTo = (s.toCity || '').toLowerCase();
+
+    // Look for matching master product in availableProducts
+    const matchedMaster = availableProducts.find(p => {
+      const isTrf = (p.category || '').toLowerCase().includes('transfer') || Boolean((p as any).isTransfer);
+      if (!isTrf) return false;
+      const pName = (p.name || '').toLowerCase();
+      const pFrom = (p.fromHubName || '').toLowerCase();
+      const pTo = (p.toHubName || '').toLowerCase();
+      const pCity = (p.city || '').toLowerCase();
+
+      if (s.type === 'INTERCITY') {
+        const matchesFrom = sFrom && (pName.includes(sFrom) || pFrom.includes(sFrom) || pCity.includes(sFrom));
+        const matchesTo = sTo && (pName.includes(sTo) || pTo.includes(sTo));
+        return Boolean(matchesFrom && matchesTo);
+      } else {
+        const targetCity = s.type === 'AIRPORT_ARRIVAL' ? sTo : sFrom;
+        return targetCity && (pName.includes(targetCity) || pFrom.includes(targetCity) || pTo.includes(targetCity) || pCity.includes(targetCity));
+      }
+    });
+
+    const prod = matchedMaster || ({
       id: `prod-transfer-${s.id}-${Date.now()}`,
       sku: `TRF-${s.type}`,
       destinationId: currentDestination.id,
@@ -1115,14 +1137,16 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       ],
       exclusions: ['Driver tips and personal luggage handling extras'],
       heroImage: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?q=80&w=800&auto=format&fit=crop',
-      galleryImages: ['https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?q=80&w=800&auto=format&fit=crop']
-    } as unknown as Product;
+      galleryImages: ['https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?q=80&w=800&auto=format&fit=crop'],
+      status: 'ACTIVE'
+    } as unknown as Product);
 
     handleAddProductToQuoteSilently(prod, { 
       travelDate: dateStr, 
       adults: adultsCount, 
       children: childrenCount, 
-      infants: infantsCount 
+      infants: infantsCount,
+      notes: `${s.fromLocation || s.fromCity || 'Pickup'} ➔ ${s.toLocation || s.toCity || 'Dropoff'}`
     });
   };
 
@@ -1762,12 +1786,13 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const handleOpenSavePackageModal = () => {
     if (!canSaveAsPackage) return;
     const defaultTitle = `${currentDestination.name} ${tripNights}N/${tripNights + 1}D ${tripType} Discovery`;
-    const defaultTagline = `Signature ${tripNights}-night curated circuit featuring ${routeHubs.map(h => h.hubName).join(' → ')}.`;
+    const routeHubNames = (routeHubs || []).map(h => h.hubName).filter(Boolean);
+    const defaultTagline = `Signature ${tripNights}-night curated circuit featuring ${routeHubNames.length > 0 ? routeHubNames.join(' → ') : currentDestination.name}.`;
     
     setPackageFormData({
       title: defaultTitle,
       tagline: defaultTagline,
-      description: `Comprehensive multi-city luxury touring circuit including ${items.length} master experiences and premium accommodations across ${routeHubs.map(h => h.hubName).join(', ')}.`,
+      description: `Comprehensive multi-city luxury touring circuit including ${items.length} master experiences and premium accommodations across ${routeHubNames.length > 0 ? routeHubNames.join(', ') : currentDestination.name}.`,
       tripType: (tripType.toUpperCase().includes('LUXURY') ? 'LUXURY' : 'BOUTIQUE') as any,
       pricingMode: 'LIVE_DYNAMIC',
       status: 'PUBLISHED',
@@ -1859,7 +1884,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         currency
       },
       highlights: [
-        `${tripNights} Nights luxury accommodations in ${routeHubs.map(h => h.hubName).join(', ')}`,
+        `${tripNights} Nights luxury accommodations in ${(routeHubs || []).map(h => h.hubName).filter(Boolean).join(', ') || currentDestination.name}`,
         'Daily private transfers and English-speaking local guides',
         'Direct 24/7 on-ground DMC concierge support'
       ],
@@ -2814,6 +2839,47 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             setInspectingProduct(null);
             setEditingRailItem(null);
             showBuilderToast(editingRailItem ? `✓ Updated Shinkansen Journey in Quote` : `✓ Added Shinkansen Journey to Quote`, 'SUCCESS');
+          }}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: AUTHORITATIVE DEDICATED CATEGORY CONFIGURATOR ROUTER */}
+      {/* ========================================================================= */}
+      {editingServiceItem && (
+        <GlobalConfiguratorRouter
+          isOpen={true}
+          itemOrProduct={editingServiceItem}
+          portalOrigin="B2B_QUOTE_BUILDER"
+          existingQuoteItemId={editingServiceItem.id}
+          initialTravelDate={editingServiceItem.travelDate}
+          initialAdults={editingServiceItem.pax?.adults || adultsCount}
+          initialChildren={editingServiceItem.pax?.children || childrenCount}
+          initialInfants={editingServiceItem.pax?.infants || infantsCount}
+          initialServiceTime={editingServiceItem.serviceTime}
+          initialNotes={editingServiceItem.notes}
+          onClose={() => setEditingServiceItem(null)}
+          onSuccess={() => {
+            setEditingServiceItem(null);
+            showBuilderToast('✓ Service configuration updated', 'SUCCESS');
+          }}
+        />
+      )}
+
+      {configuringQuickAddProduct && (
+        <GlobalConfiguratorRouter
+          isOpen={true}
+          itemOrProduct={configuringQuickAddProduct.product}
+          portalOrigin="B2B_QUOTE_BUILDER"
+          initialTravelDate={configuringQuickAddProduct.dateString}
+          initialAdults={adultsCount}
+          initialChildren={childrenCount}
+          initialInfants={infantsCount}
+          onClose={() => setConfiguringQuickAddProduct(null)}
+          onSuccess={(configuredItem) => {
+            setConfiguringQuickAddProduct(null);
+            setQuickAddModalDay(null);
+            showBuilderToast(`✓ Added ${configuredItem?.name || configuringQuickAddProduct.product.name} to Day ${configuringQuickAddProduct.dayNum}`, 'SUCCESS');
           }}
         />
       )}

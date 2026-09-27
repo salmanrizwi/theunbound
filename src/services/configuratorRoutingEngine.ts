@@ -1,5 +1,13 @@
 import { Product, QuoteItem, Hotel } from '../types';
-import { isRailProduct, isRailQuoteItem } from './rail/JapanRailJourneyDataService';
+import { 
+  resolveProductCategoryEnum, 
+  isHotelProductOrItem, 
+  isShinkansenProductOrItem, 
+  isVisaProductOrItem,
+  getConfiguratorForProduct,
+  ConfiguratorRegistry,
+  DedicatedConfiguratorType as RegistryConfiguratorType
+} from './configuratorRegistry';
 
 export type AuthoritativeServiceCategory = 
   | 'HOTEL'
@@ -18,94 +26,26 @@ export type DedicatedConfiguratorType =
 
 /**
  * Detects whether any product, quote item, or hotel object belongs to the Hotel / Accommodation category.
+ * Compliant with Rule 1, 3, 9:
+ * MUST NEVER return true for Transfers, Visas, Rail, Private Tours, or any other product
+ * merely because its name contains the word 'hotel'.
  */
 export function isHotelService(itemOrProduct: any): boolean {
-  if (!itemOrProduct) return false;
-  if (itemOrProduct.isManualHotel || itemOrProduct.hotelDetails || itemOrProduct.roomDetails || itemOrProduct.hotelConfigurationPayload) {
-    return true;
-  }
-  const category = (itemOrProduct.category || itemOrProduct.product?.category || '').toLowerCase();
-  const productType = (itemOrProduct.productType || itemOrProduct.product?.productType || '').toLowerCase();
-  const id = (itemOrProduct.id || itemOrProduct.product?.id || '').toUpperCase();
-  const sku = (itemOrProduct.sku || itemOrProduct.product?.sku || '').toUpperCase();
-  const code = (itemOrProduct.supplierProductCode || itemOrProduct.product?.supplierProductCode || '').toUpperCase();
-  const name = (itemOrProduct.name || itemOrProduct.product?.name || itemOrProduct.customTitle || '').toLowerCase();
-
-  return (
-    category.includes('hotel') ||
-    category.includes('accommodation') ||
-    category.includes('resort') ||
-    category.includes('ryokan') ||
-    category.includes('stay') ||
-    productType.includes('hotel') ||
-    productType.includes('accommodation') ||
-    id.startsWith('HTL-') ||
-    sku.startsWith('HTL-') ||
-    code.startsWith('SUP-HTL-') ||
-    name.includes('hotel') ||
-    name.includes('ryokan') ||
-    name.includes('resort')
-  );
+  return isHotelProductOrItem(itemOrProduct);
 }
 
 /**
  * Detects whether any product or quote item belongs to the Japan Rail / Shinkansen category.
  */
 export function isShinkansenService(itemOrProduct: any): boolean {
-  if (!itemOrProduct) return false;
-  if (isRailQuoteItem(itemOrProduct) || isRailProduct(itemOrProduct)) {
-    return true;
-  }
-  if (itemOrProduct.product && isRailProduct(itemOrProduct.product)) {
-    return true;
-  }
-  return false;
+  return isShinkansenProductOrItem(itemOrProduct);
 }
 
 /**
  * Detects whether any product, quote item, or visa object belongs to the Visa & Ancillary Services category.
  */
 export function isVisaService(itemOrProduct: any): boolean {
-  if (!itemOrProduct) return false;
-  if (
-    itemOrProduct.serviceVisaDetails || 
-    itemOrProduct.visaSnapshot || 
-    itemOrProduct.visaConfigurationPayload || 
-    itemOrProduct.metadata?.visaConfigurationPayload ||
-    itemOrProduct.metadata?.visaProductId
-  ) {
-    return true;
-  }
-  // Check if it has visa-specific attributes
-  if (itemOrProduct.entryType && (itemOrProduct.validityDays !== undefined || itemOrProduct.embassyFee !== undefined || itemOrProduct.embassyFeeUSD !== undefined)) {
-    return true;
-  }
-  const category = (itemOrProduct.category || itemOrProduct.product?.category || '').toLowerCase();
-  const subcategory = (itemOrProduct.subcategory || itemOrProduct.product?.subcategory || '').toLowerCase();
-  const productType = (itemOrProduct.productType || itemOrProduct.product?.productType || '').toLowerCase();
-  const id = (itemOrProduct.id || itemOrProduct.product?.id || '').toUpperCase();
-  const sku = (itemOrProduct.sku || itemOrProduct.product?.sku || '').toUpperCase();
-  const code = (itemOrProduct.supplierProductCode || itemOrProduct.product?.supplierProductCode || '').toUpperCase();
-  const name = (itemOrProduct.name || itemOrProduct.product?.name || itemOrProduct.customTitle || '').toLowerCase();
-
-  return (
-    sku.startsWith('VSA-') ||
-    sku.startsWith('VISA-') ||
-    id.startsWith('VISA-') ||
-    id.startsWith('VSA-') ||
-    code.startsWith('VISA-') ||
-    code.startsWith('SUP-VSA-') ||
-    category.includes('visa') ||
-    subcategory.includes('visa') ||
-    productType.includes('visa') ||
-    name.includes('visa facilitation') ||
-    name.includes('tourist e-visa') ||
-    name.includes('tourist visa') ||
-    name.includes('business visa') ||
-    name.includes('schengen visa') ||
-    name.includes('transit visa') ||
-    name.includes('entry visa')
-  );
+  return isVisaProductOrItem(itemOrProduct);
 }
 
 /**

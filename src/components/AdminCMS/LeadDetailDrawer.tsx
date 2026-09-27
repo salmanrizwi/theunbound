@@ -1038,7 +1038,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                           <tr key={prod.id} className="hover:bg-slate-50">
                             <td className="py-2.5 font-bold text-slate-800 max-w-[200px]">
                               {prod.productName}
-                              {prod.selectedAddonNames && prod.selectedAddonNames.length > 0 && (
+                              {Array.isArray(prod.selectedAddonNames) && prod.selectedAddonNames.length > 0 && (
                                 <div className="text-[10px] text-slate-400 font-normal">
                                   + {prod.selectedAddonNames.join(', ')}
                                 </div>

@@ -155,212 +155,208 @@ export const SupplierDetailDrawer: React.FC<SupplierDetailDrawerProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex justify-end">
-      <div className="w-full max-w-3xl bg-white h-full shadow-2xl flex flex-col border-l border-slate-200 animate-in slide-in-from-right duration-200">
+      <div className="w-full max-w-5xl md:max-w-6xl bg-white h-full shadow-2xl flex flex-col border-l border-slate-200 animate-in slide-in-from-right duration-200">
         {/* Top Header */}
-        <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col gap-3 shrink-0">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-teal-600 text-white rounded-2xl shadow-xs">
-                <Building2 className="w-6 h-6" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-mono text-[11px] font-black px-2 py-0.5 rounded-lg bg-teal-100 text-teal-900">
-                    {supplier.supplierCode}
-                  </span>
-                  <h2 className="text-lg font-black text-slate-900">{supplier.name}</h2>
-                </div>
-                {supplier.legalName && supplier.legalName !== supplier.name && (
-                  <p className="text-xs text-slate-500 font-medium">Legal: {supplier.legalName}</p>
-                )}
-              </div>
+        <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between gap-4 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-teal-600 text-white rounded-2xl shadow-xs">
+              <Building2 className="w-6 h-6" />
             </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              {/* Quick Actions */}
-              {canEdit && !isArchived && (
-                <button
-                  onClick={() => onEdit(supplier)}
-                  className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer"
-                >
-                  <Edit3 className="w-3.5 h-3.5 text-teal-600" />
-                  Edit
-                </button>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-mono text-[11px] font-black px-2 py-0.5 rounded-lg bg-teal-100 text-teal-900">
+                  {supplier.supplierCode}
+                </span>
+                <h2 className="text-lg font-black text-slate-900">{supplier.name}</h2>
+              </div>
+              {supplier.legalName && supplier.legalName !== supplier.name && (
+                <p className="text-xs text-slate-500 font-medium">Legal: {supplier.legalName}</p>
               )}
+            </div>
+          </div>
 
-              {canArchive && (
-                <button
-                  onClick={() => onArchiveToggle(supplier, isArchived ? 'restore' : 'archive')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border shadow-xs cursor-pointer ${
-                    isArchived
-                      ? 'bg-teal-50 border-teal-200 text-teal-800 hover:bg-teal-100'
-                      : 'bg-white border-slate-200 text-slate-700 hover:bg-amber-50 hover:text-amber-800 hover:border-amber-200'
-                  }`}
-                >
-                  {isArchived ? (
-                    <>
-                      <RotateCcw className="w-3.5 h-3.5 text-teal-600" />
-                      Restore
-                    </>
-                  ) : (
-                    <>
-                      <Archive className="w-3.5 h-3.5 text-amber-600" />
-                      Archive
-                    </>
-                  )}
-                </button>
-              )}
-
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Quick Actions */}
+            {canEdit && !isArchived && (
               <button
-                onClick={onClose}
-                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-200 cursor-pointer"
+                onClick={() => onEdit(supplier)}
+                className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <Edit3 className="w-3.5 h-3.5 text-teal-600" />
+                Edit
               </button>
-            </div>
-          </div>
+            )}
 
-          {/* Status and Badges row */}
-          <div className="flex items-center justify-between flex-wrap gap-2 text-xs">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-slate-500 font-semibold">Status:</span>
-              {canEdit ? (
-                <select
-                  value={supplier.status}
-                  onChange={e => handleStatusChange(e.target.value as SupplierStatus)}
-                  className={`px-2.5 py-1 rounded-lg font-bold border text-xs cursor-pointer ${
-                    supplier.status === 'ACTIVE'
-                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                      : supplier.status === 'UNDER_REVIEW'
-                      ? 'bg-blue-50 text-blue-800 border-blue-300'
-                      : supplier.status === 'ARCHIVED'
-                      ? 'bg-slate-100 text-slate-700 border-slate-300'
-                      : 'bg-amber-50 text-amber-800 border-amber-300'
-                  }`}
-                >
-                  <option value="ACTIVE">ACTIVE</option>
-                  <option value="UNDER_REVIEW">UNDER REVIEW</option>
-                  <option value="INACTIVE">INACTIVE</option>
-                  <option value="SUSPENDED">SUSPENDED</option>
-                  <option value="ARCHIVED">ARCHIVED</option>
-                </select>
-              ) : (
-                <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-800 font-bold">
-                  {supplier.status}
-                </span>
-              )}
+            {canArchive && (
+              <button
+                onClick={() => onArchiveToggle(supplier, isArchived ? 'restore' : 'archive')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border shadow-xs cursor-pointer ${
+                  isArchived
+                    ? 'bg-teal-50 border-teal-200 text-teal-800 hover:bg-teal-100'
+                    : 'bg-white border-slate-200 text-slate-700 hover:bg-amber-50 hover:text-amber-800 hover:border-amber-200'
+                }`}
+              >
+                {isArchived ? (
+                  <>
+                    <RotateCcw className="w-3.5 h-3.5 text-teal-600" />
+                    Restore
+                  </>
+                ) : (
+                  <>
+                    <Archive className="w-3.5 h-3.5 text-amber-600" />
+                    Archive
+                  </>
+                )}
+              </button>
+            )}
 
-              <span className="text-slate-300">|</span>
-              <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-semibold flex items-center gap-1">
-                <MapPin className="w-3 h-3 text-slate-400" />
-                {supplier.destination}
-              </span>
-
-              {supplier.categories.map(c => (
-                <span key={c} className="px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 font-medium text-[11px]">
-                  {c}
-                </span>
-              ))}
-            </div>
-
-            <div className="flex items-center gap-3 text-slate-500 font-medium text-[11px]">
-              <span>Linked Items: <strong className="text-slate-900">{supplier.linkedServiceItemsCount || 0}</strong></span>
-              <span>Active Bookings: <strong className="text-teal-700">{supplier.activeBookingsCount || 0}</strong></span>
-            </div>
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-200 cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
         </div>
 
-        {/* Tab Strip */}
-        <div className="flex items-center gap-1 px-5 pt-3 border-b border-slate-200 bg-white overflow-x-auto shrink-0 text-xs">
-          <button
-            onClick={() => setActiveTab('OVERVIEW')}
-            className={`px-3 py-2 font-bold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'OVERVIEW'
-                ? 'border-teal-600 text-teal-700'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <UserIcon className="w-3.5 h-3.5" />
-            Profile & Contacts
-          </button>
+        {/* Main Body - Split into 25/75 Grid Layout */}
+        <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start h-full">
+            
+            {/* LEFT 25% COLUMN - Sticky Context/Navigation Panel */}
+            <div className="lg:col-span-3 space-y-4 lg:sticky lg:top-0">
+              
+              {/* Supplier Identity & Operational Summary Card */}
+              <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-3 text-xs">
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Status & Metadata</span>
+                  <div className="flex items-center gap-2">
+                    {canEdit ? (
+                      <select
+                        value={supplier.status}
+                        onChange={e => handleStatusChange(e.target.value as SupplierStatus)}
+                        className={`px-2 py-0.5 rounded-lg font-bold border text-xs cursor-pointer w-full ${
+                          supplier.status === 'ACTIVE'
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                            : supplier.status === 'UNDER_REVIEW'
+                            ? 'bg-blue-50 text-blue-800 border-blue-300'
+                            : supplier.status === 'ARCHIVED'
+                            ? 'bg-slate-100 text-slate-700 border-slate-300'
+                            : 'bg-amber-50 text-amber-800 border-amber-300'
+                        }`}
+                      >
+                        <option value="ACTIVE">ACTIVE</option>
+                        <option value="UNDER_REVIEW">UNDER REVIEW</option>
+                        <option value="INACTIVE">INACTIVE</option>
+                        <option value="SUSPENDED">SUSPENDED</option>
+                        <option value="ARCHIVED">ARCHIVED</option>
+                      </select>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-800 font-bold text-xs">
+                        {supplier.status}
+                      </span>
+                    )}
+                  </div>
+                </div>
 
-          <button
-            onClick={() => setActiveTab('COVERAGE')}
-            className={`px-3 py-2 font-bold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'COVERAGE'
-                ? 'border-teal-600 text-teal-700'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <Globe2 className="w-3.5 h-3.5" />
-            Coverage & Hubs
-          </button>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between py-1 border-b border-slate-100">
+                    <span className="text-slate-400">Destination:</span>
+                    <span className="font-bold text-slate-800 flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-slate-400" />
+                      {supplier.destination}
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-100">
+                    <span className="text-slate-400">Linked Services:</span>
+                    <span className="font-bold text-slate-800">{supplier.linkedServiceItemsCount || 0}</span>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-slate-400">Active Bookings:</span>
+                    <span className="font-bold text-teal-700">{supplier.activeBookingsCount || 0}</span>
+                  </div>
+                </div>
 
-          <button
-            onClick={() => setActiveTab('COMMERCIAL')}
-            className={`px-3 py-2 font-bold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'COMMERCIAL'
-                ? 'border-teal-600 text-teal-700'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <CreditCard className="w-3.5 h-3.5" />
-            Commercials & Bank
-          </button>
+                <div className="flex flex-wrap gap-1 pt-1 border-t border-slate-100">
+                  {supplier.categories.map(c => (
+                    <span key={c} className="px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 font-bold text-[10px]">
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              </div>
 
-          <button
-            onClick={() => setActiveTab('RATE_CARDS')}
-            className={`px-3 py-2 font-bold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'RATE_CARDS'
-                ? 'border-teal-600 text-teal-700'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <DollarSign className="w-3.5 h-3.5" />
-            Rate Cards ({rateCards.length})
-          </button>
+              {/* Quick Contacts Panel */}
+              <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-3 text-xs">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">Primary Contact</span>
+                <div className="space-y-2">
+                  <div>
+                    <span className="text-slate-400 text-[10px] block">Dispatcher Name</span>
+                    <span className="font-bold text-slate-800">{supplier.contactPerson}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 text-[10px] block">Email Address</span>
+                    <a href={`mailto:${supplier.email}`} className="font-semibold text-teal-600 hover:underline break-all">
+                      {supplier.email}
+                    </a>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 text-[10px] block">Phone Line</span>
+                    <a href={`tel:${supplier.phone}`} className="font-semibold text-slate-800 hover:underline">
+                      {supplier.phone}
+                    </a>
+                  </div>
+                  {supplier.emergencyPhone && (
+                    <div className="p-2 rounded-lg bg-rose-50 text-rose-800 border border-rose-100">
+                      <span className="text-[9px] font-bold uppercase tracking-wider block text-rose-500">24x7 Emergency Line</span>
+                      <span className="font-bold font-mono text-xs">{supplier.emergencyPhone}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
 
-          <button
-            onClick={() => setActiveTab('DOCUMENTS')}
-            className={`px-3 py-2 font-bold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'DOCUMENTS'
-                ? 'border-teal-600 text-teal-700'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <FileText className="w-3.5 h-3.5" />
-            Contracts ({documents.length})
-          </button>
+              {/* Section Navigation - Vertical Tabs */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                <div className="p-3 bg-slate-50 border-b border-slate-200">
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Sections</span>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {[
+                    { id: 'OVERVIEW', label: 'Profile & Contacts', icon: UserIcon },
+                    { id: 'COVERAGE', label: 'Coverage & Hubs', icon: Globe2 },
+                    { id: 'COMMERCIAL', label: 'Commercials & Bank', icon: CreditCard },
+                    { id: 'RATE_CARDS', label: `Rate Cards (${rateCards.length})`, icon: DollarSign },
+                    { id: 'DOCUMENTS', label: `Contracts (${documents.length})`, icon: FileText },
+                    { id: 'ALLOCATIONS', label: `Allocations (${allocations.length})`, icon: Briefcase },
+                    { id: 'AUDIT', label: `Audit Ledger (${activity.length})`, icon: History }
+                  ].map(tab => {
+                    const isActive = activeTab === tab.id;
+                    const Icon = tab.icon;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setActiveTab(tab.id as any)}
+                        className={`w-full px-4 py-3 text-left text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                          isActive
+                            ? 'bg-teal-600 text-white shadow-inner'
+                            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950'
+                        }`}
+                      >
+                        <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                        <span>{tab.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
-          <button
-            onClick={() => setActiveTab('ALLOCATIONS')}
-            className={`px-3 py-2 font-bold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'ALLOCATIONS'
-                ? 'border-teal-600 text-teal-700'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <Briefcase className="w-3.5 h-3.5" />
-            Allocations ({allocations.length})
-          </button>
+            </div>
 
-          <button
-            onClick={() => setActiveTab('AUDIT')}
-            className={`px-3 py-2 font-bold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'AUDIT'
-                ? 'border-teal-600 text-teal-700'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <History className="w-3.5 h-3.5" />
-            Audit Ledger ({activity.length})
-          </button>
-        </div>
-
-        {/* Tab Content Body */}
-        <div className="p-6 overflow-y-auto flex-1 space-y-6 text-xs">
-          {/* TAB 1: OVERVIEW & CONTACTS */}
-          {activeTab === 'OVERVIEW' && (
+            {/* RIGHT 75% COLUMN - Dynamic Workspace Panel */}
+            <div className="lg:col-span-9 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs min-h-[500px]">
+              {/* TAB 1: OVERVIEW & CONTACTS */}
+              {activeTab === 'OVERVIEW' && (
             <div className="space-y-5">
               {/* Primary Contact Banner */}
               <div className="p-4 rounded-2xl bg-teal-50/70 border border-teal-100 flex items-start justify-between gap-4">
@@ -938,5 +934,7 @@ export const SupplierDetailDrawer: React.FC<SupplierDetailDrawerProps> = ({
         </div>
       </div>
     </div>
+  </div>
+</div>
   );
 };

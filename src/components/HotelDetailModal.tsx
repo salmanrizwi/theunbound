@@ -254,7 +254,7 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                   </h3>
                 </div>
                 <div className="bg-black/50 backdrop-blur-md px-2.5 sm:px-3.5 py-1 sm:py-2 rounded-lg sm:rounded-xl border border-white/20 text-right shrink-0">
-                  <span className="text-[10px] sm:text-[11px] text-slate-300 block">Starting from</span>
+                  <span className="text-[10px] sm:text-[11px] text-slate-300 block">Final Price</span>
                   <span className="text-sm sm:text-lg font-black text-emerald-400">
                     {formatCurrency(startingSellingPrice, currency)}
                     <span className="text-[10px] sm:text-xs font-normal text-slate-300"> / night</span>
@@ -534,7 +534,7 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                     </div>
                     <div className="pt-2 border-t border-slate-700 flex justify-between items-baseline">
                       <div>
-                        <span className="text-xs font-bold text-white block">Final Selling Price:</span>
+                        <span className="text-xs font-bold text-white block">Final Price:</span>
                         <span className="text-[10px] text-slate-400">All taxes, fees & breakfast included</span>
                       </div>
                       <span className="text-base sm:text-lg font-black text-emerald-400">

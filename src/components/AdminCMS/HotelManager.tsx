@@ -5,6 +5,8 @@ import { useAuth } from '../../context/AuthContext';
 import { ImageUploadOrUrlInput } from '../ImageUploadOrUrlInput';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
+import { AdminWorkspaceLayout } from '../common/AdminWorkspaceLayout';
+import { ModuleMasterSyncBar } from './common/ModuleMasterSyncBar';
 import { 
   Hotel as HotelIcon, 
   Plus, 
@@ -659,6 +661,12 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
           </button>
         </div>
       </div>
+
+      {/* Google Sheets Master Sync Bar */}
+      <ModuleMasterSyncBar 
+        moduleType="HOTELS" 
+        onSyncCompleted={() => setHotels(db.getHotels())} 
+      />
 
       {/* ========================================================================= */}
       {/* MODE 1: CALENDAR VIEW (ADD & MANAGE DAILY NIGHTLY RATES ON CALENDAR)       */}
@@ -1391,7 +1399,7 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
       {/* ========================================================================= */}
       {isEditing && editingHotel && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
-          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-4xl w-full max-h-[94dvh] sm:max-h-[90vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in">
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-6xl w-full max-h-[94dvh] sm:max-h-[90vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in">
             {/* Modal Header */}
             <div className="flex items-center justify-between p-4 sm:p-6 pb-4 border-b border-slate-100 shrink-0 bg-white">
               <div>
@@ -1408,57 +1416,105 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
               </button>
             </div>
 
-            {/* Sub-tabs */}
-            <div className="flex items-center space-x-2 border-b border-slate-200 px-4 sm:px-6 py-2.5 bg-slate-50 overflow-x-auto shrink-0 scrollbar-none">
-              <button
-                type="button"
-                onClick={() => setActiveSubTab('DETAILS')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                  activeSubTab === 'DETAILS'
-                    ? 'bg-[#008972] text-white shadow-xs'
-                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                }`}
-              >
-                1. Property Overview
-              </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('ROOMS')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                    activeSubTab === 'ROOMS'
-                      ? 'bg-[#008972] text-white shadow-xs'
-                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                  }`}
-                >
-                  2. Room Categories & Per-Night Rates ({editingHotel.roomTypes?.length || 0})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('LOCATION')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                    activeSubTab === 'LOCATION'
-                      ? 'bg-[#008972] text-white shadow-xs'
-                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                  }`}
-                >
-                  3. Location & Transfers
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('SEO')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 whitespace-nowrap shrink-0 ${
-                    activeSubTab === 'SEO'
-                      ? 'bg-[#008972] text-white shadow-xs'
-                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                  }`}
-                >
-                  <Globe2 className="w-3.5 h-3.5" />
-                  <span>4. SEO & Indexing</span>
-                </button>
-              </div>
+            {/* DUAL COLUMN WORKSPACE */}
+            <div className="flex-1 overflow-y-auto p-5 sm:p-6">
+              <AdminWorkspaceLayout
+                sidebar={
+                  <div className="space-y-6">
+                    {/* Hotel Preview Context Panel */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl overflow-hidden shadow-xs text-xs text-slate-700">
+                      <div className="h-32 bg-slate-200 relative">
+                        <img 
+                          src={editingHotel.heroImage || 'https://images.unsplash.com/photo-1542051841857-5f90071e7989?q=80&w=400&auto=format&fit=crop'} 
+                          alt="Hotel Preview" 
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent" />
+                        <div className="absolute bottom-2 left-2 flex items-center space-x-1 text-amber-400">
+                          {Array.from({ length: Number(editingHotel.starRating || 5) }).map((_, i) => (
+                            <Star key={i} className="w-3.5 h-3.5 fill-current" />
+                          ))}
+                        </div>
+                      </div>
 
-              {/* Scrollable Modal Body */}
-              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 modal-body-scroll text-xs">
+                      <div className="p-4 space-y-2.5">
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Property Code</span>
+                          <span className="font-mono font-bold text-slate-900">{editingHotel.code || 'PENDING'}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Location</span>
+                          <span className="font-semibold text-slate-800">
+                            {editingHotel.cityName || 'City'}, {editingHotel.destinationName || 'Destination'}
+                          </span>
+                        </div>
+                        <div className="pt-2 border-t border-slate-200">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Lowest Contracted Rate</span>
+                          <span className="text-base font-black text-[#008972] font-mono mt-0.5">
+                            {editingHotel.currency || 'USD'} {editingHotel.startingNetPrice || 350} / night
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Vertical Navigation Tabs */}
+                    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs divide-y divide-slate-100">
+                      <button
+                        type="button"
+                        onClick={() => setActiveSubTab('DETAILS')}
+                        className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center space-x-2.5 cursor-pointer ${
+                          activeSubTab === 'DETAILS'
+                            ? 'bg-[#00C6A6]/10 text-slate-950 font-black border-l-4 border-[#00C6A6]'
+                            : 'hover:bg-slate-50 text-slate-600'
+                        }`}
+                      >
+                        <Building2 className="w-4 h-4 text-slate-400" />
+                        <span>1. Property Overview</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setActiveSubTab('ROOMS')}
+                        className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center space-x-2.5 cursor-pointer ${
+                          activeSubTab === 'ROOMS'
+                            ? 'bg-[#00C6A6]/10 text-slate-950 font-black border-l-4 border-[#00C6A6]'
+                            : 'hover:bg-slate-50 text-slate-600'
+                        }`}
+                      >
+                        <Bed className="w-4 h-4 text-slate-400" />
+                        <span>2. Room Categories ({editingHotel.roomTypes?.length || 0})</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setActiveSubTab('LOCATION')}
+                        className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center space-x-2.5 cursor-pointer ${
+                          activeSubTab === 'LOCATION'
+                            ? 'bg-[#00C6A6]/10 text-slate-950 font-black border-l-4 border-[#00C6A6]'
+                            : 'hover:bg-slate-50 text-slate-600'
+                        }`}
+                      >
+                        <MapPin className="w-4 h-4 text-slate-400" />
+                        <span>3. Location & Transfers</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setActiveSubTab('SEO')}
+                        className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center space-x-2.5 cursor-pointer ${
+                          activeSubTab === 'SEO'
+                            ? 'bg-[#00C6A6]/10 text-[#008972] font-black border-l-4 border-[#00C6A6]'
+                            : 'hover:bg-slate-50 text-slate-600'
+                        }`}
+                      >
+                        <Globe2 className="w-4 h-4 text-slate-400" />
+                        <span>4. SEO & Indexing</span>
+                      </button>
+                    </div>
+                  </div>
+                }
+                content={
+                  <div className="space-y-6">
                 {/* Tab 1: Details */}
               {activeSubTab === 'DETAILS' && (
                 <div className="space-y-4">
@@ -1799,10 +1855,10 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                             <label className="text-slate-500 font-bold">Total Max Occupancy (Pax)</label>
                             <input
                               type="number"
-                              value={room.maxOccupancy || (room.maxAdults + room.maxChildren) || 4}
+                              value={room.maxOccupancy ?? ((room.maxAdults || 2) + (room.maxChildren || 1))}
                               onChange={e => {
                                 const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                const val = Number(e.target.value);
+                                const val = Number(e.target.value) || 1;
                                 updatedRooms[roomIdx].maxOccupancy = val;
                                 updatedRooms[roomIdx].maxPax = val;
                                 setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
@@ -2109,10 +2165,10 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                                   <label className="text-slate-500 text-[10px] uppercase font-bold block mb-1">Single Net / Nt</label>
                                   <input
                                     type="number"
-                                    value={rate.singleNetRate}
+                                    value={rate.singleNetRate ?? ''}
                                     onChange={e => {
                                       const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                      updatedRooms[roomIdx].rates[rIdx].singleNetRate = Number(e.target.value);
+                                      updatedRooms[roomIdx].rates[rIdx].singleNetRate = Number(e.target.value) || 0;
                                       setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
                                     }}
                                     className="w-full p-1.5 border border-slate-200 rounded-lg font-mono font-bold text-xs bg-slate-50 focus:bg-white"
@@ -2124,10 +2180,10 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                                   <input
                                     type="number"
                                     required
-                                    value={rate.doubleNetRate}
+                                    value={rate.doubleNetRate ?? ''}
                                     onChange={e => {
                                       const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                      updatedRooms[roomIdx].rates[rIdx].doubleNetRate = Number(e.target.value);
+                                      updatedRooms[roomIdx].rates[rIdx].doubleNetRate = Number(e.target.value) || 0;
                                       setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
                                     }}
                                     className="w-full p-1.5 border border-slate-200 rounded-lg font-mono font-bold text-xs bg-slate-50 focus:bg-white text-[#008972]"
@@ -2138,10 +2194,10 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                                   <label className="text-slate-500 text-[10px] uppercase font-bold block mb-1">Triple Net / Nt</label>
                                   <input
                                     type="number"
-                                    value={rate.tripleNetRate}
+                                    value={rate.tripleNetRate ?? ''}
                                     onChange={e => {
                                       const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                      updatedRooms[roomIdx].rates[rIdx].tripleNetRate = Number(e.target.value);
+                                      updatedRooms[roomIdx].rates[rIdx].tripleNetRate = Number(e.target.value) || 0;
                                       setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
                                     }}
                                     className="w-full p-1.5 border border-slate-200 rounded-lg font-mono font-bold text-xs bg-slate-50 focus:bg-white"
@@ -2152,10 +2208,10 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                                   <label className="text-slate-500 text-[10px] uppercase font-bold block mb-1">Extra Bed Net</label>
                                   <input
                                     type="number"
-                                    value={rate.extraBedRate}
+                                    value={rate.extraBedRate ?? ''}
                                     onChange={e => {
                                       const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                      updatedRooms[roomIdx].rates[rIdx].extraBedRate = Number(e.target.value);
+                                      updatedRooms[roomIdx].rates[rIdx].extraBedRate = Number(e.target.value) || 0;
                                       setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
                                     }}
                                     className="w-full p-1.5 border border-slate-200 rounded-lg font-mono font-bold text-xs bg-slate-50 focus:bg-white"
@@ -2166,10 +2222,10 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                                   <label className="text-slate-500 text-[10px] uppercase font-bold block mb-1">Child Net / Nt</label>
                                   <input
                                     type="number"
-                                    value={rate.childRate}
+                                    value={rate.childRate ?? ''}
                                     onChange={e => {
                                       const updatedRooms = [...(editingHotel.roomTypes || [])];
-                                      updatedRooms[roomIdx].rates[rIdx].childRate = Number(e.target.value);
+                                      updatedRooms[roomIdx].rates[rIdx].childRate = Number(e.target.value) || 0;
                                       setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
                                     }}
                                     className="w-full p-1.5 border border-slate-200 rounded-lg font-mono font-bold text-xs bg-slate-50 focus:bg-white"
@@ -2258,7 +2314,10 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                   onChange={(newSeo) => setEditingHotel(prev => prev ? ({ ...prev, seo: newSeo, slug: newSeo.slug || prev.slug }) : null)}
                 />
               )}
-              </div>
+                  </div>
+                }
+              />
+            </div>
 
               {/* Sticky / Fixed Footer Actions */}
               <div className="p-4 sm:px-6 py-3 border-t border-slate-100 bg-white/95 backdrop-blur-xs shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3">

@@ -145,7 +145,7 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
             <div className="flex items-center space-x-2 shrink-0">
               <div className="text-right">
                 <span className="text-[10px] uppercase text-slate-400 font-bold block">
-                  {isB2BAgent ? 'B2B Wholesale Rate' : 'Starting From'}
+                  Final Price
                 </span>
                 <span className="text-base font-black text-[#00C6A6] font-mono">
                   {formatCurrency(displayPrice, selectedCurrency)} <span className="text-[10px] text-slate-300 font-sans font-normal">/ pax</span>
@@ -456,7 +456,7 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
           <div className="flex items-center justify-between sm:block">
             <div>
               <span className="text-[9px] sm:text-[10px] font-bold text-slate-500 uppercase block">
-                {isB2BAgent ? 'B2B Wholesale Price' : 'Total Package Price'}
+                Final Price
               </span>
               <div className="flex items-baseline space-x-1 sm:space-x-1.5">
                 <span className="text-lg sm:text-xl font-black text-slate-900 font-mono">

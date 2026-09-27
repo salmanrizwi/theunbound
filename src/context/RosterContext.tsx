@@ -195,12 +195,13 @@ export const RosterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
 
     // 3. Check regular weekly operating days
-    if (!rule.operatingDays.includes(dayName)) {
+    const opDays = rule.operatingDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    if (!opDays.includes(dayName)) {
       return {
         isAvailable: false,
         status: 'OFF_ROSTER',
         date: dateStr,
-        reason: `Does not operate on ${dayName}s (Operating days: ${rule.operatingDays.join(', ')})`,
+        reason: `Does not operate on ${dayName}s (Operating days: ${opDays.join(', ')})`,
         operatingDayName: dayName,
         maxCapacity: 0,
         remainingCapacity: 0,

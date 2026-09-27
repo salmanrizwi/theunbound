@@ -1456,7 +1456,7 @@ export const BookingOperationsEngine: React.FC<BookingOperationsEngineProps> = (
                       <li key={idx} className="flex items-start gap-2">
                         <span className="text-amber-600 font-bold">•</span>
                         <span>
-                          <strong>{mr.itemName}:</strong> {mr.reasons.join(', ')}
+                          <strong>{mr.itemName}:</strong> {(mr.reasons || []).join(', ')}
                         </span>
                       </li>
                     ))}

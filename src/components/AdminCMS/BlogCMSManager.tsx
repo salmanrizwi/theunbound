@@ -131,7 +131,7 @@ export const BlogCMSManager: React.FC<BlogCMSManagerProps> = ({ onViewArticle })
       destinationSlug: formData.destinationSlug || 'japan',
       seoTitle: formData.seo?.metaTitle || formData.seoTitle || formData.title || '',
       seoDescription: formData.seo?.metaDescription || formData.seoDescription || formData.summary || '',
-      seoKeywords: (formData.seo?.keywords && formData.seo.keywords.join(', ')) || formData.seoKeywords || '',
+      seoKeywords: (Array.isArray(formData.seo?.keywords) ? formData.seo.keywords.join(', ') : '') || formData.seoKeywords || '',
       seo: formData.seo || editingBlog?.seo,
       views: editingBlog?.views || 0,
       createdAt: editingBlog?.createdAt || new Date().toISOString(),

@@ -205,7 +205,7 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
               </span>
               <span>•</span>
               <span className="text-slate-400">
-                {product.operatingDays.slice(0, 4).join(', ')}
+                {Array.isArray(product.operatingDays) ? product.operatingDays.slice(0, 4).join(', ') : (product.operatingDays || 'Daily')}
               </span>
               {isAlreadyAdded && (
                 <>

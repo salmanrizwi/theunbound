@@ -23,16 +23,34 @@ export function formatCurrency(amount?: number | null, currency: CurrencyCode | 
 }
 
 // Product categories that use capacity-based vehicle/yacht calculation by default
-export const CAPACITY_BASED_CATEGORIES = ['Private Tours', 'Transfers', 'Transport', 'Private Yacht'];
+export const CAPACITY_BASED_CATEGORIES = [
+  'Private Tour',
+  'Private Tours',
+  'Transfer',
+  'Transfers',
+  'Transport',
+  'Private Yacht',
+  'Private Yacht Charter',
+  'Ferry',
+  'Cruises'
+];
 
 export function isCapacityBasedProduct(product: Product): boolean {
   if (product.pricingMethod === 'capacity_based') return true;
   if (product.pricingMethod === 'per_person') return false;
+  if (product.pricingMethod as string === 'hourly' || product.pricingMethod === 'hourly_based') return false;
   if (product.vehicleConfig?.pricingMethod === 'capacity_based') return true;
   if (product.isTransfer) return true;
-  return CAPACITY_BASED_CATEGORIES.includes(product.category as string) || 
-         product.category === 'Private Yacht' || 
-         (product.category as string) === 'Cruises';
+  if (product.vehicleConfig && product.vehicleConfig.maxSeats) return true;
+  const cat = (product.category || '').toLowerCase();
+  return (
+    cat.includes('private tour') ||
+    cat.includes('transfer') ||
+    cat.includes('transport') ||
+    cat.includes('private yacht') ||
+    cat.includes('ferry') ||
+    cat.includes('cruise')
+  );
 }
 
 export interface CapacitySimulationRow {
@@ -93,13 +111,95 @@ export function generateCapacitySimulationMatrix(
   return rows;
 }
 
+export type MarginType = 'PERCENTAGE' | 'FIXED';
+export type ServiceChargeType = 'PERCENTAGE' | 'FIXED';
+
+export interface UnifiedPricingInput {
+  nettPrice: number;
+  marginType?: MarginType;
+  marginValue?: number; // e.g. 20 (for 20%) or 2500 (fixed amount)
+  serviceChargeType?: ServiceChargeType;
+  serviceChargeValue?: number; // e.g. 5 (for 5%) or 500 (fixed amount)
+  taxPercent?: number; // e.g. 10 (for 10% tax)
+  taxApplication?: 'ON_MARGIN' | 'ON_TOTAL' | 'NONE'; // Default: ON_MARGIN
+  currency?: CurrencyCode;
+  quantity?: number;
+}
+
+export interface UnifiedPricingResult {
+  nettPrice: number;
+  marginAmount: number;
+  marginType: MarginType;
+  marginValue: number;
+  serviceChargeAmount: number;
+  serviceChargeType: ServiceChargeType;
+  serviceChargeValue: number;
+  taxAmount: number;
+  taxPercent: number;
+  finalPrice: number;
+  unitFinalPrice: number;
+  currency: CurrencyCode;
+}
+
+/**
+ * Global Authoritative Calculation:
+ * Formula: NETT PRICE + MARGIN + SERVICE CHARGE (+ APPLICABLE TAX) = FINAL PRICE
+ * Supports all sellable inventory types: Products, Hotels, Hotel Rooms, Visa, Ancillary, Rail, Transfers, Tours, Tickets, Guides, Restaurants, Private Yachts.
+ */
+export function calculateUnifiedPrice(input: UnifiedPricingInput): UnifiedPricingResult {
+  const nett = Math.max(0, input.nettPrice || 0);
+  const qty = Math.max(1, input.quantity || 1);
+  const totalNett = nett * qty;
+
+  const marginType: MarginType = input.marginType || 'PERCENTAGE';
+  const marginValue = input.marginValue !== undefined ? input.marginValue : 20;
+  const marginAmount = marginType === 'FIXED' 
+    ? marginValue * qty 
+    : totalNett * (marginValue / 100);
+
+  const serviceChargeType: ServiceChargeType = input.serviceChargeType || 'FIXED';
+  const serviceChargeValue = input.serviceChargeValue !== undefined ? input.serviceChargeValue : 0;
+  const serviceChargeAmount = serviceChargeType === 'FIXED' 
+    ? serviceChargeValue * qty 
+    : totalNett * (serviceChargeValue / 100);
+
+  const taxPercent = input.taxPercent !== undefined ? input.taxPercent : 10;
+  const taxApp = input.taxApplication || 'ON_MARGIN';
+  let taxAmount = 0;
+  if (taxApp === 'ON_MARGIN') {
+    taxAmount = marginAmount * (taxPercent / 100);
+  } else if (taxApp === 'ON_TOTAL') {
+    taxAmount = (totalNett + marginAmount + serviceChargeAmount) * (taxPercent / 100);
+  }
+
+  const finalPrice = Math.round(totalNett + marginAmount + serviceChargeAmount + taxAmount);
+  const unitFinalPrice = qty > 0 ? Math.round(finalPrice / qty) : finalPrice;
+
+  return {
+    nettPrice: totalNett,
+    marginAmount,
+    marginType,
+    marginValue,
+    serviceChargeAmount,
+    serviceChargeType,
+    serviceChargeValue,
+    taxAmount,
+    taxPercent,
+    finalPrice,
+    unitFinalPrice,
+    currency: input.currency || 'USD'
+  };
+}
+
 export function calculateSellingPrice(
   adultNetPrice: number,
   markupPercent: number = 20,
   taxPercent: number = 10,
-  serviceFeeFixed: number = 0
+  serviceFeeFixed: number = 0,
+  marginType: MarginType = 'PERCENTAGE',
+  marginFixed: number = 0
 ): number {
-  const markupAmount = adultNetPrice * (markupPercent / 100);
+  const markupAmount = marginType === 'FIXED' ? marginFixed : adultNetPrice * (markupPercent / 100);
   const taxAmount = markupAmount * (taxPercent / 100);
   return adultNetPrice + markupAmount + taxAmount + serviceFeeFixed;
 }
@@ -261,7 +361,7 @@ export function calculateProductPrice(
   let baseAdultNet = product.adultNetPrice ?? product.adultNettCost ?? 0;
   let baseChildNet = product.childNetPrice !== undefined ? product.childNetPrice : (product.childNettCost !== undefined ? product.childNettCost : baseAdultNet * 0.5);
   let baseInfantNet = product.infantNetPrice !== undefined ? product.infantNetPrice : (product.infantNettCost !== undefined ? product.infantNettCost : 0);
-  let nativeCurrency = product.currency;
+  let nativeCurrency = product.nativeCurrency || product.currency || 'USD';
 
   let authoritativeRateId: string | undefined = (product as any).rateId;
   let authoritativeRateVersion: string | number | undefined = (product as any).version || 1;
@@ -393,8 +493,37 @@ export function calculateProductPrice(
       }
     }
 
-    // Total Vehicle Nett Cost: remains fixed per vehicle (e.g. ₹500 for 1–7 passengers on 1 vehicle)
-    rawTotalNetCostInNative = vehiclesAllocated * unitVehicleNetCost;
+    // Total Vehicle Nett Cost calculation with passenger distribution and capacity-based tiered pricing rules
+    if (product.tieredPricing && product.tieredPricing.length > 0) {
+      const allocationStrategy = vehicleConfig?.allocationStrategy || 'Occupancy Split';
+      const vehicleDistribution: number[] = [];
+
+      if (allocationStrategy === 'Occupancy Split') {
+        let remaining = totalOccupiedSeats;
+        for (let i = 0; i < vehiclesAllocated; i++) {
+          const allocated = Math.min(remaining, maxSeats);
+          vehicleDistribution.push(allocated);
+          remaining -= allocated;
+        }
+      } else {
+        const base = Math.floor(totalOccupiedSeats / vehiclesAllocated);
+        let remainder = totalOccupiedSeats % vehiclesAllocated;
+        for (let i = 0; i < vehiclesAllocated; i++) {
+          const count = base + (remainder > 0 ? 1 : 0);
+          vehicleDistribution.push(count);
+          if (remainder > 0) remainder--;
+        }
+      }
+
+      rawTotalNetCostInNative = 0;
+      for (const vCount of vehicleDistribution) {
+        const matchingTier = product.tieredPricing.find(t => vCount >= t.minPax && vCount <= t.maxPax);
+        rawTotalNetCostInNative += matchingTier ? matchingTier.netCostPerPax : unitVehicleNetCost;
+      }
+    } else {
+      rawTotalNetCostInNative = vehiclesAllocated * unitVehicleNetCost;
+    }
+
     const perPersonNetInNative = totalPax > 0 ? rawTotalNetCostInNative / totalPax : rawTotalNetCostInNative;
 
     adultNetInNative = rawTotalNetCostInNative;
@@ -408,6 +537,7 @@ export function calculateProductPrice(
       maxSeats,
       occupiedSeats: totalOccupiedSeats,
       vehiclesAllocated,
+      vehiclesRequired: vehiclesAllocated,
       unitVehicleNetCost,
       totalVehicleNetCost: rawTotalNetCostInNative,
       perPersonNetCost: perPersonNetInNative,
@@ -420,7 +550,7 @@ export function calculateProductPrice(
         totalSeats: totalOccupiedSeats
       },
       allowMultipleVehicles: allowMultiple
-    };
+    } as any;
   } else if (isFixedStayHotel) {
     // Fixed Total Stay Net Cost for Manual Hotel / Room Configuration
     rawTotalNetCostInNative = baseAdultNet * quantity;
@@ -428,22 +558,49 @@ export function calculateProductPrice(
     childNetInNative = (baseChildNet || 0) * children * quantity;
     infantNetInNative = (baseInfantNet || 0) * infants * quantity;
     rawTotalNetCostInNative = adultNetInNative + childNetInNative + infantNetInNative;
+  } else if ((product.category as string) === 'Guides' || (product.category as string) === 'Guide' || (product as any).hourlyNetPrice || product.pricingMethod === 'hourly_based') {
+    // Hourly Guide Service Pricing Engine (Section 14)
+    const minHours = (product as any).minHours || 1;
+    const requestedHours = (request as any).serviceDurationHours || (request as any).hours || minHours;
+    const billableHours = Math.max(minHours, requestedHours);
+    const hourlyRate = (product as any).hourlyNetPrice || baseAdultNet || 0;
+    rawTotalNetCostInNative = hourlyRate * billableHours * quantity;
+    adultNetInNative = rawTotalNetCostInNative;
+    childNetInNative = 0;
+    infantNetInNative = 0;
   } else {
-    // Standard Per-Person Tour / Activity / Hotel Pricing Engine
+    // Standard Per-Person Tour / Activity / Ticket / Restaurant Pricing Engine
     adultNetInNative = baseAdultNet * adults * quantity;
     childNetInNative = baseChildNet * children * quantity;
     infantNetInNative = baseInfantNet * infants * quantity;
     rawTotalNetCostInNative = adultNetInNative + childNetInNative + infantNetInNative;
   }
 
-  // Add-ons Calculation
+  // Optional Experience Upgrades / Upsells & Add-ons Calculation (Section 20-21)
   let addonsNetInNative = 0;
-  if (request.selectedAddonIds && (request.selectedAddonIds || []).length > 0 && product.addons) {
-    const selectedAddons = (product.addons || []).filter(a => (request.selectedAddonIds || []).includes(a.id));
-    for (const addon of selectedAddons) {
-      const chargeablePax = isCapacity ? 1 : (adults + children);
-      const addonAmountConverted = convertCurrency(addon.pricePerPax * chargeablePax * quantity, addon.currency, product.currency);
-      addonsNetInNative += addonAmountConverted;
+  const activeUpsellIds = request.selectedUpsellIds || request.selectedAddonIds || [];
+  
+  if (activeUpsellIds.length > 0) {
+    // 1. Check Product Upsells first (Authoritative Master Source)
+    if (product.upsells && product.upsells.length > 0) {
+      const selectedUpsells = product.upsells.filter(u => 
+        u.status !== 'INACTIVE' && u.status !== 'ARCHIVED' && activeUpsellIds.includes(u.id)
+      );
+      for (const upsell of selectedUpsells) {
+        const isPerBooking = upsell.priceType === 'PER_BOOKING' || upsell.priceType === 'PER_VEHICLE';
+        const chargeablePax = isPerBooking ? 1 : (isCapacity ? 1 : (adults + children));
+        const unitCost = upsell.netCost !== undefined ? upsell.netCost : upsell.price;
+        const upsellAmountConverted = convertCurrency(unitCost * chargeablePax * quantity, upsell.currency, product.currency);
+        addonsNetInNative += upsellAmountConverted;
+      }
+    } else if (product.addons && product.addons.length > 0) {
+      // 2. Fallback to product.addons
+      const selectedAddons = product.addons.filter(a => activeUpsellIds.includes(a.id));
+      for (const addon of selectedAddons) {
+        const chargeablePax = isCapacity ? 1 : (adults + children);
+        const addonAmountConverted = convertCurrency(addon.pricePerPax * chargeablePax * quantity, addon.currency, product.currency);
+        addonsNetInNative += addonAmountConverted;
+      }
     }
   }
 
@@ -482,32 +639,47 @@ export function calculateProductPrice(
   let markupRate = configuredMarkupPercent / 100;
   let nativeMarkupAmount = nativeTotalNetCost * markupRate;
 
+  // Support for configured fixed margin amounts (Global Pricing Architecture Section 4)
+  if ((product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined) {
+    nativeMarkupAmount = Number((product as any).marginFixed) * (isCapacity ? 1 : totalPax);
+    markupRate = nativeTotalNetCost > 0 ? nativeMarkupAmount / nativeTotalNetCost : 0;
+  }
+
   let b2bWholesaleMarkupRate = configuredMarkupPercent / 100;
   let nativeB2bWholesaleNetToAgent = nativeTotalNetCost + (nativeTotalNetCost * b2bWholesaleMarkupRate);
   let agentClientMarkupRate = (request.agentClientMarkupPercent || 12) / 100;
   let nativeAgentProfitAmount = nativeB2bWholesaleNetToAgent * agentClientMarkupRate;
 
   if (pricingTier === 'B2B') {
-    const dmcWholesaleMarginAmount = nativeTotalNetCost * b2bWholesaleMarkupRate;
+    const dmcWholesaleMarginAmount = ((product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined)
+      ? Number((product as any).marginFixed) * (isCapacity ? 1 : totalPax)
+      : nativeTotalNetCost * b2bWholesaleMarkupRate;
     nativeB2bWholesaleNetToAgent = nativeTotalNetCost + dmcWholesaleMarginAmount;
     nativeAgentProfitAmount = nativeB2bWholesaleNetToAgent * agentClientMarkupRate;
     nativeMarkupAmount = dmcWholesaleMarginAmount + nativeAgentProfitAmount;
     markupRate = nativeTotalNetCost > 0 ? nativeMarkupAmount / nativeTotalNetCost : 0;
   }
 
-  // TAX SPEC: Tax is calculated on the MARGIN amount only in Native Currency!
+  // Dynamic Fee in Native Currency
+  let nativeServiceFee = 0;
+  if ((product as any).serviceFeeFixed !== undefined) {
+    nativeServiceFee = Number((product as any).serviceFeeFixed) * (isCapacity ? 1 : totalPax);
+  } else if ((product as any).serviceFeePercent !== undefined) {
+    nativeServiceFee = nativeTotalNetCost * ((product as any).serviceFeePercent / 100);
+  } else if ((product as any).serviceFee !== undefined) {
+    nativeServiceFee = Number((product as any).serviceFee) * (isCapacity ? 1 : totalPax);
+  }
+  const feeRate = nativeTotalNetCost > 0 ? (nativeServiceFee / nativeTotalNetCost) : 0;
+
+  // TAX SPEC: Tax on taxable base in Native Currency
   const configuredTaxPercent = rateTaxPercentage !== undefined 
     ? rateTaxPercentage 
     : (product.taxPercent !== undefined ? product.taxPercent : 10);
   const taxRate = configuredTaxPercent / 100;
-  const nativeTaxAmount = nativeMarkupAmount * taxRate;
-
-  // Dynamic Fee in Native Currency
-  const configuredFeePercent = product.serviceFeeFixed !== undefined 
-    ? (nativeTotalNetCost > 0 ? (product.serviceFeeFixed / nativeTotalNetCost) * 100 : 0)
-    : (product.productType === 'Hotel' || product.accommodationType === 'manual' || product.isManualHotel ? 0 : 2.5);
-  const feeRate = configuredFeePercent / 100;
-  const nativeServiceFee = nativeTotalNetCost * feeRate;
+  const taxableBase = ((product as any).taxMethod === 'on_margin' || (product as any).taxBase === 'margin')
+    ? nativeMarkupAmount
+    : (nativeTotalNetCost + nativeMarkupAmount + nativeServiceFee);
+  const nativeTaxAmount = taxableBase * taxRate;
 
   // Discounts & Commissions in Native Currency
   const discountPercent = request.customDiscountPercent || 0;

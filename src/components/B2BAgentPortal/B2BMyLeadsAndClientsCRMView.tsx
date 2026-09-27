@@ -1057,14 +1057,14 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
       {/* ========================================================================= */}
       {selectedLead && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh] my-auto">
+          <div className="bg-slate-100 w-full max-w-5xl md:max-w-6xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh] my-auto">
             {/* Header */}
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+            <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-white shrink-0">
               <div className="flex items-center space-x-2">
                 <span className="font-mono text-xs font-black text-slate-900 bg-white border border-slate-200 px-2 py-0.5 rounded-md shadow-xs">
                   {selectedLead.leadNumber || 'LED-DIRECT'}
                 </span>
-                <span className="text-xs font-bold text-slate-700">CRM Record: {selectedLead.contactName}</span>
+                <span className="text-sm font-black text-slate-900">CRM Workspace: {selectedLead.contactName}</span>
               </div>
               <button
                 onClick={() => setSelectedLead(null)}
@@ -1074,34 +1074,94 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
               </button>
             </div>
 
-            {/* Modal Tabs for 7 Information Sections */}
-            <div className="flex items-center space-x-1 px-5 pt-3 border-b border-slate-200 bg-slate-50/40 overflow-x-auto">
-              {[
-                { id: 'overview', label: 'Lead & Client' },
-                { id: 'quotes', label: 'Assigned Quotes' },
-                { id: 'bookings', label: 'Bookings' },
-                { id: 'followups', label: 'Follow-ups' },
-                { id: 'communications', label: 'Communications' },
-                { id: 'timeline', label: 'Activity Timeline' }
-              ].map(tab => (
-                <button
-                  key={tab.id}
-                  onClick={() => setDetailTab(tab.id as any)}
-                  className={`px-3 py-2 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-                    detailTab === tab.id
-                      ? 'border-slate-950 text-slate-950'
-                      : 'border-transparent text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
+            {/* Split Main Body into 25/75 Grid Layout */}
+            <div className="flex-1 overflow-y-auto p-6 bg-slate-100/50">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start h-full">
 
-            {/* Modal Body */}
-            <div className="p-6 space-y-5 overflow-y-auto flex-1 text-xs">
-              {/* TAB 1: LEAD & CLIENT DETAILS */}
-              {detailTab === 'overview' && (
+                {/* LEFT 25% COLUMN - Sticky Context/Navigation Panel */}
+                <div className="lg:col-span-3 space-y-4 lg:sticky lg:top-0">
+                  
+                  {/* Lead Context Summary Card */}
+                  <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-3 text-xs">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">Lead Context</span>
+                    <div className="space-y-2">
+                      <div>
+                        <span className="text-slate-400 text-[10px] block">Client Name</span>
+                        <span className="font-bold text-slate-800 text-sm block">{selectedLead.contactName}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 text-[10px] block">Company / Agency</span>
+                        <span className="font-bold text-slate-800 block">{selectedLead.companyName || selectedLead.agencyName || 'Independent Guest'}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100 mt-1">
+                        <div>
+                          <span className="text-slate-400 text-[9px] block">Destination</span>
+                          <span className="font-semibold text-slate-800">{selectedLead.destinationName || 'Japan'}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 text-[9px] block">Budget Per Person</span>
+                          <span className="font-semibold text-teal-600">${Number(selectedLead.estimatedBudget || 0).toLocaleString()}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Contact Channels Card */}
+                  <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-2 text-xs">
+                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">Contact Channels</span>
+                    <div className="space-y-1.5">
+                      <a href={`mailto:${selectedLead.email}`} className="flex items-center gap-1.5 font-medium text-teal-600 hover:underline break-all">
+                        <Mail className="w-3.5 h-3.5" />
+                        {selectedLead.email || 'No email specified'}
+                      </a>
+                      <a href={`tel:${selectedLead.phone}`} className="flex items-center gap-1.5 font-medium text-slate-800 hover:underline">
+                        <Phone className="w-3.5 h-3.5" />
+                        {selectedLead.phone || 'No phone specified'}
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* Section Navigation - Vertical Tabs */}
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                    <div className="p-3 bg-slate-50 border-b border-slate-200">
+                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Sections</span>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                      {[
+                        { id: 'overview', label: 'Lead & Client Profile', icon: Users },
+                        { id: 'quotes', label: 'Assigned Quotes', icon: FileText },
+                        { id: 'bookings', label: 'Bookings Converted', icon: BookmarkCheck },
+                        { id: 'followups', label: 'Follow-ups', icon: Clock },
+                        { id: 'communications', label: 'Communications', icon: MessageSquare },
+                        { id: 'timeline', label: 'Activity Timeline', icon: History }
+                      ].map(tab => {
+                        const isActive = detailTab === tab.id;
+                        const Icon = tab.icon;
+                        return (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setDetailTab(tab.id as any)}
+                            className={`w-full px-4 py-3 text-left text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                              isActive
+                                ? 'bg-slate-900 text-white shadow-inner'
+                                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950'
+                            }`}
+                          >
+                            <Icon className={`w-4 h-4 ${isActive ? 'text-[#00E5C0]' : 'text-slate-400'}`} />
+                            <span>{tab.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* RIGHT 75% COLUMN - Dynamic Workspace Panel */}
+                <div className="lg:col-span-9 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs min-h-[450px]">
+                  {/* TAB 1: LEAD & CLIENT DETAILS */}
+                  {detailTab === 'overview' && (
                 <div className="space-y-4">
                   {/* Client Details Section */}
                   <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2.5">
@@ -1400,10 +1460,12 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                   </div>
                 </div>
               )}
-            </div>
+            </div> {/* End lg:col-span-9 */}
+          </div> {/* End grid */}
+        </div> {/* End flex-1 overflow-y-auto */}
 
             {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-100 flex items-center justify-between gap-2 bg-slate-50/70">
+            <div className="p-4 border-t border-slate-200 flex items-center justify-between gap-2 bg-white shrink-0">
               <button
                 type="button"
                 onClick={() => setSelectedLead(null)}

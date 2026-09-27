@@ -1,5 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { Product, ProductCategory, CurrencyCode, Destination, Supplier, DestinationRegionItem, CityHub, MasterRegion, ProductPricingMethod, TransferVehicleConfig } from '../../types';
+import { 
+  Product, 
+  ProductCategory, 
+  CurrencyCode, 
+  Destination, 
+  Supplier, 
+  DestinationRegionItem, 
+  CityHub, 
+  MasterRegion, 
+  ProductPricingMethod, 
+  TransferVehicleConfig,
+  TicketConfig,
+  GuideConfig,
+  RestaurantConfig,
+  FerryConfig
+} from '../../types';
+import { ModuleMasterSyncBar } from './common/ModuleMasterSyncBar';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { formatCurrency, CAPACITY_BASED_CATEGORIES } from '../../services/pricingEngine';
@@ -39,22 +55,36 @@ import {
   ShieldAlert,
   Gauge,
   Train,
-  Sliders
+  Sliders,
+  Code,
+  FileText,
+  ExternalLink,
+  Settings,
+  Ticket,
+  Utensils,
+  Wine,
+  Languages,
+  CalendarDays,
+  CheckSquare,
+  X,
+  Tag
 } from 'lucide-react';
 import { fileToDataUrl, convertUnsplashUrl, fetchUnsplashImagesByQuery } from '../../utils/imageUtils';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
+import { ProductUpdateWorkspace } from './ProductUpdateWorkspace';
 import { JapanRailJourneyConfigurator } from '../JapanRail/JapanRailJourneyConfigurator';
 import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
+import { AUTHORITATIVE_PRODUCT_CATEGORIES, PRODUCT_CMS_CATEGORIES, resolveAuthoritativeCategory, CONFIGURATOR_REGISTRY_MAP } from '../../services/configuratorRegistry';
+import { OperationalAssetSelector, SelectedAssetPayload } from './OperationalAssetSelector';
+import { OperationalAssetsManager } from './OperationalAssetsManager';
 
 interface ProductManagerProps {
   destinations: Destination[];
   onViewProduct?: (product: Product) => void;
 }
 
-const CATEGORIES: ProductCategory[] = [
-  'Private Tours', 'Day Trips', 'Activities', 'Transfers', 'Transport', 'Private Yacht', 'Tours', 'Rail', 'Ferries', 'Guides', 'Travel Services'
-];
+const CATEGORIES: ProductCategory[] = [...PRODUCT_CMS_CATEGORIES];
 
 export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, onViewProduct }) => {
   const db = AppDatabase.getInstance();
@@ -95,78 +125,122 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [testingRailProduct, setTestingRailProduct] = useState<Product | null>(null);
   const [testingConfigProduct, setTestingConfigProduct] = useState<Product | null>(null);
+  const [inspectingProduct, setInspectingProduct] = useState<Product | null>(null);
+  const [isOperationalAssetsManagerOpen, setIsOperationalAssetsManagerOpen] = useState(false);
+  const [operationalAssetsManagerTab, setOperationalAssetsManagerTab] = useState<'VEHICLES' | 'YACHTS' | 'FERRIES'>('VEHICLES');
 
-  // Form State
-  const [formData, setFormData] = useState<Partial<Product>>({
-    sku: '',
+  // Form State: Starts 100% clean for new products (no fabricated pricing or operational presets)
+  const createCleanProductFormData = (targetDest?: Destination, targetHub?: CityHub, targetReg?: MasterRegion): Partial<Product> => ({
+    sku: `UB-PROD-${Math.floor(100000 + Math.random() * 900000)}`,
     name: '',
-    destinationId: destinations[0]?.id || 'dest-japan',
-    destinationName: destinations[0]?.name || 'Japan',
-    regionId: '',
-    regionName: '',
-    hubId: '',
-    country: 'Japan',
-    city: 'Tokyo',
-    productType: 'Private Day Tour',
-    category: 'Private Tours',
-    subcategory: 'Cultural & Heritage',
-    duration: '8 Hours',
-    operatingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-    operatingHours: '09:00 - 17:00',
-    pricingMethod: 'capacity_based',
-    vehicleConfig: {
-      vehicleModel: 'Toyota Hiace Grand Cabin (7-Seater)',
-      vehicleType: 'Executive MPV / Van',
-      maxSeats: 7,
-      unitVehicleNetCost: 500,
-      adultSeatCount: 1,
-      childSeatCount: 1,
-      infantSeatCount: 0,
-      allowMultipleVehicles: true,
-      autoAllocateVehicles: true,
-      maxVehicles: 5
-    },
-    adultNetPrice: 500,
-    childNetPrice: 0,
-    infantNetPrice: 0,
-    currency: 'USD',
-    defaultMarkupPercent: 30,
-    buyerMarkupPercent: 30,
-    b2bAgentMarkupPercent: 20,
-    taxPercent: 10,
-    commissionPercent: 10,
-    serviceFeeFixed: 25,
-    sellingPriceStartingFrom: 660,
-    optionalUpgradeProductIds: [],
+    title: '',
     shortDescription: '',
     longDescription: '',
-    supplierId: db.getSuppliers()[0]?.id || '',
-    supplierName: db.getSuppliers()[0]?.name || 'Authorized Ground Partner',
-    supplierProductCode: '',
-    season: 'All Year',
-    validityFrom: '2026-01-01',
-    validityTo: '2026-12-31',
-    minPax: 1,
-    maxPax: 8,
-    availability: 'INSTANT',
-    bookingRequiredDays: 2,
-    cancellationPolicy: 'Free cancellation up to 72 hours prior to service date.',
-    inclusions: ['Private bilingual Blue Badge guide', 'Luxury Alphard Executive MPV charter'],
-    exclusions: ['Client personal meals and temple entrance fees'],
-    importantInformation: ['Please provide guest flight arrival details in advance.'],
-    meetingPoint: 'Hotel Lobby Pick-up in Tokyo Central',
-    pickupInformation: 'Driver will meet guests at designated hotel concierge desk.',
-    images: ['https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=800&auto=format&fit=crop'],
-    location: 'Tokyo, Japan',
+    destinationId: targetDest?.id || destinations[0]?.id || 'dest-japan',
+    destinationName: targetDest?.name || destinations[0]?.name || 'Japan',
+    regionId: targetReg?.id || '',
+    regionName: targetReg?.name || '',
+    hubId: targetHub?.id || '',
+    country: targetDest?.name || 'Japan',
+    city: targetHub?.name || 'Tokyo',
+    productType: '',
+    category: 'Private Tours',
+    subcategory: '',
+    duration: '',
+    operatingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    operatingHours: '',
+    pricingMethod: 'capacity_based',
+    vehicleConfig: undefined,
+    vehicleId: undefined,
+    vehicleNameSnapshot: undefined,
+    vehicleTypeSnapshot: undefined,
+    capacitySnapshot: undefined,
+    yachtId: undefined,
+    yachtNameSnapshot: undefined,
+    yachtTypeSnapshot: undefined,
+    yachtCapacitySnapshot: undefined,
+    ferryId: undefined,
+    ferryNameSnapshot: undefined,
+    ferryTypeSnapshot: undefined,
+    ferryCapacitySnapshot: undefined,
+    adultNetPrice: undefined,
+    childNetPrice: undefined,
+    infantNetPrice: undefined,
+    currency: 'USD',
+    nativeCurrency: 'USD',
+    defaultMarkupPercent: undefined,
+    buyerMarkupPercent: undefined,
+    b2bAgentMarkupPercent: undefined,
+    taxPercent: undefined,
+    commissionPercent: undefined,
+    serviceFeeFixed: undefined,
+    sellingPriceStartingFrom: undefined,
+    optionalUpgradeProductIds: [],
+    inclusions: [],
+    exclusions: [],
+    importantInformation: [],
+    meetingPoint: '',
+    pickupInformation: '',
+    images: [],
+    location: `${targetHub?.name || 'Tokyo'}, ${targetDest?.name || 'Japan'}`,
     latitude: 35.6762,
     longitude: 139.6503,
-    rating: 4.9,
-    reviewCount: 28,
+    rating: 5.0,
+    reviewCount: 0,
     status: 'ACTIVE'
   });
 
+  const [formData, setFormData] = useState<Partial<Product>>(() => 
+    createCleanProductFormData(destinations[0], cityHubs[0], masterRegions[0])
+  );
+
   const [inclusionInput, setInclusionInput] = useState('');
   const [exclusionInput, setExclusionInput] = useState('');
+
+  const handleCategoryChange = (newCat: ProductCategory) => {
+    if (editingProduct && editingProduct.category !== newCat) {
+      const confirmed = window.confirm(
+        `Changing category from "${editingProduct.category}" to "${newCat}" will update the active operational fields and pricing structure. Do you wish to proceed?`
+      );
+      if (!confirmed) return;
+    }
+    const isCapCat = CAPACITY_BASED_CATEGORIES.includes(newCat as string);
+    setFormData(prev => ({
+      ...prev,
+      category: newCat,
+      pricingMethod: isCapCat ? 'capacity_based' : (newCat === 'Guides' ? 'per_person' : prev.pricingMethod || 'per_person')
+    }));
+  };
+
+  const handleAddInclusion = () => {
+    if (!inclusionInput.trim()) return;
+    const current = formData.inclusions || [];
+    if (!current.includes(inclusionInput.trim())) {
+      setFormData({ ...formData, inclusions: [...current, inclusionInput.trim()] });
+    }
+    setInclusionInput('');
+  };
+
+  const handleRemoveInclusion = (idx: number) => {
+    const current = [...(formData.inclusions || [])];
+    current.splice(idx, 1);
+    setFormData({ ...formData, inclusions: current });
+  };
+
+  const handleAddExclusion = () => {
+    if (!exclusionInput.trim()) return;
+    const current = formData.exclusions || [];
+    if (!current.includes(exclusionInput.trim())) {
+      setFormData({ ...formData, exclusions: [...current, exclusionInput.trim()] });
+    }
+    setExclusionInput('');
+  };
+
+  const handleRemoveExclusion = (idx: number) => {
+    const current = [...(formData.exclusions || [])];
+    current.splice(idx, 1);
+    setFormData({ ...formData, exclusions: current });
+  };
   const [newImageUrl, setNewImageUrl] = useState('');
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [productPhotoTab, setProductPhotoTab] = useState<'UPLOAD' | 'UNSPLASH' | 'URL'>('UPLOAD');
@@ -223,62 +297,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     const targetDest = matchingDests[0] || destinations[0] || { id: 'dest-japan', name: 'Japan', regionId: firstReg.id };
     const dHubs = cityHubs.filter(h => h.destinationId === targetDest.id);
     const firstHub = dHubs[0];
-    const skuGenerated = `UB-${targetDest.name.substring(0, 3).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
 
-    setFormData({
-      sku: skuGenerated,
-      name: '',
-      regionId: firstReg.id,
-      regionName: firstReg.name,
-      destinationId: targetDest.id,
-      destinationName: targetDest.name,
-      hubId: firstHub?.id || '',
-      country: targetDest.name,
-      city: firstHub?.name || 'Tokyo',
-      productType: 'Private VIP Experience',
-      category: 'Private Tours',
-      subcategory: 'Culture & Luxury',
-      duration: '8 Hours',
-      operatingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-      operatingHours: '09:00 - 17:00',
-      adultNetPrice: 400,
-      childNetPrice: 250,
-      infantNetPrice: 0,
-      currency: 'USD',
-      defaultMarkupPercent: 30,
-      buyerMarkupPercent: 30,
-      b2bAgentMarkupPercent: 20,
-      taxPercent: 10,
-      commissionPercent: 10,
-      serviceFeeFixed: 20,
-      sellingPriceStartingFrom: 528,
-      optionalUpgradeProductIds: [],
-      shortDescription: '',
-      longDescription: '',
-      supplierId: suppliers[0]?.id || db.getSuppliers()[0]?.id || '',
-      supplierName: suppliers[0]?.name || db.getSuppliers()[0]?.name || 'Ground Supplier',
-      supplierProductCode: skuGenerated,
-      season: 'All Year',
-      validityFrom: '2026-01-01',
-      validityTo: '2026-12-31',
-      minPax: 1,
-      maxPax: 8,
-      availability: 'INSTANT',
-      bookingRequiredDays: 2,
-      cancellationPolicy: 'Free cancellation up to 72 hours prior to service.',
-      inclusions: ['Private guide', 'Private luxury transport'],
-      exclusions: ['Meals and personal expenses'],
-      importantInformation: ['Valid passport required.'],
-      meetingPoint: 'Hotel Lobby Pick-up',
-      pickupInformation: 'Chauffeur will hold digital nameboard in lobby.',
-      images: ['https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=800&auto=format&fit=crop'],
-      location: `${firstHub?.name || 'Tokyo'}, ${targetDest.name}`,
-      latitude: 35.6762,
-      longitude: 139.6503,
-      rating: 5.0,
-      reviewCount: 0,
-      status: 'ACTIVE'
-    });
+    setFormData(createCleanProductFormData(targetDest, firstHub, firstReg));
     setIsModalOpen(true);
   };
 
@@ -289,20 +309,10 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     setFormData({
       ...product,
       pricingMethod: product.pricingMethod || (isCapCat ? 'capacity_based' : 'per_person'),
-      vehicleConfig: product.vehicleConfig || (isCapCat ? {
-        vehicleModel: product.name || 'Executive MPV / Van',
-        vehicleType: 'Executive MPV / Van',
-        maxSeats: product.maxPax || 7,
-        unitVehicleNetCost: product.adultNetPrice || 500,
-        adultSeatCount: 1,
-        childSeatCount: 1,
-        infantSeatCount: 0,
-        allowMultipleVehicles: true,
-        autoAllocateVehicles: true,
-        maxVehicles: 5
-      } : undefined),
-      buyerMarkupPercent: product.buyerMarkupPercent !== undefined ? product.buyerMarkupPercent : (product.defaultMarkupPercent || 30),
-      b2bAgentMarkupPercent: product.b2bAgentMarkupPercent !== undefined ? product.b2bAgentMarkupPercent : 20,
+      // Load actual saved data - never synthesize defaults for existing records
+      vehicleConfig: product.vehicleConfig,
+      buyerMarkupPercent: product.buyerMarkupPercent,
+      b2bAgentMarkupPercent: product.b2bAgentMarkupPercent,
       optionalUpgradeProductIds: product.optionalUpgradeProductIds || []
     });
     setIsModalOpen(true);
@@ -327,10 +337,14 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     refreshProducts();
   };
 
-  const calculateSellingPrice = (net: number, markup: number, tax: number, fee: number) => {
-    const markupAmt = net * (markup / 100);
-    const taxAmt = markupAmt * (tax / 100);
-    return Math.round(net + markupAmt + taxAmt + fee);
+  const calculateSellingPrice = (net?: number, markup?: number, tax?: number, fee?: number): number | null => {
+    if (net === undefined || net === null || isNaN(net) || net <= 0) return null;
+    const effectiveMarkup = markup !== undefined && !isNaN(markup) ? markup : 0;
+    const effectiveTax = tax !== undefined && !isNaN(tax) ? tax : 0;
+    const effectiveFee = fee !== undefined && !isNaN(fee) ? fee : 0;
+    const markupAmt = net * (effectiveMarkup / 100);
+    const taxAmt = markupAmt * (effectiveTax / 100);
+    return Math.round(net + markupAmt + taxAmt + effectiveFee);
   };
 
   const handleSave = (e: React.FormEvent) => {
@@ -338,15 +352,15 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     if (!formData.name || !formData.sku) return;
 
     const isCapacityBased = formData.pricingMethod === 'capacity_based' || CAPACITY_BASED_CATEGORIES.includes(formData.category as string);
-    const maxSeats = Number(formData.vehicleConfig?.maxSeats) || Number(formData.maxPax) || 7;
-    const vehicleNet = Number(formData.vehicleConfig?.unitVehicleNetCost) || Number(formData.adultNetPrice) || 0;
+    const maxSeats = Number(formData.vehicleConfig?.maxSeats) || Number(formData.capacitySnapshot) || Number(formData.maxPax) || 0;
+    const vehicleNet = formData.vehicleConfig?.unitVehicleNetCost !== undefined ? Number(formData.vehicleConfig.unitVehicleNetCost) : (formData.adultNetPrice !== undefined ? Number(formData.adultNetPrice) : 0);
     
     const adultNet = isCapacityBased ? vehicleNet : (Number(formData.adultNetPrice) || 0);
     const childNet = isCapacityBased ? 0 : (Number(formData.childNetPrice) || 0);
     const infantNet = isCapacityBased ? 0 : (Number(formData.infantNetPrice) || 0);
-    const buyerMarkup = Number(formData.buyerMarkupPercent) || Number(formData.defaultMarkupPercent) || 30;
-    const b2bAgentMarkup = Number(formData.b2bAgentMarkupPercent) || 20;
-    const tax = Number(formData.taxPercent) || 10;
+    const buyerMarkup = Number(formData.buyerMarkupPercent) || Number(formData.defaultMarkupPercent) || 0;
+    const b2bAgentMarkup = Number(formData.b2bAgentMarkupPercent) || 0;
+    const tax = Number(formData.taxPercent) || 0;
     const fee = Number(formData.serviceFeeFixed) || 0;
     const computedSelling = calculateSellingPrice(adultNet, buyerMarkup, tax, fee);
 
@@ -364,7 +378,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       hubId: formData.hubId || targetHub?.id || '',
       country: formData.country || targetDest?.country || targetDest?.name || 'Japan',
       city: formData.city || targetHub?.name || 'Tokyo',
-      productType: formData.productType || 'Private Tour',
+      productType: formData.productType || '',
       name: formData.name || '',
       shortDescription: formData.shortDescription || '',
       longDescription: formData.longDescription || formData.shortDescription || '',
@@ -372,14 +386,27 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       supplierName: suppliers.find(s => s.id === formData.supplierId)?.name || formData.supplierName || 'Ground Supplier',
       supplierProductCode: formData.supplierProductCode || formData.sku || '',
       category: (formData.category as ProductCategory) || 'Private Tours',
-      subcategory: formData.subcategory || 'Luxury & Culture',
-      duration: formData.duration || 'Full Day',
+      subcategory: formData.subcategory || '',
+      duration: formData.duration || '',
       operatingDays: formData.operatingDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-      operatingHours: formData.operatingHours || '09:00 - 18:00',
+      operatingHours: formData.operatingHours || '',
       pricingMethod: isCapacityBased ? 'capacity_based' : (formData.pricingMethod || 'per_person'),
-      vehicleConfig: isCapacityBased ? {
-        vehicleModel: formData.vehicleConfig?.vehicleModel || formData.name || 'Executive Vehicle',
-        vehicleType: formData.vehicleConfig?.vehicleType || 'Executive MPV / Van',
+      vehicleId: formData.vehicleId,
+      vehicleNameSnapshot: formData.vehicleNameSnapshot,
+      vehicleTypeSnapshot: formData.vehicleTypeSnapshot,
+      capacitySnapshot: formData.capacitySnapshot,
+      yachtId: formData.yachtId,
+      yachtNameSnapshot: formData.yachtNameSnapshot,
+      yachtTypeSnapshot: formData.yachtTypeSnapshot,
+      yachtCapacitySnapshot: formData.yachtCapacitySnapshot,
+      ferryId: formData.ferryId,
+      ferryNameSnapshot: formData.ferryNameSnapshot,
+      ferryTypeSnapshot: formData.ferryTypeSnapshot,
+      ferryCapacitySnapshot: formData.ferryCapacitySnapshot,
+      vehicleConfig: isCapacityBased && (formData.vehicleConfig || formData.vehicleId || formData.yachtId) ? {
+        ...(formData.vehicleConfig || {}),
+        vehicleModel: formData.vehicleConfig?.vehicleModel || formData.vehicleNameSnapshot || formData.yachtNameSnapshot || '',
+        vehicleType: formData.vehicleConfig?.vehicleType || formData.vehicleTypeSnapshot || formData.yachtTypeSnapshot || '',
         maxSeats: maxSeats,
         unitVehicleNetCost: vehicleNet,
         adultSeatCount: Number(formData.vehicleConfig?.adultSeatCount ?? 1),
@@ -398,37 +425,43 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       adultNettCost: adultNet,
       childNettCost: childNet,
       infantNettCost: infantNet,
-      currency: (formData.currency as CurrencyCode) || 'USD',
+      currency: (formData.currency as CurrencyCode) || (formData.nativeCurrency as CurrencyCode) || 'USD',
+      nativeCurrency: (formData.nativeCurrency as CurrencyCode) || (formData.currency as CurrencyCode) || 'USD',
       defaultMarkupPercent: buyerMarkup,
       buyerMarkupPercent: buyerMarkup,
       b2bAgentMarkupPercent: b2bAgentMarkup,
       taxPercent: tax,
-      commissionPercent: Number(formData.commissionPercent) || 10,
+      commissionPercent: Number(formData.commissionPercent) || 0,
       serviceFeeFixed: fee,
-      sellingPriceStartingFrom: computedSelling,
+      sellingPriceStartingFrom: computedSelling !== null ? computedSelling : 0,
       optionalUpgradeProductIds: formData.optionalUpgradeProductIds || [],
       season: (formData.season as any) || 'All Year',
       validityFrom: formData.validityFrom || '2026-01-01',
       validityTo: formData.validityTo || '2026-12-31',
       minPax: Number(formData.minPax) || 1,
-      maxPax: maxSeats,
+      maxPax: maxSeats > 0 ? maxSeats : (Number(formData.maxPax) || 1),
       availability: (formData.availability as any) || 'INSTANT',
-      bookingRequiredDays: Number(formData.bookingRequiredDays) || 2,
-      cancellationPolicy: formData.cancellationPolicy || 'Standard 72-hour notice.',
+      bookingRequiredDays: Number(formData.bookingRequiredDays) || 1,
+      cancellationPolicy: formData.cancellationPolicy || '',
       inclusions: formData.inclusions || [],
       exclusions: formData.exclusions || [],
       importantInformation: formData.importantInformation || [],
-      meetingPoint: formData.meetingPoint || 'Hotel Lobby',
-      pickupInformation: formData.pickupInformation || 'Concierge Desk Pick-up',
-      images: formData.images && (formData.images || []).length > 0 ? formData.images : ['https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=800&auto=format&fit=crop'],
-      location: `${formData.city || targetHub?.name || 'Tokyo'}, ${formData.country || targetDest?.name || 'Japan'}`,
+      meetingPoint: formData.meetingPoint || '',
+      pickupInformation: formData.pickupInformation || '',
+      images: formData.images && (formData.images || []).length > 0 ? formData.images : [],
+      location: `${formData.city || targetHub?.name || ''}, ${formData.country || targetDest?.name || ''}`.replace(/^,\s*|,\s*$/g, ''),
       latitude: formData.latitude || 35.6762,
       longitude: formData.longitude || 139.6503,
-      rating: formData.rating || 4.9,
-      reviewCount: formData.reviewCount || 10,
+      rating: formData.rating || 5.0,
+      reviewCount: formData.reviewCount || 0,
       slug: formData.slug || formData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
       seo: formData.seo,
       status: formData.status || 'ACTIVE',
+      ticketConfig: formData.ticketConfig,
+      guideConfig: formData.guideConfig,
+      restaurantConfig: formData.restaurantConfig,
+      ferryConfig: formData.ferryConfig,
+      configuration: formData.configuration || editingProduct?.configuration,
       lastUpdated: new Date().toISOString().split('T')[0]
     };
 
@@ -481,6 +514,24 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     return matchesReg && matchesDest;
   });
 
+  if (isModalOpen) {
+    return (
+      <ProductUpdateWorkspace
+        product={editingProduct}
+        destinations={destinations}
+        masterRegions={masterRegions}
+        cityHubs={cityHubs}
+        suppliers={suppliers}
+        onSave={(savedProduct) => {
+          db.saveProduct(savedProduct, user);
+          refreshProducts();
+          setIsModalOpen(false);
+        }}
+        onCancel={() => setIsModalOpen(false)}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -504,6 +555,12 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
           <span>Create New Product</span>
         </button>
       </div>
+
+      {/* Google Sheets Master Sync Bar */}
+      <ModuleMasterSyncBar 
+        moduleType="PRODUCTS" 
+        onSyncCompleted={refreshProducts} 
+      />
 
       {/* Search & Filters */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
@@ -630,32 +687,53 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                           </span>
                         )}
                       </div>
-                      <div className="text-[11px] text-slate-500 font-medium flex items-center space-x-1">
+                      <div className="text-[11px] text-slate-500 font-medium flex items-center space-x-1 flex-wrap gap-1">
                         <span className="text-slate-700 font-semibold">{product.city}</span>
                         <span>•</span>
                         <span>{product.category}</span>
+                        {((product.upsells && product.upsells.length > 0) || (product.addons && product.addons.length > 0)) && (
+                          <span className="inline-flex items-center space-x-0.5 px-1.5 py-0.5 rounded bg-teal-50 border border-teal-200 text-[#008972] text-[9px] font-extrabold">
+                            <Sparkles className="w-2.5 h-2.5" />
+                            <span>{(product.upsells?.length || product.addons?.length || 0)} Upsells</span>
+                          </span>
+                        )}
                       </div>
                     </div>
                   </td>
                   <td className="py-3.5 px-4">
-                    <div className="font-bold font-mono text-slate-900 text-xs">
-                      {formatCurrency(product.adultNetPrice, product.currency)}
-                    </div>
-                    <div className="text-[10px] text-slate-400">
-                      Child: {formatCurrency(product.childNetPrice, product.currency)}
-                    </div>
+                    {(!product.adultNetPrice && !(product.vehicleConfig?.unitVehicleNetCost) && !product.sellingPriceStartingFrom) ? (
+                      <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold" title="Pricing record incomplete. Please edit product to configure base rates.">
+                        <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                        <span>Pricing Pending</span>
+                      </span>
+                    ) : (
+                      <>
+                        <div className="font-bold font-mono text-slate-900 text-xs">
+                          {formatCurrency(product.adultNetPrice ?? product.vehicleConfig?.unitVehicleNetCost, product.nativeCurrency || product.currency)}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          Child: {formatCurrency(product.childNetPrice, product.nativeCurrency || product.currency)}
+                        </div>
+                      </>
+                    )}
                   </td>
                   <td className="py-3.5 px-4">
                     <div className="text-[11px] space-y-0.5">
                       <div>Markup: <strong className="text-emerald-700">+{product.defaultMarkupPercent}%</strong></div>
-                      <div className="text-slate-400 text-[10px]">Tax: +{product.taxPercent}% • Fee: ${product.serviceFeeFixed}</div>
+                      <div className="text-slate-400 text-[10px]">Tax: +{product.taxPercent}% • Fee: {formatCurrency(product.serviceFeeFixed, product.nativeCurrency || product.currency)}</div>
                     </div>
                   </td>
                   <td className="py-3.5 px-4">
-                    <div className="font-bold font-mono text-[#008972] text-xs">
-                      {formatCurrency(product.sellingPriceStartingFrom, product.currency)}
-                    </div>
-                    <span className="text-[10px] text-slate-400">Gross Quoted</span>
+                    {(!product.sellingPriceStartingFrom && !(product.adultNetPrice || product.vehicleConfig?.unitVehicleNetCost)) ? (
+                      <span className="text-[10px] font-bold text-amber-700 font-mono">Rate Unconfigured</span>
+                    ) : (
+                      <>
+                        <div className="font-bold font-mono text-[#008972] text-xs">
+                          {formatCurrency(product.sellingPriceStartingFrom, product.nativeCurrency || product.currency)}
+                        </div>
+                        <span className="text-[10px] text-slate-400">Gross Quoted ({product.nativeCurrency || product.currency})</span>
+                      </>
+                    )}
                   </td>
                   <td className="py-3.5 px-4">
                     <button
@@ -674,32 +752,6 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   </td>
                   <td className="py-3.5 px-4 text-right">
                     <div className="flex items-center justify-end space-x-1.5">
-                      {(product.category === 'Rail' || product.id.startsWith('RAIL-JP')) ? (
-                        <button
-                          onClick={() => setTestingRailProduct(product)}
-                          className="p-1.5 text-[#00A88F] hover:text-[#008F77] bg-[#00C6A6]/10 hover:bg-[#00C6A6]/20 border border-[#00C6A6]/30 rounded-lg transition-colors cursor-pointer"
-                          title="Open Japan Rail Dynamic Journey Configurator"
-                        >
-                          <Train className="w-3.5 h-3.5" />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setTestingConfigProduct(product)}
-                          className="p-1.5 text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/50 rounded-lg transition-colors cursor-pointer"
-                          title="Open Dedicated Configurator"
-                        >
-                          <Sliders className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                      {onViewProduct && (
-                        <button
-                          onClick={() => onViewProduct(product)}
-                          className="p-1.5 text-slate-500 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
-                          title="View Live Modal"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                      )}
                       <button
                         onClick={() => handleDuplicate(product.id)}
                         className="p-1.5 text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer"
@@ -795,7 +847,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   modalTab === 'CONTENT' ? 'bg-[#00C6A6] text-slate-950 shadow-xs' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
                 }`}
               >
-                Product Details & Pricing
+                1. Product Information & Category Details
               </button>
               <button
                 type="button"
@@ -805,7 +857,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                 }`}
               >
                 <Globe2 className="w-3.5 h-3.5" />
-                <span>SEO & Search Indexing</span>
+                <span>2. SEO & Search Indexing</span>
               </button>
             </div>
 
@@ -1009,30 +1061,44 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                 </div>
               </div>
 
-              {/* Pricing Calculation Architecture Selector */}
+              {/* DYNAMIC CATEGORY-SPECIFIC OPERATIONAL & PRICING SPECIFICATIONS */}
               <div className="bg-slate-900 text-white p-5 rounded-2xl space-y-4">
+                {/* Category Header Banner */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
                   <div className="flex items-center space-x-2">
                     <div className="p-2 bg-teal-500/20 text-[#00E5C0] rounded-lg">
-                      <Calculator className="w-4 h-4" />
+                      {formData.category === 'Private Tours' && <Car className="w-4 h-4" />}
+                      {formData.category === 'Group Tours' && <Users className="w-4 h-4" />}
+                      {formData.category === 'Transfers' && <Car className="w-4 h-4" />}
+                      {formData.category === 'Tickets' && <Ticket className="w-4 h-4" />}
+                      {formData.category === 'Private Yacht' && <Ship className="w-4 h-4" />}
+                      {formData.category === 'Ferries' && <Anchor className="w-4 h-4" />}
+                      {formData.category === 'Guides' && <Languages className="w-4 h-4" />}
+                      {formData.category === 'Lunch / Dinner Restaurant' && <Utensils className="w-4 h-4" />}
+                      {!['Private Tours', 'Group Tours', 'Transfers', 'Tickets', 'Private Yacht', 'Ferries', 'Guides', 'Lunch / Dinner Restaurant'].includes(formData.category || '') && <Calculator className="w-4 h-4" />}
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                        <span>Commercial Pricing & Calculation Engine</span>
+                        <span>{formData.category} — Operational & Rate Specifications</span>
                         {formData.pricingMethod === 'capacity_based' ? (
                           <span className="text-[10px] bg-teal-500/20 text-[#00E5C0] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-teal-500/30">
-                            Capacity-Based Vehicle Engine
+                            Capacity-Based Vehicle
                           </span>
                         ) : (
                           <span className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-blue-500/30">
-                            Per-Person Rate Engine
+                            Per-Person Rate
                           </span>
                         )}
                       </h4>
                       <p className="text-[11px] text-slate-400">
-                        {formData.pricingMethod === 'capacity_based'
-                          ? 'Vehicle calculation: Total Vehicle Cost ÷ Actual Occupied Seats = Per-Person Nett Cost (Capped at Capacity).'
-                          : 'Per-person calculation: Adult Net × Adults + Child Net × Children + Infant Net × Infants.'}
+                        {formData.category === 'Private Tours' && 'Private chauffeured tour with capacity-based fleet allocation and fixed unit vehicle cost.'}
+                        {formData.category === 'Group Tours' && 'Shared scheduled departure with per-person rate tiers and minimum pax thresholds.'}
+                        {formData.category === 'Transfers' && 'Dedicated airport/intercity transfer with luggage limits and flight number requirements.'}
+                        {formData.category === 'Tickets' && 'Direct admissions and timed entries with instant redemption barcodes and age tiering.'}
+                        {formData.category === 'Private Yacht' && 'Private vessel charter with skipper, crew, fuel, and passenger manifest capacity.'}
+                        {formData.category === 'Ferries' && 'Scheduled passenger ferry and maritime transit with route ports and baggage policies.'}
+                        {formData.category === 'Guides' && 'Professional licensed guide services with supported languages and expertise badges.'}
+                        {formData.category === 'Lunch / Dinner Restaurant' && 'Curated culinary reservations with set menus, dietary compliance, and drink packages.'}
                       </p>
                     </div>
                   </div>
@@ -1066,228 +1132,252 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   </div>
                 </div>
 
-                {/* CAPACITY-BASED VEHICLE / YACHT & SEAT ALLOCATION CONFIGURATION */}
+                {/* 1. CATEGORY: PRIVATE TOURS & TRANSFERS & PRIVATE YACHT (Capacity-Based) */}
                 {formData.pricingMethod === 'capacity_based' ? (
                   <div className="space-y-4">
                     <div className="bg-slate-800/80 p-4 rounded-xl border border-teal-500/30 space-y-4">
-                      <div className="flex items-center justify-between text-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
                         <span className="font-bold text-[#00E5C0] flex items-center gap-1.5">
-                          {formData.category === 'Private Yacht' ? <Ship className="w-4 h-4" /> : <Car className="w-4 h-4" />}
+                          {formData.category === 'Private Yacht' ? <Ship className="w-4 h-4" /> : <Car className="w-4 h-4 text-[#00E5C0]" />}
                           <span>
                             {formData.category === 'Private Yacht' 
-                              ? 'Private Yacht Specifications & Charter Capacity' 
-                              : 'Vehicle Fleet & Seating Capacity Specifications'}
+                              ? 'Authoritative Yacht Master Asset & Capacity Specifications' 
+                              : 'Authoritative Vehicle Master Asset & Capacity Specifications'}
                           </span>
                         </span>
-                        <span className="text-[10px] text-slate-400 font-mono">
-                          {formData.category === 'Private Yacht'
-                            ? 'Auto-allocates multiple yachts when guest capacity is exceeded'
-                            : 'Auto-allocates multiple vehicles when capacity is exceeded'}
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs text-slate-800">
-                        <div className="space-y-1 sm:col-span-2">
-                          <label className="text-[11px] text-slate-300 font-medium">
-                            {formData.category === 'Private Yacht' ? 'Yacht Model / Charter Name *' : 'Vehicle Model / Fleet Name *'}
-                          </label>
-                          <input
-                            type="text"
-                            value={formData.vehicleConfig?.vehicleModel || formData.vehicleConfig?.yachtModel || formData.vehicleConfig?.vehicleName || (formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge Luxury Yacht' : 'Toyota Hiace Grand Cabin (7-Seater)')}
-                            onChange={e => setFormData({
-                              ...formData,
-                              vehicleConfig: {
-                                ...(formData.vehicleConfig || {
-                                  vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge Luxury Yacht' : 'Toyota Hiace Grand Cabin (7-Seater)',
-                                  vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
-                                  maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
-                                  unitVehicleNetCost: 500,
-                                  adultSeatCount: 1,
-                                  childSeatCount: 1,
-                                  infantSeatCount: 0,
-                                  allowMultipleVehicles: true,
-                                  autoAllocateVehicles: true,
-                                  maxVehicles: 5
-                                }),
-                                vehicleModel: e.target.value,
-                                vehicleName: e.target.value,
-                                yachtModel: e.target.value,
-                                yachtName: e.target.value
-                              }
-                            })}
-                            placeholder={formData.category === 'Private Yacht' ? 'e.g. Azimut 66 Flybridge (10-Pax)' : 'e.g. Toyota Hiace Grand Cabin (7-Seater)'}
-                            className="w-full p-2 bg-white rounded-lg font-semibold"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-[11px] text-slate-300 font-medium">
-                            {formData.category === 'Private Yacht' ? 'Yacht Classification' : 'Vehicle Classification'}
-                          </label>
-                          <select
-                            value={formData.vehicleConfig?.vehicleType || (formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van')}
-                            onChange={e => setFormData({
-                              ...formData,
-                              vehicleConfig: {
-                                ...(formData.vehicleConfig || {
-                                  vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge Luxury Yacht' : 'Toyota Hiace Grand Cabin (7-Seater)',
-                                  vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
-                                  maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
-                                  unitVehicleNetCost: 500,
-                                  adultSeatCount: 1,
-                                  childSeatCount: 1,
-                                  infantSeatCount: 0,
-                                  allowMultipleVehicles: true,
-                                  autoAllocateVehicles: true,
-                                  maxVehicles: 5
-                                }),
-                                vehicleType: e.target.value,
-                                yachtType: e.target.value
-                              }
-                            })}
-                            className="w-full p-2 bg-white rounded-lg font-medium text-xs"
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOperationalAssetsManagerTab(formData.category === 'Private Yacht' ? 'YACHTS' : 'VEHICLES');
+                              setIsOperationalAssetsManagerOpen(true);
+                            }}
+                            className="text-[11px] text-teal-300 hover:text-white underline font-semibold flex items-center gap-1 cursor-pointer"
                           >
-                            {formData.category === 'Private Yacht' ? (
-                              <>
-                                <option value="Motor Yacht">Motor Yacht (Luxury Flybridge)</option>
-                                <option value="Catamaran">Catamaran (High Stability)</option>
-                                <option value="Sailing Yacht">Sailing Yacht / Monohull</option>
-                                <option value="Superyacht">Superyacht / Megayacht</option>
-                                <option value="Speedboat">Speedboat / Day Cruiser</option>
-                                <option value="Gulet / Wooden Boat">Gulet / Wooden Classic</option>
-                              </>
-                            ) : (
-                              <>
-                                <option value="Executive Sedan">Executive Sedan (1–3 Seats)</option>
-                                <option value="Executive MPV / Van">Executive MPV / Van (4–7 Seats)</option>
-                                <option value="Minibus / Sprinter">Minibus / Sprinter (8–16 Seats)</option>
-                                <option value="Luxury Coach">Luxury Coach (17–45 Seats)</option>
-                                <option value="Private Yacht / Boat">Private Yacht / Boat</option>
-                              </>
-                            )}
-                          </select>
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-[11px] text-slate-300 font-medium">
-                            {formData.category === 'Private Yacht' ? 'Max Passenger Capacity *' : 'Max Seating Capacity *'}
-                          </label>
-                          <div className="relative">
-                            <input
-                              type="number"
-                              min="1"
-                              max="100"
-                              value={formData.vehicleConfig?.maxSeats || (formData.category === 'Private Yacht' ? 10 : 7)}
-                              onChange={e => {
-                                const seats = Math.max(1, Number(e.target.value));
-                                setFormData({
-                                  ...formData,
-                                  maxPax: seats,
-                                  vehicleConfig: {
-                                    ...(formData.vehicleConfig || {
-                                      vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge' : 'Toyota Hiace Grand Cabin (7-Seater)',
-                                      vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
-                                      maxSeats: seats,
-                                      unitVehicleNetCost: 500,
-                                      adultSeatCount: 1,
-                                      childSeatCount: 1,
-                                      infantSeatCount: 0,
-                                      allowMultipleVehicles: true,
-                                      autoAllocateVehicles: true,
-                                      maxVehicles: 5
-                                    }),
-                                    maxSeats: seats,
-                                    passengerCapacity: seats,
-                                    totalSeats: seats
-                                  }
-                                });
-                              }}
-                              className="w-full p-2 bg-white rounded-lg font-bold pr-12"
-                            />
-                            <span className="absolute right-2.5 top-2 text-[10px] font-bold text-slate-400">
-                              {formData.category === 'Private Yacht' ? 'GUESTS' : 'SEATS'}
-                            </span>
-                          </div>
+                            <span>Manage {formData.category === 'Private Yacht' ? 'Yacht' : 'Vehicle'} Database</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </button>
                         </div>
                       </div>
 
-                      {/* Yacht Size / Length when Category is Private Yacht */}
-                      {formData.category === 'Private Yacht' && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-800 pt-2 border-t border-slate-700">
+                      {/* Transfers Hub-to-Hub Routing */}
+                      {formData.category === 'Transfers' && (
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs bg-slate-900/90 p-3 rounded-lg border border-slate-700">
                           <div className="space-y-1">
-                            <label className="text-[11px] text-slate-300 font-medium">Yacht Length / Dimensions</label>
-                            <input
-                              type="text"
-                              value={formData.vehicleConfig?.yachtSize || formData.vehicleConfig?.yachtLength || '66 ft / 20.8 m'}
-                              onChange={e => setFormData({
-                                ...formData,
-                                vehicleConfig: {
-                                  ...(formData.vehicleConfig || {
-                                    vehicleModel: 'Azimut 66 Flybridge',
-                                    vehicleType: 'Motor Yacht',
-                                    maxSeats: 10,
-                                    unitVehicleNetCost: 500,
-                                    adultSeatCount: 1,
-                                    childSeatCount: 1,
-                                    infantSeatCount: 0,
-                                    allowMultipleVehicles: true,
-                                    autoAllocateVehicles: true,
-                                    maxVehicles: 5
-                                  }),
-                                  yachtSize: e.target.value,
-                                  yachtLength: e.target.value
-                                }
-                              })}
-                              placeholder="e.g. 66 ft / 20.8 m"
-                              className="w-full p-2 bg-white rounded-lg font-medium text-xs"
-                            />
+                            <label className="text-[11px] text-slate-300 font-medium">Origin Hub (From) *</label>
+                            <select
+                              value={formData.fromHubId || ''}
+                              onChange={e => {
+                                const h = cityHubs.find(hub => hub.id === e.target.value);
+                                setFormData(prev => ({ ...prev, fromHubId: h?.id || '', fromHubName: h?.name || '' }));
+                              }}
+                              className="w-full p-2 bg-white rounded-lg font-semibold text-slate-900"
+                            >
+                              <option value="">-- Select Origin Hub --</option>
+                              {cityHubs.map(h => (
+                                <option key={h.id} value={h.id}>{h.name} ({h.code || h.id})</option>
+                              ))}
+                            </select>
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[11px] text-slate-300 font-medium">Standard Capacity Presets</label>
-                            <div className="flex flex-wrap gap-1.5 pt-0.5">
-                              {[6, 8, 10, 12, 15, 20, 30, 50].map(cap => (
-                                <button
-                                  key={cap}
-                                  type="button"
-                                  onClick={() => {
-                                    setFormData({
-                                      ...formData,
-                                      maxPax: cap,
-                                      vehicleConfig: {
-                                        ...(formData.vehicleConfig || {
-                                          vehicleModel: 'Azimut 66 Flybridge',
-                                          vehicleType: 'Motor Yacht',
-                                          maxSeats: cap,
-                                          unitVehicleNetCost: 500,
-                                          adultSeatCount: 1,
-                                          childSeatCount: 1,
-                                          infantSeatCount: 0,
-                                          allowMultipleVehicles: true,
-                                          autoAllocateVehicles: true,
-                                          maxVehicles: 5
-                                        }),
-                                        maxSeats: cap,
-                                        passengerCapacity: cap,
-                                        totalSeats: cap
-                                      }
-                                    });
-                                  }}
-                                  className={`px-2 py-1 rounded text-[11px] font-bold cursor-pointer transition-all ${
-                                    (formData.vehicleConfig?.maxSeats || 10) === cap
-                                      ? 'bg-[#00C6A6] text-slate-950 shadow-xs'
-                                      : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
-                                  }`}
-                                >
-                                  {cap} Pax
-                                </button>
+                            <label className="text-[11px] text-slate-300 font-medium">Destination Hub (To) *</label>
+                            <select
+                              value={formData.toHubId || ''}
+                              onChange={e => {
+                                const h = cityHubs.find(hub => hub.id === e.target.value);
+                                setFormData(prev => ({ ...prev, toHubId: h?.id || '', toHubName: h?.name || '' }));
+                              }}
+                              className="w-full p-2 bg-white rounded-lg font-semibold text-slate-900"
+                            >
+                              <option value="">-- Select Destination Hub --</option>
+                              {cityHubs.map(h => (
+                                <option key={h.id} value={h.id}>{h.name} ({h.code || h.id})</option>
                               ))}
-                            </div>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Transfer Route Type</label>
+                            <select
+                              value={formData.vehicleConfig?.route || 'Airport Transfer (Airport ↔ Hotel)'}
+                              onChange={e => setFormData(prev => ({
+                                ...prev,
+                                vehicleConfig: { ...(prev.vehicleConfig || {}), route: e.target.value }
+                              }))}
+                              className="w-full p-2 bg-white rounded-lg font-medium text-slate-900 text-xs"
+                            >
+                              <option value="Airport Transfer (Airport ↔ Hotel)">Airport Transfer (Airport ↔ Hotel)</option>
+                              <option value="Station Transfer (Bullet Train Station ↔ Hotel)">Station Transfer (Bullet Train Station ↔ Hotel)</option>
+                              <option value="Intercity Chauffeur (e.g. Tokyo → Hakone)">Intercity Chauffeur (e.g. Tokyo → Hakone)</option>
+                              <option value="City Point-to-Point (Dinner / Meeting)">City Point-to-Point (Dinner / Meeting)</option>
+                              <option value="Full-Day Chauffeur Standby (10 Hours)">Full-Day Chauffeur Standby (10 Hours)</option>
+                            </select>
                           </div>
                         </div>
                       )}
 
-                      {/* Total Vehicle / Yacht Net Cost & Currency */}
+                      {/* Searchable Database Operational Asset Selector */}
+                      <div className="space-y-2">
+                        <label className="text-xs text-slate-300 font-semibold block">
+                          {formData.category === 'Private Yacht' 
+                            ? 'Select Operational Yacht from Authoritative Master Database *' 
+                            : 'Select Operational Vehicle from Authoritative Fleet Database *'}
+                        </label>
+                        <OperationalAssetSelector
+                          assetType={formData.category === 'Private Yacht' ? 'YACHT' : 'VEHICLE'}
+                          selectedId={formData.category === 'Private Yacht' ? (formData.yachtId || formData.vehicleConfig?.yachtId) : (formData.vehicleId || formData.vehicleConfig?.vehicleId)}
+                          selectedName={formData.category === 'Private Yacht' ? (formData.yachtNameSnapshot || formData.vehicleConfig?.yachtName || formData.vehicleConfig?.vehicleModel) : (formData.vehicleNameSnapshot || formData.vehicleConfig?.vehicleName || formData.vehicleConfig?.vehicleModel)}
+                          selectedType={formData.category === 'Private Yacht' ? (formData.yachtTypeSnapshot || formData.vehicleConfig?.yachtType || formData.vehicleConfig?.vehicleType) : (formData.vehicleTypeSnapshot || formData.vehicleConfig?.vehicleType)}
+                          selectedCapacity={formData.category === 'Private Yacht' ? (formData.yachtCapacitySnapshot || formData.vehicleConfig?.maxSeats) : (formData.capacitySnapshot || formData.vehicleConfig?.maxSeats)}
+                          selectedDimensions={formData.vehicleConfig?.yachtSize || formData.vehicleConfig?.yachtLength}
+                          destinationId={formData.destinationId}
+                          hubId={formData.hubId}
+                          onSelect={(asset: SelectedAssetPayload) => {
+                            if (formData.category === 'Private Yacht') {
+                              setFormData(prev => ({
+                                ...prev,
+                                yachtId: asset.id,
+                                yachtNameSnapshot: asset.name,
+                                yachtTypeSnapshot: asset.type,
+                                yachtCapacitySnapshot: asset.capacity,
+                                maxPax: asset.capacity,
+                                vehicleConfig: {
+                                  ...(prev.vehicleConfig || {}),
+                                  yachtId: asset.id,
+                                  yachtName: asset.name,
+                                  yachtModel: asset.model,
+                                  yachtType: asset.type,
+                                  vehicleModel: asset.name,
+                                  vehicleType: asset.type,
+                                  maxSeats: asset.capacity,
+                                  passengerCapacity: asset.capacity,
+                                  totalSeats: asset.capacity,
+                                  yachtSize: asset.length || asset.dimensions || '',
+                                  yachtLength: asset.length || '',
+                                  skipperName: asset.operator || 'Licensed Skipper & Crew',
+                                  allowMultipleVehicles: prev.vehicleConfig?.allowMultipleVehicles ?? true,
+                                  autoAllocateVehicles: prev.vehicleConfig?.autoAllocateVehicles ?? true,
+                                  maxVehicles: prev.vehicleConfig?.maxVehicles || 5
+                                }
+                              }));
+                            } else {
+                              setFormData(prev => ({
+                                ...prev,
+                                vehicleId: asset.id,
+                                vehicleNameSnapshot: asset.name,
+                                vehicleTypeSnapshot: asset.type,
+                                capacitySnapshot: asset.capacity,
+                                maxPax: asset.capacity,
+                                vehicleConfig: {
+                                  ...(prev.vehicleConfig || {}),
+                                  vehicleId: asset.id,
+                                  vehicleName: asset.name,
+                                  vehicleModel: asset.model,
+                                  vehicleType: asset.type,
+                                  maxSeats: asset.capacity,
+                                  passengerCapacity: asset.capacity,
+                                  totalSeats: asset.capacity,
+                                  maxLuggage: asset.luggageCapacity !== undefined ? asset.luggageCapacity : (prev.vehicleConfig?.maxLuggage || 4),
+                                  adultSeatCount: prev.vehicleConfig?.adultSeatCount ?? 1,
+                                  childSeatCount: prev.vehicleConfig?.childSeatCount ?? 1,
+                                  infantSeatCount: prev.vehicleConfig?.infantSeatCount ?? 0,
+                                  allowMultipleVehicles: prev.vehicleConfig?.allowMultipleVehicles ?? true,
+                                  autoAllocateVehicles: prev.vehicleConfig?.autoAllocateVehicles ?? true,
+                                  maxVehicles: prev.vehicleConfig?.maxVehicles || 5
+                                }
+                              }));
+                            }
+                          }}
+                          onClear={() => {
+                            if (formData.category === 'Private Yacht') {
+                              setFormData(prev => ({
+                                ...prev,
+                                yachtId: undefined,
+                                yachtNameSnapshot: undefined,
+                                yachtTypeSnapshot: undefined,
+                                yachtCapacitySnapshot: undefined,
+                                vehicleConfig: prev.vehicleConfig ? {
+                                  ...prev.vehicleConfig,
+                                  yachtId: undefined,
+                                  yachtName: undefined,
+                                  yachtModel: undefined,
+                                  yachtType: undefined,
+                                  yachtSize: undefined,
+                                  maxSeats: 0
+                                } : undefined
+                              }));
+                            } else {
+                              setFormData(prev => ({
+                                ...prev,
+                                vehicleId: undefined,
+                                vehicleNameSnapshot: undefined,
+                                vehicleTypeSnapshot: undefined,
+                                capacitySnapshot: undefined,
+                                vehicleConfig: prev.vehicleConfig ? {
+                                  ...prev.vehicleConfig,
+                                  vehicleId: undefined,
+                                  vehicleName: undefined,
+                                  vehicleModel: undefined,
+                                  vehicleType: undefined,
+                                  maxSeats: 0
+                                } : undefined
+                              }));
+                            }
+                          }}
+                          onOpenMasterManager={() => {
+                            setOperationalAssetsManagerTab(formData.category === 'Private Yacht' ? 'YACHTS' : 'VEHICLES');
+                            setIsOperationalAssetsManagerOpen(true);
+                          }}
+                        />
+                      </div>
+
+                      {/* Authoritative Specs Grid (Loaded from Database Snapshot) */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-700/80 text-xs">
+                        <div>
+                          <span className="text-[10px] text-slate-400 block uppercase font-semibold">
+                            {formData.category === 'Private Yacht' ? 'Yacht Model / Charter' : 'Vehicle Model'}
+                          </span>
+                          <span className="text-white font-bold truncate block">
+                            {formData.category === 'Private Yacht' 
+                              ? (formData.yachtNameSnapshot || formData.vehicleConfig?.vehicleModel || '—')
+                              : (formData.vehicleNameSnapshot || formData.vehicleConfig?.vehicleModel || 'Not Selected')}
+                          </span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-400 block uppercase font-semibold">Classification</span>
+                          <span className="text-slate-200 font-semibold block">
+                            {formData.category === 'Private Yacht'
+                              ? (formData.yachtTypeSnapshot || formData.vehicleConfig?.vehicleType || '—')
+                              : (formData.vehicleTypeSnapshot || formData.vehicleConfig?.vehicleType || 'Not Selected')}
+                          </span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-400 block uppercase font-semibold">
+                            {formData.category === 'Private Yacht' ? 'Max Guest Capacity' : 'Authoritative Capacity'}
+                          </span>
+                          <span className="text-[#00E5C0] font-bold block">
+                            {formData.category === 'Private Yacht'
+                              ? (formData.yachtCapacitySnapshot || formData.vehicleConfig?.maxSeats ? `${formData.yachtCapacitySnapshot || formData.vehicleConfig?.maxSeats} Guests` : '—')
+                              : (formData.capacitySnapshot || formData.vehicleConfig?.maxSeats ? `${formData.capacitySnapshot || formData.vehicleConfig?.maxSeats} Seats` : '—')}
+                          </span>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-400 block uppercase font-semibold">
+                            {formData.category === 'Private Yacht' ? 'Length / Dimensions' : 'Luggage Capacity'}
+                          </span>
+                          <span className="text-slate-300 font-medium block">
+                            {formData.category === 'Private Yacht'
+                              ? (formData.vehicleConfig?.yachtSize || formData.vehicleConfig?.yachtLength || '—')
+                              : (formData.vehicleConfig?.maxLuggage !== undefined ? `${formData.vehicleConfig.maxLuggage} Suitcases` : '—')}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Base Currency & Contracted Commercial Nett Cost (Section 10: Empty-First) */}
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-800 pt-2 border-t border-slate-700">
                         <div className="space-y-1">
                           <label className="text-[11px] text-slate-300 font-medium">Base Currency</label>
@@ -1314,41 +1404,29 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                           <label className="text-[11px] text-emerald-400 font-bold flex items-center justify-between">
                             <span>
                               {formData.category === 'Private Yacht'
-                                ? `Total Unit Yacht Charter Nett Cost * (Constant for 1 to ${formData.vehicleConfig?.maxSeats || 10} Pax)`
-                                : `Total Unit Vehicle Nett Cost * (Constant for 1 to ${formData.vehicleConfig?.maxSeats || 7} Pax)`}
+                                ? `Contracted Charter Nett Cost * (Constant for 1 to ${formData.yachtCapacitySnapshot || formData.vehicleConfig?.maxSeats || 'Max'} Guests)`
+                                : `Contracted Vehicle Unit Nett Cost * (Constant for 1 to ${formData.capacitySnapshot || formData.vehicleConfig?.maxSeats || 'Max'} Seats)`}
                             </span>
-                            <span className="text-[10px] text-slate-400 font-normal">DMC Contracted Cost</span>
+                            <span className="text-[10px] text-slate-400 font-normal">Authoritative Supplier Rate</span>
                           </label>
                           <input
                             type="number"
-                            required
                             min="0"
-                            value={formData.vehicleConfig?.unitVehicleNetCost !== undefined ? formData.vehicleConfig.unitVehicleNetCost : (formData.adultNetPrice || 500)}
+                            value={formData.vehicleConfig?.unitVehicleNetCost !== undefined ? formData.vehicleConfig.unitVehicleNetCost : (formData.adultNetPrice !== undefined ? formData.adultNetPrice : '')}
                             onChange={e => {
-                              const cost = Number(e.target.value);
-                              setFormData({
-                                ...formData,
-                                adultNetPrice: cost,
-                                adultNettCost: cost,
+                              const val = e.target.value === '' ? undefined : Number(e.target.value);
+                              setFormData(prev => ({
+                                ...prev,
+                                adultNetPrice: val,
+                                adultNettCost: val,
                                 vehicleConfig: {
-                                  ...(formData.vehicleConfig || {
-                                    vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge' : 'Toyota Hiace Grand Cabin (7-Seater)',
-                                    vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
-                                    maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
-                                    unitVehicleNetCost: 500,
-                                    adultSeatCount: 1,
-                                    childSeatCount: 1,
-                                    infantSeatCount: 0,
-                                    allowMultipleVehicles: true,
-                                    autoAllocateVehicles: true,
-                                    maxVehicles: 5
-                                  }),
-                                  unitVehicleNetCost: cost,
-                                  totalTransferCost: cost
+                                  ...(prev.vehicleConfig || {}),
+                                  unitVehicleNetCost: val,
+                                  totalTransferCost: val
                                 }
-                              });
+                              }));
                             }}
-                            placeholder="e.g. 500"
+                            placeholder="Enter Contracted Nett Cost (e.g. 16500)"
                             className="w-full p-2 bg-white rounded-lg font-bold text-sm"
                           />
                         </div>
@@ -1361,12 +1439,12 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                             <Gauge className="w-3.5 h-3.5 text-[#00E5C0]" />
                             <span>
                               {formData.category === 'Private Yacht' 
-                                ? 'Guest Capacity & Manifest Rules' 
+                                ? 'Guest Manifest Constraints' 
                                 : 'Passenger Seat Occupancy Rules (Operational Constraints)'}
                             </span>
                           </span>
                           <span className="text-[10px] text-slate-400">
-                            {formData.category === 'Private Yacht' ? 'Passenger capacity slots utilized' : 'Number of physical seats occupied per person'}
+                            {formData.category === 'Private Yacht' ? 'Passenger capacity slots utilized' : 'Physical seats occupied per passenger'}
                           </span>
                         </div>
                         <div className="grid grid-cols-3 gap-3 text-slate-800 text-xs">
@@ -1377,24 +1455,10 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                               min="1"
                               max="4"
                               value={formData.vehicleConfig?.adultSeatCount ?? 1}
-                              onChange={e => setFormData({
-                                ...formData,
-                                vehicleConfig: {
-                                  ...(formData.vehicleConfig || {
-                                    vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge' : 'Toyota Hiace Grand Cabin (7-Seater)',
-                                    vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
-                                    maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
-                                    unitVehicleNetCost: 500,
-                                    adultSeatCount: 1,
-                                    childSeatCount: 1,
-                                    infantSeatCount: 0,
-                                    allowMultipleVehicles: true,
-                                    autoAllocateVehicles: true,
-                                    maxVehicles: 5
-                                  }),
-                                  adultSeatCount: Number(e.target.value)
-                                }
-                              })}
+                              onChange={e => setFormData(prev => ({
+                                ...prev,
+                                vehicleConfig: { ...(prev.vehicleConfig || {}), adultSeatCount: Number(e.target.value) }
+                              }))}
                               className="w-full p-1.5 bg-white rounded text-center font-bold"
                             />
                           </div>
@@ -1405,24 +1469,10 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                               min="0"
                               max="2"
                               value={formData.vehicleConfig?.childSeatCount ?? 1}
-                              onChange={e => setFormData({
-                                ...formData,
-                                vehicleConfig: {
-                                  ...(formData.vehicleConfig || {
-                                    vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge' : 'Toyota Hiace Grand Cabin (7-Seater)',
-                                    vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
-                                    maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
-                                    unitVehicleNetCost: 500,
-                                    adultSeatCount: 1,
-                                    childSeatCount: 1,
-                                    infantSeatCount: 0,
-                                    allowMultipleVehicles: true,
-                                    autoAllocateVehicles: true,
-                                    maxVehicles: 5
-                                  }),
-                                  childSeatCount: Number(e.target.value)
-                                }
-                              })}
+                              onChange={e => setFormData(prev => ({
+                                ...prev,
+                                vehicleConfig: { ...(prev.vehicleConfig || {}), childSeatCount: Number(e.target.value) }
+                              }))}
                               className="w-full p-1.5 bg-white rounded text-center font-bold"
                             />
                           </div>
@@ -1433,24 +1483,10 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                               min="0"
                               max="1"
                               value={formData.vehicleConfig?.infantSeatCount ?? 0}
-                              onChange={e => setFormData({
-                                ...formData,
-                                vehicleConfig: {
-                                  ...(formData.vehicleConfig || {
-                                    vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge' : 'Toyota Hiace Grand Cabin (7-Seater)',
-                                    vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
-                                    maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
-                                    unitVehicleNetCost: 500,
-                                    adultSeatCount: 1,
-                                    childSeatCount: 1,
-                                    infantSeatCount: 0,
-                                    allowMultipleVehicles: true,
-                                    autoAllocateVehicles: true,
-                                    maxVehicles: 5
-                                  }),
-                                  infantSeatCount: Number(e.target.value)
-                                }
-                              })}
+                              onChange={e => setFormData(prev => ({
+                                ...prev,
+                                vehicleConfig: { ...(prev.vehicleConfig || {}), infantSeatCount: Number(e.target.value) }
+                              }))}
                               className="w-full p-1.5 bg-white rounded text-center font-bold"
                             />
                           </div>
@@ -1463,31 +1499,20 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                           <input
                             type="checkbox"
                             checked={formData.vehicleConfig?.allowMultipleVehicles ?? true}
-                            onChange={e => setFormData({
-                              ...formData,
+                            onChange={e => setFormData(prev => ({
+                              ...prev,
                               vehicleConfig: {
-                                ...(formData.vehicleConfig || {
-                                  vehicleModel: formData.category === 'Private Yacht' ? 'Azimut 66 Flybridge' : 'Toyota Hiace Grand Cabin (7-Seater)',
-                                  vehicleType: formData.category === 'Private Yacht' ? 'Motor Yacht' : 'Executive MPV / Van',
-                                  maxSeats: formData.category === 'Private Yacht' ? 10 : 7,
-                                  unitVehicleNetCost: 500,
-                                  adultSeatCount: 1,
-                                  childSeatCount: 1,
-                                  infantSeatCount: 0,
-                                  allowMultipleVehicles: true,
-                                  autoAllocateVehicles: true,
-                                  maxVehicles: 5
-                                }),
+                                ...(prev.vehicleConfig || {}),
                                 allowMultipleVehicles: e.target.checked,
                                 autoAllocateVehicles: e.target.checked
                               }
-                            })}
+                            }))}
                             className="rounded text-[#00C6A6] focus:ring-[#00C6A6] w-4 h-4"
                           />
                           <span>
                             {formData.category === 'Private Yacht'
-                              ? `Allow auto-allocation of multiple yachts if passenger count exceeds ${formData.vehicleConfig?.maxSeats || 10} guests`
-                              : `Allow auto-allocation of multiple vehicles if passenger count exceeds ${formData.vehicleConfig?.maxSeats || 7} seats`}
+                              ? `Allow auto-allocation of multiple yachts if passenger count exceeds maximum guest capacity`
+                              : `Allow auto-allocation of multiple vehicles if passenger count exceeds seating capacity`}
                           </span>
                         </label>
                         <span className="text-[10px] text-slate-400">
@@ -1514,135 +1539,585 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                         </span>
                       </div>
 
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-[11px] text-left">
-                          <thead>
-                            <tr className="border-b border-slate-800 text-slate-400">
-                              <th className="pb-1.5 font-semibold">Pax Count</th>
-                              <th className="pb-1.5 font-semibold">
-                                {formData.category === 'Private Yacht' ? 'Yachts' : 'Vehicles'}
-                              </th>
-                              <th className="pb-1.5 font-semibold text-right">
-                                {formData.category === 'Private Yacht' ? 'Total Yacht Nett' : 'Total Vehicle Nett'}
-                              </th>
-                              <th className="pb-1.5 font-semibold text-right text-[#00E5C0]">Per-Person Nett</th>
-                              <th className="pb-1.5 font-semibold text-right text-emerald-400">Buyer Delivered Total</th>
-                              <th className="pb-1.5 font-semibold text-right text-emerald-300">Buyer Per-Person</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-900 text-slate-300">
-                            {[1, 2, 5, (formData.vehicleConfig?.maxSeats || (formData.category === 'Private Yacht' ? 10 : 7)), (formData.vehicleConfig?.maxSeats || (formData.category === 'Private Yacht' ? 10 : 7)) + 1, (formData.vehicleConfig?.maxSeats || (formData.category === 'Private Yacht' ? 10 : 7)) * 2].filter((v, i, a) => a.indexOf(v) === i).sort((a,b) => a-b).map(simPax => {
-                              const maxS = formData.vehicleConfig?.maxSeats || (formData.category === 'Private Yacht' ? 10 : 7);
-                              const unitCost = formData.vehicleConfig?.unitVehicleNetCost !== undefined ? formData.vehicleConfig.unitVehicleNetCost : (formData.adultNetPrice || 500);
-                              const vehCount = Math.max(1, Math.ceil(simPax / maxS));
-                              const totalVehNett = vehCount * unitCost;
-                              const perPersonNett = totalVehNett / simPax;
-                              const buyerMarkup = formData.buyerMarkupPercent !== undefined ? formData.buyerMarkupPercent : 30;
-                              const taxPct = formData.taxPercent !== undefined ? formData.taxPercent : 10;
-                              const markupAmt = totalVehNett * (buyerMarkup / 100);
-                              const taxAmt = markupAmt * (taxPct / 100);
-                              const totalSelling = totalVehNett + markupAmt + taxAmt + (formData.serviceFeeFixed || 0);
-                              const perPersonSelling = totalSelling / simPax;
-                              const isFull = simPax === maxS;
-                              const isOver = simPax > maxS;
+                      {(() => {
+                        const maxS = Number(formData.vehicleConfig?.maxSeats) || Number(formData.capacitySnapshot) || Number(formData.yachtCapacitySnapshot) || 0;
+                        const unitCost = formData.vehicleConfig?.unitVehicleNetCost !== undefined ? Number(formData.vehicleConfig.unitVehicleNetCost) : (formData.adultNetPrice !== undefined ? Number(formData.adultNetPrice) : 0);
 
-                              return (
-                                <tr key={simPax} className={`hover:bg-slate-900/60 ${isFull ? 'bg-teal-950/40 text-teal-200 font-semibold' : ''}`}>
-                                  <td className="py-1.5 flex items-center gap-1">
-                                    <Users className="w-3 h-3 text-slate-500" />
-                                    <span>{simPax} {simPax === 1 ? 'Pax' : 'Pax'}</span>
-                                    {isFull && <span className="text-[9px] bg-teal-500/20 text-[#00E5C0] px-1 rounded ml-1">MAX CAPACITY</span>}
-                                    {isOver && (
-                                      <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1 rounded ml-1">
-                                        {formData.category === 'Private Yacht' ? '2nd YACHT' : '2nd VEHICLE'}
-                                      </span>
-                                    )}
-                                  </td>
-                                  <td className="py-1.5">
-                                    {vehCount} {formData.category === 'Private Yacht' ? (vehCount === 1 ? 'Yacht' : 'Yachts') : (vehCount === 1 ? 'Vehicle' : 'Vehicles')}
-                                  </td>
-                                  <td className="py-1.5 text-right font-mono">{formatCurrency(totalVehNett, formData.currency || 'USD')}</td>
-                                  <td className="py-1.5 text-right font-mono font-bold text-[#00E5C0]">{formatCurrency(perPersonNett, formData.currency || 'USD')}</td>
-                                  <td className="py-1.5 text-right font-mono text-emerald-400">{formatCurrency(totalSelling, formData.currency || 'USD')}</td>
-                                  <td className="py-1.5 text-right font-mono font-bold text-emerald-300">{formatCurrency(perPersonSelling, formData.currency || 'USD')}</td>
+                        if (!maxS || maxS <= 0 || !unitCost || unitCost <= 0) {
+                          return (
+                            <div className="py-8 px-4 text-center border border-dashed border-slate-800 rounded-lg bg-slate-900/30">
+                              <Calculator className="w-6 h-6 text-slate-600 mx-auto mb-2" />
+                              <p className="text-xs font-semibold text-slate-300">Simulation Breakdown Unavailable</p>
+                              <p className="text-[11px] text-slate-500 mt-1 max-w-md mx-auto">
+                                {formData.category === 'Private Yacht'
+                                  ? 'Select an authoritative yacht from the Yacht Master database and enter the contracted charter nett cost above to calculate capacity breakdown and delivered rates.'
+                                  : 'Select an operational vehicle from the Vehicle Master database and enter the contracted vehicle nett cost above to calculate capacity breakdown and delivered rates.'}
+                              </p>
+                            </div>
+                          );
+                        }
+
+                        const simPaxList = [1, 2, Math.max(2, Math.ceil(maxS / 2)), maxS, maxS + 1, maxS * 2]
+                          .filter((v, i, a) => a.indexOf(v) === i && v > 0)
+                          .sort((a, b) => a - b);
+
+                        return (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-[11px] text-left">
+                              <thead>
+                                <tr className="border-b border-slate-800 text-slate-400">
+                                  <th className="pb-1.5 font-semibold">Pax Count</th>
+                                  <th className="pb-1.5 font-semibold">
+                                    {formData.category === 'Private Yacht' ? 'Yachts' : 'Vehicles'}
+                                  </th>
+                                  <th className="pb-1.5 font-semibold text-right">
+                                    {formData.category === 'Private Yacht' ? 'Total Yacht Nett' : 'Total Vehicle Nett'}
+                                  </th>
+                                  <th className="pb-1.5 font-semibold text-right text-[#00E5C0]">Per-Person Nett</th>
+                                  <th className="pb-1.5 font-semibold text-right text-emerald-400">Buyer Delivered Total</th>
+                                  <th className="pb-1.5 font-semibold text-right text-emerald-300">Buyer Per-Person</th>
                                 </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+                              </thead>
+                              <tbody className="divide-y divide-slate-900 text-slate-300">
+                                {simPaxList.map(simPax => {
+                                  const vehCount = Math.max(1, Math.ceil(simPax / maxS));
+                                  const totalVehNett = vehCount * unitCost;
+                                  const perPersonNett = totalVehNett / simPax;
+                                  const buyerMarkup = formData.buyerMarkupPercent !== undefined ? formData.buyerMarkupPercent : (formData.defaultMarkupPercent || 0);
+                                  const taxPct = formData.taxPercent !== undefined ? formData.taxPercent : 0;
+                                  const markupAmt = totalVehNett * (buyerMarkup / 100);
+                                  const taxAmt = markupAmt * (taxPct / 100);
+                                  const totalSelling = totalVehNett + markupAmt + taxAmt + (formData.serviceFeeFixed || 0);
+                                  const perPersonSelling = totalSelling / simPax;
+                                  const isFull = simPax === maxS;
+                                  const isOver = simPax > maxS;
+
+                                  return (
+                                    <tr key={simPax} className={`hover:bg-slate-900/60 ${isFull ? 'bg-teal-950/40 text-teal-200 font-semibold' : ''}`}>
+                                      <td className="py-1.5 flex items-center gap-1">
+                                        <Users className="w-3 h-3 text-slate-500" />
+                                        <span>{simPax} Pax</span>
+                                        {isFull && <span className="text-[9px] bg-teal-500/20 text-[#00E5C0] px-1 rounded ml-1 font-bold">MAX CAPACITY</span>}
+                                        {isOver && (
+                                          <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1 rounded ml-1 font-bold">
+                                            {formData.category === 'Private Yacht' ? '2nd YACHT' : '2nd VEHICLE'}
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="py-1.5">
+                                        {vehCount} {formData.category === 'Private Yacht' ? (vehCount === 1 ? 'Yacht' : 'Yachts') : (vehCount === 1 ? 'Vehicle' : 'Vehicles')}
+                                      </td>
+                                      <td className="py-1.5 text-right font-mono">{formatCurrency(totalVehNett, formData.currency || 'USD')}</td>
+                                      <td className="py-1.5 text-right font-mono font-bold text-[#00E5C0]">{formatCurrency(perPersonNett, formData.currency || 'USD')}</td>
+                                      <td className="py-1.5 text-right font-mono text-emerald-400">{formatCurrency(totalSelling, formData.currency || 'USD')}</td>
+                                      <td className="py-1.5 text-right font-mono font-bold text-emerald-300">{formatCurrency(perPersonSelling, formData.currency || 'USD')}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 ) : (
-                  /* STANDARD PER-PERSON PRICING INPUTS */
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-800">
-                    <div className="space-y-1">
-                      <label className="text-[11px] text-slate-300 font-medium">Base Currency</label>
-                      <select
-                        value={formData.currency}
-                        onChange={e => setFormData({ ...formData, currency: e.target.value as CurrencyCode })}
-                        className="w-full p-2 bg-white rounded-lg font-bold"
-                      >
-                        <option value="USD">USD ($)</option>
-                        <option value="EUR">EUR (€)</option>
-                        <option value="GBP">GBP (£)</option>
-                        <option value="JPY">JPY (¥)</option>
-                        <option value="INR">INR (₹)</option>
-                        <option value="AED">AED (AED)</option>
-                        <option value="THB">THB (฿)</option>
-                        <option value="AUD">AUD (A$)</option>
-                        <option value="CAD">CAD (CA$)</option>
-                        <option value="SGD">SGD (S$)</option>
-                        <option value="CHF">CHF (CHF)</option>
-                      </select>
+                  /* 2. CATEGORY: STANDARD PER-PERSON PRICING INPUTS (Group Tours, Tickets, Ferries, Guides, Restaurant) */
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-800">
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-slate-300 font-medium">Base Currency</label>
+                        <select
+                          value={formData.currency}
+                          onChange={e => setFormData({ ...formData, currency: e.target.value as CurrencyCode })}
+                          className="w-full p-2 bg-white rounded-lg font-bold"
+                        >
+                          <option value="USD">USD ($)</option>
+                          <option value="EUR">EUR (€)</option>
+                          <option value="GBP">GBP (£)</option>
+                          <option value="JPY">JPY (¥)</option>
+                          <option value="INR">INR (₹)</option>
+                          <option value="AED">AED (AED)</option>
+                          <option value="THB">THB (฿)</option>
+                          <option value="AUD">AUD (A$)</option>
+                          <option value="CAD">CAD (CA$)</option>
+                          <option value="SGD">SGD (S$)</option>
+                          <option value="CHF">CHF (CHF)</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-slate-300 font-medium">Adult Nett Cost *</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={formData.adultNetPrice !== undefined ? formData.adultNetPrice : ''}
+                          onChange={e => setFormData({ ...formData, adultNetPrice: e.target.value === '' ? undefined : Number(e.target.value) })}
+                          placeholder="Enter Adult Nett Cost"
+                          className="w-full p-2 bg-white rounded-lg font-bold text-slate-900"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-slate-300 font-medium">Child Nett Cost</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={formData.childNetPrice !== undefined ? formData.childNetPrice : ''}
+                          onChange={e => setFormData({ ...formData, childNetPrice: e.target.value === '' ? undefined : Number(e.target.value) })}
+                          placeholder="Enter Child Nett Cost"
+                          className="w-full p-2 bg-white rounded-lg text-slate-900"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-slate-300 font-medium">Infant Nett Cost</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={formData.infantNetPrice !== undefined ? formData.infantNetPrice : ''}
+                          onChange={e => setFormData({ ...formData, infantNetPrice: e.target.value === '' ? undefined : Number(e.target.value) })}
+                          placeholder="Enter Infant Nett Cost"
+                          className="w-full p-2 bg-white rounded-lg text-slate-900"
+                        />
+                      </div>
                     </div>
 
-                    <div className="space-y-1">
-                      <label className="text-[11px] text-slate-300 font-medium">Adult Nett Cost *</label>
-                      <input
-                        type="number"
-                        required
-                        min="0"
-                        value={formData.adultNetPrice || 0}
-                        onChange={e => setFormData({ ...formData, adultNetPrice: Number(e.target.value) })}
-                        className="w-full p-2 bg-white rounded-lg font-bold"
-                      />
-                    </div>
+                    {/* Category-Specific Detailed Attributes */}
+                    {/* TICKETS ATTRIBUTES */}
+                    {formData.category === 'Tickets' && (
+                      <div className="bg-slate-800/80 p-3.5 rounded-xl border border-blue-500/30 space-y-3">
+                        <div className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
+                          <Ticket className="w-3.5 h-3.5" />
+                          <span>Attraction Ticket & Admission Rules</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-800">
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Ticket Type / Tier</label>
+                            <select
+                              value={formData.ticketConfig?.ticketType || 'STANDARD'}
+                              onChange={e => setFormData({
+                                ...formData,
+                                ticketConfig: {
+                                  ...(formData.ticketConfig || {}),
+                                  ticketType: e.target.value as any
+                                }
+                              })}
+                              className="w-full p-2 bg-white rounded-lg font-medium text-xs"
+                            >
+                              <option value="STANDARD">Standard Admission Pass</option>
+                              <option value="VIP_FAST_TRACK">VIP Fast Track / Express Pass</option>
+                              <option value="TIMED_ENTRY">Timed Entry Slot</option>
+                              <option value="MULTI_DAY_PASS">Multi-Day Explorer Pass</option>
+                              <option value="FLEXIBLE">Flexible Date Open Ticket</option>
+                            </select>
+                          </div>
 
-                    <div className="space-y-1">
-                      <label className="text-[11px] text-slate-300 font-medium">Child Nett Cost</label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={formData.childNetPrice || 0}
-                        onChange={e => setFormData({ ...formData, childNetPrice: Number(e.target.value) })}
-                        className="w-full p-2 bg-white rounded-lg"
-                      />
-                    </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Redemption Method</label>
+                            <select
+                              value={formData.ticketConfig?.redemptionMethod || 'INSTANT_QR_VOUCHER'}
+                              onChange={e => setFormData({
+                                ...formData,
+                                ticketConfig: {
+                                  ...(formData.ticketConfig || {}),
+                                  redemptionMethod: e.target.value as any
+                                }
+                              })}
+                              className="w-full p-2 bg-white rounded-lg font-medium text-xs"
+                            >
+                              <option value="INSTANT_QR_VOUCHER">Instant QR Code / Mobile Barcode</option>
+                              <option value="MOBILE_VOUCHER">Mobile Digital Voucher</option>
+                              <option value="PRINTED_VOUCHER">Printed Paper Voucher Required</option>
+                              <option value="WILL_CALL_COUNTER">Will Call Box Office Counter</option>
+                            </select>
+                          </div>
 
-                    <div className="space-y-1">
-                      <label className="text-[11px] text-slate-300 font-medium">Infant Nett Cost</label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={formData.infantNetPrice || 0}
-                        onChange={e => setFormData({ ...formData, infantNetPrice: Number(e.target.value) })}
-                        className="w-full p-2 bg-white rounded-lg"
-                      />
-                    </div>
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Booking Cutoff (Hours)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={formData.ticketConfig?.bookingCutoffHours ?? 2}
+                              onChange={e => setFormData({
+                                ...formData,
+                                ticketConfig: {
+                                  ...(formData.ticketConfig || {}),
+                                  bookingCutoffHours: Number(e.target.value)
+                                }
+                              })}
+                              placeholder="e.g. 2 Hours prior"
+                              className="w-full p-2 bg-white rounded-lg font-semibold text-xs"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* GUIDES ATTRIBUTES */}
+                    {formData.category === 'Guides' && (
+                      <div className="bg-slate-800/80 p-3.5 rounded-xl border border-amber-500/30 space-y-3">
+                        <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                          <Languages className="w-3.5 h-3.5" />
+                          <span>Professional Guide Credentials & Languages</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-800">
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Guide Qualification</label>
+                            <select
+                              value={formData.guideConfig?.guideType || 'LICENSED_NATIONAL_GUIDE'}
+                              onChange={e => setFormData({
+                                ...formData,
+                                guideConfig: {
+                                  ...(formData.guideConfig || {}),
+                                  guideType: e.target.value as any
+                                }
+                              })}
+                              className="w-full p-2 bg-white rounded-lg font-medium text-xs"
+                            >
+                              <option value="LICENSED_NATIONAL_GUIDE">National Government Licensed Guide</option>
+                              <option value="LOCAL_EXPERT">Local Resident / Culture Specialist</option>
+                              <option value="CHAUFFEUR_GUIDE">Bilingual Chauffeur-Guide</option>
+                              <option value="SPECIALIST_ACADEMIC">Academic / Art Historian Expert</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Rate Service Format</label>
+                            <select
+                              value={formData.guideConfig?.rateType || 'FULL_DAY'}
+                              onChange={e => setFormData({
+                                ...formData,
+                                guideConfig: {
+                                  ...(formData.guideConfig || {}),
+                                  rateType: e.target.value as any
+                                }
+                              })}
+                              className="w-full p-2 bg-white rounded-lg font-medium text-xs"
+                            >
+                              <option value="FULL_DAY">Full-Day Service (8 Hours)</option>
+                              <option value="HALF_DAY">Half-Day Service (4 Hours)</option>
+                              <option value="HOURLY">Hourly Consultation</option>
+                              <option value="NIGHT_TOUR">Night Gastronomy Tour (3.5 Hours)</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Max Group Size Per Guide</label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="50"
+                              value={formData.guideConfig?.maxGroupSize ?? 10}
+                              onChange={e => setFormData({
+                                ...formData,
+                                guideConfig: {
+                                  ...(formData.guideConfig || {}),
+                                  maxGroupSize: Number(e.target.value)
+                                }
+                              })}
+                              className="w-full p-2 bg-white rounded-lg font-bold text-xs"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Languages list */}
+                        <div className="space-y-1 pt-1">
+                          <label className="text-[11px] text-slate-300 font-medium">Supported Languages</label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {['English', 'Japanese', 'Spanish', 'French', 'German', 'Mandarin Chinese', 'Italian', 'Russian', 'Arabic', 'Hindi', 'Portuguese'].map(lang => {
+                              const activeLangs = formData.guideConfig?.languages || ['English', 'Japanese'];
+                              const isSelected = activeLangs.includes(lang);
+                              return (
+                                <button
+                                  key={lang}
+                                  type="button"
+                                  onClick={() => {
+                                    const nextLangs = isSelected
+                                      ? activeLangs.filter(l => l !== lang)
+                                      : [...activeLangs, lang];
+                                    setFormData({
+                                      ...formData,
+                                      guideConfig: {
+                                        ...(formData.guideConfig || {}),
+                                        languages: nextLangs
+                                      }
+                                    });
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-all ${
+                                    isSelected
+                                      ? 'bg-amber-400 text-slate-950 shadow-xs'
+                                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                  }`}
+                                >
+                                  {isSelected ? '✓ ' : '+ '}{lang}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* RESTAURANT ATTRIBUTES */}
+                    {formData.category === 'Lunch / Dinner Restaurant' && (
+                      <div className="bg-slate-800/80 p-3.5 rounded-xl border border-rose-500/30 space-y-3">
+                        <div className="text-xs font-bold text-rose-300 flex items-center gap-1.5">
+                          <Utensils className="w-3.5 h-3.5" />
+                          <span>Dining & Culinary Experience Specifications</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-800">
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Meal / Course Format</label>
+                            <select
+                              value={formData.restaurantConfig?.mealType || 'KAISEKI_DINNER'}
+                              onChange={e => setFormData({
+                                ...formData,
+                                restaurantConfig: {
+                                  ...(formData.restaurantConfig || {}),
+                                  mealType: e.target.value as any
+                                }
+                              })}
+                              className="w-full p-2 bg-white rounded-lg font-medium text-xs"
+                            >
+                              <option value="KAISEKI_DINNER">Multi-Course Kaiseki Dinner</option>
+                              <option value="OMAKASE">Chef's Omakase Sushi</option>
+                              <option value="SET_LUNCH">Traditional Japanese Set Lunch</option>
+                              <option value="MULTI_COURSE">Western Fine Dining Course</option>
+                              <option value="BUFFET">Luxury Gourmet Buffet</option>
+                              <option value="AFTERNOON_TEA">Traditional Tea Ceremony & Sweets</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Seating Environment</label>
+                            <select
+                              value={formData.restaurantConfig?.seatingType || 'PRIVATE_ROOM_TATAMI'}
+                              onChange={e => setFormData({
+                                ...formData,
+                                restaurantConfig: {
+                                  ...(formData.restaurantConfig || {}),
+                                  seatingType: e.target.value as any
+                                }
+                              })}
+                              className="w-full p-2 bg-white rounded-lg font-medium text-xs"
+                            >
+                              <option value="PRIVATE_ROOM_TATAMI">Private Room (Traditional Tatami)</option>
+                              <option value="PRIVATE_ROOM_TABLE">Private Room (Modern Table & Chairs)</option>
+                              <option value="CHEF_COUNTER">Chef's Counter Seating</option>
+                              <option value="MAIN_DINING">Main Dining Hall</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Beverage Package</label>
+                            <select
+                              value={formData.restaurantConfig?.beveragePackage || 'STANDARD_TEA_WATER'}
+                              onChange={e => setFormData({
+                                ...formData,
+                                restaurantConfig: {
+                                  ...(formData.restaurantConfig || {}),
+                                  beveragePackage: e.target.value as any
+                                }
+                              })}
+                              className="w-full p-2 bg-white rounded-lg font-medium text-xs"
+                            >
+                              <option value="STANDARD_TEA_WATER">Standard Green Tea & Mineral Water</option>
+                              <option value="NOMIHOUDAI_ALL_YOU_CAN_DRINK">All-You-Can-Drink (Nomihoudai 2h)</option>
+                              <option value="SAKE_PAIRING">Sommelier Curated Sake Pairing (5 Glasses)</option>
+                              <option value="SOMMELIER_WINE_PAIRING">Premium Wine Pairing</option>
+                              <option value="NON_ALCOHOLIC_PAIRING">Artisanal Non-Alcoholic Pairing</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Dietary Accommodations */}
+                        <div className="space-y-1 pt-1">
+                          <label className="text-[11px] text-slate-300 font-medium">Dietary Accommodations Supported</label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {['Vegetarian', 'Halal-friendly (No Pork/Alcohol)', 'Gluten-Free', 'No Seafood', 'Vegan', 'Nut Allergy Safe', 'Egg Allergy Safe', 'Dairy Free'].map(diet => {
+                              const activeDiets = formData.restaurantConfig?.dietaryAccommodations || ['Vegetarian', 'Halal-friendly (No Pork/Alcohol)'];
+                              const isSelected = activeDiets.includes(diet);
+                              return (
+                                <button
+                                  key={diet}
+                                  type="button"
+                                  onClick={() => {
+                                    const nextDiets = isSelected
+                                      ? activeDiets.filter(d => d !== diet)
+                                      : [...activeDiets, diet];
+                                    setFormData({
+                                      ...formData,
+                                      restaurantConfig: {
+                                        ...(formData.restaurantConfig || {}),
+                                        dietaryAccommodations: nextDiets
+                                      }
+                                    });
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-all ${
+                                    isSelected
+                                      ? 'bg-rose-400 text-slate-950 shadow-xs'
+                                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                  }`}
+                                >
+                                  {isSelected ? '✓ ' : '+ '}{diet}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* FERRIES ATTRIBUTES */}
+                    {formData.category === 'Ferries' && (
+                      <div className="bg-slate-800/80 p-3.5 rounded-xl border border-cyan-500/30 space-y-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                          <span className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                            <Anchor className="w-3.5 h-3.5" />
+                            <span>Authoritative Ferry Master & Marine Logistics</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOperationalAssetsManagerTab('FERRIES');
+                              setIsOperationalAssetsManagerOpen(true);
+                            }}
+                            className="text-[11px] text-cyan-300 hover:text-white underline font-semibold flex items-center gap-1 cursor-pointer"
+                          >
+                            <span>Manage Ferry Master Database</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        {/* Searchable Ferry Vessel Selector */}
+                        <div className="space-y-1">
+                          <label className="text-xs text-slate-300 font-semibold block">Select Ferry / Vessel from Master Database *</label>
+                          <OperationalAssetSelector
+                            assetType="FERRY"
+                            selectedId={formData.ferryId || formData.ferryConfig?.vesselId}
+                            selectedName={formData.ferryNameSnapshot || formData.ferryConfig?.ferryLine}
+                            selectedType={formData.ferryTypeSnapshot || formData.ferryConfig?.vesselClass}
+                            selectedCapacity={formData.ferryCapacitySnapshot || formData.ferryConfig?.capacity}
+                            destinationId={formData.destinationId}
+                            hubId={formData.hubId}
+                            onSelect={(asset: SelectedAssetPayload) => {
+                              setFormData(prev => ({
+                                ...prev,
+                                ferryId: asset.id,
+                                ferryNameSnapshot: asset.name,
+                                ferryTypeSnapshot: asset.type,
+                                ferryCapacitySnapshot: asset.capacity,
+                                ferryConfig: {
+                                  ...(prev.ferryConfig || {}),
+                                  vesselId: asset.id,
+                                  ferryLine: asset.name,
+                                  vesselClass: asset.classification || asset.type,
+                                  capacity: asset.capacity,
+                                  departurePort: asset.origin || prev.ferryConfig?.departurePort || '',
+                                  arrivalPort: asset.destination || prev.ferryConfig?.arrivalPort || '',
+                                  operator: asset.operator || ''
+                                }
+                              }));
+                            }}
+                            onClear={() => {
+                              setFormData(prev => ({
+                                ...prev,
+                                ferryId: undefined,
+                                ferryNameSnapshot: undefined,
+                                ferryTypeSnapshot: undefined,
+                                ferryCapacitySnapshot: undefined,
+                                ferryConfig: undefined
+                              }));
+                            }}
+                            onOpenMasterManager={() => {
+                              setOperationalAssetsManagerTab('FERRIES');
+                              setIsOperationalAssetsManagerOpen(true);
+                            }}
+                          />
+                        </div>
+
+                        {/* Specs Grid from Snapshot */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-700/80 text-xs">
+                          <div>
+                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Vessel Line</span>
+                            <span className="text-white font-bold truncate block">
+                              {formData.ferryNameSnapshot || formData.ferryConfig?.ferryLine || '—'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Vessel Class</span>
+                            <span className="text-slate-200 font-semibold block">
+                              {formData.ferryTypeSnapshot || formData.ferryConfig?.vesselClass || '—'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Capacity</span>
+                            <span className="text-cyan-300 font-bold block">
+                              {formData.ferryCapacitySnapshot || formData.ferryConfig?.capacity ? `${formData.ferryCapacitySnapshot || formData.ferryConfig?.capacity} Pax` : '—'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Departure / Arrival</span>
+                            <span className="text-slate-300 font-medium block truncate">
+                              {formData.ferryConfig?.departurePort && formData.ferryConfig?.arrivalPort ? `${formData.ferryConfig.departurePort} ➔ ${formData.ferryConfig.arrivalPort}` : '—'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-800 pt-1">
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Departure Port / Pier</label>
+                            <input
+                              type="text"
+                              value={formData.ferryConfig?.departurePort || ''}
+                              onChange={e => setFormData({
+                                ...formData,
+                                ferryConfig: {
+                                  ...(formData.ferryConfig || {}),
+                                  departurePort: e.target.value
+                                }
+                              })}
+                              placeholder="e.g. Miyajimaguchi Pier"
+                              className="w-full p-2 bg-white rounded-lg font-medium text-xs text-slate-900"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] text-slate-300 font-medium">Arrival Port / Pier</label>
+                            <input
+                              type="text"
+                              value={formData.ferryConfig?.arrivalPort || ''}
+                              onChange={e => setFormData({
+                                ...formData,
+                                ferryConfig: {
+                                  ...(formData.ferryConfig || {}),
+                                  arrivalPort: e.target.value
+                                }
+                              })}
+                              placeholder="e.g. Miyajima Island Terminal"
+                              className="w-full p-2 bg-white rounded-lg font-medium text-xs text-slate-900"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* 2. User-Type Default Markups & Tax */}
+                {/* Commercial Markups, Margins, Taxes (Section 12, 13, 14: Empty-First) */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-800 pt-2 border-t border-slate-800">
                   <div className="space-y-1">
                     <label className="text-[11px] text-emerald-400 font-medium">Buyer Markup %</label>
                     <input
                       type="number"
                       min="0"
-                      value={formData.buyerMarkupPercent !== undefined ? formData.buyerMarkupPercent : 30}
-                      onChange={e => setFormData({ ...formData, buyerMarkupPercent: Number(e.target.value), defaultMarkupPercent: Number(e.target.value) })}
-                      className="w-full p-2 bg-white rounded-lg font-semibold"
+                      value={formData.buyerMarkupPercent !== undefined ? formData.buyerMarkupPercent : ''}
+                      onChange={e => {
+                        const val = e.target.value === '' ? undefined : Number(e.target.value);
+                        setFormData({ ...formData, buyerMarkupPercent: val, defaultMarkupPercent: val });
+                      }}
+                      className="w-full p-2 bg-white rounded-lg font-semibold text-slate-900"
                       placeholder="e.g. 30"
                     />
                   </div>
@@ -1652,9 +2127,12 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                     <input
                       type="number"
                       min="0"
-                      value={formData.b2bAgentMarkupPercent !== undefined ? formData.b2bAgentMarkupPercent : 20}
-                      onChange={e => setFormData({ ...formData, b2bAgentMarkupPercent: Number(e.target.value) })}
-                      className="w-full p-2 bg-white rounded-lg font-semibold"
+                      value={formData.b2bAgentMarkupPercent !== undefined ? formData.b2bAgentMarkupPercent : ''}
+                      onChange={e => {
+                        const val = e.target.value === '' ? undefined : Number(e.target.value);
+                        setFormData({ ...formData, b2bAgentMarkupPercent: val });
+                      }}
+                      className="w-full p-2 bg-white rounded-lg font-semibold text-slate-900"
                       placeholder="e.g. 20"
                     />
                   </div>
@@ -1664,9 +2142,13 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                     <input
                       type="number"
                       min="0"
-                      value={formData.taxPercent !== undefined ? formData.taxPercent : 10}
-                      onChange={e => setFormData({ ...formData, taxPercent: Number(e.target.value) })}
-                      className="w-full p-2 bg-white rounded-lg"
+                      value={formData.taxPercent !== undefined ? formData.taxPercent : ''}
+                      onChange={e => {
+                        const val = e.target.value === '' ? undefined : Number(e.target.value);
+                        setFormData({ ...formData, taxPercent: val });
+                      }}
+                      className="w-full p-2 bg-white rounded-lg text-slate-900"
+                      placeholder="e.g. 10"
                     />
                   </div>
 
@@ -1675,104 +2157,72 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                     <input
                       type="number"
                       min="0"
-                      value={formData.serviceFeeFixed || 0}
-                      onChange={e => setFormData({ ...formData, serviceFeeFixed: Number(e.target.value) })}
-                      className="w-full p-2 bg-white rounded-lg"
+                      value={formData.serviceFeeFixed !== undefined ? formData.serviceFeeFixed : ''}
+                      onChange={e => {
+                        const val = e.target.value === '' ? undefined : Number(e.target.value);
+                        setFormData({ ...formData, serviceFeeFixed: val });
+                      }}
+                      className="w-full p-2 bg-white rounded-lg text-slate-900"
+                      placeholder="e.g. 0"
                     />
                   </div>
                 </div>
 
-                {/* Japan Rail Journey Configurator Integration Card */}
-                {(formData.category === 'Rail' || formData.id?.startsWith('RAIL-JP')) && (
-                  <div className="p-4 rounded-xl bg-gradient-to-r from-slate-900 to-indigo-950 border border-slate-800 text-white space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <div className="w-8 h-8 rounded-lg bg-[#00C6A6]/20 border border-[#00C6A6]/40 flex items-center justify-center text-[#00E5C0]">
-                          <Train className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <h4 className="text-xs font-black text-white uppercase tracking-wider">
-                            Japan Rail Dynamic Journey Engine Attached
-                          </h4>
-                          <span className="text-[10px] text-slate-300">
-                            Shared across Buyer Portal, B2B Quote Builder, B2B Agent Portal & Admin CMS
+                {/* Dual Live Preview (Section 11: Selling Price Must Never Be Fabricated) */}
+                {(() => {
+                  const effectiveNet = formData.pricingMethod === 'capacity_based' 
+                    ? (formData.vehicleConfig?.unitVehicleNetCost !== undefined ? formData.vehicleConfig.unitVehicleNetCost : formData.adultNetPrice)
+                    : formData.adultNetPrice;
+                  const buyerRate = calculateSellingPrice(effectiveNet, formData.buyerMarkupPercent, formData.taxPercent, formData.serviceFeeFixed);
+                  const b2bRate = calculateSellingPrice(effectiveNet, formData.b2bAgentMarkupPercent, formData.taxPercent, formData.serviceFeeFixed);
+                  const effectiveSeats = Number(formData.vehicleConfig?.maxSeats) || Number(formData.capacitySnapshot) || Number(formData.yachtCapacitySnapshot) || 0;
+
+                  return (
+                    <div className="pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs border-t border-slate-800 bg-slate-950/60 p-3 rounded-xl">
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase tracking-wider font-semibold">
+                          {formData.pricingMethod === 'capacity_based' ? 'Buyer Vehicle Delivered Rate (1 Vehicle):' : 'Direct Buyer Delivered Rate:'}
+                        </span>
+                        {buyerRate !== null ? (
+                          <>
+                            <span className="text-base font-bold font-mono text-emerald-400">
+                              {formatCurrency(buyerRate, formData.currency || 'USD')}
+                            </span>
+                            <span className="text-[10px] text-slate-500 ml-1.5">
+                              {formData.pricingMethod === 'capacity_based' && effectiveSeats > 0
+                                ? `(Starting at ${formatCurrency(Math.round(buyerRate / effectiveSeats), formData.currency || 'USD')}/pax at full capacity)`
+                                : `(Net + ${formData.buyerMarkupPercent || 0}% markup)`}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-xs font-semibold text-amber-400 italic">
+                            Selling price unavailable (Enter Nett Cost & Markups)
                           </span>
-                        </div>
+                        )}
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const tempProd: Product = {
-                            ...(editingProduct || {}),
-                            id: formData.id || 'RAIL-JP-ORD-RESERVED',
-                            name: formData.name || 'Japan Rail High-Speed Dynamic Journey',
-                            category: 'Rail',
-                            destinationId: 'dest-japan',
-                            country: 'Japan'
-                          } as Product;
-                          setTestingRailProduct(tempProd);
-                        }}
-                        className="px-3.5 py-1.5 rounded-lg bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-xs hover:scale-[1.02]"
-                      >
-                        <Sparkles className="w-3.5 h-3.5" />
-                        <span>Launch Journey Configurator</span>
-                      </button>
+                      <div className="sm:text-right">
+                        <span className="text-slate-400 block text-[10px] uppercase tracking-wider font-semibold">
+                          {formData.pricingMethod === 'capacity_based' ? 'B2B Agent Wholesale Rate (1 Vehicle):' : 'B2B Agent Delivered Rate:'}
+                        </span>
+                        {b2bRate !== null ? (
+                          <>
+                            <span className="text-base font-bold font-mono text-[#00E5C0]">
+                              {formatCurrency(b2bRate, formData.currency || 'USD')}
+                            </span>
+                            <span className="text-[10px] text-slate-500 ml-1.5">
+                              (Net + {formData.b2bAgentMarkupPercent || 0}% markup)
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-xs font-semibold text-slate-500 italic">
+                            Wholesale rate unavailable
+                          </span>
+                        )}
+                      </div>
                     </div>
-
-                    <div className="text-[11px] text-slate-300 bg-slate-800/80 p-2.5 rounded-lg border border-slate-700/80 space-y-1">
-                      <div>• <strong>Master Commercial Product:</strong> Operates under the two-product inventory architecture (Ordinary Reserved vs Green Car First Class) without route explosion.</div>
-                      <div>• <strong>Real-Time Rules:</strong> Dynamically checks route availability, calendar seasons (Regular, Low, High, Peak), and passenger eligibility across Tokaido, Sanyo, and Kyushu lines.</div>
-                    </div>
-                  </div>
-                )}
-
-                {/* 3. Dual Live Preview */}
-                <div className="pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs border-t border-slate-800 bg-slate-950/60 p-3 rounded-xl">
-                  <div>
-                    <span className="text-slate-400 block text-[10px] uppercase tracking-wider font-semibold">
-                      {formData.pricingMethod === 'capacity_based' ? 'Buyer Vehicle Delivered Rate (1 Vehicle):' : 'Direct Buyer Delivered Rate:'}
-                    </span>
-                    <span className="text-base font-bold font-mono text-emerald-400">
-                      {formatCurrency(
-                        calculateSellingPrice(
-                          (formData.pricingMethod === 'capacity_based' 
-                            ? (formData.vehicleConfig?.unitVehicleNetCost || formData.adultNetPrice || 500)
-                            : (formData.adultNetPrice || 0)),
-                          formData.buyerMarkupPercent !== undefined ? formData.buyerMarkupPercent : 30,
-                          formData.taxPercent !== undefined ? formData.taxPercent : 10,
-                          formData.serviceFeeFixed || 0
-                        ),
-                        formData.currency || 'USD'
-                      )}
-                    </span>
-                    <span className="text-[10px] text-slate-500 ml-1.5">
-                      {formData.pricingMethod === 'capacity_based' 
-                        ? `(Starting at ${formatCurrency((calculateSellingPrice((formData.vehicleConfig?.unitVehicleNetCost || formData.adultNetPrice || 500), formData.buyerMarkupPercent || 30, formData.taxPercent || 10, formData.serviceFeeFixed || 0) / (formData.vehicleConfig?.maxSeats || 7)), formData.currency || 'USD')}/pax at full capacity)`
-                        : `(Net + ${formData.buyerMarkupPercent || 30}% markup)`}
-                    </span>
-                  </div>
-
-                  <div className="sm:text-right">
-                    <span className="text-slate-400 block text-[10px] uppercase tracking-wider font-semibold">
-                      {formData.pricingMethod === 'capacity_based' ? 'B2B Agent Wholesale Rate (1 Vehicle):' : 'B2B Agent Delivered Rate:'}
-                    </span>
-                    <span className="text-base font-bold font-mono text-[#00E5C0]">
-                      {formatCurrency(
-                        calculateSellingPrice(
-                          (formData.pricingMethod === 'capacity_based' 
-                            ? (formData.vehicleConfig?.unitVehicleNetCost || formData.adultNetPrice || 500)
-                            : (formData.adultNetPrice || 0)),
-                          formData.b2bAgentMarkupPercent !== undefined ? formData.b2bAgentMarkupPercent : 20,
-                          formData.taxPercent !== undefined ? formData.taxPercent : 10,
-                          formData.serviceFeeFixed || 0
-                        ),
-                        formData.currency || 'USD'
-                      )}
-                    </span>
-                    <span className="text-[10px] text-slate-500 ml-1.5">(Net + {formData.b2bAgentMarkupPercent || 20}% markup)</span>
-                  </div>
-                </div>
+                  );
+                })()}
               </div>
 
               {/* Optional Experience Upgrades (Upsell Tagging) */}
@@ -2185,8 +2635,288 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
           itemOrProduct={testingConfigProduct}
           portalOrigin="ADMIN_CMS"
           onClose={() => setTestingConfigProduct(null)}
-          onSuccess={() => setTestingConfigProduct(null)}
+          onSuccess={(result) => {
+            setTestingConfigProduct(null);
+            refreshProducts();
+            if (result?.configurationPayload) {
+              setFormData(prev => ({
+                ...prev,
+                configuration: {
+                  configuration_id: result.configurationPayload.configuration_id || `cfg-${prev.sku || testingConfigProduct.id}`,
+                  product_id: prev.id || testingConfigProduct.id,
+                  product_category: prev.category as any,
+                  configurator_type: result.configurationPayload.configurator_type || CONFIGURATOR_REGISTRY_MAP[resolveAuthoritativeCategory(prev as any)]?.configuratorType,
+                  configuration_version: 1,
+                  configuration_schema_version: '1.0.0',
+                  configuration_data: result.configurationPayload,
+                  status: 'ACTIVE',
+                  updated_at: new Date().toISOString()
+                }
+              }));
+            }
+          }}
         />
+      )}
+
+      {/* Admin Product & Configuration Inspector Modal (Section 11) */}
+      {inspectingProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-4xl w-full max-h-[92dvh] flex flex-col overflow-hidden shadow-2xl border border-slate-200 animate-in zoom-in-95">
+            {/* Header */}
+            <div className="bg-slate-900 text-white p-5 border-b border-slate-800 flex items-start justify-between shrink-0">
+              <div className="space-y-1 min-w-0">
+                <div className="flex items-center space-x-2">
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-[#00C6A6] text-slate-950">
+                    {inspectingProduct.sku}
+                  </span>
+                  <span className="text-xs text-slate-400">•</span>
+                  <span className="text-xs font-semibold text-[#00E5C0]">
+                    {inspectingProduct.category}
+                  </span>
+                  <span className="text-xs text-slate-400">•</span>
+                  <span className="text-xs text-slate-300 font-medium">
+                    {inspectingProduct.city}, {inspectingProduct.country}
+                  </span>
+                </div>
+                <h3 className="text-base sm:text-lg font-black text-white truncate">
+                  {inspectingProduct.name}
+                </h3>
+              </div>
+              <button
+                onClick={() => setInspectingProduct(null)}
+                className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-slate-800 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Scrollable Body */}
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-6 text-xs flex-1 modal-body-scroll">
+              {/* SECTION 1: Product Information */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                  <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-[#008972]" />
+                    <span>Product Commercial & Operational Information</span>
+                  </span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    inspectingProduct.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                  }`}>
+                    {inspectingProduct.status}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Net Cost (Adult / Unit)</span>
+                    <strong className="text-slate-900 font-mono text-sm">{formatCurrency(inspectingProduct.adultNetPrice, inspectingProduct.currency)}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Selling Starting From</span>
+                    <strong className="text-[#008972] font-mono text-sm">{formatCurrency(inspectingProduct.sellingPriceStartingFrom, inspectingProduct.currency)}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Duration</span>
+                    <span className="font-semibold text-slate-800">{inspectingProduct.duration}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Capacity / Pax</span>
+                    <span className="font-semibold text-slate-800">{inspectingProduct.minPax} - {inspectingProduct.maxPax} Pax</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 2: Category Specific Attributes & Details */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                  <div className="flex items-center space-x-2">
+                    <Sliders className="w-4 h-4 text-[#008972]" />
+                    <span className="font-bold text-slate-900 text-xs">
+                      Category Specifications ({inspectingProduct.category})
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-teal-100 text-teal-800">
+                    {inspectingProduct.pricingMethod === 'capacity_based' ? 'Capacity-Based Engine' : 'Per-Person Engine'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                  {inspectingProduct.vehicleConfig && (
+                    <>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200">
+                        <span className="text-slate-400 text-[10px] block uppercase font-semibold">Vehicle / Vessel Model</span>
+                        <span className="font-bold text-slate-900 text-xs truncate block">
+                          {inspectingProduct.vehicleConfig.vehicleModel || inspectingProduct.vehicleConfig.vehicleName || 'Standard Fleet'}
+                        </span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200">
+                        <span className="text-slate-400 text-[10px] block uppercase font-semibold">Max Pax Capacity</span>
+                        <span className="font-bold text-[#008972] text-xs truncate block">
+                          {inspectingProduct.vehicleConfig.maxSeats || inspectingProduct.maxPax} Pax
+                        </span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200">
+                        <span className="text-slate-400 text-[10px] block uppercase font-semibold">Unit Vehicle Nett</span>
+                        <span className="font-mono text-slate-900 font-bold text-xs block">
+                          {formatCurrency(inspectingProduct.vehicleConfig.unitVehicleNetCost || inspectingProduct.adultNetPrice, inspectingProduct.currency)}
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                  {inspectingProduct.ticketConfig && (
+                    <>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200">
+                        <span className="text-slate-400 text-[10px] block uppercase font-semibold">Ticket Type</span>
+                        <span className="font-bold text-slate-900 text-xs truncate block">
+                          {inspectingProduct.ticketConfig.ticketType}
+                        </span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200">
+                        <span className="text-slate-400 text-[10px] block uppercase font-semibold">Redemption</span>
+                        <span className="font-bold text-blue-700 text-xs truncate block">
+                          {inspectingProduct.ticketConfig.redemptionMethod}
+                        </span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200">
+                        <span className="text-slate-400 text-[10px] block uppercase font-semibold">Cutoff</span>
+                        <span className="font-bold text-slate-900 text-xs block">
+                          {inspectingProduct.ticketConfig.bookingCutoffHours || 2} Hours
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                  {inspectingProduct.guideConfig && (
+                    <>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200">
+                        <span className="text-slate-400 text-[10px] block uppercase font-semibold">Guide Qualification</span>
+                        <span className="font-bold text-slate-900 text-xs truncate block">
+                          {inspectingProduct.guideConfig.guideType}
+                        </span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200">
+                        <span className="text-slate-400 text-[10px] block uppercase font-semibold">Languages</span>
+                        <span className="font-bold text-amber-700 text-xs truncate block">
+                          {(inspectingProduct.guideConfig.languages || ['English', 'Japanese']).join(', ')}
+                        </span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200">
+                        <span className="text-slate-400 text-[10px] block uppercase font-semibold">Rate Format</span>
+                        <span className="font-bold text-slate-900 text-xs block">
+                          {inspectingProduct.guideConfig.rateType}
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                  {inspectingProduct.restaurantConfig && (
+                    <>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200">
+                        <span className="text-slate-400 text-[10px] block uppercase font-semibold">Course Format</span>
+                        <span className="font-bold text-slate-900 text-xs truncate block">
+                          {inspectingProduct.restaurantConfig.mealType}
+                        </span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200">
+                        <span className="text-slate-400 text-[10px] block uppercase font-semibold">Seating</span>
+                        <span className="font-bold text-rose-700 text-xs truncate block">
+                          {inspectingProduct.restaurantConfig.seatingType}
+                        </span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200">
+                        <span className="text-slate-400 text-[10px] block uppercase font-semibold">Drink Package</span>
+                        <span className="font-bold text-slate-900 text-xs block truncate">
+                          {inspectingProduct.restaurantConfig.beveragePackage}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Inclusions & Exclusions */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                  <div className="bg-emerald-50/50 p-3 rounded-xl border border-emerald-100">
+                    <span className="text-emerald-800 font-bold text-[11px] block mb-1">Inclusions:</span>
+                    <ul className="text-[11px] text-slate-700 space-y-0.5 list-disc pl-4">
+                      {(inspectingProduct.inclusions || []).map((inc, i) => (
+                        <li key={i}>{inc}</li>
+                      ))}
+                      {(!inspectingProduct.inclusions || inspectingProduct.inclusions.length === 0) && (
+                        <li className="text-slate-400 italic list-none pl-0">No specific inclusions defined.</li>
+                      )}
+                    </ul>
+                  </div>
+
+                  <div className="bg-rose-50/50 p-3 rounded-xl border border-rose-100">
+                    <span className="text-rose-800 font-bold text-[11px] block mb-1">Exclusions:</span>
+                    <ul className="text-[11px] text-slate-700 space-y-0.5 list-disc pl-4">
+                      {(inspectingProduct.exclusions || []).map((exc, i) => (
+                        <li key={i}>{exc}</li>
+                      ))}
+                      {(!inspectingProduct.exclusions || inspectingProduct.exclusions.length === 0) && (
+                        <li className="text-slate-400 italic list-none pl-0">Standard personal expenses excluded.</li>
+                      )}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Actions */}
+            <div className="p-4 bg-white border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center space-x-2">
+                {onViewProduct && (
+                  <button
+                    onClick={() => {
+                      const prod = inspectingProduct;
+                      setInspectingProduct(null);
+                      onViewProduct(prod);
+                    }}
+                    className="px-3.5 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>View Customer Modal</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    const prod = inspectingProduct;
+                    setInspectingProduct(null);
+                    handleOpenEdit(prod);
+                  }}
+                  className="px-3.5 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>Edit Specs</span>
+                </button>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setInspectingProduct(null)}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 text-xs font-bold cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Operational Assets Master Database Modal */}
+      {isOperationalAssetsManagerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+            <OperationalAssetsManager
+              destinations={destinations}
+              cityHubs={cityHubs}
+              suppliers={suppliers}
+              initialTab={operationalAssetsManagerTab}
+              onClose={() => setIsOperationalAssetsManagerOpen(false)}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

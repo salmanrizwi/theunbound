@@ -31,7 +31,7 @@ import {
   Layers,
   ArrowRight
 } from 'lucide-react';
-import { AddProductToQuoteModal } from './AddProductToQuoteModal';
+import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
 
 interface DestinationHubsViewProps {
@@ -469,17 +469,19 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
         </section>
       )}
 
-      {/* Configuration Modals */}
-      <AddProductToQuoteModal
-        product={selectedProductForModal}
-        existingItemId={modalExistingItemId}
+      {/* Dedicated Category Configurator Router */}
+      <GlobalConfiguratorRouter
+        itemOrProduct={selectedProductForModal}
+        existingQuoteItemId={modalExistingItemId}
         isOpen={Boolean(selectedProductForModal)}
+        portalOrigin="B2B_AGENT"
         onClose={() => {
           setSelectedProductForModal(null);
           setModalExistingItemId(undefined);
         }}
-        onSuccess={(product) => {
-          if (onItemAddedToQuote) onItemAddedToQuote(product.name);
+        onSuccess={(item) => {
+          const name = item?.name || item?.product?.name || 'Service';
+          if (onItemAddedToQuote) onItemAddedToQuote(name);
         }}
       />
 
@@ -965,17 +967,19 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
         )}
       </div>
 
-      {/* Configuration Modals */}
-      <AddProductToQuoteModal
-        product={selectedProductForModal}
-        existingItemId={modalExistingItemId}
+      {/* Dedicated Category Configurator Router */}
+      <GlobalConfiguratorRouter
+        itemOrProduct={selectedProductForModal}
+        existingQuoteItemId={modalExistingItemId}
         isOpen={Boolean(selectedProductForModal)}
+        portalOrigin="B2B_AGENT"
         onClose={() => {
           setSelectedProductForModal(null);
           setModalExistingItemId(undefined);
         }}
-        onSuccess={(product) => {
-          if (onItemAddedToQuote) onItemAddedToQuote(product.name);
+        onSuccess={(item) => {
+          const name = item?.name || item?.product?.name || 'Service';
+          if (onItemAddedToQuote) onItemAddedToQuote(name);
         }}
       />
 

@@ -25,13 +25,29 @@ import {
   VisaRateItem, 
   PackageItemRef,
   CurrencyCode,
-  MealPlanCode
+  MealPlanCode,
+  TravelProtectionPlan,
+  VipGroundService,
+  ConnectivityPlan
 } from '../types';
+import { 
+  RailStation, 
+  RailService, 
+  RailRoute, 
+  RailFare, 
+  RailRate, 
+  RailSeasonCalendarPeriod 
+} from '../types/rail';
 import { MASTER_SHEETS_TAB_DEFINITIONS, getTabSchemaByName } from '../data/googleSheetsTemplate';
 import { 
   createDefaultRequirementsForVisa, 
   createDefaultAssistanceServices 
 } from './visaRequirementService';
+import {
+  resolveAuthoritativeCategory,
+  buildMasterProductConfiguration,
+  ensureMasterProductConfiguration
+} from './configuratorRegistry';
 
 export interface RawMultiTabData {
   [tabName: string]: string[][] | Record<string, any>[];
@@ -212,6 +228,11 @@ export class SheetsSyncService {
     const existingPackages = new Set(db.getB2BPackages().map(p => p.id));
     const existingRooms = new Set(db.getHotelRooms().map(r => r.id));
     const existingMealPlans = new Set(db.getHotelMealPlans().map(m => m.id));
+    const existingRailStations = new Set(db.getRailStations().map(s => s.stationId || (s as any).id));
+    const existingRailRoutes = new Set(db.getRailRoutes().map(r => r.routeId || (r as any).id));
+    const existingProtections = new Set(db.getTravelProtectionPlans().map(p => p.id));
+    const existingVip = new Set(db.getVipGroundServices().map(v => v.id));
+    const existingConn = new Set(db.getConnectivityPlans().map(c => c.id));
 
     // Also collect newly declared IDs in current sheet payload
     const incomingRegions = new Set((parsedTabs['REGIONS'] || []).map(r => r.region_id || r.id).filter(Boolean));
@@ -223,6 +244,11 @@ export class SheetsSyncService {
     const incomingRoutes = new Set((parsedTabs['TRANSFER_ROUTES'] || []).map(r => r.route_id || r.id).filter(Boolean));
     const incomingRooms = new Set((parsedTabs['HOTEL_ROOMS'] || []).map(r => r.room_id || r.id).filter(Boolean));
     const incomingMealPlans = new Set((parsedTabs['HOTEL_MEAL_PLANS'] || []).map(m => m.meal_plan_id || m.id).filter(Boolean));
+    const incomingRailStations = new Set((parsedTabs['RAIL_STATIONS'] || []).map(s => s.station_id || s.id).filter(Boolean));
+    const incomingRailRoutes = new Set((parsedTabs['RAIL_ROUTES'] || []).map(r => r.route_id || r.id).filter(Boolean));
+    const incomingProtections = new Set((parsedTabs['TRAVEL_PROTECTION'] || []).map(p => p.protection_id || p.id).filter(Boolean));
+    const incomingVip = new Set((parsedTabs['VIP_GROUND'] || []).map(v => v.vip_id || v.id).filter(Boolean));
+    const incomingConn = new Set((parsedTabs['CONNECTIVITY'] || []).map(c => c.connectivity_id || c.id).filter(Boolean));
 
     const validRegionIds = new Set([...existingRegions, ...incomingRegions]);
     const validDestIds = new Set([...existingDestinations, ...incomingDestinations]);
@@ -233,6 +259,11 @@ export class SheetsSyncService {
     const validRouteIds = new Set([...existingRoutes, ...incomingRoutes]);
     const validRoomIds = new Set([...existingRooms, ...incomingRooms]);
     const validMealPlanIds = new Set([...existingMealPlans, ...incomingMealPlans]);
+    const validRailStationIds = new Set([...existingRailStations, ...incomingRailStations]);
+    const validRailRouteIds = new Set([...existingRailRoutes, ...incomingRailRoutes]);
+    const validProtectionIds = new Set([...existingProtections, ...incomingProtections]);
+    const validVipIds = new Set([...existingVip, ...incomingVip]);
+    const validConnIds = new Set([...existingConn, ...incomingConn]);
 
     let orphanDestinations = 0;
     let orphanHubs = 0;
@@ -241,6 +272,9 @@ export class SheetsSyncService {
     let orphanTransfers = 0;
     let orphanPackages = 0;
     let rateMismatches = 0;
+    let orphanRailStations = 0;
+    let orphanRailRoutes = 0;
+    let orphanRailFares = 0;
 
     let totalRowsCount = 0;
     let validRowsCount = 0;
@@ -493,6 +527,269 @@ export class SheetsSyncService {
             tabErrors++;
             rowHasCritical = true;
           }
+        } else if (tabKey === 'TRAVEL_PROTECTION') {
+          const destId = (row.destination_id || '').trim();
+          if (destId && !validDestIds.has(destId)) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'destination_id',
+              value: destId,
+              error: `Invalid destination_id '${destId}' for Travel Protection plan '${row.service_name || pkVal}'.`,
+              severity: 'WARNING',
+              suggestedFix: `Check destination_id in DESTINATIONS tab or leave blank for worldwide plans.`
+            });
+            tabWarnings++;
+          }
+          const netTrip = Number(row.net_cost_per_trip);
+          if (isNaN(netTrip) || netTrip < 0) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'net_cost_per_trip',
+              value: String(row.net_cost_per_trip),
+              error: `net_cost_per_trip must be a valid positive number.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Provide net cost per trip (e.g. 35).`
+            });
+            tabErrors++;
+            rowHasCritical = true;
+          }
+          const sellTrip = Number(row.selling_price_per_trip);
+          if (isNaN(sellTrip) || sellTrip < 0) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'selling_price_per_trip',
+              value: String(row.selling_price_per_trip),
+              error: `selling_price_per_trip must be a valid positive number.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Provide selling price per trip (e.g. 55).`
+            });
+            tabErrors++;
+            rowHasCritical = true;
+          }
+        } else if (tabKey === 'VIP_GROUND') {
+          const destId = (row.destination_id || '').trim();
+          const hubId = (row.hub_id || '').trim();
+          if (destId && !validDestIds.has(destId)) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'destination_id',
+              value: destId,
+              error: `destination_id '${destId}' does not exist for VIP service '${row.name || pkVal}'.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Match with destination_id in DESTINATIONS tab.`
+            });
+            tabErrors++;
+            rowHasCritical = true;
+          }
+          if (hubId && !validHubIds.has(hubId)) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'hub_id',
+              value: hubId,
+              error: `hub_id '${hubId}' does not exist in HUBS tab.`,
+              severity: 'WARNING',
+              suggestedFix: `Match with hub_id in HUBS tab.`
+            });
+            tabWarnings++;
+          }
+          const netCost = Number(row.net_cost);
+          if (isNaN(netCost) || netCost < 0) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'net_cost',
+              value: String(row.net_cost),
+              error: `net_cost must be a valid positive number.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Provide valid net cost (e.g. 140).`
+            });
+            tabErrors++;
+            rowHasCritical = true;
+          }
+        } else if (tabKey === 'CONNECTIVITY') {
+          const netCost = Number(row.net_cost);
+          if (isNaN(netCost) || netCost < 0) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'net_cost',
+              value: String(row.net_cost),
+              error: `net_cost must be a valid positive number.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Provide valid net cost (e.g. 12).`
+            });
+            tabErrors++;
+            rowHasCritical = true;
+          }
+          const sellPrice = Number(row.selling_price);
+          if (isNaN(sellPrice) || sellPrice < 0) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'selling_price',
+              value: String(row.selling_price),
+              error: `selling_price must be a valid positive number.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Provide valid selling price (e.g. 18).`
+            });
+            tabErrors++;
+            rowHasCritical = true;
+          }
+        } else if (tabKey === 'RAIL_STATIONS') {
+          const regionId = (row.region_id || '').trim();
+          const destId = (row.destination_id || '').trim();
+          if (regionId && !validRegionIds.has(regionId)) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'region_id',
+              value: regionId,
+              error: `Invalid region_id '${regionId}' for Rail Station '${row.station_name || pkVal}'.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Check region_id in REGIONS tab.`
+            });
+            orphanRailStations++;
+            tabErrors++;
+            rowHasCritical = true;
+          }
+          if (destId && !validDestIds.has(destId)) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'destination_id',
+              value: destId,
+              error: `Invalid destination_id '${destId}' for Rail Station '${row.station_name || pkVal}'.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Check destination_id in DESTINATIONS tab.`
+            });
+            orphanRailStations++;
+            tabErrors++;
+            rowHasCritical = true;
+          }
+        } else if (tabKey === 'RAIL_ROUTES') {
+          const originId = (row.origin_station_id || '').trim();
+          const destId = (row.destination_station_id || '').trim();
+          if (originId && !validRailStationIds.has(originId)) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'origin_station_id',
+              value: originId,
+              error: `Origin station '${originId}' does not exist in RAIL_STATIONS tab or database.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Ensure origin_station_id exists in RAIL_STATIONS tab.`
+            });
+            orphanRailRoutes++;
+            tabErrors++;
+            rowHasCritical = true;
+          }
+          if (destId && !validRailStationIds.has(destId)) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'destination_station_id',
+              value: destId,
+              error: `Destination station '${destId}' does not exist in RAIL_STATIONS tab or database.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Ensure destination_station_id exists in RAIL_STATIONS tab.`
+            });
+            orphanRailRoutes++;
+            tabErrors++;
+            rowHasCritical = true;
+          }
+        } else if (tabKey === 'RAIL_SERVICES') {
+          const originId = (row.origin_station_id || '').trim();
+          const destId = (row.destination_station_id || '').trim();
+          if (originId && !validRailStationIds.has(originId)) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'origin_station_id',
+              value: originId,
+              error: `Service origin station '${originId}' not found in RAIL_STATIONS tab.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Ensure origin_station_id exists in RAIL_STATIONS tab.`
+            });
+            tabErrors++;
+            rowHasCritical = true;
+          }
+          if (destId && !validRailStationIds.has(destId)) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'destination_station_id',
+              value: destId,
+              error: `Service destination station '${destId}' not found in RAIL_STATIONS tab.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Ensure destination_station_id exists in RAIL_STATIONS tab.`
+            });
+            tabErrors++;
+            rowHasCritical = true;
+          }
+        } else if (tabKey === 'RAIL_FARES') {
+          const nettPrice = Number(row.nett_price);
+          const finalPrice = Number(row.final_price);
+
+          if (isNaN(nettPrice) || nettPrice < 0) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'nett_price',
+              value: String(row.nett_price),
+              error: `nett_price must be a valid non-negative number in JPY.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Provide valid supplier cost in JPY (e.g. 13320).`
+            });
+            tabErrors++;
+            rowHasCritical = true;
+          } else if (nettPrice === 0) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'nett_price',
+              value: '0',
+              error: `Zero-Price Warning: nett_price is 0 for fare '${pkVal}'. Verify supplier cost.`,
+              severity: 'WARNING',
+              suggestedFix: `Ensure tariff is non-zero unless intentionally complimentary.`
+            });
+            tabWarnings++;
+          }
+
+          if (isNaN(finalPrice) || finalPrice <= 0) {
+            errors.push({
+              tabName: tabKey,
+              rowNumber: rowNum,
+              recordId: pkVal,
+              field: 'final_price',
+              value: String(row.final_price),
+              error: `final_price must be a valid positive selling price.`,
+              severity: 'CRITICAL',
+              suggestedFix: `Calculate final_price as Nett + Margin + Tax + Service Charge.`
+            });
+            tabErrors++;
+            rowHasCritical = true;
+          }
         }
 
         // 3. Validate Date formats (ISO YYYY-MM-DD)
@@ -620,6 +917,12 @@ export class SheetsSyncService {
         db.getVisas().forEach(v => existingMap.set(v.id, v));
       } else if (tabKey === 'VISA_RATES') {
         db.getVisaRates().forEach(vr => existingMap.set(vr.id, vr));
+      } else if (tabKey === 'TRAVEL_PROTECTION') {
+        db.getTravelProtectionPlans().forEach(p => existingMap.set(p.id, p));
+      } else if (tabKey === 'VIP_GROUND') {
+        db.getVipGroundServices().forEach(v => existingMap.set(v.id, v));
+      } else if (tabKey === 'CONNECTIVITY') {
+        db.getConnectivityPlans().forEach(c => existingMap.set(c.id, c));
       } else if (tabKey === 'TRANSFER_ROUTES') {
         db.getTransferRoutes().forEach(r => existingMap.set(r.id, r));
       } else if (tabKey === 'TRANSFER_RATES') {
@@ -628,6 +931,16 @@ export class SheetsSyncService {
         db.getB2BPackages().forEach(p => existingMap.set(p.id, p));
       } else if (tabKey === 'PACKAGE_ITEMS') {
         db.getPackageItems().forEach(pi => existingMap.set(pi.id, pi));
+      } else if (tabKey === 'RAIL_STATIONS') {
+        db.getRailStations().forEach(s => existingMap.set(s.stationId || (s as any).id, s));
+      } else if (tabKey === 'RAIL_ROUTES') {
+        db.getRailRoutes().forEach(r => existingMap.set(r.routeId || (r as any).id, r));
+      } else if (tabKey === 'RAIL_SERVICES') {
+        db.getRailServices().forEach(s => existingMap.set(s.serviceId || (s as any).id, s));
+      } else if (tabKey === 'RAIL_FARES') {
+        db.getRailFares().forEach(f => existingMap.set(f.railFareId || (f as any).id, f));
+      } else if (tabKey === 'RAIL_CLASS_RULES') {
+        db.getRailSeasons().forEach(s => existingMap.set(s.id, s));
       }
 
       for (const row of objects) {
@@ -753,6 +1066,15 @@ export class SheetsSyncService {
       transferRates?: TransferRate[];
       packages?: B2BPackage[];
       packageItems?: PackageItemRef[];
+      railStations?: RailStation[];
+      railServices?: RailService[];
+      railRoutes?: RailRoute[];
+      railFares?: RailFare[];
+      railRates?: RailRate[];
+      railSeasons?: RailSeasonCalendarPeriod[];
+      travelProtectionPlans?: TravelProtectionPlan[];
+      vipGroundServices?: VipGroundService[];
+      connectivityPlans?: ConnectivityPlan[];
     } = {};
 
     let createdTotal = 0;
@@ -837,57 +1159,70 @@ export class SheetsSyncService {
         }));
         logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.hubs.length} City Hubs.`);
       } else if (tabKey === 'PRODUCTS') {
-        payload.products = objects.map(p => ({
-          id: p.product_id || p.sku || `PRD-${Date.now()}`,
-          sku: p.product_id || p.sku || `SKU-${Date.now()}`,
-          name: p.product_name || p.name || 'Travel Product',
-          destinationId: p.destination_id || p.destinationId || 'dest-japan',
-          destinationName: p.destination_name || 'Japan',
-          regionId: p.region_id || 'REG-001',
-          hubId: p.hub_id || 'hub-tyo',
-          city: p.city || 'Tokyo',
-          country: p.country || 'Japan',
-          productType: p.product_category || p.category || 'Day Tours',
-          category: (p.product_category || 'Day Tours') as any,
-          subcategory: p.subcategory || 'Private Experience',
-          duration: p.duration || '8 Hours',
-          operatingDays: (p.operating_days || 'Mon;Tue;Wed;Thu;Fri;Sat;Sun').split(';').map((s: string) => s.trim()).filter(Boolean),
-          operatingHours: p.operating_hours || '09:00 - 18:00',
-          adultNetPrice: Number(p.adult_nett) || Number(p.adultNetPrice) || 42000,
-          childNetPrice: Number(p.child_nett) || Number(p.childNetPrice) || 22000,
-          infantNetPrice: Number(p.infant_nett) || Number(p.infantNetPrice) || 0,
-          sellingPriceStartingFrom: (Number(p.adult_nett) || 42000) * 1.2,
-          currency: (p.currency || 'JPY') as CurrencyCode,
-          supplierId: p.supplier_code || 'sup-01',
-          supplierName: p.supplier_name || 'Contracted DMC Ground Supplier',
-          supplierLocalCurrency: (p.currency || 'JPY') as CurrencyCode,
-          supplierProductCode: p.supplier_product_code || '',
-          shortDescription: p.description || p.shortDescription || 'Luxury private tour with English docent.',
-          description: p.description || 'Full-day custom touring experience.',
-          longDescription: p.description || 'Comprehensive guided touring experience.',
-          inclusions: ['Private Chauffeur', 'Guide', 'All Taxes'],
-          exclusions: ['Personal Expenses'],
-          importantInformation: ['Valid passport required', 'Voucher presented on arrival'],
-          images: ['https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200'],
-          cancellationPolicy: p.cancellation_policy || '100% refund up to 72h prior',
-          bookingRequiredDays: 2,
-          defaultMarkupPercent: 20,
-          buyerMarkupPercent: 25,
-          b2bAgentMarkupPercent: 15,
-          taxPercent: 10,
-          commissionPercent: 10,
-          serviceFeeFixed: 0,
-          season: 'All Year',
-          validityFrom: '2026-01-01',
-          validityTo: '2026-12-31',
-          minPax: 1,
-          maxPax: Number(p.max_capacity) || 6,
-          availability: 'INSTANT',
-          status: 'ACTIVE',
-          pricingMethod: p.capacity_type === 'capacity_based' ? 'capacity_based' : 'per_person',
-          lastUpdated: new Date().toISOString().split('T')[0]
-        }));
-        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.products.length} Products.`);
+        payload.products = objects.map(p => {
+          const rawCat = p.product_category || p.category || 'Private Tours';
+          const authoritativeCat = resolveAuthoritativeCategory({ category: rawCat, name: p.product_name, sku: p.sku || p.product_id });
+          const rawDays = p.operating_days || 'Mon;Tue;Wed;Thu;Fri;Sat;Sun';
+          const operatingDays = Array.isArray(rawDays) 
+            ? rawDays 
+            : typeof rawDays === 'string' 
+            ? rawDays.split(';').map((s: string) => s.trim()).filter(Boolean)
+            : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+          const partialProd: Product = {
+            id: p.product_id || p.sku || `PRD-${Date.now()}`,
+            sku: p.product_id || p.sku || `SKU-${Date.now()}`,
+            name: p.product_name || p.name || 'Travel Product',
+            destinationId: p.destination_id || p.destinationId || 'dest-japan',
+            destinationName: p.destination_name || 'Japan',
+            regionId: p.region_id || 'REG-001',
+            hubId: p.hub_id || 'hub-tyo',
+            city: p.city || 'Tokyo',
+            country: p.country || 'Japan',
+            productType: p.product_category || p.category || authoritativeCat,
+            category: authoritativeCat as any,
+            subcategory: p.subcategory || 'Private Experience',
+            duration: p.duration || '8 Hours',
+            operatingDays: operatingDays.length > 0 ? operatingDays : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+            operatingHours: p.operating_hours || '09:00 - 18:00',
+            adultNetPrice: Number(p.adult_nett) || Number(p.adultNetPrice) || 42000,
+            childNetPrice: Number(p.child_nett) || Number(p.childNetPrice) || 22000,
+            infantNetPrice: Number(p.infant_nett) || Number(p.infantNetPrice) || 0,
+            sellingPriceStartingFrom: (Number(p.adult_nett) || 42000) * 1.2,
+            currency: (p.currency || p.native_currency || 'JPY') as CurrencyCode,
+            nativeCurrency: (p.native_currency || p.currency || 'JPY') as CurrencyCode,
+            supplierId: p.supplier_code || 'sup-01',
+            supplierName: p.supplier_name || 'Contracted DMC Ground Supplier',
+            supplierLocalCurrency: (p.currency || 'JPY') as CurrencyCode,
+            supplierProductCode: p.supplier_product_code || '',
+            shortDescription: p.description || p.shortDescription || 'Luxury private tour with English docent.',
+            longDescription: p.description || 'Comprehensive guided touring experience.',
+            inclusions: ['Private Chauffeur', 'Guide', 'All Taxes'],
+            exclusions: ['Personal Expenses'],
+            importantInformation: ['Valid passport required', 'Voucher presented on arrival'],
+            images: ['https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200'],
+            cancellationPolicy: p.cancellation_policy || '100% refund up to 72h prior',
+            bookingRequiredDays: 2,
+            defaultMarkupPercent: 20,
+            buyerMarkupPercent: 25,
+            b2bAgentMarkupPercent: 15,
+            taxPercent: 10,
+            commissionPercent: 10,
+            serviceFeeFixed: 0,
+            season: 'All Year',
+            validityFrom: '2026-01-01',
+            validityTo: '2026-12-31',
+            minPax: 1,
+            maxPax: Number(p.max_capacity) || 6,
+            availability: 'INSTANT',
+            status: 'ACTIVE',
+            pricingMethod: p.capacity_type === 'capacity_based' ? 'capacity_based' : 'per_person',
+            lastUpdated: new Date().toISOString().split('T')[0]
+          };
+
+          return ensureMasterProductConfiguration(partialProd, user);
+        });
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.products.length} Products with Master Configurations.`);
       } else if (tabKey === 'PRODUCT_PRICING') {
         payload.productRates = objects.map(pr => ({
           id: pr.pricing_id || `PRC-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
@@ -1125,6 +1460,138 @@ export class SheetsSyncService {
           status: 'ACTIVE'
         }));
         logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.visaRates.length} Visa Rates.`);
+      } else if (tabKey === 'TRAVEL_PROTECTION') {
+        payload.travelProtectionPlans = objects.map(p => {
+          const rawInclusions = p.inclusions || 'USD 500,000 Medical Cover; 24/7 Global Helpline';
+          const inclusionsList = typeof rawInclusions === 'string'
+            ? rawInclusions.split(';').map((s: string) => s.trim()).filter(Boolean)
+            : Array.isArray(rawInclusions) ? rawInclusions : ['USD 500,000 Medical Cover'];
+          const netTrip = Number(p.net_cost_per_trip) || 35;
+          const sellTrip = Number(p.selling_price_per_trip) || 55;
+
+          return {
+            id: p.protection_id || p.id || `PROT-${Date.now()}`,
+            serviceName: p.service_name || p.name || 'Travel Protection Shield',
+            provider: p.provider || 'Allianz Global Assistance',
+            coverageArea: p.coverage_area || 'Worldwide incl. US/Canada',
+            destinationId: p.destination_id || undefined,
+            medicalCoverageAmount: Number(p.medical_coverage_amount) || 250000,
+            emergencyAssistanceIncluded: String(p.emergency_assistance_included).toUpperCase() === 'TRUE' || Boolean(p.emergency_assistance_included),
+            evacuationCoverageAmount: Number(p.evacuation_coverage_amount) || 100000,
+            tripCancellationAmount: Number(p.trip_cancellation_amount) || 5000,
+            baggageLossAmount: Number(p.baggage_loss_amount) || 2000,
+            validityDaysMax: Number(p.validity_days_max) || 30,
+            eligibilityAgeMin: Number(p.eligibility_age_min) || 0,
+            eligibilityAgeMax: Number(p.eligibility_age_max) || 85,
+            netCostPerDay: Number(p.net_cost_per_day) || 3.5,
+            netCostPerTrip: netTrip,
+            sellingPricePerDay: Number(p.selling_price_per_day) || 5.5,
+            sellingPricePerTrip: sellTrip,
+            currency: (p.currency || 'USD') as CurrencyCode,
+            status: (p.status || 'ACTIVE').toUpperCase().includes('ACT') ? 'ACTIVE' : 'INACTIVE',
+            terms: p.terms || 'Full policy conditions apply.',
+            customerDescription: p.customer_description || 'Comprehensive medical and transit travel protection.',
+            inclusions: inclusionsList,
+            displayOrder: Number(p.display_order) || 1,
+            pricing: {
+              currency: (p.currency || 'USD') as CurrencyCode,
+              nettPrice: netTrip,
+              marginType: 'FIXED',
+              marginValue: Math.max(0, sellTrip - netTrip),
+              finalPrice: sellTrip,
+              taxType: 'PERCENTAGE',
+              taxValue: 0,
+              serviceChargeType: 'FIXED',
+              serviceChargeValue: 0,
+              pricingUnit: 'Per Trip'
+            },
+            updatedAt: new Date().toISOString()
+          };
+        });
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.travelProtectionPlans.length} Travel Protection Plans.`);
+      } else if (tabKey === 'VIP_GROUND') {
+        payload.vipGroundServices = objects.map(v => {
+          const rawInclusions = v.inclusions || 'VIP greeting; Priority escort';
+          const inclusionsList = typeof rawInclusions === 'string'
+            ? rawInclusions.split(';').map((s: string) => s.trim()).filter(Boolean)
+            : Array.isArray(rawInclusions) ? rawInclusions : ['VIP greeting'];
+          const netCost = Number(v.net_cost) || 120;
+          const sellPrice = Number(v.selling_price) || 150;
+          const markupPct = Number(v.default_markup_percent) || 25;
+
+          return {
+            id: v.vip_id || v.id || `VIP-${Date.now()}`,
+            name: v.name || 'VIP Meet & Fast Track Service',
+            serviceType: (v.service_type || 'MEET_AND_GREET') as any,
+            destinationId: v.destination_id || 'dest-japan',
+            hubId: v.hub_id || 'hub-tokyo',
+            supplierName: v.supplier_name || 'Ground Concierge Desk',
+            shortDesc: v.short_desc || 'Airside VIP meet and assist service.',
+            longDesc: v.long_desc || 'Dedicated executive ground assistant escorting passengers through priority lanes.',
+            netCost,
+            defaultMarkupPercent: markupPct,
+            sellingPrice: sellPrice,
+            pricingType: (v.pricing_type || 'PER_PAX') as any,
+            currency: (v.currency || 'USD') as CurrencyCode,
+            badge: v.badge || 'VIP Escort',
+            inclusions: inclusionsList,
+            status: (v.status || 'ACTIVE').toUpperCase().includes('ACT') ? 'ACTIVE' : 'INACTIVE',
+            displayOrder: Number(v.display_order) || 1,
+            pricing: {
+              currency: (v.currency || 'USD') as CurrencyCode,
+              nettPrice: netCost,
+              marginType: 'PERCENTAGE',
+              marginValue: markupPct,
+              finalPrice: sellPrice,
+              taxType: 'PERCENTAGE',
+              taxValue: 0,
+              serviceChargeType: 'FIXED',
+              serviceChargeValue: 0,
+              pricingUnit: 'Per Passenger'
+            },
+            updatedAt: new Date().toISOString()
+          };
+        });
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.vipGroundServices.length} VIP Ground Services.`);
+      } else if (tabKey === 'CONNECTIVITY') {
+        payload.connectivityPlans = objects.map(c => {
+          const rawInclusions = c.inclusions || 'Instant eSIM QR delivery; Hotspot enabled';
+          const inclusionsList = typeof rawInclusions === 'string'
+            ? rawInclusions.split(';').map((s: string) => s.trim()).filter(Boolean)
+            : Array.isArray(rawInclusions) ? rawInclusions : ['Instant eSIM QR delivery'];
+          const netCost = Number(c.net_cost) || 12;
+          const sellPrice = Number(c.selling_price) || 18;
+
+          return {
+            id: c.connectivity_id || c.id || `ESIM-${Date.now()}`,
+            name: c.name || '5G Roaming eSIM',
+            type: (c.type || 'ESIM') as any,
+            coverageZone: c.coverage_zone || 'Asia Regional',
+            dataAllowance: c.data_allowance || '10GB High-Speed 5G',
+            validityDays: Number(c.validity_days) || 15,
+            networkSpeed: c.network_speed || '5G / 4G LTE',
+            netCost,
+            sellingPrice: sellPrice,
+            currency: (c.currency || 'USD') as CurrencyCode,
+            status: (c.status || 'ACTIVE').toUpperCase().includes('ACT') ? 'ACTIVE' : 'INACTIVE',
+            inclusions: inclusionsList,
+            displayOrder: Number(c.display_order) || 1,
+            pricing: {
+              currency: (c.currency || 'USD') as CurrencyCode,
+              nettPrice: netCost,
+              marginType: 'FIXED',
+              marginValue: Math.max(0, sellPrice - netCost),
+              finalPrice: sellPrice,
+              taxType: 'PERCENTAGE',
+              taxValue: 0,
+              serviceChargeType: 'FIXED',
+              serviceChargeValue: 0,
+              pricingUnit: 'Per eSIM Profile'
+            },
+            updatedAt: new Date().toISOString()
+          };
+        });
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.connectivityPlans.length} Connectivity Plans.`);
       } else if (tabKey === 'PACKAGE_ITEMS') {
         payload.packageItems = objects.map(pi => ({
           id: pi.package_item_id || pi.id || `PKGITEM-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
@@ -1137,6 +1604,138 @@ export class SheetsSyncService {
           remarks: pi.remarks || ''
         }));
         logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.packageItems.length} Package Items.`);
+      } else if (tabKey === 'RAIL_STATIONS') {
+        payload.railStations = objects.map(s => ({
+          stationId: s.station_id || s.id,
+          stationCode: s.station_code || (s.station_id || '').split('-').pop() || 'STN',
+          stationName: s.station_name || 'Station',
+          stationNameLocal: s.station_name_local || '',
+          displayName: `${s.station_name || 'Station'}${s.station_name_local ? ` (${s.station_name_local})` : ''}`,
+          searchAliases: [s.station_name || '', s.station_code || '', s.city || ''].filter(Boolean),
+          country: s.country || 'Japan',
+          regionId: s.region_id || 'reg-east-asia',
+          destinationId: s.destination_id || 'dest-japan',
+          hubId: s.hub_id || 'hub-tokyo',
+          city: s.city || 'Tokyo',
+          railOperator: s.rail_operator || 'JR Central',
+          latitude: Number(s.latitude) || 35.6812,
+          longitude: Number(s.longitude) || 139.7671,
+          timezone: s.timezone || 'Asia/Tokyo',
+          shinkansenLine: s.shinkansen_line || 'Tokaido Shinkansen',
+          isMajorHub: String(s.is_major_hub).toUpperCase() === 'TRUE' || Boolean(s.is_major_hub),
+          active: String(s.status || 'ACTIVE').toUpperCase().includes('ACT'),
+          status: (s.status || 'ACTIVE').toUpperCase().includes('ACT') ? 'ACTIVE' : 'INACTIVE',
+          displayOrder: Number(s.display_order) || 1,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }));
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.railStations.length} Japan Rail Stations.`);
+      } else if (tabKey === 'RAIL_ROUTES') {
+        payload.railRoutes = objects.map(r => ({
+          routeId: r.route_id || r.id,
+          originStationId: r.origin_station_id,
+          destinationStationId: r.destination_station_id,
+          originStationName: r.origin_station_name || 'Origin',
+          destinationStationName: r.destination_station_name || 'Destination',
+          country: 'Japan',
+          destinationId: r.destination_id || 'dest-japan',
+          railOperator: r.rail_operator || 'JR Central / JR West',
+          availableProductIds: ['RAIL-JP-ORD-RESERVED', 'RAIL-JP-GREEN-RESERVED'],
+          availableServiceGroups: ['NOZOMI_MIZUHO', 'HIKARI_KODAMA_SAKURA_TSUBAME'],
+          distanceKm: Number(r.distance_km) || 0,
+          durationMinutes: Number(r.duration_minutes) || 120,
+          active: String(r.status || 'ACTIVE').toUpperCase().includes('ACT'),
+          status: (r.status || 'ACTIVE').toUpperCase().includes('ACT') ? 'ACTIVE' : 'INACTIVE',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }));
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.railRoutes.length} Japan Rail Routes.`);
+      } else if (tabKey === 'RAIL_SERVICES') {
+        payload.railServices = objects.map(srv => {
+          const rawDays = srv.operating_days || 'Mon;Tue;Wed;Thu;Fri;Sat;Sun';
+          const operatingDaysList = typeof rawDays === 'string'
+            ? rawDays.split(';').map(d => d.trim()).filter(Boolean)
+            : Array.isArray(rawDays) ? rawDays : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+          return {
+            serviceId: srv.service_id || srv.id,
+            operatorId: srv.operator_id || 'JR-CENTRAL',
+            serviceName: srv.service_name || 'Express Service',
+            serviceType: srv.service_type || 'NOZOMI',
+            trainNumber: srv.train_number || '1A',
+            originStationId: srv.origin_station_id,
+            destinationStationId: srv.destination_station_id,
+            routeId: srv.route_id,
+            departureTime: srv.departure_time || '06:00',
+            arrivalTime: srv.arrival_time || '08:00',
+            durationMinutes: Number(srv.duration_minutes) || 120,
+            operatingDays: operatingDaysList,
+            status: (srv.status || 'ACTIVE').toUpperCase().includes('ACT') ? 'ACTIVE' : 'INACTIVE',
+            effectiveFrom: srv.effective_from || '2026-01-01',
+            effectiveTo: srv.effective_to || '2026-12-31',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+        });
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.railServices.length} Japan Rail Services.`);
+      } else if (tabKey === 'RAIL_FARES') {
+        payload.railFares = objects.map(f => {
+          const nettPrice = Number(f.nett_price) || 0;
+          const marginVal = Number(f.margin_value) || 15;
+          const marginType = (f.margin_type || 'PERCENTAGE') as any;
+          const marginAmt = marginType === 'PERCENTAGE' ? nettPrice * (marginVal / 100) : marginVal;
+          const taxVal = Number(f.tax_value) || 10;
+          const taxType = (f.tax_type || 'PERCENTAGE') as any;
+          const taxAmt = taxType === 'PERCENTAGE' ? (nettPrice + marginAmt) * (taxVal / 100) : taxVal;
+          const svcVal = Number(f.service_charge_value) || 500;
+          const svcType = (f.service_charge_type || 'FIXED') as any;
+          const svcAmt = svcType === 'PERCENTAGE' ? nettPrice * (svcVal / 100) : svcVal;
+          const computedFinal = Math.round(nettPrice + marginAmt + taxAmt + svcAmt);
+
+          return {
+            railFareId: f.rail_fare_id || f.id || `FARE-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+            routeId: f.route_id,
+            originStationId: f.origin_station_id,
+            destinationStationId: f.destination_station_id,
+            productId: f.product_id || 'RAIL-JP-ORD-RESERVED',
+            carType: (f.car_type || 'Ordinary') as any,
+            seatType: (f.seat_type || 'Reserved') as any,
+            fareType: f.fare_type || 'Standard',
+            passengerType: (f.passenger_type || 'ADULT') as any,
+            currency: (f.currency || 'JPY') as CurrencyCode,
+            nettPrice,
+            marginType,
+            marginValue: marginVal,
+            taxType,
+            taxValue: taxVal,
+            serviceChargeType: svcType,
+            serviceChargeValue: svcVal,
+            finalPrice: Number(f.final_price) || computedFinal,
+            effectiveFrom: f.effective_from || '2026-01-01',
+            effectiveTo: f.effective_to || '2026-12-31',
+            status: (f.status || 'ACTIVE').toUpperCase().includes('ACT') ? 'ACTIVE' : 'INACTIVE',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+        });
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.railFares.length} Japan Rail Fares.`);
+      } else if (tabKey === 'RAIL_CLASS_RULES') {
+        payload.railSeasons = objects.map(s => ({
+          id: s.season_id || s.id || `SEAS-${Date.now()}`,
+          seasonType: (s.season_type || 'REGULAR') as any,
+          title: s.title || s.season_name || 'Season Rule',
+          startDate: s.start_date || '2026-01-01',
+          endDate: s.end_date || '2026-12-31',
+          adultAdjustmentJPY: Number(s.adult_adjustment_jpy) || 0,
+          childAdjustmentJPY: Number(s.child_adjustment_jpy) || 0,
+          pricingMultiplier: Number(s.pricing_multiplier) || 1.0,
+          priority: Number(s.priority) || 1,
+          active: (s.status || 'ACTIVE').toUpperCase().includes('ACT'),
+          notes: s.notes || '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }));
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.railSeasons.length} Japan Rail Season & Class Rules.`);
       } else if (tabKey === 'FX_RATES') {
         logs.push(`[${new Date().toLocaleTimeString()}] Synchronized ${objects.length} Google Finance FX Rates (=GOOGLEFINANCE).`);
       }
@@ -1222,5 +1821,83 @@ export class SheetsSyncService {
       logs: multiReport.logs,
       multiTabReport: multiReport
     };
+  }
+
+  /**
+   * Authoritative Module-Level Synchronization
+   * Directly syncs all canonical tabs for one of the 4 major inventory domains:
+   * 1. PRODUCTS: PRODUCTS, PRODUCT_PRICING, PRODUCT_CAPACITY
+   * 2. HOTELS: HOTELS, HOTEL_ROOMS, HOTEL_MEAL_PLANS, HOTEL_RATES
+   * 3. VISA_ANCILLARY: VISA, VISA_RATES, TRAVEL_PROTECTION, VIP_GROUND, CONNECTIVITY
+   * 4. JAPAN_RAIL: RAIL_STATIONS, RAIL_ROUTES, RAIL_SERVICES, RAIL_FARES, RAIL_CLASS_RULES
+   * 5. ALL: All canonical tabs
+   */
+  public async executeModuleSync(
+    moduleType: 'PRODUCTS' | 'HOTELS' | 'VISA_ANCILLARY' | 'JAPAN_RAIL' | 'ALL',
+    user?: User | null,
+    overrideSheetUrlOrId?: string
+  ): Promise<MultiTabSyncReport> {
+    const db = AppDatabase.getInstance();
+    const config = db.getMasterGoogleSheetConfig();
+
+    let targetTabs: MasterSheetTabName[] = [];
+    if (moduleType === 'PRODUCTS') {
+      targetTabs = ['PRODUCTS', 'PRODUCT_PRICING', 'PRODUCT_CAPACITY'];
+    } else if (moduleType === 'HOTELS') {
+      targetTabs = ['HOTELS', 'HOTEL_ROOMS', 'HOTEL_MEAL_PLANS', 'HOTEL_RATES'];
+    } else if (moduleType === 'VISA_ANCILLARY') {
+      targetTabs = ['VISA', 'VISA_RATES', 'TRAVEL_PROTECTION', 'VIP_GROUND', 'CONNECTIVITY'];
+    } else if (moduleType === 'JAPAN_RAIL') {
+      targetTabs = ['RAIL_STATIONS', 'RAIL_ROUTES', 'RAIL_SERVICES', 'RAIL_FARES', 'RAIL_CLASS_RULES'];
+    } else {
+      targetTabs = [
+        'REGIONS', 'DESTINATIONS', 'HUBS',
+        'PRODUCTS', 'PRODUCT_PRICING', 'PRODUCT_CAPACITY',
+        'HOTELS', 'HOTEL_ROOMS', 'HOTEL_MEAL_PLANS', 'HOTEL_RATES',
+        'VISA', 'VISA_RATES', 'TRAVEL_PROTECTION', 'VIP_GROUND', 'CONNECTIVITY',
+        'TRANSFER_ROUTES', 'TRANSFER_RATES',
+        'PACKAGES', 'PACKAGE_ITEMS',
+        'FX_RATES',
+        'RAIL_STATIONS', 'RAIL_ROUTES', 'RAIL_SERVICES', 'RAIL_FARES', 'RAIL_CLASS_RULES'
+      ];
+    }
+
+    let rawSheetId = overrideSheetUrlOrId?.trim();
+    if (!rawSheetId) {
+      if (moduleType === 'JAPAN_RAIL' && (config as any).japanRailSheetUrl) {
+        rawSheetId = (config as any).japanRailSheetUrl;
+      } else {
+        rawSheetId = config.masterSpreadsheetId || '1C8I2TOnc_7_u07_G_Pz705yGg4Y6U5BPyY4t-rG9Hzo';
+      }
+    }
+
+    // Extract clean ID if full Google Sheet URL provided
+    const match = rawSheetId.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    const cleanSheetId = match ? match[1] : rawSheetId;
+
+    const multiTabData: RawMultiTabData = {};
+
+    for (const tabName of targetTabs) {
+      const def = getTabSchemaByName(tabName);
+      if (!def) continue;
+
+      let rows: string[][] | null = null;
+      if (cleanSheetId && !cleanSheetId.includes(' ')) {
+        try {
+          rows = await this.fetchRemoteWorksheet(cleanSheetId, tabName);
+        } catch (e) {
+          // fallback to sample
+        }
+      }
+
+      if (rows && rows.length > 1) {
+        multiTabData[tabName] = rows;
+      } else {
+        // Fallback to canonical dataset
+        multiTabData[tabName] = [def.columns.map(c => c.name), ...def.sampleRows];
+      }
+    }
+
+    return this.commitMultiTabSync(multiTabData, targetTabs, user, cleanSheetId);
   }
 }

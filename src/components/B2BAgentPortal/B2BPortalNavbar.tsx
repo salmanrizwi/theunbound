@@ -84,7 +84,10 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
   const packagesCount = db.getPackages().length;
   const productsCount = db.getProducts().length;
   const hotelsCount = db.getHotels().length;
-  const visasCount = db.getVisas().filter(v => v.status === 'ACTIVE').length;
+  const visasCount = db.getVisas().filter(v => v.status === 'ACTIVE' || !v.status).length + 
+    db.getTravelProtectionPlans().filter(p => p.status === 'ACTIVE' || !p.status).length + 
+    db.getVipGroundServices().filter(s => s.status === 'ACTIVE' || !s.status).length + 
+    db.getConnectivityPlans().filter(c => c.status === 'ACTIVE' || !c.status).length;
   const quotesCount = user ? db.getQuotesForUser(user).length : db.getAllSavedQuotes().length;
   const authorizedBookings = user ? db.getBookingsForUser(user) : [];
   const bookingsCount = authorizedBookings.length;

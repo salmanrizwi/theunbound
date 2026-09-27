@@ -23,7 +23,7 @@ import {
 import { Product, Destination } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { formatCurrency } from '../../services/pricingEngine';
-import { AddProductToQuoteModal } from './AddProductToQuoteModal';
+import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 import { isRailProduct } from '../../services/rail/JapanRailJourneyDataService';
 
 interface B2BProductsCatalogViewProps {
@@ -525,10 +525,11 @@ export const B2BProductsCatalogView: React.FC<B2BProductsCatalogViewProps> = ({
         </div>
       )}
 
-      {/* Dedicated Add Product to Quote Modal */}
-      <AddProductToQuoteModal
-        product={selectedProductForQuoteModal}
+      {/* Dedicated Category Configurator Router */}
+      <GlobalConfiguratorRouter
+        itemOrProduct={selectedProductForQuoteModal}
         isOpen={Boolean(selectedProductForQuoteModal)}
+        portalOrigin="B2B_AGENT"
         onClose={() => setSelectedProductForQuoteModal(null)}
         onSuccess={(product, details) => {
           setQuoteSuccessNotification({

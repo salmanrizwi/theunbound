@@ -7,13 +7,7 @@ import { canUserAccessB2BInventory } from '../services/permissionEngine';
 import { RosterCalendarPicker } from './RosterCalendarPicker';
 import { Quotation, Product, Hotel, CurrencyCode, SUPPORTED_CURRENCIES, Booking } from '../types';
 import { db } from '../services/db';
-import { VisaProduct } from './B2BAgentPortal/B2BVisaView';
-import { AddProductToQuoteModal } from './B2BAgentPortal/AddProductToQuoteModal';
-import { AddHotelToQuoteModal } from './B2BAgentPortal/AddHotelToQuoteModal';
-import { AddVisaToQuoteModal } from './B2BAgentPortal/AddVisaToQuoteModal';
-import { RailJourneyModal } from './RailJourneyModal';
-import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
-import { isHotelService, isShinkansenService, isVisaService } from '../services/configuratorRoutingEngine';
+import { GlobalConfiguratorRouter } from './Configurators/GlobalConfiguratorRouter';
 import { BookingSubmissionModal } from './B2BAgentPortal/BookingSubmissionModal';
 import { BookingConfirmationModal } from './BookingConfirmationModal';
 import { 
@@ -75,11 +69,8 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
   const [calendarPickerItemId, setCalendarPickerItemId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'HOTELS' | 'PRODUCTS' | 'VISAS' | 'PACKAGES'>('ALL');
 
-  // Edit item modals state
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [editingHotel, setEditingHotel] = useState<Hotel | null>(null);
-  const [editingVisa, setEditingVisa] = useState<VisaProduct | null>(null);
-  const [editingRailItem, setEditingRailItem] = useState<any | null>(null);
+  // Edit item modal state (Central GlobalConfiguratorRouter)
+  const [editingItem, setEditingItem] = useState<any | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | undefined>(undefined);
 
   // Booking Flow Modals
@@ -110,93 +101,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
 
   const handleEditItem = (item: any) => {
     setEditingItemId(item.id);
-    const cat = item.product.category?.toUpperCase() || '';
-    const code = item.product.supplierProductCode || '';
-    const sku = item.product.sku || '';
-    const meta = (item as any).metadata;
-
-    // 1. Check if Japan Rail / Shinkansen -> Shinkansen Dynamic Journey Configurator
-    if (isShinkansenService(item) || isRailQuoteItem(item)) {
-      setEditingRailItem(item);
-      return;
-    }
-
-    // 2. Check if Hotel / Accommodation -> Hotel Configurator
-    if (isHotelService(item)) {
-      const hotel = db.getHotels().find(h => 
-        h.id === item.product.id || 
-        h.id === meta?.hotelId ||
-        code === `SUP-HTL-${h.id}` || 
-        h.name.toLowerCase() === item.product.name.toLowerCase()
-      ) || {
-        id: item.product.id,
-        name: item.product.name,
-        code: item.product.sku || 'HTL-001',
-        destinationId: item.product.destinationId,
-        destinationName: item.product.destinationName,
-        cityName: item.product.city,
-        country: item.product.country,
-        starRating: 5,
-        propertyType: 'HOTEL',
-        shortDescription: item.product.shortDescription,
-        description: item.product.longDescription || item.product.shortDescription,
-        heroImage: item.product.heroImage || 'https://images.unsplash.com/photo-1566073771259-6a8506099945?q=80&w=800&auto=format&fit=crop',
-        images: [],
-        address: item.product.city,
-        amenities: ['Free WiFi', 'Breakfast Included', 'Concierge'],
-        roomTypes: [
-          {
-            id: 'room-std',
-            name: 'Deluxe Room',
-            rates: [
-              {
-                id: 'rate-1',
-                seasonName: 'Standard',
-                validFrom: item.product.validityFrom || '2025-01-01',
-                validTo: item.product.validityTo || '2026-12-31',
-                singleNetRate: 300,
-                doubleNetRate: item.calculation?.adultPricePerPax || item.product.adultNetPrice || 350,
-                tripleNetRate: 450,
-                adultNettCost: item.calculation?.adultPricePerPax || item.product.adultNetPrice || 350,
-                childNettCost: 150,
-                infantNettCost: 0,
-                markupPercent: 18,
-                currency: 'USD'
-              }
-            ]
-          }
-        ]
-      } as unknown as Hotel;
-      setEditingHotel(hotel);
-      return;
-    }
-
-    // Check if Visa & Ancillary Services
-    if (isVisaService(item) || cat === 'VISA' || cat === 'VISA SERVICE' || cat === 'VISA & ANCILLARY SERVICES' || sku.startsWith('VSA-') || meta?.visaProductId || item.master_product_id) {
-      const masterId = item.master_product_id || item.product.id || meta?.visaProductId;
-      const visa = db.getVisas().find(v => 
-        v.id === masterId || 
-        v.id === meta?.visaProductId ||
-        (v.countryCode && sku.includes(v.countryCode)) ||
-        (item.product.country && v.country.toLowerCase() === item.product.country.toLowerCase())
-      );
-      if (visa) {
-        if (visa.status === 'ACTIVE' || !visa.status) {
-          setEditingVisa(visa);
-          return;
-        } else {
-          // Requirement 26: If deactivated, notify user and preserve configuration
-          alert('This service is no longer active. The historical quote configuration has been preserved.');
-          return;
-        }
-      } else {
-        alert('This service is no longer active. The historical quote configuration has been preserved.');
-        return;
-      }
-    }
-
-    // Standard Tour / Transfer / Activity Product
-    setEditingProduct(item.product);
+    setEditingItem(item);
   };
 
   // Identify any products with Roster date conflicts
@@ -894,7 +799,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
 
                   <div className="text-right">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-[#00E5C0] block">
-                      Final Selling Price
+                      Final Price
                     </span>
                     <span className="text-2xl sm:text-3xl font-black text-white font-sans">
                       {formatCurrency(totalSellingPrice, currency)}
@@ -923,75 +828,25 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
         </div>
       )}
 
-      {/* Editing Product Modal */}
-      {editingProduct && (
-        <AddProductToQuoteModal
+      {/* Authoritative Category Configurator Router */}
+      {editingItem && (
+        <GlobalConfiguratorRouter
           isOpen={true}
-          onClose={() => {
-            setEditingProduct(null);
-            setEditingItemId(undefined);
-          }}
-          product={editingProduct}
-          existingQuoteItemId={editingItemId}
-          onAdded={() => {
-            setEditingProduct(null);
-            setEditingItemId(undefined);
-          }}
-        />
-      )}
-
-      {/* Editing Hotel Modal */}
-      {editingHotel && (
-        <AddHotelToQuoteModal
-          isOpen={true}
-          onClose={() => {
-            setEditingHotel(null);
-            setEditingItemId(undefined);
-          }}
-          hotel={editingHotel}
-          existingQuoteItemId={editingItemId}
-          onAdded={() => {
-            setEditingHotel(null);
-            setEditingItemId(undefined);
-          }}
-        />
-      )}
-
-      {/* Editing Visa Modal */}
-      {editingVisa && (
-        <AddVisaToQuoteModal
-          isOpen={true}
-          onClose={() => {
-            setEditingVisa(null);
-            setEditingItemId(undefined);
-          }}
-          visa={editingVisa}
-          existingQuoteItemId={editingItemId}
-          onAdded={() => {
-            setEditingVisa(null);
-            setEditingItemId(undefined);
-          }}
-        />
-      )}
-
-      {/* Editing Rail Modal */}
-      {editingRailItem && (
-        <RailJourneyModal
-          product={editingRailItem.product}
+          itemOrProduct={editingItem}
           portalOrigin="B2B_QUOTE_BUILDER"
-          existingQuoteItemId={editingItemId}
-          existingJourneySnapshot={editingRailItem.japanRailJourneySnapshot || editingRailItem.metadata?.journeySnapshot || editingRailItem.railJourneyDetails}
-          initialOriginStationId={editingRailItem.railJourneyDetails?.originStationId || 'JP-ST-TOKYO'}
-          initialDestinationStationId={editingRailItem.railJourneyDetails?.destinationStationId || 'JP-ST-KYOTO'}
+          existingQuoteItemId={editingItemId || editingItem.id}
+          initialTravelDate={editingItem.travelDate}
+          initialAdults={editingItem.pax?.adults}
+          initialChildren={editingItem.pax?.children}
+          initialInfants={editingItem.pax?.infants}
+          initialServiceTime={editingItem.serviceTime}
+          initialNotes={editingItem.notes || editingItem.specialRequests}
           onClose={() => {
-            setEditingRailItem(null);
+            setEditingItem(null);
             setEditingItemId(undefined);
           }}
-          onAddToQuote={() => {
-            if (editingItemId) {
-              removeProductFromQuote(editingItemId);
-            }
-            setEditingRailItem(null);
+          onSuccess={() => {
+            setEditingItem(null);
             setEditingItemId(undefined);
           }}
         />

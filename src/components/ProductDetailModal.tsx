@@ -608,7 +608,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 <div className="space-y-2.5 text-xs text-slate-300 py-3 border-y border-slate-800 mb-6">
                   <div className="flex justify-between">
                     <span>Operating Days:</span>
-                    <span className="font-semibold text-white">{product.operatingDays.join(', ')}</span>
+                    <span className="font-semibold text-white">{Array.isArray(product.operatingDays) ? product.operatingDays.join(', ') : (product.operatingDays || 'Daily')}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Min / Max Capacity:</span>

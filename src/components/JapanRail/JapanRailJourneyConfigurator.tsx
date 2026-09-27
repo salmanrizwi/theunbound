@@ -12,6 +12,7 @@ import { japanRailJourneyDataService } from '../../services/rail/JapanRailJourne
 import { formatCurrency } from '../../services/currencyEngine';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
+import { AppDatabase } from '../../services/db';
 import { 
   Train, 
   ArrowRightLeft, 
@@ -190,6 +191,19 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
     }
 
     const quoteItem = japanRailJourneyService.convertToQuoteItem(journey, activeDayNumber);
+
+    if (portalOrigin === 'ADMIN_CMS' || portalOrigin === 'PRODUCT_MANAGEMENT') {
+      const db = AppDatabase.getInstance();
+      const targetProdId = initialProduct?.id || quoteItem.product?.id || 'RAIL-JP-ORD-RESERVED';
+      db.saveProductConfiguration(targetProdId, {
+        configuration_id: `cfg-rail-${targetProdId}`,
+        product_id: targetProdId,
+        product_category: 'Rail / Shinkansen',
+        configurator_type: 'RAIL_CONFIGURATOR',
+        journeySnapshot: journey,
+        pricing: journey.pricing
+      }, user);
+    }
 
     // Save to quotation context
     setItems(prev => {
@@ -736,7 +750,7 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                         Est. Duration: <strong className="text-slate-700">{seg.formattedDuration}</strong>
                       </span>
                       <div className="text-right">
-                        <span className="text-[10px] uppercase font-bold text-slate-400 mr-1.5">Sector Fare:</span>
+                        <span className="text-[10px] uppercase font-bold text-slate-400 mr-1.5">Sector Final Price:</span>
                         <span className="font-black text-slate-900 font-sans text-sm">
                           {formatCurrency(seg.pricing.finalSellingPriceTargetCurrency, journey.currency)}
                         </span>
@@ -814,7 +828,7 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
               
               <div className="text-left md:text-right">
                 <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                  Total Journey ({journey.segments.length} {journey.segments.length === 1 ? 'Sector' : 'Sectors'})
+                  Total Final Price ({journey.segments.length} {journey.segments.length === 1 ? 'Sector' : 'Sectors'})
                 </span>
                 <div className="flex items-baseline md:justify-end gap-1 sm:gap-1.5">
                   <span className="text-lg sm:text-2xl font-black text-[#00E5C0] font-sans">
@@ -883,8 +897,16 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                     ) : (
                       <>
                         <FileSpreadsheet className="w-4 h-4 shrink-0" />
-                        <span className="hidden sm:inline">ADD JOURNEY TO QUOTE</span>
-                        <span className="sm:hidden">ADD TO QUOTE</span>
+                        <span className="hidden sm:inline">
+                          {portalOrigin === 'ADMIN_CMS' || portalOrigin === 'PRODUCT_MANAGEMENT'
+                            ? 'SAVE MASTER RAIL CONFIGURATION'
+                            : 'ADD JOURNEY TO QUOTE'}
+                        </span>
+                        <span className="sm:hidden">
+                          {portalOrigin === 'ADMIN_CMS' || portalOrigin === 'PRODUCT_MANAGEMENT'
+                            ? 'SAVE CONFIG'
+                            : 'ADD TO QUOTE'}
+                        </span>
                       </>
                     )}
                   </button>

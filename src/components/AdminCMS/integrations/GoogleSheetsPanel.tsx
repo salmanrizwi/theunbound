@@ -325,7 +325,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
       ];
     }
     setStagedData(data);
-    setStatusMessage(`Loaded official master 16-tab commercial template (${Object.keys(data).length} worksheets ready).`);
+    setStatusMessage(`Loaded official master 25-tab canonical template (${Object.keys(data).length} worksheets ready).`);
   };
 
   const toggleTabSelection = (tabName: MasterSheetTabName) => {
@@ -341,6 +341,20 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
       .filter(t => t.tabName !== 'INSTRUCTIONS')
       .map(t => t.tabName) as MasterSheetTabName[];
     setSelectedTabs(all);
+  };
+
+  const selectModuleTabs = (module: 'PRODUCTS' | 'HOTELS' | 'VISA_ANCILLARY' | 'JAPAN_RAIL' | 'ALL') => {
+    if (module === 'PRODUCTS') {
+      setSelectedTabs(['PRODUCTS', 'PRODUCT_PRICING', 'PRODUCT_CAPACITY']);
+    } else if (module === 'HOTELS') {
+      setSelectedTabs(['HOTELS', 'HOTEL_ROOMS', 'HOTEL_MEAL_PLANS', 'HOTEL_RATES']);
+    } else if (module === 'VISA_ANCILLARY') {
+      setSelectedTabs(['VISA', 'VISA_RATES', 'TRAVEL_PROTECTION', 'VIP_GROUND', 'CONNECTIVITY']);
+    } else if (module === 'JAPAN_RAIL') {
+      setSelectedTabs(['RAIL_STATIONS', 'RAIL_ROUTES', 'RAIL_SERVICES', 'RAIL_FARES', 'RAIL_CLASS_RULES']);
+    } else {
+      selectAllTabs();
+    }
   };
 
   // ----------------------------------------------------
@@ -530,6 +544,17 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
           }
         } catch (e) {
           console.debug(`Remote fetch notice for tab ${tab}:`, e);
+        }
+      }
+    }
+
+    if (!hasData) {
+      // Fallback to official canonical dataset for the requested tabs
+      for (const tab of tabs) {
+        const def = getTabSchemaByName(tab);
+        if (def) {
+          data[tab] = [def.columns.map(c => c.key), ...def.sampleRows];
+          hasData = true;
         }
       }
     }
@@ -1532,7 +1557,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                       onClick={selectAllTabs}
                       className="text-[#008972] hover:underline font-bold cursor-pointer"
                     >
-                      Select All 16
+                      Select All ({MASTER_SHEETS_TAB_DEFINITIONS.length - 1})
                     </button>
                     <span className="text-slate-300">|</span>
                     <button 
@@ -1542,6 +1567,48 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                       Clear
                     </button>
                   </div>
+                </div>
+
+                {/* Module Quick Presets */}
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                    Module Presets:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => selectModuleTabs('ALL')}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+                  >
+                    All Canonical ({MASTER_SHEETS_TAB_DEFINITIONS.length - 1})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => selectModuleTabs('PRODUCTS')}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition-colors"
+                  >
+                    Products Catalog (3)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => selectModuleTabs('HOTELS')}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition-colors"
+                  >
+                    Hotels & Allotments (4)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => selectModuleTabs('VISA_ANCILLARY')}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors"
+                  >
+                    Visa & Ancillaries (5)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => selectModuleTabs('JAPAN_RAIL')}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-50 hover:bg-rose-100 text-rose-700 transition-colors"
+                  >
+                    Japan Rail Dynamic (5)
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -1826,7 +1893,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                             </span>
                             <div>
                               <div className="font-mono font-bold text-slate-800">{item.recordId}</div>
-                              {item.changedFields && item.changedFields.length > 0 && (
+                              {Array.isArray(item.changedFields) && item.changedFields.length > 0 && (
                                 <div className="text-[11px] text-slate-500 mt-1">
                                   Updated fields: <span className="font-mono font-semibold text-amber-700">{item.changedFields.join(', ')}</span>
                                 </div>

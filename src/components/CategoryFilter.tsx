@@ -1,18 +1,18 @@
 import React from 'react';
 import { ProductCategory } from '../types';
 import { 
-  Compass, 
-  Car, 
-  Route, 
-  Train, 
-  Ship, 
   Crown, 
-  Sun, 
+  Users, 
+  Car, 
+  Ticket, 
+  Ship, 
+  Anchor, 
   UserCheck, 
-  Bus, 
-  Briefcase,
-  Anchor,
-  Sparkles
+  Building2, 
+  ShieldCheck, 
+  Train, 
+  Utensils,
+  Sparkles 
 } from 'lucide-react';
 
 interface CategoryFilterProps {
@@ -25,16 +25,16 @@ interface CategoryFilterProps {
 
 export const CATEGORIES: { name: ProductCategory; icon: React.ElementType }[] = [
   { name: 'Private Tours', icon: Crown },
-  { name: 'Day Trips', icon: Sun },
-  { name: 'Activities', icon: Compass },
+  { name: 'Group Tours', icon: Users },
   { name: 'Transfers', icon: Car },
-  { name: 'Transport', icon: Bus },
+  { name: 'Tickets', icon: Ticket },
   { name: 'Private Yacht', icon: Ship },
-  { name: 'Tours', icon: Route },
-  { name: 'Rail', icon: Train },
   { name: 'Ferries', icon: Anchor },
   { name: 'Guides', icon: UserCheck },
-  { name: 'Travel Services', icon: Briefcase },
+  { name: 'Hotels', icon: Building2 },
+  { name: 'Visa & Ancillary Services', icon: ShieldCheck },
+  { name: 'Rail / Shinkansen', icon: Train },
+  { name: 'Lunch / Dinner Restaurant', icon: Utensils },
 ];
 
 export const CategoryFilter: React.FC<CategoryFilterProps> = ({

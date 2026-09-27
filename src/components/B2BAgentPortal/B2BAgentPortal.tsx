@@ -234,7 +234,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
 
     showToast(
       'AI Itinerary Imported',
-      `${plan.badge}: ${plan.routeSummary.join(' → ')} (${plan.items?.length || 0} services)${result.priceVariance ? ' • Rates verified & updated' : ''}`
+      `${plan.badge}: ${(plan.routeSummary || []).join(' → ')} (${plan.items?.length || 0} services)${result.priceVariance ? ' • Rates verified & updated' : ''}`
     );
     setActiveTab('create-quote');
   };

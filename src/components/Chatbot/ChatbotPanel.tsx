@@ -233,7 +233,7 @@ export const ChatbotPanel: React.FC<ChatbotPanelProps> = ({
       if (plan) {
         const nights = activeSession?.tripState?.duration?.nights?.value || (plan.days.length > 1 ? plan.days.length - 1 : plan.days.length);
         const text = `*TheUnbound Luxury Itinerary: ${plan.destinationName} (${nights} Nights)*\n` +
-          `Route: ${plan.routeSummary.join(' → ')}\n` +
+          `Route: ${(plan.routeSummary || []).join(' → ')}\n` +
           `Authoritative Price: ${formatCurrency(plan.totalSellingPrice, plan.currency || currency)}\n` +
           `Crafted with TheUnbound AI Travel Specialist.`;
         window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');

@@ -19,17 +19,23 @@ export type DestinationRegion = 'EUROPE' | 'UNITED_KINGDOM' | 'JAPAN' | 'SOUTHEA
 
 export type ProductCategory = 
   | 'Private Tours' 
-  | 'Day Trips' 
-  | 'Activities' 
+  | 'Group Tours'
   | 'Transfers' 
-  | 'Transport' 
+  | 'Tickets'
   | 'Private Yacht' 
-  | 'Tours' 
-  | 'Rail' 
   | 'Ferries' 
   | 'Guides' 
-  | 'Travel Services'
-  | 'Visa & Ancillary Services';
+  | 'Hotels'
+  | 'Visa & Ancillary Services'
+  | 'Rail / Shinkansen'
+  | 'Lunch / Dinner Restaurant'
+  // Legacy migration aliases (auto-normalized by ConfiguratorRegistry)
+  | 'Day Trips'
+  | 'Activities'
+  | 'Transport'
+  | 'Tours'
+  | 'Rail'
+  | 'Travel Services';
 
 export type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'JPY' | 'AED' | 'THB' | 'AUD' | 'CAD' | 'SGD' | 'INR' | 'CHF';
 
@@ -773,6 +779,95 @@ export interface ProductAddon {
   selectedByDefault?: boolean;
 }
 
+/**
+ * Authoritative Master Product Upsell / Optional Experience Upgrade
+ * Managed directly in Admin Product Management (Section 16-22 & Product-Based Upsell Architecture)
+ * Supports:
+ * 1. TYPE 1: Existing Product Upsell (upsellProductId pointing to master Product record)
+ * 2. TYPE 2: Standalone Structured Upsell (custom ad-hoc experience)
+ */
+export interface ProductUpsell {
+  id: string; // Stable Relationship ID or Upsell ID
+  relationshipId?: string; // Canonical alias for id
+  parentProductId?: string; // Parent Master Product ID
+  productId?: string; // Alias for parentProductId
+  upsellProductId?: string; // Master Product ID of the referenced existing product (TYPE 1)
+  isExistingProduct?: boolean; // True if referencing an existing master product
+  name: string; // Authoritative product name or custom title
+  sku?: string; // SKU of referenced product
+  shortDescription?: string;
+  description?: string;
+  price: number; // Selling price / display price
+  netCost?: number; // Base net supplier cost
+  currency: CurrencyCode;
+  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  displayOrder: number;
+  category?: ProductCategory | string;
+  destinationId?: string;
+  destinationName?: string;
+  hubId?: string;
+  imageUrl?: string;
+  supplierId?: string;
+  supplierName?: string;
+  isRequired?: boolean;
+  maxQuantity?: number;
+  priceType?: 'PER_PERSON' | 'PER_BOOKING' | 'PER_VEHICLE' | 'PER_DAY' | 'HOURLY';
+  customLabel?: string;
+  internalNotes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
+}
+
+/**
+ * Authoritative Upsell Relationship representation in Master Inventory & Master Sync
+ */
+export interface UpsellRelationship {
+  id: string; // relationship_id
+  relationship_id?: string;
+  parentProductId: string; // parent_product_id
+  parent_product_id?: string;
+  upsellProductId: string; // upsell_product_id
+  upsell_product_id?: string;
+  displayOrder: number;
+  display_order?: number;
+  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  customLabel?: string;
+  custom_label?: string;
+  internalNotes?: string;
+  internal_notes?: string;
+  createdAt: string;
+  created_at?: string;
+  updatedAt: string;
+  updated_at?: string;
+  createdBy?: string;
+  created_by?: string;
+}
+
+/**
+ * Historical snapshot stored on Quotes / Bookings when an upsell is selected
+ * Guarantees historical data protection and operational tracking (Section 22, 34)
+ */
+export interface SelectedUpsellSnapshot {
+  upsellId: string;
+  upsellProductId?: string; // Master Product ID if Type 1
+  isExistingProduct?: boolean;
+  parentProductId?: string;
+  upsellNameSnapshot: string;
+  categorySnapshot?: ProductCategory | string;
+  skuSnapshot?: string;
+  supplierIdSnapshot?: string;
+  supplierNameSnapshot?: string;
+  imageUrlSnapshot?: string;
+  priceSnapshot: number;
+  netCostSnapshot?: number;
+  currencySnapshot: CurrencyCode;
+  selectedAt: string;
+  quantity?: number;
+  priceType?: 'PER_PERSON' | 'PER_BOOKING' | 'PER_VEHICLE' | 'PER_DAY' | 'HOURLY';
+  customLabel?: string;
+}
+
 export interface Product {
   id: string;
   product_id?: string;
@@ -782,6 +877,11 @@ export interface Product {
   regionId?: string;
   regionName?: string;
   hubId?: string;
+  fromHubId?: string;
+  toHubId?: string;
+  fromHubName?: string;
+  toHubName?: string;
+  cityHubId?: string;
   country: string;
   city: string;
   productType: string;
@@ -809,6 +909,7 @@ export interface Product {
   childNettCost?: number; // Alias for childNetPrice in Base Currency
   infantNettCost?: number; // Alias for infantNetPrice in Base Currency
   currency: CurrencyCode;
+  nativeCurrency?: CurrencyCode;
   
   // Commercial parameters
   defaultMarkupPercent: number;
@@ -832,12 +933,28 @@ export interface Product {
   availability: 'INSTANT' | 'ON_REQUEST' | 'LIMITED' | 'SOLD_OUT';
   bookingRequiredDays: number;
   
+  // Content & Overview fields
+  summary?: string; // Canonical alias for shortDescription
+  description?: string; // Canonical alias for longDescription
   cancellationPolicy: string;
   inclusions: string[];
   exclusions: string[];
   importantInformation: string[];
   meetingPoint?: string;
   pickupInformation?: string;
+  pickupPoint?: string; // Pickup Point for Group Tours & Day Tours
+  dropoffLocation?: string; // Drop-off Point for Tours
+  dropoffPoint?: string; // Alias for dropoffLocation
+  
+  // Restaurant specific master fields
+  restaurantName?: string;
+  specialty?: string;
+  mealSelect?: ('Breakfast' | 'Lunch' | 'Dinner')[];
+  
+  // Guide specific master fields
+  hourlyPrice?: number;
+  hourlyNettCost?: number;
+  minHours?: number;
   
   images?: string[];
   heroImage?: string;
@@ -851,18 +968,128 @@ export interface Product {
   status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
   lastUpdated?: string;
   addons?: ProductAddon[];
+  upsells?: ProductUpsell[]; // Authoritative Master Upsells / Optional Experience Upgrades (Section 16-22)
   
   // Advanced Pricing & Operational Enhancements
-  pricingMethod?: 'per_person' | 'capacity_based' | 'fixed_stay';
+  pricingMethod?: 'per_person' | 'capacity_based' | 'fixed_stay' | 'hourly_based';
   tieredPricing?: TieredPrice[];
   datePricingOverrides?: Record<string, ProductDatePricingOverride>;
   vehicleConfig?: TransferVehicleConfig;
+  vehicleId?: string;
+  vehicleNameSnapshot?: string;
+  vehicleTypeSnapshot?: string;
+  capacitySnapshot?: number;
+  yachtId?: string;
+  yachtNameSnapshot?: string;
+  yachtTypeSnapshot?: string;
+  yachtCapacitySnapshot?: number;
+  ferryId?: string;
+  ferryNameSnapshot?: string;
+  ferryTypeSnapshot?: string;
+  ferryCapacitySnapshot?: number;
+  ticketConfig?: TicketConfig;
+  guideConfig?: GuideConfig;
+  restaurantConfig?: RestaurantConfig;
+  ferryConfig?: FerryConfig;
   isTransfer?: boolean;
   accommodationType?: AccommodationType;
   isManualHotel?: boolean;
   manualHotelDetails?: ManualHotelDetails;
   seo?: EntitySEO;
   metadata?: Record<string, any>;
+  configuration?: MasterProductConfiguration;
+}
+
+export interface TicketTierPrice {
+  id: string;
+  name: string; // e.g. "Standard Admission", "VIP Fast Track Pass", "Timed Entry Slot", "Multi-Day Explorer Pass"
+  tierType?: 'STANDARD' | 'VIP_FAST_TRACK' | 'TIMED_ENTRY' | 'MULTI_DAY_PASS' | 'FLEXIBLE';
+  adultNetPrice: number;
+  childNetPrice?: number;
+  infantNetPrice?: number;
+  buyerMarkupPercent?: number;
+  b2bAgentMarkupPercent?: number;
+  sellingPriceStartingFrom?: number;
+  currency?: CurrencyCode;
+  description?: string;
+  redemptionMethod?: 'INSTANT_QR_VOUCHER' | 'MOBILE_VOUCHER' | 'PRINTED_VOUCHER' | 'WILL_CALL_COUNTER';
+  bookingCutoffHours?: number;
+  status?: 'ACTIVE' | 'INACTIVE';
+}
+
+export interface TicketConfig {
+  ticketType?: 'STANDARD' | 'VIP_FAST_TRACK' | 'TIMED_ENTRY' | 'MULTI_DAY_PASS' | 'FLEXIBLE';
+  ticketTierName?: string;
+  ticketTiers?: TicketTierPrice[];
+  redemptionMethod?: 'INSTANT_QR_VOUCHER' | 'MOBILE_VOUCHER' | 'PRINTED_VOUCHER' | 'WILL_CALL_COUNTER';
+  validityDays?: number;
+  instantConfirmation?: boolean;
+  bookingCutoffHours?: number;
+  entryTimeSlots?: string[];
+  cancellationPolicyNotice?: string;
+  childAgeMin?: number;
+  childAgeMax?: number;
+  infantAgeMax?: number;
+}
+
+export interface GuideConfig {
+  languages?: string[];
+  primaryLanguage?: string;
+  additionalLanguages?: string[];
+  guideType?: 'LICENSED_NATIONAL_GUIDE' | 'LOCAL_EXPERT' | 'CHAUFFEUR_GUIDE' | 'SPECIALIST_ACADEMIC';
+  specialization?: string[];
+  rateType?: 'FULL_DAY' | 'HALF_DAY' | 'HOURLY' | 'NIGHT_TOUR';
+  hourlyNetRate?: number; // Base net hourly rate to supplier
+  hourlySellingRate?: number; // Calculated delivered hourly rate
+  minHours?: number; // Minimum booking duration (e.g. 4 Hours)
+  overtimeHourlyRate?: number; // Overtime hourly rate
+  maxGroupSize?: number;
+  includesGuideTransportation?: boolean;
+  includesGuideMeals?: boolean;
+  meetingInstructions?: string;
+}
+
+export interface RestaurantConfig {
+  restaurantName?: string;
+  specialty?: string; // Specialty dish / cuisine highlight (e.g. "Edo-mae Sushi & Seasonal Nigiri")
+  mealSelect?: ('Breakfast' | 'Lunch' | 'Dinner')[]; // Selectable meal types (Breakfast, Lunch, Dinner)
+  mealTypes?: string[];
+  mealType?: 'SET_LUNCH' | 'KAISEKI_DINNER' | 'OMAKASE' | 'MULTI_COURSE' | 'BUFFET' | 'AFTERNOON_TEA' | 'A_LA_CARTE';
+  cuisineType?: string;
+  seatingType?: 'PRIVATE_ROOM_TATAMI' | 'PRIVATE_ROOM_TABLE' | 'CHEF_COUNTER' | 'MAIN_DINING';
+  dietaryAccommodations?: string[];
+  beveragePackage?: 'NONE' | 'NOMIHOUDAI_ALL_YOU_CAN_DRINK' | 'SOMMELIER_WINE_PAIRING' | 'SAKE_PAIRING' | 'NON_ALCOHOLIC_PAIRING' | 'STANDARD_TEA_WATER';
+  durationMinutes?: number;
+  reservationCancellationHours?: number;
+  dressCode?: string;
+}
+
+export interface FerryConfig {
+  ferryLine?: string;
+  departurePort?: string;
+  arrivalPort?: string;
+  vesselType?: 'HIGH_SPEED_HYDROFOIL' | 'SIGHTSEEING_CRUISE' | 'STANDARD_CAR_FERRY' | 'CATAMARAN';
+  vesselClass?: string;
+  capacity?: number;
+  seatingClass?: 'STANDARD' | 'FIRST_CLASS_GREEN' | 'VIP_OBSERVATION_LOUNGE';
+  luggageAllowanceBags?: number;
+  isRoundTrip?: boolean;
+  departureSchedule?: string[];
+}
+
+export interface MasterProductConfiguration<T = Record<string, any>> {
+  configuration_id: string;
+  product_id: string;
+  product_category: string;
+  configurator_type: string;
+  configuration_version: number;
+  configuration_schema_version: string;
+  configuration_data: T;
+  status: 'ACTIVE' | 'DRAFT' | 'ARCHIVED';
+  created_at: string;
+  updated_at: string;
+  created_by?: string;
+  updated_by?: string;
 }
 
 export type ProductPricingMethod = 'per_person' | 'capacity_based' | 'fixed_stay';
@@ -885,7 +1112,80 @@ export interface ProductDatePricingOverride {
   notes?: string;
 }
 
+export interface VehicleMaster {
+  id: string; // e.g. 'veh-alphard-01'
+  name: string; // e.g. 'Toyota Alphard Executive MPV'
+  model: string; // e.g. 'Toyota Alphard Executive Lounge (7-Seater)'
+  type: string; // e.g. 'Executive MPV'
+  classification: string; // e.g. 'Executive MPV / Van (4–7 Seats)'
+  manufacturer: string; // e.g. 'Toyota'
+  seatingCapacity: number; // e.g. 7
+  luggageCapacity: number; // e.g. 4
+  destinationId?: string;
+  destinationName?: string;
+  hubId?: string;
+  hubName?: string;
+  supplierId?: string;
+  supplierName?: string;
+  status: 'ACTIVE' | 'INACTIVE' | 'MAINTENANCE';
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface YachtMaster {
+  id: string; // e.g. 'yacht-azimut-66'
+  name: string; // e.g. 'Ocean Pearl (Azimut 66 Flybridge)'
+  model: string; // e.g. 'Azimut 66 Flybridge'
+  type: string; // e.g. 'Motor Yacht'
+  classification: string; // e.g. 'Motor Yacht (Luxury Flybridge)'
+  capacity: number; // Max guest capacity (e.g. 12 Guests)
+  length: string; // e.g. '66 ft / 20.8 m'
+  dimensions?: string; // e.g. '66 ft LOA x 17.2 ft Beam'
+  destinationId?: string;
+  destinationName?: string;
+  hubId?: string;
+  hubName?: string;
+  supplierId?: string;
+  supplierName?: string;
+  status: 'ACTIVE' | 'INACTIVE' | 'MAINTENANCE';
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface FerryMaster {
+  id: string; // e.g. 'ferry-miyajima-01'
+  name: string; // e.g. 'JR Miyajima Ferry (Nanaura Maru)'
+  type: string; // e.g. 'Standard Ferry'
+  vesselClass: string; // e.g. 'Standard Car & Passenger Ferry'
+  capacity: number; // e.g. 800
+  route: string; // e.g. 'Miyajimaguchi ↔ Miyajima Island'
+  origin: string; // e.g. 'Miyajimaguchi Pier'
+  destination: string; // e.g. 'Miyajima Island Terminal'
+  operator?: string; // e.g. 'JR West Miyajima Ferry Co.'
+  destinationId?: string;
+  destinationName?: string;
+  hubId?: string;
+  hubName?: string;
+  supplierId?: string;
+  supplierName?: string;
+  status: 'ACTIVE' | 'INACTIVE' | 'MAINTENANCE';
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface TransferVehicleConfig {
+  vehicleId?: string;
+  vehicleNameSnapshot?: string;
+  vehicleTypeSnapshot?: string;
+  capacitySnapshot?: number;
+  yachtId?: string;
+  yachtNameSnapshot?: string;
+  yachtTypeSnapshot?: string;
+  ferryId?: string;
+  ferryNameSnapshot?: string;
   vehicleName?: string; // e.g. 'Toyota Hiace Grand Cabin' or 'Azimut 66 Flybridge'
   vehicleModel?: string; // e.g. 'Toyota Hiace Grand Cabin (7-Seater)' or 'Azimut 66 Flybridge Luxury Yacht'
   vehicleType: string; // e.g. 'Luxury MPV', 'Minivan', 'Van', 'Minibus', 'Sedan', 'Coach', 'Motor Yacht', 'Catamaran', 'Sailing Yacht', 'Superyacht', 'Speedboat'
@@ -908,6 +1208,7 @@ export interface TransferVehicleConfig {
   yachtSize?: string; // e.g. '66 ft / 20.8 m'
   yachtLength?: string; // e.g. '66 ft'
   isYacht?: boolean;
+  skipperName?: string; // e.g. 'Captain Kenji Sato (Master 200GT)'
   
   // Occupancy rules (Configurable by Admin)
   adultSeatCount?: number; // default 1 seat
@@ -919,6 +1220,7 @@ export interface TransferVehicleConfig {
   autoAllocateVehicles?: boolean;
   maxVehicles?: number;
   pricingMethod?: 'capacity_based' | 'per_person';
+  allocationStrategy?: string;
 }
 
 export type PricingTier = 'B2C' | 'B2B';
@@ -932,6 +1234,7 @@ export interface PricingCalculationRequest {
   targetCurrency: CurrencyCode;
   quantity?: number;
   selectedAddonIds?: string[];
+  selectedUpsellIds?: string[]; // Selected Master Upsell IDs
   pricingTier?: PricingTier; // B2C (Retail Consumer / Buyer) or B2B (Travel Agent Wholesale)
   userRole?: UserRole;
   user?: User | null;
@@ -1144,6 +1447,9 @@ export interface QuoteItem {
   serviceTime?: string;
   notes?: string;
   selectedAddonIds: string[];
+  selectedUpsellIds?: string[]; // Selected Master Upsell IDs
+  selectedUpsellSnapshots?: SelectedUpsellSnapshot[]; // Frozen historical upsells snapshot (Section 22, 34)
+  selected_options?: Record<string, any>; // Compact configuration options selected by agent (Section 31)
   calculation: PricingCalculationResult | AgentPricingResponse;
   accommodationType?: AccommodationType;
   isManualHotel?: boolean;
@@ -1160,6 +1466,11 @@ export interface QuoteItem {
   configuration_snapshot?: any;
   pricing_snapshot?: any;
   currency_snapshot?: CurrencyCode | string;
+  parent_product_id?: string; // Links upsell quote item to parent product (Section 15-18)
+  parent_item_id?: string; // Links upsell quote item to parent quote item
+  upsell_relationship_id?: string; // Authoritative relationship ID
+  is_upsell?: boolean; // Indicates if this quote item was added as an upsell
+  upsell_type?: 'EXISTING_PRODUCT' | 'STANDALONE';
   visaSnapshot?: QuoteVisaSnapshot;
   metadata?: Record<string, any>;
 }
@@ -1858,6 +2169,10 @@ export interface BookingItem {
   quantity?: number;
   serviceEndDate?: string;
   duration?: string;
+  configuration_id?: string;
+  configuration_snapshot?: any;
+  pricing_snapshot?: any;
+  configurator_type?: string;
   isCancelled?: boolean;
   cancelledAt?: string;
   cancelledBy?: string;
@@ -1878,6 +2193,13 @@ export interface BookingItem {
   accommodationType?: AccommodationType;
   isManualHotel?: boolean;
   manualHotelDetails?: ManualHotelDetails;
+  
+  // Independent Upsell Service Item Relationships (Section 19-21)
+  parentBookingItemId?: string; // Links upsell service item to parent booking item
+  parentProductId?: string; // Master Product ID of parent product
+  upsellRelationshipId?: string; // Authoritative relationship ID
+  isUpsellServiceItem?: boolean; // Indicates if this booking item is an upsell child service
+  upsellType?: 'EXISTING_PRODUCT' | 'STANDALONE';
   
   // Operational Workflow & Service Details
   workflowStage?: 
@@ -3315,11 +3637,19 @@ export type MasterSheetTabName =
   | 'HOTEL_RATES'
   | 'VISA'
   | 'VISA_RATES'
+  | 'TRAVEL_PROTECTION'
+  | 'VIP_GROUND'
+  | 'CONNECTIVITY'
   | 'TRANSFER_ROUTES'
   | 'TRANSFER_RATES'
   | 'PACKAGES'
   | 'PACKAGE_ITEMS'
-  | 'FX_RATES';
+  | 'FX_RATES'
+  | 'RAIL_STATIONS'
+  | 'RAIL_SERVICES'
+  | 'RAIL_ROUTES'
+  | 'RAIL_FARES'
+  | 'RAIL_CLASS_RULES';
 
 export interface SheetValidationError {
   tabName: MasterSheetTabName | string;
@@ -3356,6 +3686,10 @@ export interface HierarchicalValidationReport {
     orphanTransfers: number;
     orphanPackages: number;
     rateMismatches: number;
+    orphanRailStations?: number;
+    orphanRailRoutes?: number;
+    orphanRailFares?: number;
+    orphanRailServices?: number;
   };
 }
 
@@ -5113,6 +5447,28 @@ export interface VisaAssistanceService {
   displayOrder?: number;
 }
 
+export type MarginType = 'PERCENTAGE' | 'FIXED';
+export type CommercialPricingTaxType = 'PERCENTAGE' | 'FIXED' | 'NOT_APPLICABLE';
+export type CommercialPricingServiceChargeType = 'PERCENTAGE' | 'FIXED' | 'NOT_APPLICABLE';
+
+export interface CommercialPricingDetails {
+  currency: CurrencyCode;
+  pricingUnit?: string; // 'PER_APPLICANT' | 'PER_TRAVELLER' | 'PER_TRIP' | 'PER_SERVICE' | 'PER_UNIT' | 'PER_DAY'
+  nettPrice?: number;
+  marginType?: MarginType | 'PERCENTAGE' | 'FIXED';
+  marginValue?: number;
+  marginAmount?: number;
+  serviceChargeType?: CommercialPricingServiceChargeType;
+  serviceChargeValue?: number;
+  serviceChargeAmount?: number;
+  taxType?: CommercialPricingTaxType;
+  taxValue?: number;
+  taxAmount?: number;
+  finalPrice?: number;
+  pricingVersion?: number;
+  lastUpdatedAt?: string;
+}
+
 export interface TravelProtectionPlan {
   id: string;
   serviceName: string;
@@ -5132,6 +5488,7 @@ export interface TravelProtectionPlan {
   sellingPricePerDay: number;
   sellingPricePerTrip: number;
   currency: CurrencyCode;
+  pricing?: CommercialPricingDetails;
   status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
   terms: string;
   customerDescription: string;
@@ -5155,6 +5512,7 @@ export interface VipGroundService {
   sellingPrice: number;
   pricingType: 'PER_PAX' | 'PER_VEHICLE' | 'FIXED';
   currency: CurrencyCode;
+  pricing?: CommercialPricingDetails;
   inclusions: string[];
   badge?: string;
   status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
@@ -5173,6 +5531,7 @@ export interface ConnectivityPlan {
   netCost: number;
   sellingPrice: number;
   currency: CurrencyCode;
+  pricing?: CommercialPricingDetails;
   status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
   inclusions: string[];
   displayOrder?: number;
@@ -5237,6 +5596,8 @@ export interface VisaProduct {
   serviceFee: number;
   expressServiceFee?: number;
   currency: CurrencyCode;
+  sellingPrice?: number;
+  pricing?: CommercialPricingDetails;
   description: string;
   documentsChecklist: string[];
   structuredRequirements?: StructuredVisaRequirement[];

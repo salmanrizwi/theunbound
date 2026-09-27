@@ -198,7 +198,7 @@ export const PackageEnquiryModal: React.FC<PackageEnquiryModalProps> = ({
                 </div>
 
                 <div className="text-right shrink-0 pl-2">
-                  <span className="text-[10px] text-slate-400 font-bold uppercase block">Starting From</span>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase block">Final Price</span>
                   <span className="text-sm font-black text-slate-900 font-mono">
                     {formatCurrency(displayPrice, currency)}
                   </span>

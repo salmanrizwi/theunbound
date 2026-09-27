@@ -370,7 +370,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       productType: 'Travel Protection',
       name: `${plan.serviceName} (${coverageDays} Days)`,
       shortDescription: plan.customerDescription || `${plan.coverageArea} Comprehensive Medical & Travel Cover. Provider: ${plan.provider}.`,
-      longDescription: `Full comprehensive travel protection covering ${adults} Adults and ${children} Children for ${coverageDays} days in ${currentDestination.name}. Medical Coverage: $${plan.medicalCoverageAmount.toLocaleString()} USD. Inclusions: ${plan.inclusions.join(', ')}.`,
+      longDescription: `Full comprehensive travel protection covering ${adults} Adults and ${children} Children for ${coverageDays} days in ${currentDestination.name}. Medical Coverage: $${plan.medicalCoverageAmount.toLocaleString()} USD. Inclusions: ${(plan.inclusions || []).join(', ')}.`,
       supplierId: 'sup-insurance-canonical',
       supplierName: plan.provider,
       supplierProductCode: `INS-${plan.id}`,
@@ -379,13 +379,13 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       duration: `${coverageDays} Days`,
       operatingDays: ['All Days'],
       operatingHours: '24/7 Coverage',
-      adultNetPrice: plan.netCostPerDay * coverageDays,
-      childNetPrice: Math.round(plan.netCostPerDay * 0.7) * coverageDays,
+      adultNetPrice: totalAdultCost,
+      childNetPrice: totalChildCost,
       infantNetPrice: 0,
       currency: plan.currency || 'USD',
-      defaultMarkupPercent: 30,
+      defaultMarkupPercent: 0,
       taxPercent: 0,
-      commissionPercent: 15,
+      commissionPercent: 0,
       serviceFeeFixed: 0,
       sellingPriceStartingFrom: dailyPrice,
       season: 'All Year',
@@ -467,13 +467,13 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       duration: 'Flexible',
       operatingDays: ['All Days'],
       operatingHours: '24/7 Operations',
-      adultNetPrice: service.netCost,
+      adultNetPrice: isPerGroup ? sellingPrice : service.netCost,
       childNetPrice: isPerGroup ? 0 : Math.round(service.netCost * 0.7),
       infantNetPrice: 0,
       currency: service.currency || 'USD',
-      defaultMarkupPercent: service.defaultMarkupPercent || 25,
+      defaultMarkupPercent: 0,
       taxPercent: 0,
-      commissionPercent: 10,
+      commissionPercent: 0,
       serviceFeeFixed: 0,
       sellingPriceStartingFrom: sellingPrice,
       season: 'All Year',
@@ -549,13 +549,13 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       duration: `${plan.validityDays} Days`,
       operatingDays: ['All Days'],
       operatingHours: 'Instant Digital Activation',
-      adultNetPrice: plan.netCost,
+      adultNetPrice: unitSellingUSD * devicesCount,
       childNetPrice: 0,
       infantNetPrice: 0,
       currency: plan.currency || 'USD',
-      defaultMarkupPercent: 35,
+      defaultMarkupPercent: 0,
       taxPercent: 0,
-      commissionPercent: 10,
+      commissionPercent: 0,
       serviceFeeFixed: 0,
       sellingPriceStartingFrom: unitSellingUSD,
       season: 'All Year',
@@ -1811,5 +1811,10 @@ const ConnectivityConfigModal: React.FC<ConnectivityConfigModalProps> = ({
   );
 };
 
-// Aliases for modern naming & clean backward compatibility
+// Aliases & Sub-modals for modern naming & clean backward compatibility
 export const VisaAndAncillaryServicesSection = VisaServicesAndFacilitationSection;
+export {
+  TravelProtectionConfigModal,
+  VipGroundConfigModal,
+  ConnectivityConfigModal
+};

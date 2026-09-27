@@ -171,7 +171,7 @@ export const DeskOverviewSection: React.FC<DeskOverviewSectionProps> = ({
   const handleSaveStatus = (e: React.FormEvent) => {
     e.preventDefault();
     if (newStatus === 'CONFIRMED' && !readiness.canConfirm) {
-      alert(`Cannot confirm booking: ${readiness.blockingReasons.join(', ')}`);
+      alert(`Cannot confirm booking: ${(readiness.blockingReasons || []).join(', ')}`);
       return;
     }
 

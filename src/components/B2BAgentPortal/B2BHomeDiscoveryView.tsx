@@ -40,7 +40,7 @@ import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { VisaProduct } from './B2BVisaView';
 import { DestinationHubsContextView, HubProductsContextView } from './B2BContextualExplorer';
-import { AddProductToQuoteModal } from './AddProductToQuoteModal';
+import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
 import { AddVisaToQuoteModal } from './AddVisaToQuoteModal';
 import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
@@ -1195,17 +1195,19 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
         </section>
       </div>
 
-      {/* Configuration Modals */}
-      <AddProductToQuoteModal
-        product={selectedProductForModal}
-        existingItemId={modalExistingItemId}
+      {/* Dedicated Category Configurator Router */}
+      <GlobalConfiguratorRouter
+        itemOrProduct={selectedProductForModal}
+        existingQuoteItemId={modalExistingItemId}
         isOpen={Boolean(selectedProductForModal)}
+        portalOrigin="B2B_AGENT"
         onClose={() => {
           setSelectedProductForModal(null);
           setModalExistingItemId(undefined);
         }}
-        onSuccess={(product) => {
-          if (onItemAddedToQuote) onItemAddedToQuote(product.name);
+        onSuccess={(item) => {
+          const name = item?.name || item?.product?.name || 'Service';
+          if (onItemAddedToQuote) onItemAddedToQuote(name);
         }}
       />
 

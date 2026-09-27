@@ -1,15 +1,16 @@
 import { CurrencyCode, UserRole, Product } from '../types';
 
 export type RailCarType = 'Ordinary' | 'Green';
-export type RailSeatType = 'Reserved';
+export type RailSeatType = 'Reserved' | 'Non-Reserved';
 export type RailServiceGroup = 'NOZOMI_MIZUHO' | 'HIKARI_KODAMA_SAKURA_TSUBAME';
-export type RailPassengerType = 'ADULT' | 'CHILD';
+export type RailPassengerType = 'ADULT' | 'CHILD' | 'ADT' | 'CWB' | 'CNB' | 'INF';
 export type RailSeasonType = 'REGULAR' | 'LOW' | 'HIGH' | 'PEAK_HIGH' | 'HOLIDAY' | 'SPECIAL';
 
 export interface RailStation {
   stationId: string; // e.g. "JP-ST-TOKYO"
   stationCode: string; // e.g. "TYO"
   stationName: string; // e.g. "Tokyo"
+  stationNameLocal?: string; // e.g. "東京駅"
   displayName: string; // e.g. "Tokyo (東京)"
   searchAliases: string[];
   country: string; // "Japan"
@@ -23,8 +24,31 @@ export interface RailStation {
   timezone: string; // "Asia/Tokyo"
   active: boolean;
   order?: number;
+  displayOrder?: number;
+  status?: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
   shinkansenLine?: string; // "Tokaido / Sanyo / Kyushu"
   isMajorHub?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface RailService {
+  serviceId: string; // e.g. "SRV-TYO-OSA-NZ1"
+  operatorId?: string; // e.g. "JR-CENTRAL"
+  serviceName: string; // e.g. "Nozomi 1 Super Express"
+  serviceType: string; // e.g. "NOZOMI" | "HIKARI" | "KODAMA" | "MIZUHO" | "SAKURA" | "TSUBAME"
+  trainNumber?: string; // e.g. "1A"
+  originStationId: string; // FK to RailStation
+  destinationStationId: string; // FK to RailStation
+  routeId?: string; // FK to RailRoute
+  departureTime: string; // "06:00"
+  arrivalTime: string; // "08:28"
+  duration?: string; // "2h 28m"
+  durationMinutes?: number; // 148
+  operatingDays?: string[] | string; // "Mon, Tue, Wed, Thu, Fri, Sat, Sun"
+  status: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
+  effectiveFrom?: string; // YYYY-MM-DD
+  effectiveTo?: string; // YYYY-MM-DD
   createdAt?: string;
   updatedAt?: string;
 }
@@ -39,13 +63,41 @@ export interface RailRoute {
   destinationId: string; // "dest-japan"
   railOperator: string; // "JR Central / JR West / smartEX"
   active: boolean;
+  status?: 'ACTIVE' | 'INACTIVE';
   availableProductIds: string[]; // ["RAIL-JP-ORD-RESERVED", "RAIL-JP-GREEN-RESERVED"]
   availableServiceGroups: RailServiceGroup[];
   distanceKm?: number;
+  durationMinutes?: number;
   travelDurationMinutes?: {
     nozomiMizuho?: number;
     hikariKodamaSakura?: number;
   };
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface RailFare {
+  railFareId: string; // e.g. "FARE-TYO-OSA-ORD-ADT"
+  originStationId: string; // FK to RailStation
+  destinationStationId: string; // FK to RailStation
+  routeId?: string; // FK to RailRoute
+  productId: 'RAIL-JP-ORD-RESERVED' | 'RAIL-JP-GREEN-RESERVED' | string;
+  carType: RailCarType; // 'Ordinary' | 'Green'
+  seatType: RailSeatType; // 'Reserved' | 'Non-Reserved'
+  fareType: string; // 'Standard' | 'Discount' | 'Express'
+  passengerType: RailPassengerType; // 'ADT' | 'CWB' | 'CNB' | 'INF' | 'ADULT' | 'CHILD'
+  nettPrice: number; // Base Supplier Cost
+  marginType: 'PERCENTAGE' | 'FIXED';
+  marginValue: number;
+  taxType?: 'PERCENTAGE' | 'FIXED' | 'NOT_APPLICABLE';
+  taxValue?: number;
+  serviceChargeType?: 'PERCENTAGE' | 'FIXED' | 'NOT_APPLICABLE';
+  serviceChargeValue?: number;
+  finalPrice: number; // Final Calculated Selling Price
+  currency: CurrencyCode; // 'JPY'
+  effectiveFrom: string; // YYYY-MM-DD
+  effectiveTo: string; // YYYY-MM-DD
+  status: 'ACTIVE' | 'INACTIVE';
   createdAt?: string;
   updatedAt?: string;
 }

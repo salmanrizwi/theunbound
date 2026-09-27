@@ -251,7 +251,7 @@ export function hotelToProduct(
     productType: 'Hotel & Resort',
     name: `${hotel.name} - ${roomTitle} (${safeRooms} ${safeRooms > 1 ? 'Rooms' : 'Room'}, ${safeNights} ${safeNights > 1 ? 'Nights' : 'Night'})`,
     shortDescription: `${hotel.starRating}★ ${hotel.propertyType ? hotel.propertyType.replace('_', ' ') : 'Hotel'} in ${hotel.area}, ${hotel.cityName}. Includes ${mealLabel}.`,
-    longDescription: `${hotel.description}\n\nRoom Details: ${selectedRoom?.description || ''}\nAmenities: ${hotel.amenities.join(', ')}`,
+    longDescription: `${hotel.description}\n\nRoom Details: ${selectedRoom?.description || ''}\nAmenities: ${(hotel.amenities || []).join(', ')}`,
     supplierId: `sup-${hotel.code}`,
     supplierName: `${hotel.name} Corporate Reservations`,
     supplierProductCode: hotel.code,

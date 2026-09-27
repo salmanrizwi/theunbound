@@ -61,6 +61,7 @@ import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { EntitySEO } from '../../types/seo';
 import { useAuth } from '../../context/AuthContext';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { AdminWorkspaceLayout } from '../common/AdminWorkspaceLayout';
 
 interface PackageManagerProps {
   destinations: Destination[];
@@ -948,7 +949,7 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
       {/* ========================================================================= */}
       {isEditorOpen && editingPackage && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-5xl w-full my-auto shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-3xl max-w-6xl w-full my-auto shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             
             {/* Modal Header */}
             <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 shrink-0">
@@ -976,36 +977,78 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
               </div>
             </div>
 
-            {/* Editor Subtabs Navigation */}
-            <div className="px-6 py-2.5 bg-white border-b border-slate-200 flex items-center space-x-2 overflow-x-auto shrink-0">
-              {[
-                { id: 'GENERAL', label: '1. Basic Info & Route', icon: FileText },
-                { id: 'ITINERARY', label: '2. Day-by-Day Builder', icon: Calendar },
-                { id: 'PRICING', label: '3. Pricing Engine & Margin', icon: DollarSign },
-                { id: 'ADDONS', label: '4. Highlights & Policy', icon: Tag },
-                { id: 'SEO_PUBLISH', label: '5. SEO & Publishing', icon: Globe }
-              ].map(tab => {
-                const Icon = tab.icon;
-                const isActive = editorActiveTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setEditorActiveTab(tab.id as any)}
-                    className={`flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                      isActive
-                        ? 'bg-[#008972] text-white shadow-xs'
-                        : 'bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-slate-200'
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    <span>{tab.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+            {/* Modal Body (Scrollable 25/75 Workspace) */}
+            <div className="p-5 sm:p-6 overflow-y-auto flex-1">
+              <AdminWorkspaceLayout
+                sidebar={
+                  <div className="space-y-6">
+                    {/* Package Preview Context Panel */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl overflow-hidden shadow-xs text-xs text-slate-700">
+                      <div className="h-32 bg-slate-200 relative">
+                        <img 
+                          src={editingPackage.heroImage || 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=400&auto=format&fit=crop'} 
+                          alt="Package Preview" 
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent" />
+                      </div>
 
-            {/* Modal Body (Scrollable) */}
-            <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
+                      <div className="p-4 space-y-2.5">
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Package ID</span>
+                          <span className="font-mono font-bold text-slate-900">{editingPackage.id || 'PENDING'}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Duration</span>
+                          <span className="font-semibold text-slate-800">
+                            {editingPackage.durationDays} Days / {editingPackage.durationNights || editingPackage.durationDays - 1} Nights
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Travel Style</span>
+                          <span className="font-semibold text-slate-800">{editingPackage.tripType || 'CULTURAL'}</span>
+                        </div>
+                        <div className="pt-2 border-t border-slate-200">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Suggested Selling Price</span>
+                          <span className="text-base font-black text-[#008972] font-mono mt-0.5">
+                            USD {(editingPackage.suggestedSellingPriceUSD || editingPackage.baseNetCostUSD || 0).toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Vertical Navigation Tabs */}
+                    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs divide-y divide-slate-100">
+                      {[
+                        { id: 'GENERAL', label: '1. Basic Info & Route', icon: FileText },
+                        { id: 'ITINERARY', label: '2. Day-by-Day Builder', icon: Calendar },
+                        { id: 'PRICING', label: '3. Pricing Engine & Margin', icon: DollarSign },
+                        { id: 'ADDONS', label: '4. Highlights & Policy', icon: Tag },
+                        { id: 'SEO_PUBLISH', label: '5. SEO & Publishing', icon: Globe }
+                      ].map(tab => {
+                        const Icon = tab.icon;
+                        const isActive = editorActiveTab === tab.id;
+                        return (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setEditorActiveTab(tab.id as any)}
+                            className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center space-x-2.5 cursor-pointer ${
+                              isActive
+                                ? 'bg-[#00C6A6]/10 text-slate-950 font-black border-l-4 border-[#00C6A6]'
+                                : 'hover:bg-slate-50 text-slate-600'
+                            }`}
+                          >
+                            <Icon className="w-4 h-4 text-slate-400" />
+                            <span>{tab.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                }
+                content={
+                  <div className="space-y-6 text-xs">
               
               {/* TAB 1: GENERAL INFO & DESTINATION ROUTE */}
               {editorActiveTab === 'GENERAL' && (
@@ -1086,7 +1129,7 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                           type="number"
                           min="1"
                           max="30"
-                          value={editingPackage.durationDays}
+                          value={editingPackage.durationDays ?? 1}
                           onChange={(e) => {
                             const days = parseInt(e.target.value) || 1;
                             setEditingPackage({
@@ -1104,7 +1147,7 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                           type="number"
                           min="0"
                           max="30"
-                          value={editingPackage.durationNights || editingPackage.durationDays - 1}
+                          value={editingPackage.durationNights ?? Math.max(0, (editingPackage.durationDays || 1) - 1)}
                           onChange={(e) => setEditingPackage({ ...editingPackage, durationNights: parseInt(e.target.value) || 0 })}
                           className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-black text-slate-900 focus:border-[#008972] outline-none"
                         />
@@ -1964,6 +2007,9 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                   </div>
                 </div>
               )}
+                  </div>
+                }
+              />
             </div>
 
             {/* Modal Footer Actions */}
