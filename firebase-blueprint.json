@@ -463,7 +463,7 @@
       }
     },
     "TravelProtectionPlan": {
-      "collection": "travel_protection",
+      "collection": "travel_protection_plans",
       "fields": {
         "id": { "type": "string", "required": true },
         "serviceName": { "type": "string", "required": true },

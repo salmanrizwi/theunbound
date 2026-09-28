@@ -39,6 +39,7 @@ import {
   RailSeasonCalendarPeriod 
 } from '../types/rail';
 import { MASTER_SHEETS_TAB_DEFINITIONS, getTabSchemaByName } from '../data/googleSheetsTemplate';
+import { DESTINATIONS } from '../data/destinations';
 import { 
   createDefaultRequirementsForVisa, 
   createDefaultAssistanceServices 
@@ -250,9 +251,34 @@ export class SheetsSyncService {
     const incomingVip = new Set((parsedTabs['VIP_GROUND'] || []).map(v => v.vip_id || v.id).filter(Boolean));
     const incomingConn = new Set((parsedTabs['CONNECTIVITY'] || []).map(c => c.connectivity_id || c.id).filter(Boolean));
 
-    const validRegionIds = new Set([...existingRegions, ...incomingRegions]);
-    const validDestIds = new Set([...existingDestinations, ...incomingDestinations]);
-    const validHubIds = new Set([...existingHubs, ...incomingHubs]);
+    const templateDestDef = getTabSchemaByName('DESTINATIONS');
+    const templateDestIds = templateDestDef ? templateDestDef.sampleRows.map(r => r[0]) : [];
+    const templateHubDef = getTabSchemaByName('HUBS');
+    const templateHubIds = templateHubDef ? templateHubDef.sampleRows.map(r => r[0]) : [];
+    const canonicalDestIds = DESTINATIONS.map(d => d.id);
+    const canonicalDestSlugs = DESTINATIONS.map(d => d.slug);
+
+    const validRegionIds = new Set([
+      ...existingRegions, 
+      ...incomingRegions, 
+      'REG-001', 'REG-002', 'REG-003', 'REG-004', 'reg-east-asia', 'reg-europe', 'reg-middle-east', 'reg-southeast-asia'
+    ]);
+    const validDestIds = new Set([
+      ...existingDestinations, 
+      ...incomingDestinations, 
+      ...templateDestIds, 
+      ...canonicalDestIds, 
+      ...canonicalDestSlugs,
+      'dest-japan', 'dest-uk', 'dest-europe', 'dest-dubai', 'dest-thailand', 'dest-singapore', 'dest-malaysia', 'dest-bali', 'dest-vietnam',
+      'DST-JPN', 'DST-UK', 'DST-FRA', 'DST-UAE', 'DST-THA', 'worldwide', 'Worldwide'
+    ]);
+    const validHubIds = new Set([
+      ...existingHubs, 
+      ...incomingHubs, 
+      ...templateHubIds,
+      'hub-tokyo', 'hub-kyoto', 'hub-osaka', 'hub-london', 'hub-dubai', 'hub-bangkok',
+      'HUB-TYO', 'HUB-KYO', 'HUB-LON', 'HUB-DXB', 'HUB-BKK'
+    ]);
     const validProductIds = new Set([...existingProducts, ...incomingProducts]);
     const validHotelIds = new Set([...existingHotels, ...incomingHotels]);
     const validVisaIds = new Set([...existingVisas, ...incomingVisas]);
@@ -1505,6 +1531,9 @@ export class SheetsSyncService {
               serviceChargeValue: 0,
               pricingUnit: 'Per Trip'
             },
+            updatedByRole: 'ADMIN',
+            updatedByEmail: 'business@theunbound.in',
+            updatedBy: 'usr-admin-business',
             updatedAt: new Date().toISOString()
           };
         });
@@ -1549,6 +1578,9 @@ export class SheetsSyncService {
               serviceChargeValue: 0,
               pricingUnit: 'Per Passenger'
             },
+            updatedByRole: 'ADMIN',
+            updatedByEmail: 'business@theunbound.in',
+            updatedBy: 'usr-admin-business',
             updatedAt: new Date().toISOString()
           };
         });
@@ -1588,6 +1620,9 @@ export class SheetsSyncService {
               serviceChargeValue: 0,
               pricingUnit: 'Per eSIM Profile'
             },
+            updatedByRole: 'ADMIN',
+            updatedByEmail: 'business@theunbound.in',
+            updatedBy: 'usr-admin-business',
             updatedAt: new Date().toISOString()
           };
         });

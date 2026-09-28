@@ -801,7 +801,8 @@ export class AppDatabase {
         'master_regions', 'destinations', 'city_hubs', 'regions', 'products', 'hotels',
         'hotel_rooms', 'hotel_rates', 'hotel_meal_plans', 'transfer_routes', 'transfer_rates',
         'product_pricing_rates', 'product_capacities', 'b2b_packages', 'package_items',
-        'visas', 'visa_rates', 'custom_pages', 'blog_articles', 'inventory_tombstones'
+        'visas', 'visa_rates', 'travel_protection_plans', 'vip_ground_services', 'connectivity_plans',
+        'custom_pages', 'blog_articles', 'inventory_tombstones'
       ];
       const isAdminCollection = cmsCollections.includes(collectionName);
       const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || data?.updatedByEmail || 'business@theunbound.in';
@@ -838,7 +839,8 @@ export class AppDatabase {
         'master_regions', 'destinations', 'city_hubs', 'regions', 'products', 'hotels',
         'hotel_rooms', 'hotel_rates', 'hotel_meal_plans', 'transfer_routes', 'transfer_rates',
         'product_pricing_rates', 'product_capacities', 'b2b_packages', 'package_items',
-        'visas', 'visa_rates', 'custom_pages', 'blog_articles', 'inventory_tombstones'
+        'visas', 'visa_rates', 'travel_protection_plans', 'vip_ground_services', 'connectivity_plans',
+        'custom_pages', 'blog_articles', 'inventory_tombstones'
       ];
       const isAdminCollection = cmsCollections.includes(collectionName);
       const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || data?.updatedByEmail || 'business@theunbound.in';
@@ -931,6 +933,12 @@ export class AppDatabase {
       `custom_pages_${recordId}`,
       `BlogArticle_${recordId}`,
       `blog_articles_${recordId}`,
+      `TravelProtectionPlan_${recordId}`,
+      `travel_protection_plans_${recordId}`,
+      `VipGroundService_${recordId}`,
+      `vip_ground_services_${recordId}`,
+      `ConnectivityPlan_${recordId}`,
+      `connectivity_plans_${recordId}`,
       `User_${recordId}`
     ];
     keysToDelete.forEach(k => set.delete(k));
@@ -1015,6 +1023,18 @@ export class AppDatabase {
     const dests = this.getItem<Destination[]>('destinations', allowDemo ? DESTINATIONS : []);
     const filteredDests = dests.filter(d => !deletedSet.has(d.id) && !deletedSet.has(d.slug));
     if (filteredDests.length !== dests.length) this.setItem('destinations', filteredDests, false);
+
+    const protections = this.getItem<TravelProtectionPlan[]>('travel_protection_plans', []);
+    const filteredProtections = protections.filter(p => !deletedSet.has(p.id) && !deletedSet.has(`TravelProtectionPlan_${p.id}`));
+    if (filteredProtections.length !== protections.length) this.setItem('travel_protection_plans', filteredProtections, false);
+
+    const vip = this.getItem<VipGroundService[]>('vip_ground_services', []);
+    const filteredVip = vip.filter(v => !deletedSet.has(v.id) && !deletedSet.has(`VipGroundService_${v.id}`));
+    if (filteredVip.length !== vip.length) this.setItem('vip_ground_services', filteredVip, false);
+
+    const conn = this.getItem<ConnectivityPlan[]>('connectivity_plans', []);
+    const filteredConn = conn.filter(c => !deletedSet.has(c.id) && !deletedSet.has(`ConnectivityPlan_${c.id}`));
+    if (filteredConn.length !== conn.length) this.setItem('connectivity_plans', filteredConn, false);
   }
 
   /**
