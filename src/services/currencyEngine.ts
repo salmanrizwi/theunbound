@@ -58,7 +58,7 @@ export class CurrencyEngine {
     googleSheetsSyncEnabled: true,
     googleSheetTabName: 'FX_RATES',
     googleFinanceProviderEnabled: true,
-    xeProviderEnabled: true,
+    xeProviderEnabled: false,
     cacheTtlMinutes: 60,
     fallbackPolicy: 'USE_LAST_VALID',
     staleThresholdMinutes: 180,
@@ -357,7 +357,7 @@ export class CurrencyEngine {
       pair.googleFinanceLiveRate = Number(rawRate.toFixed(6));
       pair.googleFinanceFormula = formula;
       pair.xeLiveRate = Number(rawRate.toFixed(6));
-      pair.effectiveRate = Number(Math.max(0.000001, pair.xeLiveRate + (pair.manualAdjustment || 0)).toFixed(6));
+      pair.effectiveRate = Number(Math.max(0.000001, (pair.googleFinanceLiveRate ?? rawRate) + (pair.manualAdjustment || 0)).toFixed(6));
       pair.lastFetchedAt = now;
       pair.status = this.isStale ? 'STALE' : 'ACTIVE';
     });
@@ -511,7 +511,7 @@ export class CurrencyEngine {
     const pair = this.pairs.get(pairId);
     if (!pair) return false;
 
-    const prevLiveRate = pair.xeLiveRate;
+    const prevLiveRate = pair.googleFinanceLiveRate ?? pair.xeLiveRate;
     const prevAdjustment = pair.manualAdjustment;
     const prevEffective = pair.effectiveRate;
 
@@ -519,7 +519,7 @@ export class CurrencyEngine {
     if (isNaN(numericAdj)) return false;
 
     pair.manualAdjustment = numericAdj;
-    pair.effectiveRate = Number(Math.max(0.000001, pair.xeLiveRate + numericAdj).toFixed(6));
+    pair.effectiveRate = Number(Math.max(0.000001, (pair.googleFinanceLiveRate ?? pair.xeLiveRate) + numericAdj).toFixed(6));
     pair.lastUpdatedAt = new Date().toISOString();
     pair.updatedBy = user?.id || 'admin';
     pair.updatedByName = user?.name || user?.email || 'Admin';
@@ -531,7 +531,7 @@ export class CurrencyEngine {
       fromCurrency: pair.fromCurrency,
       toCurrency: pair.toCurrency,
       previousLiveRate: prevLiveRate,
-      newLiveRate: pair.xeLiveRate,
+      newLiveRate: pair.googleFinanceLiveRate ?? pair.xeLiveRate,
       previousAdjustment: prevAdjustment,
       newAdjustment: numericAdj,
       previousEffectiveRate: prevEffective,

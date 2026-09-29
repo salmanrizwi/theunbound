@@ -759,6 +759,139 @@ console.log('\n--- 19. Testing Duplicate Margin Protection ---');
   assert(calculation.finalTotalSellingPrice === 132, 'Duplicate Margin: Exactly 1 single margin applied (132 USD, not 158.4 USD)');
 }
 
+// -------------------------------------------------------------
+// 20. SECTION 51: MANDATORY CAPACITY & CATEGORY ISOLATION TEST
+// -------------------------------------------------------------
+console.log('\n--- 20. Testing Section 51 Mandatory Capacity Isolation ---');
+{
+  // 1. Product A: Airport Transfer with Toyota Alphard
+  // Capacity Rule configured:
+  // 1–3 Pax -> 1 Alphard -> Net: 25,000 JPY
+  // 4–6 Pax -> 2 Alphards -> Net: 50,000 JPY
+  const airportTransferProduct: any = {
+    id: 'prod-alphard-transfer',
+    sku: 'SKU-HND-ALPHARD-TR',
+    name: 'Haneda Airport Private Alphard Transfer',
+    category: 'Transfers',
+    destination: 'Japan',
+    city: 'Tokyo',
+    currency: 'JPY',
+    nativeCurrency: 'JPY',
+    defaultMarkupPercent: 20,
+    taxPercent: 10,
+    vehicleConfig: {
+      vehicleType: 'Toyota Alphard',
+      maxSeats: 6, // Generic physical capacity (reference only)
+      autoAllocateVehicles: true
+    },
+    tieredPricing: [
+      {
+        tierLabel: '1-3 Pax (1 Alphard)',
+        minPax: 1,
+        maxPax: 3,
+        vehicleCount: 1,
+        nettPrice: 25000,
+        netCostPerPax: 25000
+      },
+      {
+        tierLabel: '4-6 Pax (2 Alphards)',
+        minPax: 4,
+        maxPax: 6,
+        vehicleCount: 2,
+        nettPrice: 50000,
+        netCostPerPax: 50000
+      }
+    ],
+    status: 'ACTIVE'
+  };
+
+  // 2. Product B: Private Tour with Toyota Alphard
+  // Capacity Rule configured:
+  // 1–6 Pax -> 1 Alphard -> Net: 60,000 JPY
+  // 7–12 Pax -> 2 Alphards -> Net: 120,000 JPY
+  const privateTourProduct: any = {
+    id: 'prod-alphard-tour',
+    sku: 'SKU-TOKYO-ALPHARD-TOUR',
+    name: 'Tokyo Full Day Private Tour (Toyota Alphard)',
+    category: 'Private Tours',
+    destination: 'Japan',
+    city: 'Tokyo',
+    currency: 'JPY',
+    nativeCurrency: 'JPY',
+    defaultMarkupPercent: 20,
+    taxPercent: 10,
+    vehicleConfig: {
+      vehicleType: 'Toyota Alphard',
+      maxSeats: 6, // Generic physical capacity (reference only)
+      autoAllocateVehicles: true
+    },
+    tieredPricing: [
+      {
+        tierLabel: '1-6 Pax (1 Alphard)',
+        minPax: 1,
+        maxPax: 6,
+        vehicleCount: 1,
+        nettPrice: 60000,
+        netCostPerPax: 60000
+      },
+      {
+        tierLabel: '7-12 Pax (2 Alphards)',
+        minPax: 7,
+        maxPax: 12,
+        vehicleCount: 2,
+        nettPrice: 120000,
+        netCostPerPax: 120000
+      }
+    ],
+    status: 'ACTIVE'
+  };
+
+  // 3. Booking 1: Airport Transfer for 5 Pax
+  // Must calculate: 2 Alphards, Net: 50,000 JPY
+  const booking1Transfer5Pax = calculateProductPrice(airportTransferProduct, {
+    productId: 'prod-alphard-transfer',
+    adults: 5,
+    children: 0,
+    infants: 0,
+    travelDate: '2026-08-01',
+    targetCurrency: 'JPY'
+  });
+
+  // 4. Booking 2: Private Tour for 5 Pax
+  // Must calculate: 1 Alphard, Net: 60,000 JPY
+  const booking2Tour5Pax = calculateProductPrice(privateTourProduct, {
+    productId: 'prod-alphard-tour',
+    adults: 5,
+    children: 0,
+    infants: 0,
+    travelDate: '2026-08-01',
+    targetCurrency: 'JPY'
+  });
+
+  assert(
+    (booking1Transfer5Pax.vehicleDetails as any)?.vehiclesRequired === 2,
+    'Section 51: Transfer for 5 Pax allocates exactly 2 Alphards based on Product-specific capacity rule'
+  );
+  assert(
+    booking1Transfer5Pax.totalNetCost === 50000,
+    'Section 51: Transfer for 5 Pax has totalNetCost = 50,000 JPY'
+  );
+
+  assert(
+    (booking2Tour5Pax.vehicleDetails as any)?.vehiclesRequired === 1,
+    'Section 51: Tour for 5 Pax allocates exactly 1 Alphard based on Product-specific capacity rule'
+  );
+  assert(
+    booking2Tour5Pax.totalNetCost === 60000,
+    'Section 51: Tour for 5 Pax has totalNetCost = 60,000 JPY'
+  );
+
+  assert(
+    (booking1Transfer5Pax.vehicleDetails as any)?.vehiclesRequired !== (booking2Tour5Pax.vehicleDetails as any)?.vehiclesRequired,
+    'Section 51: Transfer (2 Alphards) and Tour (1 Alphard) allocate independently for the same 5 Pax and same Fleet Vehicle'
+  );
+}
+
 console.log('\n================================================================');
 console.log(`  AUDIT COMPLETE: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)`);
 console.log('================================================================\n');

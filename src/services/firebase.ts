@@ -17,6 +17,7 @@ import {
   browserSessionPersistence, 
   indexedDBLocalPersistence,
   inMemoryPersistence,
+  browserPopupRedirectResolver,
   GoogleAuthProvider 
 } from 'firebase/auth';
 import firebaseConfigJson from '../../firebase-applet-config.json';
@@ -96,7 +97,7 @@ try {
 
 export const db = firestoreInstance;
 
-// Initialize Auth with multi-tier persistence cascade for iOS Safari / Mobile / Private Browsing resilience
+// Initialize Auth with multi-tier persistence cascade and popupRedirectResolver
 let authInstance;
 try {
   if (typeof window !== 'undefined') {
@@ -106,7 +107,8 @@ try {
         browserLocalPersistence,
         browserSessionPersistence,
         inMemoryPersistence
-      ]
+      ],
+      popupRedirectResolver: browserPopupRedirectResolver
     });
   } else {
     authInstance = getAuth(app);

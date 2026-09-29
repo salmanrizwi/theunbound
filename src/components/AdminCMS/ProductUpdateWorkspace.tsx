@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Product, 
   ProductCategory, 
@@ -175,8 +175,11 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
   }, []);
 
   // Keep state sync with product changes and resolve live master upsells
+  const currentProductIdRef = useRef<string | undefined>(product?.id);
+
   useEffect(() => {
-    if (product) {
+    if (product && product.id !== currentProductIdRef.current) {
+      currentProductIdRef.current = product.id;
       const prods = allMasterProducts.length > 0 ? allMasterProducts : db.getProducts();
       const resolvedUpsells = resolveProductUpsells(product, prods);
       setFormData({ 
@@ -185,7 +188,20 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       });
       setActiveCategory(product.category);
     }
-  }, [product, allMasterProducts]);
+  }, [product?.id]);
+
+  // When allMasterProducts first loads, populate upsells if not already resolved
+  useEffect(() => {
+    if (product && allMasterProducts.length > 0) {
+      setFormData(prev => {
+        if (!prev.upsells || prev.upsells.length === 0) {
+          const resolvedUpsells = resolveProductUpsells(product, allMasterProducts);
+          return { ...prev, upsells: resolvedUpsells };
+        }
+        return prev;
+      });
+    }
+  }, [allMasterProducts.length]);
 
   // Sync pricing method and configs when category changes
   const handleSelectCategory = (category: ProductCategory) => {
@@ -381,18 +397,22 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       return;
     }
 
-    const isCap = activeCategory === 'Private Tours' || activeCategory === 'Transfers' || activeCategory === 'Private Yacht';
+    const isCap = activeCategory === 'Private Tours' || 
+      activeCategory === 'Transfers' || 
+      activeCategory === 'Private Yacht' || 
+      activeCategory === 'Private Tour' || 
+      activeCategory === 'Transfer' || 
+      activeCategory === 'Yacht';
+
     const sortedTiers = [...(formData.tieredPricing || [])].sort((a, b) => a.minPax - b.minPax);
 
     if (isCap) {
-      if (!formData.vehicleConfig?.vehicleType && activeCategory !== 'Private Yacht') {
+      if (!formData.vehicleConfig?.vehicleType && activeCategory !== 'Private Yacht' && activeCategory !== 'Yacht') {
         alert('Vehicle / Fleet Operational Selection is required.');
         return;
       }
 
       // Check tiered pricing validation rules (overlap, gap, duplicate, coverage) on save
-      const maxSeats = Number(formData.capacitySnapshot) || Number(formData.vehicleConfig?.maxSeats) || 6;
-      
       if (sortedTiers.length === 0) {
         alert('Pricing tiers coverage is incomplete. Please add capacity pricing tiers.');
         return;
@@ -402,8 +422,11 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
           alert(`Invalid range: Min Pax (${tier.minPax}) is greater than Max Pax (${tier.maxPax}) in tier "${tier.tierLabel || ''}".`);
           return;
         }
-        if (tier.netCostPerPax < 0 || isNaN(tier.netCostPerPax)) {
-          alert(`Nett Cost cannot be negative in tier "${tier.tierLabel || ''}".`);
+        const netVal = tier.supplierNett !== undefined 
+          ? tier.supplierNett 
+          : (tier.nettPrice !== undefined ? tier.nettPrice : tier.netCostPerPax);
+        if (netVal === undefined || isNaN(Number(netVal)) || Number(netVal) <= 0) {
+          alert(`Supplier Nett * is required and must be greater than 0 in tier "${tier.tierLabel || `${tier.minPax}–${tier.maxPax} Pax`}".`);
           return;
         }
       }
@@ -424,25 +447,11 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
         if (current.maxPax >= next.minPax) {
           alert(`Overlap detected: Tier "${current.tierLabel || `${current.minPax}-${current.maxPax}`}" overlaps with "${next.tierLabel || `${next.minPax}-${next.maxPax}`}".`);
           return;
-        } else if (current.maxPax + 1 < next.minPax) {
-          alert(`Gap detected: No pricing tier covers ${current.maxPax + 1} to ${next.minPax - 1} Pax.`);
-          return;
         }
-      }
-      
-      const firstMin = sortedTiers[0].minPax;
-      const lastMax = sortedTiers[sortedTiers.length - 1].maxPax;
-      if (firstMin > 1) {
-        alert(`Coverage gap: Pax 1 to ${firstMin - 1} have no configured pricing.`);
-        return;
-      }
-      if (lastMax < maxSeats) {
-        alert(`Pricing coverage is incomplete. Pax ${lastMax + 1} to ${maxSeats} have no configured tier.`);
-        return;
       }
     }
 
-    if (activeCategory === 'Transfers' && (!formData.fromHubId || !formData.toHubId)) {
+    if ((activeCategory === 'Transfers' || activeCategory === 'Transfer') && (!formData.fromHubId || !formData.toHubId)) {
       alert('From Hub and To Hub are required for Transfers.');
       return;
     }
@@ -455,16 +464,93 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     const chosenCurrency = (formData.nativeCurrency || formData.currency) as CurrencyCode;
 
     // Direct alignment to prevent zero net cost mapping bugs
-    const syncedNet = isCap && sortedTiers.length > 0 ? sortedTiers[0].netCostCostPerPax || sortedTiers[0].netCostPerPax : (formData.adultNetPrice || 0);
+    const syncedNet = isCap && sortedTiers.length > 0 
+      ? (sortedTiers[0].supplierNett ?? sortedTiers[0].nettPrice ?? sortedTiers[0].netCostPerPax ?? 0) 
+      : (formData.adultNetPrice || 0);
+
+    const syncedTiers = (formData.tieredPricing || []).map(t => {
+      const netVal = t.supplierNett !== undefined 
+        ? Number(t.supplierNett) 
+        : (t.nettPrice !== undefined ? Number(t.nettPrice) : (t.netCostPerPax !== undefined ? Number(t.netCostPerPax) : 0));
+      const mVal = t.marginValue !== undefined ? Number(t.marginValue) : (formData.buyerMarkupPercent || 20);
+      const mType = t.marginType || 'PERCENTAGE';
+      const marginAmt = mType === 'FIXED' ? mVal : netVal * (mVal / 100);
+      const tVal = t.taxValue !== undefined ? Number(t.taxValue) : (formData.taxPercent || 10);
+      const tType = t.taxType || 'PERCENTAGE';
+      const taxAmt = tType === 'NOT_APPLICABLE' ? 0 : (tType === 'FIXED' ? tVal : marginAmt * (tVal / 100));
+      const sVal = t.serviceChargeValue !== undefined ? Number(t.serviceChargeValue) : (formData.serviceFeeFixed || 0);
+      const sType = t.serviceChargeType || 'FIXED';
+      const svcAmt = sType === 'NOT_APPLICABLE' ? 0 : (sType === 'PERCENTAGE' ? netVal * (sVal / 100) : sVal);
+      const calculatedFinal = Math.round((netVal + marginAmt + taxAmt + svcAmt) * 100) / 100;
+
+      return {
+        ...t,
+        capacityPricingRuleId: t.capacityPricingRuleId || `CPR-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+        productCategory: activeCategory,
+        minPax: t.minPax !== undefined ? Number(t.minPax) : (t.minPassengers !== undefined ? Number(t.minPassengers) : 1),
+        minPassengers: t.minPax !== undefined ? Number(t.minPax) : (t.minPassengers !== undefined ? Number(t.minPassengers) : 1),
+        maxPax: t.maxPax !== undefined ? Number(t.maxPax) : (t.maxPassengers !== undefined ? Number(t.maxPassengers) : 1),
+        maxPassengers: t.maxPax !== undefined ? Number(t.maxPax) : (t.maxPassengers !== undefined ? Number(t.maxPassengers) : 1),
+        vehicleCount: t.vehicleCount && Number(t.vehicleCount) > 0 ? Number(t.vehicleCount) : 1,
+        currency: t.currency || chosenCurrency,
+        nativeCurrency: t.nativeCurrency || t.currency || chosenCurrency,
+        supplierNett: netVal, // Authoritative Supplier Nett
+        nettPrice: netVal,
+        netCostPerPax: netVal,
+        marginType: mType,
+        marginValue: mVal,
+        taxType: tType,
+        taxValue: tVal,
+        serviceChargeType: sType,
+        serviceChargeValue: sVal,
+        finalPrice: t.finalPrice !== undefined ? Number(t.finalPrice) : calculatedFinal,
+        sellingPricePerPax: t.finalPrice !== undefined ? Number(t.finalPrice) : calculatedFinal,
+        status: t.status || 'ACTIVE'
+      };
+    });
+
+    const capacityTiersPayload = syncedTiers.map(t => ({
+      tierId: t.id,
+      capacityPricingRuleId: t.capacityPricingRuleId,
+      productCategory: t.productCategory,
+      minPassengers: t.minPassengers,
+      maxPassengers: t.maxPassengers,
+      vehicleCount: t.vehicleCount,
+      fleetId: t.fleetId,
+      fleetName: t.fleetName,
+      nativeCurrency: t.nativeCurrency,
+      currency: t.currency,
+      supplierNett: t.supplierNett,
+      nettPrice: t.nettPrice,
+      marginType: t.marginType,
+      marginValue: t.marginValue,
+      taxType: t.taxType,
+      taxValue: t.taxValue,
+      serviceChargeType: t.serviceChargeType,
+      serviceChargeValue: t.serviceChargeValue,
+      finalPrice: t.finalPrice,
+      status: t.status
+    }));
 
     const finalProduct: Product = {
       ...(formData as Product),
       id: product?.id || `prod-${Date.now()}`,
       category: activeCategory,
+      pricingModel: isCap 
+        ? 'CAPACITY_TIERED' 
+        : (activeCategory === 'Guides' ? 'PER_HOUR' : (activeCategory === 'Lunch / Dinner Restaurant' ? 'MEAL_PASSENGER' : (activeCategory === 'Tickets' ? 'PER_PERSON' : 'PER_PERSON'))),
+      pricingMethod: isCap ? 'capacity_based' : (activeCategory === 'Guides' ? 'hourly_based' : 'per_person'),
       currency: chosenCurrency,
       nativeCurrency: chosenCurrency,
       adultNetPrice: syncedNet,
       adultNettCost: syncedNet,
+      tieredPricing: isCap ? syncedTiers : (formData.tieredPricing || []),
+      capacityTiers: isCap ? capacityTiersPayload : undefined,
+      mealPricing: (formData as any).mealPricing || formData.restaurantConfig?.mealPricing || [],
+      restaurantConfig: {
+        ...(formData.restaurantConfig || {}),
+        mealPricing: (formData as any).mealPricing || formData.restaurantConfig?.mealPricing || []
+      },
       vehicleConfig: isCap ? {
         ...(formData.vehicleConfig || {}),
         unitVehicleNetCost: syncedNet,
@@ -995,43 +1081,55 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
           <PricingConfigurationComponent
             category={activeCategory}
             currency={formData.currency || formData.nativeCurrency || 'USD'}
-            onCurrencyChange={(curr) => setFormData({ ...formData, currency: curr, nativeCurrency: curr })}
+            onCurrencyChange={(curr) => setFormData(prev => ({ ...prev, currency: curr, nativeCurrency: curr }))}
             status={formData.status}
             buyerMarginPercent={formData.buyerMarkupPercent}
-            onBuyerMarginChange={(margin) => setFormData({ ...formData, buyerMarkupPercent: margin, defaultMarkupPercent: margin })}
+            onBuyerMarginChange={(margin) => setFormData(prev => ({ ...prev, buyerMarkupPercent: margin, defaultMarkupPercent: margin }))}
             b2bAgentMarginPercent={formData.b2bAgentMarkupPercent}
-            onB2bAgentMarginChange={(margin) => setFormData({ ...formData, b2bAgentMarkupPercent: margin })}
+            onB2bAgentMarginChange={(margin) => setFormData(prev => ({ ...prev, b2bAgentMarkupPercent: margin }))}
             taxPercent={formData.taxPercent}
-            onTaxPercentChange={(tax) => setFormData({ ...formData, taxPercent: tax })}
+            onTaxPercentChange={(tax) => setFormData(prev => ({ ...prev, taxPercent: tax }))}
             serviceFeeFixed={formData.serviceFeeFixed}
-            onServiceFeeFixedChange={(fee) => setFormData({ ...formData, serviceFeeFixed: fee })}
+            onServiceFeeFixedChange={(fee) => setFormData(prev => ({ ...prev, serviceFeeFixed: fee }))}
             tieredPricing={formData.tieredPricing || []}
-            onTieredPricingChange={(tiers) => setFormData({ ...formData, tieredPricing: tiers })}
+            onTieredPricingChange={(tiers) => setFormData(prev => ({ ...prev, tieredPricing: tiers }))}
             adultNetPrice={formData.adultNetPrice}
-            onAdultNetPriceChange={(price) => setFormData({ ...formData, adultNetPrice: price })}
+            onAdultNetPriceChange={(price) => setFormData(prev => ({ ...prev, adultNetPrice: price }))}
             childNetPrice={formData.childNetPrice}
-            onChildNetPriceChange={(price) => setFormData({ ...formData, childNetPrice: price })}
+            onChildNetPriceChange={(price) => setFormData(prev => ({ ...prev, childNetPrice: price }))}
             infantNetPrice={formData.infantNetPrice}
-            onInfantNetPriceChange={(price) => setFormData({ ...formData, infantNetPrice: price })}
+            onInfantNetPriceChange={(price) => setFormData(prev => ({ ...prev, infantNetPrice: price }))}
             hourlyNetPrice={formData.hourlyNettCost !== undefined ? formData.hourlyNettCost : formData.adultNetPrice}
-            onHourlyNetPriceChange={(price) => setFormData({ ...formData, adultNetPrice: price, hourlyNettCost: price })}
+            onHourlyNetPriceChange={(price) => setFormData(prev => ({ ...prev, adultNetPrice: price, hourlyNettCost: price }))}
             minHours={formData.minHours}
-            onMinHoursChange={(hours) => setFormData({ ...formData, minHours: hours })}
+            onMinHoursChange={(hours) => setFormData(prev => ({ ...prev, minHours: hours }))}
             isAdminView={true}
             vehicleConfig={formData.vehicleConfig}
-            onVehicleConfigChange={(config) => setFormData({ ...formData, vehicleConfig: config })}
+            onVehicleConfigChange={(config) => setFormData(prev => ({ ...prev, vehicleConfig: config }))}
             destinations={destinations}
             cityHubs={cityHubs}
             destinationId={formData.destinationId}
             hubId={formData.hubId}
             vehicleId={formData.vehicleId}
-            onVehicleIdChange={(vid) => setFormData({ ...formData, vehicleId: vid })}
+            onVehicleIdChange={(vid) => setFormData(prev => ({ ...prev, vehicleId: vid }))}
             vehicleNameSnapshot={formData.vehicleNameSnapshot}
-            onVehicleNameSnapshotChange={(name) => setFormData({ ...formData, vehicleNameSnapshot: name })}
+            onVehicleNameSnapshotChange={(name) => setFormData(prev => ({ ...prev, vehicleNameSnapshot: name }))}
             vehicleTypeSnapshot={formData.vehicleTypeSnapshot}
-            onVehicleTypeSnapshotChange={(type) => setFormData({ ...formData, vehicleTypeSnapshot: type })}
+            onVehicleTypeSnapshotChange={(type) => setFormData(prev => ({ ...prev, vehicleTypeSnapshot: type }))}
             capacitySnapshot={formData.capacitySnapshot}
-            onCapacitySnapshotChange={(cap) => setFormData({ ...formData, capacitySnapshot: cap })}
+            onCapacitySnapshotChange={(cap) => setFormData(prev => ({ ...prev, capacitySnapshot: cap }))}
+            ticketConfig={formData.ticketConfig}
+            onTicketConfigChange={(tc) => setFormData(prev => ({ ...prev, ticketConfig: tc }))}
+            guideConfig={formData.guideConfig}
+            onGuideConfigChange={(gc) => setFormData(prev => ({ ...prev, guideConfig: gc }))}
+            restaurantConfig={formData.restaurantConfig}
+            onRestaurantConfigChange={(rc) => setFormData(prev => ({ ...prev, restaurantConfig: rc }))}
+            mealPricing={(formData as any).mealPricing || formData.restaurantConfig?.mealPricing || []}
+            onMealPricingChange={(mp) => setFormData(prev => ({ ...prev, mealPricing: mp, restaurantConfig: { ...(prev.restaurantConfig || {}), mealPricing: mp } }))}
+            fromHubId={formData.fromHubId}
+            toHubId={formData.toHubId}
+            fromHubName={formData.fromHubName}
+            toHubName={formData.toHubName}
           />
 
           {/* Inline Inclusions & Exclusions Section (Refined from Right-Side repeatables to fit the 75% Right form layout) */}

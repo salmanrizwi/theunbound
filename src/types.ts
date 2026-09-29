@@ -874,6 +874,7 @@ export interface Product {
   sku: string;
   destinationId: string;
   destinationName: string;
+  destination?: string;
   regionId?: string;
   regionName?: string;
   hubId?: string;
@@ -916,6 +917,8 @@ export interface Product {
   buyerMarkupPercent?: number; // Default Buyer markup % (e.g. 30%)
   b2bAgentMarkupPercent?: number; // Default B2B Agent markup % (e.g. 20%)
   taxPercent: number;
+  taxMethod?: 'on_margin' | 'on_total' | string;
+  taxBase?: 'margin' | 'total' | string;
   commissionPercent: number;
   serviceFeeFixed: number;
   
@@ -950,6 +953,7 @@ export interface Product {
   restaurantName?: string;
   specialty?: string;
   mealSelect?: ('Breakfast' | 'Lunch' | 'Dinner')[];
+  mealPricing?: RestaurantMealPriceItem[];
   
   // Guide specific master fields
   hourlyPrice?: number;
@@ -971,8 +975,10 @@ export interface Product {
   upsells?: ProductUpsell[]; // Authoritative Master Upsells / Optional Experience Upgrades (Section 16-22)
   
   // Advanced Pricing & Operational Enhancements
+  pricingModel?: 'CAPACITY_TIERED' | 'PER_PERSON' | 'PER_HOUR' | 'MEAL_PASSENGER' | string;
   pricingMethod?: 'per_person' | 'capacity_based' | 'fixed_stay' | 'hourly_based';
   tieredPricing?: TieredPrice[];
+  capacityTiers?: any[];
   datePricingOverrides?: Record<string, ProductDatePricingOverride>;
   vehicleConfig?: TransferVehicleConfig;
   vehicleId?: string;
@@ -1062,7 +1068,39 @@ export interface RestaurantConfig {
   durationMinutes?: number;
   reservationCancellationHours?: number;
   dressCode?: string;
+  mealPricing?: RestaurantMealPriceItem[];
 }
+
+export interface RestaurantMealPriceItem {
+  id?: string;
+  meal: 'Breakfast' | 'Lunch' | 'Dinner' | string;
+  adultNettPrice: number;
+  childNettPrice: number;
+  infantNettPrice?: number;
+  currency?: CurrencyCode;
+  marginType?: 'PERCENTAGE' | 'FIXED';
+  marginValue?: number;
+  taxType?: 'PERCENTAGE' | 'FIXED' | 'NOT_APPLICABLE';
+  taxValue?: number;
+  serviceChargeType?: 'PERCENTAGE' | 'FIXED' | 'NOT_APPLICABLE';
+  serviceChargeValue?: number;
+  adultFinalPrice?: number;
+  childFinalPrice?: number;
+  infantFinalPrice?: number;
+  status?: 'ACTIVE' | 'INACTIVE';
+}
+
+export type PricingModelType = 
+  | 'CAPACITY_TIERED' 
+  | 'PER_PERSON' 
+  | 'PER_HOUR' 
+  | 'MEAL_PASSENGER' 
+  | 'RAIL_FARE' 
+  | 'ROOM_NIGHT' 
+  | 'APPLICANT' 
+  | 'TRAVELLER' 
+  | 'SERVICE_UNIT' 
+  | 'PLAN_DURATION';
 
 export interface FerryConfig {
   ferryLine?: string;
@@ -1092,15 +1130,40 @@ export interface MasterProductConfiguration<T = Record<string, any>> {
   updated_by?: string;
 }
 
-export type ProductPricingMethod = 'per_person' | 'capacity_based' | 'fixed_stay';
+export type ProductPricingMethod = 'per_person' | 'capacity_based' | 'fixed_stay' | 'hourly_based';
 
 export interface TieredPrice {
   id: string;
-  tierLabel: string; // e.g. '1–2 Pax', '3–5 Pax', '6–10 Pax', '11–20 Pax'
+  tierLabel: string; // e.g. '1–3 Pax', '4–6 Pax', '7–12 Pax'
   minPax: number;
   maxPax: number;
-  netCostPerPax: number;
-  sellingPricePerPax?: number;
+  vehicleCount?: number; // Number of vehicles required for this tier (e.g. 1 or 2)
+  netCostPerPax: number; // Base net cost
+  sellingPricePerPax?: number; // Calculated final selling price
+  
+  // Section 8 Canonical Capacity Tier Data Structure:
+  capacityPricingRuleId?: string;
+  productId?: string;
+  productCategory?: string;
+  fleetId?: string;
+  fleetName?: string;
+  minPassengers?: number;
+  maxPassengers?: number;
+  pricingUnit?: 'Per Vehicle' | 'Per Person' | 'Per Tier';
+  nativeCurrency?: CurrencyCode;
+  currency?: CurrencyCode;
+  supplierNett?: number; // Authoritative Admin-entered supplier/base/nett cost input
+  nettPrice?: number;
+  marginType?: 'PERCENTAGE' | 'FIXED';
+  marginValue?: number;
+  taxType?: 'PERCENTAGE' | 'FIXED' | 'NOT_APPLICABLE';
+  taxValue?: number;
+  serviceChargeType?: 'PERCENTAGE' | 'FIXED' | 'NOT_APPLICABLE';
+  serviceChargeValue?: number;
+  finalPrice?: number;
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  status?: 'ACTIVE' | 'INACTIVE';
 }
 
 export interface ProductDatePricingOverride {
@@ -3841,7 +3904,20 @@ export interface ProductCapacityItem {
   capacity: number;
   vehicleModel: string;
   fixedNettCost: number;
+  supplierNett?: number;
   currency?: CurrencyCode;
+  nativeCurrency?: CurrencyCode;
+  category?: string;
+  fleetId?: string;
+  minPassengers?: number;
+  maxPassengers?: number;
+  vehicleCount?: number;
+  margin?: number;
+  tax?: number;
+  serviceCharge?: number;
+  finalPrice?: number;
+  effectiveFrom?: string;
+  effectiveTo?: string;
   status?: 'ACTIVE' | 'INACTIVE';
 }
 

@@ -176,6 +176,30 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
   });
   const [seasonFormErrors, setSeasonFormErrors] = useState<string[]>([]);
 
+  // Rate/Fare Form Modal state
+  const [isRateModalOpen, setIsRateModalOpen] = useState(false);
+  const [rateModalMode, setRateModalMode] = useState<'CREATE' | 'EDIT' | 'DUPLICATE'>('CREATE');
+  const [rateFormData, setRateFormData] = useState<Partial<RailRate>>({
+    rateId: '',
+    originStationId: 'JP-ST-TOKYO',
+    destinationStationId: 'JP-ST-KYOTO',
+    routeId: 'JP-RT-TOKYO-KYOTO',
+    productId: 'RAIL-JP-ORD-RESERVED',
+    carType: 'Ordinary',
+    seatType: 'Reserved',
+    serviceGroup: 'NOZOMI_MIZUHO',
+    passengerType: 'Adult',
+    currency: 'JPY',
+    baseFareJPY: 8360,
+    superExpressSurchargeJPY: 4960,
+    greenCarSurchargeJPY: 0,
+    regularTotalFareJPY: 13320,
+    active: true,
+    effectiveDate: new Date().toISOString().split('T')[0],
+    supplierId: 'SUP-JR-CENTRAL',
+    supplierName: 'JR Central / smartEX'
+  });
+
   // Google Sheets import/export & dynamic sync state
   const [csvText, setCsvText] = useState('');
   const [syncStatus, setSyncStatus] = useState<'IDLE' | 'SUCCESS' | 'ERROR'>('IDLE');
@@ -1009,6 +1033,91 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
   };
 
   // =========================================================================
+  // FARE / RATE MANAGEMENT (Section 10, 26, 27, 28)
+  // =========================================================================
+  const handleOpenAddRate = () => {
+    setRateModalMode('CREATE');
+    const matchedRoute = routes.find(r => r.originStationId === rateOriginFilter && r.destinationStationId === rateDestFilter);
+    setRateFormData({
+      rateId: `JP-RR-${Date.now().toString().slice(-6)}`,
+      originStationId: rateOriginFilter,
+      destinationStationId: rateDestFilter,
+      routeId: matchedRoute?.routeId || `JP-RT-${rateOriginFilter}-${rateDestFilter}`,
+      productId: 'RAIL-JP-ORD-RESERVED',
+      carType: 'Ordinary',
+      seatType: 'Reserved',
+      serviceGroup: 'NOZOMI_MIZUHO',
+      passengerType: 'Adult',
+      currency: 'JPY',
+      baseFareJPY: 8000,
+      superExpressSurchargeJPY: 5000,
+      greenCarSurchargeJPY: 0,
+      regularTotalFareJPY: 13000,
+      active: true,
+      effectiveDate: new Date().toISOString().split('T')[0],
+      supplierId: 'SUP-JR-CENTRAL',
+      supplierName: 'JR Central / smartEX'
+    });
+    setIsRateModalOpen(true);
+  };
+
+  const handleOpenEditRate = (r: RailRate) => {
+    setRateModalMode('EDIT');
+    setRateFormData({ ...r });
+    setIsRateModalOpen(true);
+  };
+
+  const handleOpenDuplicateRate = (r: RailRate) => {
+    setRateModalMode('DUPLICATE');
+    setRateFormData({
+      ...r,
+      rateId: `${r.rateId}-COPY-${Date.now().toString().slice(-4)}`
+    });
+    setIsRateModalOpen(true);
+  };
+
+  const handleSaveRateForm = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rateFormData.originStationId || !rateFormData.destinationStationId) return;
+
+    try {
+      const baseFare = Number(rateFormData.baseFareJPY) || 0;
+      const superExpress = Number(rateFormData.superExpressSurchargeJPY) || 0;
+      const greenSurcharge = rateFormData.carType === 'Green' ? (Number(rateFormData.greenCarSurchargeJPY) || 0) : 0;
+      const total = baseFare + superExpress + greenSurcharge;
+
+      const rateId = rateFormData.rateId || `JP-RR-${rateFormData.originStationId}-${rateFormData.destinationStationId}-${rateFormData.carType}-${rateFormData.passengerType}-${Date.now().toString().slice(-4)}`;
+
+      const rate: RailRate = {
+        rateId,
+        originStationId: rateFormData.originStationId,
+        destinationStationId: rateFormData.destinationStationId,
+        routeId: rateFormData.routeId || `JP-RT-${rateFormData.originStationId}-${rateFormData.destinationStationId}`,
+        productId: rateFormData.carType === 'Green' ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED',
+        carType: (rateFormData.carType as RailCarType) || 'Ordinary',
+        seatType: (rateFormData.seatType as any) || 'Reserved',
+        serviceGroup: (rateFormData.serviceGroup as any) || 'NOZOMI_MIZUHO',
+        passengerType: (rateFormData.passengerType as any) || 'Adult',
+        currency: 'JPY',
+        baseFareJPY: baseFare,
+        superExpressSurchargeJPY: superExpress,
+        greenCarSurchargeJPY: greenSurcharge,
+        regularTotalFareJPY: total,
+        active: rateFormData.active !== false,
+        effectiveDate: rateFormData.effectiveDate || new Date().toISOString().split('T')[0],
+        supplierId: rateFormData.supplierId || 'SUP-JR-CENTRAL',
+        supplierName: rateFormData.supplierName || 'JR Central / smartEX'
+      };
+
+      db.saveRailRate(rate, user);
+      setIsRateModalOpen(false);
+      setSuccessToast(`Fare Rate ${rate.rateId} (¥${rate.regularTotalFareJPY.toLocaleString()}) saved successfully.`);
+    } catch (err: any) {
+      alert(`Save error: ${err?.message || err}`);
+    }
+  };
+
+  // =========================================================================
   // SEASON CALENDAR MANAGEMENT
   // =========================================================================
   const handleOpenCreateSeason = () => {
@@ -1815,9 +1924,19 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                   Regular-season listed one-way smartEX source values in Japanese Yen (JPY)
                 </span>
               </div>
-              <span className="text-xs font-mono font-bold text-[#00A88F]">
-                {selectedRates.length} rate permutations
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-mono font-bold text-[#00A88F]">
+                  {selectedRates.length} rate permutations
+                </span>
+                <button
+                  type="button"
+                  onClick={handleOpenAddRate}
+                  className="px-3 py-1.5 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Fare / Rate</span>
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -1869,20 +1988,38 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                           ¥{r.regularTotalFareJPY.toLocaleString()}
                         </td>
                         <td className="px-3 py-3 text-right font-sans">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenDeleteModal({
-                              type: 'RATE',
-                              id: r.rateId,
-                              title: `${r.rateId} (${r.carType} Car, ¥${r.regularTotalFareJPY})`,
-                              subtitle: `Route: ${r.originStationId} ➔ ${r.destinationStationId}`,
-                              itemTypeLabel: 'Rate'
-                            })}
-                            className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 cursor-pointer"
-                            title="Delete Rate"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditRate(r)}
+                              className="p-1 text-slate-400 hover:text-teal-600 rounded hover:bg-teal-50 cursor-pointer"
+                              title="Edit Fare"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDuplicateRate(r)}
+                              className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50 cursor-pointer"
+                              title="Duplicate Fare"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDeleteModal({
+                                type: 'RATE',
+                                id: r.rateId,
+                                title: `${r.rateId} (${r.carType} Car, ¥${r.regularTotalFareJPY})`,
+                                subtitle: `Route: ${r.originStationId} ➔ ${r.destinationStationId}`,
+                                itemTypeLabel: 'Rate'
+                              })}
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 cursor-pointer"
+                              title="Delete Rate"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -2717,6 +2854,241 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                   className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold shadow-xs cursor-pointer"
                 >
                   Save Station
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* RATE / FARE CREATE / EDIT / DUPLICATE MODAL (Sections 10, 26, 27, 28) */}
+      {/* ========================================================================= */}
+      {isRateModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
+                <DollarSign className="w-5 h-5 text-[#00C6A6]" />
+                <span>
+                  {rateModalMode === 'CREATE' ? 'Add New Rail Fare / Rate' : rateModalMode === 'DUPLICATE' ? 'Duplicate Rail Fare / Rate' : 'Edit Rail Fare / Rate'}
+                </span>
+              </h3>
+              <button onClick={() => setIsRateModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveRateForm} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Origin Station *</label>
+                  <select
+                    required
+                    value={rateFormData.originStationId || ''}
+                    onChange={(e) => {
+                      const origin = e.target.value;
+                      const matchedRoute = routes.find(r => r.originStationId === origin && r.destinationStationId === rateFormData.destinationStationId);
+                      setRateFormData({
+                        ...rateFormData,
+                        originStationId: origin,
+                        routeId: matchedRoute?.routeId || `JP-RT-${origin}-${rateFormData.destinationStationId || ''}`
+                      });
+                    }}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-medium focus:ring-1 focus:ring-[#00C6A6]"
+                  >
+                    {stations.filter(s => s.active).map(s => (
+                      <option key={s.stationId} value={s.stationId}>{s.stationName} ({s.stationCode})</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Destination Station *</label>
+                  <select
+                    required
+                    value={rateFormData.destinationStationId || ''}
+                    onChange={(e) => {
+                      const dest = e.target.value;
+                      const matchedRoute = routes.find(r => r.originStationId === rateFormData.originStationId && r.destinationStationId === dest);
+                      setRateFormData({
+                        ...rateFormData,
+                        destinationStationId: dest,
+                        routeId: matchedRoute?.routeId || `JP-RT-${rateFormData.originStationId || ''}-${dest}`
+                      });
+                    }}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-medium focus:ring-1 focus:ring-[#00C6A6]"
+                  >
+                    {stations.filter(s => s.active).map(s => (
+                      <option key={s.stationId} value={s.stationId}>{s.stationName} ({s.stationCode})</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2.5">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Car Class *</label>
+                  <select
+                    value={rateFormData.carType || 'Ordinary'}
+                    onChange={(e) => {
+                      const car = e.target.value as RailCarType;
+                      setRateFormData({
+                        ...rateFormData,
+                        carType: car,
+                        productId: car === 'Green' ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED',
+                        greenCarSurchargeJPY: car === 'Green' ? (rateFormData.greenCarSurchargeJPY || 4000) : 0
+                      });
+                    }}
+                    className="w-full p-2 rounded-xl border border-slate-300 bg-white font-medium focus:ring-1 focus:ring-[#00C6A6]"
+                  >
+                    <option value="Ordinary">Ordinary Car</option>
+                    <option value="Green">Green Car (First Class)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Service Group *</label>
+                  <select
+                    value={rateFormData.serviceGroup || 'NOZOMI_MIZUHO'}
+                    onChange={(e) => setRateFormData({ ...rateFormData, serviceGroup: e.target.value as RailServiceGroup })}
+                    className="w-full p-2 rounded-xl border border-slate-300 bg-white font-medium focus:ring-1 focus:ring-[#00C6A6]"
+                  >
+                    <option value="NOZOMI_MIZUHO">Nozomi / Mizuho</option>
+                    <option value="HIKARI_KODAMA_SAKURA">Hikari / Kodama / Sakura</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Passenger Type *</label>
+                  <select
+                    value={rateFormData.passengerType || 'Adult'}
+                    onChange={(e) => setRateFormData({ ...rateFormData, passengerType: e.target.value as any })}
+                    className="w-full p-2 rounded-xl border border-slate-300 bg-white font-medium focus:ring-1 focus:ring-[#00C6A6]"
+                  >
+                    <option value="Adult">Adult (12+ yrs)</option>
+                    <option value="Child">Child (6-11 yrs)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Fare Components */}
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-3">
+                <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">
+                  Authoritative smartEX Fare Breakdown (JPY)
+                </span>
+
+                <div className="grid grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block font-bold text-slate-600 mb-1 text-[11px]">Base Fare (¥) *</label>
+                    <input
+                      type="number"
+                      min="0"
+                      required
+                      value={rateFormData.baseFareJPY ?? ''}
+                      onChange={(e) => {
+                        const base = Number(e.target.value);
+                        const exp = Number(rateFormData.superExpressSurchargeJPY) || 0;
+                        const green = Number(rateFormData.greenCarSurchargeJPY) || 0;
+                        setRateFormData({
+                          ...rateFormData,
+                          baseFareJPY: base,
+                          regularTotalFareJPY: base + exp + green
+                        });
+                      }}
+                      className="w-full p-2 rounded-lg border border-slate-300 font-mono font-bold focus:ring-1 focus:ring-[#00C6A6]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-600 mb-1 text-[11px]">Super Express (¥) *</label>
+                    <input
+                      type="number"
+                      min="0"
+                      required
+                      value={rateFormData.superExpressSurchargeJPY ?? ''}
+                      onChange={(e) => {
+                        const exp = Number(e.target.value);
+                        const base = Number(rateFormData.baseFareJPY) || 0;
+                        const green = Number(rateFormData.greenCarSurchargeJPY) || 0;
+                        setRateFormData({
+                          ...rateFormData,
+                          superExpressSurchargeJPY: exp,
+                          regularTotalFareJPY: base + exp + green
+                        });
+                      }}
+                      className="w-full p-2 rounded-lg border border-slate-300 font-mono font-bold focus:ring-1 focus:ring-[#00C6A6]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-600 mb-1 text-[11px]">Green Surcharge (¥)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      disabled={rateFormData.carType !== 'Green'}
+                      value={rateFormData.carType === 'Green' ? (rateFormData.greenCarSurchargeJPY ?? '') : 0}
+                      onChange={(e) => {
+                        const green = Number(e.target.value);
+                        const base = Number(rateFormData.baseFareJPY) || 0;
+                        const exp = Number(rateFormData.superExpressSurchargeJPY) || 0;
+                        setRateFormData({
+                          ...rateFormData,
+                          greenCarSurchargeJPY: green,
+                          regularTotalFareJPY: base + exp + green
+                        });
+                      }}
+                      className="w-full p-2 rounded-lg border border-slate-300 font-mono font-bold disabled:bg-slate-100 disabled:text-slate-400 focus:ring-1 focus:ring-[#00C6A6]"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
+                  <span className="font-bold text-slate-700">Calculated Regular Total Fare:</span>
+                  <span className="font-mono font-black text-sm text-[#00A88F]">
+                    ¥{((Number(rateFormData.baseFareJPY) || 0) + (Number(rateFormData.superExpressSurchargeJPY) || 0) + (rateFormData.carType === 'Green' ? (Number(rateFormData.greenCarSurchargeJPY) || 0) : 0)).toLocaleString()} JPY
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 items-center">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Effective Date</label>
+                  <input
+                    type="date"
+                    value={rateFormData.effectiveDate || ''}
+                    onChange={(e) => setRateFormData({ ...rateFormData, effectiveDate: e.target.value })}
+                    className="w-full p-2 rounded-xl border border-slate-300 font-medium focus:ring-1 focus:ring-[#00C6A6]"
+                  />
+                </div>
+
+                <div className="flex items-center space-x-2 pt-4">
+                  <input
+                    type="checkbox"
+                    id="rateActiveCheckbox"
+                    checked={rateFormData.active !== false}
+                    onChange={(e) => setRateFormData({ ...rateFormData, active: e.target.checked })}
+                    className="rounded text-[#00C6A6] focus:ring-[#00C6A6] h-4 w-4"
+                  />
+                  <label htmlFor="rateActiveCheckbox" className="font-bold text-slate-800">
+                    Active in Tariff Engine
+                  </label>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setIsRateModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold shadow-xs cursor-pointer"
+                >
+                  Save Fare / Rate
                 </button>
               </div>
             </form>

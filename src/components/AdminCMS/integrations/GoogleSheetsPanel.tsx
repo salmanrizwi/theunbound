@@ -604,7 +604,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
     document.body.removeChild(link);
   };
 
-  // Download Canonical 16-Tab Excel Template (.xlsx)
+  // Download Canonical 25-Tab Excel Template (.xlsx)
   const handleDownloadCanonicalExcelTemplate = () => {
     try {
       const blob = generateCanonicalExcelWorkbookBlob();
@@ -616,7 +616,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      setHealthStatusNotice('Generated and downloaded canonical 16-tab Excel workbook (.xlsx).');
+      setHealthStatusNotice('Generated and downloaded canonical 25-tab Excel workbook (.xlsx).');
       setTimeout(() => setHealthStatusNotice(null), 5000);
     } catch (err: any) {
       console.error('Failed to generate Excel blob', err);
@@ -647,7 +647,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                 </h2>
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center space-x-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  <span>Strict 16-Tab Hierarchy</span>
+                  <span>Strict 25-Tab Hierarchy</span>
                 </span>
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-teal-50 text-[#008972] border border-teal-200">
                   Single Unified Engine
@@ -710,7 +710,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
               }`}
             >
               <Download className="w-3.5 h-3.5 text-amber-600" />
-              <span>16-Tab Schema</span>
+              <span>25-Tab Schema</span>
             </button>
 
             <button
@@ -771,7 +771,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
               className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-teal-200 bg-teal-50 hover:bg-teal-100 text-[#008972] font-semibold transition-all cursor-pointer"
             >
               <Download className="w-3.5 h-3.5 text-[#008972]" />
-              <span>Canonical 16-Tab Excel (.xlsx)</span>
+              <span>Canonical 25-Tab Excel (.xlsx)</span>
             </button>
           </div>
         </div>
@@ -938,14 +938,14 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                   <span>Open Master Spreadsheet</span>
                 </a>
 
-                {/* 4. Download Canonical 16-Tab Excel Template */}
+                {/* 4. Download Canonical 25-Tab Excel Template */}
                 <button
                   id="action-download-canonical-xlsx"
                   onClick={handleDownloadCanonicalExcelTemplate}
                   className="flex items-center space-x-1.5 px-3 py-2 rounded-xl border border-teal-200 bg-teal-50 hover:bg-teal-100 text-[#008972] font-bold text-xs transition-all cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5 text-[#008972]" />
-                  <span>Download Canonical 16-Tab Excel (.xlsx)</span>
+                  <span>Download Canonical 25-Tab Excel (.xlsx)</span>
                 </button>
 
                 {/* 5. View Apps Script Webhook Code */}
@@ -1511,7 +1511,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                     <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
                       <Sparkles className="w-4 h-4" />
                     </div>
-                    <div className="font-bold text-sm text-slate-900">Official Master 16-Tab Suite (Preset)</div>
+                    <div className="font-bold text-sm text-slate-900">Official Master 25-Tab Suite (Preset)</div>
                   </div>
                   <p className="text-xs text-slate-500">
                     Load the pre-configured verified dataset with Japan, UK, UAE, and Thailand products, hotels, and rates.
@@ -2017,7 +2017,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
               <span>Selective Worksheet Synchronization</span>
             </h3>
             <p className="text-xs text-slate-500 mb-5">
-              Sync individual subsets of your master sheet directly into Firebase without running the full 16-tab import.
+              Sync individual subsets of your master sheet directly into Firebase without running the full 25-tab import.
             </p>
 
             {/* Category Sync Cards */}
@@ -2107,14 +2107,14 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* VIEW 4: 16-TAB SCHEMAS & TEMPLATES */}
+      {/* VIEW 4: 25-TAB SCHEMAS & TEMPLATES */}
       {/* ========================================================================= */}
       {managerView === 'TEMPLATES' && (
         <div className="space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Canonical 16-Tab Worksheets & CSV Templates</h3>
+                <h3 className="text-base font-bold text-slate-900">Canonical 25-Tab Worksheets & CSV Templates</h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Download templates, inspect schema definitions, primary keys, and sample data for all worksheets.
                 </p>
@@ -2125,7 +2125,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                 className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-xs font-bold transition-all shadow-xs cursor-pointer shrink-0"
               >
                 <Download className="w-4 h-4" />
-                <span>Download Canonical 16-Tab Excel (.xlsx)</span>
+                <span>Download Canonical 25-Tab Excel (.xlsx)</span>
               </button>
             </div>
 
@@ -2337,7 +2337,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                     <span>Security & Architecture Rule</span>
                   </div>
                   <p className="text-[11px] text-indigo-800 leading-relaxed">
-                    Apps Script does <strong>NOT</strong> write directly to Firestore. It securely dispatches the spreadsheet data to TheUnbound Backend Gateway, which performs complete 16-tab schema validation, foreign key checks, and atomic Firestore upserts.
+                    Apps Script does <strong>NOT</strong> write directly to Firestore. It securely dispatches the spreadsheet data to TheUnbound Backend Gateway, which performs complete 25-tab schema validation, foreign key checks, and atomic Firestore upserts.
                   </p>
                 </div>
 
@@ -2382,7 +2382,7 @@ function syncMasterSheetToFirebase() {
   
   const confirm = ui.alert(
     'TheUnbound Production Sync',
-    'Are you sure you want to synchronize the entire 16-tab Master Sheet to Firebase Firestore?\\n\\nSpreadsheet ID: ' + ss.getId(),
+    'Are you sure you want to synchronize the entire 25-tab Master Sheet to Firebase Firestore?\\n\\nSpreadsheet ID: ' + ss.getId(),
     ui.ButtonSet.YES_NO
   );
   if (confirm !== ui.Button.YES) return;

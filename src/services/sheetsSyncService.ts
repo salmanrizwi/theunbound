@@ -38,7 +38,12 @@ import {
   RailRate, 
   RailSeasonCalendarPeriod 
 } from '../types/rail';
-import { MASTER_SHEETS_TAB_DEFINITIONS, getTabSchemaByName } from '../data/googleSheetsTemplate';
+import { 
+  MASTER_SHEETS_TAB_DEFINITIONS, 
+  getTabSchemaByName,
+  EXPECTED_MASTER_TAB_COUNT,
+  MASTER_WORKBOOK_TABS
+} from '../data/googleSheetsTemplate';
 import { DESTINATIONS } from '../data/destinations';
 import { 
   createDefaultRequirementsForVisa, 
@@ -49,6 +54,7 @@ import {
   buildMasterProductConfiguration,
   ensureMasterProductConfiguration
 } from './configuratorRegistry';
+import { CurrencyEngine } from './currencyEngine';
 
 export interface RawMultiTabData {
   [tabName: string]: string[][] | Record<string, any>[];
@@ -194,7 +200,59 @@ export class SheetsSyncService {
   }
 
   // ----------------------------------------------------
-  // 3. HIERARCHICAL VALIDATION ENGINE
+  // 3. MASTER WORKBOOK STRUCTURE & 25-TAB VALIDATION
+  // ----------------------------------------------------
+  /**
+   * Validates the configured Master Workbook against the canonical 25-tab configuration.
+   * Enforces exact tab count validation and canonical tab name/schema alignment.
+   */
+  public validateWorkbookStructure(discoveredTabNames: string[]): {
+    isValid: boolean;
+    expectedCount: number;
+    foundCount: number;
+    missingTabs: MasterSheetTabName[];
+    unexpectedTabs: string[];
+    canonicalTabs: MasterSheetTabName[];
+    errorMessage?: string;
+  } {
+    const canonicalSet = new Set<string>(MASTER_WORKBOOK_TABS);
+    // Ignore internal instructions tab if discovered
+    const filteredDiscovered = discoveredTabNames.filter(t => t && t.toUpperCase() !== 'INSTRUCTIONS');
+    
+    // Normalize discovered tab names against schema aliases
+    const normalizedDiscovered = filteredDiscovered.map(name => {
+      const def = getTabSchemaByName(name);
+      return def && def.tabName !== 'INSTRUCTIONS' ? def.tabName : name.trim();
+    });
+
+    const discoveredSet = new Set<string>(normalizedDiscovered);
+    const missingTabs = MASTER_WORKBOOK_TABS.filter(t => !discoveredSet.has(t));
+    const unexpectedTabs = normalizedDiscovered.filter(t => !canonicalSet.has(t as MasterSheetTabName));
+
+    const isValid = missingTabs.length === 0 && discoveredSet.size === EXPECTED_MASTER_TAB_COUNT;
+
+    let errorMessage: string | undefined;
+    if (!isValid) {
+      if (discoveredSet.size !== EXPECTED_MASTER_TAB_COUNT) {
+        errorMessage = `Master Workbook Schema Error: Expected ${EXPECTED_MASTER_TAB_COUNT} canonical tabs, found ${discoveredSet.size} tabs. Missing: [${missingTabs.join(', ')}].`;
+      } else if (missingTabs.length > 0) {
+        errorMessage = `Master Workbook Schema Error: Expected ${EXPECTED_MASTER_TAB_COUNT} canonical tabs, found ${discoveredSet.size} tabs. Schema mismatch detected: Missing [${missingTabs.join(', ')}], Unexpected [${unexpectedTabs.join(', ')}].`;
+      }
+    }
+
+    return {
+      isValid,
+      expectedCount: EXPECTED_MASTER_TAB_COUNT,
+      foundCount: discoveredSet.size,
+      missingTabs,
+      unexpectedTabs,
+      canonicalTabs: MASTER_WORKBOOK_TABS,
+      errorMessage
+    };
+  }
+
+  // ----------------------------------------------------
+  // 4. HIERARCHICAL VALIDATION ENGINE
   // ----------------------------------------------------
   public validateHierarchicalData(multiTabData: RawMultiTabData): HierarchicalValidationReport {
     const db = AppDatabase.getInstance();
@@ -967,6 +1025,8 @@ export class SheetsSyncService {
         db.getRailFares().forEach(f => existingMap.set(f.railFareId || (f as any).id, f));
       } else if (tabKey === 'RAIL_CLASS_RULES') {
         db.getRailSeasons().forEach(s => existingMap.set(s.id, s));
+      } else if (tabKey === 'FX_RATES') {
+        CurrencyEngine.getInstance().getAllPairs().forEach(p => existingMap.set(p.id, p));
       }
 
       for (const row of objects) {
@@ -1439,16 +1499,45 @@ export class SheetsSyncService {
         }));
         logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.packages.length} Packages.`);
       } else if (tabKey === 'PRODUCT_CAPACITY') {
-        payload.productCapacities = objects.map(pc => ({
-          id: pc.capacity_id || pc.id || `CAP-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-          productId: pc.product_id,
-          capacity: Number(pc.capacity) || 6,
-          vehicleModel: pc.vehicle_model || 'Executive MPV',
-          fixedNettCost: Number(pc.fixed_cost) || 0,
-          currency: (pc.currency || 'USD') as CurrencyCode,
-          status: 'ACTIVE'
-        }));
-        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.productCapacities.length} Product Capacities.`);
+        payload.productCapacities = objects.map(pc => {
+          const rawSupplierNett = pc.supplier_nett ?? pc.supplier_nett_cost ?? pc.nett_price ?? pc.fixed_cost;
+          let supplierNett: number | undefined = undefined;
+          if (rawSupplierNett !== undefined && rawSupplierNett !== null && String(rawSupplierNett).trim() !== '') {
+            const num = parseFloat(String(rawSupplierNett));
+            if (!isNaN(num) && isFinite(num)) {
+              supplierNett = num;
+            }
+          }
+
+          const paxFrom = Number(pc.pax_from ?? pc.minimum_passengers ?? pc.min_pax ?? 1) || 1;
+          const paxTo = Number(pc.pax_to ?? pc.maximum_passengers ?? pc.max_pax ?? pc.capacity ?? 6) || 6;
+          const vCount = Number(pc.vehicle_count ?? pc.vehicles ?? 1) || 1;
+          const curr = (pc.currency || pc.native_currency || 'USD') as CurrencyCode;
+
+          return {
+            id: pc.capacity_id || pc.id || `CAP-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+            productId: pc.product_id,
+            category: pc.category || pc.product_category,
+            fleetId: pc.fleet_id,
+            capacity: paxTo,
+            minPassengers: paxFrom,
+            maxPassengers: paxTo,
+            vehicleCount: vCount,
+            vehicleModel: pc.vehicle_model || 'Executive MPV',
+            supplierNett: supplierNett,
+            fixedNettCost: supplierNett ?? (Number(pc.fixed_cost) || 0),
+            currency: curr,
+            nativeCurrency: curr,
+            margin: pc.margin !== undefined && pc.margin !== '' ? Number(pc.margin) : undefined,
+            tax: pc.tax !== undefined && pc.tax !== '' ? Number(pc.tax) : undefined,
+            serviceCharge: pc.service_charge !== undefined && pc.service_charge !== '' ? Number(pc.service_charge) : undefined,
+            finalPrice: pc.final_price !== undefined && pc.final_price !== '' ? Number(pc.final_price) : undefined,
+            effectiveFrom: pc.effective_from || '',
+            effectiveTo: pc.effective_to || '',
+            status: (pc.status && String(pc.status).toUpperCase() === 'INACTIVE') ? 'INACTIVE' : 'ACTIVE'
+          };
+        });
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.productCapacities.length} Product Capacities with authoritative Supplier Nett mapping.`);
       } else if (tabKey === 'HOTEL_RATES') {
         payload.hotelRates = objects.map(hr => ({
           id: hr.hotel_rate_id || hr.id || `HRATE-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
@@ -1772,6 +1861,13 @@ export class SheetsSyncService {
         }));
         logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.railSeasons.length} Japan Rail Season & Class Rules.`);
       } else if (tabKey === 'FX_RATES') {
+        const ce = CurrencyEngine.getInstance();
+        for (const r of objects) {
+          const pairId = r.pair_id || r.id;
+          if (pairId && r.manual_adjustment !== undefined && r.manual_adjustment !== '') {
+            ce.updatePairAdjustment(pairId, Number(r.manual_adjustment), user || null, 'Master Google Sheets FX_RATES sync');
+          }
+        }
         logs.push(`[${new Date().toLocaleTimeString()}] Synchronized ${objects.length} Google Finance FX Rates (=GOOGLEFINANCE).`);
       }
     }

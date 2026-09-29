@@ -78,10 +78,12 @@ export interface RailRoute {
 
 export interface RailFare {
   railFareId: string; // e.g. "FARE-TYO-OSA-ORD-ADT"
+  railServiceId?: string; // FK to RailService
   originStationId: string; // FK to RailStation
   destinationStationId: string; // FK to RailStation
   routeId?: string; // FK to RailRoute
   productId: 'RAIL-JP-ORD-RESERVED' | 'RAIL-JP-GREEN-RESERVED' | string;
+  classId?: string; // 'Ordinary' | 'Green' | class identifier
   carType: RailCarType; // 'Ordinary' | 'Green'
   seatType: RailSeatType; // 'Reserved' | 'Non-Reserved'
   fareType: string; // 'Standard' | 'Discount' | 'Express'

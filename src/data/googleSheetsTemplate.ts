@@ -223,9 +223,15 @@ export const MASTER_SHEETS_TAB_DEFINITIONS: MasterSheetTabDefinition[] = [
       { name: 'infant_nett', key: 'infant_nett', type: 'number', required: false, sampleValue: '0', description: 'Infant net cost (0-2 yrs)' },
       { name: 'fixed_cost', key: 'fixed_cost', type: 'number', required: false, sampleValue: '0', description: 'Fixed vehicle / guide booking fee' },
       { name: 'per_person_cost', key: 'per_person_cost', type: 'number', required: false, sampleValue: '42000', description: 'Per passenger charge' },
+      { name: 'meal', key: 'meal', type: 'string', required: false, sampleValue: 'Lunch', description: 'Meal type for Restaurants (Breakfast, Lunch, Dinner)' },
+      { name: 'passenger_type', key: 'passenger_type', type: 'string', required: false, sampleValue: 'Adult', description: 'Passenger classification (Adult, Child, Infant)' },
+      { name: 'language', key: 'language', type: 'string', required: false, sampleValue: 'English', description: 'Language specialization for Guide inventory' },
+      { name: 'duration_hours', key: 'duration_hours', type: 'number', required: false, sampleValue: '4', description: 'Minimum duration commitment in hours' },
       { name: 'markup_buyer', key: 'markup_buyer', type: 'number', required: true, sampleValue: '20', description: 'Retail Buyer markup % (e.g. 20)' },
       { name: 'markup_agent', key: 'markup_agent', type: 'number', required: true, sampleValue: '15', description: 'B2B Wholesale Agent markup % (e.g. 15)' },
       { name: 'tax_percentage', key: 'tax_percentage', type: 'number', required: true, sampleValue: '10', description: 'Compulsory VAT/GST %' },
+      { name: 'service_charge', key: 'service_charge', type: 'number', required: false, sampleValue: '0', description: 'Service charge amount' },
+      { name: 'final_price', key: 'final_price', type: 'number', required: false, sampleValue: '51240', description: 'Pre-calculated final selling price' },
       { name: 'supplier_name', key: 'supplier_name', type: 'string', required: true, sampleValue: 'Nippon Luxury Transit', description: 'Contracted supplier' },
       { name: 'supplier_rate_reference', key: 'supplier_rate_reference', type: 'string', required: false, sampleValue: 'RATE-2026-NLT-01', description: 'Supplier contract reference' },
       { name: 'status', key: 'status', type: 'enum', required: true, sampleValue: 'Active', description: 'Active or Inactive', allowedValues: ['Active', 'Inactive', 'ACTIVE', 'INACTIVE'] }
@@ -245,23 +251,36 @@ export const MASTER_SHEETS_TAB_DEFINITIONS: MasterSheetTabDefinition[] = [
   {
     tabName: 'PRODUCT_CAPACITY',
     displayName: '6. Product Capacity Models (PRODUCT_CAPACITY)',
-    description: 'Vehicle models, passenger thresholds, and fixed charter costs for capacity-based inventory.',
+    description: 'Product-specific capacity rules mapping passenger ranges to required vehicle counts and commercial pricing.',
     hierarchyLevel: 5,
     parentTab: 'PRODUCTS',
     primaryKey: 'capacity_id',
     columns: [
-      { name: 'product_id', key: 'product_id', type: 'string', required: true, sampleValue: 'PRD-TYO-001', description: 'Foreign key linking to PRODUCTS tab', foreignKeyTab: 'PRODUCTS', foreignKeyColumn: 'product_id' },
-      { name: 'capacity_id', key: 'capacity_id', type: 'string', required: true, sampleValue: 'CAP-TYO-001-MPV', description: 'Unique capacity tier ID' },
-      { name: 'capacity', key: 'capacity', type: 'number', required: true, sampleValue: '6', description: 'Maximum passenger capacity' },
-      { name: 'vehicle_model', key: 'vehicle_model', type: 'string', required: true, sampleValue: 'Toyota Alphard Executive MPV (6 Pax)', description: 'Vehicle or vessel model' },
-      { name: 'fixed_nett_cost', key: 'fixed_nett_cost', type: 'number', required: true, sampleValue: '65000', description: 'Fixed total net cost for this capacity tier' }
+      { name: 'product_id', key: 'product_id', type: 'string', required: true, sampleValue: 'PRD-TYO-TRANSFER', description: 'Foreign key linking to PRODUCTS tab', foreignKeyTab: 'PRODUCTS', foreignKeyColumn: 'product_id' },
+      { name: 'capacity_id', key: 'capacity_id', type: 'string', required: true, sampleValue: 'CAP-TRN-ALPHARD-01', description: 'Unique capacity tier ID' },
+      { name: 'category', key: 'category', type: 'string', required: true, sampleValue: 'Transfers', description: 'Product Category (Transfers, Private Tours, Private Yacht)' },
+      { name: 'fleet_id', key: 'fleet_id', type: 'string', required: true, sampleValue: 'VEH-ALPHARD-01', description: 'Operational Fleet Vehicle or Yacht ID' },
+      { name: 'pax_from', key: 'pax_from', type: 'number', required: true, sampleValue: '1', description: 'Minimum passenger threshold (Min Pax)' },
+      { name: 'pax_to', key: 'pax_to', type: 'number', required: true, sampleValue: '3', description: 'Maximum passenger threshold (Max Pax)' },
+      { name: 'vehicle_count', key: 'vehicle_count', type: 'number', required: true, sampleValue: '1', description: 'Required count of vehicles for this passenger range' },
+      { name: 'currency', key: 'currency', type: 'enum', required: true, sampleValue: 'JPY', description: 'Currency code', allowedValues: ['JPY', 'USD', 'EUR', 'GBP', 'THB', 'AED', 'INR', 'AUD', 'CHF', 'CAD', 'SGD'] },
+      { name: 'supplier_nett', key: 'supplier_nett', type: 'number', required: true, sampleValue: '18000', description: 'Authoritative supplier base nett cost for this capacity tier' },
+      { name: 'nett_price', key: 'nett_price', type: 'number', required: false, sampleValue: '18000', description: 'Legacy alias for supplier nett cost' },
+      { name: 'margin', key: 'margin', type: 'number', required: true, sampleValue: '20', description: 'Commercial markup percentage (e.g. 20)' },
+      { name: 'tax', key: 'tax', type: 'number', required: true, sampleValue: '10', description: 'VAT / Tax percentage (e.g. 10)' },
+      { name: 'service_charge', key: 'service_charge', type: 'number', required: false, sampleValue: '0', description: 'Fixed service charge amount' },
+      { name: 'final_price', key: 'final_price', type: 'number', required: false, sampleValue: '21960', description: 'Delivered commercial selling price' },
+      { name: 'vehicle_model', key: 'vehicle_model', type: 'string', required: false, sampleValue: 'Toyota Alphard Executive MPV', description: 'Descriptive vehicle or yacht model' },
+      { name: 'effective_from', key: 'effective_from', type: 'string', required: false, sampleValue: '2026-01-01', description: 'Validity start date (YYYY-MM-DD)' },
+      { name: 'effective_to', key: 'effective_to', type: 'string', required: false, sampleValue: '2026-12-31', description: 'Validity end date (YYYY-MM-DD)' },
+      { name: 'status', key: 'status', type: 'enum', required: true, sampleValue: 'Active', description: 'Active or Inactive', allowedValues: ['Active', 'Inactive', 'ACTIVE', 'INACTIVE'] }
     ],
     sampleRows: [
-      ['PRD-TYO-001', 'CAP-TYO-001-MPV', '6', 'Toyota Alphard Executive MPV (6 Pax)', '65000'],
-      ['PRD-TYO-001', 'CAP-TYO-001-VAN', '9', 'Toyota HiAce Grand Cabin (9 Pax)', '82000'],
-      ['PRD-LON-003', 'CAP-LON-003-VCLASS', '6', 'Mercedes-Benz V-Class Extra Long (6 Pax)', '750'],
-      ['PRD-DXB-004', 'CAP-DXB-004-DEF', '6', 'Land Rover Defender Safari (6 Pax)', '1200'],
-      ['PRD-HKT-005', 'CAP-HKT-005-SPDBOAT', '12', 'Custom 35ft Twin Yamaha Speedboat (12 Pax)', '18500']
+      ['PRD-TYO-TRANSFER', 'CAP-TRN-ALPHARD-01', 'Transfers', 'VEH-ALPHARD-01', '1', '3', '1', 'JPY', '18000', '20', '10', '0', '21960', 'Toyota Alphard Executive MPV (1-3 Pax)', 'Active'],
+      ['PRD-TYO-TRANSFER', 'CAP-TRN-ALPHARD-02', 'Transfers', 'VEH-ALPHARD-01', '4', '6', '2', 'JPY', '36000', '20', '10', '0', '43920', 'Toyota Alphard Executive MPV (4-6 Pax -> 2 Vehicles)', 'Active'],
+      ['PRD-TYO-001', 'CAP-TYO-TOUR-01', 'Private Tours', 'VEH-ALPHARD-01', '1', '6', '1', 'JPY', '42000', '20', '10', '0', '51240', 'Toyota Alphard Executive MPV (1-6 Pax Tour)', 'Active'],
+      ['PRD-TYO-001', 'CAP-TYO-TOUR-02', 'Private Tours', 'VEH-ALPHARD-01', '7', '12', '2', 'JPY', '84000', '20', '10', '0', '102480', 'Toyota Alphard Executive MPV (7-12 Pax Tour -> 2 Vehicles)', 'Active'],
+      ['PRD-HKT-005', 'CAP-HKT-YACHT-01', 'Private Yacht', 'YACHT-AZIMUT-66', '1', '10', '1', 'THB', '150000', '20', '7', '0', '182100', 'Azimut 66 Luxury Flybridge Yacht Charter', 'Active']
     ]
   },
 
@@ -976,6 +995,11 @@ export const CANONICAL_SCHEMA_HEADERS: Record<MasterSheetTabName, string[]> = {
 };
 
 /**
+ * Authoritative Canonical Master Workbook Tab Registry (Exactly 25 tabs)
+ */
+export const EXPECTED_MASTER_TAB_COUNT = 25;
+
+/**
  * Approved canonical ordering for processing and sheets layout
  */
 export const CANONICAL_TAB_PROCESSING_ORDER: MasterSheetTabName[] = [
@@ -1005,6 +1029,8 @@ export const CANONICAL_TAB_PROCESSING_ORDER: MasterSheetTabName[] = [
   'RAIL_FARES',
   'RAIL_CLASS_RULES'
 ];
+
+export const MASTER_WORKBOOK_TABS = CANONICAL_TAB_PROCESSING_ORDER;
 
 /**
  * Generates an authentic .xlsx workbook containing exactly the canonical worksheets.

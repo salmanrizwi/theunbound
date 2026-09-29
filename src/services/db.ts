@@ -1,5 +1,6 @@
 import { 
   Product, 
+  TieredPrice,
   Destination, 
   DestinationRegionItem,
   MasterRegion,
@@ -18501,6 +18502,120 @@ export class AppDatabase {
         if (!deletedSet.has(pc.id)) {
           this.syncFirestoreDoc('product_capacities', pc.id, pc);
         }
+      }
+
+      // Synchronize capacity tiers into matching Products' tieredPricing with source governance (Section 20 & 21)
+      const allProducts = this.getProducts();
+      let productsModified = false;
+      const capsByProduct = new Map<string, ProductCapacityItem[]>();
+      for (const pc of merged) {
+        if (pc.productId) {
+          const list = capsByProduct.get(pc.productId) || [];
+          list.push(pc);
+          capsByProduct.set(pc.productId, list);
+        }
+      }
+
+      for (const [prodId, capList] of capsByProduct.entries()) {
+        const prodIndex = allProducts.findIndex(p => p.id === prodId || p.sku === prodId);
+        if (prodIndex >= 0) {
+          const targetProd = allProducts[prodIndex];
+          const cat = targetProd.category as string;
+          const isCapProduct = cat === 'Private Tours' || 
+                               cat === 'Private Tour' ||
+                               cat === 'Transfers' || 
+                               cat === 'Transfer' || 
+                               cat === 'Private Yacht' || 
+                               cat === 'Yacht' ||
+                               targetProd.pricingMethod === 'capacity_based';
+          if (isCapProduct) {
+            const currentTiers = targetProd.tieredPricing || [];
+            const updatedTiers: TieredPrice[] = [...currentTiers];
+
+            for (const cap of capList) {
+              const nettVal = cap.supplierNett !== undefined ? cap.supplierNett : (cap.fixedNettCost || 0);
+              const minP = cap.minPassengers || 1;
+              const maxP = cap.maxPassengers || cap.capacity || 6;
+              const vCount = cap.vehicleCount || 1;
+              const curr = cap.currency || targetProd.currency || 'USD';
+
+              const existingTierIdx = updatedTiers.findIndex(t => 
+                t.id === cap.id || (t.minPax === minP && t.maxPax === maxP)
+              );
+
+              if (existingTierIdx >= 0) {
+                // Section 21 Governance: Never overwrite an Admin's valid configured Supplier Nett with 0 or blank
+                const prevTier = updatedTiers[existingTierIdx];
+                const finalNett = nettVal > 0 ? nettVal : (prevTier.supplierNett ?? prevTier.nettPrice ?? nettVal);
+                updatedTiers[existingTierIdx] = {
+                  ...prevTier,
+                  id: cap.id || prevTier.id,
+                  minPax: minP,
+                  maxPax: maxP,
+                  minPassengers: minP,
+                  maxPassengers: maxP,
+                  vehicleCount: vCount,
+                  fleetId: cap.fleetId || prevTier.fleetId,
+                  fleetName: cap.vehicleModel || prevTier.fleetName,
+                  currency: curr,
+                  nativeCurrency: curr,
+                  supplierNett: finalNett,
+                  nettPrice: finalNett,
+                  netCostPerPax: finalNett,
+                  marginValue: cap.margin !== undefined ? cap.margin : prevTier.marginValue,
+                  taxValue: cap.tax !== undefined ? cap.tax : prevTier.taxValue,
+                  serviceChargeValue: cap.serviceCharge !== undefined ? cap.serviceCharge : prevTier.serviceChargeValue,
+                  finalPrice: cap.finalPrice !== undefined ? cap.finalPrice : prevTier.finalPrice,
+                  status: cap.status || prevTier.status || 'ACTIVE'
+                };
+              } else {
+                updatedTiers.push({
+                  id: cap.id || `tier-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+                  capacityPricingRuleId: `CPR-${Date.now()}`,
+                  productCategory: targetProd.category,
+                  tierLabel: `${minP}–${maxP} Pax`,
+                  minPax: minP,
+                  maxPax: maxP,
+                  minPassengers: minP,
+                  maxPassengers: maxP,
+                  vehicleCount: vCount,
+                  fleetId: cap.fleetId,
+                  fleetName: cap.vehicleModel,
+                  pricingUnit: 'Per Vehicle',
+                  currency: curr,
+                  nativeCurrency: curr,
+                  supplierNett: nettVal,
+                  nettPrice: nettVal,
+                  netCostPerPax: nettVal,
+                  marginType: 'PERCENTAGE',
+                  marginValue: cap.margin !== undefined ? cap.margin : 20,
+                  taxType: 'PERCENTAGE',
+                  taxValue: cap.tax !== undefined ? cap.tax : 10,
+                  serviceChargeType: 'FIXED',
+                  serviceChargeValue: cap.serviceCharge !== undefined ? cap.serviceCharge : 0,
+                  finalPrice: cap.finalPrice,
+                  status: cap.status || 'ACTIVE'
+                });
+              }
+            }
+
+            targetProd.tieredPricing = updatedTiers;
+            if (updatedTiers.length > 0) {
+              const firstNett = updatedTiers[0].supplierNett ?? updatedTiers[0].nettPrice ?? updatedTiers[0].netCostPerPax;
+              if (firstNett !== undefined) {
+                targetProd.adultNetPrice = firstNett;
+                targetProd.adultNettCost = firstNett;
+              }
+            }
+            allProducts[prodIndex] = targetProd;
+            this.syncFirestoreDoc('products', targetProd.id, targetProd);
+            productsModified = true;
+          }
+        }
+      }
+
+      if (productsModified) {
+        this.setItem('products', allProducts);
       }
     }
 

@@ -1,4 +1,4 @@
-import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, AgentPricingResponse, Product, User, UserRole, HotelRate, B2BPackage, FXRateDetails } from '../types';
+import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, AgentPricingResponse, Product, User, UserRole, HotelRate, B2BPackage, FXRateDetails, TieredPrice } from '../types';
 import { currencyEngine, convertCurrency as engineConvert, formatCurrency as engineFormat, getExchangeRateInfo, BASELINE_USD_RATES } from './currencyEngine';
 import { AppDatabase } from './db';
 import { hotelToProduct } from '../utils/hotelHelpers';
@@ -281,11 +281,20 @@ export function calculateDeliveredPriceForUser(
   const baseInfantNet = product.infantNetPrice ?? product.infantNettCost ?? 0;
 
   if (isCapacity) {
-    const vehicleCost = product.vehicleConfig?.unitVehicleNetCost ?? 
+    // If product has configured capacity tiers, use the first tier as starting point
+    const firstTier = (product.tieredPricing && product.tieredPricing.length > 0) ? product.tieredPricing[0] : null;
+    const vehicleCost = firstTier?.supplierNett ??
+                        firstTier?.nettPrice ?? 
+                        firstTier?.netCostPerPax ?? 
+                        product.vehicleConfig?.unitVehicleNetCost ?? 
                         product.vehicleConfig?.totalTransferCost ?? 
                         baseAdultNet ?? 
                         500;
-    const maxSeats = product.vehicleConfig?.maxSeats || product.vehicleConfig?.passengerCapacity || product.maxPax || 7;
+    const startingCapacity = firstTier?.maxPax ?? 
+                             product.vehicleConfig?.maxSeats ?? 
+                             product.vehicleConfig?.passengerCapacity ?? 
+                             product.maxPax ?? 
+                             7;
     const vehicleModel = product.vehicleConfig?.vehicleModel || product.vehicleConfig?.vehicleName || product.name;
 
     const rawVehicleSelling = calculateSellingPrice(
@@ -296,7 +305,7 @@ export function calculateDeliveredPriceForUser(
     );
 
     const totalVehicleSellingPrice = convertCurrency(rawVehicleSelling, product.currency, targetCurrency);
-    const perPersonStartingFrom = totalVehicleSellingPrice / Math.max(1, maxSeats);
+    const perPersonStartingFrom = totalVehicleSellingPrice / Math.max(1, startingCapacity);
 
     return {
       deliveredPrice: totalVehicleSellingPrice,
@@ -311,7 +320,7 @@ export function calculateDeliveredPriceForUser(
       isCapacityBased: true,
       totalVehicleSellingPrice,
       perPersonStartingFrom,
-      vehicleCapacity: maxSeats,
+      vehicleCapacity: startingCapacity,
       vehicleModel,
       unitVehicleNetCost: vehicleCost
     };
@@ -425,8 +434,8 @@ export function calculateProductPrice(
   if (product.tieredPricing && (product.tieredPricing || []).length > 0) {
     const matchingTier = (product.tieredPricing || []).find(t => totalPax >= t.minPax && totalPax <= t.maxPax);
     if (matchingTier) {
-      baseAdultNet = matchingTier.netCostPerPax;
-      baseChildNet = matchingTier.netCostPerPax * 0.5;
+      baseAdultNet = matchingTier.supplierNett ?? matchingTier.nettPrice ?? matchingTier.netCostPerPax;
+      baseChildNet = baseAdultNet * 0.5;
     }
   }
 
@@ -445,13 +454,13 @@ export function calculateProductPrice(
   let vehicleDetails: PricingCalculationResult['vehicleDetails'] | undefined = undefined;
 
   if (isCapacity) {
-    // --- CAPACITY-BASED PRICING MODEL ---
-    // Rule: Total Vehicle Cost / Actual Occupied Seats = Per-Person Nett Cost.
-    // Total Vehicle Cost remains unchanged until the vehicle's maximum capacity is exceeded.
+    // --- CAPACITY-BASED PRICING MODEL (Sections 2–14, 51) ---
+    // CORE PRINCIPLE: Commercial passenger capacity is determined strictly by the Product's
+    // configured capacity rules, NOT by the physical vehicle's generic seating capacity.
     const vehicleConfig = product.vehicleConfig;
     const vehicleModel = vehicleConfig?.vehicleModel || vehicleConfig?.vehicleName || product.name;
     const vehicleType = vehicleConfig?.vehicleType || 'Executive Vehicle';
-    const maxSeats = Math.max(1, vehicleConfig?.maxSeats || vehicleConfig?.passengerCapacity || vehicleConfig?.totalSeats || product.maxPax || 7);
+    const genericPhysicalCapacity = Math.max(1, vehicleConfig?.maxSeats || vehicleConfig?.passengerCapacity || vehicleConfig?.totalSeats || product.maxPax || 7);
     const unitVehicleNetCost = vehicleConfig?.unitVehicleNetCost ?? 
                                vehicleConfig?.totalTransferCost ?? 
                                baseAdultNet ?? 
@@ -468,59 +477,62 @@ export function calculateProductPrice(
     const totalOccupiedSeats = adultSeatsOccupied + childSeatsOccupied + infantSeatsOccupied;
 
     const allowMultiple = vehicleConfig?.allowMultipleVehicles ?? true;
-    const autoAllocate = vehicleConfig?.autoAllocateVehicles ?? true;
     const maxVehicles = vehicleConfig?.maxVehicles || 10;
 
     let vehiclesAllocated = quantity;
     let capacityExceeded = false;
     let capacityErrorMessage: string | undefined = undefined;
+    let matchingTierFound: TieredPrice | undefined = undefined;
 
-    if (totalOccupiedSeats <= (maxSeats * quantity)) {
-      vehiclesAllocated = quantity;
-      capacityExceeded = false;
-    } else {
-      // Passenger count exceeds configured vehicle capacity
-      if (autoAllocate || allowMultiple) {
-        vehiclesAllocated = Math.max(quantity, Math.ceil(totalOccupiedSeats / maxSeats));
-        if (vehiclesAllocated > maxVehicles) {
+    // Check Product-Specific Capacity Rules (tieredPricing) FIRST
+    const activeTiers = (product.tieredPricing || []).filter(t => t.status !== 'INACTIVE');
+    const sortedTiers = [...activeTiers].sort((a, b) => a.minPax - b.minPax);
+
+    if (sortedTiers.length > 0) {
+      // Find matching passenger tier in product-specific capacity rules
+      matchingTierFound = sortedTiers.find(t => totalOccupiedSeats >= t.minPax && totalOccupiedSeats <= t.maxPax);
+
+      if (matchingTierFound) {
+        // Required vehicle count comes strictly from the product's configured capacity rule
+        const tierVehicles = matchingTierFound.vehicleCount !== undefined && matchingTierFound.vehicleCount > 0 
+          ? matchingTierFound.vehicleCount 
+          : 1;
+        vehiclesAllocated = tierVehicles * quantity;
+        
+        // Applicable price comes from the product capacity rule
+        const tierNett = matchingTierFound.supplierNett !== undefined 
+          ? matchingTierFound.supplierNett 
+          : (matchingTierFound.nettPrice !== undefined 
+            ? matchingTierFound.nettPrice 
+            : (matchingTierFound.netCostPerPax !== undefined ? matchingTierFound.netCostPerPax : unitVehicleNetCost));
+          
+        rawTotalNetCostInNative = tierNett * quantity;
+      } else {
+        // totalOccupiedSeats exceeds configured tiers
+        // Determine required vehicles using the Product's configured capacity rules (NOT generic physical vehicle capacity)
+        const highestTier = sortedTiers[sortedTiers.length - 1];
+        const highestTierCapacity = highestTier.maxPax || genericPhysicalCapacity;
+        const highestTierVehicles = highestTier.vehicleCount || 1;
+        const capacityPerVehicle = Math.max(1, Math.floor(highestTierCapacity / highestTierVehicles));
+        
+        vehiclesAllocated = Math.max(quantity, Math.ceil(totalOccupiedSeats / capacityPerVehicle) * quantity);
+        if (vehiclesAllocated > maxVehicles && !allowMultiple) {
           capacityExceeded = true;
-          capacityErrorMessage = `Passenger count (${totalOccupiedSeats} seats) exceeds maximum allowed fleet capacity (${maxVehicles * maxSeats} seats across ${maxVehicles} vehicles).`;
+          capacityErrorMessage = `Passenger count (${totalOccupiedSeats} seats) exceeds maximum configured capacity (${highestTierCapacity} seats).`;
         }
-      } else {
-        vehiclesAllocated = quantity;
-        capacityExceeded = true;
-        capacityErrorMessage = `Vehicle capacity of ${maxSeats} seats exceeded (${totalOccupiedSeats} seats required). Please add another vehicle or select a higher-capacity transport option.`;
-      }
-    }
-
-    // Total Vehicle Nett Cost calculation with passenger distribution and capacity-based tiered pricing rules
-    if (product.tieredPricing && product.tieredPricing.length > 0) {
-      const allocationStrategy = vehicleConfig?.allocationStrategy || 'Occupancy Split';
-      const vehicleDistribution: number[] = [];
-
-      if (allocationStrategy === 'Occupancy Split') {
-        let remaining = totalOccupiedSeats;
-        for (let i = 0; i < vehiclesAllocated; i++) {
-          const allocated = Math.min(remaining, maxSeats);
-          vehicleDistribution.push(allocated);
-          remaining -= allocated;
-        }
-      } else {
-        const base = Math.floor(totalOccupiedSeats / vehiclesAllocated);
-        let remainder = totalOccupiedSeats % vehiclesAllocated;
-        for (let i = 0; i < vehiclesAllocated; i++) {
-          const count = base + (remainder > 0 ? 1 : 0);
-          vehicleDistribution.push(count);
-          if (remainder > 0) remainder--;
-        }
-      }
-
-      rawTotalNetCostInNative = 0;
-      for (const vCount of vehicleDistribution) {
-        const matchingTier = product.tieredPricing.find(t => vCount >= t.minPax && vCount <= t.maxPax);
-        rawTotalNetCostInNative += matchingTier ? matchingTier.netCostPerPax : unitVehicleNetCost;
+        
+        const tierUnitCost = highestTier.supplierNett !== undefined 
+          ? highestTier.supplierNett 
+          : (highestTier.nettPrice !== undefined 
+            ? highestTier.nettPrice 
+            : (highestTier.netCostPerPax !== undefined ? highestTier.netCostPerPax : unitVehicleNetCost));
+        
+        // Scale by vehicle units
+        rawTotalNetCostInNative = Math.ceil(vehiclesAllocated / highestTierVehicles) * tierUnitCost;
       }
     } else {
+      // No tiered rules configured - calculate based on unit cost with generic physical capacity as last resort
+      vehiclesAllocated = Math.max(quantity, Math.ceil(totalOccupiedSeats / genericPhysicalCapacity) * quantity);
       rawTotalNetCostInNative = vehiclesAllocated * unitVehicleNetCost;
     }
 
@@ -531,10 +543,10 @@ export function calculateProductPrice(
     infantNetInNative = 0;
 
     vehicleDetails = {
-      vehicleName: vehicleConfig?.vehicleName || vehicleModel,
+      vehicleName: matchingTierFound?.fleetName || vehicleConfig?.vehicleName || vehicleModel,
       vehicleModel,
       vehicleType,
-      maxSeats,
+      maxSeats: matchingTierFound?.maxPax || genericPhysicalCapacity,
       occupiedSeats: totalOccupiedSeats,
       vehiclesAllocated,
       vehiclesRequired: vehiclesAllocated,
@@ -559,17 +571,59 @@ export function calculateProductPrice(
     infantNetInNative = (baseInfantNet || 0) * infants * quantity;
     rawTotalNetCostInNative = adultNetInNative + childNetInNative + infantNetInNative;
   } else if ((product.category as string) === 'Guides' || (product.category as string) === 'Guide' || (product as any).hourlyNetPrice || product.pricingMethod === 'hourly_based') {
-    // Hourly Guide Service Pricing Engine (Section 14)
-    const minHours = (product as any).minHours || 1;
+    // Hourly Guide Service Pricing Engine (Section 17)
+    const minHours = (product as any).minHours || product.guideConfig?.minHours || 4;
     const requestedHours = (request as any).serviceDurationHours || (request as any).hours || minHours;
     const billableHours = Math.max(minHours, requestedHours);
-    const hourlyRate = (product as any).hourlyNetPrice || baseAdultNet || 0;
+    const hourlyRate = product.hourlyNettCost || (product as any).hourlyNetPrice || product.guideConfig?.hourlyNetRate || baseAdultNet || 6000;
     rawTotalNetCostInNative = hourlyRate * billableHours * quantity;
     adultNetInNative = rawTotalNetCostInNative;
     childNetInNative = 0;
     infantNetInNative = 0;
+  } else if ((product.category as string) === 'Lunch / Dinner Restaurant' || (product.category as string) === 'Restaurant') {
+    // Restaurant Meal + Passenger Pricing Engine (Sections 18 & 19)
+    const requestedMeal = (request as any).meal || (product.mealSelect && product.mealSelect[0]) || 'Lunch';
+    const mealPricingList = product.mealPricing || product.restaurantConfig?.mealPricing || [];
+    const matchedMeal = mealPricingList.find(m => m.meal && m.meal.toLowerCase() === requestedMeal.toLowerCase() && m.status !== 'INACTIVE')
+      || mealPricingList[0];
+
+    if (matchedMeal) {
+      const adultNett = matchedMeal.adultNettPrice !== undefined ? matchedMeal.adultNettPrice : baseAdultNet;
+      const childNett = matchedMeal.childNettPrice !== undefined ? matchedMeal.childNettPrice : baseChildNet;
+      const infantNett = matchedMeal.infantNettPrice || 0;
+      
+      adultNetInNative = adultNett * adults * quantity;
+      childNetInNative = childNett * children * quantity;
+      infantNetInNative = infantNett * infants * quantity;
+      rawTotalNetCostInNative = adultNetInNative + childNetInNative + infantNetInNative;
+    } else {
+      adultNetInNative = baseAdultNet * adults * quantity;
+      childNetInNative = baseChildNet * children * quantity;
+      infantNetInNative = baseInfantNet * infants * quantity;
+      rawTotalNetCostInNative = adultNetInNative + childNetInNative + infantNetInNative;
+    }
+  } else if ((product.category as string) === 'Tickets' || (product.category as string) === 'Ticket') {
+    // Ticket Per-Person Pricing Engine (Section 15)
+    const ticketTiers = product.ticketConfig?.ticketTiers || [];
+    const requestedTierId = (request as any).ticketTierId || (request as any).tierId;
+    const matchedTier = ticketTiers.find(t => t.id === requestedTierId && t.status !== 'INACTIVE') || ticketTiers[0];
+
+    if (matchedTier) {
+      const adultNett = matchedTier.adultNetPrice !== undefined ? matchedTier.adultNetPrice : baseAdultNet;
+      const childNett = matchedTier.childNetPrice !== undefined ? matchedTier.childNetPrice : baseChildNet;
+      const infantNett = matchedTier.infantNetPrice || 0;
+      adultNetInNative = adultNett * adults * quantity;
+      childNetInNative = childNett * children * quantity;
+      infantNetInNative = infantNett * infants * quantity;
+      rawTotalNetCostInNative = adultNetInNative + childNetInNative + infantNetInNative;
+    } else {
+      adultNetInNative = baseAdultNet * adults * quantity;
+      childNetInNative = baseChildNet * children * quantity;
+      infantNetInNative = baseInfantNet * infants * quantity;
+      rawTotalNetCostInNative = adultNetInNative + childNetInNative + infantNetInNative;
+    }
   } else {
-    // Standard Per-Person Tour / Activity / Ticket / Restaurant Pricing Engine
+    // Standard Per-Person Tour / Activity Pricing Engine (Section 16)
     adultNetInNative = baseAdultNet * adults * quantity;
     childNetInNative = baseChildNet * children * quantity;
     infantNetInNative = baseInfantNet * infants * quantity;
