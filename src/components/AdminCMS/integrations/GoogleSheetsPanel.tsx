@@ -16,7 +16,8 @@ import {
   generateSampleCsv, 
   generateAllTabsCsvBundle, 
   getTabSchemaByName,
-  generateCanonicalExcelWorkbookBlob
+  generateCanonicalExcelWorkbookBlob,
+  generateCanonicalExcelWorkbookWithDemoDataBlob
 } from '../../../data/googleSheetsTemplate';
 import { useAuth } from '../../../context/AuthContext';
 import { 
@@ -604,19 +605,39 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
     document.body.removeChild(link);
   };
 
-  // Download Canonical 25-Tab Excel Template (.xlsx)
+  // Download Canonical 25-Tab Excel with Full Demo Data (.xlsx)
+  const handleDownloadCanonicalExcelWithDemoData = () => {
+    try {
+      const blob = generateCanonicalExcelWorkbookWithDemoDataBlob(true);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `TheUnbound_Master_Inventory_and_Tariff_Canonical_25_Tabs_Demo_Data.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setHealthStatusNotice('Downloaded Master Excel Workbook with all 25 canonical tabs & demo data (.xlsx).');
+      setTimeout(() => setHealthStatusNotice(null), 5000);
+    } catch (err: any) {
+      console.error('Failed to generate Excel demo blob', err);
+      setStatusMessage(`Template export error: ${err?.message || 'Failed to generate workbook'}`);
+    }
+  };
+
+  // Download Canonical 25-Tab Blank Excel Template (.xlsx)
   const handleDownloadCanonicalExcelTemplate = () => {
     try {
       const blob = generateCanonicalExcelWorkbookBlob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.setAttribute('href', url);
-      link.setAttribute('download', `TheUnbound_Master_Inventory_and_Tariff_Canonical_Template.xlsx`);
+      link.setAttribute('download', `TheUnbound_Master_Inventory_and_Tariff_Canonical_Blank_Template.xlsx`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      setHealthStatusNotice('Generated and downloaded canonical 25-tab Excel workbook (.xlsx).');
+      setHealthStatusNotice('Generated and downloaded canonical 25-tab blank Excel template (.xlsx).');
       setTimeout(() => setHealthStatusNotice(null), 5000);
     } catch (err: any) {
       console.error('Failed to generate Excel blob', err);
@@ -767,11 +788,21 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
             </button>
 
             <button
-              onClick={handleDownloadCanonicalExcelTemplate}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-teal-200 bg-teal-50 hover:bg-teal-100 text-[#008972] font-semibold transition-all cursor-pointer"
+              onClick={handleDownloadCanonicalExcelWithDemoData}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-teal-300 bg-[#008972] hover:bg-[#007360] text-white font-bold transition-all cursor-pointer shadow-xs"
+              title="Download full workbook containing all 25 canonical tabs pre-populated with demo data"
             >
-              <Download className="w-3.5 h-3.5 text-[#008972]" />
-              <span>Canonical 25-Tab Excel (.xlsx)</span>
+              <Download className="w-3.5 h-3.5 text-white" />
+              <span>Excel with Demo Data (.xlsx)</span>
+            </button>
+
+            <button
+              onClick={handleDownloadCanonicalExcelTemplate}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold transition-all cursor-pointer"
+              title="Download blank template workbook with column headers only"
+            >
+              <Download className="w-3.5 h-3.5 text-slate-500" />
+              <span>Blank Template (.xlsx)</span>
             </button>
           </div>
         </div>
@@ -938,14 +969,23 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                   <span>Open Master Spreadsheet</span>
                 </a>
 
-                {/* 4. Download Canonical 25-Tab Excel Template */}
+                {/* 4. Download Canonical 25-Tab Excel Workbooks */}
                 <button
-                  id="action-download-canonical-xlsx"
-                  onClick={handleDownloadCanonicalExcelTemplate}
-                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl border border-teal-200 bg-teal-50 hover:bg-teal-100 text-[#008972] font-bold text-xs transition-all cursor-pointer"
+                  id="action-download-canonical-demo-xlsx"
+                  onClick={handleDownloadCanonicalExcelWithDemoData}
+                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl border border-teal-300 bg-[#008972] hover:bg-[#007360] text-white font-bold text-xs transition-all cursor-pointer shadow-xs"
                 >
-                  <Download className="w-3.5 h-3.5 text-[#008972]" />
-                  <span>Download Canonical 25-Tab Excel (.xlsx)</span>
+                  <Download className="w-3.5 h-3.5 text-white" />
+                  <span>Download Excel (25 Tabs + Demo Data)</span>
+                </button>
+
+                <button
+                  id="action-download-canonical-blank-xlsx"
+                  onClick={handleDownloadCanonicalExcelTemplate}
+                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs transition-all cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Download Blank Template (.xlsx)</span>
                 </button>
 
                 {/* 5. View Apps Script Webhook Code */}
@@ -2120,13 +2160,23 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                 </p>
               </div>
 
-              <button
-                onClick={handleDownloadCanonicalExcelTemplate}
-                className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-xs font-bold transition-all shadow-xs cursor-pointer shrink-0"
-              >
-                <Download className="w-4 h-4" />
-                <span>Download Canonical 25-Tab Excel (.xlsx)</span>
-              </button>
+              <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+                <button
+                  onClick={handleDownloadCanonicalExcelWithDemoData}
+                  className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                >
+                  <Download className="w-4 h-4 text-white" />
+                  <span>Download Excel (25 Tabs + Demo Data)</span>
+                </button>
+
+                <button
+                  onClick={handleDownloadCanonicalExcelTemplate}
+                  className="flex items-center space-x-2 px-4 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-xs cursor-pointer"
+                >
+                  <Download className="w-4 h-4 text-slate-500" />
+                  <span>Download Blank Template (.xlsx)</span>
+                </button>
+              </div>
             </div>
 
             {/* Tab Cards Grid */}

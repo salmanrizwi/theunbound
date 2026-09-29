@@ -1043,6 +1043,10 @@ export function generateCanonicalExcelWorkbookBlob(): Blob {
   for (const tabName of CANONICAL_TAB_PROCESSING_ORDER) {
     const headers = CANONICAL_SCHEMA_HEADERS[tabName] || [];
     const ws = XLSX.utils.aoa_to_sheet([headers]);
+    
+    // Auto-fit column widths
+    ws['!cols'] = headers.map(h => ({ wch: Math.max(h.length + 4, 15) }));
+    
     XLSX.utils.book_append_sheet(wb, ws, tabName);
   }
 
@@ -1051,4 +1055,57 @@ export function generateCanonicalExcelWorkbookBlob(): Blob {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   });
 }
+
+/**
+ * Generates a comprehensive .xlsx workbook containing all 25 canonical inventory tabs
+ * pre-populated with authentic canonical demo and reference records.
+ */
+export function generateCanonicalExcelWorkbookWithDemoDataBlob(includeInstructions = true): Blob {
+  const wb = XLSX.utils.book_new();
+
+  if (includeInstructions) {
+    const instructionsDef = MASTER_SHEETS_TAB_DEFINITIONS.find(t => t.tabName === 'INSTRUCTIONS');
+    if (instructionsDef) {
+      const headers = instructionsDef.columns.map(c => c.key);
+      const rows = [headers, ...instructionsDef.sampleRows];
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = [
+        { wch: 12 },
+        { wch: 22 },
+        { wch: 30 },
+        { wch: 80 }
+      ];
+      XLSX.utils.book_append_sheet(wb, ws, 'INSTRUCTIONS');
+    }
+  }
+
+  for (const tabName of CANONICAL_TAB_PROCESSING_ORDER) {
+    const tabDef = MASTER_SHEETS_TAB_DEFINITIONS.find(t => t.tabName === tabName);
+    const headers = CANONICAL_SCHEMA_HEADERS[tabName] || (tabDef ? tabDef.columns.map(c => c.key) : []);
+    const sampleRows = tabDef?.sampleRows || [];
+    
+    const rows = [headers, ...sampleRows];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+
+    // Dynamic column width calculation
+    ws['!cols'] = headers.map((h, colIdx) => {
+      let maxLen = h.length;
+      sampleRows.forEach(r => {
+        const val = r[colIdx];
+        if (val && typeof val === 'string') {
+          maxLen = Math.max(maxLen, Math.min(val.length, 50));
+        }
+      });
+      return { wch: Math.max(maxLen + 3, 14) };
+    });
+
+    XLSX.utils.book_append_sheet(wb, ws, tabName);
+  }
+
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  return new Blob([wbout], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+}
+
 
