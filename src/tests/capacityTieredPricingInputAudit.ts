@@ -6,6 +6,8 @@
 import { AppDatabase } from '../services/db';
 import { Product, TieredPrice, CurrencyCode } from '../types';
 import { calculateProductPrice } from '../services/pricingEngine';
+import { SheetsSyncService } from '../services/sheetsSyncService';
+import { MASTER_SHEETS_TAB_DEFINITIONS } from '../data/googleSheetsTemplate';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -22,11 +24,24 @@ function assert(condition: boolean, testName: string, details?: any) {
   }
 }
 
-console.log('================================================================');
-console.log('  CAPACITY & TIERED PRICING INPUT ACCEPTANCE AUDIT');
-console.log('================================================================\n');
+async function runAudit() {
+  console.log('================================================================');
+  console.log('  CAPACITY & TIERED PRICING INPUT ACCEPTANCE AUDIT');
+  console.log('================================================================\n');
 
-const db = AppDatabase.getInstance();
+  const db = AppDatabase.getInstance();
+  const syncEngine = SheetsSyncService.getInstance();
+
+  const canonicalMultiTabData: Record<string, string[][]> = {};
+  for (const tabDef of MASTER_SHEETS_TAB_DEFINITIONS) {
+    if (tabDef.tabName !== 'INSTRUCTIONS') {
+      canonicalMultiTabData[tabDef.tabName] = [
+        tabDef.columns.map(c => c.key),
+        ...tabDef.sampleRows
+      ];
+    }
+  }
+  await syncEngine.commitMultiTabSync(canonicalMultiTabData, undefined, null);
 
 // 1. Audit Tier Creation Empty State (Section 8)
 console.log('--- 1. Testing Tier Creation Empty State ---');
@@ -109,6 +124,9 @@ console.log('\n--- 4. Testing Persistence Across Three Capacity Categories ---')
     category: 'Private Tours',
     pricingModel: 'CAPACITY_TIERED',
     pricingMethod: 'capacity_based',
+    regionId: 'REG-001',
+    destinationId: 'DST-JPN',
+    hubId: 'HUB-TYO',
     destination: 'Japan',
     city: 'Tokyo',
     currency: 'JPY',
@@ -173,6 +191,9 @@ console.log('\n--- 4. Testing Persistence Across Three Capacity Categories ---')
     category: 'Transfers',
     pricingModel: 'CAPACITY_TIERED',
     pricingMethod: 'capacity_based',
+    regionId: 'REG-001',
+    destinationId: 'DST-JPN',
+    hubId: 'HUB-TYO',
     destination: 'Japan',
     city: 'Tokyo',
     currency: 'JPY',
@@ -181,8 +202,8 @@ console.log('\n--- 4. Testing Persistence Across Three Capacity Categories ---')
     status: 'ACTIVE',
     inclusions: ['Flight Tracking', 'Luggage Assist'],
     exclusions: ['Extra Stops'],
-    fromHubId: 'hub-hnd',
-    toHubId: 'hub-tokyo',
+    fromHubId: 'HUB-HND',
+    toHubId: 'HUB-TYO',
     vehicleConfig: {
       vehicleType: 'Executive MPV',
       vehicleModel: 'Toyota Alphard',
@@ -239,6 +260,9 @@ console.log('\n--- 4. Testing Persistence Across Three Capacity Categories ---')
     category: 'Private Yacht',
     pricingModel: 'CAPACITY_TIERED',
     pricingMethod: 'capacity_based',
+    regionId: 'REG-001',
+    destinationId: 'DST-JPN',
+    hubId: 'HUB-TYO',
     destination: 'Japan',
     city: 'Tokyo',
     currency: 'JPY',
@@ -443,6 +467,9 @@ console.log('\n--- 8. Testing Google Sheets Master Sync Governance ---');
     category: 'Private Tours',
     pricingMethod: 'capacity_based',
     pricingModel: 'CAPACITY_TIERED',
+    regionId: 'REG-001',
+    destinationId: 'DST-JPN',
+    hubId: 'HUB-TYO',
     currency: 'JPY',
     nativeCurrency: 'JPY',
     status: 'ACTIVE',
@@ -482,12 +509,18 @@ console.log('\n--- 8. Testing Google Sheets Master Sync Governance ---');
   db.deleteProduct(prodId, null);
 }
 
-console.log('\n================================================================');
-console.log(`  CAPACITY INPUT AUDIT RESULT: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)`);
-console.log('================================================================\n');
+  console.log('\n================================================================');
+  console.log(`  CAPACITY INPUT AUDIT RESULT: ${passedTests}/${totalTests} Tests Passed (${failedTests} Failed)`);
+  console.log('================================================================\n');
 
-if (failedTests > 0) {
-  process.exit(1);
-} else {
-  process.exit(0);
+  if (failedTests > 0) {
+    process.exit(1);
+  } else {
+    process.exit(0);
+  }
 }
+
+runAudit().catch(err => {
+  console.error('Fatal test runner failure:', err);
+  process.exit(1);
+});

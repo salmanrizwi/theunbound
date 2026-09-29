@@ -206,6 +206,7 @@ import { EmailNotificationService } from './emailNotificationService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { googleBusinessService } from './googleBusinessService';
 import { envService } from './environment';
+import { MasterDataService } from './masterDataService';
 import { auth, db as firestoreDb } from './firebase';
 
 let currentAuthUser: User | null = null;
@@ -4977,10 +4978,24 @@ export class AppDatabase {
       throw new Error('Product Currency (Native Currency) is required.');
     }
 
+    // CANONICAL HIERARCHY VALIDATION (Sections 12, 25 & 32)
+    const masterData = MasterDataService.getInstance();
+    const hierarchy = masterData.validateHierarchy(product.regionId, product.destinationId, product.hubId);
+    if (!hierarchy.valid) {
+      throw new Error(`Data Integrity Error: ${hierarchy.error}`);
+    }
+
     const productWithMasterConfig = ensureMasterProductConfiguration(product, user);
 
     const savedProd: Product = {
       ...productWithMasterConfig,
+      regionId: hierarchy.region!.id,
+      regionName: hierarchy.region!.name,
+      destinationId: hierarchy.destination!.id,
+      destinationName: hierarchy.destination!.name,
+      country: hierarchy.destination!.country || hierarchy.destination!.name,
+      hubId: hierarchy.hub ? hierarchy.hub.id : (product.hubId || ''),
+      city: hierarchy.hub ? hierarchy.hub.name : (product.city || hierarchy.destination!.name),
       currency: chosenCurrency,
       nativeCurrency: chosenCurrency,
       product_id: product.id,
@@ -5069,12 +5084,19 @@ export class AppDatabase {
       throw new Error('Product Currency (Native Currency) is required.');
     }
 
+    // CANONICAL HIERARCHY VALIDATION (Sections 12, 25 & 32)
+    const masterData = MasterDataService.getInstance();
+    const hierarchy = masterData.validateHierarchy(product.regionId, product.destinationId, product.hubId);
+    if (!hierarchy.valid) {
+      throw new Error(`Data Integrity Error: ${hierarchy.error}`);
+    }
+
     const dup = this.checkDuplicateRecord('Product', {
       id: product.id,
       name: product.name,
       sku: product.sku,
-      destinationId: product.destinationId,
-      hubId: product.hubId
+      destinationId: hierarchy.destination!.id,
+      hubId: hierarchy.hub ? hierarchy.hub.id : (product.hubId || '')
     });
     if (dup.isDuplicate && dup.duplicateType === 'EXACT') {
       throw new Error(dup.message || 'An active product with this SKU or Name already exists.');
@@ -5086,6 +5108,13 @@ export class AppDatabase {
 
     const savedProd: Product = {
       ...product,
+      regionId: hierarchy.region!.id,
+      regionName: hierarchy.region!.name,
+      destinationId: hierarchy.destination!.id,
+      destinationName: hierarchy.destination!.name,
+      country: hierarchy.destination!.country || hierarchy.destination!.name,
+      hubId: hierarchy.hub ? hierarchy.hub.id : (product.hubId || ''),
+      city: hierarchy.hub ? hierarchy.hub.name : (product.city || hierarchy.destination!.name),
       currency: chosenCurrency,
       nativeCurrency: chosenCurrency,
       product_id: product.id,
@@ -11993,12 +12022,14 @@ export class AppDatabase {
 
   public getCityHubsByDestination(destinationIdOrSlug: string): CityHub[] {
     if (!destinationIdOrSlug || destinationIdOrSlug === 'all') return this.getCityHubs();
-    const query = destinationIdOrSlug.toLowerCase();
+    const query = destinationIdOrSlug.trim().toLowerCase();
+    const matchedDest = this.getDestinations().find(d => 
+      d.id.toLowerCase() === query || (d.slug && d.slug.toLowerCase() === query)
+    );
+    const targetDestId = matchedDest ? matchedDest.id.toLowerCase() : query;
     return this.getCityHubs().filter(c => 
-      c.destinationId.toLowerCase() === query || 
-      c.destinationName.toLowerCase() === query ||
-      c.destinationId.toLowerCase().includes(query) ||
-      query.includes(c.destinationId.toLowerCase())
+      c.destinationId.toLowerCase() === targetDestId ||
+      c.destinationId.toLowerCase() === query
     );
   }
 

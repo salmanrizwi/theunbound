@@ -55,6 +55,7 @@ import {
   ensureMasterProductConfiguration
 } from './configuratorRegistry';
 import { CurrencyEngine } from './currencyEngine';
+import { MasterDataService } from './masterDataService';
 
 export interface RawMultiTabData {
   [tabName: string]: string[][] | Record<string, any>[];
@@ -1200,49 +1201,63 @@ export class SheetsSyncService {
         }));
         logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.regions.length} Regions.`);
       } else if (tabKey === 'DESTINATIONS') {
-        payload.destinations = objects.map(d => ({
-          id: d.destination_id || d.id,
-          regionId: d.region_id || d.regionId || 'REG-001',
-          name: d.destination_name || d.name || 'Destination',
-          country: d.country_name || d.country || d.destination_name || '',
-          slug: d.slug || (d.destination_name || '').toLowerCase().replace(/\s+/g, '-'),
-          currency: (d.base_currency || d.currency || 'USD') as CurrencyCode,
-          status: (d.status || 'ACTIVE').toUpperCase().includes('COMING') ? 'COMING_SOON' : 'ACTIVE',
-          displayOrder: Number(d.display_order) || 1,
-          heroImage: d.hero_image_url || d.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200',
-          description: d.description || '',
-          region: d.region_name || d.region_id || 'East Asia',
-          tagline: `Premium Ground Logistics across ${d.destination_name || 'the Destination'}`,
-          keySellingPoints: ['Curated 5-Star Accommodations', 'Private Chauffeur Fleet', '24/7 Dedicated DMC Operations'],
-          bestTimeToVisit: 'Year-Round / Seasonal',
-          idealTripDuration: '7–14 Days',
-          travelStyle: 'Bespoke Luxury & Cultural Immersion',
-          cities: [],
-          highlights: ['Exclusive Experiences', 'VIP Airport Fast Track'],
-          featuredProductIds: []
-        }));
+        payload.destinations = objects.map(d => {
+          const rawRegId = d.region_id || d.regionId || 'REG-001';
+          const regObj = MasterDataService.getInstance().getRegionById(rawRegId);
+          const canonicalRegId = regObj ? regObj.id : rawRegId;
+
+          return {
+            id: d.destination_id || d.id,
+            regionId: canonicalRegId,
+            name: d.destination_name || d.name || 'Destination',
+            country: d.country_name || d.country || d.destination_name || '',
+            slug: d.slug || (d.destination_name || '').toLowerCase().replace(/\s+/g, '-'),
+            currency: (d.base_currency || d.currency || 'USD') as CurrencyCode,
+            status: (d.status || 'ACTIVE').toUpperCase().includes('COMING') ? 'COMING_SOON' : 'ACTIVE',
+            displayOrder: Number(d.display_order) || 1,
+            heroImage: d.hero_image_url || d.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200',
+            description: d.description || '',
+            region: d.region_name || regObj?.name || 'East Asia',
+            tagline: `Premium Ground Logistics across ${d.destination_name || 'the Destination'}`,
+            keySellingPoints: ['Curated 5-Star Accommodations', 'Private Chauffeur Fleet', '24/7 Dedicated DMC Operations'],
+            bestTimeToVisit: 'Year-Round / Seasonal',
+            idealTripDuration: '7–14 Days',
+            travelStyle: 'Bespoke Luxury & Cultural Immersion',
+            cities: [],
+            highlights: ['Exclusive Experiences', 'VIP Airport Fast Track'],
+            featuredProductIds: []
+          };
+        });
         logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.destinations.length} Destinations.`);
       } else if (tabKey === 'HUBS') {
-        payload.hubs = objects.map(h => ({
-          id: h.hub_id || h.id,
-          destinationId: h.destination_id || h.destinationId || 'dest-japan',
-          destinationName: h.country || 'Destination',
-          name: h.hub_name || h.name || 'City Hub',
-          tagline: `${h.hub_type || 'City'} Gateway`,
-          description: `Operational logistics hub in ${h.hub_name || 'destination'}.`,
-          heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200',
-          images: ['https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200'],
-          displayOrder: Number(h.display_order) || 1,
-          isPublished: true,
-          status: (h.status || 'ACTIVE').toUpperCase().includes('ARCH') ? 'ARCHIVED' : 'ACTIVE',
-          airportCode: h.airport_code || '',
-          railwayStation: h.railway_station || '',
-          latitude: Number(h.latitude) || undefined,
-          longitude: Number(h.longitude) || undefined,
-          productCount: 0,
-          hotelCount: 0,
-          highlights: []
-        }));
+        payload.hubs = objects.map(h => {
+          const rawDestId = h.destination_id || h.destinationId || 'DST-JPN';
+          const destObj = MasterDataService.getInstance().getDestinationById(rawDestId);
+          const canonicalDestId = destObj ? destObj.id : rawDestId;
+          const canonicalRegId = destObj ? destObj.regionId : 'REG-001';
+
+          return {
+            id: h.hub_id || h.id,
+            destinationId: canonicalDestId,
+            destinationName: destObj?.name || h.country || 'Destination',
+            regionId: canonicalRegId,
+            name: h.hub_name || h.name || 'City Hub',
+            tagline: `${h.hub_type || 'City'} Gateway`,
+            description: `Operational logistics hub in ${h.hub_name || 'destination'}.`,
+            heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200',
+            images: ['https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200'],
+            displayOrder: Number(h.display_order) || 1,
+            isPublished: true,
+            status: (h.status || 'ACTIVE').toUpperCase().includes('ARCH') ? 'ARCHIVED' : 'ACTIVE',
+            airportCode: h.airport_code || '',
+            railwayStation: h.railway_station || '',
+            latitude: Number(h.latitude) || undefined,
+            longitude: Number(h.longitude) || undefined,
+            productCount: 0,
+            hotelCount: 0,
+            highlights: []
+          };
+        });
         logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.hubs.length} City Hubs.`);
       } else if (tabKey === 'PRODUCTS') {
         payload.products = objects.map(p => {
@@ -1255,16 +1270,29 @@ export class SheetsSyncService {
             ? rawDays.split(';').map((s: string) => s.trim()).filter(Boolean)
             : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+          const rawDestId = p.destination_id || p.destinationId || 'DST-JPN';
+          const rawRegId = p.region_id || 'REG-001';
+          const rawHubId = p.hub_id || 'HUB-TYO';
+
+          const destObj = MasterDataService.getInstance().getDestinationById(rawDestId);
+          const regObj = MasterDataService.getInstance().getRegionById(rawRegId) || (destObj ? MasterDataService.getInstance().getRegionById(destObj.regionId) : undefined);
+          const hubObj = MasterDataService.getInstance().getHubById(rawHubId);
+
+          const canonicalDestId = destObj ? destObj.id : rawDestId;
+          const canonicalRegId = regObj ? regObj.id : rawRegId;
+          const canonicalHubId = hubObj ? hubObj.id : rawHubId;
+
           const partialProd: Product = {
             id: p.product_id || p.sku || `PRD-${Date.now()}`,
             sku: p.product_id || p.sku || `SKU-${Date.now()}`,
             name: p.product_name || p.name || 'Travel Product',
-            destinationId: p.destination_id || p.destinationId || 'dest-japan',
-            destinationName: p.destination_name || 'Japan',
-            regionId: p.region_id || 'REG-001',
-            hubId: p.hub_id || 'hub-tyo',
-            city: p.city || 'Tokyo',
-            country: p.country || 'Japan',
+            destinationId: canonicalDestId,
+            destinationName: destObj?.name || p.destination_name || 'Japan',
+            regionId: canonicalRegId,
+            regionName: regObj?.name || 'East Asia',
+            hubId: canonicalHubId,
+            city: hubObj?.name || p.city || 'Tokyo',
+            country: destObj?.country || destObj?.name || p.country || 'Japan',
             productType: p.product_category || p.category || authoritativeCat,
             category: authoritativeCat as any,
             subcategory: p.subcategory || 'Private Experience',

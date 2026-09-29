@@ -52,6 +52,7 @@ import { PageHeader } from '../common/PageHeader';
 import { PricingConfigurationComponent } from '../common/PricingConfigurationComponent';
 import { ProductPreviewCard } from '../common/ProductPreviewCard';
 import { AppDatabase } from '../../services/db';
+import { MasterDataService } from '../../services/masterDataService';
 import { getActiveUpsellsForProduct, resolveProductUpsells } from '../../services/configuratorRegistry';
 import { ExistingProductUpsellSelectorModal } from './ExistingProductUpsellSelectorModal';
 import { OperationalAssetSelector, SelectedAssetPayload } from './OperationalAssetSelector';
@@ -96,6 +97,7 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
   const [isOperationalAssetsManagerOpen, setIsOperationalAssetsManagerOpen] = useState(false);
   const [operationalAssetsManagerTab, setOperationalAssetsManagerTab] = useState<'VEHICLES' | 'YACHTS' | 'FERRIES'>('VEHICLES');
 
+  // Sections 13 & 33: New products start with completely empty cascading selections (no auto-selection)
   const createCleanWorkspaceFormData = (): Partial<Product> => ({
     sku: `UB-${Math.floor(100000 + Math.random() * 900000)}`,
     name: '',
@@ -104,13 +106,13 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     longDescription: '',
     category: 'Private Tours',
     subcategory: '',
-    destinationId: destinations[0]?.id || '',
-    destinationName: destinations[0]?.name || '',
-    regionId: masterRegions[0]?.id || '',
-    regionName: masterRegions[0]?.name || '',
-    hubId: cityHubs[0]?.id || '',
-    country: destinations[0]?.name || 'Japan',
-    city: cityHubs[0]?.name || 'Tokyo',
+    destinationId: '',
+    destinationName: '',
+    regionId: '',
+    regionName: '',
+    hubId: '',
+    country: '',
+    city: '',
     productType: 'Private Tour',
     duration: '',
     operatingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
@@ -158,6 +160,14 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
   const [formData, setFormData] = useState<Partial<Product>>(() => {
     if (product) return { ...product };
     return createCleanWorkspaceFormData();
+  });
+
+  // Section 14: Audit existing product hierarchy on load without auto-repairing or modifying data
+  const [hierarchyIntegrityIssue, setHierarchyIntegrityIssue] = useState<string | null>(() => {
+    if (!product) return null;
+    const masterData = MasterDataService.getInstance();
+    const audit = masterData.auditProductHierarchy(product);
+    return !audit.valid ? audit.issues.join('; ') : null;
   });
 
   // All Master Products catalog for upsell selector and live resolution
@@ -461,6 +471,14 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       return;
     }
 
+    // Sections 24 & 25: Canonical hierarchy validation
+    const masterData = MasterDataService.getInstance();
+    const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, formData.hubId);
+    if (!hierarchy.valid) {
+      alert(`Data Integrity Error: ${hierarchy.error}`);
+      return;
+    }
+
     const chosenCurrency = (formData.nativeCurrency || formData.currency) as CurrencyCode;
 
     // Direct alignment to prevent zero net cost mapping bugs
@@ -536,6 +554,13 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       ...(formData as Product),
       id: product?.id || `prod-${Date.now()}`,
       category: activeCategory,
+      regionId: hierarchy.region!.id,
+      regionName: hierarchy.region!.name,
+      destinationId: hierarchy.destination!.id,
+      destinationName: hierarchy.destination!.name,
+      country: hierarchy.destination!.country || hierarchy.destination!.name,
+      hubId: hierarchy.hub ? hierarchy.hub.id : (formData.hubId || ''),
+      city: hierarchy.hub ? hierarchy.hub.name : (formData.city || hierarchy.destination!.name),
       pricingModel: isCap 
         ? 'CAPACITY_TIERED' 
         : (activeCategory === 'Guides' ? 'PER_HOUR' : (activeCategory === 'Lunch / Dinner Restaurant' ? 'MEAL_PASSENGER' : (activeCategory === 'Tickets' ? 'PER_PERSON' : 'PER_PERSON'))),
@@ -569,12 +594,27 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       return;
     }
 
+    // Sections 24 & 25: Canonical hierarchy validation
+    const masterData = MasterDataService.getInstance();
+    const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, formData.hubId);
+    if (!hierarchy.valid) {
+      alert(`Data Integrity Error: ${hierarchy.error}`);
+      return;
+    }
+
     const chosenCurrency = (formData.nativeCurrency || formData.currency) as CurrencyCode;
 
     const draftProduct: Product = {
       ...(formData as Product),
       id: product?.id || `prod-${Date.now()}`,
       category: activeCategory,
+      regionId: hierarchy.region!.id,
+      regionName: hierarchy.region!.name,
+      destinationId: hierarchy.destination!.id,
+      destinationName: hierarchy.destination!.name,
+      country: hierarchy.destination!.country || hierarchy.destination!.name,
+      hubId: hierarchy.hub ? hierarchy.hub.id : (formData.hubId || ''),
+      city: hierarchy.hub ? hierarchy.hub.name : (formData.city || hierarchy.destination!.name),
       currency: chosenCurrency,
       nativeCurrency: chosenCurrency,
       status: 'DRAFT',
@@ -688,6 +728,22 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
         {/* Complete Product Management Form */}
         <form onSubmit={handleFormSubmit} className="lg:col-span-9 space-y-6">
           
+          {/* Section 14: Data Integrity Issue Warning Banner */}
+          {hierarchyIntegrityIssue && (
+            <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex items-start space-x-3 text-amber-900 shadow-xs">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="space-y-1 text-xs">
+                <div className="font-bold text-sm text-amber-950">Data Integrity Warning</div>
+                <p className="text-amber-800 leading-relaxed">
+                  This Product contains an outdated or invalid Region / Destination / Hub relationship: <strong>{hierarchyIntegrityIssue}</strong>.
+                </p>
+                <p className="text-amber-700">
+                  Please select the correct current hierarchy relationships below before saving. Opening this form has not altered any saved database records.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Card 1: Basic Information */}
           <SectionCard 
             title="1. Basic Information" 
@@ -716,54 +772,86 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                 />
               </FormField>
 
-              <FormField label="Region" required>
+              {/* Cascading Region (Tier 1) */}
+              <FormField label="Master Region (Tier 1)" required>
                 <select
                   required
                   value={formData.regionId || ''}
                   onChange={e => {
-                    const reg = masterRegions.find(r => r.id === e.target.value);
-                    setFormData({ ...formData, regionId: reg?.id, regionName: reg?.name });
+                    const regId = e.target.value;
+                    const reg = masterRegions.find(r => r.id === regId);
+                    setFormData({ 
+                      ...formData, 
+                      regionId: reg?.id || '', 
+                      regionName: reg?.name || '',
+                      destinationId: '',
+                      destinationName: '',
+                      hubId: '',
+                      city: '',
+                      country: ''
+                    });
                   }}
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs"
+                  className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none"
                 >
-                  <option value="">Select Region</option>
+                  <option value="">-- Select Master Region --</option>
                   {masterRegions.map(r => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
+                    <option key={r.id} value={r.id}>{r.name} ({r.id})</option>
                   ))}
                 </select>
               </FormField>
 
-              <FormField label="Destination" required>
+              {/* Cascading Destination (Tier 2) strictly filtered by selected Region */}
+              <FormField label="Destination (Tier 2)" required>
                 <select
                   required
+                  disabled={!formData.regionId}
                   value={formData.destinationId || ''}
                   onChange={e => {
-                    const dest = destinations.find(d => d.id === e.target.value);
-                    setFormData({ ...formData, destinationId: dest?.id, destinationName: dest?.name });
+                    const destId = e.target.value;
+                    const dest = destinations.find(d => d.id === destId);
+                    setFormData({ 
+                      ...formData, 
+                      destinationId: dest?.id || '', 
+                      destinationName: dest?.name || '',
+                      country: dest?.country || dest?.name || '',
+                      hubId: '',
+                      city: ''
+                    });
                   }}
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs"
+                  className={`w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none ${!formData.regionId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
                 >
-                  <option value="">Select Destination</option>
-                  {destinations.map(d => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
+                  <option value="">{formData.regionId ? '-- Select Destination --' : '-- Select Region First --'}</option>
+                  {destinations
+                    .filter(d => d.regionId === formData.regionId)
+                    .map(d => (
+                      <option key={d.id} value={d.id}>{d.name} ({d.id})</option>
+                    ))}
                 </select>
               </FormField>
 
-              <FormField label="City Hub" required>
+              {/* Cascading City Hub (Tier 3) strictly filtered by selected Destination */}
+              <FormField label="City Hub (Tier 3)" required>
                 <select
                   required
+                  disabled={!formData.destinationId}
                   value={formData.hubId || ''}
                   onChange={e => {
-                    const hub = cityHubs.find(h => h.id === e.target.value);
-                    setFormData({ ...formData, hubId: hub?.id, city: hub?.name || '' });
+                    const hubId = e.target.value;
+                    const hub = cityHubs.find(h => h.id === hubId);
+                    setFormData({ 
+                      ...formData, 
+                      hubId: hub?.id || '', 
+                      city: hub?.name || ''
+                    });
                   }}
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs"
+                  className={`w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
                 >
-                  <option value="">Select Hub</option>
-                  {cityHubs.map(h => (
-                    <option key={h.id} value={h.id}>{h.name}</option>
-                  ))}
+                  <option value="">{formData.destinationId ? '-- Select City Hub --' : '-- Select Destination First --'}</option>
+                  {cityHubs
+                    .filter(h => h.destinationId === formData.destinationId)
+                    .map(h => (
+                      <option key={h.id} value={h.id}>{h.name} ({h.id})</option>
+                    ))}
                 </select>
               </FormField>
 

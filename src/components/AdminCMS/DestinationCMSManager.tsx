@@ -97,16 +97,14 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
 
   const handleOpenCreate = () => {
     setSaveError(null);
-    const activeMasterRegions = masterRegions.filter(r => r.status === 'ACTIVE');
-    const defaultRegion = activeMasterRegions[0] || masterRegions[0];
     setEditingDest(null);
     setModalTab('CONTENT');
     setFormData({
       name: '',
       slug: '',
       country: '',
-      regionId: defaultRegion ? defaultRegion.id : '',
-      regionName: defaultRegion ? defaultRegion.name : '',
+      regionId: '',
+      regionName: '',
       region: 'JAPAN',
       heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1600&auto=format&fit=crop',
       heroImageAlt: 'Destination Ground Operations',

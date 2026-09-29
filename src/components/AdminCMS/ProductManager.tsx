@@ -17,6 +17,7 @@ import {
 } from '../../types';
 import { ModuleMasterSyncBar } from './common/ModuleMasterSyncBar';
 import { AppDatabase } from '../../services/db';
+import { MasterDataService } from '../../services/masterDataService';
 import { useAuth } from '../../context/AuthContext';
 import { formatCurrency, CAPACITY_BASED_CATEGORIES } from '../../services/pricingEngine';
 import { 
@@ -130,19 +131,19 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   const [operationalAssetsManagerTab, setOperationalAssetsManagerTab] = useState<'VEHICLES' | 'YACHTS' | 'FERRIES'>('VEHICLES');
 
   // Form State: Starts 100% clean for new products (no fabricated pricing or operational presets)
-  const createCleanProductFormData = (targetDest?: Destination, targetHub?: CityHub, targetReg?: MasterRegion): Partial<Product> => ({
+  const createCleanProductFormData = (): Partial<Product> => ({
     sku: `UB-PROD-${Math.floor(100000 + Math.random() * 900000)}`,
     name: '',
     title: '',
     shortDescription: '',
     longDescription: '',
-    destinationId: targetDest?.id || destinations[0]?.id || 'dest-japan',
-    destinationName: targetDest?.name || destinations[0]?.name || 'Japan',
-    regionId: targetReg?.id || '',
-    regionName: targetReg?.name || '',
-    hubId: targetHub?.id || '',
-    country: targetDest?.name || 'Japan',
-    city: targetHub?.name || 'Tokyo',
+    destinationId: '',
+    destinationName: '',
+    regionId: '',
+    regionName: '',
+    hubId: '',
+    country: '',
+    city: '',
     productType: '',
     category: 'Private Tours',
     subcategory: '',
@@ -182,7 +183,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     meetingPoint: '',
     pickupInformation: '',
     images: [],
-    location: `${targetHub?.name || 'Tokyo'}, ${targetDest?.name || 'Japan'}`,
+    location: '',
     latitude: 35.6762,
     longitude: 139.6503,
     rating: 5.0,
@@ -191,7 +192,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   });
 
   const [formData, setFormData] = useState<Partial<Product>>(() => 
-    createCleanProductFormData(destinations[0], cityHubs[0], masterRegions[0])
+    createCleanProductFormData()
   );
 
   const [inclusionInput, setInclusionInput] = useState('');
@@ -292,13 +293,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   const handleOpenCreate = () => {
     setEditingProduct(null);
     setModalTab('CONTENT');
-    const firstReg = masterRegions[0] || { id: 'reg-asia', name: 'Asia', code: 'ASIA' };
-    const matchingDests = destinations.filter(d => !firstReg.id || d.regionId === firstReg.id);
-    const targetDest = matchingDests[0] || destinations[0] || { id: 'dest-japan', name: 'Japan', regionId: firstReg.id };
-    const dHubs = cityHubs.filter(h => h.destinationId === targetDest.id);
-    const firstHub = dHubs[0];
-
-    setFormData(createCleanProductFormData(targetDest, firstHub, firstReg));
+    setFormData(createCleanProductFormData());
     setIsModalOpen(true);
   };
 
@@ -364,20 +359,24 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     const fee = Number(formData.serviceFeeFixed) || 0;
     const computedSelling = calculateSellingPrice(adultNet, buyerMarkup, tax, fee);
 
-    const targetDest = destinations.find(d => d.id === formData.destinationId);
-    const targetReg = masterRegions.find(r => r.id === (formData.regionId || targetDest?.regionId));
-    const targetHub = cityHubs.find(h => h.id === formData.hubId);
+    // Canonical Hierarchy Validation
+    const masterData = MasterDataService.getInstance();
+    const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, formData.hubId);
+    if (!hierarchy.valid) {
+      alert(`Data Integrity Error: ${hierarchy.error}`);
+      return;
+    }
 
     const productToSave: Product = {
       id: editingProduct ? editingProduct.id : `prod-${Date.now()}`,
       sku: formData.sku || `SKU-${Date.now()}`,
-      destinationId: formData.destinationId || destinations[0]?.id || 'dest-japan',
-      destinationName: targetDest?.name || formData.destinationName || 'Japan',
-      regionId: targetReg?.id || formData.regionId || '',
-      regionName: targetReg?.name || formData.regionName || '',
-      hubId: formData.hubId || targetHub?.id || '',
-      country: formData.country || targetDest?.country || targetDest?.name || 'Japan',
-      city: formData.city || targetHub?.name || 'Tokyo',
+      regionId: hierarchy.region!.id,
+      regionName: hierarchy.region!.name,
+      destinationId: hierarchy.destination!.id,
+      destinationName: hierarchy.destination!.name,
+      country: hierarchy.destination!.country || hierarchy.destination!.name,
+      hubId: hierarchy.hub ? hierarchy.hub.id : (formData.hubId || ''),
+      city: hierarchy.hub ? hierarchy.hub.name : (formData.city || hierarchy.destination!.name),
       productType: formData.productType || '',
       name: formData.name || '',
       shortDescription: formData.shortDescription || '',
@@ -449,7 +448,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       meetingPoint: formData.meetingPoint || '',
       pickupInformation: formData.pickupInformation || '',
       images: formData.images && (formData.images || []).length > 0 ? formData.images : [],
-      location: `${formData.city || targetHub?.name || ''}, ${formData.country || targetDest?.name || ''}`.replace(/^,\s*|,\s*$/g, ''),
+      location: `${formData.city || ''}, ${formData.country || ''}`.replace(/^,\s*|,\s*$/g, ''),
       latitude: formData.latitude || 35.6762,
       longitude: formData.longitude || 139.6503,
       rating: formData.rating || 5.0,
@@ -935,27 +934,23 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                       onChange={e => {
                         const regId = e.target.value;
                         const reg = masterRegions.find(r => r.id === regId);
-                        const matchingDests = destinations.filter(d => !regId || d.regionId === regId);
-                        const nextDest = matchingDests[0] || destinations[0];
-                        const matchingHubs = cityHubs.filter(h => h.destinationId === nextDest?.id);
-                        const nextHub = matchingHubs[0];
                         setFormData({
                           ...formData,
                           regionId: regId,
                           regionName: reg?.name || '',
-                          destinationId: nextDest?.id || formData.destinationId,
-                          destinationName: nextDest?.name || formData.destinationName,
-                          country: nextDest?.country || nextDest?.name || formData.country,
-                          hubId: nextHub?.id || '',
-                          city: nextHub?.name || 'Tokyo',
-                          location: `${nextHub?.name || 'Tokyo'}, ${nextDest?.name || 'Japan'}`
+                          destinationId: '',
+                          destinationName: '',
+                          country: '',
+                          hubId: '',
+                          city: '',
+                          location: ''
                         });
                       }}
                       className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-[#00C6A6]"
                     >
-                      <option value="" disabled>-- Select Region --</option>
+                      <option value="">-- Select Master Region --</option>
                       {masterRegions.map(r => (
-                        <option key={r.id} value={r.id}>{r.name} ({r.code})</option>
+                        <option key={r.id} value={r.id}>{r.name} ({r.id})</option>
                       ))}
                     </select>
                   </div>
@@ -964,30 +959,29 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                     <label className="text-xs font-semibold text-slate-700">2. Destination (Tier 2) *</label>
                     <select
                       required
-                      value={formData.destinationId}
+                      disabled={!formData.regionId}
+                      value={formData.destinationId || ''}
                       onChange={e => {
                         const destId = e.target.value;
                         const dest = destinations.find(d => d.id === destId);
-                        const parentReg = masterRegions.find(r => r.id === dest?.regionId);
-                        const matchingHubs = cityHubs.filter(h => h.destinationId === destId);
-                        const firstHub = matchingHubs[0];
                         setFormData({
                           ...formData,
                           destinationId: destId,
                           destinationName: dest?.name || '',
-                          country: dest?.country || dest?.name || 'Japan',
-                          regionId: dest?.regionId || parentReg?.id || formData.regionId || '',
-                          regionName: dest?.regionName || parentReg?.name || formData.regionName || '',
-                          hubId: firstHub?.id || '',
-                          city: firstHub?.name || 'Tokyo',
-                          location: `${firstHub?.name || 'Tokyo'}, ${dest?.name || 'Japan'}`
+                          country: dest?.country || dest?.name || '',
+                          hubId: '',
+                          city: '',
+                          location: dest?.name || ''
                         });
                       }}
-                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-[#00C6A6]"
+                      className={`w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-[#00C6A6] ${!formData.regionId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
                     >
-                      {modalAvailableDestinations.map(d => (
-                        <option key={d.id} value={d.id}>{d.name} {d.regionName ? `(${d.regionName})` : ''}</option>
-                      ))}
+                      <option value="">{formData.regionId ? '-- Select Destination --' : '-- Select Region First --'}</option>
+                      {destinations
+                        .filter(d => d.regionId === formData.regionId)
+                        .map(d => (
+                          <option key={d.id} value={d.id}>{d.name} ({d.id})</option>
+                        ))}
                     </select>
                   </div>
 
@@ -995,6 +989,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                     <label className="text-xs font-semibold text-slate-700">3. Destination Hub / City (Tier 3) *</label>
                     <div className="flex gap-1.5">
                       <select
+                        disabled={!formData.destinationId}
                         value={formData.hubId || ''}
                         onChange={e => {
                           const hId = e.target.value;
@@ -1003,15 +998,17 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                             ...formData,
                             hubId: hId,
                             city: hub?.name || formData.city || '',
-                            location: `${hub?.name || formData.city || 'Tokyo'}, ${formData.destinationName || 'Japan'}`
+                            location: `${hub?.name || formData.city || ''}, ${formData.destinationName || ''}`.replace(/^,\s*|,\s*$/g, '')
                           });
                         }}
-                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-[#00C6A6]"
+                        className={`w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-[#00C6A6] ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
                       >
-                        <option value="">-- Choose City Hub --</option>
-                        {modalAvailableHubs.map(h => (
-                          <option key={h.id} value={h.id}>{h.name}</option>
-                        ))}
+                        <option value="">{formData.destinationId ? '-- Select City Hub --' : '-- Select Destination First --'}</option>
+                        {cityHubs
+                          .filter(h => h.destinationId === formData.destinationId)
+                          .map(h => (
+                            <option key={h.id} value={h.id}>{h.name} ({h.id})</option>
+                          ))}
                       </select>
                     </div>
                   </div>
