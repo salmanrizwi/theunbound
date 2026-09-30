@@ -250,6 +250,19 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
     setHasUnsavedChanges(true);
   };
 
+  const handleDirectSequenceChange = (fromIdx: number, newSequenceVal: number) => {
+    if (isNaN(newSequenceVal) || newSequenceVal < 1) return;
+    const targetIdx = Math.min(Math.max(1, newSequenceVal), sequenceDraftModules.length) - 1;
+    if (fromIdx === targetIdx) return;
+
+    const updated = [...sequenceDraftModules];
+    const [movedItem] = updated.splice(fromIdx, 1);
+    updated.splice(targetIdx, 0, movedItem);
+    const reindexed = updated.map((item, i) => ({ ...item, sequence: i + 1 }));
+    setSequenceDraftModules(reindexed);
+    setHasUnsavedChanges(true);
+  };
+
   const handleDiscardSequenceChanges = () => {
     const latest = db.getHomepageConfig();
     setSequenceDraftModules(initSequenceDraft(latest));
@@ -728,10 +741,17 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                     }`}
                   >
                     <div className="flex items-center space-x-3.5 mb-3 sm:mb-0">
-                      {/* Monospaced 2-digit sequence number badge */}
-                      <span className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 text-slate-800 text-xs font-mono font-bold flex items-center justify-center shrink-0 shadow-2xs">
-                        {String(idx + 1).padStart(2, '0')}
-                      </span>
+                      {/* Monospaced 2-digit sequence number badge & direct order input */}
+                      <div className="flex items-center space-x-1 shrink-0" title="Directly edit sequence number or use arrows to reorder">
+                        <input
+                          type="number"
+                          min={1}
+                          max={sequenceDraftModules.length}
+                          value={item.sequence}
+                          onChange={(e) => handleDirectSequenceChange(idx, parseInt(e.target.value, 10))}
+                          className="w-11 h-9 rounded-xl bg-slate-100 border border-slate-200 text-slate-900 text-xs font-mono font-bold text-center focus:bg-white focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none shadow-2xs transition-all"
+                        />
+                      </div>
 
                       <div className="space-y-0.5">
                         <div className="flex items-center space-x-2">

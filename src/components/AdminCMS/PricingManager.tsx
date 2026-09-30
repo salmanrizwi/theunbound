@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Product, CurrencyCode, Destination, ProductCategory, SUPPORTED_CURRENCIES } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
-import { formatCurrency, calculateSellingPrice } from '../../services/pricingEngine';
+import { formatCurrency, calculateSellingPrice, calculateUnifiedPrice } from '../../services/pricingEngine';
 import { 
   DollarSign, 
   Search, 
@@ -576,12 +576,27 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) 
                           } else {
                             const netVal = parseFloat(raw);
                             if (!isNaN(netVal)) {
-                              const markup = editingTierProduct.defaultMarkupPercent ?? 20;
-                              const fin = Math.round(netVal * (1 + markup / 100));
+                              const currentTier = updated[idx];
+                              const mVal = currentTier.marginValue !== undefined ? Number(currentTier.marginValue) : (editingTierProduct.b2bAgentMarkupPercent || editingTierProduct.defaultMarkupPercent || 20);
+                              const tVal = currentTier.taxValue !== undefined ? Number(currentTier.taxValue) : (editingTierProduct.taxPercent || 10);
+                              const sVal = currentTier.serviceChargeValue !== undefined ? Number(currentTier.serviceChargeValue) : (editingTierProduct.serviceFeeFixed || 0);
+
+                              const res = calculateUnifiedPrice({
+                                nettPrice: netVal,
+                                quantity: 1,
+                                marginType: (currentTier.marginType as any) || 'PERCENTAGE',
+                                marginValue: mVal,
+                                taxPercent: tVal,
+                                serviceChargeType: (currentTier.serviceChargeType as any) || 'PERCENTAGE',
+                                serviceChargeValue: sVal,
+                                currency: editingTierProduct.currency || 'USD'
+                              });
+                              const fin = res.finalPrice;
                               updated[idx] = { 
                                 ...updated[idx], 
                                 netCostPerPax: netVal,
                                 nettPrice: netVal,
+                                supplierNett: netVal,
                                 finalPrice: fin,
                                 sellingPricePerPax: fin
                               };

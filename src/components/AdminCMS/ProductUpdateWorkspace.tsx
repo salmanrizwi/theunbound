@@ -57,6 +57,7 @@ import { getActiveUpsellsForProduct, resolveProductUpsells } from '../../service
 import { ExistingProductUpsellSelectorModal } from './ExistingProductUpsellSelectorModal';
 import { OperationalAssetSelector, SelectedAssetPayload } from './OperationalAssetSelector';
 import { OperationalAssetsManager } from './OperationalAssetsManager';
+import { calculateUnifiedPrice } from '../../services/pricingEngine';
 
 interface ProductUpdateWorkspaceProps {
   product: Product | null; // null means Create mode
@@ -490,16 +491,25 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       const netVal = t.supplierNett !== undefined 
         ? Number(t.supplierNett) 
         : (t.nettPrice !== undefined ? Number(t.nettPrice) : (t.netCostPerPax !== undefined ? Number(t.netCostPerPax) : 0));
-      const mVal = t.marginValue !== undefined ? Number(t.marginValue) : (formData.buyerMarkupPercent || 20);
+      const mVal = t.marginValue !== undefined ? Number(t.marginValue) : (formData.b2bAgentMarkupPercent || formData.buyerMarkupPercent || 20);
       const mType = t.marginType || 'PERCENTAGE';
-      const marginAmt = mType === 'FIXED' ? mVal : netVal * (mVal / 100);
       const tVal = t.taxValue !== undefined ? Number(t.taxValue) : (formData.taxPercent || 10);
       const tType = t.taxType || 'PERCENTAGE';
-      const taxAmt = tType === 'NOT_APPLICABLE' ? 0 : (tType === 'FIXED' ? tVal : marginAmt * (tVal / 100));
       const sVal = t.serviceChargeValue !== undefined ? Number(t.serviceChargeValue) : (formData.serviceFeeFixed || 0);
-      const sType = t.serviceChargeType || 'FIXED';
-      const svcAmt = sType === 'NOT_APPLICABLE' ? 0 : (sType === 'PERCENTAGE' ? netVal * (sVal / 100) : sVal);
-      const calculatedFinal = Math.round((netVal + marginAmt + taxAmt + svcAmt) * 100) / 100;
+      const sType = t.serviceChargeType || 'PERCENTAGE';
+
+      const unifiedRes = calculateUnifiedPrice({
+        nettPrice: netVal,
+        quantity: 1,
+        marginType: mType as any,
+        marginValue: mVal,
+        taxPercent: tType === 'NOT_APPLICABLE' ? 0 : tVal,
+        serviceChargeType: sType === 'NOT_APPLICABLE' ? 'FIXED' : sType as any,
+        serviceChargeValue: sType === 'NOT_APPLICABLE' ? 0 : sVal,
+        currency: (t.currency || chosenCurrency) as CurrencyCode
+      });
+
+      const calculatedFinal = unifiedRes.finalPrice;
 
       return {
         ...t,

@@ -300,12 +300,25 @@ export function calculateDeliveredPriceForUser(
                              7;
     const vehicleModel = product.vehicleConfig?.vehicleModel || product.vehicleConfig?.vehicleName || product.name;
 
-    const rawVehicleSelling = calculateSellingPrice(
-      vehicleCost,
-      appliedMarkupPercent,
-      product.taxPercent ?? 10,
-      product.serviceFeeFixed ?? 0
-    );
+    const tierMargin = isAgent
+      ? ((firstTier as any)?.b2bMargin ?? firstTier?.marginValue ?? appliedMarkupPercent)
+      : ((firstTier as any)?.buyerMargin ?? firstTier?.marginValue ?? appliedMarkupPercent);
+    const tierTax = firstTier?.taxValue ?? product.taxPercent ?? 10;
+    const tierSvcValue = firstTier?.serviceChargeValue ?? (product as any).serviceFeePercent ?? (product as any).serviceFeeFixed ?? 0;
+    const tierSvcType = firstTier?.serviceChargeType ?? ((product as any).serviceFeePercent !== undefined ? 'PERCENTAGE' : 'FIXED');
+
+    const unifiedRes = calculateUnifiedPrice({
+      nettPrice: vehicleCost,
+      quantity: 1,
+      marginType: firstTier?.marginType || 'PERCENTAGE',
+      marginValue: tierMargin,
+      taxPercent: tierTax,
+      serviceChargeType: tierSvcType as any,
+      serviceChargeValue: tierSvcValue,
+      currency: product.currency || 'USD'
+    });
+
+    const rawVehicleSelling = unifiedRes.finalPrice;
 
     const totalVehicleSellingPrice = convertCurrency(rawVehicleSelling, product.currency, targetCurrency);
     const perPersonStartingFrom = totalVehicleSellingPrice / Math.max(1, startingCapacity);
@@ -316,7 +329,7 @@ export function calculateDeliveredPriceForUser(
       baseAdultNet: vehicleCost,
       baseChildNet: 0,
       baseInfantNet: 0,
-      appliedMarkupPercent,
+      appliedMarkupPercent: tierMargin,
       userTier,
       isCustomMargin,
       currency: targetCurrency,
@@ -455,6 +468,7 @@ export function calculateProductPrice(
 
   // Capacity calculations
   let vehicleDetails: PricingCalculationResult['vehicleDetails'] | undefined = undefined;
+  let matchingTierFound: TieredPrice | undefined = undefined;
 
   if (isCapacity) {
     // --- CAPACITY-BASED PRICING MODEL (Sections 2–14, 51) ---
@@ -485,7 +499,6 @@ export function calculateProductPrice(
     let vehiclesAllocated = quantity;
     let capacityExceeded = false;
     let capacityErrorMessage: string | undefined = undefined;
-    let matchingTierFound: TieredPrice | undefined = undefined;
 
     // Check Product-Specific Capacity Rules (tieredPricing) FIRST
     const activeTiers = (product.tieredPricing || []).filter(t => t.status !== 'INACTIVE');
@@ -673,6 +686,10 @@ export function calculateProductPrice(
       configuredMarkupPercent = user.customAgentMarginPercent;
     } else if (rateMarkupAgent !== undefined) {
       configuredMarkupPercent = rateMarkupAgent;
+    } else if (isCapacity && matchingTierFound && (matchingTierFound as any).b2bMargin !== undefined) {
+      configuredMarkupPercent = (matchingTierFound as any).b2bMargin;
+    } else if (isCapacity && matchingTierFound && matchingTierFound.marginValue !== undefined) {
+      configuredMarkupPercent = matchingTierFound.marginValue;
     } else if (product.b2bAgentMarkupPercent !== undefined) {
       configuredMarkupPercent = product.b2bAgentMarkupPercent;
     } else {
@@ -684,6 +701,10 @@ export function calculateProductPrice(
       configuredMarkupPercent = user.customBuyerMarginPercent;
     } else if (rateMarkupBuyer !== undefined) {
       configuredMarkupPercent = rateMarkupBuyer;
+    } else if (isCapacity && matchingTierFound && (matchingTierFound as any).buyerMargin !== undefined) {
+      configuredMarkupPercent = (matchingTierFound as any).buyerMargin;
+    } else if (isCapacity && matchingTierFound && matchingTierFound.marginValue !== undefined) {
+      configuredMarkupPercent = matchingTierFound.marginValue;
     } else if (product.buyerMarkupPercent !== undefined) {
       configuredMarkupPercent = product.buyerMarkupPercent;
     } else {
@@ -703,15 +724,20 @@ export function calculateProductPrice(
   let nativeMarkupAmount = nativeTotalNetCost * markupRate;
 
   // Support for configured fixed margin amounts (Section 23)
-  if ((product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined) {
+  if (isCapacity && matchingTierFound && matchingTierFound.marginType === 'FIXED' && matchingTierFound.marginValue !== undefined) {
+    nativeMarkupAmount = matchingTierFound.marginValue * quantity;
+    markupRate = nativeTotalNetCost > 0 ? nativeMarkupAmount / nativeTotalNetCost : 0;
+  } else if ((product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined) {
     nativeMarkupAmount = Number((product as any).marginFixed) * (isCapacity ? 1 : totalPax);
     markupRate = nativeTotalNetCost > 0 ? nativeMarkupAmount / nativeTotalNetCost : 0;
   }
 
   // Authoritative Tax on Margin (Section 4 & 24)
-  const configuredTaxPercent = rateTaxPercentage !== undefined 
-    ? rateTaxPercentage 
-    : (product.taxPercent !== undefined ? product.taxPercent : 10);
+  const configuredTaxPercent = (isCapacity && matchingTierFound && matchingTierFound.taxValue !== undefined)
+    ? matchingTierFound.taxValue
+    : (rateTaxPercentage !== undefined 
+      ? rateTaxPercentage 
+      : (product.taxPercent !== undefined ? product.taxPercent : 10));
   const taxRate = configuredTaxPercent / 100;
   const nativeTaxAmount = nativeMarkupAmount * taxRate;
 
@@ -720,7 +746,14 @@ export function calculateProductPrice(
 
   // Service Fee on Subtotal (Section 4 & 24)
   let nativeServiceFee = 0;
-  if ((product as any).serviceFeeFixed !== undefined) {
+  if (isCapacity && matchingTierFound && matchingTierFound.serviceChargeValue !== undefined) {
+    const sType = matchingTierFound.serviceChargeType || 'PERCENTAGE';
+    if (sType === 'PERCENTAGE') {
+      nativeServiceFee = nativeSubtotal * (matchingTierFound.serviceChargeValue / 100);
+    } else if (sType === 'FIXED') {
+      nativeServiceFee = matchingTierFound.serviceChargeValue * quantity;
+    }
+  } else if ((product as any).serviceFeeFixed !== undefined) {
     nativeServiceFee = Number((product as any).serviceFeeFixed) * (isCapacity ? 1 : totalPax);
   } else if ((product as any).serviceFeePercent !== undefined) {
     nativeServiceFee = nativeSubtotal * ((product as any).serviceFeePercent / 100);

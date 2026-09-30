@@ -148,8 +148,8 @@ console.log('\n--- 2. Testing Group Tour Pricing ---');
 
   // Base Net = 2 * 8000 + 1 * 5000 + 1 * 0 = 21,000 JPY
   assert(groupCalc.totalNetCost === 21000, 'Group Tour: Adult (2) + Child (1) + Infant (0) net cost = 21,000 JPY');
-  // Markup = 21,000 * 25% = 5,250 -> Gross = 26,250 JPY -> Tax 10% = 2,625 -> Final = 28,875 JPY
-  assert(groupCalc.finalTotalSellingPrice === 28875, 'Group Tour: 25% markup + 10% tax = 28,875 JPY final price');
+  // Markup = 21,000 * 25% = 5,250 -> Tax 10% on Margin = 525 -> Final = 26,775 JPY
+  assert(groupCalc.finalTotalSellingPrice === 26775, 'Group Tour: 25% markup + 10% tax on margin = 26,775 JPY final price');
 }
 
 // -------------------------------------------------------------
@@ -185,8 +185,8 @@ console.log('\n--- 3. Testing Ticket Pricing ---');
 
   // Base Net = 3 * 2200 + 2 * 1200 + 0 = 9,000 JPY
   assert(tktCalc.totalNetCost === 9000, 'Ticket: 3 Adults + 2 Children + 1 Infant Net = 9,000 JPY');
-  // Markup 20% = 1,800 -> Gross = 10,800 -> Tax 10% = 1,080 -> Final = 11,880 JPY
-  assert(tktCalc.finalTotalSellingPrice === 11880, 'Ticket: Exact commercial final price = 11,880 JPY');
+  // Markup 20% = 1,800 -> Tax 10% on Margin = 180 -> Final = 10,980 JPY
+  assert(tktCalc.finalTotalSellingPrice === 10980, 'Ticket: Exact commercial final price = 10,980 JPY');
 }
 
 // -------------------------------------------------------------
@@ -318,8 +318,8 @@ console.log('\n--- 6. Testing Restaurant Pricing ---');
   });
   // Net = 2 * 12000 + 1 * 6000 = 30,000 JPY
   assert(restCalc.totalNetCost === 30000, 'Restaurant: 2 Adults + 1 Child net = 30,000 JPY');
-  // Markup 20% = 6,000 -> Gross = 36,000 -> Tax 10% = 3,600 -> Final = 39,600 JPY
-  assert(restCalc.finalTotalSellingPrice === 39600, 'Restaurant: Final price = 39,600 JPY');
+  // Markup 20% = 6,000 -> Tax 10% on Margin = 600 -> Final = 36,600 JPY
+  assert(restCalc.finalTotalSellingPrice === 36600, 'Restaurant: Final price = 36,600 JPY');
 }
 
 // -------------------------------------------------------------
@@ -360,7 +360,7 @@ console.log('\n--- 7. Testing Private Yacht Pricing ---');
     targetCurrency: 'JPY'
   });
   assert(yachtCalc.totalNetCost === 150000, 'Private Yacht: 10 Pax on 12-capacity charter net = 150,000 JPY');
-  assert(yachtCalc.finalTotalSellingPrice === 198000, 'Private Yacht: 20% Markup + 10% Tax = 198,000 JPY');
+  assert(yachtCalc.finalTotalSellingPrice === 183000, 'Private Yacht: 20% Markup + 10% Tax = 183,000 JPY');
 }
 
 // -------------------------------------------------------------
@@ -531,9 +531,9 @@ console.log('\n--- 12. Testing VIP Ground Services Pricing ---');
     travelDate: '2026-08-01',
     targetCurrency: 'USD'
   });
-  // Net = 2 * 120 + 60 = $300. Markup 25% = $75 -> Gross = $375 -> Tax 10% = $37.5 (round 38) -> Final = $413
+  // Net = 2 * 120 + 60 = $300. Markup 25% = $75 -> Tax 10% on Margin = $7.5 -> Final = $382.5
   assert(vipCalc.totalNetCost === 300, 'VIP Ground: 2 Adults + 1 Child net = $300');
-  assert(vipCalc.finalTotalSellingPrice >= 412 && vipCalc.finalTotalSellingPrice <= 413, 'VIP Ground: Final selling price matches calculation');
+  assert(vipCalc.finalTotalSellingPrice >= 382 && vipCalc.finalTotalSellingPrice <= 383, 'VIP Ground: Final selling price matches calculation');
 }
 
 // -------------------------------------------------------------
@@ -710,7 +710,7 @@ console.log('\n--- 17. Testing Cross-Screen Reconciliation ---');
     cartPrice === bookingPrice,
     'Reconciliation: Product Card = Detail = Configurator = Quote = Cart = Booking'
   );
-  assert(authoritativeFinalPrice === 34320, 'Reconciliation: Exact reconciled Final Price = 34,320 JPY');
+  assert(authoritativeFinalPrice === 31720, 'Reconciliation: Exact reconciled Final Price = 31,720 JPY');
 }
 
 // -------------------------------------------------------------
@@ -754,9 +754,9 @@ console.log('\n--- 19. Testing Duplicate Margin Protection ---');
     targetCurrency: 'USD'
   });
 
-  // Net = 100, Markup = 20, Tax = 12 -> Final = 132.
-  // The system must NOT take Final Price 132 and apply 20% margin again to get 158.4
-  assert(calculation.finalTotalSellingPrice === 132, 'Duplicate Margin: Exactly 1 single margin applied (132 USD, not 158.4 USD)');
+  // Net = 100, Markup = 20, Tax on Margin = 2 -> Final = 122.
+  // The system must NOT take Final Price 122 and apply 20% margin again to get 146.4
+  assert(calculation.finalTotalSellingPrice === 122, 'Duplicate Margin: Exactly 1 single margin applied (122 USD, not 146.4 USD)');
 }
 
 // -------------------------------------------------------------

@@ -380,12 +380,19 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
   // Helper formula for calculating selling price
   const calcSellingPrice = (net: number, marginPct: number) => {
     if (!net || net <= 0) return 0;
-    const markupAmt = net * (marginPct / 100);
-    const taxAmt = markupAmt * (taxPercent / 100);
-    return Math.round(net + markupAmt + taxAmt + serviceFeeFixed);
+    return calculateUnifiedPrice({
+      nettPrice: net,
+      quantity: 1,
+      marginType: 'PERCENTAGE',
+      marginValue: marginPct,
+      taxPercent: taxPercent || 0,
+      serviceChargeType: 'PERCENTAGE',
+      serviceChargeValue: serviceFeeFixed || 0,
+      currency: currency || 'USD'
+    }).finalPrice;
   };
 
-  // Helper formula for calculating tier final price
+  // Helper formula for calculating tier final price using central calculateUnifiedPrice
   const calcTierFinalPrice = (tier: Partial<TieredPrice>): number | undefined => {
     const netVal = tier.supplierNett !== undefined 
       ? tier.supplierNett 
@@ -393,24 +400,24 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
     if (netVal === undefined || isNaN(netVal)) return undefined;
 
     const mType = tier.marginType || 'PERCENTAGE';
-    const mVal = tier.marginValue !== undefined ? tier.marginValue : (buyerMarginPercent || 20);
-    const marginAmt = mType === 'FIXED' ? mVal : netVal * (mVal / 100);
+    const mVal = tier.marginValue !== undefined ? tier.marginValue : (b2bAgentMarginPercent || buyerMarginPercent || 20);
 
     const tType = tier.taxType || 'PERCENTAGE';
-    let taxAmt = 0;
-    if (tType !== 'NOT_APPLICABLE') {
-      const tVal = tier.taxValue !== undefined ? tier.taxValue : (taxPercent || 10);
-      taxAmt = tType === 'FIXED' ? tVal : marginAmt * (tVal / 100);
-    }
+    const tVal = tType === 'NOT_APPLICABLE' ? 0 : (tier.taxValue !== undefined ? tier.taxValue : (taxPercent || 10));
 
-    const sType = tier.serviceChargeType || 'FIXED';
-    let svcAmt = 0;
-    if (sType !== 'NOT_APPLICABLE') {
-      const sVal = tier.serviceChargeValue !== undefined ? tier.serviceChargeValue : (serviceFeeFixed || 0);
-      svcAmt = sType === 'PERCENTAGE' ? netVal * (sVal / 100) : sVal;
-    }
+    const sType = tier.serviceChargeType || 'PERCENTAGE';
+    const sVal = sType === 'NOT_APPLICABLE' ? 0 : (tier.serviceChargeValue !== undefined ? tier.serviceChargeValue : (serviceFeeFixed || 0));
 
-    return Math.round((netVal + marginAmt + taxAmt + svcAmt) * 100) / 100;
+    return calculateUnifiedPrice({
+      nettPrice: netVal,
+      quantity: 1,
+      marginType: mType as any,
+      marginValue: mVal,
+      taxPercent: tVal,
+      serviceChargeType: sType as any,
+      serviceChargeValue: sVal,
+      currency: currency || 'USD'
+    }).finalPrice;
   };
 
   // --------------------------------------------------------------------------
