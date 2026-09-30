@@ -229,6 +229,49 @@ export interface RailPricingResult {
   formattedDuration: string;
 }
 
+export interface JapanRailCommercialPricingConfig {
+  pricingMode: 'DYNAMIC_ROUTE_FARE' | 'FIXED' | string;
+  supplierNett?: number;
+  marginType?: 'PERCENTAGE' | 'FIXED';
+  marginValue?: number;
+  taxType?: 'PERCENTAGE' | 'FIXED';
+  taxValue?: number;
+  serviceChargeType?: 'PERCENTAGE' | 'FIXED';
+  serviceChargeValue?: number;
+}
+
+export interface JapanRailCommercialProduct {
+  id: string; // 'RAIL-JP-ORD-RESERVED' | 'RAIL-JP-GREEN-RESERVED' | 'ORDINARY_RESERVED' | 'GREEN_RESERVED'
+  productCode: 'ORDINARY_RESERVED' | 'GREEN_RESERVED';
+  productName: string; // 'Ordinary Car — Reserved Seat' | 'Green Car — First Class / Reserved'
+  category: 'RAIL' | 'Rail';
+  destinationId: string; // 'dest-japan' | 'DST-JPN'
+  destinationName?: string;
+  productType: 'ORDINARY_RESERVED' | 'GREEN_RESERVED' | 'Rail';
+  description?: string;
+  shortDescription?: string;
+  inclusions?: string[];
+  exclusions?: string[];
+  importantInformation?: string[];
+  imageUrl?: string;
+  images?: string[];
+  classType: string; // 'Standard' | 'First Class'
+  carType: RailCarType; // 'Ordinary' | 'Green'
+  reservationType: string; // 'Reserved Seat'
+  seatType?: RailSeatType; // 'Reserved'
+  passengerTypes?: string[];
+  supportedServices?: string[];
+  status: 'DRAFT' | 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  displayOrder?: number;
+  nativeCurrency: CurrencyCode; // 'JPY'
+  pricingConfiguration: JapanRailCommercialPricingConfig;
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
+  schemaVersion?: number;
+}
+
 export interface RailBookingItemDetails {
   type: 'JAPAN_RAIL';
   productId: string;

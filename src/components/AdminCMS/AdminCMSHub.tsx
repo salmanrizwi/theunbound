@@ -482,7 +482,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           badge: 'smartEX Dynamic',
           description: 'Dynamic Japan Rail Shinkansen stations, routes, normalized tariff rates, season calendar rules, and dynamic pricing engine.',
           subTabs: [
-            { id: 'OVERVIEW', label: 'Master Products & Engine', icon: Train },
+            { id: 'OVERVIEW', label: 'Master Architecture', icon: Train },
+            { id: 'COMMERCIAL_PRODUCTS', label: 'Commercial Master Products (2)', icon: Sparkles },
             { id: 'STATIONS', label: 'Station Master', icon: MapPin },
             { id: 'ROUTES', label: 'Route Network', icon: RouteIcon },
             { id: 'RATES', label: 'Rate Explorer', icon: DollarSign },

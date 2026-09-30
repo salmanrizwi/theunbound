@@ -1,4 +1,4 @@
-import { RailStation, RailRoute, RailRate, RailMarkupRule, RailSeasonCalendarPeriod, RailServiceGroup } from '../../types/rail';
+import { RailStation, RailRoute, RailRate, RailMarkupRule, RailSeasonCalendarPeriod, RailServiceGroup, JapanRailCommercialProduct } from '../../types/rail';
 import { Product } from '../../types';
 import { INITIAL_RAIL_STATIONS, getStationById, searchStations } from '../../data/initialRailStations';
 import { INITIAL_RAIL_ROUTES, findRoute } from '../../data/initialRailRoutes';
@@ -79,6 +79,14 @@ export class JapanRailJourneyDataService {
       p.id === 'RAIL-JP-GREEN-RESERVED' || 
       p.category === 'Rail'
     );
+  }
+
+  public getCommercialProducts(): JapanRailCommercialProduct[] {
+    return AppDatabase.getInstance().getJapanRailCommercialProducts();
+  }
+
+  public getCommercialProduct(idOrCode: string): JapanRailCommercialProduct | undefined {
+    return AppDatabase.getInstance().getJapanRailCommercialProductById(idOrCode);
   }
 
   public getRailProduct(productId: string): Product | undefined {

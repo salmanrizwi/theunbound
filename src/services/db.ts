@@ -201,7 +201,8 @@ import { INITIAL_RAIL_MARKUP_RULE } from '../data/initialRailMarkup';
 import { INITIAL_VEHICLES } from '../data/initialVehicles';
 import { INITIAL_YACHTS } from '../data/initialYachts';
 import { INITIAL_FERRIES } from '../data/initialFerries';
-import { RailStation, RailService, RailRoute, RailFare, RailRate, RailMarkupRule, RailSeasonCalendarPeriod } from '../types/rail';
+import { RailStation, RailService, RailRoute, RailFare, RailRate, RailMarkupRule, RailSeasonCalendarPeriod, JapanRailCommercialProduct } from '../types/rail';
+import { INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS } from '../data/initialRailCommercialProducts';
 import { EmailNotificationService } from './emailNotificationService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { googleBusinessService } from './googleBusinessService';
@@ -4955,6 +4956,169 @@ export class AppDatabase {
       `Updated Japan Rail dynamic markup rules (B2B: ${rule.b2bAgentMarkupPercent}%, Buyer: ${rule.buyerMarkupPercent}%, Min margin: ¥${rule.minMarginJPY})`
     );
     this.notify();
+  }
+
+  // ==========================================
+  // JAPAN RAIL COMMERCIAL MASTER PRODUCTS CRUD (EXACTLY 2)
+  // ==========================================
+  public getJapanRailCommercialProducts(): JapanRailCommercialProduct[] {
+    const raw = this.getItem<JapanRailCommercialProduct[]>(
+      'japan_rail_commercial_products',
+      INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS
+    );
+
+    const productsMap = new Map<string, JapanRailCommercialProduct>();
+    for (const initProd of INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS) {
+      productsMap.set(initProd.productCode, { ...initProd });
+    }
+
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        if (item && item.productCode && (item.productCode === 'ORDINARY_RESERVED' || item.productCode === 'GREEN_RESERVED')) {
+          const current = productsMap.get(item.productCode);
+          if (current) {
+            productsMap.set(item.productCode, { ...current, ...item });
+          }
+        }
+      }
+    }
+
+    return [
+      productsMap.get('ORDINARY_RESERVED')!,
+      productsMap.get('GREEN_RESERVED')!
+    ].filter(Boolean);
+  }
+
+  public getJapanRailCommercialProductById(idOrCode: string): JapanRailCommercialProduct | undefined {
+    if (!idOrCode) return undefined;
+    const clean = idOrCode.trim();
+    const products = this.getJapanRailCommercialProducts();
+    return products.find(p => 
+      p.id === clean || 
+      p.productCode === clean || 
+      p.productType === clean ||
+      (clean.toUpperCase().includes('GREEN') && p.productCode === 'GREEN_RESERVED') ||
+      (clean.toUpperCase().includes('ORD') && p.productCode === 'ORDINARY_RESERVED')
+    );
+  }
+
+  public saveJapanRailCommercialProduct(
+    product: JapanRailCommercialProduct, 
+    user: User | null
+  ): JapanRailCommercialProduct {
+    if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER') {
+      throw new Error('Unauthorized: Only administrators may modify Japan Rail Commercial Master Products.');
+    }
+
+    // Exact 2-Product Governance validation
+    if (product.productCode !== 'ORDINARY_RESERVED' && product.productCode !== 'GREEN_RESERVED') {
+      throw new Error(`Validation Error: Invalid Commercial Product Code '${product.productCode}'. Only 'ORDINARY_RESERVED' and 'GREEN_RESERVED' are permitted.`);
+    }
+
+    const currentList = this.getJapanRailCommercialProducts();
+    const existingIndex = currentList.findIndex(p => p.productCode === product.productCode || p.id === product.id);
+
+    const now = new Date().toISOString();
+    const updated: JapanRailCommercialProduct = {
+      ...product,
+      category: 'RAIL',
+      destinationId: product.destinationId || 'dest-japan',
+      nativeCurrency: 'JPY',
+      updatedAt: now,
+      updatedBy: user?.name || user?.email || 'Admin',
+      schemaVersion: 1
+    };
+
+    if (existingIndex >= 0) {
+      currentList[existingIndex] = updated;
+    } else {
+      currentList.push(updated);
+    }
+
+    // Persist to local storage & Firestore
+    this.setItem('japan_rail_commercial_products', currentList);
+    this.syncFirestoreDoc('japan_rail_commercial_products', updated.id, updated);
+    this.syncFirestoreDoc('products', updated.id, {
+      ...updated,
+      name: updated.productName,
+      sku: updated.productCode === 'ORDINARY_RESERVED' ? 'JP-SHINKANSEN-ORD-RES' : 'JP-SHINKANSEN-GRN-RES',
+      category: 'Rail',
+      productType: 'Rail',
+      currency: 'JPY',
+      adultNetPrice: updated.pricingConfiguration?.supplierNett || (updated.productCode === 'ORDINARY_RESERVED' ? 13970 : 19040),
+      status: updated.status
+    });
+
+    this.logAudit(
+      user || null,
+      'PRODUCT_UPDATED',
+      'RailCommercialProduct' as any,
+      updated.id,
+      `Updated Japan Rail Commercial Master Product: ${updated.productName} (${updated.productCode})`
+    );
+
+    this.notify();
+    return updated;
+  }
+
+  public deleteJapanRailCommercialProduct(
+    idOrCode: string, 
+    user: User | null
+  ): { success: boolean; action: 'DELETED' | 'ARCHIVED'; message: string } {
+    if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER') {
+      throw new Error('Unauthorized: Only administrators may delete or archive Japan Rail Commercial Master Products.');
+    }
+
+    const target = this.getJapanRailCommercialProductById(idOrCode);
+    if (!target) {
+      throw new Error(`Product '${idOrCode}' not found.`);
+    }
+
+    // Reference Check: check quotes, leads, bookings
+    const quotes = this.getAllSavedQuotes();
+    const bookings = this.getBookings();
+    const isReferencedInQuotes = quotes.some(q => 
+      q.items?.some(item => 
+        item.productId === target.id || 
+        item.productId === target.productCode ||
+        (item as any).commercialProductId === target.productCode ||
+        (item as any).commercialProductId === target.id
+      )
+    );
+    const isReferencedInBookings = bookings.some(b => 
+      b.items?.some(item => 
+        item.productId === target.id || 
+        item.productId === target.productCode ||
+        (item as any).commercialProductId === target.productCode ||
+        (item as any).commercialProductId === target.id
+      )
+    );
+
+    if (isReferencedInQuotes || isReferencedInBookings) {
+      // Must NOT hard-delete! Archive / Inactive instead to preserve historical integrity
+      target.status = 'ARCHIVED';
+      this.saveJapanRailCommercialProduct(target, user);
+      this.logAudit(
+        user || null,
+        'PRODUCT_ARCHIVED',
+        'RailCommercialProduct' as any,
+        target.id,
+        `Archived referenced Japan Rail Commercial Master Product: ${target.productName} (${target.productCode})`
+      );
+      return {
+        success: true,
+        action: 'ARCHIVED',
+        message: `Product is referenced in historical quotes/bookings. Status changed to ARCHIVED to protect transactional records.`
+      };
+    }
+
+    target.status = 'INACTIVE';
+    this.saveJapanRailCommercialProduct(target, user);
+    return {
+      success: true,
+      action: 'ARCHIVED',
+      message: `Product deactivated successfully.`
+    };
   }
 
   public getProductById(id: string): Product | undefined {

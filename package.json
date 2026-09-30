@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "tsx src/tests/masterSystemAuditCertification.ts",
-    "test:all": "tsx src/tests/masterSystemAuditCertification.ts && tsx src/tests/masterPricingEngineAudit.ts && tsx src/tests/capacityTieredPricingInputAudit.ts && tsx src/tests/homepageDataSyncAudit.ts"
+    "test:all": "tsx src/tests/masterSystemAuditCertification.ts && tsx src/tests/masterPricingEngineAudit.ts && tsx src/tests/capacityTieredPricingInputAudit.ts && tsx src/tests/homepageDataSyncAudit.ts && tsx src/tests/japanRailCommercialProductsAudit.ts"
   },
   "dependencies": {
     "@google/genai": "^2.21.0",

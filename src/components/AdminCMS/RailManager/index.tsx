@@ -58,8 +58,9 @@ import {
 import { JapanRailJourneyConfigurator } from '../../JapanRail/JapanRailJourneyConfigurator';
 import { AdminWorkspaceLayout } from '../../common/AdminWorkspaceLayout';
 import { ModuleMasterSyncBar } from '../common/ModuleMasterSyncBar';
+import { CommercialProductsManager } from './CommercialProductsManager';
 
-type RailTab = 'OVERVIEW' | 'STATIONS' | 'ROUTES' | 'RATES' | 'SEASONS' | 'MARKUP' | 'SHEETS_SYNC';
+type RailTab = 'OVERVIEW' | 'COMMERCIAL_PRODUCTS' | 'STATIONS' | 'ROUTES' | 'RATES' | 'SEASONS' | 'MARKUP' | 'SHEETS_SYNC';
 
 interface RailManagerProps {
   initialTab?: string;
@@ -1476,7 +1477,8 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
             {/* Vertical Sub-Tabs List */}
             <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs divide-y divide-slate-100">
               {[
-                { id: 'OVERVIEW', label: 'Master Products', icon: Train },
+                { id: 'OVERVIEW', label: 'Master Architecture', icon: Train },
+                { id: 'COMMERCIAL_PRODUCTS', label: 'Commercial Master Products (2)', icon: Sparkles },
                 { id: 'STATIONS', label: `Stations (${stations.length})`, icon: MapPin },
                 { id: 'ROUTES', label: `Routes (${routes.length})`, icon: RouteIcon },
                 { id: 'RATES', label: `Rate Explorer (${rates.length})`, icon: DollarSign },
@@ -1659,6 +1661,13 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
           </div>
 
         </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 2: COMMERCIAL MASTER PRODUCTS (EXACTLY 2) */}
+      {/* ========================================================================= */}
+      {activeTab === 'COMMERCIAL_PRODUCTS' && (
+        <CommercialProductsManager />
       )}
 
 
