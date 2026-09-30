@@ -58,6 +58,7 @@ export interface HotelStayCalculationResult {
   discountAmount: number;
 
   // Final Quoted Selling Price
+  price: number;
   finalTotalSellingPrice: number;
   pricePerNightSelling: number;
   pricePerPersonSelling: number;
@@ -120,30 +121,41 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
   const childrenTotalNetCost = nightlyChildNetRate * nights * children;
   const totalStayNetCost = roomsTotalNetCost + extraBedsTotalNetCost + childrenTotalNetCost;
 
-  // Markups
-  const b2bMarkupPercent = rate.markupPercent ?? 18;
+  // Universal B2B Pricing Formula (Sections 4, 11, 20, 24, 49):
+  // 1. Margin Amount = Nett Cost × B2B Margin %
+  // 2. Tax Amount = Margin Amount × Tax % (Tax strictly on Margin)
+  // 3. Subtotal = Nett Cost + Margin Amount + Tax Amount
+  // 4. Service Fee = Subtotal × Service Fee % (Service Fee on Subtotal)
+  // 5. Price = Subtotal + Service Fee
+  const b2bMarkupPercent = rate.markupPercent ?? 20;
   const b2bWholesaleMarkupRate = b2bMarkupPercent / 100;
-  const b2bWholesaleNetToAgent = totalStayNetCost * (1 + b2bWholesaleMarkupRate);
+  const marginAmount = totalStayNetCost * b2bWholesaleMarkupRate;
 
-  const agentClientMarkupRate = agentClientMarkupPercent / 100;
-  const priceBeforeTaxWithAgent = b2bWholesaleNetToAgent * (1 + agentClientMarkupRate);
-  const agentProfitAmount = priceBeforeTaxWithAgent - b2bWholesaleNetToAgent;
-
-  // Taxes and Fees
+  // Tax on B2B Margin (Section 4 & 24)
   const taxRate = (rate.taxPercent ?? 10) / 100;
-  const taxAmount = priceBeforeTaxWithAgent * taxRate;
-  const serviceFee = convertCurrency(rate.feePercent ? (totalStayNetCost * (rate.feePercent / 100)) : 0, hotelCurrency, targetCurrency);
+  const taxAmount = marginAmount * taxRate;
+
+  // Subtotal = Nett + Margin + Tax
+  const subtotal = totalStayNetCost + marginAmount + taxAmount;
+
+  // Service Fee on Subtotal (Section 4 & 24)
+  const serviceFeeRate = (rate.feePercent ?? 0) / 100;
+  const serviceFee = subtotal * serviceFeeRate;
 
   // Discounts
   const discountRate = (customDiscountPercent || 0) / 100;
-  const grossTotal = priceBeforeTaxWithAgent + taxAmount + serviceFee;
+  const grossTotal = subtotal + serviceFee;
   const discountAmount = grossTotal * discountRate;
 
-  // Final Quoted Selling Price
+  // Final Quoted Price
   const finalTotalSellingPrice = Math.max(0, grossTotal - discountAmount);
   const pricePerNightSelling = finalTotalSellingPrice / nights;
   const totalGuests = adults + children;
   const pricePerPersonSelling = totalGuests > 0 ? finalTotalSellingPrice / totalGuests : finalTotalSellingPrice;
+
+  const b2bWholesaleNetToAgent = finalTotalSellingPrice;
+  const agentClientMarkupRate = (agentClientMarkupPercent || 0) / 100;
+  const agentProfitAmount = 0;
 
   return {
     hotelId: hotel.id,
@@ -181,6 +193,7 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
     discountRate,
     discountAmount,
 
+    price: finalTotalSellingPrice,
     finalTotalSellingPrice,
     pricePerNightSelling,
     pricePerPersonSelling

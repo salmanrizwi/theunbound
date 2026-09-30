@@ -143,8 +143,12 @@ export interface UnifiedPricingResult {
 
 /**
  * Global Authoritative Calculation:
- * Formula: NETT PRICE + MARGIN + SERVICE CHARGE (+ APPLICABLE TAX) = FINAL PRICE
- * Supports all sellable inventory types: Products, Hotels, Hotel Rooms, Visa, Ancillary, Rail, Transfers, Tours, Tickets, Guides, Restaurants, Private Yachts.
+ * Universal Formula:
+ * 1. Margin = Nett × B2B Margin %
+ * 2. Tax = Margin × Tax % (Tax strictly on Margin)
+ * 3. Subtotal = Nett + Margin + Tax
+ * 4. Service Fee = Subtotal × Service Fee % (Service Fee on Subtotal)
+ * 5. Price = Subtotal + Service Fee
  */
 export function calculateUnifiedPrice(input: UnifiedPricingInput): UnifiedPricingResult {
   const nett = Math.max(0, input.nettPrice || 0);
@@ -157,23 +161,19 @@ export function calculateUnifiedPrice(input: UnifiedPricingInput): UnifiedPricin
     ? marginValue * qty 
     : totalNett * (marginValue / 100);
 
-  const serviceChargeType: ServiceChargeType = input.serviceChargeType || 'FIXED';
+  const taxPercent = input.taxPercent !== undefined ? input.taxPercent : 10;
+  const taxAmount = marginAmount * (taxPercent / 100);
+
+  const subtotal = totalNett + marginAmount + taxAmount;
+
+  const serviceChargeType: ServiceChargeType = input.serviceChargeType || 'PERCENTAGE';
   const serviceChargeValue = input.serviceChargeValue !== undefined ? input.serviceChargeValue : 0;
   const serviceChargeAmount = serviceChargeType === 'FIXED' 
     ? serviceChargeValue * qty 
-    : totalNett * (serviceChargeValue / 100);
+    : subtotal * (serviceChargeValue / 100);
 
-  const taxPercent = input.taxPercent !== undefined ? input.taxPercent : 10;
-  const taxApp = input.taxApplication || 'ON_MARGIN';
-  let taxAmount = 0;
-  if (taxApp === 'ON_MARGIN') {
-    taxAmount = marginAmount * (taxPercent / 100);
-  } else if (taxApp === 'ON_TOTAL') {
-    taxAmount = (totalNett + marginAmount + serviceChargeAmount) * (taxPercent / 100);
-  }
-
-  const finalPrice = Math.round(totalNett + marginAmount + serviceChargeAmount + taxAmount);
-  const unitFinalPrice = qty > 0 ? Math.round(finalPrice / qty) : finalPrice;
+  const finalPrice = Math.round((subtotal + serviceChargeAmount) * 100) / 100;
+  const unitFinalPrice = qty > 0 ? Math.round((finalPrice / qty) * 100) / 100 : finalPrice;
 
   return {
     nettPrice: totalNett,
@@ -195,13 +195,16 @@ export function calculateSellingPrice(
   adultNetPrice: number,
   markupPercent: number = 20,
   taxPercent: number = 10,
-  serviceFeeFixed: number = 0,
+  serviceFeePercent: number = 0,
   marginType: MarginType = 'PERCENTAGE',
-  marginFixed: number = 0
+  marginFixed: number = 0,
+  serviceFeeFixed: number = 0
 ): number {
   const markupAmount = marginType === 'FIXED' ? marginFixed : adultNetPrice * (markupPercent / 100);
   const taxAmount = markupAmount * (taxPercent / 100);
-  return adultNetPrice + markupAmount + taxAmount + serviceFeeFixed;
+  const subtotal = adultNetPrice + markupAmount + taxAmount;
+  const serviceFeeAmount = serviceFeeFixed > 0 ? serviceFeeFixed : subtotal * (serviceFeePercent / 100);
+  return Math.round((subtotal + serviceFeeAmount) * 100) / 100;
 }
 
 export interface DeliveredPriceInfo {
@@ -661,10 +664,11 @@ export function calculateProductPrice(
   rawTotalNetCostInNative += addonsNetInNative;
 
   // Configurable Commercial Rates with User-Type Hierarchy & Rate Sheet Overrides:
-  let configuredMarkupPercent = 25;
+  let configuredMarkupPercent = 20;
   if (request.customMarkupPercent !== undefined) {
     configuredMarkupPercent = request.customMarkupPercent;
   } else if (pricingTier === 'B2B') {
+    // SECTION 5: BUYER MARGIN MUST NOT BE USED for B2B. Use B2B Agent Margin only.
     if (user?.customAgentMarginPercent !== undefined) {
       configuredMarkupPercent = user.customAgentMarginPercent;
     } else if (rateMarkupAgent !== undefined) {
@@ -675,7 +679,7 @@ export function calculateProductPrice(
       configuredMarkupPercent = 20;
     }
   } else {
-    // Buyer tier
+    // Buyer tier (B2C)
     if (user?.customBuyerMarginPercent !== undefined) {
       configuredMarkupPercent = user.customBuyerMarginPercent;
     } else if (rateMarkupBuyer !== undefined) {
@@ -688,65 +692,68 @@ export function calculateProductPrice(
   }
 
   // COMMERCIAL PRICING PRINCIPLE: CALCULATE NATIVE FIRST, CONVERT SECOND
-  // 1. All commercial pricing (margins, taxes, discounts, fees) MUST be evaluated in product's native currency
+  // Universal B2B Pricing Formula (Sections 4, 20, 24, 49):
+  // 1. Margin Amount = Nett Cost × B2B Margin %
+  // 2. Tax Amount = Margin Amount × Tax % (Tax is strictly on Margin)
+  // 3. Subtotal = Nett Cost + Margin Amount + Tax Amount
+  // 4. Service Fee Amount = Subtotal × Service Fee % (Service Fee on Subtotal)
+  // 5. Price = Subtotal + Service Fee Amount
   const nativeTotalNetCost = rawTotalNetCostInNative;
   let markupRate = configuredMarkupPercent / 100;
   let nativeMarkupAmount = nativeTotalNetCost * markupRate;
 
-  // Support for configured fixed margin amounts (Global Pricing Architecture Section 4)
+  // Support for configured fixed margin amounts (Section 23)
   if ((product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined) {
     nativeMarkupAmount = Number((product as any).marginFixed) * (isCapacity ? 1 : totalPax);
     markupRate = nativeTotalNetCost > 0 ? nativeMarkupAmount / nativeTotalNetCost : 0;
   }
 
-  let b2bWholesaleMarkupRate = configuredMarkupPercent / 100;
-  let nativeB2bWholesaleNetToAgent = nativeTotalNetCost + (nativeTotalNetCost * b2bWholesaleMarkupRate);
-  let agentClientMarkupRate = (request.agentClientMarkupPercent || 12) / 100;
-  let nativeAgentProfitAmount = nativeB2bWholesaleNetToAgent * agentClientMarkupRate;
-
-  if (pricingTier === 'B2B') {
-    const dmcWholesaleMarginAmount = ((product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined)
-      ? Number((product as any).marginFixed) * (isCapacity ? 1 : totalPax)
-      : nativeTotalNetCost * b2bWholesaleMarkupRate;
-    nativeB2bWholesaleNetToAgent = nativeTotalNetCost + dmcWholesaleMarginAmount;
-    nativeAgentProfitAmount = nativeB2bWholesaleNetToAgent * agentClientMarkupRate;
-    nativeMarkupAmount = dmcWholesaleMarginAmount + nativeAgentProfitAmount;
-    markupRate = nativeTotalNetCost > 0 ? nativeMarkupAmount / nativeTotalNetCost : 0;
-  }
-
-  // Dynamic Fee in Native Currency
-  let nativeServiceFee = 0;
-  if ((product as any).serviceFeeFixed !== undefined) {
-    nativeServiceFee = Number((product as any).serviceFeeFixed) * (isCapacity ? 1 : totalPax);
-  } else if ((product as any).serviceFeePercent !== undefined) {
-    nativeServiceFee = nativeTotalNetCost * ((product as any).serviceFeePercent / 100);
-  } else if ((product as any).serviceFee !== undefined) {
-    nativeServiceFee = Number((product as any).serviceFee) * (isCapacity ? 1 : totalPax);
-  }
-  const feeRate = nativeTotalNetCost > 0 ? (nativeServiceFee / nativeTotalNetCost) : 0;
-
-  // TAX SPEC: Tax on taxable base in Native Currency
+  // Authoritative Tax on Margin (Section 4 & 24)
   const configuredTaxPercent = rateTaxPercentage !== undefined 
     ? rateTaxPercentage 
     : (product.taxPercent !== undefined ? product.taxPercent : 10);
   const taxRate = configuredTaxPercent / 100;
-  const taxableBase = ((product as any).taxMethod === 'on_margin' || (product as any).taxBase === 'margin')
-    ? nativeMarkupAmount
-    : (nativeTotalNetCost + nativeMarkupAmount + nativeServiceFee);
-  const nativeTaxAmount = taxableBase * taxRate;
+  const nativeTaxAmount = nativeMarkupAmount * taxRate;
+
+  // Subtotal = Nett Cost + Margin Amount + Tax Amount
+  const nativeSubtotal = nativeTotalNetCost + nativeMarkupAmount + nativeTaxAmount;
+
+  // Service Fee on Subtotal (Section 4 & 24)
+  let nativeServiceFee = 0;
+  if ((product as any).serviceFeeFixed !== undefined) {
+    nativeServiceFee = Number((product as any).serviceFeeFixed) * (isCapacity ? 1 : totalPax);
+  } else if ((product as any).serviceFeePercent !== undefined) {
+    nativeServiceFee = nativeSubtotal * ((product as any).serviceFeePercent / 100);
+  } else if ((product as any).serviceFee !== undefined) {
+    const rawFee = (product as any).serviceFee;
+    if (typeof rawFee === 'number' && rawFee > 0 && rawFee <= 100) {
+      nativeServiceFee = nativeSubtotal * (rawFee / 100);
+    } else if (typeof rawFee === 'number' && rawFee > 100) {
+      nativeServiceFee = rawFee * (isCapacity ? 1 : totalPax);
+    }
+  }
+
+  // Pre-discount total Price
+  let nativeFinalSellingPrice = nativeSubtotal + nativeServiceFee;
 
   // Discounts & Commissions in Native Currency
   const discountPercent = request.customDiscountPercent || 0;
   const discountRate = discountPercent / 100;
-  const nativeDiscountAmount = (nativeTotalNetCost + nativeMarkupAmount + nativeTaxAmount + nativeServiceFee) * discountRate;
+  const nativeDiscountAmount = nativeFinalSellingPrice * discountRate;
+  nativeFinalSellingPrice -= nativeDiscountAmount;
 
   const commissionPercent = product.commissionPercent || 0;
   const commissionRate = commissionPercent / 100;
   const nativeCommissionAmount = nativeTotalNetCost * commissionRate;
 
   const nativeGrossBeforeTax = nativeTotalNetCost + nativeMarkupAmount;
-  const nativeFinalSellingPrice = (nativeTotalNetCost + nativeMarkupAmount + nativeTaxAmount + nativeServiceFee) - nativeDiscountAmount;
   const nativePricePerPerson = totalPax > 0 ? nativeFinalSellingPrice / totalPax : nativeFinalSellingPrice;
+
+  // B2B Wholesale reporting values
+  const b2bWholesaleMarkupRate = markupRate;
+  const nativeB2bWholesaleNetToAgent = nativeFinalSellingPrice;
+  const agentClientMarkupRate = (request.agentClientMarkupPercent || 0) / 100;
+  const nativeAgentProfitAmount = 0;
 
   // 2. CONVERT ONLY AT THE DELIVERED LEVEL (or convert itemized values using exact authoritative FX rate)
   const targetCurrency = request.targetCurrency || nativeCurrency;
@@ -828,6 +835,7 @@ export function calculateProductPrice(
     addonsSubtotalSelling,
     adultPricePerPax,
     childPricePerPax,
+    price: finalTotalSellingPrice,
     finalTotalSellingPrice,
     sellingPriceFinal: finalTotalSellingPrice,
     pricePerPerson,

@@ -12248,7 +12248,7 @@ export class AppDatabase {
       config.homepageModuleOrder = INITIAL_HOMEPAGE_CONFIG.homepageModuleOrder;
     }
     if (!config.homepageHubs || config.homepageHubs.length === 0) {
-      config.homepageHubs = envService.allowDemoData() ? INITIAL_HOMEPAGE_CONFIG.homepageHubs : [];
+      config.homepageHubs = INITIAL_HOMEPAGE_CONFIG.homepageHubs;
     }
     if (!config.hubSectionTitle) {
       config.hubSectionTitle = INITIAL_HOMEPAGE_CONFIG.hubSectionTitle;
@@ -12258,6 +12258,21 @@ export class AppDatabase {
     }
     if (!config.hubSectionBadge) {
       config.hubSectionBadge = INITIAL_HOMEPAGE_CONFIG.hubSectionBadge;
+    }
+    if (!config.affiliations || config.affiliations.length === 0) {
+      config.affiliations = INITIAL_HOMEPAGE_CONFIG.affiliations;
+    }
+    if (config.showAffiliationsSection === undefined) {
+      config.showAffiliationsSection = INITIAL_HOMEPAGE_CONFIG.showAffiliationsSection !== false;
+    }
+    if (!config.affiliationsSectionBadge) {
+      config.affiliationsSectionBadge = INITIAL_HOMEPAGE_CONFIG.affiliationsSectionBadge;
+    }
+    if (!config.affiliationsSectionTitle) {
+      config.affiliationsSectionTitle = INITIAL_HOMEPAGE_CONFIG.affiliationsSectionTitle;
+    }
+    if (!config.affiliationsSectionSubtitle) {
+      config.affiliationsSectionSubtitle = INITIAL_HOMEPAGE_CONFIG.affiliationsSectionSubtitle;
     }
     return config;
   }

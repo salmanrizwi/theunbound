@@ -6,6 +6,7 @@ import { FinalCTA } from '../components/FinalCTA';
 import { AppDatabase } from '../services/db';
 import { GlobalCountingEngine } from '../services/countingEngine';
 import { inventoryVisibilityService, useInventoryVisibility } from '../services/inventoryVisibilityService';
+import { homepageService } from '../services/homepageService';
 import { 
   Building2, 
   ShieldCheck, 
@@ -131,6 +132,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     'cityHubs',
     'destinationFilter',
     'partnershipBenefits',
+    'affiliations',
     'onboardingProcess',
     'testimonials',
     'homepageFaqs',
@@ -144,6 +146,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     if (clean === 'cityhubs' || clean === 'homepagecityhubs') return 'cityHubs';
     if (clean === 'destinationfilter' || clean === 'b2bdestinationexpertise' || clean === 'destinations' || clean === 'destinationexpertise') return 'destinationFilter';
     if (clean === 'partnershipbenefits' || clean === 'b2bpartnershipbenefits') return 'partnershipBenefits';
+    if (clean === 'affiliations' || clean === 'regulatoryaffiliations' || clean === 'b2bregulatoryaffiliations') return 'affiliations';
     if (clean === 'onboardingprocess' || clean === 'b2bonboardingprocess') return 'onboardingProcess';
     if (clean === 'testimonials' || clean === 'b2btestimonials' || clean === 'reviews' || clean === 'googlereviews') return 'testimonials';
     if (clean === 'homepagefaqs' || clean === 'b2btradefaqs' || clean === 'faqs') return 'homepageFaqs';
@@ -256,7 +259,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                     <span>Regulatory Verification</span>
                   </div>
                   <p className="text-xs text-slate-700 leading-relaxed">
-                    We independently verify trade credentials (IATA, ABTA, ASTA, or national trade licenses) before commercial rates are unlocked.
+                    We independently verify trade credentials (JATA, MSME, NIDHI, or national trade licenses) before commercial rates are unlocked.
                   </p>
                 </div>
               </div>
@@ -330,21 +333,9 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                     const dest = (item.destinationIdOverride && allDestinations.find(d => d.id === item.destinationIdOverride || d.slug === item.destinationIdOverride)) || allDestinations.find(d => d.id === hub.destinationId || d.slug === hub.destinationId);
                     const region = regions.find(r => r.id === dest?.regionId || r.id === (dest as any)?.masterRegionId || r.id === (hub as any)?.regionId);
                     const autoCounts = countingEngine.getCountsBreakdown({ hubId: hub.id });
-                    const totalProductsCount = typeof item.inventoryCountOverride === 'number'
-                      ? item.inventoryCountOverride
-                      : (item.inventoryCountOverride as any)?.totalProducts !== undefined
-                        ? (item.inventoryCountOverride as any).totalProducts
-                        : autoCounts.totalProducts;
-
-                    const hotelsCount = item.hotelsCountOverride !== undefined
-                      ? item.hotelsCountOverride
-                      : (item.inventoryCountOverride as any)?.hotels !== undefined
-                        ? (item.inventoryCountOverride as any).hotels
-                        : autoCounts.hotels;
-
                     const counts = {
-                      totalProducts: totalProductsCount,
-                      hotels: hotelsCount,
+                      totalProducts: autoCounts.totalProducts,
+                      hotels: autoCounts.hotels,
                       activities: autoCounts.activities,
                       transfers: autoCounts.transfers,
                     };
@@ -695,6 +686,96 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
           </section>
         ) : null;
 
+      case 'affiliations':
+        return config.showAffiliationsSection !== false ? (
+          <section key="module-affiliations" id="b2b-regulatory-affiliations" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="bg-white rounded-3xl border border-slate-200 p-8 sm:p-12 shadow-xs space-y-8">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-slate-100 pb-6 text-left">
+                <div className="space-y-1.5">
+                  <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-teal-50 border border-teal-200 text-[#008972] text-xs font-bold uppercase tracking-wider">
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>{config.affiliationsSectionBadge || 'REGULATORY AFFILIATIONS & ACCREDITATIONS'}</span>
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+                    {config.affiliationsSectionTitle || 'Regulatory Verification & Recognized Trade Affiliations'}
+                  </h2>
+                  <p className="text-xs sm:text-sm text-slate-500 max-w-2xl">
+                    {config.affiliationsSectionSubtitle || 'TheUnbound operates under rigorous regulatory oversight and recognized tourism bodies, guaranteeing operational integrity, financial probity, and trade compliance.'}
+                  </p>
+                </div>
+                <div className="flex items-center space-x-2 shrink-0">
+                  <span className="inline-flex items-center space-x-1.5 text-xs font-bold text-slate-600 bg-slate-100 border border-slate-200 px-3.5 py-1.5 rounded-xl">
+                    <CheckCircle2 className="w-4 h-4 text-[#008972]" />
+                    <span>JATA • MSME • NIDHI Certified</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Affiliations Cards Matrix */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
+                {(config.affiliations && config.affiliations.length > 0 ? config.affiliations : homepageService.getHomepageAffiliations())
+                  .filter(a => a.isActive !== false)
+                  .map((aff) => (
+                    <div
+                      key={aff.id}
+                      id={`homepage-affiliation-card-${aff.name.toLowerCase()}`}
+                      className="p-6 rounded-2xl bg-slate-50 hover:bg-slate-100/70 border border-slate-200 transition-all flex flex-col justify-between space-y-4 group hover:shadow-md"
+                    >
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-14 h-14 rounded-xl bg-white border border-slate-200 p-2 flex items-center justify-center font-black text-slate-900 text-lg shadow-xs group-hover:border-[#00C6A6] transition-colors">
+                              {aff.name}
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-bold text-[#008972] bg-[#00C6A6]/10 px-2 py-0.5 rounded-md uppercase tracking-wider border border-[#00C6A6]/20">
+                                {aff.type}
+                              </span>
+                              <h3 className="text-sm font-bold text-slate-900 mt-1 leading-snug">
+                                {aff.fullName}
+                              </h3>
+                            </div>
+                          </div>
+                        </div>
+
+                        <p className="text-xs text-slate-600 leading-relaxed">
+                          {aff.description}
+                        </p>
+
+                        {aff.verificationReference && (
+                          <div className="p-2.5 rounded-xl bg-white border border-slate-200/80 space-y-0.5">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                              Registration / Accreditation Ref
+                            </span>
+                            <span className="text-xs font-mono font-bold text-slate-800">
+                              {aff.verificationReference}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-200/60">
+                        {aff.officialLink ? (
+                          <a
+                            href={aff.officialLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center space-x-1.5 text-xs font-bold text-slate-900 hover:text-[#008972] transition-colors"
+                          >
+                            <span>Official Regulatory Website</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </a>
+                        ) : (
+                          <span className="text-xs text-slate-400 font-medium">Verified Regulatory Status</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </section>
+        ) : null;
+
       case 'onboardingProcess':
         return config.showOnboardingProcess !== false ? (
           <section key="module-onboarding" id="b2b-onboarding-process" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -797,7 +878,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                 {(config.homepageFAQs && config.homepageFAQs.length > 0 ? config.homepageFAQs.map(f => ({ q: f.question, a: f.answer })) : [
                   {
                     q: 'Who qualifies for access to TheUnbound B2B portal?',
-                    a: 'Access is strictly limited to accredited travel agents, outbound tour operators, luxury travel advisors, and corporate concierge firms with verified business registrations (IATA, ABTA, ASTA, or national trade licenses). We do not accept public registrations.'
+                    a: 'Access is strictly limited to accredited travel agents, outbound tour operators, luxury travel advisors, and corporate concierge firms with verified business registrations (JATA, MSME, NIDHI, or national trade licenses). We do not accept public registrations.'
                   },
                   {
                     q: 'Why are products, hotels, and prices hidden from the public website?',

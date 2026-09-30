@@ -389,6 +389,7 @@ export function sanitizePricingResultForAgent(
       addonsSubtotalSelling: 0,
       adultPricePerPax: 0,
       childPricePerPax: 0,
+      price: 0,
       finalTotalSellingPrice: 0,
       sellingPriceFinal: 0,
       pricePerPerson: 0
@@ -433,6 +434,7 @@ export function sanitizePricingResultForAgent(
     adultPricePerPax: calc.adultPricePerPax ?? 0,
     childPricePerPax: calc.childPricePerPax ?? 0,
 
+    price: (calc as any).price ?? calc.finalTotalSellingPrice ?? calc.sellingPriceFinal ?? 0,
     finalTotalSellingPrice: calc.finalTotalSellingPrice ?? calc.sellingPriceFinal ?? 0,
     sellingPriceFinal: calc.sellingPriceFinal ?? calc.finalTotalSellingPrice ?? 0,
     pricePerPerson: calc.pricePerPerson ?? 0,

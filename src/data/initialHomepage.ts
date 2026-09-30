@@ -1,4 +1,43 @@
-import { HomepageConfig } from '../types';
+import { HomepageConfig, HomepageAffiliation } from '../types';
+
+export const INITIAL_AFFILIATIONS: HomepageAffiliation[] = [
+  {
+    id: 'aff-jata',
+    name: 'JATA',
+    fullName: 'Japan Association of Travel Agents',
+    type: 'Accredited Allied Travel Partner',
+    logo: 'https://images.unsplash.com/photo-1542051841857-5f90071e7989?q=80&w=200&auto=format&fit=crop',
+    description: 'Accredited allied partner adhering to Japan Ministry of Land, Infrastructure, Transport and Tourism (MLIT) travel agency standards.',
+    verificationReference: 'Allied Associate Member #JATA-INTL-2025',
+    officialLink: 'https://www.jata-net.or.jp/',
+    displayOrder: 1,
+    isActive: true
+  },
+  {
+    id: 'aff-msme',
+    name: 'MSME',
+    fullName: 'Ministry of Micro, Small & Medium Enterprises',
+    type: 'National Enterprise Registration',
+    logo: 'https://images.unsplash.com/photo-1532375810709-75b1da00537c?q=80&w=200&auto=format&fit=crop',
+    description: 'Formally registered and accredited under the Ministry of Micro, Small and Medium Enterprises, Government of India.',
+    verificationReference: 'UDYAM-DL-08-0049281',
+    officialLink: 'https://msme.gov.in/',
+    displayOrder: 2,
+    isActive: true
+  },
+  {
+    id: 'aff-nidhi',
+    name: 'NIDHI',
+    fullName: 'National Integrated Database of Hospitality Industry',
+    type: 'Ministry of Tourism Regulatory Registration',
+    logo: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?q=80&w=200&auto=format&fit=crop',
+    description: 'Recognized travel and hospitality service provider listed in the National Integrated Database of Hospitality Industry (Ministry of Tourism, Govt. of India).',
+    verificationReference: 'NIDHI/MOT/DL-DMC-2026/0149',
+    officialLink: 'https://nidhi.tourism.gov.in/',
+    displayOrder: 3,
+    isActive: true
+  }
+];
 
 export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
   heroHeading: 'Premier Ground Operations & Wholesale DMC Network',
@@ -102,14 +141,14 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
   
   // Homepage Hubs CMS Fields (Authoritative Firestore Hub references)
   homepageHubs: [
-    { hubId: 'hub-tokyo', enabled: true, displayOrder: 1, featured: true, badge: 'Direct Operations Desk' },
-    { hubId: 'hub-kyoto', enabled: true, displayOrder: 2, featured: true, badge: 'Cultural Capital' },
-    { hubId: 'hub-osaka', enabled: true, displayOrder: 3, featured: false, badge: 'Gastronomy Hub' },
-    { hubId: 'hub-london', enabled: true, displayOrder: 4, featured: true, badge: 'UK Operations Center' },
-    { hubId: 'hub-paris', enabled: true, displayOrder: 5, featured: true, badge: 'Western Europe Gateway' },
-    { hubId: 'hub-rome', enabled: true, displayOrder: 6, featured: false, badge: 'VIP Ground Logistics' },
-    { hubId: 'hub-dubai', enabled: true, displayOrder: 7, featured: true, badge: 'Middle East Hub' },
-    { hubId: 'hub-bangkok', enabled: true, displayOrder: 8, featured: false, badge: 'Southeast Asia Hub' }
+    { hubId: 'HUB-TYO', enabled: true, displayOrder: 1, featured: true, badge: 'Direct Operations Desk' },
+    { hubId: 'HUB-KYO', enabled: true, displayOrder: 2, featured: true, badge: 'Cultural Capital' },
+    { hubId: 'HUB-OSA', enabled: true, displayOrder: 3, featured: false, badge: 'Gastronomy Hub' },
+    { hubId: 'HUB-HAK', enabled: true, displayOrder: 4, featured: true, badge: 'Hot Springs Gateway' },
+    { hubId: 'HUB-LON', enabled: true, displayOrder: 5, featured: true, badge: 'UK Operations Center' },
+    { hubId: 'HUB-PAR', enabled: true, displayOrder: 6, featured: true, badge: 'Western Europe Gateway' },
+    { hubId: 'HUB-DXB', enabled: true, displayOrder: 7, featured: true, badge: 'Middle East Hub' },
+    { hubId: 'HUB-BKK', enabled: true, displayOrder: 8, featured: false, badge: 'Southeast Asia Hub' }
   ],
   hubSectionTitle: 'Direct Ground Operations Hubs & Gateways',
   hubSectionSubtitle: 'Directly licensed ground handling, owned vehicle dispatch, and accredited bilingual guide networks across premier worldwide commercial gateways.',
@@ -150,13 +189,14 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
     'cityHubs',
     'destinationFilter',
     'partnershipBenefits',
+    'affiliations',
     'onboardingProcess',
     'testimonials',
     'homepageFaqs',
     'conversionCta'
   ],
 
-  // Module display toggles (The 9 live modules on the homepage)
+  // Module display toggles (The live modules on the homepage)
   showHeroSection: true,
   showBrandIntroduction: true,
   brandIntroductionBadge: 'B2B WHOLESALE OPERATIONS • DIRECT GROUND DMC',
@@ -171,6 +211,11 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
   partnershipBenefitsBadge: 'Trade Partner Advantage',
   partnershipBenefitsTitle: 'Why Premier Travel Advisors & Tour Operators Partner with TheUnbound',
   partnershipBenefitsSubtitle: 'We remove the operational friction of sourcing international ground services, protecting your reputation with guaranteed SLAs and confidential net wholesale rates.',
+  showAffiliationsSection: true,
+  affiliationsSectionBadge: 'REGULATORY AFFILIATIONS & ACCREDITATIONS',
+  affiliationsSectionTitle: 'Regulatory Verification & Recognized Trade Affiliations',
+  affiliationsSectionSubtitle: 'TheUnbound operates under rigorous regulatory oversight and recognized tourism bodies, guaranteeing operational integrity, financial probity, and trade compliance.',
+  affiliations: INITIAL_AFFILIATIONS,
   showOnboardingProcess: true,
   onboardingProcessBadge: 'Seamless Trade Registration',
   onboardingProcessTitle: 'Partner Onboarding in 4 Simple Steps',

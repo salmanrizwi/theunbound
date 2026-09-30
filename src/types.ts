@@ -4301,6 +4301,19 @@ export interface HomepageHubConfigItem {
   };
 }
 
+export interface HomepageAffiliation {
+  id: string; // 'aff-jata', 'aff-msme', 'aff-nidhi'
+  name: string; // 'JATA', 'MSME', 'NIDHI'
+  fullName: string;
+  type: string;
+  logo?: string;
+  description: string;
+  verificationReference?: string;
+  officialLink: string;
+  displayOrder: number;
+  isActive: boolean;
+}
+
 export interface HomepageConfig {
   heroHeading: string;
   heroSubheading: string;
@@ -4369,6 +4382,11 @@ export interface HomepageConfig {
   onboardingProcessBadge?: string;
   onboardingProcessTitle?: string;
   onboardingProcessSubtitle?: string;
+  showAffiliationsSection?: boolean;
+  affiliationsSectionBadge?: string;
+  affiliationsSectionTitle?: string;
+  affiliationsSectionSubtitle?: string;
+  affiliations?: HomepageAffiliation[];
   showGoogleReviews: boolean;
   showHomepageFAQs: boolean;
   showConversionCTA: boolean;

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppDatabase } from '../../services/db';
-import { HomepageConfig, Destination, HomepageFAQItem, CityHub, MasterRegion, HomepageHubConfigItem } from '../../types';
-import { INITIAL_HOMEPAGE_CONFIG } from '../../data/initialHomepage';
+import { HomepageConfig, Destination, HomepageFAQItem, CityHub, MasterRegion, HomepageHubConfigItem, HomepageAffiliation } from '../../types';
+import { INITIAL_HOMEPAGE_CONFIG, INITIAL_AFFILIATIONS } from '../../data/initialHomepage';
 import { useAuth } from '../../context/AuthContext';
 import { GlobalCountingEngine } from '../../services/countingEngine';
 import { 
@@ -60,7 +60,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
   const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());
   const [regions, setRegions] = useState<MasterRegion[]>(() => db.getMasterRegions());
   const [savedSuccess, setSavedSuccess] = useState(false);
-  const [activeSubTab, setActiveSubTab] = useState<'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'FAQS'>('LAYOUT');
+  const [activeSubTab, setActiveSubTab] = useState<'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'AFFILIATIONS' | 'FAQS'>('LAYOUT');
 
   // Hubs Management Specific State
   const [hubSearchQuery, setHubSearchQuery] = useState('');
@@ -72,6 +72,19 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
   // Hero CMS Specific State
   const [previewDevice, setPreviewDevice] = useState<'DESKTOP' | 'TABLET' | 'MOBILE'>('DESKTOP');
   const [heroConfigSection, setHeroConfigSection] = useState<'COPY' | 'MEDIA' | 'CTA' | 'OPERATIONS'>('COPY');
+
+  // Affiliations Management State (JATA / MSME / NIDHI)
+  const [isEditingAffiliation, setIsEditingAffiliation] = useState(false);
+  const [affiliationForm, setAffiliationForm] = useState<Partial<HomepageAffiliation>>({
+    name: '',
+    fullName: '',
+    type: 'Regulatory Verification',
+    description: '',
+    verificationReference: '',
+    officialLink: '',
+    displayOrder: 1,
+    isActive: true
+  });
 
   // FAQ Modal state
   const [isEditingFaq, setIsEditingFaq] = useState(false);
@@ -273,6 +286,67 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
     db.updateHomepageConfig(updated, user);
   };
 
+  // Affiliations Handlers (JATA / MSME / NIDHI)
+  const handleSaveAffiliation = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!affiliationForm.name || !affiliationForm.fullName) return;
+
+    const existingAffiliations = config.affiliations && config.affiliations.length > 0 
+      ? [...config.affiliations] 
+      : [...INITIAL_AFFILIATIONS];
+
+    if (affiliationForm.id) {
+      const idx = existingAffiliations.findIndex(a => a.id === affiliationForm.id);
+      if (idx >= 0) {
+        existingAffiliations[idx] = {
+          ...existingAffiliations[idx],
+          ...affiliationForm
+        } as HomepageAffiliation;
+      }
+    } else {
+      existingAffiliations.push({
+        id: `aff-${Date.now()}`,
+        name: affiliationForm.name,
+        fullName: affiliationForm.fullName,
+        type: affiliationForm.type || 'Regulatory Verification',
+        description: affiliationForm.description || '',
+        verificationReference: affiliationForm.verificationReference || '',
+        officialLink: affiliationForm.officialLink || '',
+        displayOrder: existingAffiliations.length + 1,
+        isActive: affiliationForm.isActive !== false
+      });
+    }
+
+    const updated = { ...config, affiliations: existingAffiliations };
+    setConfig(updated);
+    db.updateHomepageConfig(updated, user);
+    setIsEditingAffiliation(false);
+    setAffiliationForm({
+      name: '',
+      fullName: '',
+      type: 'Regulatory Verification',
+      description: '',
+      verificationReference: '',
+      officialLink: '',
+      displayOrder: 1,
+      isActive: true
+    });
+  };
+
+  const handleDeleteAffiliation = (id: string) => {
+    const filtered = (config.affiliations || INITIAL_AFFILIATIONS).filter(a => a.id !== id);
+    const updated = { ...config, affiliations: filtered };
+    setConfig(updated);
+    db.updateHomepageConfig(updated, user);
+  };
+
+  const handleToggleAffiliation = (id: string) => {
+    const affiliations = (config.affiliations || INITIAL_AFFILIATIONS).map(a => a.id === id ? { ...a, isActive: !a.isActive } : a);
+    const updated = { ...config, affiliations };
+    setConfig(updated);
+    db.updateHomepageConfig(updated, user);
+  };
+
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -312,6 +386,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
           { id: 'HUBS', label: 'Homepage Hubs & Gateways', icon: Building2 },
           { id: 'DESTINATIONS', label: 'Destinations & Ordering', icon: LayoutTemplate },
           { id: 'SECTIONS', label: 'Homepage Content Sections', icon: Layers },
+          { id: 'AFFILIATIONS', label: 'Regulatory Affiliations (JATA / MSME / NIDHI)', icon: ShieldCheck },
           { id: 'FAQS', label: 'Homepage FAQs Manager', icon: HelpCircle }
         ].map(tab => {
           const Icon = tab.icon;
@@ -355,6 +430,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                 { key: 'showCityHubs', label: 'City Hubs & Gateways Bar', desc: 'Direct regional gateways (Tokyo, Kyoto, London, etc.)' },
                 { key: 'showDestinationFilter', label: 'Destination Hubs & Operations', desc: 'Active corridor grid & in-country operational desks' },
                 { key: 'showPartnershipBenefits', label: 'Why Partner With TheUnbound', desc: 'Direct contracts, SLA turnaround, white-label quotes, 24/7 dispatch' },
+                { key: 'showAffiliationsSection', label: 'Regulatory Affiliations (JATA / MSME / NIDHI)', desc: 'Official government, tourism & association regulatory accreditations' },
                 { key: 'showOnboardingProcess', label: 'Partner Onboarding Process', desc: '4-step trade verification & account activation workflow' },
                 { key: 'showGoogleReviews', label: 'Google Business Reviews', desc: 'Verified trade partner reviews with 5-star badges' },
                 { key: 'showHomepageFAQs', label: 'Homepage FAQs Accordion', desc: 'Trade buyer & operational SLA Q&A section' },
@@ -411,6 +487,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                     'cityHubs',
                     'destinationFilter',
                     'partnershipBenefits',
+                    'affiliations',
                     'onboardingProcess',
                     'testimonials',
                     'homepageFaqs',
@@ -434,6 +511,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                 'cityHubs',
                 'destinationFilter',
                 'partnershipBenefits',
+                'affiliations',
                 'onboardingProcess',
                 'testimonials',
                 'homepageFaqs',
@@ -449,6 +527,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                 cityHubs: { label: 'Direct Operations Hubs & Regional Gateways', desc: 'Direct regional gateways (Tokyo, Kyoto, London, etc.)', toggleKey: 'showCityHubs' },
                 destinationFilter: { label: 'Destination Expertise Across Global Corridors', desc: 'Editorial global corridors and active ground desks', toggleKey: 'showDestinationFilter' },
                 partnershipBenefits: { label: 'Why Travel Agents Partner With TheUnbound', desc: 'Direct contracts, SLA turnaround, white-label quotes, 24/7 dispatch', toggleKey: 'showPartnershipBenefits' },
+                affiliations: { label: 'Regulatory Affiliations (JATA / MSME / NIDHI)', desc: 'Official government, tourism & association regulatory accreditations', toggleKey: 'showAffiliationsSection' },
                 onboardingProcess: { label: 'Partner Onboarding in 4 Simple Steps', desc: '4-step trade verification & account activation workflow', toggleKey: 'showOnboardingProcess' },
                 testimonials: { label: 'Verified Trade Partner Testimonials', desc: 'Client reviews carousel with 5-star ratings', toggleKey: 'showGoogleReviews' },
                 homepageFaqs: { label: 'Homepage FAQs Accordion', desc: 'Trade buyer & operational SLA Q&A section', toggleKey: 'showHomepageFAQs' },
@@ -2548,6 +2627,199 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
           </div>
         </div>
       )}
+
+      {/* SUB TAB: REGULATORY AFFILIATIONS (JATA / MSME / NIDHI) */}
+      {activeSubTab === 'AFFILIATIONS' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+              <div className="flex items-center space-x-3">
+                <div className="w-9 h-9 rounded-xl bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
+                  <ShieldCheck className="w-5 h-5 text-[#008972]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Regulatory Affiliations Manager (JATA / MSME / NIDHI)</h3>
+                  <p className="text-xs text-slate-500">
+                    Manage authoritative regulatory registrations, accreditation references, official government links, and display order.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const updated = { ...config, affiliations: INITIAL_AFFILIATIONS };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 cursor-pointer transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Reset to JATA / MSME / NIDHI Triad</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAffiliationForm({
+                      name: '',
+                      fullName: '',
+                      type: 'Regulatory Verification',
+                      description: '',
+                      verificationReference: '',
+                      officialLink: '',
+                      displayOrder: ((config.affiliations || INITIAL_AFFILIATIONS).length) + 1,
+                      isActive: true
+                    });
+                    setIsEditingAffiliation(true);
+                  }}
+                  className="inline-flex items-center space-x-2 bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer shadow-xs"
+                >
+                  <Plus className="w-4 h-4 text-[#00C6A6]" />
+                  <span>Add Affiliation</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Section Controls */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Section Badge
+                </label>
+                <input
+                  type="text"
+                  value={config.affiliationsSectionBadge || 'REGULATORY AFFILIATIONS & ACCREDITATIONS'}
+                  onChange={e => {
+                    const updated = { ...config, affiliationsSectionBadge: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Section Title
+                </label>
+                <input
+                  type="text"
+                  value={config.affiliationsSectionTitle || 'Regulatory Verification & Recognized Trade Affiliations'}
+                  onChange={e => {
+                    const updated = { ...config, affiliationsSectionTitle: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Section Subtitle
+                </label>
+                <input
+                  type="text"
+                  value={config.affiliationsSectionSubtitle || 'TheUnbound operates under rigorous regulatory oversight and recognized tourism bodies.'}
+                  onChange={e => {
+                    const updated = { ...config, affiliationsSectionSubtitle: e.target.value };
+                    setConfig(updated);
+                    db.updateHomepageConfig(updated, user);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white"
+                />
+              </div>
+            </div>
+
+            {/* Affiliations Cards List */}
+            <div className="space-y-3">
+              {(config.affiliations && config.affiliations.length > 0 ? config.affiliations : INITIAL_AFFILIATIONS).map((aff, idx) => (
+                <div 
+                  key={aff.id}
+                  className={`p-4 rounded-xl border transition-all ${
+                    aff.isActive ? 'bg-white border-slate-200' : 'bg-slate-50 border-slate-200 opacity-60'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1.5 flex-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[10px] font-bold font-mono px-2 py-0.5 bg-slate-100 text-slate-600 rounded">
+                          Order #{aff.displayOrder || idx + 1}
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 bg-teal-50 text-[#008972] rounded">
+                          {aff.type}
+                        </span>
+                        {!aff.isActive && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 bg-rose-50 text-rose-600 rounded">
+                            Inactive / Hidden
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-baseline space-x-2 pt-0.5">
+                        <span className="text-sm font-black text-slate-900">{aff.name}</span>
+                        <span className="text-xs font-medium text-slate-600">— {aff.fullName}</span>
+                      </div>
+                      <p className="text-xs text-slate-600 leading-relaxed">{aff.description}</p>
+                      
+                      <div className="flex flex-wrap items-center gap-3 pt-1 text-[11px]">
+                        {aff.verificationReference && (
+                          <span className="text-slate-500">
+                            <strong>Reference:</strong> <code className="font-mono text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded">{aff.verificationReference}</code>
+                          </span>
+                        )}
+                        {aff.officialLink && (
+                          <a 
+                            href={aff.officialLink} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="text-[#008972] hover:underline flex items-center space-x-1"
+                          >
+                            <span>Official Destination URL</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleAffiliation(aff.id)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${
+                          aff.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
+                        }`}
+                      >
+                        {aff.isActive ? 'Active' : 'Inactive'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAffiliationForm(aff);
+                          setIsEditingAffiliation(true);
+                        }}
+                        className="p-1.5 text-slate-500 hover:text-slate-900 rounded-lg hover:bg-slate-100 cursor-pointer"
+                        title="Edit Affiliation"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteAffiliation(aff.id)}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer"
+                        title="Delete Affiliation"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeSubTab === 'FAQS' && (
         <div className="space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
@@ -2739,6 +3011,136 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                 className="px-5 py-2 rounded-xl text-xs font-bold bg-[#008972] text-white hover:bg-[#00C6A6] hover:text-slate-950 cursor-pointer shadow-xs"
               >
                 Save FAQ
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Edit/Create Affiliation Modal */}
+      {isEditingAffiliation && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <form onSubmit={handleSaveAffiliation} className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-lg w-full p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-900">
+                {affiliationForm.id ? 'Edit Regulatory Affiliation' : 'Add Regulatory Affiliation'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsEditingAffiliation(false)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer text-xs"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Acronym / Code *</label>
+                <input
+                  type="text"
+                  required
+                  value={affiliationForm.name || ''}
+                  onChange={e => setAffiliationForm({ ...affiliationForm, name: e.target.value })}
+                  placeholder="e.g. JATA, MSME, NIDHI"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-900"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Accreditation Type</label>
+                <input
+                  type="text"
+                  value={affiliationForm.type || ''}
+                  onChange={e => setAffiliationForm({ ...affiliationForm, type: e.target.value })}
+                  placeholder="e.g. Accredited Allied Partner"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Full Entity Name *</label>
+              <input
+                type="text"
+                required
+                value={affiliationForm.fullName || ''}
+                onChange={e => setAffiliationForm({ ...affiliationForm, fullName: e.target.value })}
+                placeholder="e.g. Japan Association of Travel Agents"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Description</label>
+              <textarea
+                rows={2}
+                value={affiliationForm.description || ''}
+                onChange={e => setAffiliationForm({ ...affiliationForm, description: e.target.value })}
+                placeholder="Description of regulatory status and accreditation..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Registration / Verification Reference</label>
+              <input
+                type="text"
+                value={affiliationForm.verificationReference || ''}
+                onChange={e => setAffiliationForm({ ...affiliationForm, verificationReference: e.target.value })}
+                placeholder="e.g. UDYAM-DL-08-0049281 or Allied Member #JATA-INTL-2025"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-mono text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Official Website Link</label>
+              <input
+                type="url"
+                value={affiliationForm.officialLink || ''}
+                onChange={e => setAffiliationForm({ ...affiliationForm, officialLink: e.target.value })}
+                placeholder="https://www.jata-net.or.jp/"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 items-center">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Display Order</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={affiliationForm.displayOrder || 1}
+                  onChange={e => setAffiliationForm({ ...affiliationForm, displayOrder: parseInt(e.target.value) || 1 })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900"
+                />
+              </div>
+
+              <div className="flex items-center pt-5">
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={affiliationForm.isActive !== false}
+                    onChange={e => setAffiliationForm({ ...affiliationForm, isActive: e.target.checked })}
+                    className="w-4 h-4 text-[#008972] rounded"
+                  />
+                  <span className="text-xs font-bold text-slate-800">Active & Published</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsEditingAffiliation(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-[#008972] text-white hover:bg-[#00C6A6] hover:text-slate-950 cursor-pointer shadow-xs"
+              >
+                Save Affiliation
               </button>
             </div>
           </form>
