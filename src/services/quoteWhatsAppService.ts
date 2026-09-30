@@ -200,7 +200,8 @@ export function recordWhatsAppQuoteShare(
   );
 
   if (!existingLead && quote.clientEmail && quote.clientEmail !== 'client@example.com') {
-    existingLead = allLeads.find(l => l.email.toLowerCase() === quote.clientEmail!.toLowerCase());
+    const targetEmail = quote.clientEmail.toLowerCase();
+    existingLead = allLeads.find(l => l.email && l.email.toLowerCase() === targetEmail);
   }
 
   const timelineEvent = {
@@ -255,7 +256,7 @@ export function recordWhatsAppQuoteShare(
       source: 'QUOTATION_SAVED',
       status: 'PROPOSAL_SAVED',
       priority: 'NORMAL',
-      destinationId: quote.destination.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+      destinationId: (quote.destination || 'japan').toLowerCase().replace(/[^a-z0-9]/g, '-'),
       destinationName: quote.destination,
       travelStartDate: quote.travelStartDate,
       travelEndDate: quote.travelEndDate,

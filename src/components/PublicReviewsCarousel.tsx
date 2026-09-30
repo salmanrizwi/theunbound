@@ -22,9 +22,10 @@ export const PublicReviewsCarousel: React.FC<PublicReviewsCarouselProps> = ({ de
   let reviews = allVisible.filter(r => r.rating >= minRating);
 
   if (destinationName) {
+    const destTarget = (destinationName || '').toLowerCase();
     reviews = reviews.filter(r => {
       const dest = (r.destination || 'Global').toLowerCase();
-      return dest.includes(destinationName.toLowerCase()) || dest === 'global';
+      return dest.includes(destTarget) || dest === 'global';
     });
   }
 

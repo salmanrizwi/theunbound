@@ -117,7 +117,7 @@ export const ItineraryTimelineView: React.FC<ItineraryTimelineViewProps> = ({
   };
 
   const getTimeSlotIcon = (duration: string) => {
-    const durLower = duration.toLowerCase();
+    const durLower = (duration || '').toLowerCase();
     if (durLower.includes('night') || durLower.includes('dinner') || durLower.includes('evening')) {
       return <Moon className="w-3.5 h-3.5 text-indigo-400" />;
     }

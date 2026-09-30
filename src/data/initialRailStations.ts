@@ -741,11 +741,11 @@ export function searchStations(query: string): RailStation[] {
   const q = query.toLowerCase().trim();
   return INITIAL_RAIL_STATIONS.filter(s => {
     if (!s.active) return false;
-    if (s.stationName.toLowerCase().includes(q)) return true;
-    if (s.stationCode.toLowerCase().includes(q)) return true;
-    if (s.displayName.toLowerCase().includes(q)) return true;
-    if (s.city.toLowerCase().includes(q)) return true;
+    if ((s.stationName || '').toLowerCase().includes(q)) return true;
+    if ((s.stationCode || '').toLowerCase().includes(q)) return true;
+    if ((s.displayName || '').toLowerCase().includes(q)) return true;
+    if ((s.city || '').toLowerCase().includes(q)) return true;
     if (s.shinkansenLine && s.shinkansenLine.toLowerCase().includes(q)) return true;
-    return s.searchAliases.some(alias => alias.toLowerCase().includes(q));
+    return (s.searchAliases || []).some(alias => (alias || '').toLowerCase().includes(q));
   });
 }

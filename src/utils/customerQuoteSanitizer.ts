@@ -436,6 +436,7 @@ export function sanitizePricingResultForAgent(
 
     price: (calc as any).price ?? calc.finalTotalSellingPrice ?? calc.sellingPriceFinal ?? 0,
     finalTotalSellingPrice: calc.finalTotalSellingPrice ?? calc.sellingPriceFinal ?? 0,
+    totalSellingPrice: (calc as any).totalSellingPrice ?? (calc as any).deliveredPrice ?? (calc as any).totalVehicleSellingPrice ?? calc.finalTotalSellingPrice ?? calc.sellingPriceFinal ?? 0,
     sellingPriceFinal: calc.sellingPriceFinal ?? calc.finalTotalSellingPrice ?? 0,
     pricePerPerson: calc.pricePerPerson ?? 0,
 

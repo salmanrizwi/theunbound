@@ -58,12 +58,13 @@ export const BookingsManagementModal: React.FC<BookingsManagementModalProps> = (
   };
 
   const filteredBookings = bookings.filter(b => {
-    const matchesQuery = 
-      b.bookingReference.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      b.customer.leadTravelerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      b.customer.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (b.customer.agencyName && b.customer.agencyName.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      b.items.some(i => i.productName.toLowerCase().includes(searchQuery.toLowerCase()));
+    const q = (searchQuery || '').toLowerCase();
+    const matchesQuery = !q ||
+      (b.bookingReference || '').toLowerCase().includes(q) ||
+      (b.customer?.leadTravelerName || '').toLowerCase().includes(q) ||
+      (b.customer?.email || '').toLowerCase().includes(q) ||
+      ((b.customer?.agencyName || '').toLowerCase().includes(q)) ||
+      (b.items || []).some(i => (i.productName || '').toLowerCase().includes(q));
 
     const matchesStatus = statusFilter === 'ALL' || b.status === statusFilter;
     return matchesQuery && matchesStatus;

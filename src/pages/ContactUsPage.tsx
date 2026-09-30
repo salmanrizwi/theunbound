@@ -75,7 +75,7 @@ export const ContactUsPage: React.FC = () => {
       status: 'NEW',
       assignedStaffId: 'staff-01',
       assignedStaffName: 'Inbound Operations Desk',
-      destinationId: destinationInterest.toLowerCase(),
+      destinationId: (destinationInterest || '').toLowerCase(),
       destinationName: destinationInterest,
       travelDates: 'Upcoming 2026',
       paxAdults: 2,

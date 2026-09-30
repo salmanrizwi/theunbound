@@ -316,10 +316,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   useEffect(() => {
     if (contextDestination) {
+      const qDestLower = contextDestination.toLowerCase();
       const found = destinations.find(d => 
-        d.name.toLowerCase() === contextDestination.toLowerCase() ||
-        d.slug.toLowerCase() === contextDestination.toLowerCase() ||
-        d.id.toLowerCase() === contextDestination.toLowerCase()
+        (d.name || '').toLowerCase() === qDestLower ||
+        (d.slug || '').toLowerCase() === qDestLower ||
+        (d.id || '').toLowerCase() === qDestLower
       );
       if (found) {
         setCurrentDestination(found);
@@ -511,9 +512,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         setContextDayThemes(q.dayThemes);
       }
       if (q.destination) {
+        const qDestLower = q.destination.toLowerCase();
         const dMatch = destinations.find(d => 
-          d.name.toLowerCase() === q.destination.toLowerCase() || 
-          d.id === q.destination.toLowerCase()
+          (d.name || '').toLowerCase() === qDestLower || 
+          (d.id || '').toLowerCase() === qDestLower
         );
         if (dMatch) setCurrentDestination(dMatch);
       }
@@ -539,9 +541,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           setChildrenCount(prefillLead.paxChildren);
         }
         if (prefillLead.destinationName) {
+          const pLeadDestLower = prefillLead.destinationName.toLowerCase();
           const dMatch = destinations.find(d => 
-            d.name.toLowerCase() === prefillLead.destinationName.toLowerCase() || 
-            d.id === prefillLead.destinationId
+            (d.name || '').toLowerCase() === pLeadDestLower || 
+            (d.id || '').toLowerCase() === (prefillLead.destinationId || '').toLowerCase()
           );
           if (dMatch) setCurrentDestination(dMatch);
         }
@@ -1045,14 +1048,14 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const hasInsurance = useMemo(() => {
     return items.some(it => 
       it.product.subcategory === 'Travel Insurance' || 
-      it.product.name.toLowerCase().includes('insurance')
+      (it.product.name || '').toLowerCase().includes('insurance')
     );
   }, [items]);
 
   const hasEsim = useMemo(() => {
     return items.some(it => 
       it.product.subcategory === 'eSIM Connectivity' || 
-      it.product.name.toLowerCase().includes('esim')
+      (it.product.name || '').toLowerCase().includes('esim')
     );
   }, [items]);
 
@@ -1527,7 +1530,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       (it.notes?.includes(targetHub.hubName) || 
        (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)) || 
        (it.manualHotelDetails?.hubId === targetHub.id) ||
-       it.product.name.toLowerCase().includes(targetHub.hubName.toLowerCase()))
+       (it.product.name || '').toLowerCase().includes((targetHub.hubName || '').toLowerCase()))
     );
     existingHotelItems.forEach(it => removeProductFromQuote(it.id));
 
@@ -1945,13 +1948,14 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       if (!matchCat) return false;
 
       // 2. Search text query
-      const matchSearch = !quickAddSearch || 
-        p.name.toLowerCase().includes(quickAddSearch.toLowerCase()) ||
-        p.longDescription?.toLowerCase().includes(quickAddSearch.toLowerCase()) ||
-        p.shortDescription?.toLowerCase().includes(quickAddSearch.toLowerCase()) ||
-        p.city?.toLowerCase().includes(quickAddSearch.toLowerCase()) ||
-        p.location?.toLowerCase().includes(quickAddSearch.toLowerCase()) ||
-        p.subcategory?.toLowerCase().includes(quickAddSearch.toLowerCase());
+      const q = (quickAddSearch || '').toLowerCase();
+      const matchSearch = !q || 
+        (p.name || '').toLowerCase().includes(q) ||
+        p.longDescription?.toLowerCase().includes(q) ||
+        p.shortDescription?.toLowerCase().includes(q) ||
+        p.city?.toLowerCase().includes(q) ||
+        p.location?.toLowerCase().includes(q) ||
+        p.subcategory?.toLowerCase().includes(q);
 
       return matchCat && matchSearch;
     });
@@ -3150,10 +3154,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               {(() => {
                 const activeVisas = db.getVisas().filter(v => v.status === 'ACTIVE' || !v.status);
                 const filtered = activeVisas.filter(visa => {
-                  const matchesSearch = !visaPickerSearch.trim() || 
-                    visa.country.toLowerCase().includes(visaPickerSearch.toLowerCase()) ||
-                    visa.visaType.toLowerCase().includes(visaPickerSearch.toLowerCase()) ||
-                    (visa.description || '').toLowerCase().includes(visaPickerSearch.toLowerCase());
+                  const q = (visaPickerSearch || '').trim().toLowerCase();
+                  const matchesSearch = !q || 
+                    (visa.country || '').toLowerCase().includes(q) ||
+                    (visa.visaType || '').toLowerCase().includes(q) ||
+                    (visa.description || '').toLowerCase().includes(q);
                   const matchesCat = visaPickerCategory === 'ALL' || visa.entryType === visaPickerCategory;
                   return matchesSearch && matchesCat;
                 });
@@ -3168,7 +3173,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                 }
 
                 return filtered.map(visa => {
-                  const isCurrentDest = visa.country.toLowerCase() === currentDestination.name.toLowerCase();
+                  const isCurrentDest = (visa.country || '').toLowerCase() === (currentDestination?.name || '').toLowerCase();
                   const alreadyInQuote = isVisaInQuote(visa.id);
                   const totalFeeUSD = (visa.embassyFee || 0) + (visa.serviceFee || 0);
 

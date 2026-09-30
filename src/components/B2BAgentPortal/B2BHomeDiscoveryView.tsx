@@ -139,7 +139,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
     if (!selectedDestinationContext) {
       const parentDest = destinations.find(d => 
         d.id === hub.destinationId || 
-        d.name.toLowerCase() === (hub.destinationName || '').toLowerCase()
+        (d.name || '').toLowerCase() === (hub.destinationName || '').toLowerCase()
       );
       if (parentDest) setSelectedDestinationContext(parentDest);
     }
@@ -166,41 +166,41 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
     if (!q) return null;
 
     const matchedDestinations = destinations.filter(d => 
-      d.name.toLowerCase().includes(q) || 
-      d.country.toLowerCase().includes(q) ||
-      d.description.toLowerCase().includes(q)
+      (d.name || '').toLowerCase().includes(q) || 
+      (d.country || '').toLowerCase().includes(q) ||
+      (d.description || '').toLowerCase().includes(q)
     );
 
     const matchedHubs = cityHubs.filter(h => 
-      h.name.toLowerCase().includes(q) || 
+      (h.name || '').toLowerCase().includes(q) || 
       (h.destinationName && h.destinationName.toLowerCase().includes(q)) ||
       (h.stateProvince && h.stateProvince.toLowerCase().includes(q))
     );
 
     const matchedProducts = products.filter(p => 
-      p.name.toLowerCase().includes(q) ||
-      p.city.toLowerCase().includes(q) ||
-      p.country.toLowerCase().includes(q) ||
-      p.category.toLowerCase().includes(q) ||
+      (p.name || '').toLowerCase().includes(q) ||
+      (p.city || '').toLowerCase().includes(q) ||
+      (p.country || '').toLowerCase().includes(q) ||
+      (p.category || '').toLowerCase().includes(q) ||
       (p.sku && p.sku.toLowerCase().includes(q))
     );
 
     const matchedHotels = hotels.filter(h => 
-      h.name.toLowerCase().includes(q) ||
+      (h.name || '').toLowerCase().includes(q) ||
       (h.cityName && h.cityName.toLowerCase().includes(q)) ||
       (h.city && h.city.toLowerCase().includes(q))
     );
 
     const matchedPackages = packages.filter(pkg => 
-      pkg.title.toLowerCase().includes(q) ||
-      pkg.destinationName.toLowerCase().includes(q) ||
-      pkg.tagline.toLowerCase().includes(q) ||
-      pkg.routeSummary.some(r => r.toLowerCase().includes(q))
+      (pkg.title || '').toLowerCase().includes(q) ||
+      (pkg.destinationName || '').toLowerCase().includes(q) ||
+      (pkg.tagline || '').toLowerCase().includes(q) ||
+      (pkg.routeSummary && pkg.routeSummary.some(r => r && r.toLowerCase().includes(q)))
     );
 
     const matchedVisas = db.getVisas().filter(v => v.status === 'ACTIVE' && (
-      v.country.toLowerCase().includes(q) ||
-      v.visaType.toLowerCase().includes(q)
+      (v.country || '').toLowerCase().includes(q) ||
+      (v.visaType || '').toLowerCase().includes(q)
     ));
 
     const totalCount = 
@@ -224,7 +224,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
 
   // Real Count Calculation Helper per Destination
   const getDestinationMetrics = (destName: string, destId: string) => {
-    const destNameLower = destName.toLowerCase();
+    const destNameLower = (destName || '').toLowerCase();
     
     // Hubs count
     const destHubs = cityHubs.filter(h => 
@@ -235,14 +235,14 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
     // Products count
     const destProducts = products.filter(p => 
       p.destinationId === destId || 
-      p.destinationName.toLowerCase().includes(destNameLower) ||
-      p.country.toLowerCase().includes(destNameLower)
+      (p.destinationName || '').toLowerCase().includes(destNameLower) ||
+      (p.country || '').toLowerCase().includes(destNameLower)
     );
 
     // Hotels count
     const destHotels = hotels.filter(h => 
       h.destinationId === destId || 
-      (h.cityName && destProducts.some(p => p.city.toLowerCase() === h.cityName.toLowerCase()))
+      (h.cityName && destProducts.some(p => (p.city || '').toLowerCase() === h.cityName.toLowerCase()))
     );
 
     return {
@@ -254,7 +254,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
 
   // Real Count Helper per Hub
   const getHubMetrics = (hub: CityHub) => {
-    const hubNameLower = hub.name.toLowerCase();
+    const hubNameLower = (hub.name || '').toLowerCase();
     const hubProducts = products.filter(p => 
       p.hubId === hub.id || 
       (p.city && p.city.toLowerCase() === hubNameLower)

@@ -114,32 +114,34 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
   }, [items]);
 
   const protectionItemsInQuote = useMemo(() => {
-    return items.filter(it => 
-      it.service_type === 'TRAVEL_PROTECTION' ||
-      it.product.subcategory === 'Travel Insurance' || 
-      it.product.productType === 'Travel Protection' ||
-      it.product.name.toLowerCase().includes('insurance') ||
-      it.product.name.toLowerCase().includes('protection') ||
-      it.product.sku?.startsWith('INS-')
-    );
+    return items.filter(it => {
+      const pNameLower = (it.product.name || '').toLowerCase();
+      return it.service_type === 'TRAVEL_PROTECTION' ||
+        it.product.subcategory === 'Travel Insurance' || 
+        it.product.productType === 'Travel Protection' ||
+        pNameLower.includes('insurance') ||
+        pNameLower.includes('protection') ||
+        it.product.sku?.startsWith('INS-');
+    });
   }, [items]);
 
   const groundServicesInQuote = useMemo(() => {
-    return items.filter(it => 
-      it.service_type === 'VIP_GROUND' ||
-      it.service_type === 'CONNECTIVITY' ||
-      it.product.subcategory === 'Ground VIP Services' ||
-      it.product.subcategory === 'eSIM Connectivity' ||
-      it.product.productType === '5G Connectivity' ||
-      it.product.sku?.startsWith('VIP-') ||
-      it.product.sku?.startsWith('ESIM-') ||
-      it.product.name.toLowerCase().includes('meet & assist') ||
-      it.product.name.toLowerCase().includes('fast track') ||
-      it.product.name.toLowerCase().includes('lounge') ||
-      it.product.name.toLowerCase().includes('porter') ||
-      it.product.name.toLowerCase().includes('concierge') ||
-      it.product.name.toLowerCase().includes('esim')
-    );
+    return items.filter(it => {
+      const pNameLower = (it.product.name || '').toLowerCase();
+      return it.service_type === 'VIP_GROUND' ||
+        it.service_type === 'CONNECTIVITY' ||
+        it.product.subcategory === 'Ground VIP Services' ||
+        it.product.subcategory === 'eSIM Connectivity' ||
+        it.product.productType === '5G Connectivity' ||
+        it.product.sku?.startsWith('VIP-') ||
+        it.product.sku?.startsWith('ESIM-') ||
+        pNameLower.includes('meet & assist') ||
+        pNameLower.includes('fast track') ||
+        pNameLower.includes('lounge') ||
+        pNameLower.includes('porter') ||
+        pNameLower.includes('concierge') ||
+        pNameLower.includes('esim');
+    });
   }, [items]);
 
   const allSectionItemsInQuote = useMemo(() => {
@@ -832,8 +834,9 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {allSectionItemsInQuote.map((item) => {
-                  const isVisa = item.service_type === 'VISA' || item.product.sku?.startsWith('VSA-') || item.product.sku?.startsWith('VISA-') || item.product.name.toLowerCase().includes('visa');
-                  const isInsurance = item.service_type === 'TRAVEL_PROTECTION' || item.product.subcategory === 'Travel Insurance' || item.product.name.toLowerCase().includes('insurance');
+                  const pNameLower = (item.product.name || '').toLowerCase();
+                  const isVisa = item.service_type === 'VISA' || item.product.sku?.startsWith('VSA-') || item.product.sku?.startsWith('VISA-') || pNameLower.includes('visa');
+                  const isInsurance = item.service_type === 'TRAVEL_PROTECTION' || item.product.subcategory === 'Travel Insurance' || pNameLower.includes('insurance');
                   const isEsim = item.service_type === 'CONNECTIVITY' || item.product.subcategory === 'eSIM Connectivity';
 
                   return (

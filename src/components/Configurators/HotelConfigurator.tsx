@@ -50,12 +50,13 @@ export const HotelConfigurator: React.FC<HotelConfiguratorProps> = ({
       const metaHotelId = (itemOrProduct as any).metadata?.hotelId || (itemOrProduct as any).hotelDetails?.hotelId;
       const name = ((itemOrProduct as any).name || (itemOrProduct as any).customTitle || '').toLowerCase();
 
-      targetHotel = allHotels.find(h => 
-        h.id === targetId || 
-        h.id === metaHotelId || 
-        h.name.toLowerCase() === name ||
-        name.includes(h.name.toLowerCase())
-      ) || null;
+      targetHotel = allHotels.find(h => {
+        const hNameLower = (h.name || '').toLowerCase();
+        return h.id === targetId || 
+          h.id === metaHotelId || 
+          (hNameLower && hNameLower === name) ||
+          (name && hNameLower && name.includes(hNameLower));
+      }) || null;
 
       if (!targetHotel) {
         const prod = (itemOrProduct as QuoteItem).product || (itemOrProduct as Product);

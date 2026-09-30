@@ -36,18 +36,19 @@ export const CAPACITY_BASED_CATEGORIES = [
 ];
 
 export function isCapacityBasedProduct(product: Product): boolean {
-  if (product.pricingMethod === 'capacity_based') return true;
+  if (product.pricingMethod === 'capacity_based' || (product as any).pricingType === 'CAPACITY' || (product as any).pricingModel === 'CAPACITY') return true;
   if (product.pricingMethod === 'per_person') return false;
   if (product.pricingMethod as string === 'hourly' || product.pricingMethod === 'hourly_based') return false;
   if (product.vehicleConfig?.pricingMethod === 'capacity_based') return true;
   if (product.isTransfer) return true;
   if (product.vehicleConfig && product.vehicleConfig.maxSeats) return true;
-  const cat = (product.category || '').toLowerCase();
+  const cat = ((product as any).productCategory || product.category || '').toLowerCase();
   return (
     cat.includes('private tour') ||
     cat.includes('transfer') ||
     cat.includes('transport') ||
     cat.includes('private yacht') ||
+    cat.includes('yacht') ||
     cat.includes('ferry') ||
     cat.includes('cruise')
   );
@@ -131,7 +132,9 @@ export interface UnifiedPricingResult {
   marginAmount: number;
   marginType: MarginType;
   marginValue: number;
+  subtotal: number;
   serviceChargeAmount: number;
+  serviceFeeAmount: number;
   serviceChargeType: ServiceChargeType;
   serviceChargeValue: number;
   taxAmount: number;
@@ -180,7 +183,9 @@ export function calculateUnifiedPrice(input: UnifiedPricingInput): UnifiedPricin
     marginAmount,
     marginType,
     marginValue,
+    subtotal,
     serviceChargeAmount,
+    serviceFeeAmount: serviceChargeAmount,
     serviceChargeType,
     serviceChargeValue,
     taxAmount,
@@ -209,6 +214,7 @@ export function calculateSellingPrice(
 
 export interface DeliveredPriceInfo {
   deliveredPrice: number; // In targetCurrency (converted from Base Currency)
+  totalSellingPrice?: number;
   rawPriceInBaseCurrency: number;
   baseAdultNet: number;
   baseChildNet: number;
@@ -325,6 +331,7 @@ export function calculateDeliveredPriceForUser(
 
     return {
       deliveredPrice: totalVehicleSellingPrice,
+      totalSellingPrice: totalVehicleSellingPrice,
       rawPriceInBaseCurrency: rawVehicleSelling,
       baseAdultNet: vehicleCost,
       baseChildNet: 0,
@@ -353,6 +360,7 @@ export function calculateDeliveredPriceForUser(
 
   return {
     deliveredPrice,
+    totalSellingPrice: deliveredPrice,
     rawPriceInBaseCurrency: rawSellingInBase,
     baseAdultNet,
     baseChildNet,
@@ -870,8 +878,11 @@ export function calculateProductPrice(
     childPricePerPax,
     price: finalTotalSellingPrice,
     finalTotalSellingPrice,
+    totalSellingPrice: finalTotalSellingPrice,
     sellingPriceFinal: finalTotalSellingPrice,
     pricePerPerson,
+    marginAmount: markupAmount,
+    serviceFeeAmount: serviceFee,
     dmcMarginAmount,
     dmcMarginPercent,
     isCapacityBased: isCapacity,

@@ -381,7 +381,7 @@ export class SheetsSyncService {
         let rowHasCritical = false;
 
         // 1. Check Primary Key
-        const pkField = schema.primaryKey.toLowerCase();
+        const pkField = (schema.primaryKey || 'id').toLowerCase();
         const pkVal = (row[pkField] || row.id || row.sku || '').trim();
 
         if (!pkVal) {
@@ -1031,7 +1031,7 @@ export class SheetsSyncService {
       }
 
       for (const row of objects) {
-        const pkField = tabDef.primaryKey.toLowerCase();
+        const pkField = (tabDef.primaryKey || 'id').toLowerCase();
         const pkVal = (row[pkField] || row.id || row.sku || '').trim();
 
         if (!pkVal) {

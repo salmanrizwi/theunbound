@@ -179,7 +179,14 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
       }
       const prod = itemOrProduct.product || itemOrProduct;
       const metaVisaId = itemOrProduct.metadata?.visaProductId || itemOrProduct.metadata?.visaConfigurationPayload?.visaId || prod.id;
-      const found = allVisas.find(v => v.id === metaVisaId || v.country.toLowerCase() === (prod.country || '').toLowerCase() || prod.name?.toLowerCase().includes(v.country.toLowerCase()));
+      const found = allVisas.find(v => {
+        const vCountryLower = (v.country || '').toLowerCase();
+        const prodCountryLower = (prod.country || '').toLowerCase();
+        const prodNameLower = (prod.name || '').toLowerCase();
+        return v.id === metaVisaId || 
+          (vCountryLower && vCountryLower === prodCountryLower) || 
+          (vCountryLower && prodNameLower.includes(vCountryLower));
+      });
       if (found) return found;
     }
     return allVisas[0] || null;

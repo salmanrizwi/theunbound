@@ -15702,7 +15702,7 @@ export class AppDatabase {
       const companies = this.getCompanies();
       let company = user.companyId 
         ? companies.find(c => c.id === user.companyId)
-        : companies.find(c => c.name.toLowerCase() === cName.toLowerCase());
+        : companies.find(c => (c.name || '').toLowerCase() === cName.toLowerCase());
 
       if (company) {
         // Update existing company
@@ -15847,7 +15847,7 @@ export class AppDatabase {
     }
 
     const users = this.getUsers();
-    const existing = users.find(u => u.email.toLowerCase() === trimmedEmail);
+    const existing = users.find(u => u.email && u.email.toLowerCase() === trimmedEmail);
     if (existing) {
       return {
         success: false,
@@ -15868,7 +15868,7 @@ export class AppDatabase {
     const category: UserCategory = isInternal ? 'INTERNAL' : 'EXTERNAL';
 
     const newUser: User = {
-      id: `usr-${isB2BAgent ? 'agent' : userData.role.toLowerCase()}-${Date.now()}`,
+      id: `usr-${isB2BAgent ? 'agent' : (userData.role || 'buyer').toLowerCase()}-${Date.now()}`,
       name: trimmedName,
       firstName: trimmedFirst || undefined,
       lastName: trimmedLast || undefined,
@@ -19833,7 +19833,7 @@ export class AppDatabase {
       bookings.forEach(b => {
         let hasItem = false;
         b.items?.forEach(it => {
-          if (it.supplierId === sup.id || (it.supplierName && it.supplierName.trim().toLowerCase() === sup.name.trim().toLowerCase())) {
+          if (it.supplierId === sup.id || (it.supplierName && sup.name && it.supplierName.trim().toLowerCase() === sup.name.trim().toLowerCase())) {
             linkedItems++;
             hasItem = true;
           }
@@ -20300,7 +20300,7 @@ export class AppDatabase {
       if (!b.items) continue;
       const matchedItems = b.items.filter(it => 
         it.supplierId === supplierId || 
-        (sup && it.supplierName && it.supplierName.trim().toLowerCase() === sup.name.trim().toLowerCase())
+        (sup && sup.name && it.supplierName && it.supplierName.trim().toLowerCase() === sup.name.trim().toLowerCase())
       );
       if (matchedItems.length > 0) {
         results.push({

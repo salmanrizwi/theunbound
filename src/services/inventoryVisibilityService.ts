@@ -447,7 +447,7 @@ export class InventoryVisibilityService {
       const targetDest = allDests.find(d => 
         d.id === destinationIdOrSlug || 
         d.slug === destinationIdOrSlug || 
-        d.name.toLowerCase() === destinationIdOrSlug.toLowerCase()
+        (d.name || '').toLowerCase() === (destinationIdOrSlug || '').toLowerCase()
       );
       const destId = targetDest?.id || destinationIdOrSlug;
       const destName = targetDest?.name || destinationIdOrSlug;

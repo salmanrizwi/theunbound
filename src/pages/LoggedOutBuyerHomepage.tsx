@@ -142,7 +142,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
   ];
 
   const normalizeModuleId = (id: string): string => {
-    const clean = id.toLowerCase().replace(/[-_]/g, '');
+    const clean = (id || '').toLowerCase().replace(/[-_]/g, '');
     if (clean === 'hero' || clean === 'buyerhomepagehero') return 'hero';
     if (clean === 'brandintroduction' || clean === 'b2bbrandintroduction') return 'brandIntroduction';
     if (clean === 'cityhubs' || clean === 'homepagecityhubs') return 'cityHubs';
@@ -721,7 +721,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                   .map((aff) => (
                     <div
                       key={aff.id}
-                      id={`homepage-affiliation-card-${aff.name.toLowerCase()}`}
+                      id={`homepage-affiliation-card-${(aff.name || aff.id || 'aff').toLowerCase()}`}
                       className="p-6 rounded-2xl bg-slate-50 hover:bg-slate-100/70 border border-slate-200 transition-all flex flex-col justify-between space-y-4 group hover:shadow-md"
                     >
                       <div className="space-y-4">

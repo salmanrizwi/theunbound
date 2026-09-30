@@ -352,19 +352,19 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
     let list = destinationProducts.filter((p) => {
       // Search query
       if (filters.searchQuery) {
-        const q = filters.searchQuery.toLowerCase();
-        const matchesName = p.name.toLowerCase().includes(q);
-        const matchesCity = p.city.toLowerCase().includes(q);
-        const matchesDesc = p.shortDescription.toLowerCase().includes(q);
-        const matchesSku = p.sku.toLowerCase().includes(q);
-        const matchesDest = p.destinationName.toLowerCase().includes(q) || p.country.toLowerCase().includes(q);
+        const q = (filters.searchQuery || '').toLowerCase();
+        const matchesName = (p.name || '').toLowerCase().includes(q);
+        const matchesCity = (p.city || '').toLowerCase().includes(q);
+        const matchesDesc = (p.shortDescription || '').toLowerCase().includes(q);
+        const matchesSku = (p.sku || '').toLowerCase().includes(q);
+        const matchesDest = (p.destinationName || '').toLowerCase().includes(q) || (p.country || '').toLowerCase().includes(q);
         if (!matchesName && !matchesCity && !matchesDesc && !matchesSku && !matchesDest) return false;
       }
 
       // City filter
       if (filters.city) {
-        const cityLower = filters.city.toLowerCase();
-        const pCityLower = p.city.toLowerCase();
+        const cityLower = (filters.city || '').toLowerCase();
+        const pCityLower = (p.city || '').toLowerCase();
         const matchesExact = pCityLower === cityLower;
         const matchesSub = pCityLower.includes(cityLower) || p.category === 'Rail';
         if (!matchesExact && !matchesSub) {

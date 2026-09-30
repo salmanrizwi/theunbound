@@ -131,7 +131,7 @@ export async function testConnection(): Promise<boolean> {
     return true;
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
+      console.warn("[Firebase Connection] Client is offline or Firestore is unreachable. Please verify network connectivity or Firebase configuration.");
       return false;
     }
     // Any other response (like document not found or permissions) confirms connectivity

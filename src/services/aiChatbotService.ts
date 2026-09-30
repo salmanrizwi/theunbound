@@ -593,7 +593,7 @@ export class AiChatbotService {
       destination: {
         id: plan.destinationId,
         name: plan.destinationName,
-        slug: plan.destinationName.toLowerCase().replace(/\s+/g, '-')
+        slug: (plan.destinationName || 'destination').toLowerCase().replace(/\s+/g, '-')
       },
       travelDates: {
         startDate,

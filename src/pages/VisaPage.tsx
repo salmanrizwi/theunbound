@@ -176,10 +176,14 @@ export const VisaPage: React.FC = () => {
   const countries = Array.from(new Set(visas.map(v => v.country)));
 
   const filteredVisas = visas.filter(v => {
-    const matchesCountry = selectedCountry === 'all' || v.country.toLowerCase() === selectedCountry.toLowerCase();
-    const matchesSearch = v.country.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          v.visaType.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          v.description.toLowerCase().includes(searchQuery.toLowerCase());
+    const vCountry = (v.country || '').toLowerCase();
+    const vType = (v.visaType || '').toLowerCase();
+    const vDesc = (v.description || '').toLowerCase();
+    const selCountry = (selectedCountry || 'all').toLowerCase();
+    const searchQ = (searchQuery || '').toLowerCase();
+
+    const matchesCountry = selectedCountry === 'all' || vCountry === selCountry;
+    const matchesSearch = vCountry.includes(searchQ) || vType.includes(searchQ) || vDesc.includes(searchQ);
     return matchesCountry && matchesSearch && v.status === 'ACTIVE';
   });
 

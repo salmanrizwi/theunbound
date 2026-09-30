@@ -236,9 +236,9 @@ export function fetchUnsplashImagesByQuery(query: string, category: string = 'al
   }
 
   const matches = pool.filter(p => 
-    p.title.toLowerCase().includes(cleanQ) || 
-    p.category.toLowerCase().includes(cleanQ) ||
-    cleanQ.split(' ').some(word => p.title.toLowerCase().includes(word))
+    (p.title || '').toLowerCase().includes(cleanQ) || 
+    (p.category || '').toLowerCase().includes(cleanQ) ||
+    cleanQ.split(' ').some(word => word && (p.title || '').toLowerCase().includes(word))
   );
 
   return matches.length > 0 ? matches : pool;

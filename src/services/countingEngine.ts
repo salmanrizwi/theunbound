@@ -48,11 +48,11 @@ export class GlobalCountingEngine {
   public resolveDestination(destinationIdOrSlug?: string): Destination | undefined {
     if (!destinationIdOrSlug || destinationIdOrSlug === 'all') return undefined;
     const destinations = this.db.getDestinations();
-    const query = destinationIdOrSlug.toLowerCase().trim();
+    const query = (destinationIdOrSlug || '').toLowerCase().trim();
     return destinations.find(d => 
-      d.id.toLowerCase() === query || 
-      d.slug.toLowerCase() === query || 
-      d.name.toLowerCase() === query
+      (d.id || '').toLowerCase() === query || 
+      (d.slug || '').toLowerCase() === query || 
+      (d.name || '').toLowerCase() === query
     );
   }
 
@@ -62,11 +62,11 @@ export class GlobalCountingEngine {
   public resolveMasterRegion(regionIdOrSlug?: string): MasterRegion | undefined {
     if (!regionIdOrSlug || regionIdOrSlug === 'all') return undefined;
     const regions = this.db.getMasterRegions();
-    const query = regionIdOrSlug.toLowerCase().trim();
+    const query = (regionIdOrSlug || '').toLowerCase().trim();
     return regions.find(r => 
-      r.id.toLowerCase() === query || 
-      r.slug.toLowerCase() === query || 
-      r.name.toLowerCase() === query
+      (r.id || '').toLowerCase() === query || 
+      (r.slug || '').toLowerCase() === query || 
+      (r.name || '').toLowerCase() === query
     );
   }
 
@@ -76,13 +76,13 @@ export class GlobalCountingEngine {
   public resolveHub(hubIdOrName?: string): CityHub | undefined {
     if (!hubIdOrName || hubIdOrName === 'all') return undefined;
     const hubs = this.db.getCityHubs();
-    const query = hubIdOrName.toLowerCase().trim();
+    const query = (hubIdOrName || '').toLowerCase().trim();
     return hubs.find(h => 
-      h.id.toLowerCase() === query || 
-      h.name.toLowerCase() === query ||
-      h.id.toLowerCase() === `hub-${query}` ||
-      query.includes(h.name.toLowerCase()) ||
-      h.name.toLowerCase().includes(query)
+      (h.id || '').toLowerCase() === query || 
+      (h.name || '').toLowerCase() === query ||
+      (h.id || '').toLowerCase() === `hub-${query}` ||
+      (h.name && query.includes(h.name.toLowerCase())) ||
+      (h.name && h.name.toLowerCase().includes(query))
     );
   }
 
@@ -104,10 +104,10 @@ export class GlobalCountingEngine {
       const region = this.resolveMasterRegion(filter.masterRegionId);
       if (region) {
         const dest = this.db.getDestinations().find(d => 
-          d.id.toLowerCase() === product.destinationId?.toLowerCase() ||
-          d.slug.toLowerCase() === product.destinationId?.toLowerCase() ||
-          d.name.toLowerCase() === product.country?.toLowerCase() ||
-          d.name.toLowerCase() === product.destinationName?.toLowerCase()
+          (d.id && product.destinationId && d.id.toLowerCase() === product.destinationId.toLowerCase()) ||
+          (d.slug && product.destinationId && d.slug.toLowerCase() === product.destinationId.toLowerCase()) ||
+          (d.name && product.country && d.name.toLowerCase() === product.country.toLowerCase()) ||
+          (d.name && product.destinationName && d.name.toLowerCase() === product.destinationName.toLowerCase())
         );
         const destRegionId = dest?.regionId || (dest as any)?.masterRegionId;
         if (!dest || destRegionId !== region.id) return false;
@@ -117,9 +117,9 @@ export class GlobalCountingEngine {
     // 2. Destination filter
     if (filter.destinationId && filter.destinationId !== 'all') {
       const canonicalDest = this.resolveDestination(filter.destinationId);
-      const targetQuery = (canonicalDest ? canonicalDest.id : filter.destinationId).toLowerCase();
-      const targetName = canonicalDest ? canonicalDest.name.toLowerCase() : filter.destinationId.toLowerCase();
-      const targetSlug = canonicalDest ? canonicalDest.slug.toLowerCase() : filter.destinationId.toLowerCase();
+      const targetQuery = (canonicalDest ? canonicalDest.id : filter.destinationId || '').toLowerCase();
+      const targetName = (canonicalDest?.name || filter.destinationId || '').toLowerCase();
+      const targetSlug = (canonicalDest?.slug || filter.destinationId || '').toLowerCase();
 
       const pDestId = (product.destinationId || '').toLowerCase();
       const pDestSlug = ((product as any).destinationSlug || '').toLowerCase();
@@ -142,8 +142,8 @@ export class GlobalCountingEngine {
     // 3. Hub / City filter
     if (filter.hubId && filter.hubId !== 'all') {
       const canonicalHub = this.resolveHub(filter.hubId);
-      const targetHubId = (canonicalHub ? canonicalHub.id : filter.hubId).toLowerCase();
-      const targetHubName = canonicalHub ? canonicalHub.name.toLowerCase() : filter.hubId.toLowerCase();
+      const targetHubId = (canonicalHub ? canonicalHub.id : filter.hubId || '').toLowerCase();
+      const targetHubName = (canonicalHub?.name || filter.hubId || '').toLowerCase();
 
       const pHubId = ((product as any).hubId || '').toLowerCase();
       const pCity = (product.city || '').toLowerCase();
@@ -195,10 +195,10 @@ export class GlobalCountingEngine {
       const region = this.resolveMasterRegion(filter.masterRegionId);
       if (region) {
         const dest = this.db.getDestinations().find(d => 
-          d.id.toLowerCase() === hotel.destinationId?.toLowerCase() ||
-          d.slug.toLowerCase() === hotel.destinationId?.toLowerCase() ||
-          d.name.toLowerCase() === hotel.country?.toLowerCase() ||
-          d.name.toLowerCase() === hotel.destinationName?.toLowerCase()
+          (d.id && hotel.destinationId && d.id.toLowerCase() === hotel.destinationId.toLowerCase()) ||
+          (d.slug && hotel.destinationId && d.slug.toLowerCase() === hotel.destinationId.toLowerCase()) ||
+          (d.name && hotel.country && d.name.toLowerCase() === hotel.country.toLowerCase()) ||
+          (d.name && hotel.destinationName && d.name.toLowerCase() === hotel.destinationName.toLowerCase())
         );
         const destRegionId = dest?.regionId || (dest as any)?.masterRegionId;
         if (!dest || destRegionId !== region.id) return false;
@@ -208,9 +208,9 @@ export class GlobalCountingEngine {
     // 2. Destination filter
     if (filter.destinationId && filter.destinationId !== 'all') {
       const canonicalDest = this.resolveDestination(filter.destinationId);
-      const targetQuery = (canonicalDest ? canonicalDest.id : filter.destinationId).toLowerCase();
-      const targetName = canonicalDest ? canonicalDest.name.toLowerCase() : filter.destinationId.toLowerCase();
-      const targetSlug = canonicalDest ? canonicalDest.slug.toLowerCase() : filter.destinationId.toLowerCase();
+      const targetQuery = (canonicalDest ? canonicalDest.id : filter.destinationId || '').toLowerCase();
+      const targetName = (canonicalDest?.name || filter.destinationId || '').toLowerCase();
+      const targetSlug = (canonicalDest?.slug || filter.destinationId || '').toLowerCase();
 
       const hDestId = (hotel.destinationId || '').toLowerCase();
       const hCountry = (hotel.country || '').toLowerCase();
@@ -229,8 +229,8 @@ export class GlobalCountingEngine {
     // 3. Hub / City filter
     if (filter.hubId && filter.hubId !== 'all') {
       const canonicalHub = this.resolveHub(filter.hubId);
-      const targetHubId = (canonicalHub ? canonicalHub.id : filter.hubId).toLowerCase();
-      const targetHubName = canonicalHub ? canonicalHub.name.toLowerCase() : filter.hubId.toLowerCase();
+      const targetHubId = (canonicalHub ? canonicalHub.id : filter.hubId || '').toLowerCase();
+      const targetHubName = (canonicalHub?.name || filter.hubId || '').toLowerCase();
 
       const hHubId = (hotel.hubId || hotel.cityId || '').toLowerCase();
       const hCity = (hotel.cityName || hotel.area || '').toLowerCase();
@@ -264,9 +264,9 @@ export class GlobalCountingEngine {
 
     if (filter.destinationId && filter.destinationId !== 'all') {
       const canonicalDest = this.resolveDestination(filter.destinationId);
-      const targetQuery = (canonicalDest ? canonicalDest.id : filter.destinationId).toLowerCase();
-      const targetName = canonicalDest ? canonicalDest.name.toLowerCase() : filter.destinationId.toLowerCase();
-      const targetSlug = canonicalDest ? canonicalDest.slug.toLowerCase() : filter.destinationId.toLowerCase();
+      const targetQuery = (canonicalDest ? canonicalDest.id : filter.destinationId || '').toLowerCase();
+      const targetName = (canonicalDest?.name || filter.destinationId || '').toLowerCase();
+      const targetSlug = (canonicalDest?.slug || filter.destinationId || '').toLowerCase();
 
       const hubDestId = (hub.destinationId || '').toLowerCase();
       const hubDestName = (hub.destinationName || '').toLowerCase();
@@ -337,7 +337,7 @@ export class GlobalCountingEngine {
       }
       if (filter.searchQuery && filter.searchQuery.trim()) {
         const q = filter.searchQuery.toLowerCase().trim();
-        const inName = d.name.toLowerCase().includes(q);
+        const inName = (d.name || '').toLowerCase().includes(q);
         const inDesc = (d.tagline || d.description || '').toLowerCase().includes(q);
         if (!inName && !inDesc) return false;
       }

@@ -141,7 +141,7 @@ export const RosterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           isAvailable: false,
           status: override.status,
           date: dateStr,
-          reason: override.reason || `Date is ${override.status.toLowerCase().replace('_', ' ')} in DMC roster`,
+          reason: override.reason || `Date is ${(override.status || '').toLowerCase().replace('_', ' ')} in DMC roster`,
           operatingDayName: dayName,
           maxCapacity: override.maxCapacity || 0,
           remainingCapacity: 0,
@@ -368,7 +368,7 @@ export const RosterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       status: 'AVAILABLE',
       assignedResourceId: resource.id,
       assignedResourceName: `${resource.name} (${resource.role})`,
-      notes: `Assigned DMC ${resource.role.toLowerCase()}`
+      notes: `Assigned DMC ${(resource.role || '').toLowerCase()}`
     });
   };
 

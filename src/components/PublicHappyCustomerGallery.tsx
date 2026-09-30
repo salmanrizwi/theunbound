@@ -10,8 +10,9 @@ export const PublicHappyCustomerGallery: React.FC<PublicHappyCustomerGalleryProp
   const db = AppDatabase.getInstance();
   const galleryImages = db.getGalleryImages().filter(img => img.isPublished);
 
-  const filtered = destinationName
-    ? galleryImages.filter(img => img.destination.toLowerCase().includes(destinationName.toLowerCase()) || img.destination === 'Global')
+  const destTarget = (destinationName || '').toLowerCase();
+  const filtered = destTarget
+    ? galleryImages.filter(img => (img.destination || '').toLowerCase().includes(destTarget) || img.destination === 'Global')
     : galleryImages;
 
   if (filtered.length === 0) return null;

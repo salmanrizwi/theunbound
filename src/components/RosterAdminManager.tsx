@@ -96,16 +96,19 @@ export const RosterAdminManager: React.FC<RosterAdminManagerProps> = ({ products
 
   // Filtered products list for search bar
   const filteredProducts = safeProducts.filter(p => {
-    const matchesSearch = productSearchQuery === '' ||
-      p.name.toLowerCase().includes(productSearchQuery.toLowerCase()) ||
-      p.sku.toLowerCase().includes(productSearchQuery.toLowerCase()) ||
-      p.city.toLowerCase().includes(productSearchQuery.toLowerCase()) ||
-      p.country.toLowerCase().includes(productSearchQuery.toLowerCase()) ||
-      p.category.toLowerCase().includes(productSearchQuery.toLowerCase());
+    const q = (productSearchQuery || '').toLowerCase();
+    const destFilter = (productDestFilter || 'ALL').toLowerCase();
 
-    const matchesDest = productDestFilter === 'ALL' ||
-      p.destinationId.toLowerCase() === productDestFilter.toLowerCase() ||
-      p.country.toLowerCase().includes(productDestFilter.toLowerCase());
+    const matchesSearch = !q ||
+      (p.name || '').toLowerCase().includes(q) ||
+      (p.sku || '').toLowerCase().includes(q) ||
+      (p.city || '').toLowerCase().includes(q) ||
+      (p.country || '').toLowerCase().includes(q) ||
+      (p.category || '').toLowerCase().includes(q);
+
+    const matchesDest = destFilter === 'all' ||
+      (p.destinationId || '').toLowerCase() === destFilter ||
+      (p.country || '').toLowerCase().includes(destFilter);
 
     return matchesSearch && matchesDest;
   });

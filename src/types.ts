@@ -1361,8 +1361,11 @@ export interface PricingCalculationResult {
   // Final Results
   price?: number;
   finalTotalSellingPrice: number;
+  totalSellingPrice?: number;
   sellingPriceFinal: number;
   pricePerPerson: number;
+  marginAmount?: number;
+  serviceFeeAmount?: number;
 
   // Native Commercial Calculation (Calculate Native First, Convert Second)
   nativeCurrency?: CurrencyCode;
@@ -1458,6 +1461,7 @@ export interface AgentPricingResponse {
   // Final Customer-Facing Results
   price?: number;
   finalTotalSellingPrice: number;
+  totalSellingPrice?: number;
   sellingPriceFinal: number;
   pricePerPerson: number;
 

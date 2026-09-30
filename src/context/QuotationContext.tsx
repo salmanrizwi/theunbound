@@ -592,7 +592,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // 1. Verify destination against DB
     const matchedDest = allDestinations.find(
       d => d.id === payload.destination.id ||
-           d.name.toLowerCase() === payload.destination.name.toLowerCase() ||
+           (d.name || '').toLowerCase() === (payload.destination?.name || '').toLowerCase() ||
            d.slug === payload.destination.slug
     );
     const destName = matchedDest ? matchedDest.name : payload.destination.name;

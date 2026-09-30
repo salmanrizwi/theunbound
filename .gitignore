@@ -4,3 +4,8 @@ coverage/
 *.log
 .env*
 !.env.example
+# dist/
+# build/
+.next/
+.cache/
+temp/

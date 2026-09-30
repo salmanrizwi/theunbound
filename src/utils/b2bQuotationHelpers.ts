@@ -346,8 +346,8 @@ export function checkItineraryFeasibility(
       const fromHub = routeHubs[i];
       const toHub = routeHubs[i + 1];
       const hasIntercity = transferItems.some(it => 
-        (it.product.name || '').toLowerCase().includes(fromHub.hubName.toLowerCase()) && 
-        (it.product.name || '').toLowerCase().includes(toHub.hubName.toLowerCase())
+        (it.product.name || '').toLowerCase().includes((fromHub.hubName || '').toLowerCase()) && 
+        (it.product.name || '').toLowerCase().includes((toHub.hubName || '').toLowerCase())
       );
 
       if (!hasIntercity) {

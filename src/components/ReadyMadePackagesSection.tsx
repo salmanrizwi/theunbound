@@ -74,8 +74,10 @@ export const ReadyMadePackagesSection: React.FC<ReadyMadePackagesSectionProps> =
 
     // Filter by destination if provided and not "all"
     if (destinationId && destinationId !== 'all') {
-      const matchId = pkg.destinationId === destinationId || pkg.destinationId?.toLowerCase() === destinationId.toLowerCase();
-      const matchName = destinationName && pkg.destinationName?.toLowerCase() === destinationName.toLowerCase();
+      const destIdLower = (destinationId || '').toLowerCase();
+      const destNameLower = (destinationName || '').toLowerCase();
+      const matchId = pkg.destinationId === destinationId || (pkg.destinationId || '').toLowerCase() === destIdLower;
+      const matchName = Boolean(destNameLower && (pkg.destinationName || '').toLowerCase() === destNameLower);
       return matchId || matchName;
     }
 

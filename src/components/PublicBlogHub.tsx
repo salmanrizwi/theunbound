@@ -33,10 +33,12 @@ export const PublicBlogHub: React.FC<PublicBlogHubProps> = ({ onBackToExplore, o
 
   const filtered = blogs.filter(b => {
     const matchesCat = selectedCategory === 'ALL' || b.category === selectedCategory;
-    const matchesSearch = b.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      b.summary.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      b.author.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      b.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
+    const q = (searchQuery || '').toLowerCase();
+    const matchesSearch = !q ||
+      (b.title || '').toLowerCase().includes(q) ||
+      (b.summary || '').toLowerCase().includes(q) ||
+      (b.author || '').toLowerCase().includes(q) ||
+      (b.tags || []).some(t => (t || '').toLowerCase().includes(q));
     return matchesCat && matchesSearch;
   });
 

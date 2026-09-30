@@ -84,27 +84,35 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
 
   // Filter hubs for this destination
   const hubs = useMemo(() => {
+    if (!destination) return [];
+    const destNameLower = (destination.name || '').toLowerCase();
     return allHubs.filter(h => 
       h.destinationId === destination.id ||
-      (h.destinationName && h.destinationName.toLowerCase() === destination.name.toLowerCase()) ||
-      (destination.name.toLowerCase().includes(h.destinationName || ''))
+      (h.destinationName && h.destinationName.toLowerCase() === destNameLower) ||
+      (h.destinationName && destNameLower.includes(h.destinationName.toLowerCase()))
     );
   }, [allHubs, destination]);
 
   // Filter products for this destination
   const destinationProducts = useMemo(() => {
+    if (!destination) return [];
+    const destNameLower = (destination.name || '').toLowerCase();
+    const destCountryLower = (destination.country || '').toLowerCase();
     return allProducts.filter(p => 
-      p.destinationName.toLowerCase().includes(destination.name.toLowerCase()) ||
-      p.country.toLowerCase().includes(destination.country.toLowerCase())
+      (p.destinationName || '').toLowerCase().includes(destNameLower) ||
+      (p.country || '').toLowerCase().includes(destCountryLower)
     );
   }, [allProducts, destination]);
 
   // Filter hotels for this destination
   const destinationHotels = useMemo(() => {
+    if (!destination) return [];
+    const destNameLower = (destination.name || '').toLowerCase();
+    const destCountryLower = (destination.country || '').toLowerCase();
     return allHotels.filter(h => 
-      (h.cityName && destination.name.toLowerCase().includes(h.cityName.toLowerCase())) ||
-      (h.city && destination.name.toLowerCase().includes(h.city.toLowerCase())) ||
-      (h.country && h.country.toLowerCase().includes(destination.country.toLowerCase()))
+      (h.cityName && destNameLower.includes(h.cityName.toLowerCase())) ||
+      (h.city && destNameLower.includes(h.city.toLowerCase())) ||
+      (h.country && h.country.toLowerCase().includes(destCountryLower))
     );
   }, [allHotels, destination]);
 
@@ -234,8 +242,9 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
         {hubs.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {hubs.map(hub => {
-              const hubProds = allProducts.filter(p => p.city.toLowerCase().includes(hub.name.toLowerCase()));
-              const hubHots = allHotels.filter(h => (h.cityName && h.cityName.toLowerCase().includes(hub.name.toLowerCase())) || (h.city && h.city.toLowerCase().includes(hub.name.toLowerCase())));
+              const hubNameLower = (hub.name || '').toLowerCase();
+              const hubProds = allProducts.filter(p => (p.city || '').toLowerCase().includes(hubNameLower));
+              const hubHots = allHotels.filter(h => (h.cityName && h.cityName.toLowerCase().includes(hubNameLower)) || (h.city && h.city.toLowerCase().includes(hubNameLower)));
               return (
                 <div
                   key={hub.id}
@@ -552,34 +561,64 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
 
   // Hub Products
   const hubProducts = useMemo(() => {
+    if (!hub) return [];
+    const hubNameLower = (hub.name || '').toLowerCase();
     return allProducts.filter(p => 
-      p.city.toLowerCase().includes(hub.name.toLowerCase()) ||
-      (p.destinationName && p.destinationName.toLowerCase().includes(hub.name.toLowerCase()))
+      (p.city || '').toLowerCase().includes(hubNameLower) ||
+      (p.destinationName && p.destinationName.toLowerCase().includes(hubNameLower))
     );
   }, [allProducts, hub]);
 
   // Hub Hotels
   const hubHotels = useMemo(() => {
+    if (!hub) return [];
+    const hubNameLower = (hub.name || '').toLowerCase();
     return allHotels.filter(h => 
-      (h.cityName && h.cityName.toLowerCase().includes(hub.name.toLowerCase())) ||
-      (h.city && h.city.toLowerCase().includes(hub.name.toLowerCase()))
+      (h.cityName && h.cityName.toLowerCase().includes(hubNameLower)) ||
+      (h.city && h.city.toLowerCase().includes(hubNameLower))
     );
   }, [allHotels, hub]);
 
   // Counts
-  const toursCount = hubProducts.filter(p => !p.category.toLowerCase().includes('transfer') && !p.subcategory.toLowerCase().includes('day trip')).length;
-  const transfersCount = hubProducts.filter(p => p.category.toLowerCase().includes('transfer') || p.subcategory.toLowerCase().includes('transfer')).length;
-  const dayTripsCount = hubProducts.filter(p => p.subcategory.toLowerCase().includes('day trip') || p.category.toLowerCase().includes('day trip')).length;
+  const toursCount = hubProducts.filter(p => {
+    const cat = (p.category || '').toLowerCase();
+    const sub = (p.subcategory || '').toLowerCase();
+    return !cat.includes('transfer') && !sub.includes('day trip');
+  }).length;
+
+  const transfersCount = hubProducts.filter(p => {
+    const cat = (p.category || '').toLowerCase();
+    const sub = (p.subcategory || '').toLowerCase();
+    return cat.includes('transfer') || sub.includes('transfer');
+  }).length;
+
+  const dayTripsCount = hubProducts.filter(p => {
+    const cat = (p.category || '').toLowerCase();
+    const sub = (p.subcategory || '').toLowerCase();
+    return sub.includes('day trip') || cat.includes('day trip');
+  }).length;
 
   // Filtered Products
   const filteredProducts = useMemo(() => {
     let prods = hubProducts;
     if (categoryFilter === 'TOURS') {
-      prods = prods.filter(p => !p.category.toLowerCase().includes('transfer') && !p.subcategory.toLowerCase().includes('day trip'));
+      prods = prods.filter(p => {
+        const cat = (p.category || '').toLowerCase();
+        const sub = (p.subcategory || '').toLowerCase();
+        return !cat.includes('transfer') && !sub.includes('day trip');
+      });
     } else if (categoryFilter === 'TRANSFERS') {
-      prods = prods.filter(p => p.category.toLowerCase().includes('transfer') || p.subcategory.toLowerCase().includes('transfer'));
+      prods = prods.filter(p => {
+        const cat = (p.category || '').toLowerCase();
+        const sub = (p.subcategory || '').toLowerCase();
+        return cat.includes('transfer') || sub.includes('transfer');
+      });
     } else if (categoryFilter === 'DAY_TRIPS') {
-      prods = prods.filter(p => p.subcategory.toLowerCase().includes('day trip') || p.category.toLowerCase().includes('day trip'));
+      prods = prods.filter(p => {
+        const cat = (p.category || '').toLowerCase();
+        const sub = (p.subcategory || '').toLowerCase();
+        return sub.includes('day trip') || cat.includes('day trip');
+      });
     } else if (categoryFilter === 'HOTELS') {
       return [];
     }
@@ -587,9 +626,9 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       prods = prods.filter(p => 
-        p.name.toLowerCase().includes(q) || 
-        p.shortDescription.toLowerCase().includes(q) ||
-        p.category.toLowerCase().includes(q)
+        (p.name || '').toLowerCase().includes(q) || 
+        (p.shortDescription || '').toLowerCase().includes(q) ||
+        (p.category || '').toLowerCase().includes(q)
       );
     }
 
@@ -610,7 +649,10 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
     let hots = hubHotels;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      hots = hots.filter(h => h.name.toLowerCase().includes(q) || (h.shortDescription && h.shortDescription.toLowerCase().includes(q)));
+      hots = hots.filter(h => 
+        (h.name || '').toLowerCase().includes(q) || 
+        (h.shortDescription || '').toLowerCase().includes(q)
+      );
     }
     return hots;
   }, [hubHotels, categoryFilter, searchQuery]);

@@ -241,9 +241,16 @@ export const CityHubs: React.FC<CityHubsProps> = ({
       {viewMode === 'sequence' ? (
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4 pt-2 sm:pt-3">
           {displayedHubs.map((hub, hubIdx) => {
-            const isSelected = selectedCity.toLowerCase() === hub.name.toLowerCase() || 
-                               selectedCity.toLowerCase() === hub.id.toLowerCase() ||
-                               (hub.name.includes(selectedCity) && selectedCity !== '');
+            const selCityLower = (selectedCity || '').toLowerCase();
+            const hubNameLower = (hub.name || '').toLowerCase();
+            const hubIdLower = (hub.id || '').toLowerCase();
+            const isSelected = Boolean(
+              selCityLower && (
+                selCityLower === hubNameLower || 
+                selCityLower === hubIdLower ||
+                (hubNameLower.includes(selCityLower) && selCityLower !== '')
+              )
+            );
 
             return (
               <div
@@ -365,8 +372,15 @@ export const CityHubs: React.FC<CityHubsProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5">
                 {(group.hubs || []).map((hub, hIdx) => {
-                  const isSelected = selectedCity.toLowerCase() === hub.name.toLowerCase() || 
-                                     selectedCity.toLowerCase() === hub.id.toLowerCase();
+                  const selCityLower = (selectedCity || '').toLowerCase();
+                  const hubNameLower = (hub.name || '').toLowerCase();
+                  const hubIdLower = (hub.id || '').toLowerCase();
+                  const isSelected = Boolean(
+                    selCityLower && (
+                      selCityLower === hubNameLower || 
+                      selCityLower === hubIdLower
+                    )
+                  );
                   return (
                     <div
                       key={`grouped-hub-${hub.id || hub.name}-${hIdx}`}
