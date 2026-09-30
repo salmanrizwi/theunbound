@@ -1359,6 +1359,7 @@ export interface PricingCalculationResult {
   childPricePerPax: number;
   
   // Final Results
+  price?: number;
   finalTotalSellingPrice: number;
   sellingPriceFinal: number;
   pricePerPerson: number;
@@ -1455,6 +1456,7 @@ export interface AgentPricingResponse {
   childPricePerPax: number;
 
   // Final Customer-Facing Results
+  price?: number;
   finalTotalSellingPrice: number;
   sellingPriceFinal: number;
   pricePerPerson: number;
@@ -4314,6 +4316,21 @@ export interface HomepageAffiliation {
   isActive: boolean;
 }
 
+export interface HomepageNewsletterConfig {
+  enabled: boolean;
+  eyebrow?: string;
+  heading?: string;
+  description?: string;
+  emailPlaceholder?: string;
+  buttonText?: string;
+  privacyText?: string;
+  successHeading?: string;
+  successDescription?: string;
+  alreadySubscribedMessage?: string;
+  errorMessage?: string;
+  sendyListId?: string;
+}
+
 export interface HomepageConfig {
   heroHeading: string;
   heroSubheading: string;
@@ -4390,6 +4407,13 @@ export interface HomepageConfig {
   showGoogleReviews: boolean;
   showHomepageFAQs: boolean;
   showConversionCTA: boolean;
+  showNewsletterSection?: boolean;
+  showHotelsSection?: boolean;
+  showRailSection?: boolean;
+  showExperiencesSection?: boolean;
+  showPackagesSection?: boolean;
+  showVisaSection?: boolean;
+  newsletterConfig?: HomepageNewsletterConfig;
   tradeContactEmail?: string;
 
   // Grid Layout Controls (Supported on the live homepage)
@@ -4403,6 +4427,12 @@ export interface HomepageConfig {
   ctaSubtitle: string;
   ctaButtonText: string;
   ctaButtonLink: string;
+
+  // Concurrency & Metadata
+  version?: number;
+  updatedAt?: string;
+  updatedBy?: string;
+  homepageSections?: Record<string, { sequence: number; active: boolean; updatedAt?: string; updatedBy?: string }>;
 
   // Legacy fields kept optional for non-destructive Firestore compatibility
   showCategoryFilters?: boolean;

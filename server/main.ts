@@ -6,6 +6,7 @@ import { handleGeminiChat } from "./geminiChatHandler";
 import { createIntegrationsRouter } from "./integrationsService";
 import { createFXRouter } from "./fxService";
 import { createAdminUserRouter } from "./adminUserService";
+import { createNewsletterRouter } from "./newsletterService";
 
 // Prevent unexpected unhandled crashes
 process.on('unhandledRejection', (reason) => {
@@ -41,6 +42,9 @@ export async function startServer() {
 
       // Centralized Live XE.com FX Currency Engine Router
       app.use("/api/fx", createFXRouter());
+
+      // Public Newsletter Subscription Router (Sendy integration)
+      app.use("/api/newsletter", createNewsletterRouter());
 
       // TheUnbound Gemini AI Chatbot endpoint
       app.post("/api/gemini/chat", handleGeminiChat);

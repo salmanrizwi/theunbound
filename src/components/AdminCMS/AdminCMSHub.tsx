@@ -31,6 +31,7 @@ import { FinancialsManager } from './FinancialsManager';
 import { CurrencyManagementPanel } from './CurrencyManagement/CurrencyManagementPanel';
 import { PromotionManager } from './PromotionManager';
 import { EmailCampaignsManager } from './EmailCampaignsManager';
+import { NewsletterManager } from './NewsletterManager';
 import { AuditTrailViewer } from './AuditTrailViewer';
 import { GoogleSheetsSyncManager } from './GoogleSheetsSyncManager';
 import { FirestoreDiagnosticsViewer } from './FirestoreDiagnosticsViewer';
@@ -103,6 +104,7 @@ import {
   SlidersHorizontal,
   Train,
   MapPin,
+  Mail,
   Route as RouteIcon,
   DollarSign,
   Calendar,
@@ -591,7 +593,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             { id: 'GALLERY', label: 'Happy Customer Gallery', icon: Sparkles },
             { id: 'REVIEWS', label: 'Google Business Reviews', icon: CheckCircle2 },
             { id: 'BLOGS', label: 'Editorial Articles & Guides', icon: Compass },
-            { id: 'CAMPAIGNS', label: 'Email Triggers & Broadcasts', icon: Sparkles }
+            { id: 'CAMPAIGNS', label: 'Email Triggers & Broadcasts', icon: Sparkles },
+            { id: 'NEWSLETTER', label: 'Newsletter & Sendy', icon: Mail }
           ]
         },
         {
@@ -1569,6 +1572,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
               {activeSubTab === 'REVIEWS' && <ReviewManager />}
               {activeSubTab === 'BLOGS' && <BlogCMSManager onViewArticle={onViewArticle} />}
               {activeSubTab === 'CAMPAIGNS' && <EmailCampaignsManager />}
+              {activeSubTab === 'NEWSLETTER' && <NewsletterManager />}
             </>
           )}
 

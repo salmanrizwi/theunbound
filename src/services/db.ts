@@ -12438,6 +12438,12 @@ export class AppDatabase {
     if (!config.affiliationsSectionSubtitle) {
       config.affiliationsSectionSubtitle = INITIAL_HOMEPAGE_CONFIG.affiliationsSectionSubtitle;
     }
+    if (config.showNewsletterSection === undefined) {
+      config.showNewsletterSection = INITIAL_HOMEPAGE_CONFIG.showNewsletterSection !== false;
+    }
+    if (!config.newsletterConfig) {
+      config.newsletterConfig = INITIAL_HOMEPAGE_CONFIG.newsletterConfig;
+    }
     return config;
   }
 

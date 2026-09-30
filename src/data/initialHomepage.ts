@@ -193,6 +193,7 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
     'onboardingProcess',
     'testimonials',
     'homepageFaqs',
+    'newsletter',
     'conversionCta'
   ],
 
@@ -226,6 +227,21 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
   showHappyCustomerGallery: true,
   showHomepageFAQs: true,
   showPromotionsBanner: true,
+  showNewsletterSection: true,
+  newsletterConfig: {
+    enabled: true,
+    eyebrow: 'STAY INSPIRED',
+    heading: 'Get Japan Travel Inspiration in Your Inbox',
+    description: 'Receive destination inspiration, travel ideas, curated experiences, and updates from TheUnbound.',
+    emailPlaceholder: 'Enter your email address',
+    buttonText: 'Subscribe',
+    privacyText: 'By subscribing, you agree to receive newsletter emails. You can unsubscribe at any time.',
+    successHeading: "You're subscribed!",
+    successDescription: "You'll receive our latest travel inspiration and updates in your inbox.",
+    alreadySubscribedMessage: "You're already subscribed to our newsletter.",
+    errorMessage: "We couldn't complete your subscription right now. Please try again.",
+    sendyListId: 'NL-THEUNBOUND-2026'
+  },
   showConversionCTA: true,
   tradeContactEmail: 'business@theunbound.in',
 

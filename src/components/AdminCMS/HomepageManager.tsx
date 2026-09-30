@@ -42,11 +42,100 @@ import {
   CheckSquare,
   AlertCircle,
   X,
-  MapPin
+  MapPin,
+  Mail
 } from 'lucide-react';
 import { UniversalHero } from '../UniversalHero';
 import { BuyerHeroSection } from '../BuyerPortal/BuyerHeroSection';
 import { UniversalHeroConfig, HeroTrustItem } from '../../types';
+import { NewsletterManager } from './NewsletterManager';
+
+export interface SequenceModuleItem {
+  key: string;
+  label: string;
+  desc: string;
+  toggleKey: keyof HomepageConfig;
+  active: boolean;
+  sequence: number;
+}
+
+export const CANONICAL_SECTION_DEFINITIONS: Array<{ key: string; label: string; desc: string; toggleKey: keyof HomepageConfig }> = [
+  { key: 'hero', label: 'Hero Section & Terminal Gateway', desc: 'Main visual backdrop, headlines & B2B login terminal', toggleKey: 'showHeroSection' },
+  { key: 'brandIntroduction', label: 'Brand Introduction & Architecture', desc: 'Direct DMC ground handling architecture & verified SLAs', toggleKey: 'showBrandIntroduction' },
+  { key: 'cityHubs', label: 'Direct Operations Hubs & Regional Gateways', desc: 'Direct regional gateways (Tokyo, Kyoto, London, etc.)', toggleKey: 'showCityHubs' },
+  { key: 'destinationFilter', label: 'Destination Expertise Across Global Corridors', desc: 'Editorial global corridors and active ground desks', toggleKey: 'showDestinationFilter' },
+  { key: 'partnershipBenefits', label: 'Why Travel Agents Partner With TheUnbound', desc: 'Direct contracts, SLA turnaround, white-label quotes, 24/7 dispatch', toggleKey: 'showPartnershipBenefits' },
+  { key: 'affiliations', label: 'Regulatory Affiliations (JATA / MSME / NIDHI)', desc: 'Official government, tourism & association regulatory accreditations', toggleKey: 'showAffiliationsSection' },
+  { key: 'onboardingProcess', label: 'Partner Onboarding in 4 Simple Steps', desc: '4-step trade verification & account activation workflow', toggleKey: 'showOnboardingProcess' },
+  { key: 'testimonials', label: 'Verified Trade Partner Testimonials', desc: 'Client reviews carousel with 5-star ratings', toggleKey: 'showGoogleReviews' },
+  { key: 'homepageFaqs', label: 'Homepage FAQs Accordion', desc: 'Trade buyer & operational SLA Q&A section', toggleKey: 'showHomepageFAQs' },
+  { key: 'newsletter', label: 'Newsletter Subscription (Sendy)', desc: 'Public email newsletter invitation synced with Sendy list', toggleKey: 'showNewsletterSection' },
+  { key: 'conversionCta', label: 'Final B2B Trade Accreditation CTA', desc: 'Bottom call-to-action to register and contact trade desk', toggleKey: 'showConversionCTA' }
+];
+
+export function initSequenceDraft(currentConfig: HomepageConfig): SequenceModuleItem[] {
+  const orderKeys = currentConfig.homepageModuleOrder && currentConfig.homepageModuleOrder.length > 0
+    ? currentConfig.homepageModuleOrder
+    : CANONICAL_SECTION_DEFINITIONS.map(c => c.key);
+
+  const defMap = new Map<string, { label: string; desc: string; toggleKey: keyof HomepageConfig }>();
+  CANONICAL_SECTION_DEFINITIONS.forEach(def => defMap.set(def.key, def));
+
+  const items: SequenceModuleItem[] = [];
+  const processedKeys = new Set<string>();
+
+  orderKeys.forEach((rawKey) => {
+    const cleanKey = rawKey.trim();
+    if (!cleanKey || processedKeys.has(cleanKey)) return;
+    processedKeys.add(cleanKey);
+
+    const def = defMap.get(cleanKey) || {
+      label: cleanKey,
+      desc: 'Dynamic Homepage Section',
+      toggleKey: 'showHeroSection' as any
+    };
+
+    let active = true;
+    if (currentConfig.homepageSections && currentConfig.homepageSections[cleanKey]) {
+      active = currentConfig.homepageSections[cleanKey].active !== false;
+    } else {
+      active = (currentConfig as any)[def.toggleKey] !== false;
+    }
+
+    items.push({
+      key: cleanKey,
+      label: def.label,
+      desc: def.desc,
+      toggleKey: def.toggleKey,
+      active,
+      sequence: items.length + 1
+    });
+  });
+
+  // Ensure all canonical sections are included if not present in stored order
+  CANONICAL_SECTION_DEFINITIONS.forEach(def => {
+    if (!processedKeys.has(def.key)) {
+      processedKeys.add(def.key);
+      let active = true;
+      if (currentConfig.homepageSections && currentConfig.homepageSections[def.key]) {
+        active = currentConfig.homepageSections[def.key].active !== false;
+      } else {
+        active = (currentConfig as any)[def.toggleKey] !== false;
+      }
+
+      items.push({
+        key: def.key,
+        label: def.label,
+        desc: def.desc,
+        toggleKey: def.toggleKey,
+        active,
+        sequence: items.length + 1
+      });
+    }
+  });
+
+  return items;
+}
 
 interface HomepageManagerProps {
   destinations: Destination[];
@@ -60,7 +149,13 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
   const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());
   const [regions, setRegions] = useState<MasterRegion[]>(() => db.getMasterRegions());
   const [savedSuccess, setSavedSuccess] = useState(false);
-  const [activeSubTab, setActiveSubTab] = useState<'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'AFFILIATIONS' | 'FAQS'>('LAYOUT');
+  const [activeSubTab, setActiveSubTab] = useState<'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'AFFILIATIONS' | 'NEWSLETTER' | 'FAQS'>('LAYOUT');
+
+  // Sequence & Ordering Draft State
+  const [sequenceDraftModules, setSequenceDraftModules] = useState<SequenceModuleItem[]>(() => initSequenceDraft(db.getHomepageConfig()));
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [loadedVersion, setLoadedVersion] = useState<number>(() => db.getHomepageConfig().version || 1);
+  const [concurrencyNotice, setConcurrencyNotice] = useState<string | null>(null);
 
   // Hubs Management Specific State
   const [hubSearchQuery, setHubSearchQuery] = useState('');
@@ -111,11 +206,145 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
 
   useEffect(() => {
     return db.subscribe(() => {
-      setConfig(db.getHomepageConfig());
+      const latest = db.getHomepageConfig();
+      setConfig(latest);
       setCityHubs(db.getCityHubs());
       setRegions(db.getMasterRegions());
+      if (!hasUnsavedChanges) {
+        setSequenceDraftModules(initSequenceDraft(latest));
+        setLoadedVersion(latest.version || 1);
+      }
     });
-  }, []);
+  }, [hasUnsavedChanges]);
+
+  // Sequence Reordering & Status Handlers
+  const handleMoveModuleUp = (idx: number) => {
+    if (idx <= 0) return;
+    const updated = [...sequenceDraftModules];
+    const temp = updated[idx];
+    updated[idx] = updated[idx - 1];
+    updated[idx - 1] = temp;
+    const reindexed = updated.map((item, i) => ({ ...item, sequence: i + 1 }));
+    setSequenceDraftModules(reindexed);
+    setHasUnsavedChanges(true);
+  };
+
+  const handleMoveModuleDown = (idx: number) => {
+    if (idx >= sequenceDraftModules.length - 1) return;
+    const updated = [...sequenceDraftModules];
+    const temp = updated[idx];
+    updated[idx] = updated[idx + 1];
+    updated[idx + 1] = temp;
+    const reindexed = updated.map((item, i) => ({ ...item, sequence: i + 1 }));
+    setSequenceDraftModules(reindexed);
+    setHasUnsavedChanges(true);
+  };
+
+  const handleToggleModuleActive = (idx: number) => {
+    const updated = [...sequenceDraftModules];
+    updated[idx] = {
+      ...updated[idx],
+      active: !updated[idx].active
+    };
+    setSequenceDraftModules(updated);
+    setHasUnsavedChanges(true);
+  };
+
+  const handleDiscardSequenceChanges = () => {
+    const latest = db.getHomepageConfig();
+    setSequenceDraftModules(initSequenceDraft(latest));
+    setHasUnsavedChanges(false);
+    setConcurrencyNotice(null);
+  };
+
+  const handleSaveSequenceChanges = () => {
+    const latest = db.getHomepageConfig();
+    if (latest.version && loadedVersion && latest.version > loadedVersion) {
+      setConcurrencyNotice('Homepage layout was updated by another administrator. Refresh and review the latest changes before saving.');
+      return;
+    }
+
+    // 1. Normalize sequence values (1..N contiguous)
+    const normalized = sequenceDraftModules.map((item, idx) => ({
+      ...item,
+      sequence: idx + 1
+    }));
+
+    // 2. Prepare atomic update payloads
+    const orderKeys = normalized.map(m => m.key);
+    const sectionsMap: Record<string, { sequence: number; active: boolean; updatedAt: string; updatedBy: string }> = {};
+    const toggleUpdates: Partial<HomepageConfig> = {};
+
+    normalized.forEach(m => {
+      sectionsMap[m.key] = {
+        sequence: m.sequence,
+        active: m.active,
+        updatedAt: new Date().toISOString(),
+        updatedBy: user?.email || 'admin@theunbound.in'
+      };
+      (toggleUpdates as any)[m.toggleKey] = m.active;
+    });
+
+    const nextVersion = (latest.version || 1) + 1;
+    const updatedConfig: HomepageConfig = {
+      ...config,
+      ...toggleUpdates,
+      homepageModuleOrder: orderKeys,
+      homepageSections: sectionsMap,
+      version: nextVersion,
+      updatedAt: new Date().toISOString(),
+      updatedBy: user?.email || 'admin@theunbound.in'
+    };
+
+    // 3. Atomic persistence & Audit logging
+    db.updateHomepageConfig(updatedConfig, user);
+    setConfig(updatedConfig);
+    setLoadedVersion(nextVersion);
+    setSequenceDraftModules(initSequenceDraft(updatedConfig));
+    setHasUnsavedChanges(false);
+    setConcurrencyNotice(null);
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 3000);
+  };
+
+  const handleResetSequenceToDefault = () => {
+    if (window.confirm('Reset homepage layout sequence to the canonical recommended layout?')) {
+      const canonicalKeys = CANONICAL_SECTION_DEFINITIONS.map(c => c.key);
+      const toggleUpdates: Partial<HomepageConfig> = {};
+      const sectionsMap: Record<string, { sequence: number; active: boolean; updatedAt: string; updatedBy: string }> = {};
+
+      CANONICAL_SECTION_DEFINITIONS.forEach((def, idx) => {
+        sectionsMap[def.key] = {
+          sequence: idx + 1,
+          active: true,
+          updatedAt: new Date().toISOString(),
+          updatedBy: user?.email || 'admin@theunbound.in'
+        };
+        (toggleUpdates as any)[def.toggleKey] = true;
+      });
+
+      const latest = db.getHomepageConfig();
+      const nextVersion = (latest.version || 1) + 1;
+      const updatedConfig: HomepageConfig = {
+        ...config,
+        ...toggleUpdates,
+        homepageModuleOrder: canonicalKeys,
+        homepageSections: sectionsMap,
+        version: nextVersion,
+        updatedAt: new Date().toISOString(),
+        updatedBy: user?.email || 'admin@theunbound.in'
+      };
+
+      db.updateHomepageConfig(updatedConfig, user);
+      setConfig(updatedConfig);
+      setLoadedVersion(nextVersion);
+      setSequenceDraftModules(initSequenceDraft(updatedConfig));
+      setHasUnsavedChanges(false);
+      setConcurrencyNotice(null);
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 3000);
+    }
+  };
 
   const handleSave = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -387,6 +616,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
           { id: 'DESTINATIONS', label: 'Destinations & Ordering', icon: LayoutTemplate },
           { id: 'SECTIONS', label: 'Homepage Content Sections', icon: Layers },
           { id: 'AFFILIATIONS', label: 'Regulatory Affiliations (JATA / MSME / NIDHI)', icon: ShieldCheck },
+          { id: 'NEWSLETTER', label: 'Newsletter (Sendy)', icon: Mail },
           { id: 'FAQS', label: 'Homepage FAQs Manager', icon: HelpCircle }
         ].map(tab => {
           const Icon = tab.icon;
@@ -408,212 +638,167 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
         })}
       </div>
 
-      {/* SUB TAB 1: MODULES & GRID LAYOUT */}
+      {/* SUB TAB 1: SECTION SEQUENCE & ORDERING */}
       {activeSubTab === 'LAYOUT' && (
         <div className="space-y-6">
-          {/* Section: Module Display Toggles */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
-            <div className="flex items-center space-x-3 pb-4 border-b border-slate-100">
-              <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center justify-center font-bold">
-                <Eye className="w-5 h-5 text-[#008972]" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Live Homepage Module Toggles</h3>
-                <p className="text-xs text-slate-500">Toggle individual sections on or off. State immediately reflects in the live storefront.</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {[
-                { key: 'showHeroSection', label: 'Hero Banner Section', desc: 'Main visual backdrop, headlines & B2B login terminal' },
-                { key: 'showBrandIntroduction', label: 'Brand Introduction & Architecture', desc: 'Direct DMC ground handling architecture & verified SLAs' },
-                { key: 'showCityHubs', label: 'City Hubs & Gateways Bar', desc: 'Direct regional gateways (Tokyo, Kyoto, London, etc.)' },
-                { key: 'showDestinationFilter', label: 'Destination Hubs & Operations', desc: 'Active corridor grid & in-country operational desks' },
-                { key: 'showPartnershipBenefits', label: 'Why Partner With TheUnbound', desc: 'Direct contracts, SLA turnaround, white-label quotes, 24/7 dispatch' },
-                { key: 'showAffiliationsSection', label: 'Regulatory Affiliations (JATA / MSME / NIDHI)', desc: 'Official government, tourism & association regulatory accreditations' },
-                { key: 'showOnboardingProcess', label: 'Partner Onboarding Process', desc: '4-step trade verification & account activation workflow' },
-                { key: 'showGoogleReviews', label: 'Google Business Reviews', desc: 'Verified trade partner reviews with 5-star badges' },
-                { key: 'showHomepageFAQs', label: 'Homepage FAQs Accordion', desc: 'Trade buyer & operational SLA Q&A section' },
-                { key: 'showConversionCTA', label: 'B2B Quotation Conversion CTA', desc: 'Bottom call-to-action to register and contact trade desk' }
-              ].map(item => {
-                const isEnabled = (config as any)[item.key] !== false;
-                return (
-                  <label 
-                    key={item.key}
-                    className={`flex items-start justify-between p-4 rounded-xl border transition-all cursor-pointer ${
-                      isEnabled 
-                        ? 'bg-emerald-50/50 border-emerald-200' 
-                        : 'bg-slate-50 border-slate-200 opacity-60'
-                    }`}
-                  >
-                    <div className="space-y-1 pr-3">
-                      <span className="block text-xs font-bold text-slate-900">{item.label}</span>
-                      <span className="block text-[11px] text-slate-500 leading-tight">{item.desc}</span>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={isEnabled}
-                      onChange={e => {
-                        const updated = { ...config, [item.key]: e.target.checked };
-                        setConfig(updated);
-                        db.updateHomepageConfig(updated, user);
-                      }}
-                      className="w-4 h-4 text-[#008972] rounded focus:ring-[#00C6A6] mt-0.5"
-                    />
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-
           {/* Section: Dynamic Section Sequence & Reordering */}
           <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
               <div className="flex items-center space-x-3">
                 <div className="w-9 h-9 rounded-xl bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
-                  <Sliders className="w-5 h-5" />
+                  <Sliders className="w-5 h-5 text-[#008972]" />
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900">Homepage Section Sequence & Ordering</h3>
-                  <p className="text-xs text-slate-500">Define the vertical sequence in which sections render on the live homepage.</p>
+                  <p className="text-xs text-slate-500">Control which Homepage sections appear and their vertical display sequence.</p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  const canonical = [
-                    'hero',
-                    'brandIntroduction',
-                    'cityHubs',
-                    'destinationFilter',
-                    'partnershipBenefits',
-                    'affiliations',
-                    'onboardingProcess',
-                    'testimonials',
-                    'homepageFaqs',
-                    'conversionCta'
-                  ];
-                  const updated = { ...config, homepageModuleOrder: canonical };
-                  setConfig(updated);
-                  db.updateHomepageConfig(updated, user);
-                }}
-                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 cursor-pointer transition-colors"
+                onClick={handleResetSequenceToDefault}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 cursor-pointer transition-colors"
               >
                 <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
                 <span>Reset to Recommended Sequence</span>
               </button>
             </div>
 
-            {(() => {
-              const CANONICAL = [
-                'hero',
-                'brandIntroduction',
-                'cityHubs',
-                'destinationFilter',
-                'partnershipBenefits',
-                'affiliations',
-                'onboardingProcess',
-                'testimonials',
-                'homepageFaqs',
-                'conversionCta'
-              ];
-              const currentOrder = config.homepageModuleOrder && config.homepageModuleOrder.length > 0
-                ? config.homepageModuleOrder
-                : CANONICAL;
+            {/* Unsaved Changes Notification Banner */}
+            {hasUnsavedChanges && (
+              <div className="bg-amber-50/90 border border-amber-300 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fadeIn shadow-2xs">
+                <div className="flex items-center space-x-3">
+                  <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center font-bold shrink-0">
+                    <AlertCircle className="w-5 h-5 text-amber-700" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-amber-950">Unsaved Sequence Changes</div>
+                    <div className="text-[11px] text-amber-800">You have modified section placement or visibility state. Click &quot;Save Sequence Changes&quot; to publish atomically to Firestore.</div>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2 shrink-0 w-full sm:w-auto justify-end">
+                  <button
+                    type="button"
+                    onClick={handleDiscardSequenceChanges}
+                    className="px-3.5 py-2 rounded-xl border border-amber-300 bg-white hover:bg-amber-100 text-xs font-bold text-amber-900 transition-colors cursor-pointer"
+                  >
+                    Discard Changes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveSequenceChanges}
+                    className="px-4 py-2 rounded-xl bg-[#008972] hover:bg-[#00C6A6] text-white hover:text-slate-950 text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center space-x-1.5"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Save Sequence Changes</span>
+                  </button>
+                </div>
+              </div>
+            )}
 
-              const moduleMeta: Record<string, { label: string; desc: string; toggleKey: keyof HomepageConfig }> = {
-                hero: { label: 'Hero Banner & Login Terminal', desc: 'Main visual backdrop, headlines & B2B login terminal', toggleKey: 'showHeroSection' },
-                brandIntroduction: { label: 'Brand Introduction & Architecture', desc: 'Direct DMC ground handling architecture & verified SLAs', toggleKey: 'showBrandIntroduction' },
-                cityHubs: { label: 'Direct Operations Hubs & Regional Gateways', desc: 'Direct regional gateways (Tokyo, Kyoto, London, etc.)', toggleKey: 'showCityHubs' },
-                destinationFilter: { label: 'Destination Expertise Across Global Corridors', desc: 'Editorial global corridors and active ground desks', toggleKey: 'showDestinationFilter' },
-                partnershipBenefits: { label: 'Why Travel Agents Partner With TheUnbound', desc: 'Direct contracts, SLA turnaround, white-label quotes, 24/7 dispatch', toggleKey: 'showPartnershipBenefits' },
-                affiliations: { label: 'Regulatory Affiliations (JATA / MSME / NIDHI)', desc: 'Official government, tourism & association regulatory accreditations', toggleKey: 'showAffiliationsSection' },
-                onboardingProcess: { label: 'Partner Onboarding in 4 Simple Steps', desc: '4-step trade verification & account activation workflow', toggleKey: 'showOnboardingProcess' },
-                testimonials: { label: 'Verified Trade Partner Testimonials', desc: 'Client reviews carousel with 5-star ratings', toggleKey: 'showGoogleReviews' },
-                homepageFaqs: { label: 'Homepage FAQs Accordion', desc: 'Trade buyer & operational SLA Q&A section', toggleKey: 'showHomepageFAQs' },
-                conversionCta: { label: 'Final B2B Trade Accreditation CTA', desc: 'Bottom call-to-action to register and contact trade desk', toggleKey: 'showConversionCTA' }
-              };
+            {/* Concurrency Error Banner */}
+            {concurrencyNotice && (
+              <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fadeIn">
+                <div className="flex items-center space-x-3">
+                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                  <span className="text-xs font-bold text-rose-900">{concurrencyNotice}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDiscardSequenceChanges}
+                  className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shrink-0 cursor-pointer"
+                >
+                  Refresh Latest Layout
+                </button>
+              </div>
+            )}
 
-              const moveModule = (idx: number, direction: 'up' | 'down') => {
-                const newIdx = direction === 'up' ? idx - 1 : idx + 1;
-                if (newIdx < 0 || newIdx >= currentOrder.length) return;
-                const nextOrder = [...currentOrder];
-                const temp = nextOrder[idx];
-                nextOrder[idx] = nextOrder[newIdx];
-                nextOrder[newIdx] = temp;
-                const updated = { ...config, homepageModuleOrder: nextOrder };
-                setConfig(updated);
-                db.updateHomepageConfig(updated, user);
-              };
+            {/* Section Sequence List */}
+            <div className="space-y-3">
+              {sequenceDraftModules.map((item, idx) => {
+                const isFirst = idx === 0;
+                const isLast = idx === sequenceDraftModules.length - 1;
 
-              return (
-                <div className="space-y-2.5">
-                  {currentOrder.map((modId, idx) => {
-                    const meta = moduleMeta[modId] || { label: modId, desc: '', toggleKey: 'showHeroSection' as any };
-                    const isVisible = (config as any)[meta.toggleKey] !== false;
+                return (
+                  <div
+                    key={item.key}
+                    className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-2xl border transition-all ${
+                      item.active
+                        ? 'bg-white border-slate-200 shadow-2xs'
+                        : 'bg-slate-50/70 border-slate-200 opacity-75'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-3.5 mb-3 sm:mb-0">
+                      {/* Monospaced 2-digit sequence number badge */}
+                      <span className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 text-slate-800 text-xs font-mono font-bold flex items-center justify-center shrink-0 shadow-2xs">
+                        {String(idx + 1).padStart(2, '0')}
+                      </span>
 
-                    return (
-                      <div
-                        key={modId}
-                        className={`flex items-center justify-between p-3.5 rounded-xl border transition-all ${
-                          isVisible
-                            ? 'bg-slate-50/80 border-slate-200'
-                            : 'bg-slate-50/40 border-slate-200 opacity-60'
+                      <div className="space-y-0.5">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-xs font-bold text-slate-900">{item.label}</span>
+                          
+                          {/* Active / Inactive Status Badge */}
+                          <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full flex items-center space-x-1 ${
+                            item.active
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              : 'bg-slate-200 text-slate-700 border border-slate-300'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${item.active ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                            <span>{item.active ? 'ACTIVE' : 'INACTIVE'}</span>
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 leading-snug">{item.desc}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between sm:justify-end space-x-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                      {/* Activate / Deactivate Toggle Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleModuleActive(idx)}
+                        className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                          item.active
+                            ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                            : 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
                         }`}
                       >
-                        <div className="flex items-center space-x-3">
-                          <span className="w-7 h-7 rounded-lg bg-white border border-slate-200 text-slate-700 text-xs font-mono font-bold flex items-center justify-center shadow-2xs">
-                            {idx + 1}
-                          </span>
-                          <div>
-                            <div className="flex items-center space-x-2">
-                              <span className="text-xs font-bold text-slate-900">{meta.label}</span>
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                isVisible
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : 'bg-slate-200 text-slate-600'
-                              }`}>
-                                {isVisible ? 'Active' : 'Disabled'}
-                              </span>
-                            </div>
-                            <span className="text-[11px] text-slate-500">{meta.desc}</span>
-                          </div>
-                        </div>
+                        {item.active ? 'Deactivate' : 'Activate'}
+                      </button>
 
-                        <div className="flex items-center space-x-1">
-                          <button
-                            type="button"
-                            disabled={idx === 0}
-                            onClick={() => moveModule(idx, 'up')}
-                            className={`p-1.5 rounded-lg border text-xs transition-colors ${
-                              idx === 0
-                                ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-slate-50'
-                                : 'border-slate-200 text-slate-700 hover:bg-white cursor-pointer shadow-2xs'
-                            }`}
-                            title="Move section up"
-                          >
-                            <ArrowUp className="w-4 h-4" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={idx === currentOrder.length - 1}
-                            onClick={() => moveModule(idx, 'down')}
-                            className={`p-1.5 rounded-lg border text-xs transition-colors ${
-                              idx === currentOrder.length - 1
-                                ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-slate-50'
-                                : 'border-slate-200 text-slate-700 hover:bg-white cursor-pointer shadow-2xs'
-                            }`}
-                            title="Move section down"
-                          >
-                            <ArrowDown className="w-4 h-4" />
-                          </button>
-                        </div>
+                      {/* Sequence Arrows ↑ ↓ */}
+                      <div className="flex items-center space-x-1">
+                        <button
+                          type="button"
+                          disabled={isFirst}
+                          onClick={() => handleMoveModuleUp(idx)}
+                          className={`p-1.5 rounded-lg border text-xs transition-colors ${
+                            isFirst
+                              ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-slate-50'
+                              : 'border-slate-200 text-slate-700 hover:bg-white cursor-pointer shadow-2xs active:scale-95'
+                          }`}
+                          title={isFirst ? 'First position (Cannot move up)' : 'Move section up'}
+                        >
+                          <ArrowUp className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isLast}
+                          onClick={() => handleMoveModuleDown(idx)}
+                          className={`p-1.5 rounded-lg border text-xs transition-colors ${
+                            isLast
+                              ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-slate-50'
+                              : 'border-slate-200 text-slate-700 hover:bg-white cursor-pointer shadow-2xs active:scale-95'
+                          }`}
+                          title={isLast ? 'Last position (Cannot move down)' : 'Move section down'}
+                        >
+                          <ArrowDown className="w-4 h-4" />
+                        </button>
                       </div>
-                    );
-                  })}
-                </div>
-              );
-            })()}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {/* Section: Responsive Grid Density Controls */}
@@ -2818,6 +3003,10 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
             </div>
           </div>
         </div>
+      )}
+
+      {activeSubTab === 'NEWSLETTER' && (
+        <NewsletterManager />
       )}
 
       {activeSubTab === 'FAQS' && (

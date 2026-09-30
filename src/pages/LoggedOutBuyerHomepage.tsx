@@ -3,6 +3,7 @@ import { Destination, HomepageConfig, CityHub, MasterRegion } from '../types';
 import { BuyerHeroSection } from '../components/BuyerPortal/BuyerHeroSection';
 import { PublicReviewsCarousel } from '../components/PublicReviewsCarousel';
 import { FinalCTA } from '../components/FinalCTA';
+import { NewsletterSignup } from '../components/Newsletter/NewsletterSignup';
 import { AppDatabase } from '../services/db';
 import { GlobalCountingEngine } from '../services/countingEngine';
 import { inventoryVisibilityService, useInventoryVisibility } from '../services/inventoryVisibilityService';
@@ -136,6 +137,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     'onboardingProcess',
     'testimonials',
     'homepageFaqs',
+    'newsletter',
     'conversionCta'
   ];
 
@@ -150,6 +152,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     if (clean === 'onboardingprocess' || clean === 'b2bonboardingprocess') return 'onboardingProcess';
     if (clean === 'testimonials' || clean === 'b2btestimonials' || clean === 'reviews' || clean === 'googlereviews') return 'testimonials';
     if (clean === 'homepagefaqs' || clean === 'b2btradefaqs' || clean === 'faqs') return 'homepageFaqs';
+    if (clean === 'newsletter' || clean === 'homepagenewsletter' || clean === 'newslettersubscription') return 'newsletter';
     if (clean === 'conversioncta' || clean === 'b2bfinalcta' || clean === 'cta') return 'conversionCta';
     return id;
   };
@@ -922,6 +925,19 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                 })}
               </div>
             </div>
+          </section>
+        ) : null;
+
+      case 'newsletter':
+        return (config.showNewsletterSection !== false && config.newsletterConfig?.enabled !== false) ? (
+          <section key="module-newsletter" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <NewsletterSignup
+              config={config.newsletterConfig}
+              onExploreClick={() => {
+                const destEl = document.getElementById('b2b-destination-expertise');
+                if (destEl) destEl.scrollIntoView({ behavior: 'smooth' });
+              }}
+            />
           </section>
         ) : null;
 
