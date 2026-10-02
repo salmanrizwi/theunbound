@@ -2007,7 +2007,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         id="quote-builder-fixed-header"
         className="shrink-0 w-full z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 sm:px-6 py-2.5 shadow-xs"
       >
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+        <div className="w-full max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-3">
           {/* Left: Back + Quote Info + Customer + Destination + Dates + Pax + Status */}
           <div className="flex flex-wrap items-center gap-2.5">
             {(onBackToDashboard || onViewMyQuotes) && (
@@ -2140,7 +2140,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         {/* VIEW: OFFICIAL PROPOSAL PRESENTATION PREVIEW */}
         {/* ========================================================================= */}
         {activeViewTab === 'PROPOSAL_PREVIEW' ? (
-          <main className="max-w-6xl mx-auto w-full px-4 sm:px-6 py-8 space-y-6 pb-32">
+          <main className="w-full max-w-[1920px] mx-auto min-w-0 px-4 sm:px-6 py-8 space-y-6 pb-32">
           {/* Back to Editor Bar */}
           <div className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-between shadow-xs">
             <div className="flex items-center space-x-2 text-xs text-slate-600">
@@ -2224,54 +2224,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         /* ========================================================================= */
         /* VIEW: PRIMARY ITINERARY BUILDER & DAY-WISE WORKSPACE (GUIDED WORKSPACE) */
         /* ========================================================================= */
-        <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 pb-36">
-          {/* AI Planner Handoff Notification Banner */}
-          {quoteSource === 'AI_PLANNER' && handoffPayload && (
-            <div className="mb-6 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-3xl p-5 border border-slate-700/80 shadow-lg relative overflow-hidden">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
-                <div className="flex items-start space-x-3.5">
-                  <div className="w-10 h-10 rounded-2xl bg-[#00E5C0]/20 border border-[#00E5C0]/40 text-[#00E5C0] flex items-center justify-center shrink-0 mt-0.5">
-                    <Sparkles className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-black uppercase tracking-wider text-[#00E5C0]">AI Planner Handoff</span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-teal-500/20 text-[#00E5C0] border border-teal-500/30">
-                        {handoffPayload.badge || 'Verified Itinerary'}
-                      </span>
-                      <span className="text-[10px] text-slate-400">
-                        Zero Hallucination Verified • Authoritative Contract Rates
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-300 mt-1">
-                      Imported <strong className="text-white">{handoffPayload.destination.name}</strong> circuit ({handoffPayload.travelDates.nights} Nights, {handoffPayload.travelDates.startDate} → {handoffPayload.travelDates.endDate}) for {handoffPayload.pax.adults} Adults{handoffPayload.pax.children > 0 ? `, ${handoffPayload.pax.children} Children` : ''} with <strong className="text-white">{items.length} confirmed services</strong>.
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      clearQuote();
-                      setRouteHubs([]);
-                      setDayThemes({});
-                      showBuilderToast('Reset to clean workspace for manual configuration', 'INFO');
-                    }}
-                    className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-600 text-xs font-bold transition-colors cursor-pointer"
-                  >
-                    Clear / New Manual Quote
-                  </button>
-                </div>
-              </div>
-              {priceRefreshNotice && (
-                <div className="mt-3.5 pt-3 border-t border-slate-700/80 flex items-center space-x-2 text-xs text-teal-300">
-                  <AlertCircle className="w-4 h-4 text-[#00E5C0] shrink-0" />
-                  <span>{priceRefreshNotice}</span>
-                </div>
-              )}
-            </div>
-          )}
-
+        <main className="w-full max-w-[1920px] mx-auto min-w-0 px-4 sm:px-6 py-6 pb-36">
           <StepByStepQuotationWorkspace
               activeStepId={activeStepId}
               setActiveStepId={setActiveStepId}

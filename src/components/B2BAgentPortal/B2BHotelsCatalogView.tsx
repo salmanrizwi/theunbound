@@ -52,11 +52,12 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
   const [quoteSuccessNotification, setQuoteSuccessNotification] = useState<{ hotel: Hotel; details: any } | null>(null);
 
   const filteredHotels = useMemo(() => {
+    const q = (searchQuery || '').toLowerCase().trim();
     return hotels.filter(h => {
-      const matchesSearch = 
-        h.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (h.cityName && h.cityName.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (h.city && h.city.toLowerCase().includes(searchQuery.toLowerCase()));
+      const matchesSearch = !q ||
+        (h.name || '').toLowerCase().includes(q) ||
+        (h.cityName && (h.cityName || '').toLowerCase().includes(q)) ||
+        (h.city && (h.city || '').toLowerCase().includes(q));
 
       const matchesDest = selectedDestination === 'ALL' || h.destinationId === selectedDestination;
       const matchesStar = selectedStarRating === 'ALL' || (h.starRating && h.starRating.toString() === selectedStarRating);

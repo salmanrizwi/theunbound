@@ -947,45 +947,6 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
                       </div>
                     </div>
                   </label>
-
-                  {/* B2B AI Travel Chatbot Access (Exclusive to B2B Agents) */}
-                  <label className={`flex items-start space-x-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                    perms.chatbotAccess || perms.b2bChatbotAccess 
-                      ? 'bg-teal-50/70 border-teal-300 ring-1 ring-teal-200/50' 
-                      : 'bg-slate-50 border-slate-200'
-                  }`}>
-                    <input
-                      type="checkbox"
-                      checked={!!(perms.chatbotAccess || perms.b2bChatbotAccess)}
-                      onChange={() => {
-                        const nextVal = !(perms.chatbotAccess || perms.b2bChatbotAccess);
-                        setPerms(prev => ({
-                          ...prev,
-                          chatbotAccess: nextVal,
-                          b2bChatbotAccess: nextVal
-                        }));
-                      }}
-                      className="mt-0.5 rounded text-[#00C6A6] focus:ring-0 w-4 h-4"
-                    />
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between gap-1">
-                        <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                          <span>B2B AI Travel Chatbot</span>
-                          <span className="text-[9px] bg-teal-100 text-teal-800 font-bold px-1.5 py-0.2 rounded-full uppercase tracking-wider">
-                            B2B Agents Only
-                          </span>
-                        </div>
-                      </div>
-                      <div className="text-[11px] text-slate-500 leading-tight mt-0.5">
-                        Authorizes B2B Agent to access AI Chatbot to check booking status, search packages, compare hotel rates, and check activity prices.
-                      </div>
-                      {role !== 'B2B_AGENT' && role !== 'AGENT' && (
-                        <div className="text-[10px] text-slate-400 mt-1 italic">
-                          * Admin controls Chatbot access for B2B agents. Internal Admin accounts always retain access.
-                        </div>
-                      )}
-                    </div>
-                  </label>
                 </div>
               </div>
 

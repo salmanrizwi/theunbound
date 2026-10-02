@@ -266,9 +266,11 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
   };
 
   const filtered = destinations.filter(d => {
-    const matchSearch = d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        d.country.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        d.regionName?.toLowerCase().includes(searchQuery.toLowerCase());
+    const q = (searchQuery || '').toLowerCase();
+    const matchSearch = !q ||
+                        (d.name || '').toLowerCase().includes(q) ||
+                        (d.country || '').toLowerCase().includes(q) ||
+                        (d.regionName || '').toLowerCase().includes(q);
     const matchRegion = selectedRegionFilter === 'ALL' || d.regionId === selectedRegionFilter;
     return matchSearch && matchRegion;
   });

@@ -110,33 +110,33 @@ async function runComprehensiveSystemAudit() {
   assert(currencyEngine === curr2, 'Layer 2: Exactly ONE CurrencyEngine instance');
 
   // ----------------------------------------------------
-  // LAYER 4 — MASTER SHEETS SYNC (25 CANONICAL TABS)
+  // LAYER 4 — MASTER SHEETS SYNC (CANONICAL TABS)
   // ----------------------------------------------------
-  console.log('\n--- LAYER 4: Master Google Sheets Sync (25 Canonical Tabs) ---');
-  assert(EXPECTED_MASTER_TAB_COUNT === 25, 'Layer 4: EXPECTED_MASTER_TAB_COUNT is strictly 25');
-  assert(MASTER_WORKBOOK_TABS.length === 25, 'Layer 4: MASTER_WORKBOOK_TABS registry has exactly 25 tabs');
-  assert(CANONICAL_TAB_PROCESSING_ORDER.length === 25, 'Layer 4: CANONICAL_TAB_PROCESSING_ORDER has exactly 25 tabs');
+  console.log(`\n--- LAYER 4: Master Google Sheets Sync (${EXPECTED_MASTER_TAB_COUNT} Canonical Tabs) ---`);
+  assert(EXPECTED_MASTER_TAB_COUNT === 7, 'Layer 4: EXPECTED_MASTER_TAB_COUNT is strictly 7');
+  assert(MASTER_WORKBOOK_TABS.length === EXPECTED_MASTER_TAB_COUNT, `Layer 4: MASTER_WORKBOOK_TABS registry has exactly ${EXPECTED_MASTER_TAB_COUNT} tabs`);
+  assert(CANONICAL_TAB_PROCESSING_ORDER.length === EXPECTED_MASTER_TAB_COUNT, `Layer 4: CANONICAL_TAB_PROCESSING_ORDER has exactly ${EXPECTED_MASTER_TAB_COUNT} tabs`);
 
   // Test Tab Discovery & Validation
   const validDiscoveredTabs = [...MASTER_WORKBOOK_TABS];
   const validReport = syncEngine.validateWorkbookStructure(validDiscoveredTabs);
-  assert(validReport.isValid === true, 'Layer 4: 25 Canonical tabs pass workbook structural validation');
-  assert(validReport.foundCount === 25, 'Layer 4: Found tab count is exactly 25');
+  assert(validReport.isValid === true, `Layer 4: ${EXPECTED_MASTER_TAB_COUNT} Canonical tabs pass workbook structural validation`);
+  assert(validReport.foundCount === EXPECTED_MASTER_TAB_COUNT, `Layer 4: Found tab count is exactly ${EXPECTED_MASTER_TAB_COUNT}`);
   assert(validReport.missingTabs.length === 0, 'Layer 4: Missing tabs count is 0');
 
   // Test Failure on Incomplete Tab Count
-  const incompleteTabs = MASTER_WORKBOOK_TABS.slice(0, 23);
+  const incompleteTabs = MASTER_WORKBOOK_TABS.slice(0, EXPECTED_MASTER_TAB_COUNT - 2);
   const incompleteReport = syncEngine.validateWorkbookStructure(incompleteTabs);
-  assert(incompleteReport.isValid === false, 'Layer 4: Incomplete 23 tabs rejected by workbook validator');
+  assert(incompleteReport.isValid === false, 'Layer 4: Incomplete tabs rejected by workbook validator');
   assert(incompleteReport.missingTabs.length === 2, 'Layer 4: Incomplete workbook correctly identifies 2 missing tabs');
-  assert(incompleteReport.errorMessage?.includes('Expected 25 canonical tabs') === true, 'Layer 4: Generates authoritative schema error message');
+  assert(incompleteReport.errorMessage?.includes(`Expected ${EXPECTED_MASTER_TAB_COUNT} canonical tabs`) === true, 'Layer 4: Generates authoritative schema error message');
 
-  // Test Failure on 25 Wrongly Named Tabs
-  const wrongNamedTabs = Array.from({ length: 25 }, (_, i) => `INVALID_TAB_${i + 1}`);
+  // Test Failure on Wrongly Named Tabs
+  const wrongNamedTabs = Array.from({ length: EXPECTED_MASTER_TAB_COUNT }, (_, i) => `INVALID_TAB_${i + 1}`);
   const wrongReport = syncEngine.validateWorkbookStructure(wrongNamedTabs);
-  assert(wrongReport.isValid === false, 'Layer 4: 25 incorrectly named tabs rejected by validation engine');
+  assert(wrongReport.isValid === false, 'Layer 4: Incorrectly named tabs rejected by validation engine');
 
-  // Execute Real Sync with Canonical 25-Tab Template Data
+  // Execute Real Sync with Canonical Template Data
   const canonicalMultiTabData: Record<string, string[][]> = {};
   for (const tabDef of MASTER_SHEETS_TAB_DEFINITIONS) {
     if (tabDef.tabName !== 'INSTRUCTIONS') {
@@ -148,7 +148,7 @@ async function runComprehensiveSystemAudit() {
   }
 
   const syncReport = await syncEngine.commitMultiTabSync(canonicalMultiTabData, undefined, adminUser);
-  assert(syncReport.status === 'SUCCESS', `Layer 4: Canonical 25-tab Master Sync executed with status: ${syncReport.status}`);
+  assert(syncReport.status === 'SUCCESS', `Layer 4: Canonical Master Sync executed with status: ${syncReport.status}`);
   assert(syncReport.createdTotal > 0 || syncReport.unchangedTotal > 0, `Layer 4: Master Sync processed ${syncReport.totalRecords} records across tabs`);
 
   // Idempotency Check: Running same sync again causes 0 duplicates
@@ -534,11 +534,11 @@ async function runComprehensiveSystemAudit() {
   assert(subject.includes(newBooking.bookingReference), 'Layer 16: Email subject contains booking reference');
 
   // ----------------------------------------------------
-  // LAYER 17 — AI PLANNER INTEGRITY
+  // LAYER 17 — DESTINATION GROUNDING & CATALOG INTEGRITY
   // ----------------------------------------------------
-  console.log('\n--- LAYER 17: AI Planner Tool Grounding ---');
+  console.log('\n--- LAYER 17: Destination Grounding & Catalog Verification ---');
   const destResults = destinations.filter(d => d.status === 'ACTIVE');
-  assert(destResults.length > 0, 'Layer 17: AI Planner queries real active destinations only');
+  assert(destResults.length > 0, 'Layer 17: Inventory queries real active destinations only');
 
   // ----------------------------------------------------
   // LAYER 18 — UI / UX GUIDELINES

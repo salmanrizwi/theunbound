@@ -62,7 +62,7 @@ export class AutomaticTaskEngine {
   ): CalendarTask | null {
     if (!lead || !lead.id) return null;
 
-    const autoKey = `auto-lead-${event.toLowerCase()}-${lead.id}`;
+    const autoKey = `auto-lead-${(event || '').toLowerCase()}-${lead.id}`;
     // If idempotency check passes and task already created, do not duplicate
     if (this.taskExists(autoKey)) {
       return null;
@@ -236,7 +236,7 @@ export class AutomaticTaskEngine {
   ): CalendarTask | null {
     if (!booking || !booking.id) return null;
 
-    const autoKey = `auto-booking-${event.toLowerCase()}-${booking.id}${metadata?.itemId ? `-${metadata.itemId}` : ''}`;
+    const autoKey = `auto-booking-${(event || '').toLowerCase()}-${booking.id}${metadata?.itemId ? `-${metadata.itemId}` : ''}`;
     if (this.taskExists(autoKey)) {
       return null;
     }

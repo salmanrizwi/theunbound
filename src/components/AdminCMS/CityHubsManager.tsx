@@ -61,10 +61,12 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
   const filteredHubs = cityHubs.filter(hub => {
     const matchesRegion = selectedRegionFilter === 'all' || hub.regionId === selectedRegionFilter;
     const matchesDest = selectedDestinationFilter === 'all' || hub.destinationId === selectedDestinationFilter;
-    const matchesSearch = hub.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          (hub.tagline || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          (hub.regionName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          (hub.destinationName || '').toLowerCase().includes(searchQuery.toLowerCase());
+    const q = (searchQuery || '').toLowerCase();
+    const matchesSearch = !q ||
+                          (hub.name || '').toLowerCase().includes(q) || 
+                          (hub.tagline || '').toLowerCase().includes(q) ||
+                          (hub.regionName || '').toLowerCase().includes(q) ||
+                          (hub.destinationName || '').toLowerCase().includes(q);
     return matchesRegion && matchesDest && matchesSearch;
   });
 

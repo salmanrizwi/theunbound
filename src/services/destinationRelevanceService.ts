@@ -15,8 +15,8 @@ import { AppDatabase } from './db';
 /**
  * Normalizes a destination identifier (id, slug, or name) for canonical matching.
  */
-export function normalizeDestinationToken(val?: string): string {
-  if (!val) return '';
+export function normalizeDestinationToken(val?: unknown): string {
+  if (!val || typeof val !== 'string') return '';
   return val
     .toLowerCase()
     .trim()
@@ -78,20 +78,20 @@ export function matchesDestination(
  * Checks if a hotel or product belongs to a specific Hub or City.
  */
 export function matchesHub(
-  hubCriteria: string | undefined,
-  itemHubId?: string,
-  itemCity?: string,
-  itemCityId?: string,
-  itemCityName?: string
+  hubCriteria: unknown,
+  itemHubId?: unknown,
+  itemCity?: unknown,
+  itemCityId?: unknown,
+  itemCityName?: unknown
 ): boolean {
-  if (!hubCriteria) return false;
+  if (!hubCriteria || typeof hubCriteria !== 'string') return false;
   const target = hubCriteria.toLowerCase().replace(/^hub-/, '').trim();
   if (!target) return false;
 
-  const hubId = (itemHubId || '').toLowerCase().replace(/^hub-/, '').trim();
-  const city = (itemCity || '').toLowerCase().trim();
-  const cityId = (itemCityId || '').toLowerCase().trim();
-  const cityName = (itemCityName || '').toLowerCase().trim();
+  const hubId = typeof itemHubId === 'string' ? itemHubId.toLowerCase().replace(/^hub-/, '').trim() : '';
+  const city = typeof itemCity === 'string' ? itemCity.toLowerCase().trim() : '';
+  const cityId = typeof itemCityId === 'string' ? itemCityId.toLowerCase().trim() : '';
+  const cityName = typeof itemCityName === 'string' ? itemCityName.toLowerCase().trim() : '';
 
   if (hubId && (hubId === target || hubId.includes(target) || target.includes(hubId))) {
     return true;

@@ -2,7 +2,6 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { handleSitemapXml, handleRobotsTxt, injectSEOIntoHtml } from "./seoHandler";
-import { handleGeminiChat } from "./geminiChatHandler";
 import { createIntegrationsRouter } from "./integrationsService";
 import { createFXRouter } from "./fxService";
 import { createAdminUserRouter } from "./adminUserService";
@@ -46,18 +45,18 @@ export async function startServer() {
       // Public Newsletter Subscription Router (Sendy integration)
       app.use("/api/newsletter", createNewsletterRouter());
 
-      // TheUnbound Gemini AI Chatbot endpoint
-      app.post("/api/gemini/chat", handleGeminiChat);
-
       // SEO Technical Endpoints
       app.get("/sitemap.xml", handleSitemapXml);
       app.get("/robots.txt", handleRobotsTxt);
 
-      // Robust environment detection: in production bundles or when dist build exists, never load Vite dev server
+      // Robust environment detection: in development mode or unless NODE_ENV === "production", mount Vite dev middlewares
       const distPath = path.resolve(process.cwd(), "dist");
       const indexPath = path.join(distPath, "index.html");
       const hasDistBuild = fs.existsSync(indexPath);
-      const isDev = process.env.NODE_ENV === "development" || process.env.npm_lifecycle_event === "dev";
+      const isDev = process.execArgv.some((a) => a.includes("tsx")) || 
+                    process.argv.some((a) => a.includes("tsx")) || 
+                    process.env.npm_lifecycle_event === "dev" || 
+                    process.env.NODE_ENV === "development";
       const isProduction = process.env.NODE_ENV === "production" || (!isDev && hasDistBuild);
 
       if (!isProduction) {
@@ -67,17 +66,14 @@ export async function startServer() {
           appType: "custom",
         });
 
+        // Vite dev middleware handles code bundling, HMR, assets, and node_modules
+        app.use(vite.middlewares);
+
         // Handle HTML requests with SEO meta injection in development
         app.use(async (req, res, next) => {
           const url = req.originalUrl;
-          // Skip API, static assets, internal vite routes
-          if (
-            url.startsWith("/api") ||
-            url.startsWith("/@") ||
-            url.startsWith("/src") ||
-            url.startsWith("/node_modules") ||
-            (url.includes(".") && !url.endsWith(".html"))
-          ) {
+          // Skip API endpoints
+          if (url.startsWith("/api")) {
             return next();
           }
 
@@ -92,8 +88,6 @@ export async function startServer() {
             next(e);
           }
         });
-
-        app.use(vite.middlewares);
       } else {
         const distPath = path.resolve(process.cwd(), "dist");
         const indexPath = path.join(distPath, "index.html");
@@ -115,7 +109,7 @@ export async function startServer() {
           }
         }));
 
-        app.get("*all", (req, res) => {
+        app.use((req, res) => {
           if (req.path.startsWith("/api")) {
             return res.status(404).json({ error: "Endpoint not found" });
           }

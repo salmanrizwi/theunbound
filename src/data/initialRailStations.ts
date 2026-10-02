@@ -738,7 +738,7 @@ export function getStationById(id: string): RailStation | undefined {
 
 export function searchStations(query: string): RailStation[] {
   if (!query || !query.trim()) return INITIAL_RAIL_STATIONS.filter(s => s.active);
-  const q = query.toLowerCase().trim();
+  const q = (query || '').toLowerCase().trim();
   return INITIAL_RAIL_STATIONS.filter(s => {
     if (!s.active) return false;
     if ((s.stationName || '').toLowerCase().includes(q)) return true;

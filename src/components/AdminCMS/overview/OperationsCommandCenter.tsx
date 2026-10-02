@@ -184,6 +184,7 @@ export const OperationsCommandCenter: React.FC<OperationsCommandCenterProps> = (
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
         comparisonLabel={comparison.label}
+        onNavigate={onNavigate}
       />
 
       {/* 2. Key Business Metrics Grid (8 Core KPI Cards) */}

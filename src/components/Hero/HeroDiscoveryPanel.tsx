@@ -237,26 +237,19 @@ export const HeroDiscoveryPanel: React.FC<HeroDiscoveryPanelProps> = ({
     }
   };
 
-  // Quick launch AI Planner with current parameters
-  const handleLaunchAiPlanner = () => {
-    const destParam = selectedDest?.slug ? `?dest=${selectedDest.slug}` : '';
-    navigateTo(`/b2b/ai-planner${destParam}`);
-  };
-
   const showDestination = config?.showDestination !== false;
   const showHub = config?.showHub !== false;
   const showDates = config?.showDates !== false;
   const showTravelers = config?.showTravelers !== false;
   const showTravelStyle = config?.showTravelStyle === true;
   const showProductType = config?.showProductType === true;
-  const showAiShortcut = config?.showAiPlannerShortcut !== false;
   const ctaButtonText = config?.ctaText || 'Search Inventory';
 
   return (
     <div className={`w-full max-w-5xl mx-auto ${className}`} id="hero-discovery-panel">
       {/* Outer Card with crisp light surface & controlled padding */}
       <div className="bg-white/95 backdrop-blur-xl rounded-xl sm:rounded-2xl p-2 sm:p-2.5 md:p-3 shadow-2xl border border-white/60 text-slate-900 transition-all">
-        {/* Top Operational Pill & AI Quick Assist Toggle */}
+        {/* Top Operational Pill & Discovery Header */}
         <div className="flex flex-wrap items-center justify-between gap-1.5 pb-2 mb-2 border-b border-slate-100 text-xs">
           <div className="flex items-center space-x-2">
             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-extrabold uppercase tracking-wider bg-teal-50 text-[#008972] border border-teal-200/80">
@@ -267,19 +260,6 @@ export const HeroDiscoveryPanel: React.FC<HeroDiscoveryPanelProps> = ({
               Contracted wholesale itineraries & licensed ground services
             </span>
           </div>
-
-          {showAiShortcut && (
-            <button
-              type="button"
-              id="hero-ai-planner-quick-btn"
-              onClick={handleLaunchAiPlanner}
-              className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold text-slate-700 hover:text-[#008972] bg-slate-50 hover:bg-teal-50/80 border border-slate-200 transition-colors cursor-pointer"
-            >
-              <Sparkles className="w-3 h-3 text-[#00C6A6]" />
-              <span>Generate with AI in 30s</span>
-              <ArrowRight className="w-3 h-3 ml-0.5 text-slate-400" />
-            </button>
-          )}
         </div>
 
         {/* Main Discovery Form */}

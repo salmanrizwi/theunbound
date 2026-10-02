@@ -120,10 +120,11 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
   const filteredMenuItems = useMemo(() => {
     return menuItems.filter(item => {
       const locMatch = menuLocationFilter === 'ALL' || (item.menuLocation || 'HEADER') === menuLocationFilter;
+      const q = (searchQuery || '').toLowerCase();
       const qMatch = !searchQuery.trim() || 
-        item.label.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        (item.targetId && item.targetId.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (item.customUrl && item.customUrl.toLowerCase().includes(searchQuery.toLowerCase()));
+        (item.label || '').toLowerCase().includes(q) || 
+        (item.targetId && item.targetId.toLowerCase().includes(q)) ||
+        (item.customUrl && item.customUrl.toLowerCase().includes(q));
       return locMatch && qMatch;
     });
   }, [menuItems, menuLocationFilter, searchQuery]);

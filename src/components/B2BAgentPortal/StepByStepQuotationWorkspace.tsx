@@ -1324,9 +1324,9 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       {/* Main Two-Column Step-by-Step Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* ========================================================================= */}
-        {/* LEFT COLUMN: STICKY STEP NAVIGATION (4 Cols) */}
+        {/* LEFT COLUMN: STICKY STEP NAVIGATION (4 Cols on lg, 3 Cols on xl) */}
         {/* ========================================================================= */}
-        <aside className="lg:col-span-4 space-y-3 lg:sticky lg:top-6">
+        <aside className="lg:col-span-4 xl:col-span-3 space-y-3 lg:sticky lg:top-6 min-w-0">
           <div className="bg-white rounded-3xl border border-slate-200 p-4 shadow-xs space-y-2">
             <div className="px-2 py-1 flex items-center justify-between">
               <span className="text-xs font-black text-slate-900 uppercase tracking-wider">
@@ -1421,9 +1421,9 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
         </aside>
 
         {/* ========================================================================= */}
-        {/* RIGHT COLUMN: ACTIVE STEP CONTENT WORKSPACE (8 Cols) */}
+        {/* RIGHT COLUMN: ACTIVE STEP CONTENT WORKSPACE (8 Cols on lg, 9 Cols on xl) */}
         {/* ========================================================================= */}
-        <main className="lg:col-span-8 space-y-6">
+        <main className="lg:col-span-8 xl:col-span-9 space-y-6 min-w-0">
           {/* STEP 1: TRIP DETAILS */}
           {activeStepId === 1 && (
             <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
@@ -3743,10 +3743,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
               .filter(it => it.product.category === 'Transfers' || it.product.category === 'Transport' || (it.product as any).isTransfer)
               .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
             const visaTotalSelling = items
-              .filter(it => it.product.category === 'Travel Services' || it.product.sku?.startsWith('VSA-') || it.product.name.toLowerCase().includes('visa') || (it.product as any).isVisa)
+              .filter(it => it.product.category === 'Travel Services' || it.product.sku?.startsWith('VSA-') || (it.product.name && (it.product.name || '').toLowerCase().includes('visa')) || (it.product as any).isVisa)
               .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
             const otherTotalSelling = items
-              .filter(it => !['Hotels & Stays', 'Accommodation', 'Activities & Tours', 'Attractions', 'Activity', 'Transfers', 'Transport', 'Travel Services'].includes(it.product.category) && !it.isManualHotel && !it.product.sku?.startsWith('VSA-') && !it.product.name.toLowerCase().includes('visa') && !(it.product as any).isTransfer && !(it.product as any).isVisa)
+              .filter(it => !['Hotels & Stays', 'Accommodation', 'Activities & Tours', 'Attractions', 'Activity', 'Transfers', 'Transport', 'Travel Services'].includes(it.product.category) && !it.isManualHotel && !it.product.sku?.startsWith('VSA-') && !(it.product.name && (it.product.name || '').toLowerCase().includes('visa')) && !(it.product as any).isTransfer && !(it.product as any).isVisa)
               .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
 
             const totalPax = Math.max(1, adultsCount + childrenCount + infantsCount);
@@ -4138,7 +4138,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       {/* REAL-TIME FIXED STICKY PRICING SUMMARY BAR AT BOTTOM */}
       {/* ========================================================================= */}
       <div className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-md text-white border-t border-slate-800 px-4 sm:px-8 py-3 shadow-2xl">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+        <div className="w-full max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-3">
           {/* Left: Summary Stats */}
           <div className="flex items-center space-x-4">
             <div>

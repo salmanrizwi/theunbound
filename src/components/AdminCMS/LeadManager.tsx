@@ -113,7 +113,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
       const target = leads.find(l => 
         l.id === initialLeadId || 
         l.leadNumber === initialLeadId ||
-        l.id.toLowerCase() === clean ||
+        (l.id || '').toLowerCase() === clean ||
         l.leadNumber?.toLowerCase() === clean ||
         l.leadNumber?.replace(/^#/, '').trim().toLowerCase() === clean
       );
@@ -170,11 +170,11 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
       matchesOwnership = !hasAgent;
     }
 
-    const query = searchQuery.toLowerCase().trim();
+    const query = (searchQuery || '').toLowerCase().trim();
     const matchesSearch = !query || 
-      l.contactName.toLowerCase().includes(query) ||
-      l.email.toLowerCase().includes(query) ||
-      l.leadNumber.toLowerCase().includes(query) ||
+      (l.contactName || '').toLowerCase().includes(query) ||
+      (l.email || '').toLowerCase().includes(query) ||
+      (l.leadNumber || '').toLowerCase().includes(query) ||
       (l.agencyName && l.agencyName.toLowerCase().includes(query)) ||
       (l.destinationName && l.destinationName.toLowerCase().includes(query)) ||
       (l.responsibleAgentNameSnapshot && l.responsibleAgentNameSnapshot.toLowerCase().includes(query)) ||
@@ -323,7 +323,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-12">
+    <div className="space-y-6 w-full max-w-[1920px] mx-auto min-w-0 pb-12">
       {/* Header Banner */}
       <div className="relative overflow-hidden bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-xs">
         <div className="absolute right-0 top-0 bottom-0 w-96 bg-gradient-to-l from-teal-50/50 via-teal-50/20 to-transparent pointer-events-none" />

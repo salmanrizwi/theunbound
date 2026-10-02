@@ -608,7 +608,7 @@ export function calculateProductPrice(
     // Restaurant Meal + Passenger Pricing Engine (Sections 18 & 19)
     const requestedMeal = (request as any).meal || (product.mealSelect && product.mealSelect[0]) || 'Lunch';
     const mealPricingList = product.mealPricing || product.restaurantConfig?.mealPricing || [];
-    const matchedMeal = mealPricingList.find(m => m.meal && m.meal.toLowerCase() === requestedMeal.toLowerCase() && m.status !== 'INACTIVE')
+    const matchedMeal = mealPricingList.find(m => m.meal && m.meal.toLowerCase() === (requestedMeal || '').toLowerCase() && m.status !== 'INACTIVE')
       || mealPricingList[0];
 
     if (matchedMeal) {
@@ -1032,7 +1032,7 @@ export function calculatePackagePrice(request: PackagePricingRequest): PackagePr
     const allHotels = db.getHotels();
     if (pkg.hotelsSummary && pkg.hotelsSummary.length > 0) {
       pkg.hotelsSummary.forEach(hs => {
-        const htl = allHotels.find(h => h.id === hs.hotelId || h.name.toLowerCase() === hs.name.toLowerCase());
+        const htl = allHotels.find(h => (h.id && h.id === hs.hotelId) || ((h.name || '').toLowerCase() === (hs.name || '').toLowerCase()));
         const nightRate = htl?.startingNetPrice || 350;
         dynamicSum += (nightRate * (hs.nights || 1));
         itemsCount++;

@@ -123,21 +123,21 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
   // Filtered and Sorted Packages
   const filteredPackages = useMemo(() => {
     return packages.filter(pkg => {
-      const q = searchQuery.toLowerCase().trim();
+      const q = (searchQuery || '').toLowerCase().trim();
       const matchesSearch = !q || 
-        pkg.title.toLowerCase().includes(q) ||
-        pkg.tagline.toLowerCase().includes(q) ||
-        pkg.destinationName.toLowerCase().includes(q) ||
-        (pkg.routeSummary || []).some(r => r.toLowerCase().includes(q)) ||
-        (pkg.tags || []).some(t => t.toLowerCase().includes(q));
+        (pkg.title || '').toLowerCase().includes(q) ||
+        (pkg.tagline || '').toLowerCase().includes(q) ||
+        (pkg.destinationName || '').toLowerCase().includes(q) ||
+        (pkg.routeSummary || []).some(r => (r || '').toLowerCase().includes(q)) ||
+        (pkg.tags || []).some(t => (t || '').toLowerCase().includes(q));
 
       const matchesDest = destinationFilter === 'ALL' || 
         pkg.destinationId === destinationFilter || 
-        pkg.destinationName.toLowerCase() === destinationFilter.toLowerCase();
+        (pkg.destinationName || '').toLowerCase() === (destinationFilter || '').toLowerCase();
 
       const matchesHub = hubFilter === 'ALL' || 
         (pkg.hubIds && pkg.hubIds.includes(hubFilter)) ||
-        (pkg.routeSummary && pkg.routeSummary.some(r => r.toLowerCase().includes(hubFilter.toLowerCase())));
+        (pkg.routeSummary && pkg.routeSummary.some(r => (r || '').toLowerCase().includes((hubFilter || '').toLowerCase())));
 
       const matchesStatus = statusFilter === 'ALL' || 
         (statusFilter === 'PUBLISHED' && (pkg.status === 'PUBLISHED' || (pkg.isPublished && !pkg.status))) ||
@@ -386,7 +386,7 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
     }
 
     // Auto-compute slug if empty
-    const slug = editingPackage.slug?.trim() || editingPackage.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const slug = editingPackage.slug?.trim() || (editingPackage.title || 'package').toLowerCase().replace(/[^a-z0-9]+/g, '-');
     
     // Auto-update durationNights
     const durationDays = Math.max(1, editingPackage.durationDays || 1);
@@ -1401,7 +1401,7 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                               >
                                 <option value="">+ Add Product from Master Inventory</option>
                                 {products
-                                  .filter(p => p.destinationId === editingPackage.destinationId || p.destinationName.toLowerCase() === editingPackage.destinationName.toLowerCase())
+                                  .filter(p => p.destinationId === editingPackage.destinationId || (p.destinationName || '').toLowerCase() === (editingPackage.destinationName || '').toLowerCase())
                                   .map(p => (
                                     <option key={p.id} value={p.id}>
                                       {p.name} ({p.category} • {formatCurrency(p.adultNetPrice, p.currency)})

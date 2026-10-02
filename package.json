@@ -4,8 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "NODE_ENV=development tsx server.ts",
-    "build": "vite build && esbuild server/main.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && mkdir -p build && cp -r dist/* build/",
+    "dev": "tsx server.ts",
+    "build": "vite build && esbuild server/main.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node server.ts",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
@@ -13,7 +13,6 @@
     "test:all": "tsx src/tests/masterSystemAuditCertification.ts && tsx src/tests/masterPricingEngineAudit.ts && tsx src/tests/capacityTieredPricingInputAudit.ts && tsx src/tests/homepageDataSyncAudit.ts && tsx src/tests/japanRailCommercialProductsAudit.ts && tsx src/tests/homepageSequenceAudit.ts"
   },
   "dependencies": {
-    "@google/genai": "^2.21.0",
     "@tailwindcss/vite": "^4.1.14",
     "@types/express": "^5.0.6",
     "@types/node": "^22.14.0",

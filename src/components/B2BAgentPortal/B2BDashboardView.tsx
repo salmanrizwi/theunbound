@@ -127,16 +127,6 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
             </button>
 
             <button
-              id="dashboard-header-ai-planner-btn"
-              onClick={() => onNavigate('ai-planner')}
-              className="inline-flex items-center space-x-2 bg-gradient-to-r from-teal-900 via-slate-900 to-indigo-950 hover:from-teal-800 hover:to-indigo-900 text-white px-5 py-3 rounded-2xl text-xs font-bold border border-teal-500/40 transition-all shadow-lg shadow-teal-950/20 hover:scale-[1.02] cursor-pointer group"
-            >
-              <Sparkles className="w-4 h-4 text-[#00E5C0] group-hover:rotate-12 transition-transform" />
-              <span>AI Planner</span>
-              <span className="text-[9px] bg-[#00E5C0] text-slate-950 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wider">AI</span>
-            </button>
-
-            <button
               id="dashboard-header-packages-btn"
               onClick={() => onNavigate('PACKAGES')}
               className="inline-flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-3 rounded-2xl text-xs font-bold border border-slate-700 transition-colors cursor-pointer"
@@ -239,19 +229,6 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
           <PlusCircle className="w-5 h-5 text-[#00E5C0]" />
           <span className="text-xs font-bold">Create Quote</span>
           <span className="text-[10px] text-slate-400">8 Step Builder</span>
-        </button>
-
-        <button
-          id="dashboard-grid-ai-planner-btn"
-          onClick={() => onNavigate('ai-planner')}
-          className="p-3.5 bg-gradient-to-br from-teal-950 via-slate-900 to-slate-900 hover:from-teal-900 hover:to-slate-800 text-white rounded-2xl border border-teal-500/40 flex flex-col items-center justify-center text-center space-y-1.5 transition-all hover:scale-[1.02] cursor-pointer group shadow-xs"
-        >
-          <Sparkles className="w-5 h-5 text-[#00E5C0] group-hover:rotate-12 transition-transform" />
-          <div className="flex items-center space-x-1">
-            <span className="text-xs font-bold">AI Planner</span>
-            <span className="text-[9px] bg-[#00E5C0] text-slate-950 px-1 rounded-sm font-black">AI</span>
-          </div>
-          <span className="text-[10px] text-teal-300/80">Prompt to Quote</span>
         </button>
 
         <button

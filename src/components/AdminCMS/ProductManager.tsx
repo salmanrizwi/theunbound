@@ -453,7 +453,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       longitude: formData.longitude || 139.6503,
       rating: formData.rating || 5.0,
       reviewCount: formData.reviewCount || 0,
-      slug: formData.slug || formData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+      slug: formData.slug || (formData.name || 'product').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
       seo: formData.seo,
       status: formData.status || 'ACTIVE',
       ticketConfig: formData.ticketConfig,
@@ -481,14 +481,16 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   });
 
   const filtered = products.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.city.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (p.regionName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.supplierName.toLowerCase().includes(searchQuery.toLowerCase());
+    const q = (searchQuery || '').toLowerCase().trim();
+    const matchesSearch = !q ||
+      (p.name || '').toLowerCase().includes(q) ||
+      (p.sku || '').toLowerCase().includes(q) ||
+      (p.city || '').toLowerCase().includes(q) ||
+      (p.regionName || '').toLowerCase().includes(q) ||
+      (p.supplierName || '').toLowerCase().includes(q);
     const matchesMasterReg = selectedMasterRegion === 'ALL' || p.regionId === selectedMasterRegion;
     const matchesDest = selectedDestination === 'ALL' || p.destinationId === selectedDestination;
-    const matchesHub = selectedCityHub === 'ALL' || p.hubId === selectedCityHub || p.city.toLowerCase() === selectedCityHub.toLowerCase();
+    const matchesHub = selectedCityHub === 'ALL' || p.hubId === selectedCityHub || (p.city || '').toLowerCase() === (selectedCityHub || '').toLowerCase();
     const matchesCat = selectedCategory === 'ALL' || p.category === selectedCategory;
     const matchesStat = selectedStatus === 'ALL' || p.status === selectedStatus;
     return matchesSearch && matchesMasterReg && matchesDest && matchesHub && matchesCat && matchesStat;
@@ -533,26 +535,36 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-        <div>
-          <div className="flex items-center space-x-2 text-[#00C6A6] text-xs font-bold uppercase tracking-wider mb-1">
-            <Package className="w-4 h-4" />
-            <span>Master Product Database</span>
-          </div>
-          <h2 className="text-xl font-bold text-slate-900">Product Management Engine ({products.length} Items)</h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Create, edit, duplicate, set availability rules, net supplier rates, and wholesale commercial margins.
-          </p>
-        </div>
+      {/* Breadcrumbs & Header */}
+      <div className="bg-white p-6 rounded-2xl border border-slate-200/90 shadow-xs space-y-4">
+        <nav className="flex items-center space-x-1.5 text-xs text-slate-500 font-medium">
+          <span className="hover:text-slate-800 transition-colors cursor-pointer">Home</span>
+          <span className="text-slate-300">/</span>
+          <span className="text-[#008972] font-semibold">Products</span>
+        </nav>
 
-        <button
-          onClick={handleOpenCreate}
-          className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold px-4 py-2.5 rounded-xl text-xs transition-all shadow-sm cursor-pointer shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Create New Product</span>
-        </button>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1 border-t border-slate-100">
+          <div>
+            <div className="flex items-center space-x-2 text-[#008972] text-xs font-bold uppercase tracking-wider mb-1">
+              <Package className="w-4 h-4" />
+              <span>Master Product Database ({products.length} Items)</span>
+            </div>
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">Products</h1>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Manage your travel products, pricing, availability rules, and wholesale commercial margins.
+            </p>
+          </div>
+
+          <div className="flex items-center space-x-2.5 shrink-0">
+            <button
+              onClick={handleOpenCreate}
+              className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold px-4 py-2.5 rounded-xl text-xs transition-all shadow-xs cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Add Product</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Google Sheets Master Sync Bar */}

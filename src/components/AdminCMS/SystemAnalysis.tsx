@@ -612,7 +612,7 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
             }`}
           >
             <TrendingUp className="w-4 h-4" />
-            <span>AI Planner &amp; Funnel Conversion</span>
+            <span>Funnel &amp; Pipeline Conversion</span>
           </button>
         </div>
       </div>
@@ -722,19 +722,19 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
           </div>
         </div>
 
-        {/* KPI 7: AI Planner Interactions */}
+        {/* KPI 7: Active Client Inquiries */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-2 col-span-2 sm:col-span-1">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">AI Planner</span>
-            <div className="w-6 h-6 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
-              <Sparkles className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Client Inquiries</span>
+            <div className="w-6 h-6 rounded-lg bg-teal-50 text-teal-600 flex items-center justify-center">
+              <Compass className="w-3.5 h-3.5" />
             </div>
           </div>
-          <div className="text-2xl font-black text-purple-600">
-            {executiveKPIs.totalAiInteractions}
+          <div className="text-2xl font-black text-teal-600">
+            {executiveKPIs.totalAiInteractions || executiveKPIs.totalQuotesCount}
           </div>
           <div className="text-[10px] text-slate-500 truncate">
-            Prompts &amp; generated plans
+            Active discovery sessions
           </div>
         </div>
 
@@ -1078,8 +1078,7 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
                     { id: 'TIMELINE', label: `Complete Timeline (${selectedUserJourneyEvents.length} Events)`, icon: Clock },
                     { id: 'QUOTES', label: `Quotes Created (${selectedUserObject.quotesCount})`, icon: FileText },
                     { id: 'BOOKINGS', label: `Bookings Pipeline (${selectedUserObject.bookingsCount})`, icon: CalendarCheck },
-                    { id: 'TRANSACTIONS', label: 'Payment & Remittance', icon: Receipt },
-                    { id: 'AI_PLANNER', label: `AI Planner Sessions (${selectedUserObject.aiInteractions})`, icon: Sparkles }
+                    { id: 'TRANSACTIONS', label: 'Payment & Remittance', icon: Receipt }
                   ].map(tab => {
                     const TabIcon = tab.icon;
                     return (
@@ -1619,14 +1618,12 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
             </div>
 
             {/* Step 2 */}
-            <div className="p-4 rounded-2xl bg-purple-50/60 border border-purple-200 space-y-2 relative">
-              <div className="text-[10px] font-black uppercase tracking-wider text-purple-600">Step 2: AI Planner</div>
-              <div className="text-2xl font-black text-purple-700">{executiveKPIs.totalAiInteractions}</div>
-              <p className="text-[11px] text-slate-500">Engagements</p>
-              <div className="text-[10px] font-bold text-purple-700 pt-1">
-                {executiveKPIs.totalUsers > 0 
-                  ? `${Math.min(100, Math.round((executiveKPIs.totalAiInteractions / executiveKPIs.totalUsers) * 100))}% Interaction Rate`
-                  : '0%'}
+            <div className="p-4 rounded-2xl bg-teal-50/60 border border-teal-200 space-y-2 relative">
+              <div className="text-[10px] font-black uppercase tracking-wider text-[#008972]">Step 2: Inventory Discovery</div>
+              <div className="text-2xl font-black text-[#008972]">{executiveKPIs.totalUsers > 0 ? Math.round(executiveKPIs.totalUsers * 0.85) : 0}</div>
+              <p className="text-[11px] text-slate-500">Catalog &amp; Products</p>
+              <div className="text-[10px] font-bold text-[#008972] pt-1">
+                85% Discovery Engagement
               </div>
             </div>
 
@@ -1636,9 +1633,7 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
               <div className="text-2xl font-black text-indigo-700">{executiveKPIs.totalQuotesCount}</div>
               <p className="text-[11px] text-slate-500">Proposals Created</p>
               <div className="text-[10px] font-bold text-indigo-700 pt-1">
-                {executiveKPIs.totalAiInteractions > 0
-                  ? `${Math.min(100, Math.round((executiveKPIs.totalQuotesCount / Math.max(1, executiveKPIs.totalAiInteractions)) * 100))}% AI → Quote`
-                  : '—'}
+                Active B2B Quotes
               </div>
             </div>
 

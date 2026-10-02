@@ -59,9 +59,6 @@ export default defineConfig(() => {
             if (id.includes('src/components/QuoteBuilder/')) {
               return 'app-quote-builder';
             }
-            if (id.includes('src/components/AIPlanner/')) {
-              return 'app-ai-planner';
-            }
             if (id.includes('src/services/db.ts')) {
               return 'app-db';
             }

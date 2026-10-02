@@ -159,9 +159,11 @@ export const SEOManager: React.FC = () => {
 
   // Filtered Audit Items
   const filteredItems = auditItems.filter(item => {
-    const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.url.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (item.seo.focusKeyword && item.seo.focusKeyword.toLowerCase().includes(searchQuery.toLowerCase()));
+    const q = (searchQuery || '').toLowerCase();
+    const matchesSearch = !q ||
+      (item.name || '').toLowerCase().includes(q) ||
+      (item.url || '').toLowerCase().includes(q) ||
+      Boolean(item.seo?.focusKeyword && (item.seo.focusKeyword || '').toLowerCase().includes(q));
     const matchesType = typeFilter === 'ALL' || item.entityType === typeFilter;
     const matchesHealth = healthFilter === 'ALL' || item.health === healthFilter;
     return matchesSearch && matchesType && matchesHealth;

@@ -642,6 +642,11 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       
       {/* 1. Page Header Standard (Section 5) */}
       <PageHeader
+        breadcrumbs={[
+          { label: 'Home' },
+          { label: 'Products', onClick: onCancel },
+          { label: product ? 'Update Product' : 'New Product' }
+        ]}
         title={product ? 'Update Master Product' : 'Create New Product'}
         description="Authoritative master source for all product specs, category rules, commercial pricing, and upsells."
         backLabel="Back to Products"
@@ -654,15 +659,6 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
           { label: 'Archived', value: 'ARCHIVED' }
         ]}
         onStatusChange={(newStatus) => setFormData({ ...formData, status: newStatus as any })}
-        secondaryAction={{
-          label: 'Save as Draft',
-          onClick: handleSaveDraft
-        }}
-        primaryAction={{
-          label: 'Save Product',
-          onClick: handleFormSubmit,
-          icon: <Save className="w-4 h-4" />
-        }}
       />
 
       {/* Main Responsive Two-Column Grid Layout (25% / 75%) */}

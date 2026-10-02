@@ -37,10 +37,12 @@ export const AuditTrailViewer: React.FC = () => {
   };
 
   const filtered = logs.filter(l => {
-    const matchesSearch = l.userName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      l.details.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      l.entity.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      l.action.toLowerCase().includes(searchQuery.toLowerCase());
+    const q = (searchQuery || '').toLowerCase();
+    const matchesSearch = !q ||
+      (l.userName || '').toLowerCase().includes(q) ||
+      (l.details || '').toLowerCase().includes(q) ||
+      (l.entity || '').toLowerCase().includes(q) ||
+      (l.action || '').toLowerCase().includes(q);
     const matchesAction = filterAction === 'ALL' || l.action === filterAction;
     const matchesRole = filterRole === 'ALL' || l.userRole === filterRole;
     return matchesSearch && matchesAction && matchesRole;

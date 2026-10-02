@@ -91,7 +91,7 @@ export const B2BLeadsManagerView: React.FC<B2BLeadsManagerViewProps> = ({
   }, [leads]);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+    <div className="w-full max-w-[1920px] mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6 min-w-0">
       {/* Header Banner */}
       <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xs relative overflow-hidden">
         <div className="absolute right-0 top-0 bottom-0 w-80 bg-gradient-to-l from-teal-50/60 to-transparent pointer-events-none" />

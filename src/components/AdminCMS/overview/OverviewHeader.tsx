@@ -6,7 +6,11 @@ import {
   Clock, 
   ShieldCheck, 
   Layers,
-  ChevronDown
+  ChevronDown,
+  FileText,
+  Package,
+  Plus,
+  Compass
 } from 'lucide-react';
 import { CurrencyCode, User } from '../../../types';
 import { DateRangeOption } from '../../../services/dashboardMetricsService';
@@ -25,6 +29,7 @@ interface OverviewHeaderProps {
   onRefresh: () => void;
   isRefreshing: boolean;
   comparisonLabel: string;
+  onNavigate?: (section: string, subTab?: string, recordId?: string) => void;
 }
 
 const SUPPORTED_CURRENCIES: CurrencyCode[] = ['USD', 'EUR', 'GBP', 'INR', 'AED', 'SGD', 'AUD', 'JPY', 'CAD', 'CHF', 'THB'];
@@ -42,7 +47,8 @@ export const OverviewHeader: React.FC<OverviewHeaderProps> = ({
   lastUpdated,
   onRefresh,
   isRefreshing,
-  comparisonLabel
+  comparisonLabel,
+  onNavigate
 }) => {
   const dateOptions: { id: DateRangeOption; label: string }[] = [
     { id: 'TODAY', label: 'Today' },
@@ -54,8 +60,73 @@ export const OverviewHeader: React.FC<OverviewHeaderProps> = ({
     { id: 'CUSTOM', label: 'Custom Range' }
   ];
 
+  const firstName = currentUser?.name ? currentUser.name.split(' ')[0] : 'Ritika';
+
   return (
-    <header id="cms-overview-header" className="bg-white rounded-3xl border border-slate-200/90 p-5 sm:p-7 shadow-xs space-y-5">
+    <div className="space-y-6">
+      {/* 0. Scenic Japan Welcome Hero Banner (Matching Image 1 & 2) */}
+      <div className="relative rounded-3xl overflow-hidden shadow-lg border border-slate-200/90 text-white min-h-[220px] flex flex-col justify-between p-6 sm:p-8 bg-slate-900">
+        {/* Background Mount Fuji Image with Measured Contrast Scrim */}
+        <div 
+          className="absolute inset-0 bg-cover bg-center"
+          style={{ 
+            backgroundImage: `url('https://images.unsplash.com/photo-1490806843957-31f4c9a91c65?auto=format&fit=crop&w=1800&q=80')` 
+          }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-950/90 via-slate-950/60 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent" />
+
+        {/* Content */}
+        <div className="relative z-10 max-w-2xl space-y-2">
+          <div className="flex items-center space-x-2 text-amber-300 text-xs font-bold tracking-wide">
+            <span>☀️</span>
+            <span>Good {new Date().getHours() < 12 ? 'Morning' : new Date().getHours() < 18 ? 'Afternoon' : 'Evening'}, {firstName}</span>
+          </div>
+          <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight text-white font-sans drop-shadow-xs">
+            Welcome to TheUnbound
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-200 font-medium max-w-xl leading-relaxed drop-shadow-xs">
+            Your complete Japan DMC platform — from master inventory to bookings, all in one place.
+          </p>
+        </div>
+
+        {/* Hero Bottom Bar: Quick CTAs & Featured Destination Badge */}
+        <div className="relative z-10 flex flex-wrap items-center justify-between gap-4 pt-6">
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => onNavigate?.('LEAD_MANAGEMENT', 'BUILDER', 'new')}
+              className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] active:scale-98 text-slate-950 font-bold text-xs transition-all shadow-md hover:shadow-lg cursor-pointer select-none"
+            >
+              <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>Create Quote</span>
+            </button>
+            <button
+              onClick={() => onNavigate?.('PRODUCT_MANAGEMENT', 'PRODUCTS')}
+              className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-white/90 hover:bg-white active:scale-98 text-slate-900 font-bold text-xs transition-all shadow-md hover:shadow-lg backdrop-blur-xs cursor-pointer select-none"
+            >
+              <Package className="w-3.5 h-3.5 text-slate-700" />
+              <span>Add Product</span>
+            </button>
+          </div>
+
+          {/* Featured Destination Capsule */}
+          <div 
+            onClick={() => onNavigate?.('DESTINATION_MANAGEMENT', 'DESTINATIONS')}
+            className="flex items-center space-x-3 px-3.5 py-2 rounded-2xl bg-slate-950/70 hover:bg-slate-950/90 border border-white/20 text-white backdrop-blur-md transition-all cursor-pointer select-none"
+          >
+            <div className="w-6 h-6 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400">
+              <Compass className="w-3.5 h-3.5" />
+            </div>
+            <div className="text-left">
+              <div className="text-[10px] text-slate-300 font-medium">Featured Destination</div>
+              <div className="text-xs font-bold text-white">Mt. Fuji, Japan ›</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Control Card: Period & Currency Filters */}
+      <header id="cms-overview-header" className="bg-white rounded-3xl border border-slate-200/90 p-5 sm:p-6 shadow-xs space-y-4">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-100 pb-5">
         <div>
           <div className="flex items-center space-x-2.5">
@@ -189,5 +260,6 @@ export const OverviewHeader: React.FC<OverviewHeaderProps> = ({
         </div>
       )}
     </header>
+    </div>
   );
 };

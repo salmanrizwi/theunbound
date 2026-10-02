@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 interface PageHeaderProps {
   title: string;
   description?: string;
+  breadcrumbs?: { label: string; onClick?: () => void }[];
   backLabel?: string;
   onBack?: () => void;
   status?: string;
@@ -28,6 +29,7 @@ interface PageHeaderProps {
 export const PageHeader: React.FC<PageHeaderProps> = ({
   title,
   description,
+  breadcrumbs,
   backLabel,
   onBack,
   status,
@@ -39,9 +41,34 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
   className = ''
 }) => {
   return (
-    <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-4 border-b border-slate-200 ${className}`}>
+    <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-4 border-b border-slate-200/80 ${className}`}>
       <div className="space-y-1 min-w-0">
-        {onBack && (
+        {breadcrumbs && breadcrumbs.length > 0 && (
+          <nav className="flex items-center space-x-1.5 text-xs text-slate-500 font-medium mb-1 overflow-hidden truncate">
+            {breadcrumbs.map((bc, idx) => {
+              const isLast = idx === breadcrumbs.length - 1;
+              return (
+                <React.Fragment key={idx}>
+                  {idx > 0 && <span className="text-slate-400">/</span>}
+                  {bc.onClick && !isLast ? (
+                    <button
+                      type="button"
+                      onClick={bc.onClick}
+                      className="hover:text-slate-900 transition-colors cursor-pointer truncate"
+                    >
+                      {bc.label}
+                    </button>
+                  ) : (
+                    <span className={isLast ? 'text-slate-900 font-semibold truncate' : 'truncate'}>
+                      {bc.label}
+                    </span>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </nav>
+        )}
+        {onBack && !breadcrumbs && (
           <button
             type="button"
             onClick={onBack}
@@ -51,7 +78,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
             <span>{backLabel || 'Back'}</span>
           </button>
         )}
-        <h1 className="text-2xl font-black text-slate-900 tracking-tight truncate">
+        <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight truncate">
           {title}
         </h1>
         {description && (

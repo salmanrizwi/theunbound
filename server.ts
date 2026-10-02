@@ -1,19 +1,21 @@
 import fs from "fs";
 import path from "path";
+import { createRequire } from "module";
 
-const isTsx = process.execArgv.some((arg) => arg.includes("tsx")) || process.env.npm_lifecycle_event === "dev";
+const require = createRequire(import.meta.url);
 const distBundlePath = path.resolve(process.cwd(), "dist", "server.cjs");
+const isRunningWithTsx = process.execArgv.some((a) => a.includes("tsx")) || 
+                         process.argv.some((a) => a.includes("tsx"));
 
 async function bootstrap() {
-  if (!isTsx && fs.existsSync(distBundlePath)) {
-    // Plain Node runtime (production deployment via "node server.ts"):
-    // Execute high-performance compiled bundle
-    const bundle = await import(`file://${distBundlePath}`);
+  if (fs.existsSync(distBundlePath) && !isRunningWithTsx) {
+    // Production Cloud Run container execution using compiled bundle
+    const bundle = require(distBundlePath);
     if (typeof bundle.startServer === "function") {
       await bundle.startServer();
     }
   } else {
-    // Development runtime (via tsx dev server):
+    // Development runtime via Vite middleware
     const { startServer } = await import("./server/main.ts");
     await startServer();
   }
@@ -23,3 +25,4 @@ bootstrap().catch((err) => {
   console.error("[SERVER] Startup failed:", err);
   process.exit(1);
 });
+

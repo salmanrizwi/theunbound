@@ -1,6 +1,3 @@
-# This .gcloudignore file prevents the Google Cloud SDK from using .gitignore as a fallback.
-# This ensures that compiled build directories (like dist/ and build/) are successfully uploaded as deployment artifacts.
-
 .gcloudignore
 .git
 .gitignore

@@ -85,8 +85,8 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
       const match = bookings.find(b => 
         b.id === initialBookingId || 
         b.bookingReference === initialBookingId ||
-        b.id.toLowerCase() === clean ||
-        b.bookingReference?.toLowerCase() === clean
+        (b.id || '').toLowerCase() === clean ||
+        (b.bookingReference || '').toLowerCase() === clean
       );
       if (match) {
         setSelectedBookingId(match.id);
@@ -103,19 +103,19 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
   // Filter Bookings
   const filteredBookings = useMemo(() => {
     return bookings.filter((b) => {
-      const q = searchQuery.toLowerCase().trim();
+      const q = (searchQuery || '').toLowerCase().trim();
       const matchesSearch = 
         !q ||
-        b.bookingReference.toLowerCase().includes(q) ||
-        b.customer?.leadTravelerName?.toLowerCase().includes(q) ||
-        b.customer?.name?.toLowerCase().includes(q) ||
-        b.customer?.email?.toLowerCase().includes(q) ||
-        b.agencyName?.toLowerCase().includes(q) ||
-        b.assignedTeamMemberNameSnapshot?.toLowerCase().includes(q) ||
-        b.assignedTeamMemberName?.toLowerCase().includes(q) ||
-        b.agentNameSnapshot?.toLowerCase().includes(q) ||
-        b.agentAgencySnapshot?.toLowerCase().includes(q) ||
-        b.items?.some(it => it.productName.toLowerCase().includes(q));
+        (b.bookingReference || '').toLowerCase().includes(q) ||
+        (b.customer?.leadTravelerName || '').toLowerCase().includes(q) ||
+        (b.customer?.name || '').toLowerCase().includes(q) ||
+        (b.customer?.email || '').toLowerCase().includes(q) ||
+        (b.agencyName || '').toLowerCase().includes(q) ||
+        (b.assignedTeamMemberNameSnapshot || '').toLowerCase().includes(q) ||
+        (b.assignedTeamMemberName || '').toLowerCase().includes(q) ||
+        (b.agentNameSnapshot || '').toLowerCase().includes(q) ||
+        (b.agentAgencySnapshot || '').toLowerCase().includes(q) ||
+        b.items?.some(it => (it.productName || '').toLowerCase().includes(q));
 
       if (!matchesSearch) return false;
 

@@ -22,8 +22,6 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
       return {
         b2bQuoteBuilderAccess: true,
         buyerQuoteBuilderAccess: true,
-        chatbotAccess: true,
-        b2bChatbotAccess: true,
         canAccessPricingCalculator: true,
         canCreateBookings: true,
         canExportPDF: true,
@@ -155,8 +153,6 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
       return {
         b2bQuoteBuilderAccess: true,
         buyerQuoteBuilderAccess: true,
-        chatbotAccess: true,
-        b2bChatbotAccess: true,
         canAccessPricingCalculator: true,
         canCreateBookings: true,
         canExportPDF: true,
@@ -288,8 +284,6 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
       return {
         b2bQuoteBuilderAccess: true,
         buyerQuoteBuilderAccess: false,
-        chatbotAccess: true, // Visible to B2B Agent once approved
-        b2bChatbotAccess: true,
         canAccessPricingCalculator: true,
         canCreateBookings: true,
         canExportPDF: true,
@@ -559,138 +553,6 @@ export function canUserAccessQuoteBuilder(
   }
 
   return { allowed: true };
-}
-
-/**
- * Evaluates whether a user is authorized to access the AI Planner.
- * Strictly adheres to TheUnbound access guidelines:
- * - AI Planner access is controlled EXCLUSIVELY by Admin.
- * - A user does NOT automatically receive access merely by role.
- * - Must have explicit permission: user.permissions.aiPlannerAccess === true.
- * - Master Admin is always granted access to prevent administrative lockouts.
- */
-export function canUserAccessAIPlanner(
-  user: User | null | undefined
-): { allowed: boolean; reason?: 'LOGGED_OUT' | 'APPROVAL_PENDING' | 'REJECTED' | 'PERMISSION_DENIED'; message?: string } {
-  if (!user) {
-    return { 
-      allowed: false, 
-      reason: 'LOGGED_OUT',
-      message: 'You must be signed in to access the AI Planner.' 
-    };
-  }
-
-  const approvalStatus = user.approvalStatus || 'APPROVED';
-  if (approvalStatus === 'PENDING') {
-    return { 
-      allowed: false, 
-      reason: 'APPROVAL_PENDING',
-      message: 'Your account registration is pending Admin verification.' 
-    };
-  }
-  if (approvalStatus === 'REJECTED') {
-    return { 
-      allowed: false, 
-      reason: 'REJECTED',
-      message: 'Your account access has been revoked.' 
-    };
-  }
-
-  // Master Admin always has access to prevent system lockout
-  if (isMasterAdmin(user)) {
-    return { allowed: true };
-  }
-
-  // Check explicit permission
-  if (user.permissions?.aiPlannerAccess === true) {
-    return { allowed: true };
-  }
-
-  // Explicitly denied or unallocated
-  return { 
-    allowed: false, 
-    reason: 'PERMISSION_DENIED',
-    message: 'AI Planner access has not been allocated to your account by an Administrator.' 
-  };
-}
-
-/**
- * Evaluates whether a user is authorized to access the AI Travel Chatbot.
- * Adheres strictly to TheUnbound access guidelines:
- * - Under Quote Builder Engine Access, Admin manages permission to allow chatbot access for B2B agents only.
- * - Admin decides which agent should have the access of ChatBot.
- * - Master Admin and Admin/Team Member accounts always have access.
- * - For B2B agents (role 'B2B_AGENT' or 'AGENT'), access requires explicit permission:
- *   user.permissions.chatbotAccess === true || user.permissions.b2bChatbotAccess === true.
- * - Retail/Buyer portal users retain general assistant access for retail quotations unless revoked.
- */
-/**
- * Evaluates whether a user is authorized to access the AI Travel Chatbot ("Plan with AI").
- * Adheres strictly to TheUnbound access guidelines:
- * - NO ONE should see or access the Plan with AI chat button if they are logged out.
- * - Buyer: Visible and accessible once logged in.
- * - B2B Agent: Visible and accessible once approved (pending/rejected agents are blocked).
- * - Admin / Master Admin / Staff: Always authorized.
- */
-export function canUserAccessChatbot(
-  user: User | null | undefined,
-  _portal: 'BUYER' | 'B2B_AGENT' | 'ADMIN' | string = 'B2B_AGENT'
-): { allowed: boolean; reason?: 'LOGGED_OUT' | 'APPROVAL_PENDING' | 'REJECTED' | 'PERMISSION_DENIED'; message?: string } {
-  // 1. Strictly forbidden if logged out
-  if (!user) {
-    return { 
-      allowed: false, 
-      reason: 'LOGGED_OUT',
-      message: 'Please sign in to access the Plan with AI travel specialist.' 
-    };
-  }
-
-  // 2. Master Admin and internal staff always have access
-  if (isMasterAdmin(user) || user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
-    return { allowed: true };
-  }
-
-  // 3. Approval status check for all external accounts
-  const approvalStatus = user.approvalStatus || 'APPROVED';
-  if (approvalStatus === 'PENDING') {
-    return { 
-      allowed: false, 
-      reason: 'APPROVAL_PENDING', 
-      message: 'Your B2B account registration is pending Admin verification.' 
-    };
-  }
-  if (approvalStatus === 'REJECTED') {
-    return { 
-      allowed: false, 
-      reason: 'REJECTED', 
-      message: 'Your account access has been revoked.' 
-    };
-  }
-
-  // 4. Logged-in Buyer or Direct Client accounts
-  if (user.role === 'BUYER' || user.role === 'PUBLIC') {
-    return { allowed: true };
-  }
-
-  // 5. B2B Agent accounts: once approved (checked above)
-  const isAgent = user.role === 'B2B_AGENT' || user.role === 'AGENT';
-  if (isAgent) {
-    // If admin explicitly revoked chatbot access in permissions, respect the revocation
-    if (user.permissions && user.permissions.chatbotAccess === false && user.permissions.b2bChatbotAccess === false) {
-      return { 
-        allowed: false, 
-        reason: 'PERMISSION_DENIED', 
-        message: 'AI Chatbot access has been deactivated for your account by an Administrator.' 
-      };
-    }
-    return { allowed: true };
-  }
-
-  return { 
-    allowed: false,
-    reason: 'PERMISSION_DENIED',
-    message: 'Chatbot access is restricted to Buyers and approved B2B Agents.'
-  };
 }
 
 /**

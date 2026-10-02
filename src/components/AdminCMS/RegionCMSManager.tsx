@@ -210,9 +210,11 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
   // Filtered list
   const filteredRegions = regions
     .filter(r => {
-      const matchSearch = r.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          r.code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          r.description?.toLowerCase().includes(searchTerm.toLowerCase());
+      const q = (searchTerm || '').toLowerCase();
+      const matchSearch = !q ||
+                          (r.name || '').toLowerCase().includes(q) || 
+                          (r.code || '').toLowerCase().includes(q) ||
+                          (r.description || '').toLowerCase().includes(q);
       const matchStatus = statusFilter === 'ALL' || r.status === statusFilter;
       return matchSearch && matchStatus;
     })

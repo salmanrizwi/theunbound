@@ -14260,7 +14260,7 @@ export class AppDatabase {
         const tLeadId = (t.leadId || t.entityId || '').toLowerCase();
         const tLeadNum = (t.leadNumber || '').toLowerCase();
         const matchesLead = (tLeadId && tLeadId === normLeadId) || (tLeadNum && tLeadNum === normLeadNum);
-        return matchesLead && t.title.toLowerCase() === autoTaskTitle.toLowerCase() && (t.status === 'PENDING' || t.status === 'OPEN');
+        return matchesLead && (t.title || '').toLowerCase() === (autoTaskTitle || '').toLowerCase() && (t.status === 'PENDING' || t.status === 'OPEN');
       });
 
       if (!hasDuplicate) {
@@ -14732,10 +14732,10 @@ export class AppDatabase {
       existingIdx = leads.findIndex(l => l.id === data.leadId || l.leadNumber === data.leadId);
     }
     if (existingIdx === -1 && data.userId) {
-      existingIdx = leads.findIndex(l => l.userId === data.userId && l.destinationName.toLowerCase() === (data.destinationName || '').toLowerCase());
+      existingIdx = leads.findIndex(l => l.userId === data.userId && (l.destinationName || '').toLowerCase() === (data.destinationName || '').toLowerCase());
     }
     if (existingIdx === -1 && emailLower) {
-      existingIdx = leads.findIndex(l => l.email.toLowerCase() === emailLower && (!data.destinationName || l.destinationName.toLowerCase() === data.destinationName.toLowerCase() || !l.quoteId));
+      existingIdx = leads.findIndex(l => (l.email || '').toLowerCase() === emailLower && (!data.destinationName || (l.destinationName || '').toLowerCase() === (data.destinationName || '').toLowerCase() || !l.quoteId));
     }
     if (existingIdx === -1 && data.quoteId) {
       existingIdx = leads.findIndex(l => l.quoteId === data.quoteId || (l.quoteIds && l.quoteIds.includes(data.quoteId)));
@@ -14744,7 +14744,7 @@ export class AppDatabase {
       existingIdx = leads.findIndex(l => l.bookingId === data.bookingId || (l.bookingIds && l.bookingIds.includes(data.bookingId)));
     }
     if (existingIdx === -1 && emailLower) {
-      existingIdx = leads.findIndex(l => l.email.toLowerCase() === emailLower);
+      existingIdx = leads.findIndex(l => (l.email || '').toLowerCase() === emailLower);
     }
 
     // Auto calculate priority: URGENT if travel within 7 days, HIGH if budget > $10,000
@@ -18652,8 +18652,20 @@ export class AppDatabase {
     travelProtectionPlans?: TravelProtectionPlan[];
     vipGroundServices?: VipGroundService[];
     connectivityPlans?: ConnectivityPlan[];
+    suppliers?: Supplier[];
   }, user?: User | null): void {
     const deletedSet = this.getDeletedEntityIds();
+
+    if (syncedData.suppliers && syncedData.suppliers.length > 0) {
+      const existing = this.getSuppliers();
+      const merged = this.mergeEntitiesById(existing, syncedData.suppliers as any, 'Supplier');
+      this.setItem('suppliers', merged, false);
+      for (const s of merged) {
+        if (!deletedSet.has(s.id) && !deletedSet.has(`Supplier_${s.id}`)) {
+          this.syncFirestoreDoc('suppliers', s.id, s);
+        }
+      }
+    }
 
     if (syncedData.regions && syncedData.regions.length > 0) {
       const existing = this.getMasterRegions();

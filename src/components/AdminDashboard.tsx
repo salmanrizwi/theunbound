@@ -31,10 +31,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const suppliers = db.getSuppliers();
 
   const safeProducts = products || [];
+  const q = (productFilter || '').toLowerCase();
   const filteredProducts = safeProducts.filter(p => 
-    p.name.toLowerCase().includes(productFilter.toLowerCase()) ||
-    p.sku.toLowerCase().includes(productFilter.toLowerCase()) ||
-    p.city.toLowerCase().includes(productFilter.toLowerCase())
+    (p.name || '').toLowerCase().includes(q) ||
+    (p.sku || '').toLowerCase().includes(q) ||
+    (p.city || '').toLowerCase().includes(q)
   );
 
   return (

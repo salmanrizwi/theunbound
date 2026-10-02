@@ -28,7 +28,9 @@ import {
   MealPlanCode,
   TravelProtectionPlan,
   VipGroundService,
-  ConnectivityPlan
+  ConnectivityPlan,
+  DynamicModulePresetId,
+  DynamicWorkbookInspectionReport
 } from '../types';
 import { 
   RailStation, 
@@ -56,6 +58,9 @@ import {
 } from './configuratorRegistry';
 import { CurrencyEngine } from './currencyEngine';
 import { MasterDataService } from './masterDataService';
+import { CanonicalSchemaRegistry, CanonicalModuleSchema } from './canonicalSchemaRegistry';
+import { ModulePresetRegistry, ModulePresetDefinition } from './modulePresetRegistry';
+import { countingEngine } from './countingEngine';
 
 export interface RawMultiTabData {
   [tabName: string]: string[][] | Record<string, any>[];
@@ -217,14 +222,14 @@ export class SheetsSyncService {
     errorMessage?: string;
   } {
     const canonicalSet = new Set<string>(MASTER_WORKBOOK_TABS);
-    // Ignore internal instructions tab if discovered
-    const filteredDiscovered = discoveredTabNames.filter(t => t && t.toUpperCase() !== 'INSTRUCTIONS');
     
     // Normalize discovered tab names against schema aliases
-    const normalizedDiscovered = filteredDiscovered.map(name => {
-      const def = getTabSchemaByName(name);
-      return def && def.tabName !== 'INSTRUCTIONS' ? def.tabName : name.trim();
-    });
+    const normalizedDiscovered = discoveredTabNames
+      .filter(t => Boolean(t))
+      .map(name => {
+        const def = getTabSchemaByName(name);
+        return def ? def.tabName : name.trim();
+      });
 
     const discoveredSet = new Set<string>(normalizedDiscovered);
     const missingTabs = MASTER_WORKBOOK_TABS.filter(t => !discoveredSet.has(t));
@@ -298,6 +303,16 @@ export class SheetsSyncService {
     const incomingRegions = new Set((parsedTabs['REGIONS'] || []).map(r => r.region_id || r.id).filter(Boolean));
     const incomingDestinations = new Set((parsedTabs['DESTINATIONS'] || []).map(d => d.destination_id || d.id).filter(Boolean));
     const incomingHubs = new Set((parsedTabs['HUBS'] || []).map(h => h.hub_id || h.id).filter(Boolean));
+
+    // Also collect from MASTER_DATA tab
+    for (const r of (parsedTabs['MASTER_DATA'] || [])) {
+      const type = (r.entity_type || r.type || '').toString().toLowerCase();
+      const id = r.entity_id || r.code || r.id;
+      if (!id) continue;
+      if (type === 'region') incomingRegions.add(id);
+      if (type === 'destination') incomingDestinations.add(id);
+      if (type === 'hub') incomingHubs.add(id);
+    }
     const incomingProducts = new Set((parsedTabs['PRODUCTS'] || []).map(p => p.product_id || p.sku || p.id).filter(Boolean));
     const incomingHotels = new Set((parsedTabs['HOTELS'] || []).map(h => h.hotel_id || h.id).filter(Boolean));
     const incomingVisas = new Set((parsedTabs['VISA'] || []).map(v => v.visa_id || v.id).filter(Boolean));
@@ -978,20 +993,40 @@ export class SheetsSyncService {
       // Map against existing entities in DB
       let existingMap = new Map<string, any>();
 
-      if (tabKey === 'REGIONS') {
+      if (tabKey === 'MASTER_DATA') {
+        db.getMasterRegions().forEach(r => existingMap.set(r.id, r));
+        db.getDestinations().forEach(d => existingMap.set(d.id, d));
+        db.getCityHubs().forEach(h => existingMap.set(h.id, h));
+        db.getRailStations().forEach(s => existingMap.set(s.stationId || (s as any).id, s));
+        db.getSuppliers().forEach(s => existingMap.set(s.id, s));
+      } else if (tabKey === 'VISA_ANCILLARY') {
+        db.getVisas().forEach(v => existingMap.set(v.id, v));
+        db.getTravelProtectionPlans().forEach(p => existingMap.set(p.id, p));
+        db.getVipGroundServices().forEach(v => existingMap.set(v.id, v));
+        db.getConnectivityPlans().forEach(c => existingMap.set(c.id, c));
+      } else if (tabKey === 'RAIL') {
+        db.getRailRoutes().forEach(r => existingMap.set(r.routeId || (r as any).id, r));
+        db.getRailFares().forEach(f => existingMap.set(f.railFareId || (f as any).id, f));
+      } else if (tabKey === 'REGIONS') {
         db.getMasterRegions().forEach(r => existingMap.set(r.id, r));
       } else if (tabKey === 'DESTINATIONS') {
         db.getDestinations().forEach(d => existingMap.set(d.id, d));
       } else if (tabKey === 'HUBS') {
         db.getCityHubs().forEach(h => existingMap.set(h.id, h));
       } else if (tabKey === 'PRODUCTS') {
-        db.getProducts().forEach(p => existingMap.set(p.sku || p.id, p));
+        db.getProducts().forEach(p => {
+          if (p.id) existingMap.set(p.id, p);
+          if (p.sku) existingMap.set(p.sku, p);
+        });
       } else if (tabKey === 'PRODUCT_PRICING') {
         db.getProductRates().forEach(r => existingMap.set(r.id, r));
       } else if (tabKey === 'PRODUCT_CAPACITY') {
         db.getProductCapacities().forEach(c => existingMap.set(c.id, c));
       } else if (tabKey === 'HOTELS') {
-        db.getHotels().forEach(h => existingMap.set(h.id, h));
+        db.getHotels().forEach(h => {
+          if (h.id) existingMap.set(h.id, h);
+          if (h.code) existingMap.set(h.code, h);
+        });
       } else if (tabKey === 'HOTEL_ROOMS') {
         db.getHotelRooms().forEach(r => existingMap.set(r.id, r));
       } else if (tabKey === 'HOTEL_MEAL_PLANS') {
@@ -1184,7 +1219,120 @@ export class SheetsSyncService {
         objects = Array.isArray(rawRows[0]) ? this.rowsToObjects(rawRows as string[][]) : rawRows as Record<string, any>[];
       }
 
-      if (tabKey === 'REGIONS') {
+      if (tabKey === 'MASTER_DATA') {
+        const regions: MasterRegion[] = [];
+        const destinations: Destination[] = [];
+        const hubs: CityHub[] = [];
+        const railStations: RailStation[] = [];
+        const suppliers: any[] = [];
+
+        for (const r of objects) {
+          const type = (r.entity_type || r.type || '').toString().toLowerCase();
+          const id = r.entity_id || r.code || r.id;
+          if (!id) continue;
+
+          if (type === 'region') {
+            regions.push({
+              id,
+              name: r.name || 'Region',
+              code: r.code || id.toUpperCase(),
+              slug: (r.name || r.code || '').toLowerCase().replace(/\s+/g, '-'),
+              currency: (r.currency || 'USD') as CurrencyCode,
+              status: (r.status || 'ACTIVE').toUpperCase().includes('ACTIVE') ? 'ACTIVE' : 'INACTIVE',
+              displayOrder: 1,
+              description: r.description || '',
+              heroImage: '',
+              isPublished: true,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          } else if (type === 'destination') {
+            destinations.push({
+              id,
+              regionId: r.parent_id || 'REG-001',
+              name: r.name || 'Destination',
+              country: r.country || r.name || '',
+              slug: (r.name || r.code || '').toLowerCase().replace(/\s+/g, '-'),
+              currency: (r.currency || 'USD') as CurrencyCode,
+              status: (r.status || 'ACTIVE').toUpperCase().includes('COMING') ? 'COMING_SOON' : 'ACTIVE',
+              heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200',
+              description: r.description || '',
+              region: r.parent_id || 'East Asia',
+              tagline: `Premium Ground Logistics across ${r.name || 'the Destination'}`,
+              keySellingPoints: ['Curated 5-Star Accommodations', 'Private Chauffeur Fleet', '24/7 Dedicated DMC Operations'],
+              bestTimeToVisit: 'Year-Round / Seasonal',
+              idealTripDuration: '7–14 Days',
+              travelStyle: 'Bespoke Luxury & Cultural Immersion',
+              cities: [],
+              highlights: ['Exclusive Experiences', 'VIP Airport Fast Track'],
+              featuredProductIds: []
+            });
+          } else if (type === 'hub') {
+            hubs.push({
+              id,
+              destinationId: r.parent_id || 'DST-JPN',
+              destinationName: r.country || 'Destination',
+              regionId: 'REG-001',
+              name: r.name || 'City Hub',
+              tagline: 'City Gateway',
+              description: r.description || `Operational logistics hub in ${r.name}.`,
+              heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200',
+              images: ['https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200'],
+              displayOrder: 1,
+              isPublished: true,
+              status: (r.status || 'ACTIVE').toUpperCase().includes('ACTIVE') ? 'ACTIVE' : 'ARCHIVED',
+              airportCode: '',
+              railwayStation: '',
+              productCount: 0,
+              hotelCount: 0,
+              highlights: []
+            });
+          } else if (type === 'station') {
+            railStations.push({
+              stationId: id,
+              stationCode: r.code || id,
+              stationName: r.name || 'Rail Station',
+              stationNameLocal: '',
+              displayName: r.name || 'Rail Station',
+              searchAliases: [r.name || '', r.code || ''].filter(Boolean),
+              country: r.country || 'Japan',
+              regionId: 'reg-east-asia',
+              destinationId: 'dest-japan',
+              hubId: r.parent_id || 'hub-tokyo',
+              city: r.country || 'Tokyo',
+              railOperator: 'JR Central',
+              latitude: 35.6812,
+              longitude: 139.7671,
+              timezone: 'Asia/Tokyo',
+              shinkansenLine: 'Tokaido Shinkansen',
+              isMajorHub: false,
+              active: (r.status || 'ACTIVE').toUpperCase().includes('ACTIVE'),
+              status: (r.status || 'ACTIVE').toUpperCase().includes('ACTIVE') ? 'ACTIVE' : 'INACTIVE',
+              displayOrder: 1,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          } else if (type === 'supplier') {
+            suppliers.push({
+              id,
+              name: r.name || 'Supplier',
+              code: r.code || id,
+              destinationId: r.parent_id || 'DST-JPN',
+              country: r.country || 'Japan',
+              currency: (r.currency || 'JPY') as CurrencyCode,
+              status: (r.status || 'ACTIVE').toUpperCase().includes('ACTIVE') ? 'ACTIVE' : 'INACTIVE',
+              description: r.description || ''
+            });
+          }
+        }
+
+        if (regions.length > 0) payload.regions = regions;
+        if (destinations.length > 0) payload.destinations = destinations;
+        if (hubs.length > 0) payload.hubs = hubs;
+        if (railStations.length > 0) payload.railStations = railStations;
+        if (suppliers.length > 0) (payload as any).suppliers = suppliers;
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged Master Data (${regions.length} Regions, ${destinations.length} Destinations, ${hubs.length} Hubs, ${railStations.length} Stations, ${suppliers.length} Suppliers).`);
+      } else if (tabKey === 'REGIONS') {
         payload.regions = objects.map(r => ({
           id: r.region_id || r.id,
           name: r.region_name || r.name || 'Region',
@@ -1458,6 +1606,207 @@ export class SheetsSyncService {
           status: 'ACTIVE'
         }));
         logs.push(`[${new Date().toLocaleTimeString()}] Staged ${payload.transferRates.length} Transfer Rates.`);
+      } else if (tabKey === 'VISA_ANCILLARY') {
+        const visas: VisaProduct[] = [];
+        const travelProtections: TravelProtectionPlan[] = [];
+        const vipGrounds: VipGroundService[] = [];
+        const connectivities: ConnectivityPlan[] = [];
+
+        for (const item of objects) {
+          const group = (item.service_group || item.group || '').toString().toUpperCase();
+          const id = item.service_id || item.id;
+          if (!id) continue;
+
+          if (group === 'VISA' || id.startsWith('VSA')) {
+            visas.push({
+              id,
+              destinationId: item.destination_id || 'DST-JPN',
+              country: 'Japan',
+              visaType: item.service_name || 'Tourist Visa',
+              entryType: 'SINGLE_ENTRY',
+              validityDays: 90,
+              stayDurationDays: 30,
+              processingTimeDays: 5,
+              expressProcessingAvailable: true,
+              embassyFee: Number(item.supplier_nett) || 35,
+              serviceFee: Number(item.service_fee_value) || 15,
+              currency: (item.native_currency || 'USD') as CurrencyCode,
+              description: item.coverage_or_scope || 'Visa Facilitation & Processing',
+              documentsChecklist: (item.requirements_summary || '').split('|').filter(Boolean),
+              status: 'ACTIVE',
+              structuredRequirements: createDefaultRequirementsForVisa(id, 'Japan', item.service_name || 'Tourist Visa'),
+              assistanceServices: createDefaultAssistanceServices(id),
+              requirementVersion: 1,
+              submissionSteps: ['Document Review & Digital Verification', 'Biometrics & Consulate Appointment', 'Passport Stamping & Delivery'],
+              eligibilityNotes: ['Valid for tourism and leisure travel', 'Passport must have at least 6 months validity'],
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          } else if (group === 'TRAVEL_PROTECTION' || id.startsWith('ANC-INS')) {
+            travelProtections.push({
+              id,
+              serviceName: item.service_name || 'Travel Protection Plan',
+              provider: 'Global Assistance Provider',
+              coverageArea: 'Worldwide',
+              destinationId: item.destination_id || undefined,
+              medicalCoverageAmount: 250000,
+              emergencyAssistanceIncluded: true,
+              evacuationCoverageAmount: 100000,
+              tripCancellationAmount: 5000,
+              baggageLossAmount: 2000,
+              validityDaysMax: 30,
+              eligibilityAgeMin: 0,
+              eligibilityAgeMax: 85,
+              netCostPerDay: 3.5,
+              netCostPerTrip: Number(item.supplier_nett) || 25,
+              sellingPricePerDay: 5.5,
+              sellingPricePerTrip: Math.round((Number(item.supplier_nett) || 25) * 1.2),
+              currency: (item.native_currency || 'USD') as CurrencyCode,
+              status: 'ACTIVE',
+              terms: 'Policy terms apply',
+              customerDescription: item.coverage_or_scope || 'Medical & Cancellation Protection',
+              inclusions: (item.requirements_summary || '').split('|').filter(Boolean),
+              pricing: {
+                currency: (item.native_currency || 'USD') as CurrencyCode,
+                nettPrice: Number(item.supplier_nett) || 25,
+                marginType: 'PERCENTAGE',
+                marginValue: 20,
+                finalPrice: Math.round((Number(item.supplier_nett) || 25) * 1.2),
+                taxType: 'PERCENTAGE',
+                taxValue: 0,
+                serviceChargeType: 'FIXED',
+                serviceChargeValue: 0,
+                pricingUnit: 'Per Trip'
+              },
+              displayOrder: 1,
+              updatedAt: new Date().toISOString()
+            });
+          } else if (group === 'VIP_GROUND' || id.startsWith('VIP')) {
+            vipGrounds.push({
+              id,
+              name: item.service_name || 'VIP Ground Service',
+              serviceType: 'MEET_AND_GREET',
+              destinationId: item.destination_id || 'DST-JPN',
+              hubId: item.hub_id || 'HUB-TOKYO',
+              supplierName: item.supplier_id || 'Supplier',
+              shortDesc: item.coverage_or_scope || 'VIP Fast-Track Escort',
+              longDesc: item.coverage_or_scope || 'VIP Ground Service',
+              netCost: Number(item.supplier_nett) || 120,
+              defaultMarkupPercent: 20,
+              sellingPrice: Math.round((Number(item.supplier_nett) || 120) * 1.2),
+              currency: (item.native_currency || 'USD') as CurrencyCode,
+              pricingType: 'PER_PAX' as any,
+              badge: 'VIP Escort',
+              status: 'ACTIVE',
+              inclusions: (item.requirements_summary || '').split('|').filter(Boolean),
+              pricing: {
+                currency: (item.native_currency || 'USD') as CurrencyCode,
+                nettPrice: Number(item.supplier_nett) || 120,
+                marginType: 'PERCENTAGE',
+                marginValue: 20,
+                finalPrice: Math.round((Number(item.supplier_nett) || 120) * 1.2),
+                taxType: 'PERCENTAGE',
+                taxValue: 0,
+                serviceChargeType: 'FIXED',
+                serviceChargeValue: 0,
+                pricingUnit: 'Per Pax'
+              },
+              displayOrder: 1,
+              updatedAt: new Date().toISOString()
+            });
+          } else if (group === 'CONNECTIVITY' || id.startsWith('ANC-ESIM')) {
+            connectivities.push({
+              id,
+              name: item.service_name || '5G eSIM Data Plan',
+              type: 'ESIM',
+              coverageZone: 'Japan',
+              dataAllowance: item.coverage_or_scope || 'Unlimited 5G Data',
+              validityDays: 15,
+              networkSpeed: '5G / 4G LTE',
+              netCost: Number(item.supplier_nett) || 18,
+              sellingPrice: Math.round((Number(item.supplier_nett) || 18) * 1.2),
+              currency: (item.native_currency || 'USD') as CurrencyCode,
+              status: 'ACTIVE',
+              inclusions: (item.requirements_summary || '').split('|').filter(Boolean),
+              pricing: {
+                currency: (item.native_currency || 'USD') as CurrencyCode,
+                nettPrice: Number(item.supplier_nett) || 18,
+                marginType: 'PERCENTAGE',
+                marginValue: 20,
+                finalPrice: Math.round((Number(item.supplier_nett) || 18) * 1.2),
+                taxType: 'PERCENTAGE',
+                taxValue: 0,
+                serviceChargeType: 'FIXED',
+                serviceChargeValue: 0,
+                pricingUnit: 'Per Profile'
+              },
+              displayOrder: 1,
+              updatedAt: new Date().toISOString()
+            });
+          }
+        }
+
+        if (visas.length > 0) payload.visas = visas;
+        if (travelProtections.length > 0) payload.travelProtectionPlans = travelProtections;
+        if (vipGrounds.length > 0) payload.vipGroundServices = vipGrounds;
+        if (connectivities.length > 0) payload.connectivityPlans = connectivities;
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged Visa & Ancillary Services (${visas.length} Visas, ${travelProtections.length} Insurance, ${vipGrounds.length} VIP, ${connectivities.length} eSIM).`);
+      } else if (tabKey === 'RAIL') {
+        const railRoutes: RailRoute[] = [];
+        const railFares: RailFare[] = [];
+
+        for (const item of objects) {
+          const id = item.rail_id || item.id;
+          if (!id) continue;
+
+          railRoutes.push({
+            routeId: item.route_code || id,
+            originStationId: item.origin_station_id || 'STN-TOKYO',
+            destinationStationId: item.destination_station_id || 'STN-OSAKA',
+            originStationName: item.origin_station_name || 'Tokyo Station',
+            destinationStationName: item.destination_station_name || 'Shin-Osaka Station',
+            country: 'Japan',
+            destinationId: 'dest-japan',
+            railOperator: 'JR Central',
+            availableProductIds: [item.commercial_product || 'GREEN_RESERVED'],
+            availableServiceGroups: ['NOZOMI_MIZUHO'],
+            distanceKm: 515,
+            durationMinutes: Number(item.duration_minutes) || 150,
+            active: true,
+            status: 'ACTIVE',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+
+          railFares.push({
+            railFareId: id,
+            routeId: item.route_code || id,
+            originStationId: item.origin_station_id || 'STN-TOKYO',
+            destinationStationId: item.destination_station_id || 'STN-OSAKA',
+            productId: item.commercial_product || 'GREEN_RESERVED',
+            carType: (item.travel_class?.includes('Green') ? 'Green' : 'Ordinary') as any,
+            seatType: 'Reserved',
+            fareType: 'Standard',
+            passengerType: (item.passenger_type || 'Adult').toUpperCase() as any,
+            currency: (item.native_currency || 'JPY') as CurrencyCode,
+            nettPrice: Number(item.supplier_nett) || 14720,
+            marginType: item.margin_type || 'PERCENTAGE',
+            marginValue: Number(item.b2b_margin_value) || 10,
+            taxType: item.tax_type || 'PERCENTAGE',
+            taxValue: Number(item.tax_value) || 10,
+            serviceChargeType: item.service_fee_type || 'FIXED',
+            serviceChargeValue: Number(item.service_fee_value) || 0,
+            finalPrice: Math.round((Number(item.supplier_nett) || 14720) * 1.1),
+            effectiveFrom: '2026-01-01',
+            effectiveTo: '2026-12-31',
+            status: 'ACTIVE',
+            updatedAt: new Date().toISOString()
+          });
+        }
+
+        if (railRoutes.length > 0) payload.railRoutes = railRoutes;
+        if (railFares.length > 0) payload.railFares = railFares;
+        logs.push(`[${new Date().toLocaleTimeString()}] Staged Japan Rail Journeys (${railRoutes.length} Routes, ${railFares.length} Fares).`);
       } else if (tabKey === 'VISA') {
         const existingVisasMap = new Map(db.getVisas().map(v => [v.id, v]));
         payload.visas = objects.map(v => {
@@ -2059,4 +2408,228 @@ export class SheetsSyncService {
 
     return this.commitMultiTabSync(multiTabData, targetTabs, user, cleanSheetId);
   }
+
+  // ----------------------------------------------------
+  // DYNAMIC MODULE PRESET METHODS
+  // ----------------------------------------------------
+
+  /**
+   * Inspects a workbook (raw data or list of tab names) against a specific Module Preset.
+   */
+  public inspectWorkbookAgainstPreset(
+    input: string[] | RawMultiTabData,
+    presetId: DynamicModulePresetId
+  ): DynamicWorkbookInspectionReport {
+    const preset = ModulePresetRegistry.getPreset(presetId);
+    const presetName = preset ? preset.name : 'Canonical Module';
+    const schemaVersion = preset ? preset.schemaVersion : 'v1.0.0';
+    const requiredSchemas = ModulePresetRegistry.getSchemasForPreset(presetId, false);
+    const requiredCanonicalTabs = requiredSchemas.map(s => s.canonicalTabName);
+
+    // Normalize discovered sheet names and raw rows
+    let discoveredNames: string[] = [];
+    let dataMap: RawMultiTabData = {};
+
+    if (Array.isArray(input)) {
+      discoveredNames = input.filter(Boolean);
+    } else {
+      discoveredNames = Object.keys(input).filter(Boolean);
+      dataMap = input;
+    }
+
+    const foundCanonicalTabs: string[] = [];
+    const matchedSchemas: DynamicWorkbookInspectionReport['matchedSchemas'] = [];
+    const unexpectedTabs: string[] = [];
+
+    for (const rawName of discoveredNames) {
+      const schema = CanonicalSchemaRegistry.findSchemaBySheetName(rawName);
+      if (schema) {
+        if (!foundCanonicalTabs.includes(schema.canonicalTabName)) {
+          foundCanonicalTabs.push(schema.canonicalTabName);
+        }
+
+        const rawRows = dataMap[rawName];
+        let totalRows = 0;
+        let discoveredColumns: string[] = [];
+        const missingRequiredColumns: string[] = [];
+        const unexpectedColumns: string[] = [];
+
+        if (Array.isArray(rawRows) && rawRows.length > 0) {
+          totalRows = Math.max(0, rawRows.length - 1);
+          const headerRow = Array.isArray(rawRows[0])
+            ? (rawRows[0] as string[])
+            : Object.keys(rawRows[0] || {});
+          
+          discoveredColumns = headerRow.map(h => String(h || '').trim());
+          const normalizedDiscovered = new Set(
+            discoveredColumns.map(c => c.toLowerCase().replace(/[\s_-]+/g, '_'))
+          );
+
+          // Check required schema columns
+          for (const col of schema.columns) {
+            const colKeyNorm = col.key.toLowerCase().replace(/[\s_-]+/g, '_');
+            const colNameNorm = col.name.toLowerCase().replace(/[\s_-]+/g, '_');
+            if (col.required) {
+              if (!normalizedDiscovered.has(colKeyNorm) && !normalizedDiscovered.has(colNameNorm)) {
+                missingRequiredColumns.push(col.key);
+              }
+            }
+          }
+
+          // Check unexpected columns
+          const schemaKeys = new Set(
+            schema.columns.flatMap(c => [
+              c.key.toLowerCase().replace(/[\s_-]+/g, '_'),
+              c.name.toLowerCase().replace(/[\s_-]+/g, '_')
+            ])
+          );
+
+          for (const col of discoveredColumns) {
+            const norm = col.toLowerCase().replace(/[\s_-]+/g, '_');
+            if (!schemaKeys.has(norm) && !norm.startsWith('_') && norm.length > 0) {
+              unexpectedColumns.push(col);
+            }
+          }
+        }
+
+        const isRequiredInPreset = preset?.requiredSchemaIds.includes(schema.schemaId);
+        let status: 'READY' | 'WARNING' | 'BLOCKED' = 'READY';
+        if (missingRequiredColumns.length > 0) {
+          status = 'BLOCKED';
+        } else if (unexpectedColumns.length > 0) {
+          status = 'WARNING';
+        }
+
+        matchedSchemas.push({
+          schemaId: schema.schemaId,
+          canonicalTabName: schema.canonicalTabName,
+          matchedSheetName: rawName,
+          totalRows,
+          discoveredColumns,
+          missingRequiredColumns,
+          unexpectedColumns,
+          status
+        });
+      } else {
+        unexpectedTabs.push(rawName);
+      }
+    }
+
+    const missingTabs = requiredCanonicalTabs.filter(req => !foundCanonicalTabs.includes(req));
+    const isBlocked = matchedSchemas.some(m => m.status === 'BLOCKED');
+    const isValid = missingTabs.length === 0 && !isBlocked;
+
+    let errorMessage: string | undefined;
+    if (!isValid) {
+      if (missingTabs.length > 0) {
+        errorMessage = `Missing ${missingTabs.length} required tab(s) for ${presetName}: [${missingTabs.join(', ')}].`;
+      } else if (isBlocked) {
+        const blockedTabs = matchedSchemas.filter(m => m.status === 'BLOCKED').map(m => m.matchedSheetName);
+        errorMessage = `Schema validation failed: Missing required columns in [${blockedTabs.join(', ')}].`;
+      }
+    }
+
+    return {
+      presetId,
+      presetName,
+      schemaVersion,
+      isValid,
+      requiredTabs: requiredCanonicalTabs,
+      foundTabs: foundCanonicalTabs,
+      missingTabs,
+      unexpectedTabs,
+      matchedSchemas,
+      errorMessage
+    };
+  }
+
+  /**
+   * Validates hierarchical data specifically for a given preset.
+   */
+  public validateHierarchicalDataForPreset(
+    multiTabData: RawMultiTabData,
+    presetId: DynamicModulePresetId
+  ): HierarchicalValidationReport {
+    // Normalise incoming tab data
+    const standardData: RawMultiTabData = {};
+    for (const [rawTabName, data] of Object.entries(multiTabData)) {
+      const schema = CanonicalSchemaRegistry.findSchemaBySheetName(rawTabName);
+      const standardName = schema ? schema.canonicalTabName : rawTabName;
+      standardData[standardName] = data;
+    }
+
+    // Run underlying validation engine
+    return this.validateHierarchicalData(standardData);
+  }
+
+  /**
+   * Generates a preview diff for a given preset.
+   */
+  public generateSyncPreviewForPreset(
+    multiTabData: RawMultiTabData,
+    presetId: DynamicModulePresetId
+  ): Record<string, SyncPreviewTabDiff> {
+    const schemas = ModulePresetRegistry.getSchemasForPreset(presetId, true);
+    const targetTabs = schemas.map(s => s.canonicalTabName as MasterSheetTabName);
+
+    // Map input tabs to canonical names
+    const canonicalMultiTab: RawMultiTabData = {};
+    for (const [rawName, data] of Object.entries(multiTabData)) {
+      const schema = CanonicalSchemaRegistry.findSchemaBySheetName(rawName);
+      const tabName = schema ? schema.canonicalTabName : rawName;
+      canonicalMultiTab[tabName] = data;
+    }
+
+    return this.generateSyncPreview(canonicalMultiTab, targetTabs);
+  }
+
+  /**
+   * Commits synchronization for a specific preset safely into the database.
+   */
+  public async commitPresetSync(
+    multiTabData: RawMultiTabData,
+    presetId: DynamicModulePresetId,
+    user: User | null,
+    sheetId: string,
+    sheetName?: string,
+    selectedTabNames?: string[]
+  ): Promise<MultiTabSyncReport> {
+    const preset = ModulePresetRegistry.getPreset(presetId);
+    const presetName = preset ? preset.name : 'Canonical Module';
+    const schemas = ModulePresetRegistry.getSchemasForPreset(presetId, true);
+    
+    let targetTabs = schemas.map(s => s.canonicalTabName as MasterSheetTabName);
+    if (selectedTabNames && selectedTabNames.length > 0) {
+      targetTabs = targetTabs.filter(t => selectedTabNames.includes(t));
+    }
+
+    // Normalise tab names to canonical names
+    const canonicalMultiTab: RawMultiTabData = {};
+    for (const [rawName, data] of Object.entries(multiTabData)) {
+      const schema = CanonicalSchemaRegistry.findSchemaBySheetName(rawName);
+      const tabName = (schema ? schema.canonicalTabName : rawName) as MasterSheetTabName;
+      canonicalMultiTab[tabName] = data;
+    }
+
+    const report = await this.commitMultiTabSync(
+      canonicalMultiTab,
+      targetTabs,
+      user,
+      sheetId
+    );
+
+    // Augment report with Preset metadata
+    report.presetId = presetId;
+    report.presetName = presetName;
+    report.syncMode = 'PRESET_SYNC';
+
+    // Invalidate caches & recalculate all system counts
+    countingEngine.recalculateAllCounts();
+
+    // Persist updated report with preset info
+    AppDatabase.getInstance().saveMultiTabSyncReport(report);
+
+    return report;
+  }
 }
+

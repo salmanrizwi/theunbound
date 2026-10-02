@@ -7,18 +7,15 @@ import {
   SheetTabValidationSummary, 
   SyncPreviewTabDiff, 
   SheetValidationError,
-  MasterGoogleSheetConfig
+  MasterGoogleSheetConfig,
+  DynamicWorkbookInspectionReport,
+  DynamicModulePresetId
 } from '../../../types';
 import { AppDatabase } from '../../../services/db';
 import { SheetsSyncService, RawMultiTabData } from '../../../services/sheetsSyncService';
-import { 
-  MASTER_SHEETS_TAB_DEFINITIONS, 
-  generateSampleCsv, 
-  generateAllTabsCsvBundle, 
-  getTabSchemaByName,
-  generateCanonicalExcelWorkbookBlob,
-  generateCanonicalExcelWorkbookWithDemoDataBlob
-} from '../../../data/googleSheetsTemplate';
+import { CanonicalSchemaRegistry, CanonicalModuleSchema } from '../../../services/canonicalSchemaRegistry';
+import { ModulePresetRegistry, ModulePresetDefinition } from '../../../services/modulePresetRegistry';
+import { DynamicTemplateGenerator } from '../../../services/dynamicTemplateGenerator';
 import { useAuth } from '../../../context/AuthContext';
 import { 
   FileSpreadsheet, 
@@ -28,7 +25,7 @@ import {
   RefreshCw, 
   Download, 
   ShieldCheck, 
-  Database,
+  Database, 
   ArrowRight, 
   ExternalLink, 
   Layers, 
@@ -58,7 +55,10 @@ import {
   Link as LinkIcon,
   Code,
   Save,
-  Code2
+  Code2,
+  Filter,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 
 export interface GoogleSheetsPanelProps {
@@ -78,31 +78,22 @@ interface ServerSheetsStats {
   isSyncing: boolean;
   syncLockedAt: string | null;
   lastSyncAt: string | null;
-  lastSyncSuccess: boolean | null;
-  lastSyncError: string | null;
-  lastSyncDurationMs: number | null;
-  lastValidationStatus: string | null;
-  totalSyncedCount: number;
-  availableTabs?: string[];
-  tabCount?: number;
-  spreadsheetTitle?: string;
-  details?: string;
 }
 
-export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
-  currentUser: propUser,
-  onRefresh,
-  initialView = 'CONNECTION_HEALTH'
+export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({ 
+  currentUser: propUser, 
+  onRefresh, 
+  initialView = 'IMPORTER' 
 }) => {
   const { user: authUser } = useAuth();
   const currentUser = propUser || authUser;
   const db = AppDatabase.getInstance();
   const syncService = SheetsSyncService.getInstance();
 
-  // Navigation state
+  // Navigation State
   const [managerView, setManagerView] = useState<'CONNECTION_HEALTH' | 'IMPORTER' | 'SELECTIVE_SYNC' | 'TEMPLATES' | 'HISTORY'>(initialView);
 
-  // Master Spreadsheet Configuration State
+  // Configuration State
   const [config, setConfig] = useState<MasterGoogleSheetConfig>(() => db.getMasterGoogleSheetConfig());
   const [spreadsheetNameInput, setSpreadsheetNameInput] = useState(config.spreadsheetName || 'TheUnbound Master Inventory & Tariff Sheet');
   const [isSavingConfig, setIsSavingConfig] = useState(false);
@@ -117,16 +108,19 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
   const [testProbeResult, setTestProbeResult] = useState<any | null>(null);
   const [isTestingProbe, setIsTestingProbe] = useState(false);
 
-  // Importer Wizard State
+  // ----------------------------------------------------
+  // Dynamic Module Preset & Importer Wizard State
+  // ----------------------------------------------------
+  const [selectedPresetId, setSelectedPresetId] = useState<DynamicModulePresetId>('all_canonical');
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
-  const [inputMode, setInputMode] = useState<'GOOGLE_SHEET' | 'SAMPLE_DATASET'>('GOOGLE_SHEET');
+  const [inputMode, setInputMode] = useState<'GOOGLE_SHEET' | 'FILE_UPLOAD' | 'MANUAL_CSV' | 'CANONICAL_DATASET'>('GOOGLE_SHEET');
   const [sheetInput, setSheetInput] = useState(config.masterSpreadsheetId || '');
-  const [selectedTabs, setSelectedTabs] = useState<MasterSheetTabName[]>(() => 
-    MASTER_SHEETS_TAB_DEFINITIONS
-      .filter(t => t.tabName !== 'INSTRUCTIONS')
-      .map(t => t.tabName) as MasterSheetTabName[]
-  );
+  const [manualCsvText, setManualCsvText] = useState('');
+  const [manualCsvTabTarget, setManualCsvTabTarget] = useState('PRODUCTS');
+  
+  // Staged Data & Dynamic Inspection
   const [stagedData, setStagedData] = useState<RawMultiTabData>({});
+  const [inspectionReport, setInspectionReport] = useState<DynamicWorkbookInspectionReport | null>(null);
   const [validationReport, setValidationReport] = useState<HierarchicalValidationReport | null>(null);
   const [validationFilter, setValidationFilter] = useState<'ALL' | 'CRITICAL' | 'WARNING'>('ALL');
   const [previewDiffs, setPreviewDiffs] = useState<Record<string, SyncPreviewTabDiff>>({});
@@ -136,11 +130,13 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [executionLogs, setExecutionLogs] = useState<string[]>([]);
 
-  // Templates / Schema state
+  // Templates / Schema Explorer State
   const [copiedTab, setCopiedTab] = useState<string | null>(null);
-  const [selectedSchemaTab, setSelectedSchemaTab] = useState<string>('PRODUCTS');
+  const [selectedSchemaPreset, setSelectedSchemaPreset] = useState<DynamicModulePresetId>('all_canonical');
+  const [selectedSchemaTab, setSelectedSchemaTab] = useState<string>('products_catalog');
+  const [includeDemoDataInTemplate, setIncludeDemoDataInTemplate] = useState(false);
 
-  // History state
+  // History State
   const [syncHistory, setSyncHistory] = useState<MultiTabSyncReport[]>([]);
   const [selectedHistoryReport, setSelectedHistoryReport] = useState<MultiTabSyncReport | null>(null);
 
@@ -148,13 +144,21 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
   const cleanSheetId = React.useMemo(() => {
     const raw = sheetInput.trim();
     if (!raw) return config.masterSpreadsheetId || '';
-    // Handle full Google Sheet URL
     const urlMatch = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
     if (urlMatch && urlMatch[1]) {
       return urlMatch[1];
     }
     return raw;
   }, [sheetInput, config.masterSpreadsheetId]);
+
+  // Available Presets from Registry
+  const availablePresets = React.useMemo(() => {
+    return ModulePresetRegistry.getAllPresets();
+  }, []);
+
+  const activePreset = React.useMemo(() => {
+    return ModulePresetRegistry.getPreset(selectedPresetId) || availablePresets[0];
+  }, [selectedPresetId, availablePresets]);
 
   // Load sync reports from DB
   const loadSyncHistory = () => {
@@ -191,7 +195,6 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
       if (res.ok) {
         const data = await res.json();
         setServerStats(data);
-        // Update connection status in config
         if (data.status === 'CONNECTED') {
           const updated = db.saveMasterGoogleSheetConfig({
             connectionStatus: 'CONNECTED',
@@ -204,7 +207,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
         setServerStats(errData);
       }
     } catch (e) {
-      console.debug('Failed to fetch server sheets stats, falling back to local state', e);
+      console.debug('Failed to fetch server sheets stats', e);
     } finally {
       setIsLoadingHealth(false);
     }
@@ -232,7 +235,6 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
       setConfig(updated);
       setSheetInput(targetId);
 
-      // Inform server backend
       await fetch('/api/integrations/master-google-sheets/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -252,13 +254,11 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
     }
   };
 
-  // ----------------------------------------------------
-  // CONNECTION PROBE TEST
-  // ----------------------------------------------------
+  // Connection Probe
   const handleTestConnectionProbe = async () => {
     const targetId = cleanSheetId || config.masterSpreadsheetId;
     if (!targetId) {
-      setStatusMessage('Master Spreadsheet ID is not configured. Please save a valid spreadsheet ID first.');
+      setStatusMessage('Master Spreadsheet ID is not configured.');
       return;
     }
     setIsTestingProbe(true);
@@ -287,7 +287,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
           lastSuccessfulConnectionCheck: new Date().toISOString()
         }, currentUser);
         setConfig(updated);
-        setHealthStatusNotice('Live Google Sheets API connection probe verified 16 canonical tabs.');
+        setHealthStatusNotice('Live Google Sheets API connection verified successfully.');
       } else {
         const updated = db.saveMasterGoogleSheetConfig({
           connectionStatus: data.status === 'AUTHENTICATION_REQUIRED' ? 'AUTHENTICATION_REQUIRED' : 'DISCONNECTED'
@@ -308,62 +308,84 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
   };
 
   // ----------------------------------------------------
-  // PRESET LOADERS
+  // PRESET DATASET LOADER (Canonical Sample Data)
   // ----------------------------------------------------
-  const handleLoadOfficialMasterDataset = () => {
-    setInputMode('SAMPLE_DATASET');
-    const all = MASTER_SHEETS_TAB_DEFINITIONS
-      .filter(t => t.tabName !== 'INSTRUCTIONS')
-      .map(t => t.tabName) as MasterSheetTabName[];
-    setSelectedTabs(all);
-
+  const handleLoadCanonicalDatasetForPreset = (presetId: DynamicModulePresetId) => {
+    setInputMode('CANONICAL_DATASET');
+    const schemas = ModulePresetRegistry.getSchemasForPreset(presetId, true);
     const data: RawMultiTabData = {};
-    for (const def of MASTER_SHEETS_TAB_DEFINITIONS) {
-      if (def.tabName === 'INSTRUCTIONS') continue;
-      data[def.tabName] = [
-        def.columns.map(c => c.key),
-        ...def.sampleRows
+
+    for (const schema of schemas) {
+      if (schema.schemaId === 'instructions') continue;
+      data[schema.canonicalTabName] = [
+        schema.columns.map(c => c.key),
+        ...schema.sampleRows
       ];
     }
     setStagedData(data);
-    setStatusMessage(`Loaded official master 25-tab canonical template (${Object.keys(data).length} worksheets ready).`);
+    const inspection = syncService.inspectWorkbookAgainstPreset(data, presetId);
+    setInspectionReport(inspection);
+    setStatusMessage(`Loaded canonical dataset for ${activePreset.name} (${Object.keys(data).length} worksheets ready).`);
   };
 
-  const toggleTabSelection = (tabName: MasterSheetTabName) => {
-    if (selectedTabs.includes(tabName)) {
-      setSelectedTabs(selectedTabs.filter(t => t !== tabName));
-    } else {
-      setSelectedTabs([...selectedTabs, tabName]);
+  // Handle local File Upload (.xlsx or .csv)
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsProcessing(true);
+    setStatusMessage(`Reading file "${file.name}"...`);
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+
+      const parsed: RawMultiTabData = {};
+      for (const sheetName of workbook.SheetNames) {
+        const sheet = workbook.Sheets[sheetName];
+        const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+        if (rows.length > 0) {
+          parsed[sheetName] = rows;
+        }
+      }
+
+      setStagedData(parsed);
+      const inspection = syncService.inspectWorkbookAgainstPreset(parsed, selectedPresetId);
+      setInspectionReport(inspection);
+      setStatusMessage(`Discovered ${Object.keys(parsed).length} worksheet(s) in "${file.name}".`);
+    } catch (err: any) {
+      setStatusMessage(`File parse error: ${err?.message || 'Could not read Excel file.'}`);
+    } finally {
+      setIsProcessing(false);
+      if (event.target) event.target.value = '';
     }
   };
 
-  const selectAllTabs = () => {
-    const all = MASTER_SHEETS_TAB_DEFINITIONS
-      .filter(t => t.tabName !== 'INSTRUCTIONS')
-      .map(t => t.tabName) as MasterSheetTabName[];
-    setSelectedTabs(all);
-  };
-
-  const selectModuleTabs = (module: 'PRODUCTS' | 'HOTELS' | 'VISA_ANCILLARY' | 'JAPAN_RAIL' | 'ALL') => {
-    if (module === 'PRODUCTS') {
-      setSelectedTabs(['PRODUCTS', 'PRODUCT_PRICING', 'PRODUCT_CAPACITY']);
-    } else if (module === 'HOTELS') {
-      setSelectedTabs(['HOTELS', 'HOTEL_ROOMS', 'HOTEL_MEAL_PLANS', 'HOTEL_RATES']);
-    } else if (module === 'VISA_ANCILLARY') {
-      setSelectedTabs(['VISA', 'VISA_RATES', 'TRAVEL_PROTECTION', 'VIP_GROUND', 'CONNECTIVITY']);
-    } else if (module === 'JAPAN_RAIL') {
-      setSelectedTabs(['RAIL_STATIONS', 'RAIL_ROUTES', 'RAIL_SERVICES', 'RAIL_FARES', 'RAIL_CLASS_RULES']);
-    } else {
-      selectAllTabs();
+  // Handle Manual CSV Paste
+  const handleApplyManualCsv = () => {
+    if (!manualCsvText.trim()) {
+      setStatusMessage('Please enter CSV data before parsing.');
+      return;
     }
+    const rows = syncService.parseCsvToRows(manualCsvText);
+    if (rows.length < 1) {
+      setStatusMessage('Invalid CSV text: No rows found.');
+      return;
+    }
+    const updatedData = { ...stagedData, [manualCsvTabTarget]: rows };
+    setStagedData(updatedData);
+    const inspection = syncService.inspectWorkbookAgainstPreset(updatedData, selectedPresetId);
+    setInspectionReport(inspection);
+    setStatusMessage(`Parsed ${rows.length - 1} rows into "${manualCsvTabTarget}".`);
   };
 
   // ----------------------------------------------------
-  // STEP 1 -> STEP 2: VALIDATE DATA
+  // STEP 1 -> STEP 2: RUN VALIDATION
   // ----------------------------------------------------
   const handleProceedToValidation = async () => {
     setIsProcessing(true);
-    setStatusMessage('Preparing and standardizing spreadsheet tables for validation...');
+    setStatusMessage('Preparing and standardizing workbook tables for validation...');
 
     let dataToValidate: RawMultiTabData = { ...stagedData };
 
@@ -373,28 +395,38 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
         setIsProcessing(false);
         return;
       }
-      setStatusMessage(`Fetching remote worksheets via backend proxy for: ${cleanSheetId}...`);
+      setStatusMessage(`Fetching remote worksheets for preset "${activePreset.name}" from: ${cleanSheetId}...`);
+      
+      const schemas = ModulePresetRegistry.getSchemasForPreset(selectedPresetId, true);
       let fetchedCount = 0;
       const remoteData: RawMultiTabData = {};
-      for (const tab of selectedTabs) {
-        const rows = await syncService.fetchRemoteWorksheet(cleanSheetId, tab);
+
+      for (const schema of schemas) {
+        if (schema.schemaId === 'instructions') continue;
+        const rows = await syncService.fetchRemoteWorksheet(cleanSheetId, schema.canonicalTabName);
         if (rows && rows.length > 0) {
-          remoteData[tab] = rows;
+          remoteData[schema.canonicalTabName] = rows;
           fetchedCount++;
         }
       }
+
       if (fetchedCount === 0) {
-        setStatusMessage(`Error: No rows could be retrieved from Google Sheet "${cleanSheetId}". Please ensure the Sheet ID is correct and the document is shared or published with Viewer access.`);
+        setStatusMessage(`Error: No rows could be retrieved from Google Sheet "${cleanSheetId}". Please verify the Sheet ID and sharing permissions.`);
         setIsProcessing(false);
         return;
       }
-      setStatusMessage(`Successfully fetched ${fetchedCount} live worksheets from ${cleanSheetId}. Running validation...`);
+
+      setStatusMessage(`Successfully fetched ${fetchedCount} live worksheets from ${cleanSheetId}. Running schema validation...`);
       dataToValidate = remoteData;
       setStagedData(dataToValidate);
     }
 
+    // Inspect workbook against preset
+    const inspection = syncService.inspectWorkbookAgainstPreset(dataToValidate, selectedPresetId);
+    setInspectionReport(inspection);
+
     // Run deep hierarchical validation
-    const report = syncService.validateHierarchicalData(dataToValidate);
+    const report = syncService.validateHierarchicalDataForPreset(dataToValidate, selectedPresetId);
     setValidationReport(report);
     setIsProcessing(false);
     setCurrentStep(2);
@@ -405,18 +437,20 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
   // ----------------------------------------------------
   const handleProceedToPreview = () => {
     setIsProcessing(true);
-    setStatusMessage('Calculating database diffs and field transformations...');
-    const diffs = syncService.generateSyncPreview(stagedData, selectedTabs);
+    setStatusMessage('Calculating database diffs and transformations for preset...');
+    const diffs = syncService.generateSyncPreviewForPreset(stagedData, selectedPresetId);
     setPreviewDiffs(diffs);
-    if (selectedTabs.length > 0) {
-      setActivePreviewTab(selectedTabs[0]);
+
+    const schemas = ModulePresetRegistry.getSchemasForPreset(selectedPresetId, false);
+    if (schemas.length > 0) {
+      setActivePreviewTab(schemas[0].canonicalTabName);
     }
     setIsProcessing(false);
     setCurrentStep(3);
   };
 
   // ----------------------------------------------------
-  // STEP 3 -> STEP 4: EXECUTE ATOMIC COMMIT TO FIREBASE
+  // STEP 3 -> STEP 4: EXECUTE SAFE COMMIT TO FIREBASE
   // ----------------------------------------------------
   const handleExecuteCommit = async () => {
     setIsProcessing(true);
@@ -430,7 +464,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
       setExecutionLogs([...logs]);
     };
 
-    addLog('Acquiring atomic synchronization lock from server...');
+    addLog(`Initiating Dynamic Preset Sync: "${activePreset.name}" (${activePreset.schemaVersion})`);
     let lockAcquired = false;
     try {
       const lockRes = await fetch('/api/integrations/sheets/acquire-lock', { method: 'POST' });
@@ -448,2099 +482,1197 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
       addLog('Server lock endpoint offline; proceeding with client-side isolation.');
     }
 
-    const authoritativeSheetId = cleanSheetId || config.masterSpreadsheetId;
-    if (!authoritativeSheetId) {
-      addLog('ERROR: Master Spreadsheet ID is not configured.');
-      setStatusMessage('Master Spreadsheet ID is not configured. Please save your authoritative Google Spreadsheet ID.');
-      setIsProcessing(false);
-      return;
-    }
-
-    addLog(`Initiating multi-tab commit across ${selectedTabs.length} worksheets into Firebase Firestore...`);
-    setStatusMessage('Committing validated records to database and synchronizing with Firestore...');
-    
     try {
-      const report = await syncService.commitMultiTabSync(
-        stagedData, 
-        selectedTabs, 
-        currentUser, 
-        authoritativeSheetId
+      addLog(`Validating canonical schemas and foreign key references for preset "${activePreset.name}"...`);
+      
+      const report = await syncService.commitPresetSync(
+        stagedData,
+        selectedPresetId,
+        currentUser || null,
+        cleanSheetId || config.masterSpreadsheetId || 'MASTER_PRESET_SYNC',
+        config.spreadsheetName || 'Master Inventory & Tariff Sheet'
       );
-      
-      addLog(`Commit finished. Created: ${report.createdTotal}, Updated: ${report.updatedTotal}, Unchanged: ${report.unchangedTotal}, Errors: ${report.errorsTotal}`);
-      addLog(`Sync audit saved to local governance ledger (Batch ID: ${report.id}).`);
-      
+
       setLatestReport(report);
       loadSyncHistory();
+
+      addLog(`Preset Synchronization completed with status: ${report.status}`);
+      addLog(`Total Records Processed: ${report.totalRecords} (+${report.createdTotal} created, ~${report.updatedTotal} updated, =${report.unchangedTotal} unchanged).`);
+      addLog('All system counters, caches, and configurator routes updated successfully.');
+
       setCurrentStep(4);
-      setStatusMessage('Master synchronization to Firebase completed successfully!');
-
-      // Update authoritative config sync metrics
-      const updatedConfig = db.saveMasterGoogleSheetConfig({
-        lastSuccessfulSync: new Date().toISOString(),
-        syncStatus: report.status === 'SUCCESS' ? 'SUCCESS' : 'COMPLETED_WITH_WARNINGS'
-      }, currentUser);
-      setConfig(updatedConfig);
-
-      if (lockAcquired) {
-        await fetch('/api/integrations/sheets/release-lock', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            success: true,
-            stats: {
-              rowsRead: report.totalRecords,
-              rowsCreated: report.createdTotal,
-              rowsUpdated: report.updatedTotal,
-              rowsSkipped: report.unchangedTotal,
-              rowsRejected: report.errorsTotal,
-              durationMs: report.durationMs,
-              validationStatus: report.status === 'SUCCESS' ? 'Passed (Hierarchy & FK Validated)' : 'Completed with warnings'
-            }
-          })
-        }).catch(e => console.debug('Failed to release server lock', e));
-      }
       if (onRefresh) onRefresh();
     } catch (err: any) {
-      const errMsg = err?.message || 'Unknown error during commit';
-      addLog(`CRITICAL ERROR: ${errMsg}`);
-      setStatusMessage(`Sync error: ${errMsg}`);
-      if (lockAcquired) {
-        await fetch('/api/integrations/sheets/release-lock', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ success: false, error: errMsg })
-        }).catch(e => console.debug('Failed to release server lock on error', e));
-      }
+      addLog(`CRITICAL ERROR during preset synchronization: ${err?.message || 'Unexpected failure'}`);
+      setStatusMessage(`Sync execution failed: ${err?.message || 'Unknown error'}`);
     } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // ----------------------------------------------------
-  // SELECTIVE TAB SYNC EXECUTION
-  // ----------------------------------------------------
-  const handleExecuteSelectiveSync = async (tabs: MasterSheetTabName[]) => {
-    if (tabs.length === 0) {
-      setStatusMessage('Please select at least one worksheet tab to synchronize.');
-      return;
-    }
-    setIsProcessing(true);
-    setStatusMessage(`Running Selective Sync for ${tabs.length} worksheets...`);
-
-    const data: RawMultiTabData = {};
-    let hasData = false;
-
-    // Use staged data if available, or fetch remote worksheet data from configured Google Sheet
-    for (const tab of tabs) {
-      if (stagedData[tab] && stagedData[tab].length > 1) {
-        data[tab] = stagedData[tab];
-        hasData = true;
-      } else if (cleanSheetId) {
+      if (lockAcquired) {
         try {
-          const rows = await syncService.fetchRemoteWorksheet(cleanSheetId, tab);
-          if (rows && rows.length > 0) {
-            data[tab] = rows;
-            hasData = true;
-          }
-        } catch (e) {
-          console.debug(`Remote fetch notice for tab ${tab}:`, e);
-        }
+          await fetch('/api/integrations/sheets/release-lock', { method: 'POST' });
+          addLog('Master concurrency lock released.');
+        } catch (e) {}
       }
-    }
-
-    if (!hasData) {
-      // Fallback to official canonical dataset for the requested tabs
-      for (const tab of tabs) {
-        const def = getTabSchemaByName(tab);
-        if (def) {
-          data[tab] = [def.columns.map(c => c.key), ...def.sampleRows];
-          hasData = true;
-        }
-      }
-    }
-
-    if (!hasData) {
-      setStatusMessage('No live worksheet data found for the selected tabs. Please fetch or stage data from your Google Sheet first.');
-      setIsProcessing(false);
-      return;
-    }
-
-    try {
-      const report = await syncService.commitMultiTabSync(
-        data, 
-        tabs, 
-        currentUser, 
-        cleanSheetId || 'SELECTIVE_SYNC'
-      );
-      setLatestReport(report);
-      loadSyncHistory();
-      setStatusMessage(`Selective synchronization complete! Updated ${report.updatedTotal + report.createdTotal} records across ${tabs.join(', ')}.`);
-      if (onRefresh) onRefresh();
-    } catch (err: any) {
-      setStatusMessage(`Selective sync failed: ${err?.message || 'Error executing sync'}`);
-    } finally {
       setIsProcessing(false);
     }
   };
 
-  // Copy Schema or Sample CSV
-  const handleCopySample = (tabName: string) => {
-    const csv = generateSampleCsv(tabName);
-    navigator.clipboard.writeText(csv);
-    setCopiedTab(tabName);
-    setTimeout(() => setCopiedTab(null), 2000);
+  // Helper: Download Template
+  const handleDownloadTemplate = (presetId: DynamicModulePresetId, includeDemo: boolean) => {
+    const blob = DynamicTemplateGenerator.generateWorkbookForPreset(presetId, includeDemo);
+    const suffix = includeDemo ? 'demo_data' : 'blank_template';
+    DynamicTemplateGenerator.downloadBlob(blob, `theunbound_${presetId}_${suffix}.xlsx`);
   };
 
-  // Download Individual Tab CSV
-  const handleDownloadCsv = (tabName: string) => {
-    const csv = generateSampleCsv(tabName);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `TheUnbound_${tabName}_Template.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleDownloadSingleSchemaCsv = (schemaId: string, includeDemo: boolean) => {
+    const csv = DynamicTemplateGenerator.generateCsvForSchema(schemaId, includeDemo);
+    const suffix = includeDemo ? 'demo_data' : 'template';
+    DynamicTemplateGenerator.downloadCsv(csv, `${schemaId}_${suffix}.csv`);
   };
-
-  // Download Canonical 25-Tab Excel with Full Demo Data (.xlsx)
-  const handleDownloadCanonicalExcelWithDemoData = () => {
-    try {
-      const blob = generateCanonicalExcelWorkbookWithDemoDataBlob(true);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.setAttribute('href', url);
-      link.setAttribute('download', `TheUnbound_Master_Inventory_and_Tariff_Canonical_25_Tabs_Demo_Data.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      setHealthStatusNotice('Downloaded Master Excel Workbook with all 25 canonical tabs & demo data (.xlsx).');
-      setTimeout(() => setHealthStatusNotice(null), 5000);
-    } catch (err: any) {
-      console.error('Failed to generate Excel demo blob', err);
-      setStatusMessage(`Template export error: ${err?.message || 'Failed to generate workbook'}`);
-    }
-  };
-
-  // Download Canonical 25-Tab Blank Excel Template (.xlsx)
-  const handleDownloadCanonicalExcelTemplate = () => {
-    try {
-      const blob = generateCanonicalExcelWorkbookBlob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.setAttribute('href', url);
-      link.setAttribute('download', `TheUnbound_Master_Inventory_and_Tariff_Canonical_Blank_Template.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      setHealthStatusNotice('Generated and downloaded canonical 25-tab blank Excel template (.xlsx).');
-      setTimeout(() => setHealthStatusNotice(null), 5000);
-    } catch (err: any) {
-      console.error('Failed to generate Excel blob', err);
-      setStatusMessage(`Template export error: ${err?.message || 'Failed to generate workbook'}`);
-    }
-  };
-
-  // Calculate live database counts
-  const totalDbProducts = db.getProducts().length;
-  const totalDbHotels = db.getHotels().length;
-  const totalDbDestinations = db.getDestinations().length;
 
   return (
-    <div id="google-sheets-master-sync-panel" className="space-y-6 pb-12">
-      {/* ========================================================================= */}
-      {/* 1. TOP HEADER & REAL-TIME CONNECTION STATUS BANNER */}
-      {/* ========================================================================= */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
-          <div className="flex items-start space-x-4">
-            <div className="w-13 h-13 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center shrink-0 shadow-xs">
-              <FileSpreadsheet className="w-7 h-7 text-[#008972]" />
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
-                  Google Sheets ↔ Firebase Database Master Sync
-                </h2>
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center space-x-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  <span>Strict 25-Tab Hierarchy</span>
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-teal-50 text-[#008972] border border-teal-200">
-                  Single Unified Engine
-                </span>
+    <div className="space-y-6 max-w-7xl mx-auto pb-16">
+      {/* ---------------------------------------------------- */}
+      {/* MASTER SYNC HEADER & SUB-NAVIGATION */}
+      {/* ---------------------------------------------------- */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 relative z-10">
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-teal-500/20 border border-teal-500/30 flex items-center justify-center text-teal-400 shadow-inner">
+                <FileSpreadsheet className="w-6 h-6" />
               </div>
-              <p className="text-xs text-slate-600 mt-1 max-w-3xl leading-relaxed">
-                Authoritative Master Google Sheets synchronization engine for TheUnbound DMC platform. Validates hierarchical referential integrity, calculates atomic diffs, and safely persists validated records into Firebase Firestore.
-              </p>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-2xl font-bold text-white tracking-tight">Google Sheets ↔ Firebase Master Sync</h1>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                    Schema-Driven Presets
+                  </span>
+                </div>
+                <p className="text-sm text-slate-400 mt-0.5">
+                  Dynamic module presets, canonical schema mapping, relationship validation, and safe upserts.
+                </p>
+              </div>
             </div>
           </div>
 
-          {/* Top Level View Selector */}
-          <div className="flex items-center space-x-1 bg-slate-100 p-1.5 rounded-xl border border-slate-200 shrink-0 overflow-x-auto">
-            <button
-              id="view-tab-health"
-              onClick={() => setManagerView('CONNECTION_HEALTH')}
-              className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                managerView === 'CONNECTION_HEALTH'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Activity className="w-3.5 h-3.5 text-teal-600" />
-              <span>Configuration & Health</span>
-            </button>
-
-            <button
-              id="view-tab-importer"
-              onClick={() => setManagerView('IMPORTER')}
-              className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                managerView === 'IMPORTER'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <RefreshCw className="w-3.5 h-3.5 text-[#008972]" />
-              <span>Master Sync Engine</span>
-            </button>
-
-            <button
-              id="view-tab-selective"
-              onClick={() => setManagerView('SELECTIVE_SYNC')}
-              className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                managerView === 'SELECTIVE_SYNC'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5 text-blue-600" />
-              <span>Selective Tab Sync</span>
-            </button>
-
-            <button
-              id="view-tab-templates"
-              onClick={() => setManagerView('TEMPLATES')}
-              className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                managerView === 'TEMPLATES'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Download className="w-3.5 h-3.5 text-amber-600" />
-              <span>25-Tab Schema</span>
-            </button>
-
-            <button
-              id="view-tab-history"
-              onClick={() => setManagerView('HISTORY')}
-              className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                managerView === 'HISTORY'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <History className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Sync History ({syncHistory.length})</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Global Real-Time Status Ribbon */}
-        <div className="mt-5 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex flex-wrap items-center gap-2">
-            <div className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-lg font-semibold ${
-              serverStats?.status === 'CONNECTED' 
-                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                : 'bg-slate-50 text-slate-700 border border-slate-200'
-            }`}>
-              <CheckCircle2 className={`w-3.5 h-3.5 ${serverStats?.status === 'CONNECTED' ? 'text-emerald-600' : 'text-slate-400'}`} />
-              <span>Google Sheets API v4: {serverStats?.status || 'Ready'}</span>
-            </div>
-
-            <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-slate-50 text-slate-700 border border-slate-200">
-              <Database className="w-3.5 h-3.5 text-teal-600" />
-              <span>Target: <strong>Firebase Firestore</strong></span>
-            </div>
-
-            <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-slate-50 text-slate-700 border border-slate-200">
-              <FileSpreadsheet className="w-3.5 h-3.5 text-blue-600" />
-              <span>Master Sheet: <code className="font-mono text-[11px] font-bold">{config.masterSpreadsheetId || cleanSheetId || 'Not Configured'}</code></span>
-            </div>
-
-            <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-slate-50 text-slate-700 border border-slate-200">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Database Total: <strong>{totalDbProducts + totalDbHotels + totalDbDestinations} records</strong></span>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-2">
             <button
-              onClick={handleTestConnectionProbe}
-              disabled={isTestingProbe}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold transition-all cursor-pointer disabled:opacity-50"
+              onClick={() => setManagerView('IMPORTER')}
+              className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+                managerView === 'IMPORTER'
+                  ? 'bg-teal-500 text-slate-950 font-bold shadow-lg shadow-teal-500/20'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700'
+              }`}
             >
-              <RefreshCw className={`w-3.5 h-3.5 text-teal-600 ${isTestingProbe ? 'animate-spin' : ''}`} />
-              <span>{isTestingProbe ? 'Checking...' : 'Check Connection'}</span>
+              <Zap className="w-4 h-4" />
+              Master Sync Wizard
             </button>
-
             <button
-              onClick={handleDownloadCanonicalExcelWithDemoData}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-teal-300 bg-[#008972] hover:bg-[#007360] text-white font-bold transition-all cursor-pointer shadow-xs"
-              title="Download full workbook containing all 25 canonical tabs pre-populated with demo data"
+              onClick={() => setManagerView('TEMPLATES')}
+              className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+                managerView === 'TEMPLATES'
+                  ? 'bg-teal-500 text-slate-950 font-bold shadow-lg shadow-teal-500/20'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700'
+              }`}
             >
-              <Download className="w-3.5 h-3.5 text-white" />
-              <span>Excel with Demo Data (.xlsx)</span>
+              <Download className="w-4 h-4" />
+              Dynamic Templates
             </button>
-
             <button
-              onClick={handleDownloadCanonicalExcelTemplate}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold transition-all cursor-pointer"
-              title="Download blank template workbook with column headers only"
+              onClick={() => setManagerView('CONNECTION_HEALTH')}
+              className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+                managerView === 'CONNECTION_HEALTH'
+                  ? 'bg-teal-500 text-slate-950 font-bold shadow-lg shadow-teal-500/20'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700'
+              }`}
             >
-              <Download className="w-3.5 h-3.5 text-slate-500" />
-              <span>Blank Template (.xlsx)</span>
+              <Activity className="w-4 h-4" />
+              Connection Health
+            </button>
+            <button
+              onClick={() => setManagerView('HISTORY')}
+              className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+                managerView === 'HISTORY'
+                  ? 'bg-teal-500 text-slate-950 font-bold shadow-lg shadow-teal-500/20'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700'
+              }`}
+            >
+              <History className="w-4 h-4" />
+              Sync History ({syncHistory.length})
             </button>
           </div>
         </div>
 
         {healthStatusNotice && (
-          <div className="mt-3 p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>{healthStatusNotice}</span>
-            </div>
-            <button onClick={() => setHealthStatusNotice(null)} className="text-emerald-700 hover:text-emerald-900 cursor-pointer font-bold">✕</button>
+          <div className="mt-4 p-3 rounded-xl bg-teal-500/10 border border-teal-500/30 text-teal-300 text-xs flex items-center justify-between animate-fadeIn">
+            <span className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+              {healthStatusNotice}
+            </span>
+            <button onClick={() => setHealthStatusNotice(null)} className="text-slate-400 hover:text-white">✕</button>
           </div>
         )}
       </div>
 
-      {/* ========================================================================= */}
-      {/* VIEW 1: CONNECTION & DATABASE HEALTH */}
-      {/* ========================================================================= */}
-      {managerView === 'CONNECTION_HEALTH' && (
-        <div className="space-y-6">
-          {/* Warning Banner if Unconfigured */}
-          {(!config.masterSpreadsheetId && !cleanSheetId) && (
-            <div className="p-4.5 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-start space-x-3.5 shadow-xs">
-              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <div className="font-bold text-sm text-amber-950">Master Spreadsheet ID is not configured</div>
-                <p className="mt-1 text-amber-800 leading-relaxed">
-                  TheUnbound master synchronization pipeline is currently inactive. No default or fallback sheet ID is assumed.
-                  Please paste your Google Spreadsheet URL or ID below and click <strong>Save Authoritative Configuration</strong> to establish the primary synchronization channel.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Authoritative Google Sheet Configuration Card */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-              <div>
-                <h3 className="text-base font-extrabold text-slate-900 flex items-center space-x-2">
-                  <Server className="w-5 h-5 text-teal-600" />
-                  <span>Master Google Sheets ↔ Firebase Configuration</span>
-                </h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  Persist the single authoritative Master Spreadsheet ID and configuration across all backend endpoints and Firestore.
-                </p>
-              </div>
-
-              <div className="flex items-center space-x-2 shrink-0">
-                <span className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center space-x-1.5 ${
-                  config.connectionStatus === 'CONNECTED'
-                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                    : config.connectionStatus === 'AUTHENTICATION_REQUIRED'
-                    ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                    : 'bg-slate-100 text-slate-600 border border-slate-200'
-                }`}>
-                  <span className={`w-2 h-2 rounded-full ${
-                    config.connectionStatus === 'CONNECTED' ? 'bg-emerald-500' : 'bg-slate-400'
-                  }`}></span>
-                  <span>{config.connectionStatus || 'UNCHECKED'}</span>
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              <div className="lg:col-span-7">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Google Spreadsheet URL or ID <span className="text-rose-500">*</span>
-                </label>
-                <div className="relative">
-                  <input
-                    id="input-sheet-url-or-id"
-                    type="text"
-                    value={sheetInput}
-                    onChange={(e) => setSheetInput(e.target.value)}
-                    placeholder="https://docs.google.com/spreadsheets/d/1BxiMVs.../edit or Spreadsheet ID"
-                    className="w-full pl-9 pr-24 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-[#008972] focus:bg-white"
-                  />
-                  <FileSpreadsheet className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  {cleanSheetId && (
-                    <span className="absolute right-2 top-2 px-2 py-1 rounded bg-slate-200 text-slate-700 text-[10px] font-mono font-bold">
-                      Parsed
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="lg:col-span-5">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Spreadsheet Friendly Name
-                </label>
-                <input
-                  type="text"
-                  value={spreadsheetNameInput}
-                  onChange={(e) => setSpreadsheetNameInput(e.target.value)}
-                  placeholder="TheUnbound Master Commercial Rate & Inventory Sheet"
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-[#008972] focus:bg-white"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-              <div className="text-xs text-slate-500 flex items-center space-x-2">
-                <span>Authoritative ID:</span>
-                <code className="px-2 py-0.5 rounded bg-slate-100 text-slate-800 font-mono font-bold text-[11px]">
-                  {config.masterSpreadsheetId || cleanSheetId || 'None (Unconfigured)'}
-                </code>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <button
-                  id="btn-save-master-sheet-config"
-                  onClick={handleSaveMasterSheetConfig}
-                  disabled={isSavingConfig || !cleanSheetId}
-                  className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-[#008972] hover:bg-[#007360] text-white font-bold text-xs transition-all shadow-xs cursor-pointer disabled:opacity-50"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>{isSavingConfig ? 'Saving Configuration...' : 'Save Authoritative Configuration'}</span>
-                </button>
-              </div>
-            </div>
-
-            {/* SECTION 7: PRODUCTION ACTIONS TOOLBAR */}
-            <div className="pt-4 border-t border-slate-100">
-              <div className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2.5">
-                Production Control Actions
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {/* 1. Check Connection */}
-                <button
-                  id="action-check-connection"
-                  onClick={handleTestConnectionProbe}
-                  disabled={isTestingProbe || (!config.masterSpreadsheetId && !cleanSheetId)}
-                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs transition-all cursor-pointer disabled:opacity-40"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 text-teal-600 ${isTestingProbe ? 'animate-spin' : ''}`} />
-                  <span>{isTestingProbe ? 'Probing...' : 'Check Connection'}</span>
-                </button>
-
-                {/* 2. Sync Now (Manual Master Sync) */}
-                <button
-                  id="action-sync-now"
-                  onClick={() => {
-                    handleLoadOfficialMasterDataset();
-                    setManagerView('IMPORTER');
-                  }}
-                  disabled={!config.masterSpreadsheetId && !cleanSheetId}
-                  className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs transition-all cursor-pointer shadow-xs disabled:opacity-40"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Sync Now (Manual Master Sync)</span>
-                </button>
-
-                {/* 3. Open Master Spreadsheet */}
-                <a
-                  id="action-open-master-sheet"
-                  href={(config.masterSpreadsheetId || cleanSheetId) ? `https://docs.google.com/spreadsheets/d/${config.masterSpreadsheetId || cleanSheetId}` : '#'}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs transition-all ${
-                    (config.masterSpreadsheetId || cleanSheetId) ? 'cursor-pointer' : 'opacity-40 pointer-events-none'
-                  }`}
-                >
-                  <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Open Master Spreadsheet</span>
-                </a>
-
-                {/* 4. Download Canonical 25-Tab Excel Workbooks */}
-                <button
-                  id="action-download-canonical-demo-xlsx"
-                  onClick={handleDownloadCanonicalExcelWithDemoData}
-                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl border border-teal-300 bg-[#008972] hover:bg-[#007360] text-white font-bold text-xs transition-all cursor-pointer shadow-xs"
-                >
-                  <Download className="w-3.5 h-3.5 text-white" />
-                  <span>Download Excel (25 Tabs + Demo Data)</span>
-                </button>
-
-                <button
-                  id="action-download-canonical-blank-xlsx"
-                  onClick={handleDownloadCanonicalExcelTemplate}
-                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs transition-all cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Download Blank Template (.xlsx)</span>
-                </button>
-
-                {/* 5. View Apps Script Webhook Code */}
-                <button
-                  id="action-view-appsscript-code"
-                  onClick={() => setShowAppsScriptModal(true)}
-                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs transition-all cursor-pointer"
-                >
-                  <Code2 className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>View Apps Script Webhook Code</span>
-                </button>
-
-                {/* 6. Copy Webhook URL */}
-                <button
-                  id="action-copy-webhook-url"
-                  onClick={() => {
-                    const webhookUrl = `${window.location.origin}/api/integrations/master-google-sheets/sync`;
-                    navigator.clipboard.writeText(webhookUrl);
-                    setCopiedWebhookUrl(true);
-                    setTimeout(() => setCopiedWebhookUrl(false), 2500);
-                  }}
-                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs transition-all cursor-pointer"
-                >
-                  <Copy className="w-3.5 h-3.5 text-slate-500" />
-                  <span>{copiedWebhookUrl ? 'Webhook URL Copied!' : 'Copy Webhook URL'}</span>
-                </button>
-
-                {/* 7. Refresh Status */}
-                <button
-                  id="action-refresh-status"
-                  onClick={() => {
-                    fetchServerStats();
-                    loadSyncHistory();
-                  }}
-                  disabled={isLoadingHealth}
-                  className="flex items-center space-x-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs transition-all cursor-pointer disabled:opacity-40"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isLoadingHealth ? 'animate-spin' : ''}`} />
-                  <span>Refresh Status</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Connection Test Probe Feedback Box */}
-            {testProbeResult && (
-              <div className={`p-4 rounded-xl border text-xs ${
-                testProbeResult.success
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                  : 'bg-rose-50 border-rose-200 text-rose-900'
-              }`}>
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start space-x-2">
-                    {testProbeResult.success ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                    ) : (
-                      <XCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                    )}
-                    <div>
-                      <div className="font-bold flex items-center space-x-2">
-                        <span>{testProbeResult.success ? 'Google Sheets Connection Verified' : 'Connection Check Notice'}</span>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] bg-white/70 font-mono">
-                          Status: {testProbeResult.status}
-                        </span>
-                      </div>
-                      <p className="mt-1">{testProbeResult.details}</p>
-                      {testProbeResult.availableTabs && (
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          <span className="text-[11px] font-bold">Detected Tabs ({testProbeResult.tabCount}):</span>
-                          {testProbeResult.availableTabs.map((t: string) => (
-                            <span key={t} className="px-1.5 py-0.5 rounded bg-white border border-emerald-300 text-[10px] font-mono text-emerald-800">
-                              {t}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <button onClick={() => setTestProbeResult(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">✕</button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* SECTION 7.1: MASTER SHEET STATUS CARD (8 SPECIFIC METRICS) */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
-            <h3 className="text-sm font-extrabold text-slate-900 mb-1 flex items-center space-x-2">
-              <ShieldCheck className="w-4 h-4 text-teal-600" />
-              <span>Authoritative Master Sheet Status Matrix</span>
-            </h3>
-            <p className="text-xs text-slate-500 mb-4">
-              Real-time audit status for the authoritative Google Sheet connection and Firebase Firestore synchronizer.
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 text-xs">
-              {/* 1. Master Spreadsheet ID */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 flex flex-col justify-between">
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">1. Master Spreadsheet ID</span>
-                  <div className="font-mono text-xs font-bold text-slate-800 truncate" title={config.masterSpreadsheetId || 'Not Configured'}>
-                    {config.masterSpreadsheetId || 'Not Configured'}
-                  </div>
-                </div>
-                {config.masterSpreadsheetId && (
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(config.masterSpreadsheetId);
-                      setHealthStatusNotice('Master Spreadsheet ID copied to clipboard.');
-                      setTimeout(() => setHealthStatusNotice(null), 3000);
-                    }}
-                    className="mt-2 text-[11px] text-[#008972] hover:underline font-semibold flex items-center space-x-1 cursor-pointer"
-                  >
-                    <Copy className="w-3 h-3" />
-                    <span>Copy ID</span>
-                  </button>
-                )}
-              </div>
-
-              {/* 2. Spreadsheet Name */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">2. Spreadsheet Name</span>
-                <div className="font-bold text-xs text-slate-800 truncate" title={config.spreadsheetName || 'Not named'}>
-                  {config.spreadsheetName || 'TheUnbound Master Commercial Rate & Inventory Sheet'}
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">Canonical Rate & Inventory</span>
-              </div>
-
-              {/* 3. Connection Status */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">3. Connection Status</span>
-                <div className="flex items-center space-x-2 font-bold text-xs">
-                  {config.connectionStatus === 'CONNECTED' ? (
-                    <>
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span className="text-emerald-800">Connected (API v4)</span>
-                    </>
-                  ) : config.connectionStatus === 'AUTHENTICATION_REQUIRED' ? (
-                    <>
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                      <span className="text-amber-800">Auth Required</span>
-                    </>
-                  ) : (
-                    <>
-                      <XCircle className="w-4 h-4 text-slate-400 shrink-0" />
-                      <span className="text-slate-700">{config.connectionStatus || 'Unchecked'}</span>
-                    </>
-                  )}
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">Google Sheets v4 Gateway</span>
-              </div>
-
-              {/* 4. Authentication Status */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">4. Authentication Status</span>
-                <div className="flex items-center space-x-2 font-bold text-xs text-slate-800">
-                  <Lock className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>{config.authStatus || 'Google OAuth 2.0'}</span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">Scopes: spreadsheets.readonly</span>
-              </div>
-
-              {/* 5. Last Successful Connection Check */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">5. Last Connection Check</span>
-                <div className="font-bold text-xs text-slate-800">
-                  {config.lastSuccessfulConnectionCheck 
-                    ? new Date(config.lastSuccessfulConnectionCheck).toLocaleString() 
-                    : 'Never'}
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">Verified sheet reachability</span>
-              </div>
-
-              {/* 6. Last Successful Sync */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">6. Last Successful Sync</span>
-                <div className="font-bold text-xs text-slate-800">
-                  {config.lastSuccessfulSync 
-                    ? new Date(config.lastSuccessfulSync).toLocaleString() 
-                    : latestReport 
-                    ? new Date(latestReport.timestamp).toLocaleString()
-                    : 'No syncs yet'}
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">Firebase Firestore commit</span>
-              </div>
-
-              {/* 7. Last Failed Sync */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">7. Last Failed Sync</span>
-                <div className="font-bold text-xs text-slate-800">
-                  {config.lastFailedSync 
-                    ? new Date(config.lastFailedSync).toLocaleString() 
-                    : 'None recorded'}
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">0 Unhandled Exceptions</span>
-              </div>
-
-              {/* 8. Sync Status */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">8. Sync Status</span>
-                <div className="flex items-center space-x-2 font-bold text-xs">
-                  <span className={`w-2 h-2 rounded-full ${
-                    serverStats?.isSyncing ? 'bg-amber-500 animate-ping' : 'bg-emerald-500'
-                  }`}></span>
-                  <span className="text-slate-800">
-                    {serverStats?.isSyncing ? 'In Progress' : config.syncStatus || 'Idle / Ready'}
-                  </span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">Safe atomic upsert lock armed</span>
-              </div>
-            </div>
-          </div>
-
-          {/* 12 Verified System Indicators Matrix */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-2">
-                  <ShieldCheck className="w-4 h-4 text-teal-600" />
-                  <span>12 Verified Synchronization Health Indicators</span>
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Real-time operational health checks required for authoritative DMC enterprise data synchronization.
-                </p>
-              </div>
-              <button
-                onClick={handleTestConnectionProbe}
-                disabled={isLoadingHealth}
-                className="flex items-center space-x-1 px-2.5 py-1 text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingHealth ? 'animate-spin' : ''}`} />
-                <span>Refresh Indicators</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-              {/* 1. Connection Status */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">1. Connection Status</span>
-                <div className="flex items-center space-x-2 font-bold text-xs text-slate-800">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Operational (v4 API)</span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">Live Sheets Gateway Active</span>
-              </div>
-
-              {/* 2. Master Spreadsheet */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">2. Master Spreadsheet</span>
-                <div className="flex items-center space-x-2 font-bold text-xs text-slate-800 truncate">
-                  <FileSpreadsheet className="w-4 h-4 text-blue-600 shrink-0" />
-                  <span className="truncate">{config.masterSpreadsheetId || cleanSheetId || 'Not Configured'}</span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">16 Canonical Tabs Verified</span>
-              </div>
-
-              {/* 3. Auth Status */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">3. Auth Status</span>
-                <div className="flex items-center space-x-2 font-bold text-xs text-slate-800">
-                  <Lock className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Google Workspace OAuth</span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">OAuth 2.0 / Verified Sandbox</span>
-              </div>
-
-              {/* 4. Last Successful Sync */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">4. Last Successful Sync</span>
-                <div className="flex items-center space-x-2 font-bold text-xs text-slate-800">
-                  <Activity className="w-4 h-4 text-teal-600 shrink-0" />
-                  <span>
-                    {latestReport ? new Date(latestReport.timestamp).toLocaleTimeString() : 'Recent'}
-                  </span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">
-                  {latestReport ? new Date(latestReport.timestamp).toLocaleDateString() : 'Active session'}
-                </span>
-              </div>
-
-              {/* 5. Last Attempted Sync */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">5. Last Attempted Sync</span>
-                <div className="flex items-center space-x-2 font-bold text-xs text-slate-800">
-                  <RefreshCw className="w-4 h-4 text-slate-600 shrink-0" />
-                  <span>{new Date().toLocaleTimeString()}</span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">Status: Ready & Idle</span>
-              </div>
-
-              {/* 6. Current Sync (Lock) */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">6. Concurrency Lock</span>
-                <div className="flex items-center space-x-2 font-bold text-xs text-slate-800">
-                  <Zap className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>{serverStats?.isSyncing ? 'Locked (In Progress)' : 'Unlocked (Available)'}</span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">No deadlocks detected</span>
-              </div>
-
-              {/* 7. Last Failure */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">7. Failure / Anomaly Check</span>
-                <div className="flex items-center space-x-2 font-bold text-xs text-slate-800">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>0 Critical Failures</span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">Atomic rollback armed</span>
-              </div>
-
-              {/* 8. Records Processed */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">8. Total Synced Records</span>
-                <div className="flex items-center space-x-2 font-bold text-xs text-slate-800">
-                  <Database className="w-4 h-4 text-indigo-600 shrink-0" />
-                  <span>{serverStats?.totalSyncedCount || (totalDbProducts + totalDbHotels + 1200)} records</span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">In Firestore & Local DB</span>
-              </div>
-
-              {/* 9. Last Sync Duration */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">9. Execution Duration</span>
-                <div className="flex items-center space-x-2 font-bold text-xs text-slate-800">
-                  <Activity className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>{latestReport ? `${latestReport.durationMs}ms` : '320ms'}</span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">Optimized batch upserts</span>
-              </div>
-
-              {/* 10. Validation Status */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">10. Validation Status</span>
-                <div className="flex items-center space-x-2 font-bold text-xs text-emerald-700">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Passed (Hierarchy & FK)</span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">16 Referential Tiers Verified</span>
-              </div>
-
-              {/* 11. Current Error */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">11. Blocking Error State</span>
-                <div className="flex items-center space-x-2 font-bold text-xs text-slate-800">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>None (Clear)</span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">All endpoints healthy</span>
-              </div>
-
-              {/* 12. Sync Engine Version */}
-              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">12. Engine Version</span>
-                <div className="flex items-center space-x-2 font-bold text-xs text-slate-800">
-                  <Layers className="w-4 h-4 text-[#008972] shrink-0" />
-                  <span>v2.6.0-master-unified</span>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block">Firestore Single-Pipeline</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Architecture Pipeline Flow Diagram */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
-            <h3 className="text-sm font-bold text-slate-900 mb-1 flex items-center space-x-2">
-              <Zap className="w-4 h-4 text-amber-500" />
-              <span>Direct Google Sheets ↔ Firebase Sync Pipeline Flow</span>
-            </h3>
-            <p className="text-xs text-slate-500 mb-4">
-              How data travels safely from remote Google Sheets through validation checks and into Firebase Firestore collections.
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-3 text-xs">
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <div className="font-bold text-slate-800 flex items-center space-x-1.5 mb-1">
-                  <span className="w-5 h-5 rounded-full bg-teal-100 text-[#008972] text-[10px] flex items-center justify-center font-bold">1</span>
-                  <span>Google Sheets API</span>
-                </div>
-                <p className="text-[11px] text-slate-500">Reads 16 worksheets via v4 REST endpoints or verified test bundles.</p>
-              </div>
-
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <div className="font-bold text-slate-800 flex items-center space-x-1.5 mb-1">
-                  <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-[10px] flex items-center justify-center font-bold">2</span>
-                  <span>Server Proxy</span>
-                </div>
-                <p className="text-[11px] text-slate-500">Manages token renewal and secures concurrency lock to block race conditions.</p>
-              </div>
-
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <div className="font-bold text-slate-800 flex items-center space-x-1.5 mb-1">
-                  <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-700 text-[10px] flex items-center justify-center font-bold">3</span>
-                  <span>Validation Gate</span>
-                </div>
-                <p className="text-[11px] text-slate-500">Enforces Foreign Key integrity across all 6 tiers: Regions down to Packages.</p>
-              </div>
-
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <div className="font-bold text-slate-800 flex items-center space-x-1.5 mb-1">
-                  <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] flex items-center justify-center font-bold">4</span>
-                  <span>Visual Diff Engine</span>
-                </div>
-                <p className="text-[11px] text-slate-500">Calculates Added, Modified, and Unchanged fields before touching database.</p>
-              </div>
-
-              <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
-                <div className="font-bold text-emerald-900 flex items-center space-x-1.5 mb-1">
-                  <span className="w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 text-[10px] flex items-center justify-center font-bold">5</span>
-                  <span>Firebase Firestore</span>
-                </div>
-                <p className="text-[11px] text-emerald-700">Atomic commits into 16 Firestore collections with audit history ledger.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* VIEW 2: 4-STEP MASTER IMPORTER */}
-      {/* ========================================================================= */}
+      {/* ---------------------------------------------------- */}
+      {/* 1. MASTER SYNC WIZARD (IMPORTER) */}
+      {/* ---------------------------------------------------- */}
       {managerView === 'IMPORTER' && (
         <div className="space-y-6">
-          {/* Step Progress Tracker */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
-            <div className="grid grid-cols-4 gap-2">
-              <div 
-                onClick={() => setCurrentStep(1)}
-                className={`flex items-center space-x-2 p-2.5 rounded-xl cursor-pointer transition-all ${
-                  currentStep === 1 
-                    ? 'bg-teal-50 border border-teal-200 text-[#008972]' 
-                    : currentStep > 1 
-                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
-                    : 'text-slate-400'
-                }`}
-              >
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                  currentStep === 1 
-                    ? 'bg-[#008972] text-white' 
-                    : currentStep > 1 
-                    ? 'bg-emerald-600 text-white' 
-                    : 'bg-slate-200 text-slate-600'
-                }`}>
-                  {currentStep > 1 ? '✓' : '1'}
-                </div>
-                <div className="truncate">
-                  <div className="text-[11px] font-bold uppercase tracking-wider">Step 1</div>
-                  <div className="text-xs font-bold truncate">Connect Source</div>
+          {/* STEP INDICATOR BAR */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg">
+            <div className="grid grid-cols-4 gap-2 text-center text-xs font-semibold">
+              <div className={`p-3 rounded-xl border transition-all ${
+                currentStep === 1 
+                  ? 'bg-teal-500/10 border-teal-500/40 text-teal-400' 
+                  : currentStep > 1 
+                  ? 'bg-slate-800/80 border-slate-700 text-teal-300' 
+                  : 'bg-slate-950/40 border-slate-800 text-slate-500'
+              }`}>
+                <div className="flex items-center justify-center gap-2 mb-1">
+                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
+                    currentStep > 1 ? 'bg-teal-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-300'
+                  }`}>
+                    {currentStep > 1 ? '✓' : '1'}
+                  </span>
+                  <span>1. Preset & Discovery</span>
                 </div>
               </div>
 
-              <div 
-                onClick={() => validationReport && setCurrentStep(2)}
-                className={`flex items-center space-x-2 p-2.5 rounded-xl transition-all ${
-                  !validationReport ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-                } ${
-                  currentStep === 2 
-                    ? 'bg-teal-50 border border-teal-200 text-[#008972]' 
-                    : currentStep > 2 
-                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
-                    : 'text-slate-400'
-                }`}
-              >
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                  currentStep === 2 
-                    ? 'bg-[#008972] text-white' 
-                    : currentStep > 2 
-                    ? 'bg-emerald-600 text-white' 
-                    : 'bg-slate-200 text-slate-600'
-                }`}>
-                  {currentStep > 2 ? '✓' : '2'}
-                </div>
-                <div className="truncate">
-                  <div className="text-[11px] font-bold uppercase tracking-wider">Step 2</div>
-                  <div className="text-xs font-bold truncate">Validate Integrity</div>
+              <div className={`p-3 rounded-xl border transition-all ${
+                currentStep === 2 
+                  ? 'bg-teal-500/10 border-teal-500/40 text-teal-400' 
+                  : currentStep > 2 
+                  ? 'bg-slate-800/80 border-slate-700 text-teal-300' 
+                  : 'bg-slate-950/40 border-slate-800 text-slate-500'
+              }`}>
+                <div className="flex items-center justify-center gap-2 mb-1">
+                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
+                    currentStep > 2 ? 'bg-teal-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-300'
+                  }`}>
+                    {currentStep > 2 ? '✓' : '2'}
+                  </span>
+                  <span>2. Schema Validation</span>
                 </div>
               </div>
 
-              <div 
-                onClick={() => Object.keys(previewDiffs).length > 0 && setCurrentStep(3)}
-                className={`flex items-center space-x-2 p-2.5 rounded-xl transition-all ${
-                  Object.keys(previewDiffs).length === 0 ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-                } ${
-                  currentStep === 3 
-                    ? 'bg-teal-50 border border-teal-200 text-[#008972]' 
-                    : currentStep > 3 
-                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
-                    : 'text-slate-400'
-                }`}
-              >
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                  currentStep === 3 
-                    ? 'bg-[#008972] text-white' 
-                    : currentStep > 3 
-                    ? 'bg-emerald-600 text-white' 
-                    : 'bg-slate-200 text-slate-600'
-                }`}>
-                  {currentStep > 3 ? '✓' : '3'}
-                </div>
-                <div className="truncate">
-                  <div className="text-[11px] font-bold uppercase tracking-wider">Step 3</div>
-                  <div className="text-xs font-bold truncate">Diff Preview</div>
+              <div className={`p-3 rounded-xl border transition-all ${
+                currentStep === 3 
+                  ? 'bg-teal-500/10 border-teal-500/40 text-teal-400' 
+                  : currentStep > 3 
+                  ? 'bg-slate-800/80 border-slate-700 text-teal-300' 
+                  : 'bg-slate-950/40 border-slate-800 text-slate-500'
+              }`}>
+                <div className="flex items-center justify-center gap-2 mb-1">
+                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
+                    currentStep > 3 ? 'bg-teal-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-300'
+                  }`}>
+                    {currentStep > 3 ? '✓' : '3'}
+                  </span>
+                  <span>3. Diff Preview</span>
                 </div>
               </div>
 
-              <div 
-                className={`flex items-center space-x-2 p-2.5 rounded-xl transition-all ${
-                  currentStep === 4 
-                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' 
-                    : 'text-slate-400'
-                }`}
-              >
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                  currentStep === 4 ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
-                }`}>
-                  4
-                </div>
-                <div className="truncate">
-                  <div className="text-[11px] font-bold uppercase tracking-wider">Step 4</div>
-                  <div className="text-xs font-bold truncate">Firebase Commit</div>
+              <div className={`p-3 rounded-xl border transition-all ${
+                currentStep === 4 
+                  ? 'bg-teal-500/10 border-teal-500/40 text-teal-400' 
+                  : 'bg-slate-950/40 border-slate-800 text-slate-500'
+              }`}>
+                <div className="flex items-center justify-center gap-2 mb-1">
+                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
+                    currentStep === 4 ? 'bg-teal-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-300'
+                  }`}>
+                    4
+                  </span>
+                  <span>4. Safe Commit</span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* STEP 1: CONNECT SOURCE & SELECT WORKSHEETS */}
+          {/* STEP 1: PRESET SELECTION & DISCOVERY */}
           {currentStep === 1 && (
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Step 1: Connect Source Spreadsheet</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Select your synchronization source and choose the worksheets you want to import into Firebase Firestore.
-                </p>
-              </div>
-
-              {/* Source Mode Selector */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div 
-                  onClick={() => setInputMode('GOOGLE_SHEET')}
-                  className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                    inputMode === 'GOOGLE_SHEET'
-                      ? 'border-[#008972] bg-teal-50/40'
-                      : 'border-slate-200 hover:border-slate-300'
-                  }`}
-                >
-                  <div className="flex items-center space-x-3 mb-2">
-                    <div className="w-8 h-8 rounded-lg bg-teal-100 text-[#008972] flex items-center justify-center">
-                      <FileSpreadsheet className="w-4 h-4" />
-                    </div>
-                    <div className="font-bold text-sm text-slate-900">Live Google Sheets v4 API</div>
+            <div className="space-y-6">
+              {/* 1. MODULE PRESET SELECTOR CARDS */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                      <Layers className="w-5 h-5 text-teal-400" />
+                      Select Module Preset
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Choose which inventory or tariff module you want to synchronize. The schema, required worksheets, and relationships adapt dynamically.
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-500">
-                    Connect directly to your active Google Drive spreadsheet via authenticated Google Sheets API.
-                  </p>
-                </div>
-
-                <div 
-                  onClick={handleLoadOfficialMasterDataset}
-                  className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                    inputMode === 'SAMPLE_DATASET'
-                      ? 'border-[#008972] bg-teal-50/40'
-                      : 'border-slate-200 hover:border-slate-300'
-                  }`}
-                >
-                  <div className="flex items-center space-x-3 mb-2">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                      <Sparkles className="w-4 h-4" />
-                    </div>
-                    <div className="font-bold text-sm text-slate-900">Official Master 25-Tab Suite (Preset)</div>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Load the pre-configured verified dataset with Japan, UK, UAE, and Thailand products, hotels, and rates.
-                  </p>
-                </div>
-              </div>
-
-              {/* Spreadsheet URL Input */}
-              {inputMode === 'GOOGLE_SHEET' && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Google Spreadsheet URL or Sheet ID
-                  </label>
-                  <input
-                    type="text"
-                    value={sheetInput}
-                    onChange={(e) => setSheetInput(e.target.value)}
-                    placeholder="https://docs.google.com/spreadsheets/d/1BxiMVs.../edit or Google Spreadsheet ID"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-[#008972] focus:bg-white"
-                  />
-                  <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500">
-                    <span>Parsed ID: <code className="font-bold text-slate-800">{cleanSheetId || 'None'}</code></span>
-                    {config.masterSpreadsheetId && (
-                      <button 
-                        onClick={() => setSheetInput(config.masterSpreadsheetId)}
-                        className="text-[#008972] hover:underline font-semibold cursor-pointer"
-                      >
-                        Reset to Configured Master ID ({config.masterSpreadsheetId.slice(0, 8)}...)
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Worksheets Selector */}
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                    Worksheets Included in Sync ({selectedTabs.length} of {MASTER_SHEETS_TAB_DEFINITIONS.length - 1} Selected)
-                  </label>
-                  <div className="flex items-center space-x-2 text-xs">
-                    <button 
-                      onClick={selectAllTabs}
-                      className="text-[#008972] hover:underline font-bold cursor-pointer"
-                    >
-                      Select All ({MASTER_SHEETS_TAB_DEFINITIONS.length - 1})
-                    </button>
-                    <span className="text-slate-300">|</span>
-                    <button 
-                      onClick={() => setSelectedTabs([])}
-                      className="text-slate-500 hover:text-slate-700 cursor-pointer"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-
-                {/* Module Quick Presets */}
-                <div className="flex flex-wrap items-center gap-2 mb-3">
-                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-                    Module Presets:
+                  <span className="text-xs text-slate-400 bg-slate-800 px-3 py-1 rounded-lg border border-slate-700">
+                    5 Authoritative Presets
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => selectModuleTabs('ALL')}
-                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
-                  >
-                    All Canonical ({MASTER_SHEETS_TAB_DEFINITIONS.length - 1})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => selectModuleTabs('PRODUCTS')}
-                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition-colors"
-                  >
-                    Products Catalog (3)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => selectModuleTabs('HOTELS')}
-                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition-colors"
-                  >
-                    Hotels & Allotments (4)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => selectModuleTabs('VISA_ANCILLARY')}
-                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors"
-                  >
-                    Visa & Ancillaries (5)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => selectModuleTabs('JAPAN_RAIL')}
-                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-50 hover:bg-rose-100 text-rose-700 transition-colors"
-                  >
-                    Japan Rail Dynamic (5)
-                  </button>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {MASTER_SHEETS_TAB_DEFINITIONS.filter(t => t.tabName !== 'INSTRUCTIONS').map(tab => {
-                    const isSelected = selectedTabs.includes(tab.tabName as MasterSheetTabName);
+                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {availablePresets.map(preset => {
+                    const isSelected = selectedPresetId === preset.id;
                     return (
-                      <div
-                        key={tab.tabName}
-                        onClick={() => toggleTabSelection(tab.tabName as MasterSheetTabName)}
-                        className={`p-2.5 rounded-xl border text-xs cursor-pointer transition-all flex items-center space-x-2 ${
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedPresetId(preset.id);
+                          if (inputMode === 'CANONICAL_DATASET') {
+                            handleLoadCanonicalDatasetForPreset(preset.id);
+                          }
+                        }}
+                        className={`p-4 rounded-xl border text-left transition-all relative overflow-hidden flex flex-col justify-between ${
                           isSelected
-                            ? 'bg-teal-50 border-teal-300 text-teal-900 font-bold'
-                            : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                            ? 'bg-slate-800/90 border-teal-500 ring-2 ring-teal-500/20 shadow-lg'
+                            : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 hover:bg-slate-850'
                         }`}
                       >
-                        <div className={`w-4 h-4 rounded flex items-center justify-center text-[10px] ${
-                          isSelected ? 'bg-[#008972] text-white' : 'border border-slate-300'
-                        }`}>
-                          {isSelected && '✓'}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="px-2 py-0.5 text-[10px] font-bold rounded uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
+                              {preset.badgeText}
+                            </span>
+                            {isSelected && (
+                              <CheckCircle2 className="w-4 h-4 text-teal-400" />
+                            )}
+                          </div>
+                          <h3 className="text-sm font-bold text-white">{preset.name}</h3>
+                          <p className="text-[11px] text-slate-400 line-clamp-3 leading-relaxed">
+                            {preset.description}
+                          </p>
                         </div>
-                        <span className="truncate">{tab.tabName}</span>
-                      </div>
+
+                        <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                          <span>{preset.schemaVersion}</span>
+                          <span className="text-teal-400 font-semibold">{preset.requiredSchemaIds.length} Required Tab{preset.requiredSchemaIds.length > 1 ? 's' : ''}</span>
+                        </div>
+                      </button>
                     );
                   })}
                 </div>
               </div>
 
-              {/* Action Button */}
-              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">
-                <button
-                  onClick={handleProceedToValidation}
-                  disabled={isProcessing || selectedTabs.length === 0}
-                  className="flex items-center space-x-2 px-6 py-2.5 rounded-xl bg-[#008972] hover:bg-[#007360] text-white font-bold text-xs transition-all shadow-xs cursor-pointer disabled:opacity-50"
-                >
-                  <span>{isProcessing ? 'Processing Data...' : 'Proceed to Validation Gate'}</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+              {/* 2. DATA INPUT SOURCE */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                      <Database className="w-5 h-5 text-teal-400" />
+                      Workbook Source & Discovery
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Fetch remote Google Sheets via backend proxy, upload a local Excel workbook, paste CSV, or test with canonical sample dataset.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                    <button
+                      onClick={() => setInputMode('GOOGLE_SHEET')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        inputMode === 'GOOGLE_SHEET' ? 'bg-teal-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Google Sheet URL / ID
+                    </button>
+                    <button
+                      onClick={() => setInputMode('FILE_UPLOAD')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        inputMode === 'FILE_UPLOAD' ? 'bg-teal-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Upload File (.xlsx)
+                    </button>
+                    <button
+                      onClick={() => setInputMode('MANUAL_CSV')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        inputMode === 'MANUAL_CSV' ? 'bg-teal-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Paste CSV
+                    </button>
+                    <button
+                      onClick={() => handleLoadCanonicalDatasetForPreset(selectedPresetId)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        inputMode === 'CANONICAL_DATASET' ? 'bg-teal-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Load Demo Dataset
+                    </button>
+                  </div>
+                </div>
+
+                {/* GOOGLE SHEETS URL INPUT */}
+                {inputMode === 'GOOGLE_SHEET' && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+                        Target Google Spreadsheet URL or Key
+                      </label>
+                      <div className="flex gap-3">
+                        <input
+                          type="text"
+                          value={sheetInput}
+                          onChange={(e) => setSheetInput(e.target.value)}
+                          placeholder="https://docs.google.com/spreadsheets/d/1C8I2TOnc_7_u07_G_Pz705yGg4Y6U5BPyY4t-rG9Hzo/edit"
+                          className="flex-1 px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-mono"
+                        />
+                        <button
+                          onClick={handleSaveMasterSheetConfig}
+                          disabled={isSavingConfig}
+                          className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold border border-slate-700 flex items-center gap-2"
+                        >
+                          <Save className="w-4 h-4" />
+                          {isSavingConfig ? 'Saving...' : 'Save Default'}
+                        </button>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-2">
+                        Resolved Spreadsheet ID: <span className="font-mono text-teal-400">{cleanSheetId || 'Not configured'}</span>
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* FILE UPLOAD INPUT */}
+                {inputMode === 'FILE_UPLOAD' && (
+                  <div className="space-y-4">
+                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+                      Upload Local Excel Spreadsheet (.xlsx, .xls)
+                    </label>
+                    <div className="border-2 border-dashed border-slate-700 hover:border-teal-500/50 rounded-2xl p-8 text-center transition-all bg-slate-950/40">
+                      <input
+                        type="file"
+                        accept=".xlsx,.xls,.csv"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                        id="sheet-file-upload-input"
+                      />
+                      <label htmlFor="sheet-file-upload-input" className="cursor-pointer space-y-3 block">
+                        <div className="w-12 h-12 rounded-xl bg-teal-500/10 text-teal-400 flex items-center justify-center mx-auto border border-teal-500/20">
+                          <Upload className="w-6 h-6" />
+                        </div>
+                        <div className="text-sm font-semibold text-white">
+                          Click to browse or drop your Excel workbook here
+                        </div>
+                        <p className="text-xs text-slate-400">
+                          Supports multi-tab workbooks formatted for "{activePreset.name}".
+                        </p>
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {/* MANUAL CSV PASTE */}
+                {inputMode === 'MANUAL_CSV' && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                        Direct CSV Raw Text Input
+                      </label>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-slate-400">Target Schema Tab:</span>
+                        <select
+                          value={manualCsvTabTarget}
+                          onChange={(e) => setManualCsvTabTarget(e.target.value)}
+                          className="bg-slate-950 border border-slate-700 text-white rounded-lg px-2.5 py-1 text-xs"
+                        >
+                          {ModulePresetRegistry.getSchemasForPreset(selectedPresetId, true).map(s => (
+                            <option key={s.schemaId} value={s.canonicalTabName}>{s.canonicalTabName} ({s.displayName})</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <textarea
+                      value={manualCsvText}
+                      onChange={(e) => setManualCsvText(e.target.value)}
+                      placeholder="product_id,product_code,product_name,category,region_id,destination_id,hub_id,supplier_id,native_currency,supplier_nett,margin_type,b2b_margin_value,status&#10;PROD-001,PRD-TYO-001,Tokyo Private Tour,Private Tour,REG-001,DST-JPN,HUB-TOKYO,SUP001,JPY,66000,PERCENTAGE,15,ACTIVE"
+                      rows={6}
+                      className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-600 font-mono focus:outline-none focus:border-teal-500"
+                    />
+                    <button
+                      onClick={handleApplyManualCsv}
+                      className="px-4 py-2 bg-teal-500 text-slate-950 font-bold rounded-xl text-xs flex items-center gap-2"
+                    >
+                      <Check className="w-4 h-4" />
+                      Parse & Apply to Staged Data
+                    </button>
+                  </div>
+                )}
+
+                {/* CANONICAL DATASET ACTIVE NOTIFICATION */}
+                {inputMode === 'CANONICAL_DATASET' && (
+                  <div className="p-4 rounded-xl bg-teal-500/10 border border-teal-500/30 text-teal-300 text-xs flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-teal-400" />
+                      Official canonical demo dataset loaded for <strong>{activePreset.name}</strong> ({Object.keys(stagedData).length} worksheets staged).
+                    </span>
+                    <button
+                      onClick={() => handleDownloadTemplate(selectedPresetId, true)}
+                      className="px-3 py-1 bg-teal-500 text-slate-950 rounded-lg font-bold text-xs flex items-center gap-1.5"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download Workbook (.xlsx)
+                    </button>
+                  </div>
+                )}
+
+                {/* 3. DYNAMIC PRESET WORKBOOK INSPECTION RESULTS */}
+                {inspectionReport && (
+                  <div className="mt-6 border border-slate-800 rounded-xl p-5 bg-slate-950/60 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span className={`w-3 h-3 rounded-full ${
+                          inspectionReport.isValid ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' : 'bg-amber-400 shadow-sm shadow-amber-400/50'
+                        }`} />
+                        <h3 className="text-sm font-bold text-white">
+                          Workbook Discovery & Schema Matching Report
+                        </h3>
+                        <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 font-mono">
+                          Preset: {inspectionReport.presetName} ({inspectionReport.schemaVersion})
+                        </span>
+                      </div>
+                      <span className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${
+                        inspectionReport.isValid 
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
+                          : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                      }`}>
+                        {inspectionReport.isValid ? 'SCHEMA PASSED' : 'SCHEMA REVIEW REQUIRED'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                      <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
+                        <span className="text-slate-400 block mb-1">Required Tabs</span>
+                        <span className="font-bold text-white">{inspectionReport.requiredTabs.length}</span>
+                        <div className="text-[10px] text-slate-500 truncate mt-1">
+                          {inspectionReport.requiredTabs.join(', ')}
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
+                        <span className="text-slate-400 block mb-1">Found Canonical Tabs</span>
+                        <span className="font-bold text-emerald-400">{inspectionReport.foundTabs.length}</span>
+                        <div className="text-[10px] text-emerald-500/80 truncate mt-1">
+                          {inspectionReport.foundTabs.join(', ') || 'None'}
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
+                        <span className="text-slate-400 block mb-1">Missing Required Tabs</span>
+                        <span className={`font-bold ${inspectionReport.missingTabs.length > 0 ? 'text-rose-400' : 'text-slate-400'}`}>
+                          {inspectionReport.missingTabs.length}
+                        </span>
+                        <div className="text-[10px] text-rose-400/80 truncate mt-1">
+                          {inspectionReport.missingTabs.join(', ') || 'None (All present)'}
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
+                        <span className="text-slate-400 block mb-1">Unexpected Worksheets</span>
+                        <span className="font-bold text-slate-400">{inspectionReport.unexpectedTabs.length}</span>
+                        <div className="text-[10px] text-slate-500 truncate mt-1">
+                          {inspectionReport.unexpectedTabs.join(', ') || 'None'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* MATCHED SCHEMAS COLUMN BREAKDOWN */}
+                    <div className="space-y-2 pt-2">
+                      <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                        Matched Worksheets & Column Status
+                      </h4>
+                      <div className="divide-y divide-slate-800/80 border border-slate-800 rounded-lg overflow-hidden bg-slate-900">
+                        {inspectionReport.matchedSchemas.map((m) => (
+                          <div key={m.schemaId} className="p-3 flex items-center justify-between text-xs hover:bg-slate-850">
+                            <div className="space-y-0.5">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-white">{m.matchedSheetName}</span>
+                                <span className="text-[10px] text-slate-400 font-mono">→ {m.canonicalTabName}</span>
+                                <span className="text-[10px] text-teal-400 font-semibold">({m.totalRows} data rows)</span>
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                Discovered {m.discoveredColumns.length} columns: {m.discoveredColumns.slice(0, 6).join(', ')}{m.discoveredColumns.length > 6 ? ` (+${m.discoveredColumns.length - 6} more)` : ''}
+                              </div>
+                            </div>
+
+                            <div>
+                              {m.status === 'READY' && (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3" /> Ready
+                                </span>
+                              )}
+                              {m.status === 'WARNING' && (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                                  <AlertTriangle className="w-3 h-3" /> Notice
+                                </span>
+                              )}
+                              {m.status === 'BLOCKED' && (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                                  <XCircle className="w-3 h-3" /> Missing Required Columns
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* WIZARD ACTIONS */}
+                <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+                  <div className="text-xs text-slate-400">
+                    Preset: <strong className="text-white">{activePreset.name}</strong> • Mode: <strong className="text-teal-400">{inputMode}</strong>
+                  </div>
+
+                  <button
+                    onClick={handleProceedToValidation}
+                    disabled={isProcessing}
+                    className="px-6 py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl text-sm transition-all shadow-lg shadow-teal-500/20 flex items-center gap-2"
+                  >
+                    {isProcessing ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        Fetching & Validating...
+                      </>
+                    ) : (
+                      <>
+                        Validate Schema & Relationships
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           )}
 
-          {/* STEP 2: REFERENTIAL VALIDATION GATE */}
+          {/* STEP 2: SCHEMA & RELATIONSHIP VALIDATION */}
           {currentStep === 2 && validationReport && (
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">Step 2: Referential Integrity Validation</h3>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Validating foreign keys across 16 hierarchical tiers before synchronizing with Firebase.
-                  </p>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                    validationReport.isValid
-                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                      : 'bg-rose-50 text-rose-800 border border-rose-200'
-                  }`}>
-                    {validationReport.isValid ? 'Validation Passed (0 Critical Errors)' : `${validationReport.errorRows} Critical Errors`}
-                  </span>
-                </div>
-              </div>
-
-              {/* Validation Stats Row */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center text-xs">
-                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Rows Analyzed</span>
-                  <div className="text-lg font-extrabold text-slate-800 mt-1">{validationReport.totalRows}</div>
-                </div>
-
-                <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
-                  <span className="text-[10px] uppercase font-bold text-emerald-700 block">Valid Rows</span>
-                  <div className="text-lg font-extrabold text-emerald-800 mt-1">{validationReport.validRows}</div>
-                </div>
-
-                <div className="p-3 bg-rose-50 rounded-xl border border-rose-200">
-                  <span className="text-[10px] uppercase font-bold text-rose-700 block">Critical Errors</span>
-                  <div className="text-lg font-extrabold text-rose-800 mt-1">{validationReport.errorRows}</div>
-                </div>
-
-                <div className="p-3 bg-amber-50 rounded-xl border border-amber-200">
-                  <span className="text-[10px] uppercase font-bold text-amber-700 block">Warnings</span>
-                  <div className="text-lg font-extrabold text-amber-800 mt-1">
-                    {validationReport.errors.filter(e => e.severity === 'WARNING').length}
+            <div className="space-y-6">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-800 pb-4">
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                        <ShieldCheck className="w-5 h-5 text-teal-400" />
+                        Validation Results for {activePreset.name}
+                      </h2>
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold border ${
+                        validationReport.isValid 
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
+                          : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                      }`}>
+                        {validationReport.isValid ? 'ALL VALIDATIONS PASSED' : `${validationReport.errors.length} ISSUES DETECTED`}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Verified data types, required fields, and relational foreign keys against database state.
+                    </p>
                   </div>
-                </div>
-              </div>
 
-              {/* Tab-by-Tab Summaries */}
-              <div>
-                <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">
-                  Per-Worksheet Health Summary
-                </h4>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {(Object.values(validationReport.tabSummaries) as SheetTabValidationSummary[]).map(ts => (
-                    <div 
-                      key={ts.tabName}
-                      className={`p-2.5 rounded-xl border text-xs ${
-                        ts.status === 'VALID'
-                          ? 'bg-emerald-50/60 border-emerald-200 text-emerald-900'
-                          : ts.status === 'WARNING'
-                          ? 'bg-amber-50/60 border-amber-200 text-amber-900'
-                          : 'bg-rose-50/60 border-rose-200 text-rose-900'
-                      }`}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCurrentStep(1)}
+                      className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs font-semibold"
                     >
-                      <div className="font-bold flex items-center justify-between">
-                        <span className="truncate">{ts.tabName}</span>
-                        <span>{ts.status === 'VALID' ? '✓' : ts.errorRows}</span>
-                      </div>
-                      <div className="text-[11px] opacity-75 mt-0.5">
-                        {ts.validRows} / {ts.totalRows} valid
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Validation Errors List (if any) */}
-              {validationReport.errors.length > 0 && (
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                      Validation Errors & Warnings ({validationReport.errors.length})
-                    </h4>
-                    <div className="flex items-center space-x-2 text-xs">
-                      <button
-                        onClick={() => setValidationFilter('ALL')}
-                        className={`px-2 py-0.5 rounded ${validationFilter === 'ALL' ? 'bg-slate-800 text-white' : 'text-slate-600'}`}
-                      >
-                        All
-                      </button>
-                      <button
-                        onClick={() => setValidationFilter('CRITICAL')}
-                        className={`px-2 py-0.5 rounded ${validationFilter === 'CRITICAL' ? 'bg-rose-600 text-white' : 'text-slate-600'}`}
-                      >
-                        Critical
-                      </button>
-                      <button
-                        onClick={() => setValidationFilter('WARNING')}
-                        className={`px-2 py-0.5 rounded ${validationFilter === 'WARNING' ? 'bg-amber-600 text-white' : 'text-slate-600'}`}
-                      >
-                        Warnings
-                      </button>
-                    </div>
+                      ← Back to Setup
+                    </button>
+                    <button
+                      onClick={handleProceedToPreview}
+                      disabled={isProcessing}
+                      className="px-5 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-bold shadow-lg shadow-teal-500/20 flex items-center gap-2"
+                    >
+                      Continue to Diff Preview →
+                    </button>
                   </div>
+                </div>
 
-                  <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 text-xs">
-                    {validationReport.errors
-                      .filter(e => validationFilter === 'ALL' || e.severity === validationFilter)
-                      .map((err, idx) => (
-                        <div key={idx} className="p-3 flex items-start justify-between gap-3 hover:bg-slate-50">
-                          <div className="flex items-start space-x-2">
-                            {err.severity === 'CRITICAL' ? (
-                              <XCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                            ) : (
-                              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                            )}
-                            <div>
-                              <div className="font-bold text-slate-800">
-                                <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-[11px] mr-1.5">{err.tabName}</span>
-                                Row {err.rowNumber}: <span className="font-mono text-slate-700">{err.field}</span>
+                {/* SUMMARY STATS GRID */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
+                    <span className="text-xs text-slate-400 block mb-1">Total Staged Records</span>
+                    <span className="text-2xl font-bold text-white">{validationReport.totalRows}</span>
+                  </div>
+                  <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
+                    <span className="text-xs text-slate-400 block mb-1">Valid Records</span>
+                    <span className="text-2xl font-bold text-emerald-400">{validationReport.validRows}</span>
+                  </div>
+                  <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
+                    <span className="text-xs text-slate-400 block mb-1">Errors</span>
+                    <span className={`text-2xl font-bold ${validationReport.errorRows > 0 ? 'text-rose-400' : 'text-slate-400'}`}>
+                      {validationReport.errorRows}
+                    </span>
+                  </div>
+                  <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
+                    <span className="text-xs text-slate-400 block mb-1">Active Schema Tabs</span>
+                    <span className="text-2xl font-bold text-teal-400">{Object.keys(validationReport.tabSummaries).length}</span>
+                  </div>
+                </div>
+
+                {/* DETAILED ERRORS TABLE */}
+                {validationReport.errors.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-400" />
+                        Detailed Issues List ({validationReport.errors.length})
+                      </h3>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setValidationFilter('ALL')}
+                          className={`px-2.5 py-1 rounded text-xs font-semibold ${
+                            validationFilter === 'ALL' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          All ({validationReport.errors.length})
+                        </button>
+                        <button
+                          onClick={() => setValidationFilter('CRITICAL')}
+                          className={`px-2.5 py-1 rounded text-xs font-semibold ${
+                            validationFilter === 'CRITICAL' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          Critical ({validationReport.errors.filter(e => e.severity === 'CRITICAL').length})
+                        </button>
+                        <button
+                          onClick={() => setValidationFilter('WARNING')}
+                          className={`px-2.5 py-1 rounded text-xs font-semibold ${
+                            validationFilter === 'WARNING' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          Warnings ({validationReport.errors.filter(e => e.severity === 'WARNING').length})
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="max-h-80 overflow-y-auto border border-slate-800 rounded-xl divide-y divide-slate-800 bg-slate-950">
+                      {validationReport.errors
+                        .filter(e => validationFilter === 'ALL' || e.severity === validationFilter)
+                        .map((err, idx) => (
+                          <div key={idx} className="p-3 text-xs flex items-start gap-3 hover:bg-slate-900/60">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              err.severity === 'CRITICAL' 
+                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' 
+                                : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                            }`}>
+                              {err.severity}
+                            </span>
+                            <div className="space-y-1 flex-1">
+                              <div className="flex items-center gap-2 font-mono">
+                                <span className="font-bold text-white">{err.tabName}</span>
+                                <span className="text-slate-500">Row {err.rowNumber}</span>
+                                {err.recordId && <span className="text-teal-400">ID: {err.recordId}</span>}
+                                <span className="text-slate-400 font-semibold">[{err.field}]</span>
                               </div>
-                              <p className="text-slate-600 mt-0.5">{err.error}</p>
+                              <p className="text-slate-300">{err.error}</p>
                               {err.suggestedFix && (
-                                <p className="text-[11px] text-[#008972] mt-0.5 font-medium">
-                                  💡 Suggestion: {err.suggestedFix}
+                                <p className="text-[11px] text-teal-400/90 font-mono">
+                                  Suggested Fix: {err.suggestedFix}
                                 </p>
                               )}
                             </div>
                           </div>
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            err.severity === 'CRITICAL' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            {err.severity}
-                          </span>
-                        </div>
-                      ))}
+                        ))}
+                    </div>
                   </div>
-                </div>
-              )}
-
-              {/* Navigation Buttons */}
-              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-                <button
-                  onClick={() => setCurrentStep(1)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                >
-                  ← Back to Source
-                </button>
-
-                <button
-                  onClick={handleProceedToPreview}
-                  disabled={isProcessing}
-                  className="flex items-center space-x-2 px-6 py-2.5 rounded-xl bg-[#008972] hover:bg-[#007360] text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
-                >
-                  <span>Proceed to Diff Preview</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+                )}
               </div>
             </div>
           )}
 
-          {/* STEP 3: DIFF PREVIEW */}
+          {/* STEP 3: DIFF PREVIEW MATRIX */}
           {currentStep === 3 && (
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">Step 3: Database Diff & Change Preview</h3>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Inspect exact additions, modifications, and unchanged records before committing changes to Firebase Firestore.
-                  </p>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={handleExecuteCommit}
-                    disabled={isProcessing}
-                    className="flex items-center space-x-2 px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all shadow-sm cursor-pointer disabled:opacity-50"
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>{isProcessing ? 'Committing to Firebase...' : 'Commit Changes to Firebase'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Worksheet Tab Switcher */}
-              <div className="flex items-center space-x-1 border-b border-slate-200 overflow-x-auto pb-1 text-xs">
-                {Object.keys(previewDiffs).map(tabKey => {
-                  const diff = previewDiffs[tabKey];
-                  const isActive = activePreviewTab === tabKey;
-                  return (
-                    <button
-                      key={tabKey}
-                      onClick={() => setActivePreviewTab(tabKey)}
-                      className={`px-3 py-2 rounded-t-lg font-bold transition-all cursor-pointer whitespace-nowrap flex items-center space-x-1.5 ${
-                        isActive
-                          ? 'bg-slate-100 text-slate-900 border-b-2 border-[#008972]'
-                          : 'text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      <span>{tabKey}</span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800">
-                        +{diff.addedCount}
-                      </span>
-                      {diff.modifiedCount > 0 && (
-                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-100 text-amber-800">
-                          ~{diff.modifiedCount}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Active Tab Diff Table */}
-              {activePreviewTab && previewDiffs[activePreviewTab] && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between text-xs text-slate-600">
-                    <div>
-                      Worksheet: <strong className="text-slate-900">{activePreviewTab}</strong> | 
-                      <span className="text-emerald-700 font-bold ml-1">+{previewDiffs[activePreviewTab].addedCount} New</span>, 
-                      <span className="text-amber-700 font-bold ml-1">~{previewDiffs[activePreviewTab].modifiedCount} Modified</span>, 
-                      <span className="text-slate-500 ml-1">={previewDiffs[activePreviewTab].unchangedCount} Unchanged</span>
-                    </div>
+            <div className="space-y-6">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-800 pb-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                      <Eye className="w-5 h-5 text-teal-400" />
+                      Database Diff & Transformation Matrix
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Review records to be created, updated, or left unchanged before executing atomic commit.
+                    </p>
                   </div>
 
-                  <div className="max-h-80 overflow-y-auto border border-slate-200 rounded-xl text-xs divide-y divide-slate-100">
-                    {previewDiffs[activePreviewTab].items.length === 0 ? (
-                      <div className="p-8 text-center text-slate-400">No records to preview for this worksheet.</div>
-                    ) : (
-                      previewDiffs[activePreviewTab].items.map((item, idx) => (
-                        <div key={idx} className="p-3 hover:bg-slate-50 flex items-start justify-between gap-3">
-                          <div className="flex items-start space-x-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              item.type === 'NEW'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : item.type === 'MODIFIED'
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-slate-100 text-slate-600'
-                            }`}>
-                              {item.type}
-                            </span>
-                            <div>
-                              <div className="font-mono font-bold text-slate-800">{item.recordId}</div>
-                              {Array.isArray(item.changedFields) && item.changedFields.length > 0 && (
-                                <div className="text-[11px] text-slate-500 mt-1">
-                                  Updated fields: <span className="font-mono font-semibold text-amber-700">{item.changedFields.join(', ')}</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCurrentStep(2)}
+                      className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs font-semibold"
+                    >
+                      ← Back to Validation
+                    </button>
+                    <button
+                      onClick={handleExecuteCommit}
+                      disabled={isProcessing}
+                      className="px-6 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-bold shadow-lg shadow-teal-500/20 flex items-center gap-2"
+                    >
+                      {isProcessing ? 'Executing Commit...' : 'Execute Safe Commit to Firebase →'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* TAB SWITCHER FOR DIFFS */}
+                <div className="flex items-center gap-2 overflow-x-auto pb-2">
+                  {Object.keys(previewDiffs).map(tabKey => {
+                    const diff = previewDiffs[tabKey];
+                    const isActive = activePreviewTab === tabKey;
+                    return (
+                      <button
+                        key={tabKey}
+                        onClick={() => setActivePreviewTab(tabKey)}
+                        className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-2 border ${
+                          isActive
+                            ? 'bg-teal-500 text-slate-950 border-teal-400 font-bold'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <span>{tabKey}</span>
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${
+                          isActive ? 'bg-slate-950 text-teal-300' : 'bg-slate-800 text-slate-300'
+                        }`}>
+                          +{diff.createdCount} ~{diff.updatedCount} ={diff.unchangedCount}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* ACTIVE TAB DIFF ITEMS */}
+                {previewDiffs[activePreviewTab] && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-4 gap-3 text-center text-xs">
+                      <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                        <span className="block text-[11px] uppercase tracking-wider text-emerald-500">To Create</span>
+                        <span className="text-xl font-bold">{previewDiffs[activePreviewTab].createdCount}</span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                        <span className="block text-[11px] uppercase tracking-wider text-blue-500">To Update</span>
+                        <span className="text-xl font-bold">{previewDiffs[activePreviewTab].updatedCount}</span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-400">
+                        <span className="block text-[11px] uppercase tracking-wider text-slate-500">Unchanged</span>
+                        <span className="text-xl font-bold">{previewDiffs[activePreviewTab].unchangedCount}</span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
+                        <span className="block text-[11px] uppercase tracking-wider text-rose-500">Blocked / Error</span>
+                        <span className="text-xl font-bold">{previewDiffs[activePreviewTab].errorCount}</span>
+                      </div>
+                    </div>
+
+                    <div className="border border-slate-800 rounded-xl divide-y divide-slate-800 bg-slate-950 max-h-96 overflow-y-auto">
+                      {previewDiffs[activePreviewTab].items.length === 0 ? (
+                        <div className="p-8 text-center text-slate-500 text-xs">
+                          No items to preview for this worksheet.
+                        </div>
+                      ) : (
+                        previewDiffs[activePreviewTab].items.map((item, idx) => (
+                          <div key={idx} className="p-3 text-xs flex items-center justify-between hover:bg-slate-900/60">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  item.action === 'CREATE' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                                  item.action === 'UPDATE' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
+                                  item.action === 'BLOCKED' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' :
+                                  'bg-slate-800 text-slate-400'
+                                }`}>
+                                  {item.action}
+                                </span>
+                                <span className="font-bold text-white font-mono">{item.id}</span>
+                                <span className="text-slate-300">{item.title}</span>
+                              </div>
+                              {item.changedFields && item.changedFields.length > 0 && (
+                                <div className="text-[11px] text-blue-400 font-mono">
+                                  Changed fields: {item.changedFields.join(', ')}
                                 </div>
                               )}
                             </div>
+                            <span className="text-[11px] text-slate-500">{item.details}</span>
                           </div>
-
-                          <div className="text-[11px] text-slate-400 font-mono">
-                            Row #{idx + 2}
-                          </div>
-                        </div>
-                      ))
-                    )}
+                        ))
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
-
-              {/* Bottom Buttons */}
-              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-                <button
-                  onClick={() => setCurrentStep(2)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                >
-                  ← Back to Validation
-                </button>
-
-                <button
-                  onClick={handleExecuteCommit}
-                  disabled={isProcessing}
-                  className="flex items-center space-x-2 px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all shadow-sm cursor-pointer disabled:opacity-50"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>{isProcessing ? 'Committing to Firebase...' : 'Commit Changes to Firebase'}</span>
-                </button>
+                )}
               </div>
             </div>
           )}
 
-          {/* STEP 4: FIREBASE COMMIT SUCCESS */}
+          {/* STEP 4: SAFE COMMIT & RESULTS */}
           {currentStep === 4 && latestReport && (
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
-              <div className="text-center max-w-xl mx-auto py-4">
-                <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-3">
-                  <CheckCircle2 className="w-10 h-10" />
-                </div>
-                <h3 className="text-xl font-extrabold text-slate-900">
-                  Synchronization to Firebase Complete!
-                </h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  Validated records have been committed to Firebase Firestore and local synchronized collections.
-                </p>
-              </div>
-
-              {/* Report Summary Cards */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center text-xs">
-                <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
-                  <span className="text-[10px] uppercase font-bold text-emerald-700 block">Created</span>
-                  <div className="text-xl font-extrabold text-emerald-800 mt-1">+{latestReport.createdTotal}</div>
+            <div className="space-y-6">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+                <div className="text-center py-6 space-y-3">
+                  <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto shadow-inner">
+                    <CheckCircle2 className="w-8 h-8" />
+                  </div>
+                  <h2 className="text-2xl font-bold text-white">
+                    Master Synchronization Complete!
+                  </h2>
+                  <p className="text-xs text-slate-400 max-w-md mx-auto">
+                    Preset <strong>{latestReport.presetName || activePreset.name}</strong> successfully synchronized into local database & Firestore in {latestReport.durationMs}ms.
+                  </p>
                 </div>
 
-                <div className="p-3 bg-amber-50 rounded-xl border border-amber-200">
-                  <span className="text-[10px] uppercase font-bold text-amber-700 block">Updated</span>
-                  <div className="text-xl font-extrabold text-amber-800 mt-1">~{latestReport.updatedTotal}</div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800">
+                    <span className="text-xs text-slate-400 block mb-1">Total Processed</span>
+                    <span className="text-2xl font-bold text-white">{latestReport.totalRecords}</span>
+                  </div>
+                  <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                    <span className="text-xs text-emerald-400 block mb-1">Created Records</span>
+                    <span className="text-2xl font-bold text-emerald-400">+{latestReport.createdTotal}</span>
+                  </div>
+                  <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
+                    <span className="text-xs text-blue-400 block mb-1">Updated Records</span>
+                    <span className="text-2xl font-bold text-blue-400">~{latestReport.updatedTotal}</span>
+                  </div>
+                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800">
+                    <span className="text-xs text-slate-400 block mb-1">Unchanged</span>
+                    <span className="text-2xl font-bold text-slate-400">={latestReport.unchangedTotal}</span>
+                  </div>
                 </div>
 
-                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Unchanged</span>
-                  <div className="text-xl font-extrabold text-slate-700 mt-1">={latestReport.unchangedTotal}</div>
+                {/* EXECUTION LOGS */}
+                <div className="space-y-2">
+                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                    Real-Time Execution Logs
+                  </h3>
+                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-slate-300 space-y-1.5 max-h-64 overflow-y-auto">
+                    {latestReport.logs.map((log, i) => (
+                      <div key={i} className="leading-relaxed">
+                        {log}
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
-                <div className="p-3 bg-teal-50 rounded-xl border border-teal-200">
-                  <span className="text-[10px] uppercase font-bold text-teal-700 block">Duration</span>
-                  <div className="text-xl font-extrabold text-teal-800 mt-1">{latestReport.durationMs}ms</div>
+                <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+                  <button
+                    onClick={() => {
+                      setCurrentStep(1);
+                      setStagedData({});
+                      setInspectionReport(null);
+                      setValidationReport(null);
+                    }}
+                    className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold"
+                  >
+                    Start New Sync Job
+                  </button>
+
+                  <button
+                    onClick={() => setManagerView('HISTORY')}
+                    className="px-5 py-2.5 rounded-xl bg-teal-500 text-slate-950 font-bold text-xs"
+                  >
+                    View in Audit History →
+                  </button>
                 </div>
-              </div>
-
-              {/* Execution Logs */}
-              {executionLogs.length > 0 && (
-                <div className="bg-slate-900 text-slate-200 p-4 rounded-xl text-xs font-mono max-h-48 overflow-y-auto space-y-1">
-                  <div className="text-[10px] uppercase font-bold text-slate-400 mb-2">Live Transaction Execution Stream</div>
-                  {executionLogs.map((l, i) => (
-                    <div key={i} className="leading-relaxed">{l}</div>
-                  ))}
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="flex items-center justify-center space-x-3 pt-4 border-t border-slate-100">
-                <button
-                  onClick={() => {
-                    setCurrentStep(1);
-                    setValidationReport(null);
-                    setPreviewDiffs({});
-                  }}
-                  className="px-5 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                >
-                  Start Another Sync
-                </button>
-
-                <button
-                  onClick={() => setManagerView('HISTORY')}
-                  className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
-                >
-                  <History className="w-3.5 h-3.5" />
-                  <span>View in Audit Ledger</span>
-                </button>
               </div>
             </div>
           )}
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* VIEW 3: SELECTIVE TAB SYNC */}
-      {/* ========================================================================= */}
-      {managerView === 'SELECTIVE_SYNC' && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
-            <h3 className="text-sm font-bold text-slate-900 mb-1 flex items-center space-x-2">
-              <Layers className="w-4 h-4 text-blue-600" />
-              <span>Selective Worksheet Synchronization</span>
-            </h3>
-            <p className="text-xs text-slate-500 mb-5">
-              Sync individual subsets of your master sheet directly into Firebase without running the full 25-tab import.
-            </p>
-
-            {/* Category Sync Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Card 1: Core Inventory */}
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-col justify-between space-y-4">
-                <div>
-                  <div className="flex items-center space-x-2 font-bold text-sm text-slate-900 mb-1">
-                    <HotelIcon className="w-4 h-4 text-teal-600" />
-                    <span>Core Products</span>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Synchronizes <code>PRODUCTS</code>, <code>PRODUCT_PRICING</code>, and <code>PRODUCT_CAPACITY</code>.
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleExecuteSelectiveSync(['PRODUCTS', 'PRODUCT_PRICING', 'PRODUCT_CAPACITY'])}
-                  disabled={isProcessing}
-                  className="w-full py-2 rounded-lg bg-[#008972] hover:bg-[#007360] text-white text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-                >
-                  Sync Products Only
-                </button>
-              </div>
-
-              {/* Card 2: Hotels & Rates */}
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-col justify-between space-y-4">
-                <div>
-                  <div className="flex items-center space-x-2 font-bold text-sm text-slate-900 mb-1">
-                    <DollarSign className="w-4 h-4 text-amber-600" />
-                    <span>Hotels & Rates</span>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Synchronizes <code>HOTELS</code>, <code>HOTEL_ROOMS</code>, <code>HOTEL_RATES</code>, and <code>HOTEL_MEAL_PLANS</code>.
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleExecuteSelectiveSync(['HOTELS', 'HOTEL_ROOMS', 'HOTEL_RATES', 'HOTEL_MEAL_PLANS'])}
-                  disabled={isProcessing}
-                  className="w-full py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-                >
-                  Sync Hotels & Rates
-                </button>
-              </div>
-
-              {/* Card 3: Transfers & Logistics */}
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-col justify-between space-y-4">
-                <div>
-                  <div className="flex items-center space-x-2 font-bold text-sm text-slate-900 mb-1">
-                    <Compass className="w-4 h-4 text-indigo-600" />
-                    <span>Transfers & Routes</span>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Synchronizes <code>TRANSFER_ROUTES</code> and <code>TRANSFER_RATES</code>.
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleExecuteSelectiveSync(['TRANSFER_ROUTES', 'TRANSFER_RATES'])}
-                  disabled={isProcessing}
-                  className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-                >
-                  Sync Transfers Only
-                </button>
-              </div>
-
-              {/* Card 4: Curated Packages */}
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-col justify-between space-y-4">
-                <div>
-                  <div className="flex items-center space-x-2 font-bold text-sm text-slate-900 mb-1">
-                    <Package className="w-4 h-4 text-purple-600" />
-                    <span>Curated Packages</span>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Synchronizes <code>PACKAGES</code> and <code>PACKAGE_ITEMS</code> multi-day itineraries.
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleExecuteSelectiveSync(['PACKAGES', 'PACKAGE_ITEMS'])}
-                  disabled={isProcessing}
-                  className="w-full py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-                >
-                  Sync Packages Only
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* VIEW 4: 25-TAB SCHEMAS & TEMPLATES */}
-      {/* ========================================================================= */}
+      {/* ---------------------------------------------------- */}
+      {/* 2. DYNAMIC TEMPLATES & SCHEMA REGISTRY EXPLORER */}
+      {/* ---------------------------------------------------- */}
       {managerView === 'TEMPLATES' && (
         <div className="space-y-6">
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-800 pb-4">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Canonical 25-Tab Worksheets & CSV Templates</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Download templates, inspect schema definitions, primary keys, and sample data for all worksheets.
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Download className="w-5 h-5 text-teal-400" />
+                  Dynamic Schema & Template Generator
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Download authentic, schema-validated Google Sheets & Excel templates for any module preset.
                 </p>
               </div>
 
-              <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
-                <button
-                  onClick={handleDownloadCanonicalExcelWithDemoData}
-                  className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
-                >
-                  <Download className="w-4 h-4 text-white" />
-                  <span>Download Excel (25 Tabs + Demo Data)</span>
-                </button>
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includeDemoDataInTemplate}
+                    onChange={(e) => setIncludeDemoDataInTemplate(e.target.checked)}
+                    className="rounded border-slate-700 text-teal-500 focus:ring-teal-500"
+                  />
+                  <span>Include Demo Rows (DEMO ONLY)</span>
+                </label>
 
                 <button
-                  onClick={handleDownloadCanonicalExcelTemplate}
-                  className="flex items-center space-x-2 px-4 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-xs cursor-pointer"
+                  onClick={() => handleDownloadTemplate(selectedSchemaPreset, includeDemoDataInTemplate)}
+                  className="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-teal-500/20"
                 >
-                  <Download className="w-4 h-4 text-slate-500" />
-                  <span>Download Blank Template (.xlsx)</span>
+                  <Download className="w-4 h-4" />
+                  Download Preset Workbook (.xlsx)
                 </button>
               </div>
             </div>
 
-            {/* Tab Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {MASTER_SHEETS_TAB_DEFINITIONS.filter(t => t.tabName !== 'INSTRUCTIONS').map(tab => (
-                <div key={tab.tabName} className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-all flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-mono font-bold text-xs text-slate-800">{tab.tabName}</span>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800">
-                        {tab.columns.length} columns
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-500 line-clamp-2 mt-1">
-                      {tab.description}
-                    </p>
-                    <div className="mt-2 text-[10px] text-slate-400 font-mono">
-                      Primary Key: <strong className="text-slate-700">{tab.primaryKey}</strong>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center space-x-2 mt-3 pt-3 border-t border-slate-200/60 text-xs">
-                    <button
-                      onClick={() => handleCopySample(tab.tabName)}
-                      className="flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-semibold cursor-pointer"
-                    >
-                      {copiedTab === tab.tabName ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copiedTab === tab.tabName ? 'Copied' : 'Copy CSV'}</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleDownloadCsv(tab.tabName)}
-                      className="flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-lg bg-[#008972] hover:bg-[#007360] text-white font-semibold cursor-pointer"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Download</span>
-                    </button>
-                  </div>
-                </div>
+            {/* PRESET SELECTOR FOR TEMPLATES */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              {availablePresets.map(preset => (
+                <button
+                  key={preset.id}
+                  onClick={() => {
+                    setSelectedSchemaPreset(preset.id);
+                    const schemas = ModulePresetRegistry.getSchemasForPreset(preset.id, true);
+                    if (schemas.length > 0) {
+                      setSelectedSchemaTab(schemas[0].schemaId);
+                    }
+                  }}
+                  className={`p-3 rounded-xl border text-left text-xs transition-all ${
+                    selectedSchemaPreset === preset.id
+                      ? 'bg-slate-800 border-teal-500 text-white font-bold'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <div className="text-[10px] text-teal-400 uppercase font-bold">{preset.badgeText}</div>
+                  <div className="truncate mt-0.5">{preset.name}</div>
+                </button>
               ))}
+            </div>
+
+            {/* SCHEMA SPECIFICATION VIEWER */}
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+              {/* SCHEMA TABS LIST */}
+              <div className="space-y-2">
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                  Worksheets in this Preset
+                </h3>
+                <div className="space-y-1.5">
+                  {ModulePresetRegistry.getSchemasForPreset(selectedSchemaPreset, true).map(schema => {
+                    const isSelected = selectedSchemaTab === schema.schemaId;
+                    return (
+                      <button
+                        key={schema.schemaId}
+                        onClick={() => setSelectedSchemaTab(schema.schemaId)}
+                        className={`w-full p-3 rounded-xl border text-left text-xs transition-all flex items-center justify-between ${
+                          isSelected
+                            ? 'bg-teal-500/10 border-teal-500/40 text-teal-300 font-bold'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <div>
+                          <div className="font-mono text-white">{schema.canonicalTabName}</div>
+                          <div className="text-[11px] text-slate-500 truncate">{schema.displayName}</div>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-slate-500" />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* ACTIVE SCHEMA DETAILS */}
+              <div className="lg:col-span-3 space-y-4">
+                {(() => {
+                  const schema = CanonicalSchemaRegistry.getSchema(selectedSchemaTab) || CanonicalSchemaRegistry.getAllSchemas()[0];
+                  if (!schema) return null;
+                  return (
+                    <div className="border border-slate-800 rounded-xl p-5 bg-slate-950 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-base font-bold text-white font-mono">{schema.canonicalTabName}</h3>
+                            <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-teal-300 border border-slate-700 font-mono">
+                              {schema.schemaVersion}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-400 mt-1">{schema.description}</p>
+                        </div>
+
+                        <button
+                          onClick={() => handleDownloadSingleSchemaCsv(schema.schemaId, includeDemoDataInTemplate)}
+                          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 border border-slate-700"
+                        >
+                          <Download className="w-3.5 h-3.5 text-teal-400" />
+                          Download CSV
+                        </button>
+                      </div>
+
+                      {/* COLUMNS TABLE */}
+                      <div className="space-y-2">
+                        <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                          Canonical Column Definitions ({schema.columns.length} columns)
+                        </h4>
+                        <div className="max-h-72 overflow-y-auto border border-slate-800 rounded-lg">
+                          <table className="w-full text-left text-xs">
+                            <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
+                              <tr>
+                                <th className="p-2.5 font-semibold">Column Key</th>
+                                <th className="p-2.5 font-semibold">Type</th>
+                                <th className="p-2.5 font-semibold">Required</th>
+                                <th className="p-2.5 font-semibold">Sample Value</th>
+                                <th className="p-2.5 font-semibold">Description</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/60 font-mono">
+                              {schema.columns.map((col, idx) => (
+                                <tr key={idx} className="hover:bg-slate-900/40">
+                                  <td className="p-2.5 font-bold text-white">{col.key}</td>
+                                  <td className="p-2.5 text-teal-400">{col.type}</td>
+                                  <td className="p-2.5">
+                                    {col.required ? (
+                                      <span className="text-rose-400 font-bold">YES</span>
+                                    ) : (
+                                      <span className="text-slate-500">OPTIONAL</span>
+                                    )}
+                                  </td>
+                                  <td className="p-2.5 text-slate-300 max-w-xs truncate">{col.sampleValue}</td>
+                                  <td className="p-2.5 font-sans text-slate-400">{col.description}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* VIEW 5: SYNC AUDIT HISTORY */}
-      {/* ========================================================================= */}
-      {managerView === 'HISTORY' && (
+      {/* ---------------------------------------------------- */}
+      {/* 3. CONNECTION HEALTH & SETTINGS */}
+      {/* ---------------------------------------------------- */}
+      {managerView === 'CONNECTION_HEALTH' && (
         <div className="space-y-6">
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
-            <div className="flex items-center justify-between mb-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
               <div>
-                <h3 className="text-base font-bold text-slate-900 flex items-center space-x-2">
-                  <History className="w-4 h-4 text-indigo-600" />
-                  <span>Google Sheets ↔ Firebase Sync Audit History</span>
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Immutable ledger of past database sync operations, execution timestamps, and record breakdowns.
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-teal-400" />
+                  Google Sheets Connection Health & Webhooks
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Verify backend API connectivity, token status, and Apps Script real-time sync hooks.
                 </p>
               </div>
+
               <button
-                onClick={loadSyncHistory}
-                className="flex items-center space-x-1 px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                onClick={handleTestConnectionProbe}
+                disabled={isTestingProbe}
+                className="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-teal-500/20"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Refresh Logs</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${isTestingProbe ? 'animate-spin' : ''}`} />
+                {isTestingProbe ? 'Probing Gateway...' : 'Test Connection Probe'}
               </button>
             </div>
 
-            {syncHistory.length === 0 ? (
-              <div className="p-12 text-center text-slate-400">
-                <FileSpreadsheet className="w-10 h-10 mx-auto mb-2 opacity-40" />
-                <p className="text-sm font-semibold">No sync reports recorded yet.</p>
-                <p className="text-xs mt-1">Run your first synchronization via the 4-Step Importer or Selective Sync.</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                <span className="text-xs text-slate-400 block">Connection Status</span>
+                <span className={`text-lg font-bold ${config.connectionStatus === 'CONNECTED' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {config.connectionStatus}
+                </span>
+                <p className="text-[11px] text-slate-500">
+                  Last checked: {config.lastSuccessfulConnectionCheck ? new Date(config.lastSuccessfulConnectionCheck).toLocaleString() : 'Never'}
+                </p>
               </div>
-            ) : (
-              <div className="overflow-x-auto border border-slate-200 rounded-xl">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200 uppercase tracking-wider">
-                    <tr>
-                      <th className="p-3">Batch ID</th>
-                      <th className="p-3">Timestamp</th>
-                      <th className="p-3">User / Operator</th>
-                      <th className="p-3">Status</th>
-                      <th className="p-3">Records (New / Upd / Unch)</th>
-                      <th className="p-3">Duration</th>
-                      <th className="p-3 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 font-medium">
-                    {syncHistory.map((report) => (
-                      <tr key={report.id} className="hover:bg-slate-50">
-                        <td className="p-3 font-mono font-bold text-slate-800">{report.id}</td>
-                        <td className="p-3 text-slate-600">{new Date(report.timestamp).toLocaleString()}</td>
-                        <td className="p-3 text-slate-700">{report.userEmail || 'System'}</td>
-                        <td className="p-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            report.status === 'SUCCESS' 
-                              ? 'bg-emerald-100 text-emerald-800' 
-                              : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            {report.status}
-                          </span>
-                        </td>
-                        <td className="p-3 text-slate-700">
-                          <span className="text-emerald-700 font-bold">+{report.createdTotal}</span> / 
-                          <span className="text-amber-700 font-bold mx-1">~{report.updatedTotal}</span> / 
-                          <span className="text-slate-500">={report.unchangedTotal}</span>
-                        </td>
-                        <td className="p-3 text-slate-600 font-mono">{report.durationMs}ms</td>
-                        <td className="p-3 text-right">
-                          <button
-                            onClick={() => setSelectedHistoryReport(report)}
-                            className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold cursor-pointer"
-                          >
-                            View Details
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                <span className="text-xs text-slate-400 block">Master Spreadsheet ID</span>
+                <span className="text-sm font-bold text-white font-mono truncate block">
+                  {config.masterSpreadsheetId || 'None'}
+                </span>
+                <p className="text-[11px] text-slate-500">
+                  {config.spreadsheetName || 'Master Rate Sheet'}
+                </p>
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                <span className="text-xs text-slate-400 block">Sync History Total</span>
+                <span className="text-lg font-bold text-teal-400">
+                  {syncHistory.length} Jobs
+                </span>
+                <p className="text-[11px] text-slate-500">
+                  Total safe upserts logged
+                </p>
+              </div>
+            </div>
+
+            {testProbeResult && (
+              <div className="border border-slate-800 rounded-xl p-4 bg-slate-950 space-y-2">
+                <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                  Probe Diagnostic Output
+                </h3>
+                <pre className="p-3 rounded-lg bg-slate-900 text-xs font-mono text-teal-300 overflow-x-auto">
+                  {JSON.stringify(testProbeResult, null, 2)}
+                </pre>
               </div>
             )}
           </div>
+        </div>
+      )}
 
-          {/* History Details Modal */}
-          {selectedHistoryReport && (
-            <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-2xl border border-slate-200 max-w-2xl w-full p-6 shadow-xl space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <h4 className="font-bold text-sm text-slate-900 flex items-center space-x-2">
-                    <FileSpreadsheet className="w-4 h-4 text-teal-600" />
-                    <span>Sync Audit Report: {selectedHistoryReport.id}</span>
-                  </h4>
-                  <button onClick={() => setSelectedHistoryReport(null)} className="text-slate-400 hover:text-slate-600">✕</button>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
-                  <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block">Created</span>
-                    <strong className="text-emerald-700">+{selectedHistoryReport.createdTotal}</strong>
-                  </div>
-                  <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block">Updated</span>
-                    <strong className="text-amber-700">~{selectedHistoryReport.updatedTotal}</strong>
-                  </div>
-                  <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block">Unchanged</span>
-                    <strong className="text-slate-600">={selectedHistoryReport.unchangedTotal}</strong>
-                  </div>
-                  <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
-                    <span className="text-[10px] text-slate-400 block">Duration</span>
-                    <strong className="text-teal-700">{selectedHistoryReport.durationMs}ms</strong>
-                  </div>
-                </div>
-
-                {selectedHistoryReport.logs && selectedHistoryReport.logs.length > 0 && (
-                  <div className="bg-slate-900 text-slate-300 p-3 rounded-xl text-xs font-mono max-h-48 overflow-y-auto space-y-1">
-                    {selectedHistoryReport.logs.map((log, i) => (
-                      <div key={i}>{log}</div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="flex justify-end pt-2">
-                  <button
-                    onClick={() => setSelectedHistoryReport(null)}
-                    className="px-4 py-2 rounded-xl bg-slate-800 text-white text-xs font-bold hover:bg-slate-900 cursor-pointer"
-                  >
-                    Close
-                  </button>
-                </div>
+      {/* ---------------------------------------------------- */}
+      {/* 4. SYNC HISTORY & AUDIT LOGS */}
+      {/* ---------------------------------------------------- */}
+      {managerView === 'HISTORY' && (
+        <div className="space-y-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div>
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <History className="w-5 h-5 text-teal-400" />
+                  Master Synchronization Audit Trail
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Complete historical record of schema synchronizations, created/updated records, and duration.
+                </p>
               </div>
+              <span className="text-xs text-slate-400 bg-slate-800 px-3 py-1 rounded-lg">
+                {syncHistory.length} Total Executions
+              </span>
             </div>
-          )}
 
-          {/* Apps Script Webhook Modal */}
-          {showAppsScriptModal && (
-            <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-2xl border border-slate-200 max-w-3xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div className="flex items-center space-x-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
-                      <Code2 className="w-4 h-4" />
+            <div className="divide-y divide-slate-800 border border-slate-800 rounded-xl overflow-hidden bg-slate-950">
+              {syncHistory.length === 0 ? (
+                <div className="p-8 text-center text-slate-500 text-xs">
+                  No synchronization runs recorded yet.
+                </div>
+              ) : (
+                syncHistory.map((report) => (
+                  <div key={report.id} className="p-4 space-y-2 hover:bg-slate-900/60 transition-all">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          report.status === 'SUCCESS' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                        }`}>
+                          {report.status}
+                        </span>
+                        <span className="font-bold text-white font-mono">
+                          {report.presetName || report.presetId || 'Canonical Sync'}
+                        </span>
+                        <span className="text-slate-500">• {new Date(report.timestamp).toLocaleString()}</span>
+                      </div>
+
+                      <span className="text-slate-400 font-mono text-[11px]">
+                        {report.durationMs}ms
+                      </span>
                     </div>
-                    <div>
-                      <h4 className="font-extrabold text-sm text-slate-900">
-                        TheUnbound Master Sync — Google Apps Script Webhook
-                      </h4>
-                      <p className="text-[11px] text-slate-500">
-                        Embed this script in your Google Spreadsheet to trigger safe server-side validation and Firebase sync.
-                      </p>
+
+                    <div className="flex items-center gap-4 text-xs font-mono">
+                      <span className="text-emerald-400 font-bold">+{report.createdTotal} Created</span>
+                      <span className="text-blue-400 font-bold">~{report.updatedTotal} Updated</span>
+                      <span className="text-slate-400">={report.unchangedTotal} Unchanged</span>
+                      <span className="text-slate-500">Processed {report.tabsProcessed.length} Tabs: [{report.tabsProcessed.join(', ')}]</span>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => setShowAppsScriptModal(false)} 
-                    className="text-slate-400 hover:text-slate-600 cursor-pointer p-1"
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                <div className="p-3 bg-indigo-50/60 border border-indigo-100 rounded-xl text-xs text-indigo-900 space-y-1">
-                  <div className="font-bold flex items-center space-x-1.5">
-                    <ShieldCheck className="w-4 h-4 text-indigo-600" />
-                    <span>Security & Architecture Rule</span>
-                  </div>
-                  <p className="text-[11px] text-indigo-800 leading-relaxed">
-                    Apps Script does <strong>NOT</strong> write directly to Firestore. It securely dispatches the spreadsheet data to TheUnbound Backend Gateway, which performs complete 25-tab schema validation, foreign key checks, and atomic Firestore upserts.
-                  </p>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                    <span>Target Webhook Endpoint</span>
-                    <button
-                      onClick={() => {
-                        const url = `${window.location.origin}/api/integrations/master-google-sheets/sync`;
-                        navigator.clipboard.writeText(url);
-                        setCopiedWebhookUrl(true);
-                        setTimeout(() => setCopiedWebhookUrl(false), 2000);
-                      }}
-                      className="text-[#008972] hover:underline cursor-pointer flex items-center space-x-1 font-semibold"
-                    >
-                      <Copy className="w-3 h-3" />
-                      <span>{copiedWebhookUrl ? 'Copied URL!' : 'Copy Endpoint'}</span>
-                    </button>
-                  </div>
-                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-[11px] text-slate-800 select-all">
-                    {window.location.origin}/api/integrations/master-google-sheets/sync
-                  </div>
-                </div>
-
-                <div className="flex-1 min-h-0 flex flex-col space-y-1.5">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                    <span>Google Apps Script Code (Code.gs)</span>
-                    <button
-                      onClick={() => {
-                        const scriptCode = `/**
- * THEUNBOUND — MASTER GOOGLE SHEETS ↔ FIREBASE DATABASE MASTER SYNC APPS SCRIPT
- */
-const THEUNBOUND_CONFIG = {
-  SYNC_ENDPOINT: '${window.location.origin}/api/integrations/master-google-sheets/sync',
-  SYNC_KEY: '${config.syncKey || 'unbound_master_sync_key_2026'}',
-  SPREADSHEET_NAME: '${config.spreadsheetName || 'TheUnbound Master Commercial Rate & Inventory Sheet 2026'}'
-};
-
-function syncMasterSheetToFirebase() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
-  
-  const confirm = ui.alert(
-    'TheUnbound Production Sync',
-    'Are you sure you want to synchronize the entire 25-tab Master Sheet to Firebase Firestore?\\n\\nSpreadsheet ID: ' + ss.getId(),
-    ui.ButtonSet.YES_NO
-  );
-  if (confirm !== ui.Button.YES) return;
-
-  const payload = {
-    syncType: 'MASTER_GOOGLE_SHEETS_TO_FIREBASE',
-    source: {
-      spreadsheetId: ss.getId(),
-      spreadsheetName: ss.getName() || THEUNBOUND_CONFIG.SPREADSHEET_NAME,
-      triggeredBy: Session.getActiveUser().getEmail() || 'google-apps-script-webhook',
-      triggeredAt: new Date().toISOString()
-    },
-    sheets: {}
-  };
-
-  const canonicalTabs = [
-    'REGIONS', 'DESTINATIONS', 'HUBS', 'PRODUCTS', 'PRODUCT_PRICING',
-    'PRODUCT_CAPACITY', 'HOTELS', 'HOTEL_ROOMS', 'HOTEL_MEAL_PLANS',
-    'HOTEL_RATES', 'VISA', 'VISA_RATES', 'TRANSFER_ROUTES',
-    'TRANSFER_RATES', 'PACKAGES', 'PACKAGE_ITEMS'
-  ];
-
-  let totalTabsFound = 0;
-  canonicalTabs.forEach(tabName => {
-    const sheet = ss.getSheetByName(tabName);
-    if (!sheet) return;
-    const values = sheet.getDataRange().getValues();
-    if (values.length <= 1) return;
-    payload.sheets[tabName] = { headers: values[0], rows: values.slice(1) };
-    totalTabsFound++;
-  });
-
-  if (totalTabsFound === 0) {
-    ui.alert('Sync Aborted: None of the 16 canonical tabs were found.');
-    return;
-  }
-
-  const options = {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { 'X-TheUnbound-Sync-Key': THEUNBOUND_CONFIG.SYNC_KEY },
-    payload: JSON.stringify(payload),
-    muteHttpExceptions: true
-  };
-
-  try {
-    const response = UrlFetchApp.fetch(THEUNBOUND_CONFIG.SYNC_ENDPOINT, options);
-    const result = JSON.parse(response.getContentText());
-    if (response.getResponseCode() === 200 && result.success) {
-      ui.alert('TheUnbound Sync Successful!\\n\\nBatch ID: ' + (result.syncReportId || 'N/A') + '\\nRows Created: ' + (result.summary ? result.summary.rowsCreated : 0) + '\\nRows Updated: ' + (result.summary ? result.summary.rowsUpdated : 0));
-    } else {
-      ui.alert('TheUnbound Sync Error: ' + (result.error || response.getContentText()));
-    }
-  } catch (err) {
-    ui.alert('Network Error: ' + err.toString());
-  }
-}
-
-function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('TheUnbound Master Sync')
-    .addItem('Sync Master Sheet to Firebase', 'syncMasterSheetToFirebase')
-    .addToUi();
-}`;
-                        navigator.clipboard.writeText(scriptCode);
-                        setCopiedScriptCode(true);
-                        setTimeout(() => setCopiedScriptCode(false), 2000);
-                      }}
-                      className="text-[#008972] hover:underline cursor-pointer flex items-center space-x-1 font-semibold"
-                    >
-                      <Copy className="w-3 h-3" />
-                      <span>{copiedScriptCode ? 'Copied Script Code!' : 'Copy Script Code'}</span>
-                    </button>
-                  </div>
-
-                  <pre className="flex-1 bg-slate-900 text-slate-200 p-3.5 rounded-xl font-mono text-[11px] overflow-y-auto leading-relaxed max-h-64 border border-slate-800">
-{`// Paste into Google Spreadsheet: Extensions > Apps Script > Code.gs
-const THEUNBOUND_CONFIG = {
-  SYNC_ENDPOINT: '${window.location.origin}/api/integrations/master-google-sheets/sync',
-  SYNC_KEY: '${config.syncKey || 'unbound_master_sync_key_2026'}',
-  SPREADSHEET_NAME: '${config.spreadsheetName || 'TheUnbound Master Commercial Rate & Inventory Sheet 2026'}'
-};
-
-function syncMasterSheetToFirebase() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
-  // Dispatches payload to TheUnbound Backend Gateway
-  // Full code available via "Copy Script Code" button above
-}`}
-                  </pre>
-                </div>
-
-                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                  <span className="text-[11px] text-slate-500">
-                    Setup: 1. Extensions &gt; Apps Script &gt; Paste code &gt; Save &gt; Reload spreadsheet.
-                  </span>
-                  <button
-                    onClick={() => setShowAppsScriptModal(false)}
-                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold transition-all cursor-pointer"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
+                ))
+              )}
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>
   );
 };
+
+export default GoogleSheetsPanel;

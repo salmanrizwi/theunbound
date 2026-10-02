@@ -157,21 +157,23 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
 
   // Headline rendering with highlighted keyword accent
   const renderHeadline = () => {
-    if (!headingHighlight || !heading.toLowerCase().includes(headingHighlight.toLowerCase())) {
+    const safeHeading = heading || '';
+    const safeHighlight = headingHighlight || '';
+    if (!safeHighlight || !safeHeading.toLowerCase().includes(safeHighlight.toLowerCase())) {
       return (
         <>
-          {heading} {headingHighlight && !heading.toLowerCase().includes(headingHighlight.toLowerCase()) && (
-            <span className="text-[#00C6A6]">{headingHighlight}</span>
+          {safeHeading} {safeHighlight && !safeHeading.toLowerCase().includes(safeHighlight.toLowerCase()) && (
+            <span className="text-[#00C6A6]">{safeHighlight}</span>
           )}
         </>
       );
     }
-    const escaped = headingHighlight.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const parts = heading.split(new RegExp(`(${escaped})`, 'gi'));
+    const escaped = safeHighlight.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = safeHeading.split(new RegExp(`(${escaped})`, 'gi'));
     return (
       <>
         {parts.map((part, i) => 
-          part.toLowerCase() === headingHighlight.toLowerCase() ? (
+          part.toLowerCase() === safeHighlight.toLowerCase() ? (
             <span key={i} className="text-[#00C6A6]">{part}</span>
           ) : (
             <span key={i}>{part}</span>

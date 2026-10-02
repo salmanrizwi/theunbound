@@ -167,7 +167,7 @@ export class InventoryVisibilityService {
     const dest = allDests.find(d => 
       d.id === destinationIdOrSlug || 
       d.slug === destinationIdOrSlug || 
-      d.name?.toLowerCase() === destinationIdOrSlug.toLowerCase()
+      Boolean(d.name && destinationIdOrSlug && (d.name || '').toLowerCase() === (destinationIdOrSlug || '').toLowerCase())
     );
 
     const destId = dest?.id || destinationIdOrSlug;
@@ -249,8 +249,8 @@ export class InventoryVisibilityService {
     // Active packages that include this hub
     const activePackages = this.getActivePackages().filter(pkg => 
       (pkg.hubIds && pkg.hubIds.includes(hId)) ||
-      (hName && pkg.routeSummary && pkg.routeSummary.some(r => r.toLowerCase().includes(hName.toLowerCase()))) ||
-      (pkg.routeHubs && pkg.routeHubs.some(rh => rh.hubId === hId || (hName && rh.hubName?.toLowerCase() === hName.toLowerCase())))
+      Boolean(hName && pkg.routeSummary && pkg.routeSummary.some(r => typeof r === 'string' && r.toLowerCase().includes((hName || '').toLowerCase()))) ||
+      Boolean(pkg.routeHubs && pkg.routeHubs.some(rh => rh.hubId === hId || (hName && typeof rh.hubName === 'string' && (rh.hubName || '').toLowerCase() === (hName || '').toLowerCase())))
     );
 
     // Active transfers to/from this hub
@@ -350,7 +350,7 @@ export class InventoryVisibilityService {
     const resolvedParent = parentDest || this.db.getDestinations().find(d => 
       d.id === hub.destinationId || 
       d.slug === hub.destinationId || 
-      d.name?.toLowerCase() === hub.destinationName?.toLowerCase()
+      Boolean(d.name && hub.destinationName && typeof d.name === 'string' && typeof hub.destinationName === 'string' && d.name.toLowerCase() === hub.destinationName.toLowerCase())
     );
 
     if (!resolvedParent) {
@@ -454,7 +454,7 @@ export class InventoryVisibilityService {
 
       filteredHubs = allHubs.filter(h => 
         h.destinationId === destId || 
-        h.destinationName?.toLowerCase() === destName.toLowerCase() ||
+        Boolean(h.destinationName && destName && typeof h.destinationName === 'string' && typeof destName === 'string' && h.destinationName.toLowerCase() === destName.toLowerCase()) ||
         matchesDestination(destinationIdOrSlug, h.destinationId, h.destinationName)
       );
     }
@@ -464,7 +464,7 @@ export class InventoryVisibilityService {
     }
 
     return filteredHubs.filter(hub => {
-      const parent = allDests.find(d => d.id === hub.destinationId || d.name?.toLowerCase() === hub.destinationName?.toLowerCase());
+      const parent = allDests.find(d => d.id === hub.destinationId || Boolean(d.name && hub.destinationName && typeof d.name === 'string' && typeof hub.destinationName === 'string' && d.name.toLowerCase() === hub.destinationName.toLowerCase()));
       const status = this.getHubComputedStatus(hub, parent);
       return status === 'LIVE' || status === 'COMING_SOON';
     });

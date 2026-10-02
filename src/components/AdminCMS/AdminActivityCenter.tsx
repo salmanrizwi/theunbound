@@ -124,8 +124,8 @@ export const AdminActivityCenter: React.FC<AdminActivityCenterProps> = ({
       // Search query
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
-        const matchesSummary = act.summary.toLowerCase().includes(query);
-        const matchesActor = act.actorName.toLowerCase().includes(query);
+        const matchesSummary = (act.summary || '').toLowerCase().includes(query);
+        const matchesActor = (act.actorName || '').toLowerCase().includes(query);
         const matchesEntity = (act.entityId || '').toLowerCase().includes(query) || (act.bookingReference || '').toLowerCase().includes(query) || (act.leadId || '').toLowerCase().includes(query) || (act.quoteId || '').toLowerCase().includes(query);
         const matchesCustomer = (act.details?.customerName || '').toLowerCase().includes(query);
         const matchesDestination = (act.details?.destinationName || '').toLowerCase().includes(query);
@@ -167,8 +167,6 @@ export const AdminActivityCenter: React.FC<AdminActivityCenterProps> = ({
         return { label: 'Lead CRM', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
       case 'QUOTE':
         return { label: 'Quote', bg: 'bg-amber-50 text-amber-700 border-amber-200' };
-      case 'AI_PLANNER':
-        return { label: 'AI Planner', bg: 'bg-purple-50 text-purple-700 border-purple-200' };
       case 'PAYMENT':
         return { label: 'Payment', bg: 'bg-rose-50 text-rose-700 border-rose-200' };
       case 'USER':
@@ -261,7 +259,6 @@ export const AdminActivityCenter: React.FC<AdminActivityCenterProps> = ({
     { id: 'BOOKING', label: 'Bookings' },
     { id: 'LEAD', label: 'Leads' },
     { id: 'QUOTE', label: 'Quotes' },
-    { id: 'AI_PLANNER', label: 'AI Planner' },
     { id: 'PAYMENT', label: 'Payments' },
     { id: 'USER', label: 'Users & RBAC' },
     { id: 'OPERATIONS', label: 'Ground Ops' },
@@ -293,7 +290,7 @@ export const AdminActivityCenter: React.FC<AdminActivityCenterProps> = ({
                     Live Activity Stream Active
                   </span>
                   <span>•</span>
-                  <span>Consolidated events across Buyers, B2B Agents, Operations & AI Planner</span>
+                  <span>Consolidated events across Buyers, B2B Agents, Operations & CRM</span>
                 </div>
               </div>
             </div>

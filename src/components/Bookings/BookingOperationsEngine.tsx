@@ -216,8 +216,8 @@ export const BookingOperationsEngine: React.FC<BookingOperationsEngineProps> = (
     if (!filterQuery.trim()) return items;
     const q = filterQuery.toLowerCase();
     return items.filter(it => 
-      it.productName.toLowerCase().includes(q) ||
-      it.category.toLowerCase().includes(q) ||
+      (it.productName || '').toLowerCase().includes(q) ||
+      (it.category || '').toLowerCase().includes(q) ||
       (it.supplierName && it.supplierName.toLowerCase().includes(q)) ||
       (it.city && it.city.toLowerCase().includes(q))
     );

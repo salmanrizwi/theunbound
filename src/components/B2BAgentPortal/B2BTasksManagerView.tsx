@@ -76,11 +76,11 @@ export const B2BTasksManagerView: React.FC = () => {
     else if (activeTab === 'COMPLETED') list = completedTasks;
 
     if (!searchQuery) return list;
-    const q = searchQuery.toLowerCase();
+    const q = searchQuery.toLowerCase().trim();
     return list.filter(t => 
-      t.title.toLowerCase().includes(q) ||
-      t.description.toLowerCase().includes(q) ||
-      (t.relatedCustomerName && t.relatedCustomerName.toLowerCase().includes(q))
+      (t.title || '').toLowerCase().includes(q) ||
+      (t.description || '').toLowerCase().includes(q) ||
+      (t.relatedCustomerName && (t.relatedCustomerName || '').toLowerCase().includes(q))
     );
   }, [activeTab, overdueTasks, todayTasks, upcomingTasks, completedTasks, searchQuery]);
 

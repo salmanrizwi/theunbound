@@ -45,6 +45,8 @@ import { SEOManager } from './SEOManager';
 import { SupplierManager } from './SupplierManager';
 import { RailManager } from './RailManager';
 import { OperationalAssetsManager } from './OperationalAssetsManager';
+import { AdminSidebar } from './layout/AdminSidebar';
+import { AdminHeader } from './layout/AdminHeader';
 import { GlobalRemindersBar } from '../GlobalRemindersBar';
 import { ActionCenterDrawer } from '../ActionCenter/ActionCenterDrawer';
 import { CalendarTask, TravelLead } from '../../types';
@@ -274,6 +276,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   const [openDropdown, setOpenDropdown] = useState<TopSectionId | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [leadForNewQuote, setLeadForNewQuote] = useState<TravelLead | null>(null);
@@ -422,7 +425,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       label: 'System Analysis',
       fullLabel: 'System Analysis & Journeys',
       icon: Activity,
-      description: 'User-level analytics, complete 360° journey tracking, quotes, bookings, transactions, and AI Planner performance.',
+      description: 'User-level analytics, complete 360° journey tracking, quotes, bookings, transactions, and conversion performance.',
       defaultModule: 'SYSTEM_ANALYSIS',
       modules: [
         {
@@ -436,7 +439,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             { id: 'USERS_MATRIX', label: 'User Performance Directory', icon: Users },
             { id: 'USER_JOURNEY', label: '360° User Journey Timeline', icon: Compass },
             { id: 'EVENT_STREAM', label: 'System Event Stream', icon: Activity },
-            { id: 'FUNNEL_ANALYSIS', label: 'Conversion & AI Funnel', icon: BarChart3 }
+            { id: 'FUNNEL_ANALYSIS', label: 'Conversion Funnel & Analytics', icon: BarChart3 }
           ]
         }
       ]
@@ -870,462 +873,85 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   };
 
   return (
-    <div id="theunbound-admin-cms-root" className="min-h-screen w-full max-w-full overflow-x-hidden min-w-0 bg-slate-900 text-slate-100 flex flex-col font-sans selection:bg-[#00C6A6] selection:text-slate-950">
+    <div id="theunbound-admin-cms-root" className="min-h-screen w-full max-w-full overflow-x-hidden min-w-0 bg-[#F8FAFB] text-slate-900 flex font-sans selection:bg-[#00C6A6] selection:text-slate-950">
       
       {/* Global Command Palette / Search Modal */}
       <CMSGlobalSearch
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
         onNavigate={handleNavigate}
+        currentUser={currentUser}
       />
 
-      {/* ========================================================================= */}
-      {/* UNIFIED FULL-SCREEN CMS HEADER (ROW 1: GLOBAL NAV + ROW 2: MODULE CONTEXT) */}
-      {/* ========================================================================= */}
-      <header className="sticky top-0 z-40 bg-slate-950/98 backdrop-blur-md border-b border-slate-800 text-white shadow-xl shrink-0 w-full">
-        {/* ROW 1: BRAND, PRIMARY TOP-LEVEL SECTIONS, SEARCH & ACCOUNT TOOLS */}
-        <div className="w-full px-2.5 sm:px-4 lg:px-6">
-          <div className="flex items-center justify-between h-14 sm:h-15 gap-1.5 sm:gap-2">
-            
-            {/* LEFT: CMS BRAND & IDENTITY */}
-            <div className="flex items-center space-x-2 sm:space-x-2.5 shrink-0">
-              <button
-                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                className="lg:hidden p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 transition-colors cursor-pointer"
-                title="Toggle CMS Navigation"
-                aria-label="Toggle CMS Navigation"
-              >
-                {isMobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
-              </button>
+      {/* Standard Admin Sidebar */}
+      <AdminSidebar
+        activeSection={activeSection}
+        activeSubTab={activeSubTab}
+        onNavigate={handleNavigate}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        isMobileOpen={isMobileMenuOpen}
+        onCloseMobile={() => setIsMobileMenuOpen(false)}
+        counts={{
+          products: counts.totalProducts,
+          hotels: counts.hotels,
+          packages: db.getPackages().length,
+          leads: pendingLeads,
+          bookings: pendingBookings,
+          tasks: pendingTasks,
+          users: pendingUsers,
+          destinations: counts.destinations,
+          hubs: counts.hubs
+        }}
+      />
 
-              <div 
-                onClick={() => handleNavigate('DASHBOARD', 'OVERVIEW')}
-                className="flex items-center space-x-2 cursor-pointer group select-none"
-              >
-                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-[#00C6A6] to-[#008972] flex items-center justify-center text-slate-950 font-black shadow-md shadow-[#00C6A6]/20 shrink-0 group-hover:scale-105 transition-transform">
-                  <ShieldCheck className="w-4 h-4 text-slate-950" />
-                </div>
-                <div className="flex items-center space-x-1.5">
-                  <span className="text-sm sm:text-base font-black tracking-tight text-white font-sans lowercase">
-                    theunbound
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded-md bg-[#00C6A6]/20 border border-[#00C6A6]/40 text-[#00E5C0] text-[9px] font-extrabold uppercase tracking-wider">
-                    CMS
-                  </span>
-                </div>
-              </div>
-            </div>
+      {/* Right Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0 max-w-full overflow-x-hidden">
+        
+        {/* Standard Top Header */}
+        <AdminHeader
+          currentUser={currentUser}
+          onOpenSearch={() => setIsSearchOpen(true)}
+          onToggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          onNavigate={handleNavigate}
+          onLogout={authLogout}
+          activePortalStats={activePortalStats}
+        />
 
-            {/* CENTER: 5 TOP-LEVEL NAVIGATION DROPDOWNS (Desktop) */}
-            <nav className="hidden lg:flex items-center space-x-1 shrink-0" ref={dropdownRef}>
-              {accessibleTopSections.map((sec) => {
-                const isCurrentActiveSection = currentTopSection.id === sec.id;
-                const isDropdownOpen = openDropdown === sec.id;
-                const TopIcon = sec.icon;
-                const isRightAligned = sec.id === 'FINANCE' || sec.id === 'SYSTEM';
+        {/* Sub-Tabs Bar (for modules with multiple tabs) */}
+        {(() => {
+          const permittedSubTabs = (currentModuleConfig.subTabs || []).filter(st => 
+            canUserAccessCMSSubTab(currentUser, currentModuleConfig.id, st.id)
+          );
+          if (permittedSubTabs.length <= 1) return null;
 
-                if (sec.modules.length === 1) {
-                  const singleModule = sec.modules[0];
-                  const isActive = currentModuleConfig.id === singleModule.id;
-                  return (
-                    <button
-                      key={sec.id}
-                      id={`top-nav-${sec.id}`}
-                      onClick={() => handleSelectModule(singleModule.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        isActive
-                          ? 'bg-[#008972] text-white shadow-xs ring-1 ring-[#00C6A6]/40'
-                          : 'text-slate-300 hover:text-white hover:bg-slate-900'
-                      }`}
-                    >
-                      <span>{sec.label}</span>
-                      {sec.fullLabel && sec.label && sec.fullLabel !== sec.label && (
-                        <span className="hidden 2xl:inline">
-                          {(sec.fullLabel || '').replace(sec.label || '', '')}
-                        </span>
-                      )}
-                    </button>
-                  );
-                }
-
+          return (
+            <div className="bg-white border-b border-slate-200/80 px-4 sm:px-6 py-2.5 flex items-center space-x-1.5 overflow-x-auto scrollbar-none shrink-0 w-full select-none shadow-2xs">
+              {permittedSubTabs.map((st) => {
+                const SubIcon = st.icon || Layers;
+                const isTabActive = activeSubTab === st.id;
                 return (
-                  <div key={sec.id} className="relative">
-                    <button
-                      id={`top-nav-${sec.id}`}
-                      onClick={() => handleSelectTopSection(sec)}
-                      onMouseEnter={() => setOpenDropdown(sec.id)}
-                      className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none ${
-                        isCurrentActiveSection
-                          ? 'bg-[#008972] text-white shadow-xs ring-1 ring-[#00C6A6]/40'
-                          : 'text-slate-300 hover:text-white hover:bg-slate-900'
-                      }`}
-                    >
-                      <span>{sec.label}</span>
-                      {sec.fullLabel && sec.label && sec.fullLabel !== sec.label && (
-                        <span className="hidden 2xl:inline">
-                          {(sec.fullLabel || '').replace(sec.label || '', '')}
-                        </span>
-                      )}
-                      <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${isDropdownOpen ? 'rotate-180 text-white' : ''}`} />
-                    </button>
-
-                    {/* Mega Dropdown Menu - Anchored & Clamped */}
-                    {isDropdownOpen && (
-                      <div 
-                        className={`absolute ${isRightAligned ? 'right-0' : 'left-0'} top-full pt-1.5 z-50`}
-                        onMouseEnter={() => setOpenDropdown(sec.id)}
-                        onMouseLeave={() => setOpenDropdown(null)}
-                      >
-                        <div className="w-80 sm:w-84 max-w-[90vw] bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl p-2.5 animate-in fade-in slide-in-from-top-2 duration-150 ring-1 ring-slate-800">
-                          <div className="px-3 py-2 border-b border-slate-800/80 mb-1.5">
-                            <p className="text-[11px] font-extrabold uppercase tracking-wider text-[#00E5C0] flex items-center space-x-1.5">
-                              <TopIcon className="w-3.5 h-3.5" />
-                              <span>{sec.fullLabel || sec.label}</span>
-                            </p>
-                            <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
-                              {sec.description}
-                            </p>
-                          </div>
-
-                          <div className="space-y-1 max-h-[65vh] overflow-y-auto scrollbar-thin">
-                            {sec.modules.map((mod) => {
-                              const ModIcon = mod.icon;
-                              const isModActive = currentModuleConfig.id === mod.id;
-
-                              return (
-                                <button
-                                  key={mod.id}
-                                  id={`dropdown-mod-${mod.id}`}
-                                  onClick={() => handleSelectModule(mod.id)}
-                                  className={`w-full text-left p-2.5 rounded-xl transition-all flex items-start space-x-3 cursor-pointer group ${
-                                    isModActive
-                                      ? 'bg-[#008972] text-white shadow-sm'
-                                      : 'hover:bg-slate-900 text-slate-300 hover:text-white'
-                                  }`}
-                                >
-                                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                                    isModActive
-                                      ? 'bg-white/20 text-white'
-                                      : 'bg-slate-900 text-slate-400 group-hover:text-[#00E5C0] group-hover:bg-slate-800'
-                                  }`}>
-                                    <ModIcon className="w-4 h-4" />
-                                  </div>
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-xs font-bold truncate">
-                                        {mod.label}
-                                      </span>
-                                      {mod.alertCount && mod.alertCount > 0 ? (
-                                        <span className="text-[10px] font-extrabold px-1.5 py-0.2 bg-rose-500 text-white rounded-full shrink-0">
-                                          {mod.alertCount}
-                                        </span>
-                                      ) : mod.badge ? (
-                                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium shrink-0 ${
-                                          isModActive ? 'bg-white/20 text-white' : 'bg-slate-900 text-slate-400'
-                                        }`}>
-                                          {mod.badge}
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                    <p className={`text-[10px] line-clamp-1 mt-0.5 ${
-                                      isModActive ? 'text-emerald-100' : 'text-slate-500 group-hover:text-slate-400'
-                                    }`}>
-                                      {mod.shortLabel}
-                                    </p>
-                                  </div>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <button
+                    key={st.id}
+                    id={`cms-subtab-${st.id}`}
+                    onClick={() => setActiveSubTab(st.id)}
+                    className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                      isTabActive
+                        ? 'bg-[#00C6A6]/15 text-[#008972] border border-[#00C6A6]/40 shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                    }`}
+                  >
+                    <SubIcon className={`w-3.5 h-3.5 ${isTabActive ? 'text-[#008972]' : 'text-slate-400'}`} />
+                    <span>{st.label}</span>
+                  </button>
                 );
               })}
-            </nav>
-
-            {/* RIGHT: GLOBAL TOOLS & UTILITIES */}
-            <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
-              
-              {/* Active Users Count (B2B + Buyer Portal) */}
-              <div
-                id="cms-active-users-count"
-                onClick={() => handleNavigate('ACCOUNT_MANAGEMENT', 'USERS_ACCESS')}
-                className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-[#00C6A6]/40 rounded-xl text-xs font-semibold transition-all cursor-pointer select-none shrink-0"
-                title={`Active Users: B2B: ${activePortalStats.b2b} · Buyer: ${activePortalStats.buyer} (Total: ${activePortalStats.total}). Click to manage.`}
-              >
-                {/* Live pulsing indicator */}
-                <span className="relative flex h-2 w-2 shrink-0">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-
-                <span className="text-emerald-400 font-bold whitespace-nowrap text-xs">
-                  B2B:{activePortalStats.b2b}
-                </span>
-                <span className="text-slate-600 text-xs">·</span>
-                <span className="text-slate-300 font-bold whitespace-nowrap text-xs">
-                  Buyer:{activePortalStats.buyer}
-                </span>
-              </div>
-
-              {/* Canonical Home Link */}
-              <button
-                onClick={() => navigateTo('/')}
-                className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-[#00C6A6]/40 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition-all cursor-pointer group shrink-0"
-                title="Return to TheUnbound Canonical Home Page (/)"
-              >
-                <Globe2 className="w-3.5 h-3.5 text-[#00E5C0]" />
-                <span className="hidden md:inline text-xs font-semibold">Home</span>
-              </button>
-
-              {/* Quick Search Button */}
-              <button
-                onClick={() => setIsSearchOpen(true)}
-                className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition-all cursor-pointer group shrink-0"
-                title="Search Operations Engine (⌘K)"
-              >
-                <Search className="w-3.5 h-3.5 text-slate-400 group-hover:text-[#00C6A6]" />
-                <span className="hidden xl:inline text-xs font-semibold">Search</span>
-                <kbd className="hidden 2xl:inline-block text-[10px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800 font-mono">⌘K</kbd>
-              </button>
-
-              {/* Action Center Drawer Trigger */}
-              <button
-                type="button"
-                onClick={() => setIsActionCenterDrawerOpen(true)}
-                className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition-all cursor-pointer group shrink-0"
-                title="Action Center (Tasks & Live Record Reminders)"
-              >
-                <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                <span className="hidden sm:inline text-xs font-semibold">Action Center</span>
-              </button>
-
-              {/* Real-time Notifications & SLA Dropdown */}
-              <div className="shrink-0">
-                <CMSNotificationsDropdown onNavigate={handleNavigate} currentUser={currentUser} />
-              </div>
-
-              {/* Fullscreen Toggle */}
-              <button
-                onClick={toggleFullscreen}
-                className="hidden lg:flex p-1.5 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
-                title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen Workspace'}
-              >
-                {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-              </button>
-
-              {/* User Account Menu */}
-              <div className="relative shrink-0" ref={userMenuRef}>
-                <button
-                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                  className="flex items-center space-x-1.5 p-1 sm:px-2 sm:py-1 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 transition-colors cursor-pointer"
-                >
-                  <div className="w-6 h-6 rounded-lg bg-gradient-to-tr from-[#00C6A6] to-[#00E5C0] text-slate-950 font-black text-xs flex items-center justify-center shrink-0">
-                    {currentUser.name.charAt(0)}
-                  </div>
-                  <span className="text-xs font-semibold text-white leading-none hidden 2xl:inline truncate max-w-[90px]">
-                    {currentUser.name.split(' ')[0]}
-                  </span>
-                  <ChevronDown className="w-3 h-3 text-slate-400" />
-                </button>
-
-                {/* User Dropdown */}
-                {isUserMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-64 bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl p-2 z-50 animate-in fade-in duration-150 ring-1 ring-slate-800">
-                    <div className="p-3 border-b border-slate-800">
-                      <p className="text-xs font-bold text-white">{currentUser.name}</p>
-                      <p className="text-xs text-slate-400 truncate">{currentUser.email}</p>
-                      <div className="flex items-center space-x-2 mt-2">
-                        <span className="px-2 py-0.5 bg-emerald-950/80 border border-emerald-800 text-emerald-300 rounded text-[10px] font-bold">
-                          {currentUser.role}
-                        </span>
-                        <span className="text-[10px] text-slate-400">
-                          {currentUser.agencyName}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="py-1 space-y-0.5">
-                      <button
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          handleNavigate('PAGE_MANAGEMENT', 'NAVIGATION_MENU');
-                        }}
-                        className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-900 rounded-lg flex items-center space-x-2 cursor-pointer"
-                      >
-                        <Menu className="w-3.5 h-3.5 text-[#00C6A6]" />
-                        <span>Menu & Custom Pages</span>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          handleNavigate('ACCOUNT_MANAGEMENT', 'USERS_ACCESS');
-                        }}
-                        className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-900 rounded-lg flex items-center space-x-2 cursor-pointer"
-                      >
-                        <UserCheck className="w-3.5 h-3.5 text-[#00C6A6]" />
-                        <span>User Access & RBAC</span>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          handleNavigate('INTEGRATIONS_DB', 'FIRESTORE_DIAGNOSTICS');
-                        }}
-                        className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-900 rounded-lg flex items-center space-x-2 cursor-pointer"
-                      >
-                        <Activity className="w-3.5 h-3.5 text-[#00C6A6]" />
-                        <span>Firestore Diagnostics</span>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          navigateTo('/');
-                        }}
-                        className="w-full text-left px-3 py-2 text-xs font-semibold text-[#00E5C0] hover:text-[#00C6A6] hover:bg-emerald-950/30 rounded-lg flex items-center space-x-2 cursor-pointer"
-                      >
-                        <Globe2 className="w-3.5 h-3.5 text-[#00E5C0]" />
-                        <span>Home Page (/)</span>
-                      </button>
-
-                      <div className="pt-1 border-t border-slate-800/80 mt-1">
-                        <button
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            authLogout();
-                          }}
-                          className="w-full text-left px-3 py-2 text-xs font-semibold text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 rounded-lg flex items-center space-x-2 cursor-pointer transition-colors"
-                        >
-                          <LogOut className="w-3.5 h-3.5 text-rose-400" />
-                          <span>Sign Out</span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
             </div>
-          </div>
-        </div>
+          );
+        })()}
 
-        {/* ROW 2: MODULE CONTEXT, BREADCRUMBS & SUB-TABS SELECTOR */}
-        <div className="bg-slate-950/95 border-t border-slate-800/80 py-2 sm:py-2.5 px-2.5 sm:px-4 lg:px-6 text-white shrink-0">
-          <div className="w-full flex flex-col md:flex-row md:items-center justify-between gap-2.5 sm:gap-3">
-            
-            {/* Breadcrumbs & Active Module Title */}
-            <div className="flex items-center space-x-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center text-[#00E5C0] shrink-0">
-                <currentModuleConfig.icon className="w-4 h-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center space-x-1.5 text-[11px] text-slate-400 font-medium leading-none mb-0.5">
-                  <button
-                    onClick={() => handleNavigate('DASHBOARD', 'OVERVIEW')}
-                    className="hover:text-white transition-colors cursor-pointer"
-                  >
-                    Overview
-                  </button>
-                  <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
-                  <span className="text-slate-300 font-medium truncate max-w-[140px]">{currentTopSection.label}</span>
-                  <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
-                  <span className="text-[#00E5C0] font-semibold truncate max-w-[180px]">{currentModuleConfig.label}</span>
-                </div>
-                <h1 className="text-sm sm:text-base font-bold text-white truncate leading-tight">
-                  {currentModuleConfig.label}
-                </h1>
-              </div>
-            </div>
-
-            {/* Sub-Tabs Selector */}
-            {(() => {
-              const permittedSubTabs = (currentModuleConfig.subTabs || []).filter(st => 
-                canUserAccessCMSSubTab(currentUser, currentModuleConfig.id, st.id)
-              );
-              if (permittedSubTabs.length === 0) return null;
-
-              return (
-                <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none shrink-0 max-w-full">
-                  {permittedSubTabs.map((st) => {
-                    const SubIcon = st.icon || Layers;
-                    const isTabActive = activeSubTab === st.id;
-                    return (
-                      <button
-                        key={st.id}
-                        id={`cms-subtab-${st.id}`}
-                        onClick={() => setActiveSubTab(st.id)}
-                        className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                          isTabActive
-                            ? 'bg-[#008972] text-white shadow-xs ring-1 ring-[#00C6A6]/40'
-                            : 'bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 hover:text-white'
-                        }`}
-                      >
-                        <SubIcon className={`w-3.5 h-3.5 ${isTabActive ? 'text-white' : 'text-slate-400'}`} />
-                        <span>{st.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })()}
-          </div>
-        </div>
-
-        {/* MOBILE NAVIGATION DRAWER */}
-        {isMobileMenuOpen && (
-          <div className="lg:hidden bg-slate-950 border-t border-slate-800 p-3.5 sm:p-4 max-h-[calc(100dvh-120px)] overflow-y-auto modal-body-scroll space-y-4 pb-safe shadow-2xl">
-            <div className="space-y-4">
-              {accessibleTopSections.map((sec) => (
-                <div key={sec.id} className="space-y-1.5">
-                  <div className="text-[10px] font-extrabold uppercase tracking-wider text-[#00E5C0] px-2">
-                    {sec.fullLabel || sec.label}
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                    {sec.modules.map((mod) => {
-                      const ModIcon = mod.icon;
-                      const isActive = currentModuleConfig.id === mod.id;
-                      return (
-                        <button
-                          key={mod.id}
-                          onClick={() => handleSelectModule(mod.id)}
-                          className={`w-full text-left p-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                            isActive
-                              ? 'bg-[#008972] text-white shadow-sm'
-                              : 'bg-slate-900 text-slate-300 hover:bg-slate-850 hover:text-white'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-2 min-w-0">
-                            <ModIcon className="w-4 h-4 shrink-0" />
-                            <span className="truncate">{mod.label}</span>
-                          </div>
-                          {mod.alertCount && mod.alertCount > 0 ? (
-                            <span className="text-[10px] font-extrabold px-1.5 py-0.2 bg-rose-500 text-white rounded-full shrink-0">
-                              {mod.alertCount}
-                            </span>
-                          ) : mod.badge ? (
-                            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-950/80 text-slate-400 shrink-0">
-                              {mod.badge}
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </header>
-
-      {/* ========================================================================= */}
-      {/* MAIN FULL-SCREEN WORKSPACE CONTENT */}
-      {/* ========================================================================= */}
-      <main className="flex-1 w-full min-w-0 max-w-full bg-slate-100 text-slate-900 p-3 sm:p-6 lg:p-8 space-y-6">
+        {/* MAIN FULL-SCREEN WORKSPACE CONTENT */}
+        <main className="flex-1 w-full min-w-0 max-w-full bg-[#F8FAFB] text-slate-900 p-3 sm:p-6 lg:p-8 space-y-6">
         
         {/* Urgent Action Center & Global Reminders Bar */}
         <div className="rounded-2xl overflow-hidden border border-slate-200/90 shadow-xs">
@@ -1637,6 +1263,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
         </div>
         )}
       </main>
+      </div>
 
       {/* Global Action Center Drawer */}
       <ActionCenterDrawer

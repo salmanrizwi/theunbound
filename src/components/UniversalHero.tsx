@@ -158,8 +158,6 @@ export const UniversalHero: React.FC<UniversalHeroProps> = ({
   const handleSecondaryCtaClick = () => {
     if (ctas.secondaryCtaAction === 'CUSTOM' && ctas.secondaryCtaLink) {
       navigateTo(ctas.secondaryCtaLink);
-    } else if (ctas.secondaryCtaAction === 'AI_PLANNER') {
-      navigateTo('/b2b/ai-planner');
     } else {
       navigateTo('/b2b/quote-builder');
     }

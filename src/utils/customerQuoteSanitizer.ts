@@ -350,7 +350,7 @@ const BANNED_COMMERCIAL_TERMS = [
 ];
 
 export function verifyNoCommercialLeak(message: string): { isSafe: boolean; detectedTerms: string[] } {
-  const lower = message.toLowerCase();
+  const lower = (message || '').toLowerCase();
   const detectedTerms: string[] = [];
 
   BANNED_COMMERCIAL_TERMS.forEach(term => {

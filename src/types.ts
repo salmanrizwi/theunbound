@@ -241,14 +241,9 @@ export interface SupplierPermissions {
 }
 
 export interface UserPermissionAccess {
-  // Quote Builder & AI Planner Access
+  // Quote Builder Access
   b2bQuoteBuilderAccess?: boolean;
   buyerQuoteBuilderAccess?: boolean;
-  chatbotAccess?: boolean; // Controls whether B2B Agent has permission to access AI Travel Chatbot
-  b2bChatbotAccess?: boolean; // Alias for B2B Chatbot permission
-  aiPlannerAccess?: boolean; // Controls whether user has explicit access to AI Planner in B2B Agent Portal
-  aiPlannerGrantedBy?: string;
-  aiPlannerGrantedAt?: string;
   canAccessPricingCalculator?: boolean; // backwards-compatible alias
   canCreateBookings?: boolean;
   canExportPDF?: boolean;
@@ -3694,13 +3689,18 @@ export interface DynamicPricingRecord {
 // EXTENDED GOOGLE SHEETS SYNC REPORT & MULTI-TAB ARCHITECTURE
 // ----------------------------------------------------
 export type MasterSheetTabName =
+  | 'INSTRUCTIONS'
+  | 'MASTER_DATA'
+  | 'PRODUCTS'
+  | 'HOTELS'
+  | 'VISA_ANCILLARY'
+  | 'RAIL'
+  | 'PACKAGES'
   | 'REGIONS'
   | 'DESTINATIONS'
   | 'HUBS'
-  | 'PRODUCTS'
   | 'PRODUCT_PRICING'
   | 'PRODUCT_CAPACITY'
-  | 'HOTELS'
   | 'HOTEL_ROOMS'
   | 'HOTEL_MEAL_PLANS'
   | 'HOTEL_RATES'
@@ -3711,7 +3711,6 @@ export type MasterSheetTabName =
   | 'CONNECTIVITY'
   | 'TRANSFER_ROUTES'
   | 'TRANSFER_RATES'
-  | 'PACKAGES'
   | 'PACKAGE_ITEMS'
   | 'FX_RATES'
   | 'RAIL_STATIONS'
@@ -3719,6 +3718,35 @@ export type MasterSheetTabName =
   | 'RAIL_ROUTES'
   | 'RAIL_FARES'
   | 'RAIL_CLASS_RULES';
+
+export type DynamicModulePresetId = 
+  | 'all_canonical' 
+  | 'products_catalog' 
+  | 'hotels_allotments' 
+  | 'visa_ancillaries' 
+  | 'japan_rail_dynamic';
+
+export interface DynamicWorkbookInspectionReport {
+  presetId: DynamicModulePresetId;
+  presetName: string;
+  schemaVersion: string;
+  isValid: boolean;
+  requiredTabs: string[];
+  foundTabs: string[];
+  missingTabs: string[];
+  unexpectedTabs: string[];
+  matchedSchemas: {
+    schemaId: string;
+    canonicalTabName: string;
+    matchedSheetName: string;
+    totalRows: number;
+    discoveredColumns: string[];
+    missingRequiredColumns: string[];
+    unexpectedColumns: string[];
+    status: 'READY' | 'WARNING' | 'BLOCKED';
+  }[];
+  errorMessage?: string;
+}
 
 export interface SheetValidationError {
   tabName: MasterSheetTabName | string;
@@ -3787,7 +3815,9 @@ export interface MultiTabSyncReport {
   userEmail: string;
   sheetId: string;
   sheetName?: string;
-  syncMode: 'FULL_SYNC' | 'SELECTED_TABS' | 'INCREMENTAL';
+  presetId?: DynamicModulePresetId;
+  presetName?: string;
+  syncMode: 'FULL_SYNC' | 'SELECTED_TABS' | 'INCREMENTAL' | 'PRESET_SYNC';
   tabsProcessed: string[];
   durationMs: number;
   status: 'SUCCESS' | 'COMPLETED_WITH_ERRORS' | 'FAILED';
@@ -6310,7 +6340,6 @@ export interface B2BTask {
 export type B2BTabType = 
   | 'home'
   | 'dashboard' 
-  | 'ai-planner'
   | 'create-quote' 
   | 'packages' 
   | 'products' 
@@ -6753,120 +6782,6 @@ export interface CommunicationAuditLog {
   sentByName?: string;
   deliveryStatus: 'SUCCESS' | 'DELIVERED' | 'FAILED' | 'PENDING';
   failureReason?: string;
-}
-
-// =========================================================================
-// THEUNBOUND GEMINI AI TRAVEL CHATBOT TYPES
-// =========================================================================
-
-export type ChatbotIntent = 
-  | 'GENERAL_TRAVEL_QUESTION'
-  | 'DESTINATION_SEARCH'
-  | 'HOTEL_SEARCH'
-  | 'PRODUCT_SEARCH'
-  | 'ACTIVITY_SEARCH'
-  | 'TRANSFER_SEARCH'
-  | 'VISA_SEARCH'
-  | 'PACKAGE_SEARCH'
-  | 'CREATE_ITINERARY'
-  | 'REFINE_ITINERARY'
-  | 'COMPARE_OPTIONS'
-  | 'PRICE_QUERY'
-  | 'QUOTE_REQUEST'
-  | 'OPEN_QUOTE_BUILDER'
-  | 'SAVE_QUOTE'
-  | 'DOWNLOAD_QUOTE'
-  | 'SHARE_QUOTE'
-  | 'ADD_TO_CART'
-  | 'BOOKING_REQUEST'
-  | 'LEAD_REQUEST'
-  | 'ACCOUNT_HELP';
-
-export interface ChatCardItem {
-  type: 'HOTEL' | 'PRODUCT' | 'DESTINATION' | 'TRANSFER' | 'PACKAGE' | 'BOOKING';
-  id: string;
-  title: string;
-  subtitle?: string;
-  imageUrl?: string;
-  starRating?: number;
-  priceText?: string;
-  badge?: string;
-  hubName?: string;
-  destinationName?: string;
-  metadata?: Record<string, any>;
-}
-
-export interface ChatbotAction {
-  id: string;
-  label: string;
-  actionType: 
-    | 'REFINE' 
-    | 'OPEN_QUOTE_BUILDER' 
-    | 'SAVE_QUOTE' 
-    | 'SHARE_WHATSAPP' 
-    | 'DOWNLOAD_PDF' 
-    | 'TALK_TO_EXPERT' 
-    | 'NEW_TRIP' 
-    | 'CUSTOM_PROMPT' 
-    | 'ADD_TO_CART' 
-    | 'VIEW_DETAIL'
-    | 'VIEW_BOOKING'
-    | 'CHECK_BOOKING_STATUS';
-  payload?: any;
-  variant?: 'primary' | 'secondary' | 'outline' | 'accent';
-}
-
-export interface ChatMessage {
-  messageId: string;
-  sessionId: string;
-  sender: 'USER' | 'ASSISTANT' | 'SYSTEM';
-  messageType: 'TEXT' | 'PLAN' | 'CARD' | 'PROMPT';
-  content: string;
-  createdAt: string;
-  structuredPlan?: AiPlannerResult | null;
-  selectedOptionIndex?: number;
-  cards?: ChatCardItem[];
-  actions?: ChatbotAction[];
-  quickPrompts?: string[];
-  feasibility?: {
-    status: 'PASS' | 'REVIEW_REQUIRED';
-    summary?: string;
-    details?: string[];
-  };
-  authoritativePrice?: {
-    totalSellingPrice: number;
-    currency: CurrencyCode;
-    perPersonPrice?: number;
-    priceLabel: string;
-  };
-  citations?: string[];
-  toolCalls?: Array<{
-    name: string;
-    arguments: Record<string, any>;
-    status: 'SUCCESS' | 'FAILED';
-  }>;
-}
-
-export interface ChatSession {
-  sessionId: string;
-  userId: string;
-  userName?: string;
-  userEmail?: string;
-  role: string;
-  portal: 'BUYER' | 'B2B_AGENT' | 'ADMIN';
-  title: string;
-  status: 'ACTIVE' | 'ARCHIVED';
-  createdAt: string;
-  updatedAt: string;
-  lastMessageAt: string;
-  destinationIds: string[];
-  destinationName?: string;
-  quoteId?: string | null;
-  leadId?: string | null;
-  plannerId?: string | null;
-  currentPlan?: AiPlannerResult | null;
-  tripState?: Partial<AiPlannerStructuredRequirements> | null;
-  messagesCount?: number;
 }
 
 

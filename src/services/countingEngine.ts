@@ -104,10 +104,10 @@ export class GlobalCountingEngine {
       const region = this.resolveMasterRegion(filter.masterRegionId);
       if (region) {
         const dest = this.db.getDestinations().find(d => 
-          (d.id && product.destinationId && d.id.toLowerCase() === product.destinationId.toLowerCase()) ||
-          (d.slug && product.destinationId && d.slug.toLowerCase() === product.destinationId.toLowerCase()) ||
-          (d.name && product.country && d.name.toLowerCase() === product.country.toLowerCase()) ||
-          (d.name && product.destinationName && d.name.toLowerCase() === product.destinationName.toLowerCase())
+          (Boolean(d.id && product.destinationId && String(d.id).toLowerCase() === String(product.destinationId).toLowerCase())) ||
+          (Boolean(d.slug && product.destinationId && String(d.slug).toLowerCase() === String(product.destinationId).toLowerCase())) ||
+          (Boolean(d.name && product.country && String(d.name).toLowerCase() === String(product.country).toLowerCase())) ||
+          (Boolean(d.name && product.destinationName && String(d.name).toLowerCase() === String(product.destinationName).toLowerCase()))
         );
         const destRegionId = dest?.regionId || (dest as any)?.masterRegionId;
         if (!dest || destRegionId !== region.id) return false;
@@ -195,10 +195,10 @@ export class GlobalCountingEngine {
       const region = this.resolveMasterRegion(filter.masterRegionId);
       if (region) {
         const dest = this.db.getDestinations().find(d => 
-          (d.id && hotel.destinationId && d.id.toLowerCase() === hotel.destinationId.toLowerCase()) ||
-          (d.slug && hotel.destinationId && d.slug.toLowerCase() === hotel.destinationId.toLowerCase()) ||
-          (d.name && hotel.country && d.name.toLowerCase() === hotel.country.toLowerCase()) ||
-          (d.name && hotel.destinationName && d.name.toLowerCase() === hotel.destinationName.toLowerCase())
+          (Boolean(d.id && hotel.destinationId && String(d.id).toLowerCase() === String(hotel.destinationId).toLowerCase())) ||
+          (Boolean(d.slug && hotel.destinationId && String(d.slug).toLowerCase() === String(hotel.destinationId).toLowerCase())) ||
+          (Boolean(d.name && hotel.country && String(d.name).toLowerCase() === String(hotel.country).toLowerCase())) ||
+          (Boolean(d.name && hotel.destinationName && String(d.name).toLowerCase() === String(hotel.destinationName).toLowerCase()))
         );
         const destRegionId = dest?.regionId || (dest as any)?.masterRegionId;
         if (!dest || destRegionId !== region.id) return false;
@@ -434,6 +434,13 @@ export class GlobalCountingEngine {
       destinations: destinations.length,
       regions
     };
+  }
+
+  /**
+   * Recalculates and flushes all counts across the system
+   */
+  public recalculateAllCounts(): InventoryCountsBreakdown {
+    return this.getCountsBreakdown({});
   }
 
   /**
