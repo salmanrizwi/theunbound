@@ -231,57 +231,85 @@ export interface DeliveredPriceInfo {
   unitVehicleNetCost?: number;
 }
 
+export interface B2BPriceInput {
+  nettCost: number;
+  marginPercent?: number;
+  taxPercent?: number;
+  serviceFeePercent?: number;
+  currency?: CurrencyCode;
+}
+
+export interface B2BPriceResult {
+  nettCost: number;
+  marginPercent: number;
+  marginAmount: number;
+  taxPercent: number;
+  taxAmount: number;
+  subtotal: number;
+  serviceFeePercent: number;
+  serviceFeeAmount: number;
+  price: number;
+  currency: CurrencyCode;
+  pricingVersion: string;
+}
+
+/**
+ * Single Authoritative B2B Agent Price Calculator
+ * Formula:
+ * 1. Margin Amount = Nett Cost × B2B Margin %
+ * 2. Tax Amount = Margin Amount × Tax % (Tax strictly on Margin)
+ * 3. Subtotal = Nett Cost + Margin Amount + Tax Amount
+ * 4. Service Fee Amount = Subtotal × Service Fee % (Service Fee on Subtotal)
+ * 5. Price = Subtotal + Service Fee Amount
+ */
+export function calculateB2BAgentPrice(input: B2BPriceInput): B2BPriceResult {
+  const nettCost = Math.max(0, input.nettCost || 0);
+  const marginPercent = input.marginPercent !== undefined ? input.marginPercent : 0;
+  const taxPercent = input.taxPercent !== undefined ? input.taxPercent : 0;
+  const serviceFeePercent = input.serviceFeePercent !== undefined ? input.serviceFeePercent : 0;
+
+  const marginAmount = nettCost * (marginPercent / 100);
+  const taxAmount = marginAmount * (taxPercent / 100);
+  const subtotal = nettCost + marginAmount + taxAmount;
+  const serviceFeeAmount = subtotal * (serviceFeePercent / 100);
+  const price = Math.round((subtotal + serviceFeeAmount) * 100) / 100;
+
+  return {
+    nettCost,
+    marginPercent,
+    marginAmount,
+    taxPercent,
+    taxAmount,
+    subtotal,
+    serviceFeePercent,
+    serviceFeeAmount,
+    price,
+    currency: input.currency || 'USD',
+    pricingVersion: 'v2.0-b2b-canonical'
+  };
+}
+
 /**
  * Calculates the exact Delivered Selling Price for a product based on:
- * 1. Product adult/child/infant nett costs in Base Currency
- * 2. User role & segregation (Buyer vs B2B Agent vs Admin)
- * 3. User custom margin overrides (if configured in Account Management)
- * 4. Product-level default markups (Buyer Markup % vs B2B Agent Markup %)
- * 5. Logged-out users strictly receive the Buyer pricing tier
+ * Single commercial customer price: B2B Agent Price
  */
 export function calculateDeliveredPriceForUser(
   product: Product,
   user: User | null,
   targetCurrency: CurrencyCode = 'USD'
 ): DeliveredPriceInfo {
-  const role: UserRole = user?.role || 'BUYER';
-  const isAgent = role === 'B2B_AGENT' || role === 'AGENT';
+  const role: UserRole = user?.role || 'B2B_AGENT';
   const isAdmin = role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF';
+  const userTier: 'BUYER' | 'B2B_AGENT' | 'ADMIN' = isAdmin ? 'ADMIN' : 'B2B_AGENT';
 
-  let userTier: 'BUYER' | 'B2B_AGENT' | 'ADMIN' = 'BUYER';
-  let appliedMarkupPercent = product.buyerMarkupPercent !== undefined 
-    ? product.buyerMarkupPercent 
-    : (product.defaultMarkupPercent !== undefined ? product.defaultMarkupPercent : 30);
+  let appliedMarkupPercent = product.b2bAgentMarkupPercent !== undefined 
+    ? product.b2bAgentMarkupPercent 
+    : (product.defaultMarkupPercent !== undefined ? product.defaultMarkupPercent : 20);
   let isCustomMargin = false;
 
-  if (isAdmin) {
-    userTier = 'ADMIN';
-    appliedMarkupPercent = product.b2bAgentMarkupPercent !== undefined ? product.b2bAgentMarkupPercent : 20;
-    if (user?.customAgentMarginPercent !== undefined) {
-      appliedMarkupPercent = user.customAgentMarginPercent;
-      isCustomMargin = true;
-    }
-  } else if (isAgent) {
-    userTier = 'B2B_AGENT';
-    // Default B2B Agent markup from product, else fallback 20%
-    appliedMarkupPercent = product.b2bAgentMarkupPercent !== undefined ? product.b2bAgentMarkupPercent : 20;
-    // Check if specific B2B Agent has a custom margin override
-    if (user?.customAgentMarginPercent !== undefined) {
-      appliedMarkupPercent = user.customAgentMarginPercent;
-      isCustomMargin = true;
-    }
-  } else {
-    // BUYER tier (or logged-out user)
-    userTier = 'BUYER';
-    // Default Buyer markup from product, else fallback 30%
-    appliedMarkupPercent = product.buyerMarkupPercent !== undefined 
-      ? product.buyerMarkupPercent 
-      : (product.defaultMarkupPercent !== undefined ? product.defaultMarkupPercent : 30);
-    // Check if specific Buyer has a custom margin override
-    if (user?.customBuyerMarginPercent !== undefined) {
-      appliedMarkupPercent = user.customBuyerMarginPercent;
-      isCustomMargin = true;
-    }
+  if (user?.customAgentMarginPercent !== undefined) {
+    appliedMarkupPercent = user.customAgentMarginPercent;
+    isCustomMargin = true;
   }
 
   const isCapacity = isCapacityBasedProduct(product);
@@ -306,9 +334,7 @@ export function calculateDeliveredPriceForUser(
                              7;
     const vehicleModel = product.vehicleConfig?.vehicleModel || product.vehicleConfig?.vehicleName || product.name;
 
-    const tierMargin = isAgent
-      ? ((firstTier as any)?.b2bMargin ?? firstTier?.marginValue ?? appliedMarkupPercent)
-      : ((firstTier as any)?.buyerMargin ?? firstTier?.marginValue ?? appliedMarkupPercent);
+    const tierMargin = (firstTier as any)?.b2bMargin ?? firstTier?.marginValue ?? appliedMarkupPercent;
     const tierTax = firstTier?.taxValue ?? product.taxPercent ?? 10;
     const tierSvcValue = firstTier?.serviceChargeValue ?? (product as any).serviceFeePercent ?? (product as any).serviceFeeFixed ?? 0;
     const tierSvcType = firstTier?.serviceChargeType ?? ((product as any).serviceFeePercent !== undefined ? 'PERCENTAGE' : 'FIXED');

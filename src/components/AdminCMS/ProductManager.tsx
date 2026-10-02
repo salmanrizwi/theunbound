@@ -19,7 +19,7 @@ import { ModuleMasterSyncBar } from './common/ModuleMasterSyncBar';
 import { AppDatabase } from '../../services/db';
 import { MasterDataService } from '../../services/masterDataService';
 import { useAuth } from '../../context/AuthContext';
-import { formatCurrency, CAPACITY_BASED_CATEGORIES } from '../../services/pricingEngine';
+import { formatCurrency, CAPACITY_BASED_CATEGORIES, calculateB2BAgentPrice } from '../../services/pricingEngine';
 import { 
   Package, 
   Plus, 
@@ -353,11 +353,20 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     const adultNet = isCapacityBased ? vehicleNet : (Number(formData.adultNetPrice) || 0);
     const childNet = isCapacityBased ? 0 : (Number(formData.childNetPrice) || 0);
     const infantNet = isCapacityBased ? 0 : (Number(formData.infantNetPrice) || 0);
-    const buyerMarkup = Number(formData.buyerMarkupPercent) || Number(formData.defaultMarkupPercent) || 0;
-    const b2bAgentMarkup = Number(formData.b2bAgentMarkupPercent) || 0;
+    const marginPercent = Number(formData.b2bAgentMarkupPercent) !== undefined && !isNaN(Number(formData.b2bAgentMarkupPercent))
+      ? Number(formData.b2bAgentMarkupPercent)
+      : (Number(formData.defaultMarkupPercent) || 0);
     const tax = Number(formData.taxPercent) || 0;
     const fee = Number(formData.serviceFeeFixed) || 0;
-    const computedSelling = calculateSellingPrice(adultNet, buyerMarkup, tax, fee);
+    
+    const b2bCalc = calculateB2BAgentPrice({
+      nettCost: adultNet,
+      marginPercent,
+      taxPercent: tax,
+      serviceFeePercent: fee,
+      currency: (formData.currency as CurrencyCode) || 'USD'
+    });
+    const computedSelling = b2bCalc.price;
 
     // Canonical Hierarchy Validation
     const masterData = MasterDataService.getInstance();
@@ -426,9 +435,9 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       infantNettCost: infantNet,
       currency: (formData.currency as CurrencyCode) || (formData.nativeCurrency as CurrencyCode) || 'USD',
       nativeCurrency: (formData.nativeCurrency as CurrencyCode) || (formData.currency as CurrencyCode) || 'USD',
-      defaultMarkupPercent: buyerMarkup,
-      buyerMarkupPercent: buyerMarkup,
-      b2bAgentMarkupPercent: b2bAgentMarkup,
+      defaultMarkupPercent: marginPercent,
+      buyerMarkupPercent: undefined,
+      b2bAgentMarkupPercent: marginPercent,
       taxPercent: tax,
       commissionPercent: Number(formData.commissionPercent) || 0,
       serviceFeeFixed: fee,
@@ -2114,35 +2123,20 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   </div>
                 )}
 
-                {/* Commercial Markups, Margins, Taxes (Section 12, 13, 14: Empty-First) */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-800 pt-2 border-t border-slate-800">
+                {/* Commercial Pricing Inputs (Single B2B Agent Price Model) */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-800 pt-2 border-t border-slate-800">
                   <div className="space-y-1">
-                    <label className="text-[11px] text-emerald-400 font-medium">Buyer Markup %</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={formData.buyerMarkupPercent !== undefined ? formData.buyerMarkupPercent : ''}
-                      onChange={e => {
-                        const val = e.target.value === '' ? undefined : Number(e.target.value);
-                        setFormData({ ...formData, buyerMarkupPercent: val, defaultMarkupPercent: val });
-                      }}
-                      className="w-full p-2 bg-white rounded-lg font-semibold text-slate-900"
-                      placeholder="e.g. 30"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[11px] text-cyan-400 font-medium">B2B Agent Markup %</label>
+                    <label className="text-[11px] text-[#00E5C0] font-medium">B2B Margin %</label>
                     <input
                       type="number"
                       min="0"
                       value={formData.b2bAgentMarkupPercent !== undefined ? formData.b2bAgentMarkupPercent : ''}
                       onChange={e => {
                         const val = e.target.value === '' ? undefined : Number(e.target.value);
-                        setFormData({ ...formData, b2bAgentMarkupPercent: val });
+                        setFormData({ ...formData, b2bAgentMarkupPercent: val, defaultMarkupPercent: val });
                       }}
                       className="w-full p-2 bg-white rounded-lg font-semibold text-slate-900"
-                      placeholder="e.g. 20"
+                      placeholder="e.g. 50"
                     />
                   </div>
 
@@ -2157,12 +2151,12 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                         setFormData({ ...formData, taxPercent: val });
                       }}
                       className="w-full p-2 bg-white rounded-lg text-slate-900"
-                      placeholder="e.g. 10"
+                      placeholder="e.g. 18"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] text-slate-300 font-medium">Fixed Service Fee</label>
+                    <label className="text-[11px] text-slate-300 font-medium">Service Fee %</label>
                     <input
                       type="number"
                       min="0"
@@ -2172,62 +2166,72 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                         setFormData({ ...formData, serviceFeeFixed: val });
                       }}
                       className="w-full p-2 bg-white rounded-lg text-slate-900"
-                      placeholder="e.g. 0"
+                      placeholder="e.g. 3"
                     />
                   </div>
                 </div>
 
-                {/* Dual Live Preview (Section 11: Selling Price Must Never Be Fabricated) */}
+                {/* Commercial Pricing Live Preview & Authoritative Breakdown */}
                 {(() => {
                   const effectiveNet = formData.pricingMethod === 'capacity_based' 
-                    ? (formData.vehicleConfig?.unitVehicleNetCost !== undefined ? formData.vehicleConfig.unitVehicleNetCost : formData.adultNetPrice)
-                    : formData.adultNetPrice;
-                  const buyerRate = calculateSellingPrice(effectiveNet, formData.buyerMarkupPercent, formData.taxPercent, formData.serviceFeeFixed);
-                  const b2bRate = calculateSellingPrice(effectiveNet, formData.b2bAgentMarkupPercent, formData.taxPercent, formData.serviceFeeFixed);
-                  const effectiveSeats = Number(formData.vehicleConfig?.maxSeats) || Number(formData.capacitySnapshot) || Number(formData.yachtCapacitySnapshot) || 0;
+                    ? (formData.vehicleConfig?.unitVehicleNetCost !== undefined ? Number(formData.vehicleConfig.unitVehicleNetCost) : (formData.adultNetPrice !== undefined ? Number(formData.adultNetPrice) : undefined))
+                    : (formData.adultNetPrice !== undefined ? Number(formData.adultNetPrice) : undefined);
+                  
+                  const hasValidNett = effectiveNet !== undefined && !isNaN(effectiveNet) && effectiveNet >= 0;
+                  const marginPct = Number(formData.b2bAgentMarkupPercent) || Number(formData.defaultMarkupPercent) || 0;
+                  const taxPct = Number(formData.taxPercent) || 0;
+                  const feePct = Number(formData.serviceFeeFixed) || 0;
+                  const curr = (formData.currency as CurrencyCode) || 'USD';
+
+                  if (!hasValidNett) {
+                    return (
+                      <div className="pt-3 border-t border-slate-800 bg-slate-950/60 p-3 rounded-xl text-center text-amber-400 font-semibold text-xs italic">
+                        Price unavailable (Enter Nett Cost to calculate Price)
+                      </div>
+                    );
+                  }
+
+                  const b2bRes = calculateB2BAgentPrice({
+                    nettCost: effectiveNet,
+                    marginPercent: marginPct,
+                    taxPercent: taxPct,
+                    serviceFeePercent: feePct,
+                    currency: curr
+                  });
 
                   return (
-                    <div className="pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs border-t border-slate-800 bg-slate-950/60 p-3 rounded-xl">
-                      <div>
-                        <span className="text-slate-400 block text-[10px] uppercase tracking-wider font-semibold">
-                          {formData.pricingMethod === 'capacity_based' ? 'Buyer Vehicle Delivered Rate (1 Vehicle):' : 'Direct Buyer Delivered Rate:'}
-                        </span>
-                        {buyerRate !== null ? (
-                          <>
-                            <span className="text-base font-bold font-mono text-emerald-400">
-                              {formatCurrency(buyerRate, formData.currency || 'USD')}
-                            </span>
-                            <span className="text-[10px] text-slate-500 ml-1.5">
-                              {formData.pricingMethod === 'capacity_based' && effectiveSeats > 0
-                                ? `(Starting at ${formatCurrency(Math.round(buyerRate / effectiveSeats), formData.currency || 'USD')}/pax at full capacity)`
-                                : `(Net + ${formData.buyerMarkupPercent || 0}% markup)`}
-                            </span>
-                          </>
-                        ) : (
-                          <span className="text-xs font-semibold text-amber-400 italic">
-                            Selling price unavailable (Enter Nett Cost & Markups)
+                    <div className="pt-3 border-t border-slate-800 bg-slate-950/80 p-3.5 rounded-xl space-y-2 text-xs">
+                      <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                        <span className="text-slate-400 text-[11px] uppercase tracking-wider font-semibold">Authoritative Price Breakdown:</span>
+                        <div className="text-right">
+                          <span className="text-slate-400 text-[10px] mr-2">Calculated Commercial Price:</span>
+                          <span className="text-base font-bold font-mono text-[#00E5C0]">
+                            {formatCurrency(b2bRes.price, curr)}
                           </span>
-                        )}
+                        </div>
                       </div>
 
-                      <div className="sm:text-right">
-                        <span className="text-slate-400 block text-[10px] uppercase tracking-wider font-semibold">
-                          {formData.pricingMethod === 'capacity_based' ? 'B2B Agent Wholesale Rate (1 Vehicle):' : 'B2B Agent Delivered Rate:'}
-                        </span>
-                        {b2bRate !== null ? (
-                          <>
-                            <span className="text-base font-bold font-mono text-[#00E5C0]">
-                              {formatCurrency(b2bRate, formData.currency || 'USD')}
-                            </span>
-                            <span className="text-[10px] text-slate-500 ml-1.5">
-                              (Net + {formData.b2bAgentMarkupPercent || 0}% markup)
-                            </span>
-                          </>
-                        ) : (
-                          <span className="text-xs font-semibold text-slate-500 italic">
-                            Wholesale rate unavailable
-                          </span>
-                        )}
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px] font-mono text-slate-300">
+                        <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                          <span className="text-slate-500 block text-[9px] uppercase font-sans">Nett Cost</span>
+                          <span className="font-semibold">{formatCurrency(b2bRes.nettCost, curr)}</span>
+                        </div>
+                        <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                          <span className="text-slate-500 block text-[9px] uppercase font-sans">B2B Margin ({b2bRes.marginPercent}%)</span>
+                          <span className="text-emerald-400 font-semibold">+{formatCurrency(b2bRes.marginAmount, curr)}</span>
+                        </div>
+                        <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                          <span className="text-slate-500 block text-[9px] uppercase font-sans">Tax ({b2bRes.taxPercent}%)</span>
+                          <span className="text-cyan-400 font-semibold">+{formatCurrency(b2bRes.taxAmount, curr)}</span>
+                        </div>
+                        <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                          <span className="text-slate-500 block text-[9px] uppercase font-sans">Service Fee ({b2bRes.serviceFeePercent}%)</span>
+                          <span className="text-indigo-400 font-semibold">+{formatCurrency(b2bRes.serviceFeeAmount, curr)}</span>
+                        </div>
+                        <div className="bg-[#00C6A6]/10 p-2 rounded-lg border border-[#00C6A6]/30 col-span-2 sm:col-span-1">
+                          <span className="text-[#00C6A6] block text-[9px] uppercase font-sans font-bold">Price</span>
+                          <span className="text-[#00E5C0] font-bold text-xs">{formatCurrency(b2bRes.price, curr)}</span>
+                        </div>
                       </div>
                     </div>
                   );

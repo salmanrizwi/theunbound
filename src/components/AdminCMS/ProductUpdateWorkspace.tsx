@@ -57,7 +57,7 @@ import { getActiveUpsellsForProduct, resolveProductUpsells } from '../../service
 import { ExistingProductUpsellSelectorModal } from './ExistingProductUpsellSelectorModal';
 import { OperationalAssetSelector, SelectedAssetPayload } from './OperationalAssetSelector';
 import { OperationalAssetsManager } from './OperationalAssetsManager';
-import { calculateUnifiedPrice } from '../../services/pricingEngine';
+import { calculateUnifiedPrice, calculateB2BAgentPrice } from '../../services/pricingEngine';
 
 interface ProductUpdateWorkspaceProps {
   product: Product | null; // null means Create mode
@@ -236,12 +236,22 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     return Math.round(net + markupAmt + taxAmt + (formData.serviceFeeFixed || 0));
   };
 
-  const currentAdultSellingPrice = calculateSellingPrice(
-    formData.pricingMethod === 'capacity_based' 
-      ? (formData.vehicleConfig?.unitVehicleNetCost !== undefined ? formData.vehicleConfig.unitVehicleNetCost : formData.adultNetPrice)
-      : formData.adultNetPrice,
-    formData.buyerMarkupPercent !== undefined ? formData.buyerMarkupPercent : formData.defaultMarkupPercent
-  );
+  // Authoritative B2B Agent Price calculation
+  const effectiveMargin = formData.b2bAgentMarkupPercent !== undefined 
+    ? formData.b2bAgentMarkupPercent 
+    : (formData.defaultMarkupPercent || 0);
+
+  const b2bCalc = calculateB2BAgentPrice({
+    nettCost: formData.pricingMethod === 'capacity_based' 
+      ? (formData.vehicleConfig?.unitVehicleNetCost !== undefined ? formData.vehicleConfig.unitVehicleNetCost : (formData.adultNetPrice || 0))
+      : (formData.adultNetPrice || 0),
+    marginPercent: effectiveMargin,
+    taxPercent: formData.taxPercent || 0,
+    serviceFeePercent: formData.serviceFeeFixed || 0,
+    currency: (formData.currency || formData.nativeCurrency || 'USD') as CurrencyCode
+  });
+
+  const currentAdultSellingPrice = b2bCalc.price;
 
   // Inclusions/Exclusions Temp Inputs
   const [newInclusion, setNewInclusion] = useState('');

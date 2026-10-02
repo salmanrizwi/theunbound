@@ -635,8 +635,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
       tierDescription = 'Baseline net rate (No tiers configured)';
     }
 
-    const buyerSelling = calcSellingPrice(totalNett, buyerMarginPercent);
-    const b2bSelling = calcSellingPrice(totalNett, b2bAgentMarginPercent);
+    const b2bSelling = calcSellingPrice(totalNett, b2bAgentMarginPercent || buyerMarginPercent || 20);
 
     return {
       pax,
@@ -644,7 +643,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
       matchedTier,
       tierDescription,
       totalNett,
-      buyerSelling,
+      buyerSelling: b2bSelling,
       b2bSelling
     };
   }, [testPassengerCount, pricingMode, tieredPricing, adultNetPrice, buyerMarginPercent, b2bAgentMarginPercent, physicalFleetCapacity, taxPercent, serviceFeeFixed]);
@@ -826,24 +825,18 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
         </div>
 
         {/* Global Commercial Margins */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 bg-slate-950/60 p-4 rounded-xl border border-slate-800 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5 bg-slate-950/60 p-4 rounded-xl border border-slate-800 text-xs">
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Buyer Margin (%)</label>
+            <label className="text-[10px] text-[#00E5C0] font-bold uppercase tracking-wider block">B2B Margin (%)</label>
             <input
               type="number"
               min="0"
-              value={buyerMarginPercent ?? ''}
-              onChange={(e) => onBuyerMarginChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">B2B Agent Margin (%)</label>
-            <input
-              type="number"
-              min="0"
-              value={b2bAgentMarginPercent ?? ''}
-              onChange={(e) => onB2bAgentMarginChange(Number(e.target.value))}
+              value={b2bAgentMarginPercent ?? buyerMarginPercent ?? ''}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                onB2bAgentMarginChange(val);
+                if (onBuyerMarginChange) onBuyerMarginChange(val);
+              }}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
