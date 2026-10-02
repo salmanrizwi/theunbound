@@ -307,7 +307,7 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
       if (categoryFilter !== 'all' && item.category !== categoryFilter) return false;
 
       // Destination filter
-      if (selectedDestination !== 'all' && !item.destination.toLowerCase().includes(selectedDestination.toLowerCase())) {
+      if (selectedDestination !== 'all' && !(item.destination || '').toLowerCase().includes(selectedDestination.toLowerCase())) {
         return false;
       }
 
@@ -321,11 +321,11 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const matches = 
-          item.name.toLowerCase().includes(q) ||
-          item.id.toLowerCase().includes(q) ||
-          item.destination.toLowerCase().includes(q) ||
-          item.provider.toLowerCase().includes(q) ||
-          item.serviceType.toLowerCase().includes(q);
+          (item.name || '').toLowerCase().includes(q) ||
+          (item.id || '').toLowerCase().includes(q) ||
+          (item.destination || '').toLowerCase().includes(q) ||
+          (item.provider || '').toLowerCase().includes(q) ||
+          (item.serviceType || '').toLowerCase().includes(q);
         if (!matches) return false;
       }
 

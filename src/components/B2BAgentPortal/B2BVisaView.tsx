@@ -216,37 +216,55 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
 
   const filteredVisas = useMemo(() => {
     return formattedVisas.filter(v => {
-      const matchSearch = !searchLower || 
-        v.country.toLowerCase().includes(searchLower) ||
-        v.visaType.toLowerCase().includes(searchLower) ||
-        v.stayDuration.toLowerCase().includes(searchLower) ||
-        v.entryType.toLowerCase().includes(searchLower);
+      if (!v) return false;
+      const country = (v.country || '').toLowerCase();
+      const visaType = (v.visaType || '').toLowerCase();
+      const stayDuration = (v.stayDuration || '').toLowerCase();
+      const entryType = (v.entryType || '').toLowerCase();
 
-      const matchDest = selectedDestination === 'ALL' || v.country === selectedDestination;
+      const matchSearch = !searchLower || 
+        country.includes(searchLower) ||
+        visaType.includes(searchLower) ||
+        stayDuration.includes(searchLower) ||
+        entryType.includes(searchLower);
+
+      const matchDest = selectedDestination === 'ALL' || (v.country || '') === selectedDestination;
       return matchSearch && matchDest;
     });
   }, [formattedVisas, searchLower, selectedDestination]);
 
   const filteredProtectionPlans = useMemo(() => {
     return realProtectionPlans.filter(p => {
-      const matchSearch = !searchLower ||
-        p.serviceName.toLowerCase().includes(searchLower) ||
-        p.provider.toLowerCase().includes(searchLower) ||
-        p.coverageArea.toLowerCase().includes(searchLower) ||
-        (p.customerDescription || '').toLowerCase().includes(searchLower);
+      if (!p) return false;
+      const sName = (p.serviceName || '').toLowerCase();
+      const provider = (p.provider || '').toLowerCase();
+      const covArea = (p.coverageArea || '').toLowerCase();
+      const custDesc = (p.customerDescription || '').toLowerCase();
 
-      const matchDest = selectedDestination === 'ALL' || p.coverageArea.toLowerCase().includes(selectedDestination.toLowerCase());
+      const matchSearch = !searchLower ||
+        sName.includes(searchLower) ||
+        provider.includes(searchLower) ||
+        covArea.includes(searchLower) ||
+        custDesc.includes(searchLower);
+
+      const matchDest = selectedDestination === 'ALL' || covArea.includes(selectedDestination.toLowerCase());
       return matchSearch && matchDest;
     });
   }, [realProtectionPlans, searchLower, selectedDestination]);
 
   const filteredVipServices = useMemo(() => {
     return realVipServices.filter(s => {
+      if (!s) return false;
+      const name = (s.name || '').toLowerCase();
+      const supp = (s.supplierName || '').toLowerCase();
+      const type = (s.serviceType || '').toLowerCase();
+      const desc = (s.shortDesc || '').toLowerCase();
+
       const matchSearch = !searchLower ||
-        s.name.toLowerCase().includes(searchLower) ||
-        s.supplierName.toLowerCase().includes(searchLower) ||
-        s.serviceType.toLowerCase().includes(searchLower) ||
-        (s.shortDesc || '').toLowerCase().includes(searchLower);
+        name.includes(searchLower) ||
+        supp.includes(searchLower) ||
+        type.includes(searchLower) ||
+        desc.includes(searchLower);
 
       return matchSearch;
     });
@@ -254,12 +272,17 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
 
   const filteredConnectivityPlans = useMemo(() => {
     return realConnectivityPlans.filter(c => {
-      const matchSearch = !searchLower ||
-        c.name.toLowerCase().includes(searchLower) ||
-        c.dataAllowance.toLowerCase().includes(searchLower) ||
-        c.coverageZone.toLowerCase().includes(searchLower);
+      if (!c) return false;
+      const name = (c.name || '').toLowerCase();
+      const data = (c.dataAllowance || '').toLowerCase();
+      const zone = (c.coverageZone || '').toLowerCase();
 
-      const matchDest = selectedDestination === 'ALL' || c.coverageZone.toLowerCase().includes(selectedDestination.toLowerCase());
+      const matchSearch = !searchLower ||
+        name.includes(searchLower) ||
+        data.includes(searchLower) ||
+        zone.includes(searchLower);
+
+      const matchDest = selectedDestination === 'ALL' || zone.includes(selectedDestination.toLowerCase());
       return matchSearch && matchDest;
     });
   }, [realConnectivityPlans, searchLower, selectedDestination]);
