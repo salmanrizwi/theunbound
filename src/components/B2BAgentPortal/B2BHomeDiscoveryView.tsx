@@ -409,8 +409,8 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
   return (
     <div className="space-y-12 pb-12">
       {/* 1. Welcome / Search Hero (Bright, spacious, trade-focused) */}
-      <section className="bg-gradient-to-b from-teal-50/50 via-white to-slate-50/50 border-b border-slate-200/80 px-4 sm:px-6 lg:px-8 pt-8 pb-12">
-        <div className="max-w-7xl mx-auto space-y-6">
+      <section className="bg-gradient-to-b from-teal-50/50 via-white to-slate-50/50 border-b border-slate-200/80 px-4 sm:px-6 lg:px-8 xl:px-10 pt-8 pb-12 w-full">
+        <div className="w-full max-w-full space-y-6">
           {/* Top Trade Badge & Headline */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="space-y-2">
@@ -772,7 +772,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
       </section>
 
       {/* Main Container for Discovery Sections */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-14">
+      <div className="w-full max-w-full px-4 sm:px-6 lg:px-8 xl:px-10 space-y-14">
 
         {/* 3. EXPLORE DESTINATIONS SECTION */}
         <section className="space-y-6">
@@ -796,7 +796,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {visibleDestinationsList.map(dest => {
               const metrics = getDestinationMetrics(dest.name, dest.id);
               const destStatus = inventoryVisibilityService.getDestinationComputedStatus(dest);

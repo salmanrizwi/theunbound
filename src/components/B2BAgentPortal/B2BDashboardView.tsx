@@ -94,7 +94,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
   const pendingTasks = tasks.filter(t => t.status !== 'COMPLETED').slice(0, 4);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+    <div className="w-full max-w-full min-w-0 px-4 sm:px-6 lg:px-8 py-6 space-y-6">
       {/* Agent Welcome & Operational Header Banner */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">

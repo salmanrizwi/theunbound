@@ -25,7 +25,8 @@ import {
   Briefcase,
   ArrowRight,
   TrendingUp,
-  LayoutDashboard
+  LayoutDashboard,
+  Search
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
@@ -92,14 +93,11 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
   const authorizedBookings = user ? db.getBookingsForUser(user) : [];
   const bookingsCount = authorizedBookings.length;
   const pendingBookingsCount = authorizedBookings.filter(b => b.status === 'NEW' || b.status === 'TO_BE_PROCESSED' || b.status === 'PROCESSING' || b.status === 'WAITING_FOR_UPDATE' || b.status === 'PENDING_CONFIRMATION').length;
-  const customersCount = db.getB2BCustomers().length;
-
+  
   const authorizedLeads = user ? db.getLeadsAuthorized(user) : [];
   const leadsCount = authorizedLeads.length;
-  const unquotedLeadsCount = authorizedLeads.filter(l => !l.quoteNumber && !l.bookingReference).length;
 
   const agentNotifications = user ? db.getAgentNotifications(user.id) : [];
-  const unreadNotificationsCount = agentNotifications.filter(n => !n.isRead).length;
   
   // Real Tasks and Overdue Counts
   const allTasks = db.getB2BTasks(user?.id);
@@ -128,58 +126,74 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
     };
   }, [allTasks, authorizedBookings, authorizedLeads, agentNotifications, db, user]);
 
-  const navItems: { 
-    id: B2BTabType; 
-    label: string; 
-    icon: React.FC<{ className?: string }>;
-    count?: number;
-    alertCount?: number;
-  }[] = [
-    { id: 'home', label: 'Discovery', icon: Compass },
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'products', label: 'Products', icon: ShoppingBag, count: productsCount },
-    { id: 'hotels', label: 'Hotels', icon: Building2, count: hotelsCount },
-    { id: 'packages', label: 'Packages', icon: Layers, count: packagesCount },
-    { id: 'visa', label: 'Visa', icon: FileCheck, count: visasCount },
-    { id: 'create-quote', label: 'Quote Builder', icon: PlusCircle },
-    { id: 'bookings', label: 'Bookings', icon: BookmarkCheck, count: bookingsCount, alertCount: pendingBookingsCount },
-    { id: 'tasks', label: 'My Tasks', icon: CheckSquare, count: pendingTasksCount, alertCount: overdueTasksCount }
+  // Grouped Navigation Definition for Clean Desktop & Mobile Hierarchy
+  const navSections = [
+    {
+      group: 'MAIN',
+      items: [
+        { id: 'home' as B2BTabType, label: 'Discovery', icon: Compass },
+        { id: 'dashboard' as B2BTabType, label: 'Dashboard', icon: LayoutDashboard },
+        { id: 'products' as B2BTabType, label: 'Products', icon: ShoppingBag, count: productsCount },
+        { id: 'hotels' as B2BTabType, label: 'Hotels', icon: Building2, count: hotelsCount },
+        { id: 'packages' as B2BTabType, label: 'Packages', icon: Layers, count: packagesCount },
+        { id: 'visa' as B2BTabType, label: 'Visa & Ancillaries', icon: FileCheck, count: visasCount },
+      ]
+    },
+    {
+      group: 'SALES',
+      items: [
+        { id: 'create-quote' as B2BTabType, label: 'Quote Builder', icon: PlusCircle, isPrimary: true },
+        { id: 'my-quotes' as B2BTabType, label: 'My Quotes', icon: FileText, count: quotesCount },
+        { id: 'bookings' as B2BTabType, label: 'Bookings', icon: BookmarkCheck, count: bookingsCount, alertCount: pendingBookingsCount },
+      ]
+    },
+    {
+      group: 'OPERATIONS',
+      items: [
+        { id: 'crm' as B2BTabType, label: 'Leads & CRM', icon: Users, count: leadsCount },
+        { id: 'tasks' as B2BTabType, label: 'My Tasks', icon: CheckSquare, count: pendingTasksCount, alertCount: overdueTasksCount }
+      ]
+    }
   ];
 
+  const allNavItems = useMemo(() => {
+    return navSections.flatMap(s => s.items);
+  }, [navSections]);
+
   return (
-    <header className="sticky top-0 z-40 bg-white border-b border-slate-200/90 shadow-xs">
-      {/* Top Professional B2B Header Bar (Bright & Crisp) */}
-      <div className="bg-slate-900 text-white px-4 sm:px-6 py-1.5 flex items-center justify-between text-xs border-b border-slate-800">
-        <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-2">
+    <header className="sticky top-0 z-40 bg-white border-b border-slate-200/90 shadow-2xs w-full max-w-full min-w-0">
+      {/* Top Global Utility Bar */}
+      <div className="bg-slate-900 text-white px-4 sm:px-6 lg:px-8 py-1.5 flex items-center justify-between text-xs border-b border-slate-800">
+        <div className="flex items-center space-x-3 min-w-0">
+          <div className="flex items-center space-x-2 shrink-0">
             <span className="w-2 h-2 rounded-full bg-[#00E5C0] animate-pulse"></span>
             <span className="font-bold text-[#00E5C0] uppercase tracking-wider text-[11px]">
               Travel Agent Portal
             </span>
           </div>
           <span className="hidden md:inline text-slate-600">|</span>
-          <span className="hidden md:inline text-slate-300 font-semibold truncate max-w-xs">
+          <span className="hidden md:inline text-slate-300 font-semibold truncate max-w-md">
             {user?.agencyName || 'Luxury Discovery Travel Trade Desk'}
           </span>
-          <span className="hidden lg:inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-800 text-[10px] text-slate-300 border border-slate-700">
+          <span className="hidden lg:inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-800 text-[10px] text-slate-300 border border-slate-700 shrink-0">
             <ShieldCheck className="w-3 h-3 text-[#00C6A6]" />
-            <span>Verified Wholesale Rates & 24h Ground SLA</span>
+            <span>Direct DMC Wholesale Contract</span>
           </span>
         </div>
 
-        <div className="flex items-center space-x-3">
-          {/* Canonical Home Link */}
+        <div className="flex items-center space-x-2.5 shrink-0">
+          {/* Main Website Link */}
           <button
             onClick={() => navigateTo('/')}
             className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-[11px] font-bold transition-all cursor-pointer"
-            title="Return to TheUnbound Home Page (/)"
+            title="Return to Public Portal (/)"
           >
             <Globe2 className="w-3 h-3 text-[#00E5C0]" />
-            <span>Home</span>
+            <span className="hidden sm:inline">Main Site</span>
           </button>
 
           {/* Currency Switcher */}
-          <div className="flex items-center space-x-1.5 bg-slate-800 border border-slate-700 px-2.5 py-1 rounded-lg">
+          <div className="flex items-center space-x-1 bg-slate-800 border border-slate-700 px-2 py-1 rounded-lg">
             <Globe2 className="w-3 h-3 text-slate-400" />
             <select
               id="b2b-currency-selector-nav-upper"
@@ -195,24 +209,24 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
             </select>
           </div>
 
-          {/* B2B Cart Drawer Trigger Button in Upper Header Bar */}
+          {/* B2B Cart Trigger */}
           <button
             id="b2b-cart-drawer-trigger-btn"
             onClick={() => setIsQuoteDrawerOpen(true)}
-            className="flex items-center space-x-2 px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-all cursor-pointer shadow-xs"
-            title="Open Quotation Cart & Configured Items"
+            className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 transition-all cursor-pointer"
+            title="Open Quotation Cart"
           >
             <div className="relative">
               <ShoppingBag className="w-3.5 h-3.5 text-[#00E5C0]" />
               {items.length > 0 && (
-                <span className="absolute -top-2 -right-2 w-3.5 h-3.5 rounded-full bg-[#00E5C0] text-slate-950 text-[9px] font-black flex items-center justify-center">
+                <span className="absolute -top-1.5 -right-2 w-3.5 h-3.5 rounded-full bg-[#00E5C0] text-slate-950 text-[9px] font-black flex items-center justify-center">
                   {items.length}
                 </span>
               )}
             </div>
             <span className="hidden sm:inline text-[11px] font-bold">Cart</span>
             {items.length > 0 && (
-              <span className="hidden md:inline text-[11px] font-extrabold text-[#00E5C0] font-mono pl-1.5 border-l border-slate-700">
+              <span className="hidden md:inline text-[11px] font-bold text-[#00E5C0] font-mono pl-1 border-l border-slate-700">
                 {formatCurrency(totalSellingPrice, currency)}
               </span>
             )}
@@ -220,14 +234,14 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
         </div>
       </div>
 
-      {/* Main Agent Navigation Row */}
-      <div className="px-4 sm:px-6 flex items-center justify-between h-16 bg-white">
-        {/* Brand Logo & Portal Badge */}
-        <div className="flex items-center space-x-8">
+      {/* Main Navigation Row - Full Width */}
+      <div className="px-4 sm:px-6 lg:px-8 flex items-center justify-between h-14 bg-white">
+        {/* Brand Logo & Compact Tag */}
+        <div className="flex items-center space-x-6 min-w-0">
           <div 
-            onClick={() => navigateTo('/')}
-            className="cursor-pointer flex items-center group"
-            title="Return to TheUnbound Home Page (/)"
+            onClick={() => onSelectTab('home')}
+            className="cursor-pointer flex items-center group shrink-0"
+            title="TheUnbound B2B Agent Portal"
           >
             <img 
               src="/White Icon.jpg?v=3" 
@@ -235,37 +249,47 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
               onError={(e) => {
                 (e.currentTarget as HTMLImageElement).src = '/white-icon.jpg?v=3';
               }}
-              className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg mr-2.5 sm:mr-3 shadow-xs transition-transform group-hover:scale-105 shrink-0 object-contain" 
+              className="w-8 h-8 rounded-lg mr-2 shadow-2xs transition-transform group-hover:scale-105 shrink-0 object-contain" 
             />
             <div>
-              <span className="text-xl font-black lowercase tracking-tight text-slate-950 group-hover:text-[#00a88c] transition-colors font-sans block leading-none">
+              <span className="text-lg font-black lowercase tracking-tight text-slate-950 group-hover:text-[#00a88c] transition-colors font-sans block leading-none">
                 theunbound
               </span>
-              <span className="text-[9px] font-extrabold text-[#00a88c] uppercase tracking-widest block mt-0.5">
+              <span className="text-[8px] font-extrabold text-[#00a88c] uppercase tracking-widest block mt-0.5">
                 B2B Agent Portal
               </span>
             </div>
           </div>
 
           {/* Desktop Navigation Links */}
-          <nav className="hidden xl:flex items-center space-x-1">
-            {navItems.map(item => {
+          <nav className="hidden lg:flex items-center space-x-1 overflow-x-auto py-1" aria-label="B2B Main Navigation">
+            {allNavItems.map(item => {
               const Icon = item.icon;
-              const isActive = activeTab === item.id;
+              const isActive = activeTab === item.id || (item.id === 'crm' && (activeTab === 'leads' || activeTab === 'customers'));
+              const isPrimary = (item as any).isPrimary;
+
               return (
                 <button
                   key={item.id}
                   onClick={() => onSelectTab(item.id)}
-                  className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[13px] font-semibold transition-all cursor-pointer whitespace-nowrap ${
                     isActive
-                      ? 'bg-slate-950 text-white shadow-xs font-extrabold'
+                      ? 'bg-slate-900 text-white shadow-2xs font-bold'
+                      : isPrimary
+                      ? 'bg-teal-50 text-teal-800 border border-teal-200 hover:bg-teal-100 font-bold'
                       : 'text-slate-600 hover:text-slate-950 hover:bg-slate-100'
                   }`}
                 >
-                  <Icon className={`w-4 h-4 ${isActive ? 'text-[#00E5C0]' : 'text-slate-400'}`} />
+                  <Icon className={`w-4 h-4 shrink-0 ${
+                    isActive 
+                      ? 'text-[#00E5C0]' 
+                      : isPrimary
+                      ? 'text-teal-600'
+                      : 'text-slate-400'
+                  }`} />
                   <span>{item.label}</span>
                   {item.count !== undefined && item.count > 0 && (
-                    <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-black ${
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
                       item.alertCount && item.alertCount > 0
                         ? 'bg-rose-500 text-white animate-pulse'
                         : isActive
@@ -281,18 +305,18 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
           </nav>
         </div>
 
-        {/* Right Section: Action Centre (Bell), Agent Profile */}
-        <div className="flex items-center space-x-2.5">
-          {/* Action Centre (Bell 🔔 with Live Aggregated Notifications) */}
+        {/* Right Section: Action Centre & Agent Profile */}
+        <div className="flex items-center space-x-2 shrink-0">
+          {/* Action Centre (Bell 🔔) */}
           <div className="relative" ref={notificationsRef}>
             <button
               onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
-              className="relative p-2.5 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 transition-colors cursor-pointer"
-              title="Action Centre & Reminders"
+              className="relative p-2 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 transition-colors cursor-pointer"
+              title="Action Centre & Alerts"
             >
               <Bell className="w-4 h-4" />
               {actionItems.totalUrgent > 0 && (
-                <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center ring-2 ring-white">
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center ring-2 ring-white">
                   {actionItems.totalUrgent}
                 </span>
               )}
@@ -300,10 +324,10 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
 
             {/* Action Centre Dropdown Popover */}
             {isNotificationsOpen && (
-              <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white border border-slate-200 rounded-3xl shadow-2xl py-3 z-50 animate-in fade-in zoom-in-95 duration-150">
-                <div className="px-5 py-2 border-b border-slate-100 flex items-center justify-between">
+              <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white border border-slate-200 rounded-2xl shadow-2xl py-3 z-50 animate-in fade-in zoom-in-95 duration-150">
+                <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between">
                   <div>
-                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">Action Centre</h4>
+                    <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Action Centre</h4>
                     <p className="text-[11px] text-slate-500">Live booking alerts & SLA reminders</p>
                   </div>
                   {actionItems.totalUrgent > 0 && (
@@ -314,159 +338,61 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
                 </div>
 
                 <div className="max-h-80 overflow-y-auto p-3 space-y-2 text-xs">
-                  {/* Overdue Tasks (RED) */}
+                  {/* Overdue Tasks */}
                   {actionItems.overdueTasks.length > 0 && (
-                    <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-extrabold text-rose-800 flex items-center space-x-1.5">
+                    <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 space-y-1.5">
+                      <div className="flex items-center justify-between text-rose-900 font-bold">
+                        <span className="flex items-center gap-1">
                           <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-                          <span>Overdue Tasks ({actionItems.overdueTasks.length})</span>
+                          Overdue Tasks ({actionItems.overdueTasks.length})
                         </span>
                         <button
                           onClick={() => {
                             onSelectTab('tasks');
                             setIsNotificationsOpen(false);
                           }}
-                          className="text-[11px] font-bold text-rose-700 hover:underline cursor-pointer"
+                          className="text-[10px] text-rose-700 underline font-bold"
                         >
-                          View Tasks →
+                          View All
                         </button>
                       </div>
-                      <div className="space-y-1">
-                        {actionItems.overdueTasks.slice(0, 2).map(task => (
-                          <div key={task.id} className="text-[11px] text-rose-900 flex items-center justify-between">
-                            <span className="font-medium truncate max-w-[200px]">{task.title}</span>
-                            <span className="text-[10px] font-mono text-rose-600 font-bold">Due {task.dueDate}</span>
-                          </div>
-                        ))}
-                      </div>
+                      {actionItems.overdueTasks.slice(0, 2).map(t => (
+                        <div key={t.id} className="text-[11px] text-rose-800 truncate font-mono">
+                          • {t.title} (Due: {t.dueDate})
+                        </div>
+                      ))}
                     </div>
                   )}
 
-                  {/* Pending Bookings (RED / Operations Alert) */}
+                  {/* Pending Bookings */}
                   {actionItems.pendingBookings.length > 0 && (
-                    <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-extrabold text-amber-800 flex items-center space-x-1.5">
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 space-y-1.5">
+                      <div className="flex items-center justify-between text-amber-900 font-bold">
+                        <span className="flex items-center gap-1">
                           <Clock className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Pending Bookings ({actionItems.pendingBookings.length})</span>
+                          Pending Bookings ({actionItems.pendingBookings.length})
                         </span>
                         <button
                           onClick={() => {
                             onSelectTab('bookings');
                             setIsNotificationsOpen(false);
                           }}
-                          className="text-[11px] font-bold text-amber-700 hover:underline cursor-pointer"
+                          className="text-[10px] text-amber-700 underline font-bold"
                         >
-                          View Bookings →
+                          View Desk
                         </button>
                       </div>
-                      <div className="space-y-1">
-                        {actionItems.pendingBookings.slice(0, 2).map(bk => (
-                          <div key={bk.id} className="text-[11px] text-amber-900 flex items-center justify-between">
-                            <span className="font-medium truncate max-w-[190px]">{bk.bookingReference} — {bk.leadPassengerName || 'Guest'}</span>
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-200 text-amber-900">Awaiting Ops</span>
-                          </div>
-                        ))}
-                      </div>
+                      {actionItems.pendingBookings.slice(0, 2).map(bk => (
+                        <div key={bk.id} className="text-[11px] text-amber-800 truncate font-mono">
+                          • {bk.bookingReference} — {bk.leadPassengerName || 'Guest'}
+                        </div>
+                      ))}
                     </div>
                   )}
 
-                  {/* Active Quotations Requiring Follow-Up */}
-                  {actionItems.activeQuotes.length > 0 && (
-                    <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-slate-800 flex items-center space-x-1.5">
-                          <FileText className="w-3.5 h-3.5 text-slate-500" />
-                          <span>Active Proposals ({actionItems.activeQuotes.length})</span>
-                        </span>
-                        <button
-                          onClick={() => {
-                            onSelectTab('my-quotes');
-                            setIsNotificationsOpen(false);
-                          }}
-                          className="text-[11px] font-bold text-slate-700 hover:underline cursor-pointer"
-                        >
-                          View Quotes →
-                        </button>
-                      </div>
-                      <p className="text-[11px] text-slate-500">Proposals ready for client sharing or conversion to booking.</p>
-                    </div>
-                  )}
-
-                  {/* Assigned Leads Awaiting Quotation (TEAL / Qualified Opportunity) */}
-                  {actionItems.assignedLeads.length > 0 && (
-                    <div className="p-3 rounded-2xl bg-teal-50 border border-[#00C6A6]/30 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-extrabold text-[#008f77] flex items-center space-x-1.5">
-                          <Users className="w-3.5 h-3.5 text-[#00C6A6]" />
-                          <span>Assigned Leads ({actionItems.assignedLeads.length})</span>
-                        </span>
-                        <button
-                          onClick={() => {
-                            onSelectTab('crm');
-                            setIsNotificationsOpen(false);
-                          }}
-                          className="text-[11px] font-bold text-[#008f77] hover:underline cursor-pointer"
-                        >
-                          View in CRM →
-                        </button>
-                      </div>
-                      <div className="space-y-1">
-                        {actionItems.assignedLeads.slice(0, 2).map(lead => (
-                          <div key={lead.id} className="text-[11px] text-slate-800 flex items-center justify-between">
-                            <span className="font-medium truncate max-w-[190px]">{lead.leadNumber || 'Lead'}: {lead.contactName}</span>
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-200/70 text-[#006e5b]">Create Quote</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Agent Notifications (Assignment / Updates) */}
-                  {actionItems.notifications.length > 0 && (
-                    <div className="p-3 rounded-2xl bg-slate-900 text-white space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-extrabold text-white flex items-center space-x-1.5">
-                          <Bell className="w-3.5 h-3.5 text-[#00E5C0]" />
-                          <span>Team Assignments ({actionItems.notifications.length})</span>
-                        </span>
-                        <button
-                          onClick={() => {
-                            if (user?.id) {
-                              db.markAllNotificationsAsRead(user.id);
-                            }
-                          }}
-                          className="text-[10px] text-slate-300 hover:text-white hover:underline cursor-pointer"
-                        >
-                          Mark all read
-                        </button>
-                      </div>
-                      <div className="space-y-1.5">
-                        {actionItems.notifications.slice(0, 3).map(notif => (
-                          <div 
-                            key={notif.id} 
-                            onClick={() => {
-                              db.markNotificationAsRead(notif.id);
-                              if (notif.entityType === 'LEAD' || notif.deepLinkTab === 'leads') onSelectTab('crm');
-                              else if (notif.entityType === 'BOOKING' || notif.deepLinkTab === 'bookings') onSelectTab('bookings');
-                              setIsNotificationsOpen(false);
-                            }}
-                            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700/80 transition-colors cursor-pointer text-[11px]"
-                          >
-                            <p className="font-bold text-white">{notif.title}</p>
-                            <p className="text-slate-300 text-[10px] line-clamp-1">{notif.message}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {actionItems.totalUrgent === 0 && actionItems.activeQuotes.length === 0 && (
-                    <div className="p-4 text-center text-slate-400 space-y-1">
-                      <ShieldCheck className="w-6 h-6 mx-auto text-[#00C6A6]" />
-                      <p className="font-bold text-slate-700">All Operations Current</p>
-                      <p className="text-[11px]">No overdue tasks or pending booking SLA blockers.</p>
+                  {actionItems.totalUrgent === 0 && (
+                    <div className="py-6 text-center text-slate-400 text-xs">
+                      No urgent operational alerts at this time.
                     </div>
                   )}
                 </div>
@@ -474,108 +400,70 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
             )}
           </div>
 
-          {/* Account Dropdown */}
+          {/* User Profile Dropdown */}
           <div className="relative" ref={userMenuRef}>
             <button
-              id="b2b-accounts-dropdown-trigger"
               onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-              className="flex items-center space-x-2 p-1.5 md:px-2.5 md:py-1.5 rounded-2xl bg-white hover:bg-slate-50 text-slate-800 transition-colors cursor-pointer border border-slate-200 shadow-xs"
-              aria-label="Accounts and profile menu"
+              className="flex items-center space-x-2 p-1.5 pr-2.5 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-colors cursor-pointer text-xs"
             >
-              <img
-                src={user?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=200&auto=format&fit=crop'}
-                alt={user?.name || 'Agent'}
-                className="w-7 h-7 rounded-xl object-cover ring-1 ring-[#00C6A6]"
-              />
-              <span className="hidden md:inline text-xs font-bold text-slate-900 max-w-[110px] truncate">
-                {user?.agencyName || user?.name || 'Partner Agent'}
-              </span>
-              <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`} />
+              <div className="w-7 h-7 rounded-lg bg-slate-900 text-[#00E5C0] font-black flex items-center justify-center text-xs shrink-0">
+                {user?.name ? user.name.charAt(0).toUpperCase() : 'A'}
+              </div>
+              <div className="text-left hidden md:block max-w-[120px] truncate">
+                <div className="font-bold text-slate-900 text-xs truncate leading-tight">
+                  {user?.name || 'Agent User'}
+                </div>
+                <div className="text-[10px] text-slate-400 truncate leading-none">
+                  {user?.role || 'B2B Partner'}
+                </div>
+              </div>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
             </button>
 
             {isUserMenuOpen && (
-              <div 
-                id="b2b-accounts-dropdown-menu"
-                className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-2xl shadow-2xl py-2 z-50 animate-in fade-in zoom-in-95 duration-150"
-              >
-                <div className="px-4 py-3 border-b border-slate-100">
-                  <p className="text-xs font-black text-slate-900">{user?.name || 'Partner Travel Agent'}</p>
-                  <p className="text-[11px] text-slate-400 truncate">{user?.email || 'agent@partnerdesk.in'}</p>
-                  <span className="inline-block mt-1.5 px-2 py-0.5 rounded-md text-[9px] font-bold bg-[#00C6A6]/20 text-[#008a73]">
-                    {user?.agencyName || 'Wholesale Partner Agency'}
-                  </span>
+              <div className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-2xl shadow-2xl py-2 z-50 animate-in fade-in zoom-in-95 duration-150 text-xs">
+                <div className="px-4 py-2 border-b border-slate-100">
+                  <div className="font-bold text-slate-900 truncate">{user?.name || 'Agent User'}</div>
+                  <div className="text-[11px] text-slate-400 truncate">{user?.email || 'agent@theunbound.in'}</div>
                 </div>
 
                 <div className="py-1">
                   <button
-                    id="b2b-accounts-crm-menu-item"
                     onClick={() => {
-                      onSelectTab('crm');
+                      onSelectTab('account');
                       setIsUserMenuOpen(false);
                     }}
-                    className={`w-full text-left px-4 py-2.5 text-xs flex items-center justify-between hover:bg-slate-50 transition-colors cursor-pointer font-bold ${
-                      activeTab === 'crm' || activeTab === 'leads' || activeTab === 'customers'
-                        ? 'bg-teal-50 text-[#008f77]'
-                        : 'text-slate-800'
-                    }`}
+                    className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700 font-medium"
                   >
-                    <div className="flex items-center space-x-2.5">
-                      <Users className="w-4 h-4 text-[#00C6A6]" />
-                      <span>My Leads and Clients (CRM)</span>
-                    </div>
-                    {leadsCount > 0 && (
-                      <span className="px-2 py-0.5 text-[10px] font-black rounded-full bg-teal-100 text-[#008f77]">
-                        {leadsCount}
-                      </span>
-                    )}
+                    <UserIcon className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Agency Settings</span>
                   </button>
                   <button
                     onClick={() => {
                       onSelectTab('dashboard');
                       setIsUserMenuOpen(false);
                     }}
-                    className="w-full text-left px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2 font-medium"
+                    className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700 font-medium"
                   >
                     <TrendingUp className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>Performance Dashboard</span>
+                    <span>Dashboard</span>
                   </button>
-                  <button
-                    onClick={() => {
-                      onSelectTab('my-quotes');
-                      setIsUserMenuOpen(false);
-                    }}
-                    className="w-full text-left px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2 font-medium"
-                  >
-                    <FileText className="w-3.5 h-3.5 text-slate-400" />
-                    <span>My Quotes & Proposals</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      onSelectTab('account');
-                      setIsUserMenuOpen(false);
-                    }}
-                    className="w-full text-left px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center space-x-2 font-medium"
-                  >
-                    <UserIcon className="w-3.5 h-3.5 text-slate-400" />
-                    <span>Agency Account & Profile</span>
-                  </button>
-
                   <button
                     onClick={() => {
                       setIsUserMenuOpen(false);
                       navigateTo('/');
                     }}
-                    className="w-full text-left px-4 py-2 text-xs text-[#008f77] hover:bg-teal-50 flex items-center space-x-2 font-semibold"
+                    className="w-full text-left px-4 py-2 hover:bg-teal-50 flex items-center gap-2 text-[#008f77] font-semibold"
                   >
                     <Globe2 className="w-3.5 h-3.5 text-[#00C6A6]" />
-                    <span>Home Page (/)</span>
+                    <span>Return to Main Site</span>
                   </button>
                 </div>
 
                 <div className="border-t border-slate-100 pt-1">
                   <button
                     onClick={logout}
-                    className="w-full text-left px-4 py-2 text-xs text-rose-600 hover:bg-rose-50 flex items-center space-x-2 cursor-pointer font-bold"
+                    className="w-full text-left px-4 py-2 text-rose-600 hover:bg-rose-50 flex items-center gap-2 font-bold"
                   >
                     <LogOut className="w-3.5 h-3.5 text-rose-600" />
                     <span>Sign Out</span>
@@ -585,111 +473,67 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
             )}
           </div>
 
-          {/* Mobile Menu Toggle Button */}
+          {/* Mobile Menu Hamburger Toggle */}
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="xl:hidden p-2 text-slate-600 hover:text-slate-950 focus:outline-none"
+            className="lg:hidden p-2 text-slate-600 hover:text-slate-950 focus:outline-none"
+            aria-label="Toggle Navigation Menu"
           >
             {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
         </div>
       </div>
 
-      {/* Sub-Navigation Strip on Medium Screens / Tablet */}
-      <div className="hidden md:flex xl:hidden px-4 sm:px-6 py-2 bg-slate-50 border-t border-slate-200 overflow-x-auto gap-2">
-        {navItems.map(item => {
-          const Icon = item.icon;
-          const isActive = activeTab === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => onSelectTab(item.id)}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-all ${
-                isActive
-                  ? 'bg-slate-950 text-white font-extrabold'
-                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200'
-              }`}
-            >
-              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#00E5C0]' : 'text-slate-400'}`} />
-              <span>{item.label}</span>
-              {item.count !== undefined && item.count > 0 && (
-                <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-                  item.alertCount && item.alertCount > 0 ? 'bg-rose-500 text-white' : 'bg-slate-200 text-slate-700'
-                }`}>
-                  {item.count}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Mobile Drawer Menu */}
+      {/* Mobile Drawer Navigation Menu */}
       {isMobileMenuOpen && (
-        <div className="xl:hidden bg-white border-t border-slate-200 p-4 space-y-2 animate-in slide-in-from-top-2 max-h-[calc(100dvh-80px)] overflow-y-auto">
-          {navItems.map(item => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => {
-                  onSelectTab(item.id);
-                  setIsMobileMenuOpen(false);
-                }}
-                className={`w-full flex items-center justify-between px-4 py-2.5 rounded-2xl text-xs font-bold cursor-pointer transition-all ${
-                  isActive
-                    ? 'bg-slate-950 text-white font-extrabold'
-                    : 'text-slate-700 hover:bg-slate-100'
-                }`}
-              >
-                <div className="flex items-center space-x-3">
-                  <Icon className="w-4 h-4" />
-                  <span>{item.label}</span>
-                </div>
-                {item.count !== undefined && item.count > 0 && (
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                    item.alertCount && item.alertCount > 0 ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
-                  }`}>
-                    {item.count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-
-          {/* Accounts Section in Mobile Drawer */}
-          <div className="pt-2 border-t border-slate-200">
-            <div className="px-4 py-1.5 text-[10px] font-black uppercase tracking-wider text-slate-400">
-              Accounts
-            </div>
-            <button
-              onClick={() => {
-                onSelectTab('crm');
-                setIsMobileMenuOpen(false);
-              }}
-              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-2xl text-xs font-bold cursor-pointer transition-all ${
-                activeTab === 'crm' || activeTab === 'leads' || activeTab === 'customers'
-                  ? 'bg-slate-950 text-white font-extrabold'
-                  : 'text-slate-700 hover:bg-slate-100'
-              }`}
-            >
-              <div className="flex items-center space-x-3">
-                <Users className="w-4 h-4 text-[#00C6A6]" />
-                <span>My Leads and Clients (CRM)</span>
+        <div className="lg:hidden bg-white border-t border-slate-200 p-4 space-y-4 animate-in slide-in-from-top-2 max-h-[calc(100dvh-80px)] overflow-y-auto">
+          {navSections.map(section => (
+            <div key={section.group} className="space-y-1">
+              <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                {section.group}
               </div>
-              {leadsCount > 0 && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-100 text-[#008f77]">
-                  {leadsCount}
-                </span>
-              )}
-            </button>
+              <div className="space-y-1">
+                {section.items.map(item => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id || (item.id === 'crm' && (activeTab === 'leads' || activeTab === 'customers'));
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        onSelectTab(item.id);
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-all ${
+                        isActive
+                          ? 'bg-slate-900 text-white font-bold'
+                          : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Icon className="w-4 h-4 text-slate-400" />
+                        <span>{item.label}</span>
+                      </div>
+                      {item.count !== undefined && item.count > 0 && (
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          item.alertCount && item.alertCount > 0 ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-700'
+                        }`}>
+                          {item.count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          <div className="pt-2 border-t border-slate-200">
             <button
               onClick={() => {
                 onSelectTab('account');
                 setIsMobileMenuOpen(false);
               }}
-              className="w-full flex items-center space-x-3 px-4 py-2 rounded-2xl text-xs text-slate-600 hover:bg-slate-100 cursor-pointer"
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs text-slate-700 hover:bg-slate-100"
             >
               <UserIcon className="w-4 h-4 text-slate-400" />
               <span>Agency Account & Profile</span>
@@ -700,3 +544,5 @@ export const B2BPortalNavbar: React.FC<B2BPortalNavbarProps> = ({
     </header>
   );
 };
+
+export default B2BPortalNavbar;

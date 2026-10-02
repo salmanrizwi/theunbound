@@ -598,7 +598,7 @@ Support: visa-operations@theunbound.in
   const totalActiveServicesCount = formattedVisas.length + realProtectionPlans.length + realVipServices.length + realConnectivityPlans.length;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 animate-fadeIn">
+    <div className="w-full max-w-full min-w-0 px-4 sm:px-6 lg:px-8 py-6 space-y-6 animate-fadeIn">
       {/* Header Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-5">
         <div>
@@ -781,7 +781,7 @@ Support: visa-operations@theunbound.in
               No visa products found matching your search.
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5">
               {filteredVisas.map(visa => {
                 const inQuote = isItemInQuote(visa.id);
                 const quoteItem = getQuoteItemByProductId(visa.id);
@@ -936,7 +936,7 @@ Support: visa-operations@theunbound.in
               No travel protection plans found matching your search.
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5">
               {filteredProtectionPlans.map(plan => {
                 const inQuote = isItemInQuote(plan.id);
                 const quoteItem = getQuoteItemByProductId(plan.id);
@@ -1053,7 +1053,7 @@ Support: visa-operations@theunbound.in
           {/* Sub-grid: VIP Airport Services */}
           <div className="space-y-3">
             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">VIP Airport & Ground Services</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5">
               {filteredVipServices.map(svc => {
                 const inQuote = isItemInQuote(svc.id);
                 const quoteItem = getQuoteItemByProductId(svc.id);
@@ -1140,7 +1140,7 @@ Support: visa-operations@theunbound.in
           {/* Sub-grid: 5G / eSIM Connectivity Plans */}
           <div className="space-y-3 pt-2">
             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">5G / eSIM Connectivity Plans</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5">
               {filteredConnectivityPlans.map(conn => {
                 const inQuote = isItemInQuote(conn.id);
                 const quoteItem = getQuoteItemByProductId(conn.id);

@@ -300,7 +300,7 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
   ];
 
   return (
-    <div id="b2b-my-leads-and-clients-crm" className="w-full max-w-[1920px] mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6 min-w-0">
+    <div id="b2b-my-leads-and-clients-crm" className="w-full max-w-full min-w-0 px-4 sm:px-6 lg:px-8 xl:px-10 py-6 sm:py-8 space-y-6">
       {/* 1. Breadcrumb Hierarchy */}
       <nav className="flex items-center space-x-2 text-xs text-slate-500" aria-label="Breadcrumb">
         <span className="font-semibold text-slate-700">Accounts</span>

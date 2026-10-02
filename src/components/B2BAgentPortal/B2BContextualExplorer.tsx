@@ -120,7 +120,7 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
   const isHotelInQuote = (hotelId: string) => items.some(item => item.product.supplierProductCode === `SUP-HTL-${hotelId}` || item.product.id === hotelId);
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-in fade-in duration-300">
+    <div className="space-y-8 w-full max-w-full min-w-0 px-4 sm:px-6 lg:px-8 xl:px-10 py-6 animate-in fade-in duration-300">
       {/* 1. Context Breadcrumb & Back Action */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
         <nav className="flex items-center space-x-2 text-xs font-bold text-slate-500">
@@ -663,7 +663,7 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
   const parentDest = destinationName || hub.destinationName || 'Destination';
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-in fade-in duration-300">
+    <div className="space-y-8 w-full max-w-full min-w-0 px-4 sm:px-6 lg:px-8 xl:px-10 py-6 animate-in fade-in duration-300">
       {/* 1. Breadcrumbs */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
         <nav className="flex items-center space-x-2 text-xs font-bold text-slate-500">
