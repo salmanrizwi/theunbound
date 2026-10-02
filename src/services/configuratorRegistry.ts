@@ -1414,44 +1414,76 @@ export function resolveProductUpsells(
 ): ProductUpsell[] {
   if (!product) return [];
 
+  // 1. Primary: product.upsells with live resolution for explicit selections
   const rawUpsells = product.upsells || [];
-  if (!Array.isArray(rawUpsells) || rawUpsells.length === 0) {
-    // Fallback check on addons
-    return getActiveUpsellsForProduct(product, allProducts);
-  }
-
-  const productsMap = new Map<string, Product>();
-  for (const p of allProducts) {
-    if (p.id) productsMap.set(p.id, p);
-    if (p.product_id) productsMap.set(p.product_id, p);
-    if (p.sku) productsMap.set(p.sku, p);
-  }
-
-  return rawUpsells.map(upsell => {
-    // If it's a TYPE 1 Existing Product Upsell
-    if (upsell.upsellProductId && productsMap.has(upsell.upsellProductId)) {
-      const liveProduct = productsMap.get(upsell.upsellProductId)!;
-      return {
-        ...upsell,
-        isExistingProduct: true,
-        name: liveProduct.name, // live master title
-        sku: liveProduct.sku,
-        shortDescription: liveProduct.shortDescription || liveProduct.summary || upsell.shortDescription,
-        description: liveProduct.longDescription || liveProduct.description || upsell.description,
-        price: liveProduct.sellingPriceStartingFrom || upsell.price,
-        netCost: liveProduct.adultNetPrice || upsell.netCost,
-        currency: liveProduct.currency || upsell.currency,
-        category: liveProduct.category || upsell.category,
-        destinationId: liveProduct.destinationId || upsell.destinationId,
-        destinationName: liveProduct.destinationName || upsell.destinationName,
-        hubId: liveProduct.hubId || upsell.hubId,
-        imageUrl: liveProduct.images?.[0] || liveProduct.heroImage || upsell.imageUrl,
-        supplierId: liveProduct.supplierId || upsell.supplierId,
-        supplierName: liveProduct.supplierName || upsell.supplierName
-      };
+  if (Array.isArray(rawUpsells) && rawUpsells.length > 0) {
+    const productsMap = new Map<string, Product>();
+    for (const p of allProducts) {
+      if (p.id) productsMap.set(p.id, p);
+      if (p.product_id) productsMap.set(p.product_id, p);
+      if (p.sku) productsMap.set(p.sku, p);
     }
-    return upsell;
-  });
+
+    return rawUpsells.map(upsell => {
+      if (upsell.upsellProductId && productsMap.has(upsell.upsellProductId)) {
+        const liveProduct = productsMap.get(upsell.upsellProductId)!;
+        return {
+          ...upsell,
+          isExistingProduct: true,
+          name: liveProduct.name,
+          sku: liveProduct.sku,
+          shortDescription: liveProduct.shortDescription || liveProduct.summary || upsell.shortDescription,
+          description: liveProduct.longDescription || liveProduct.description || upsell.description,
+          price: liveProduct.sellingPriceStartingFrom || upsell.price,
+          netCost: liveProduct.adultNetPrice || upsell.netCost,
+          currency: liveProduct.currency || upsell.currency,
+          category: liveProduct.category || upsell.category,
+          destinationId: liveProduct.destinationId || upsell.destinationId,
+          destinationName: liveProduct.destinationName || upsell.destinationName,
+          hubId: liveProduct.hubId || upsell.hubId,
+          imageUrl: liveProduct.images?.[0] || liveProduct.heroImage || upsell.imageUrl,
+          supplierId: liveProduct.supplierId || upsell.supplierId,
+          supplierName: liveProduct.supplierName || upsell.supplierName
+        };
+      }
+      return upsell;
+    });
+  }
+
+  // 2. Explicit optionalUpgradeProductIds tagged in Product Management
+  if (Array.isArray(product.optionalUpgradeProductIds) && product.optionalUpgradeProductIds.length > 0) {
+    const productsMap = new Map<string, Product>();
+    for (const p of allProducts) {
+      if (p.id) productsMap.set(p.id, p);
+    }
+
+    const resolved: ProductUpsell[] = [];
+    product.optionalUpgradeProductIds.forEach((id, idx) => {
+      const liveProduct = productsMap.get(id);
+      if (liveProduct) {
+        resolved.push({
+          id: `upsell-upgrade-${id}`,
+          productId: product.id || '',
+          upsellProductId: liveProduct.id,
+          isExistingProduct: true,
+          name: liveProduct.name,
+          sku: liveProduct.sku,
+          shortDescription: liveProduct.shortDescription || liveProduct.summary || '',
+          description: liveProduct.longDescription || liveProduct.description || '',
+          price: liveProduct.sellingPriceStartingFrom || liveProduct.adultNetPrice || 0,
+          netCost: liveProduct.adultNetPrice || 0,
+          currency: liveProduct.currency || 'USD',
+          status: 'ACTIVE',
+          displayOrder: idx + 1,
+          priceType: 'PER_PERSON'
+        });
+      }
+    });
+    return resolved;
+  }
+
+  // Strictly no automatic or implicit upsells if none were explicitly selected
+  return [];
 }
 
 /**
@@ -1463,52 +1495,10 @@ export function getActiveUpsellsForProduct(
 ): ProductUpsell[] {
   if (!product) return [];
   
-  // 1. Primary: product.upsells with live resolution
-  if (Array.isArray(product.upsells) && product.upsells.length > 0) {
-    const resolved = resolveProductUpsells(product, allProducts);
-    return resolved
-      .filter(u => u && u.status !== 'INACTIVE' && u.status !== 'ARCHIVED')
-      .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
-  }
-
-  // 2. Canonical fallback: product.addons mapped to ProductUpsell
-  if (Array.isArray(product.addons) && product.addons.length > 0) {
-    return product.addons.map((a, idx) => ({
-      id: a.id || `upsell-${idx + 1}`,
-      productId: product.id || '',
-      isExistingProduct: false,
-      name: a.name,
-      shortDescription: a.description,
-      description: a.description,
-      price: a.pricePerPax || 0,
-      netCost: Math.round((a.pricePerPax || 0) * 0.8),
-      currency: a.currency || product.currency || 'USD',
-      status: 'ACTIVE',
-      displayOrder: idx + 1,
-      priceType: 'PER_PERSON'
-    }));
-  }
-
-  // 3. Fallback: product.configuration addons
-  const cfgAddons = (product.configuration?.configuration_data as any)?.addons;
-  if (Array.isArray(cfgAddons) && cfgAddons.length > 0) {
-    return cfgAddons.map((a: any, idx: number) => ({
-      id: a.id || `upsell-cfg-${idx + 1}`,
-      productId: product.id || '',
-      isExistingProduct: false,
-      name: a.name || 'Optional Experience',
-      shortDescription: a.description || '',
-      description: a.description || '',
-      price: a.price || 0,
-      netCost: Math.round((a.price || 0) * 0.8),
-      currency: product.currency || 'USD',
-      status: 'ACTIVE',
-      displayOrder: idx + 1,
-      priceType: 'PER_PERSON'
-    }));
-  }
-
-  return [];
+  const resolved = resolveProductUpsells(product, allProducts);
+  return resolved
+    .filter(u => u && u.status !== 'INACTIVE' && u.status !== 'ARCHIVED')
+    .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
 }
 
 /**
