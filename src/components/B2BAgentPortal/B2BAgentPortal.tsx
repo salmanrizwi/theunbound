@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { B2BPortalNavbar, B2BTabType } from './B2BPortalNavbar';
+import { B2BPortalSidebar, B2BPortalHeader, B2BTabType } from './B2BPortalNavbar';
 import { B2BHomeDiscoveryView } from './B2BHomeDiscoveryView';
 import { B2BDashboardView } from './B2BDashboardView';
 import { UnifiedB2BQuotationBuilder } from './UnifiedB2BQuotationBuilder';
@@ -50,6 +50,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<B2BTabType>(initialTab);
   const [initialDestinationSlug, setInitialDestinationSlug] = useState<string | undefined>(undefined);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
 
@@ -262,50 +263,59 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
   };
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden min-w-0 bg-slate-100 flex flex-col font-sans text-slate-900 selection:bg-[#00C6A6] selection:text-slate-950">
-      {/* Dedicated B2B Navigation - Quote Builder has its own fixed application-level header */}
-      {activeTab !== 'create-quote' && (
-        <B2BPortalNavbar
+    <div className="flex h-screen w-full max-w-full overflow-hidden bg-slate-100 font-sans text-slate-900 selection:bg-[#00C6A6] selection:text-slate-950">
+      {/* Persistent Left Sidebar Navigation */}
+      <B2BPortalSidebar
+        activeTab={activeTab}
+        onSelectTab={handleTabSelect}
+        isMobileOpen={isMobileMenuOpen}
+        onCloseMobile={() => setIsMobileMenuOpen(false)}
+      />
+
+      {/* Main Workspace Column */}
+      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto w-full">
+        {/* Sticky Top Header Bar */}
+        <B2BPortalHeader
           activeTab={activeTab}
           onSelectTab={handleTabSelect}
-          quoteItemCount={items.length}
+          onToggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          onOpenCreateQuote={() => handleOpenCreateQuote()}
         />
-      )}
 
-      {/* Floating Success Feedback Toast */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-950 text-white px-5 py-3.5 rounded-2xl shadow-2xl border border-[#00C6A6]/40 flex items-center space-x-3.5 animate-in slide-in-from-bottom-5 duration-200">
-          <div className="w-8 h-8 rounded-xl bg-[#00C6A6]/20 text-[#00E5C0] flex items-center justify-center shrink-0">
-            <CheckCircle2 className="w-5 h-5" />
-          </div>
-          <div className="pr-2">
-            <p className="text-xs font-black text-white">{toastMessage.title}</p>
-            {toastMessage.subtitle && (
-              <p className="text-[11px] text-slate-400 font-medium">{toastMessage.subtitle}</p>
-            )}
-          </div>
-          <div className="flex items-center space-x-2">
+        {/* Floating Success Feedback Toast */}
+        {toastMessage && (
+          <div className="fixed bottom-6 right-6 z-50 bg-slate-950 text-white px-5 py-3.5 rounded-2xl shadow-2xl border border-[#00C6A6]/40 flex items-center space-x-3.5 animate-in slide-in-from-bottom-5 duration-200">
+            <div className="w-8 h-8 rounded-xl bg-[#00C6A6]/20 text-[#00E5C0] flex items-center justify-center shrink-0">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+            <div className="pr-2">
+              <p className="text-xs font-black text-white">{toastMessage.title}</p>
+              {toastMessage.subtitle && (
+                <p className="text-[11px] text-slate-400 font-medium">{toastMessage.subtitle}</p>
+              )}
+            </div>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => {
+                  setToastMessage(null);
+                  setIsQuoteDrawerOpen(true);
+                }}
+                className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 text-xs font-black transition-colors flex items-center space-x-1 cursor-pointer"
+              >
+                <span>View Cart ({items.length})</span>
+              </button>
+            </div>
             <button
-              onClick={() => {
-                setToastMessage(null);
-                setIsQuoteDrawerOpen(true);
-              }}
-              className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 text-xs font-black transition-colors flex items-center space-x-1 cursor-pointer"
+              onClick={() => setToastMessage(null)}
+              className="text-slate-500 hover:text-white p-1 rounded-md cursor-pointer"
             >
-              <span>View Cart ({items.length})</span>
+              <X className="w-4 h-4" />
             </button>
           </div>
-          <button
-            onClick={() => setToastMessage(null)}
-            className="text-slate-500 hover:text-white p-1 rounded-md cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+        )}
 
-      {/* Main Content Area */}
-      <main className="flex-1 w-full min-w-0 max-w-full pb-16">
+        {/* Main Content Area */}
+        <main className="flex-1 w-full min-w-0 max-w-full pb-16">
         {activeTab === 'home' && (
           <B2BHomeDiscoveryView
             destinations={destinations}
@@ -538,6 +548,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
         onNavigateToQuoteBuilder={() => setActiveTab('create-quote')}
         onNavigateToCatalog={(tab) => setActiveTab(tab as B2BTabType)}
       />
+      </div>
     </div>
   );
 };

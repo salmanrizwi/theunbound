@@ -30,6 +30,7 @@ import {
   Settings,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   Menu,
   X,
   ShieldCheck,
@@ -417,15 +418,15 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   const sidebarContent = (
     <div className="flex flex-col h-full bg-white select-none">
       {/* Brand Header */}
-      <div className="h-16 px-4 border-b border-slate-200/80 flex items-center justify-between shrink-0">
-        <div 
-          onClick={() => onNavigate('DASHBOARD', 'OVERVIEW')}
-          className="flex items-center space-x-2.5 cursor-pointer group overflow-hidden"
-        >
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#00C6A6] to-[#008972] flex items-center justify-center text-slate-950 font-black shadow-xs shadow-[#00C6A6]/20 shrink-0 group-hover:scale-105 transition-transform">
-            <ShieldCheck className="w-4 h-4 text-slate-950" />
-          </div>
-          {!isCollapsed && (
+      {!isCollapsed ? (
+        <div className="h-16 px-3.5 border-b border-slate-200/80 flex items-center justify-between shrink-0">
+          <div 
+            onClick={() => onNavigate('DASHBOARD', 'OVERVIEW')}
+            className="flex items-center space-x-2.5 cursor-pointer group overflow-hidden"
+          >
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#00C6A6] to-[#008972] flex items-center justify-center text-slate-950 font-black shadow-xs shadow-[#00C6A6]/20 shrink-0 group-hover:scale-105 transition-transform">
+              <ShieldCheck className="w-4 h-4 text-slate-950" />
+            </div>
             <div className="min-w-0">
               <div className="flex items-center space-x-1.5">
                 <span className="text-sm font-black tracking-tight text-slate-900 font-sans lowercase">
@@ -439,26 +440,51 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
                 Japan Travel DMC
               </p>
             </div>
-          )}
+          </div>
+
+          {/* Toggle Collapse Button (Desktop) ◀ */}
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="hidden lg:flex items-center justify-center w-7 h-7 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-slate-500 hover:text-[#00C6A6] transition-all cursor-pointer shadow-2xs shrink-0 ml-1"
+            title="Collapse Sidebar"
+            aria-label="Collapse Sidebar"
+          >
+            <ChevronLeft className="w-4 h-4 stroke-[2.5]" />
+          </button>
+
+          {/* Close Button (Mobile) */}
+          <button
+            onClick={onCloseMobile}
+            className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
+      ) : (
+        <div className="h-16 border-b border-slate-200/80 flex flex-col items-center justify-center shrink-0 gap-1 p-2">
+          <div 
+            onClick={() => onNavigate('DASHBOARD', 'OVERVIEW')}
+            className="cursor-pointer group"
+            title="TheUnbound Admin CMS"
+          >
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#00C6A6] to-[#008972] flex items-center justify-center text-slate-950 font-black shadow-xs shadow-[#00C6A6]/20 group-hover:scale-105 transition-transform">
+              <ShieldCheck className="w-3.5 h-3.5 text-slate-950" />
+            </div>
+          </div>
 
-        {/* Toggle Collapse Button (Desktop) */}
-        <button
-          onClick={onToggleCollapse}
-          className="hidden lg:flex p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-          title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
-        >
-          <Menu className="w-4 h-4" />
-        </button>
-
-        {/* Close Button (Mobile) */}
-        <button
-          onClick={onCloseMobile}
-          className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
+          {/* Toggle Expand Button (Desktop) ▶ */}
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="hidden lg:flex items-center justify-center w-6 h-6 rounded-md border border-slate-200 bg-white hover:bg-slate-100 text-slate-500 hover:text-[#00C6A6] transition-all cursor-pointer shadow-2xs"
+            title="Expand Sidebar"
+            aria-label="Expand Sidebar"
+          >
+            <ChevronRight className="w-3.5 h-3.5 stroke-[2.5]" />
+          </button>
+        </div>
+      )}
 
       {/* Navigation Groups List */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4 scrollbar-thin">
