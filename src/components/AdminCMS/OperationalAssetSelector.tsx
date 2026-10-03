@@ -124,11 +124,24 @@ export const OperationalAssetSelector: React.FC<OperationalAssetSelectorProps> =
     });
   }, [activeRecords, searchQuery, filterByDestination, destinationId]);
 
-  // Find currently selected record
+  // Find currently selected record across active and all
+  const allRecords = useMemo(() => {
+    if (assetType === 'VEHICLE') return vehicles;
+    if (assetType === 'YACHT') return yachts;
+    return ferries;
+  }, [assetType, vehicles, yachts, ferries]);
+
   const currentRecord = useMemo(() => {
     if (!selectedId) return null;
     return activeRecords.find(r => r.id === selectedId) || null;
   }, [activeRecords, selectedId]);
+
+  const historicalOrInactiveRecord = useMemo(() => {
+    if (!selectedId || currentRecord) return null;
+    return allRecords.find(r => r.id === selectedId) || null;
+  }, [allRecords, selectedId, currentRecord]);
+
+  const isOrphan = Boolean(selectedId && !currentRecord);
 
   const assetLabel = assetType === 'VEHICLE' ? 'Vehicle' : assetType === 'YACHT' ? 'Yacht' : 'Ferry / Vessel';
   const Icon = assetType === 'VEHICLE' ? Car : assetType === 'YACHT' ? Ship : Anchor;
@@ -379,76 +392,94 @@ export const OperationalAssetSelector: React.FC<OperationalAssetSelectorProps> =
 
       {/* Authoritative Selected Asset Read-Only Inspection Display */}
       {selectedId ? (
-        <div className="bg-slate-950 p-3 rounded-xl border border-teal-500/30 space-y-2 text-xs">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="text-slate-400 flex items-center gap-1 font-semibold">
-              <ShieldCheck className="w-3.5 h-3.5 text-[#00E5C0]" />
-              <span>Authoritative Master Record Snapshot</span>
-            </span>
-            <span className="text-[10px] bg-teal-500/20 text-[#00E5C0] font-mono px-1.5 py-0.5 rounded font-bold">
-              ID: {selectedId}
-            </span>
-          </div>
+        <div className="space-y-2">
+          {isOrphan && (
+            <div className="p-3 bg-rose-950/80 rounded-xl border border-rose-500/50 text-xs text-rose-200 flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <div className="font-bold text-rose-100">
+                  Referenced operational asset is unavailable.
+                </div>
+                <div className="text-[11px] text-rose-300">
+                  {historicalOrInactiveRecord
+                    ? `Asset "${historicalOrInactiveRecord.name}" (ID: ${selectedId}) is currently marked as ${historicalOrInactiveRecord.status}. Please select an active asset from Authoritative Operational Master Inventory.`
+                    : `Asset ID "${selectedId}" does not exist in Authoritative Operational Master Inventory. Please select an active asset from Authoritative Operational Master Inventory.`}
+                </div>
+              </div>
+            </div>
+          )}
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
-            <div className="space-y-0.5">
-              <span className="text-[10px] text-slate-500 uppercase tracking-wider block">
-                {assetLabel} Classification
+          <div className="bg-slate-950 p-3 rounded-xl border border-teal-500/30 space-y-2 text-xs">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-slate-400 flex items-center gap-1 font-semibold">
+                <ShieldCheck className="w-3.5 h-3.5 text-[#00E5C0]" />
+                <span>Authoritative Master Record Snapshot</span>
               </span>
-              <span className="font-semibold text-white truncate block">
-                {selectedType || currentRecord?.classification || (currentRecord as any)?.type || '—'}
+              <span className="text-[10px] bg-teal-500/20 text-[#00E5C0] font-mono px-1.5 py-0.5 rounded font-bold">
+                ID: {selectedId}
               </span>
             </div>
 
-            <div className="space-y-0.5">
-              <span className="text-[10px] text-slate-500 uppercase tracking-wider block">
-                Authoritative Capacity
-              </span>
-              <span className="font-bold text-[#00E5C0] truncate block">
-                {selectedCapacity !== undefined ? `${selectedCapacity} ${capacityUnit}` : '—'}
-              </span>
-            </div>
-
-            {assetType === 'VEHICLE' && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
               <div className="space-y-0.5">
                 <span className="text-[10px] text-slate-500 uppercase tracking-wider block">
-                  Luggage Allowance
+                  {assetLabel} Classification
                 </span>
-                <span className="font-semibold text-slate-200 truncate block">
-                  {(currentRecord as any)?.luggageCapacity ? `${(currentRecord as any).luggageCapacity} Standard Suitcases` : 'Controlled'}
+                <span className="font-semibold text-white truncate block">
+                  {selectedType || currentRecord?.classification || (currentRecord as any)?.type || (historicalOrInactiveRecord as any)?.classification || '—'}
                 </span>
               </div>
-            )}
 
-            {assetType === 'YACHT' && (
               <div className="space-y-0.5">
                 <span className="text-[10px] text-slate-500 uppercase tracking-wider block">
-                  Length / Dimensions
+                  Authoritative Capacity
                 </span>
-                <span className="font-semibold text-slate-200 truncate block">
-                  {selectedDimensions || (currentRecord as any)?.length || '—'}
+                <span className="font-bold text-[#00E5C0] truncate block">
+                  {selectedCapacity !== undefined ? `${selectedCapacity} ${capacityUnit}` : (currentRecord?.capacity !== undefined ? `${currentRecord.capacity} ${capacityUnit}` : '—')}
                 </span>
               </div>
-            )}
 
-            {assetType === 'FERRY' && (
+              {assetType === 'VEHICLE' && (
+                <div className="space-y-0.5">
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider block">
+                    Luggage Allowance
+                  </span>
+                  <span className="font-semibold text-slate-200 truncate block">
+                    {(currentRecord as any)?.luggageCapacity ? `${(currentRecord as any).luggageCapacity} Standard Suitcases` : 'Controlled'}
+                  </span>
+                </div>
+              )}
+
+              {assetType === 'YACHT' && (
+                <div className="space-y-0.5">
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider block">
+                    Length / Dimensions
+                  </span>
+                  <span className="font-semibold text-slate-200 truncate block">
+                    {selectedDimensions || (currentRecord as any)?.length || '—'}
+                  </span>
+                </div>
+              )}
+
+              {assetType === 'FERRY' && (
+                <div className="space-y-0.5">
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider block">
+                    Ferry Route
+                  </span>
+                  <span className="font-semibold text-slate-200 truncate block">
+                    {(currentRecord as any)?.route || '—'}
+                  </span>
+                </div>
+              )}
+
               <div className="space-y-0.5">
                 <span className="text-[10px] text-slate-500 uppercase tracking-wider block">
-                  Ferry Route
+                  Home Port / Hub
                 </span>
                 <span className="font-semibold text-slate-200 truncate block">
-                  {(currentRecord as any)?.route || '—'}
+                  {(currentRecord as any)?.hubName || (currentRecord as any)?.destinationName || (historicalOrInactiveRecord as any)?.hubName || 'National Fleet'}
                 </span>
               </div>
-            )}
-
-            <div className="space-y-0.5">
-              <span className="text-[10px] text-slate-500 uppercase tracking-wider block">
-                Home Port / Hub
-              </span>
-              <span className="font-semibold text-slate-200 truncate block">
-                {(currentRecord as any)?.hubName || (currentRecord as any)?.destinationName || 'National Fleet'}
-              </span>
             </div>
           </div>
         </div>

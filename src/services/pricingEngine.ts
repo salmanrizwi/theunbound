@@ -112,6 +112,161 @@ export function generateCapacitySimulationMatrix(
   return rows;
 }
 
+export interface CapacityTierResolutionParams {
+  product: Product;
+  passengerCount: number;
+  routeId?: string;
+  travelDate?: string;
+  configuration?: Record<string, any>;
+}
+
+export interface CapacityTierResolutionResult {
+  hasMatchedTier: boolean;
+  matchingTier?: TieredPrice;
+  vehicleName: string;
+  vehicleType: string;
+  vehicleModel?: string;
+  fleetAssetId?: string;
+  supplierNett: number;
+  minPassengers: number;
+  maxPassengers: number;
+  vehiclesRequired: number;
+  calculatedPrice: number;
+  currency: CurrencyCode;
+  validationError?: string;
+  isCapacityExceeded?: boolean;
+}
+
+/**
+ * Authoritative Central Service for Capacity Tier Resolution
+ * Step 3 (Product-Specific Capacity Pricing Tiers) is the primary commercial pricing mechanism
+ * based on passenger count. Step 2 Fleet Assets do NOT block or restrict Step 3 tier selection.
+ */
+export function resolveCapacityPricingTier(params: CapacityTierResolutionParams): CapacityTierResolutionResult {
+  const { product, passengerCount } = params;
+  const curr: CurrencyCode = product.currency || product.nativeCurrency || 'USD';
+  const activeTiers = (product.tieredPricing || []).filter(t => t.status !== 'INACTIVE');
+  const sortedTiers = [...activeTiers].sort((a, b) => a.minPax - b.minPax);
+
+  const totalPax = Math.max(1, passengerCount || 1);
+  const vehicleConfig = product.vehicleConfig;
+  const defaultVehicleName = vehicleConfig?.vehicleName || vehicleConfig?.vehicleModel || product.name;
+  const defaultVehicleType = vehicleConfig?.vehicleType || 'Executive Chauffeur';
+  const defaultUnitNett = vehicleConfig?.unitVehicleNetCost ?? vehicleConfig?.totalTransferCost ?? product.adultNetPrice ?? 0;
+
+  // Step 3: Product-Specific Capacity Pricing Tiers is AUTHORITATIVE for passenger count match
+  if (sortedTiers.length > 0) {
+    const matched = sortedTiers.find(t => totalPax >= t.minPax && totalPax <= t.maxPax);
+
+    if (matched) {
+      const tierNett = matched.supplierNett !== undefined 
+        ? matched.supplierNett 
+        : (matched.nettPrice !== undefined 
+          ? matched.nettPrice 
+          : (matched.netCostPerPax !== undefined ? matched.netCostPerPax : defaultUnitNett));
+
+      const marginPct = matched.marginValue !== undefined 
+        ? matched.marginValue 
+        : (product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 20);
+      
+      const taxPct = matched.taxValue !== undefined 
+        ? matched.taxValue 
+        : (product.taxPercent ?? 10);
+      
+      const feePct = matched.serviceChargeValue !== undefined 
+        ? matched.serviceChargeValue 
+        : (product.serviceFeeFixed ?? 0);
+
+      const b2bCalc = calculateB2BAgentPrice({
+        nettCost: tierNett,
+        marginPercent: marginPct,
+        taxPercent: taxPct,
+        serviceFeePercent: feePct,
+        currency: curr
+      });
+
+      const tierVehicles = matched.vehicleCount !== undefined && matched.vehicleCount > 0 ? matched.vehicleCount : 1;
+
+      let validationError: string | undefined = undefined;
+      if (matched.maxPax && totalPax > matched.maxPax) {
+        validationError = `Configuration Error: Selected fleet asset capacity does not support the configured passenger range (${totalPax} Pax).`;
+      }
+
+      return {
+        hasMatchedTier: true,
+        matchingTier: matched,
+        vehicleName: matched.fleetName || (matched as any).vehicleName || defaultVehicleName,
+        vehicleType: defaultVehicleType,
+        vehicleModel: vehicleConfig?.vehicleModel,
+        fleetAssetId: matched.fleetId || (matched as any).vehicleId || product.vehicleId,
+        supplierNett: tierNett,
+        minPassengers: matched.minPax,
+        maxPassengers: matched.maxPax,
+        vehiclesRequired: tierVehicles,
+        calculatedPrice: b2bCalc.price,
+        currency: curr,
+        validationError
+      };
+    } else {
+      // Step 3 tiers exist, but passenger count does NOT match any configured tier range
+      return {
+        hasMatchedTier: false,
+        vehicleName: defaultVehicleName,
+        vehicleType: defaultVehicleType,
+        supplierNett: 0,
+        minPassengers: 1,
+        maxPassengers: sortedTiers[sortedTiers.length - 1]?.maxPax || 1,
+        vehiclesRequired: 1,
+        calculatedPrice: 0,
+        currency: curr,
+        isCapacityExceeded: true,
+        validationError: `No configured pricing tier is available for this passenger count (${totalPax} Pax).`
+      };
+    }
+  }
+
+  // Fallback if no Step 3 tiers are defined at all
+  const maxSeats = Math.max(1, vehicleConfig?.maxSeats || vehicleConfig?.passengerCapacity || product.maxPax || 7);
+  const allowMultiple = vehicleConfig?.allowMultipleVehicles ?? true;
+  const vehiclesNeeded = totalPax > maxSeats && allowMultiple ? Math.ceil(totalPax / maxSeats) : 1;
+  const totalNett = defaultUnitNett * vehiclesNeeded;
+
+  const marginPct = product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 20;
+  const taxPct = product.taxPercent ?? 10;
+  const feePct = product.serviceFeeFixed ?? 0;
+
+  const b2bCalc = calculateB2BAgentPrice({
+    nettCost: totalNett,
+    marginPercent: marginPct,
+    taxPercent: taxPct,
+    serviceFeePercent: feePct,
+    currency: curr
+  });
+
+  return {
+    hasMatchedTier: totalPax <= maxSeats || allowMultiple,
+    vehicleName: defaultVehicleName,
+    vehicleType: defaultVehicleType,
+    vehicleModel: vehicleConfig?.vehicleModel,
+    fleetAssetId: product.vehicleId,
+    supplierNett: totalNett,
+    minPassengers: 1,
+    maxPassengers: maxSeats,
+    vehiclesRequired: vehiclesNeeded,
+    calculatedPrice: b2bCalc.price,
+    currency: curr,
+    validationError: (totalPax > maxSeats && !allowMultiple) 
+      ? `No configured pricing tier is available for this passenger count (${totalPax} Pax).` 
+      : undefined
+  };
+}
+
+export class CapacityTierResolver {
+  public static resolve(params: CapacityTierResolutionParams): CapacityTierResolutionResult {
+    return resolveCapacityPricingTier(params);
+  }
+}
+
 export type MarginType = 'PERCENTAGE' | 'FIXED';
 export type ServiceChargeType = 'PERCENTAGE' | 'FIXED';
 

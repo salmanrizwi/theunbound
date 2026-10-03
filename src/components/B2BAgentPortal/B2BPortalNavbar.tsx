@@ -48,6 +48,13 @@ import { navigateTo } from '../../services/portalRouter';
 
 export type { B2BTabType };
 
+interface SidebarNavChild {
+  id: string;
+  label: string;
+  subCategory: 'VISA' | 'PROTECTION' | 'GROUND';
+  icon: React.ElementType;
+}
+
 interface SidebarNavItem {
   id: B2BTabType;
   label: string;
@@ -55,6 +62,7 @@ interface SidebarNavItem {
   count?: number;
   alertCount?: number;
   isPrimary?: boolean;
+  children?: SidebarNavChild[];
 }
 
 interface SidebarNavGroup {
@@ -64,7 +72,8 @@ interface SidebarNavGroup {
 
 interface B2BPortalSidebarProps {
   activeTab: B2BTabType;
-  onSelectTab: (tab: B2BTabType) => void;
+  activeSubCategory?: string;
+  onSelectTab: (tab: B2BTabType, subCategory?: string) => void;
   isMobileOpen?: boolean;
   onCloseMobile?: () => void;
 }
@@ -76,6 +85,7 @@ interface B2BPortalSidebarProps {
  */
 export const B2BPortalSidebar: React.FC<B2BPortalSidebarProps> = ({
   activeTab,
+  activeSubCategory,
   onSelectTab,
   isMobileOpen = false,
   onCloseMobile
@@ -95,6 +105,7 @@ export const B2BPortalSidebar: React.FC<B2BPortalSidebarProps> = ({
 
   // Expanded sections state for collapsible groups
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({ visa: true });
 
   useEffect(() => {
     return db.subscribe(() => {
@@ -158,7 +169,17 @@ export const B2BPortalSidebar: React.FC<B2BPortalSidebarProps> = ({
       items: [
         { id: 'products', label: 'Products & Tours', icon: ShoppingBag, count: productsCount },
         { id: 'hotels', label: 'Hotels & Ryokans', icon: Building2, count: hotelsCount },
-        { id: 'visa', label: 'Visa & Ancillaries', icon: FileCheck, count: visasCount },
+        { 
+          id: 'visa', 
+          label: 'Visa & Ancillaries', 
+          icon: FileCheck, 
+          count: visasCount,
+          children: [
+            { id: 'visa_services', label: 'Visa Services', subCategory: 'VISA', icon: FileText },
+            { id: 'travel_protection', label: 'Travel Protection', subCategory: 'PROTECTION', icon: ShieldCheck },
+            { id: 'ground_connectivity', label: 'Ground & Connectivity', subCategory: 'GROUND', icon: Sparkles }
+          ]
+        },
         { id: 'packages', label: 'Tour Packages', icon: Layers, count: packagesCount }
       ]
     },
@@ -328,45 +349,99 @@ export const B2BPortalSidebar: React.FC<B2BPortalSidebarProps> = ({
                       );
                     }
 
+                    const hasChildren = !!(item.children && item.children.length > 0);
+                    const isExpanded = expandedItems[item.id] ?? true;
+
                     return (
-                      <button
-                        key={item.id}
-                        onClick={() => {
-                          onSelectTab(item.id);
-                          if (onCloseMobile) onCloseMobile();
-                        }}
-                        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-[13px] font-semibold transition-all cursor-pointer group ${
-                          isActive
-                            ? 'bg-teal-50 text-[#008f77] border-l-4 border-[#00C6A6] font-bold shadow-2xs'
-                            : isPrimary
-                            ? 'bg-emerald-50/80 text-emerald-900 border border-emerald-200/80 hover:bg-emerald-100/80 font-bold'
-                            : 'text-slate-600 hover:text-slate-950 hover:bg-slate-100/80'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <Icon className={`w-4 h-4 shrink-0 transition-colors ${
-                            isActive 
-                              ? 'text-[#00C6A6]' 
+                      <div key={item.id} className="space-y-0.5">
+                        <div
+                          onClick={() => {
+                            onSelectTab(item.id);
+                            if (hasChildren && !expandedItems[item.id]) {
+                              setExpandedItems(prev => ({ ...prev, [item.id]: true }));
+                            }
+                            if (!hasChildren && onCloseMobile) onCloseMobile();
+                          }}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-[13px] font-semibold transition-all cursor-pointer group ${
+                            isActive
+                              ? 'bg-teal-50 text-[#008f77] border-l-4 border-[#00C6A6] font-bold shadow-2xs'
                               : isPrimary
-                              ? 'text-emerald-600'
-                              : 'text-slate-400 group-hover:text-slate-600'
-                          }`} />
-                          <span className="truncate">{item.label}</span>
+                              ? 'bg-emerald-50/80 text-emerald-900 border border-emerald-200/80 hover:bg-emerald-100/80 font-bold'
+                              : 'text-slate-600 hover:text-slate-950 hover:bg-slate-100/80'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <Icon className={`w-4 h-4 shrink-0 transition-colors ${
+                              isActive 
+                                ? 'text-[#00C6A6]' 
+                                : isPrimary
+                                ? 'text-emerald-600'
+                                : 'text-slate-400 group-hover:text-slate-600'
+                            }`} />
+                            <span className="truncate">{item.label}</span>
+                          </div>
+
+                          <div className="flex items-center space-x-1.5 shrink-0">
+                            {/* Counts / Alert Badge */}
+                            {item.count !== undefined && item.count > 0 && (
+                              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold shrink-0 ${
+                                item.alertCount && item.alertCount > 0
+                                  ? 'bg-rose-500 text-white animate-pulse'
+                                  : isActive
+                                  ? 'bg-[#00C6A6]/20 text-[#008f77]'
+                                  : 'bg-slate-100 text-slate-500 group-hover:bg-slate-200'
+                              }`}>
+                                {item.count}
+                              </span>
+                            )}
+                            {hasChildren && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExpandedItems(prev => ({ ...prev, [item.id]: !prev[item.id] }));
+                                }}
+                                className="p-1 hover:bg-slate-200/60 rounded-md text-slate-400 hover:text-slate-700 transition-colors"
+                                title={isExpanded ? 'Collapse sub-items' : 'Expand sub-items'}
+                              >
+                                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? '' : '-rotate-90'}`} />
+                              </button>
+                            )}
+                          </div>
                         </div>
 
-                        {/* Counts / Alert Badge */}
-                        {item.count !== undefined && item.count > 0 && (
-                          <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold shrink-0 ${
-                            item.alertCount && item.alertCount > 0
-                              ? 'bg-rose-500 text-white animate-pulse'
-                              : isActive
-                              ? 'bg-[#00C6A6]/20 text-[#008f77]'
-                              : 'bg-slate-100 text-slate-500 group-hover:bg-slate-200'
-                          }`}>
-                            {item.count}
-                          </span>
+                        {/* Indented Children Sub-Tree */}
+                        {hasChildren && isExpanded && (
+                          <div className="pl-4 pr-1 space-y-0.5 border-l-2 border-[#00C6A6]/30 ml-4.5 my-1 animate-in fade-in slide-in-from-top-1">
+                            {item.children!.map((child) => {
+                              const ChildIcon = child.icon;
+                              const isChildActive = activeTab === 'visa' && (
+                                activeSubCategory === child.subCategory ||
+                                (!activeSubCategory && child.subCategory === 'VISA')
+                              );
+
+                              return (
+                                <button
+                                  key={child.id}
+                                  id={`b2b-nav-child-${child.id}`}
+                                  onClick={() => {
+                                    onSelectTab('visa', child.subCategory);
+                                    if (onCloseMobile) onCloseMobile();
+                                  }}
+                                  className={`w-full flex items-center space-x-2 px-2 py-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                                    isChildActive
+                                      ? 'bg-[#00C6A6]/20 text-[#008972] font-black shadow-2xs border border-[#00C6A6]/40'
+                                      : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50 font-medium'
+                                  }`}
+                                >
+                                  <ChildIcon className={`w-3.5 h-3.5 shrink-0 ${isChildActive ? 'text-[#008972]' : 'text-slate-400'}`} />
+                                  <span className="truncate">{child.label}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
                         )}
-                      </button>
+                      </div>
                     );
                   })}
                 </div>

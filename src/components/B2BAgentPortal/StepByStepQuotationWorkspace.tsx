@@ -66,7 +66,7 @@ import {
   FeasibilityCheckResult,
   AgentMarginType
 } from '../../types';
-import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, resolveCapacityPricingTier } from '../../services/pricingEngine';
 import { TransferSuggestion } from '../../utils/b2bQuotationHelpers';
 import { validateRoomOccupancy, hotelToProduct, manualHotelToProduct } from '../../utils/hotelHelpers';
 import { VisaServicesAndFacilitationSection } from './VisaServicesAndFacilitationSection';
@@ -692,15 +692,14 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
   const handleQuickAddTransfer = (product: Product, movement?: any) => {
     const totalPax = adultsCount + childrenCount;
-    const maxSeats = product.vehicleConfig?.maxSeats || product.vehicleConfig?.totalSeats || product.maxPax || 4;
-    const allowMulti = Boolean(product.vehicleConfig?.allowMultipleVehicles);
-    const vehiclesNeeded = (totalPax > maxSeats && allowMulti) ? Math.ceil(totalPax / maxSeats) : 1;
+    const tierRes = resolveCapacityPricingTier({ product, passengerCount: totalPax });
+    const vehiclesNeeded = tierRes.vehiclesRequired;
 
     const fromText = movement?.fromName || product.fromHubName || 'Departure Hub';
     const toText = movement?.toName || product.toHubName || 'Arrival Hub';
     const travelDate = movement?.suggestedDate || startDate || new Date().toISOString().split('T')[0];
 
-    const notes = `${fromText} ➔ ${toText} • ${vehiclesNeeded > 1 ? `${vehiclesNeeded} × Vehicles Allocated` : (product.vehicleConfig?.vehicleName || product.name)}`;
+    const notes = `${fromText} ➔ ${toText} • ${vehiclesNeeded > 1 ? `${vehiclesNeeded} × Vehicles Allocated` : (tierRes.vehicleName || product.name)}`;
 
     addProductToQuote(product, {
       travelDate,
@@ -2687,17 +2686,15 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                               ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                   {movement.matchingProducts.map(prod => {
-                                    const maxSeats = prod.vehicleConfig?.maxSeats || prod.vehicleConfig?.totalSeats || prod.maxPax || 4;
+                                    const tierRes = resolveCapacityPricingTier({ product: prod, passengerCount: totalPax });
+                                    const maxSeats = tierRes.maxPassengers;
                                     const maxLuggage = prod.vehicleConfig?.maxLuggage || 4;
                                     const allowMulti = Boolean(prod.vehicleConfig?.allowMultipleVehicles);
-                                    const isCapacityExceeded = totalPax > maxSeats;
-                                    const vehiclesNeeded = (isCapacityExceeded && allowMulti) ? Math.ceil(totalPax / maxSeats) : 1;
+                                    const isCapacityExceeded = !tierRes.hasMatchedTier;
+                                    const vehiclesNeeded = tierRes.vehiclesRequired;
 
-                                    const baseNet = prod.vehicleConfig?.unitVehicleNetCost || prod.adultNetPrice || 100;
-                                    const markupPct = prod.b2bAgentMarkupPercent || prod.defaultMarkupPercent || 15;
-                                    const unitSelling = Math.round(baseNet * (1 + markupPct / 100));
-                                    const totalSelling = unitSelling * vehiclesNeeded;
-                                    const convertedSelling = convertCurrency(totalSelling, prod.currency || 'USD', currency);
+                                    const unitSelling = tierRes.calculatedPrice / Math.max(1, vehiclesNeeded);
+                                    const convertedSelling = convertCurrency(tierRes.calculatedPrice, tierRes.currency, currency);
 
                                     const isAlreadySelected = items.some(it => 
                                       (it.product.id === prod.id || it.product.sku === prod.sku) &&
@@ -2738,7 +2735,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                           <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px] text-slate-600">
                                             <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium flex items-center space-x-1">
                                               <Users className="w-3 h-3 text-slate-500" />
-                                              <span>Max {maxSeats} Pax</span>
+                                              <span>Capacity: {tierRes.minPassengers}–{tierRes.maxPassengers} Pax</span>
                                             </span>
                                             <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium flex items-center space-x-1">
                                               <Luggage className="w-3 h-3 text-slate-500" />
@@ -2754,20 +2751,15 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
                                           {/* Passenger Capacity Validation Badge */}
                                           <div className="pt-1">
-                                            {!isCapacityExceeded ? (
+                                            {tierRes.hasMatchedTier ? (
                                               <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
                                                 <Check className="w-3 h-3 text-emerald-600" />
-                                                <span>Accommodates Group ({totalPax} Pax / {maxSeats} Seats)</span>
-                                              </span>
-                                            ) : allowMulti ? (
-                                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-300">
-                                                <AlertTriangle className="w-3 h-3 text-amber-600" />
-                                                <span>Auto-Allocates {vehiclesNeeded} × Vehicles for {totalPax} Pax</span>
+                                                <span>Step 3 Tier Matched ({totalPax} Pax / {tierRes.minPassengers}–{tierRes.maxPassengers} Pax)</span>
                                               </span>
                                             ) : (
                                               <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 text-rose-800 border border-rose-300">
                                                 <AlertCircle className="w-3 h-3 text-rose-600" />
-                                                <span>Insufficient Capacity (Max {maxSeats} Seats)</span>
+                                                <span>{tierRes.validationError || 'No configured pricing tier is available for this passenger count.'}</span>
                                               </span>
                                             )}
                                           </div>
@@ -2914,17 +2906,13 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             })
                             .map(prod => {
                               const totalPax = adultsCount + childrenCount;
-                              const maxSeats = prod.vehicleConfig?.maxSeats || prod.vehicleConfig?.totalSeats || prod.maxPax || 4;
+                              const tierRes = resolveCapacityPricingTier({ product: prod, passengerCount: totalPax });
+                              const maxSeats = tierRes.maxPassengers;
                               const maxLuggage = prod.vehicleConfig?.maxLuggage || 4;
                               const allowMulti = Boolean(prod.vehicleConfig?.allowMultipleVehicles);
-                              const isExceeded = totalPax > maxSeats;
-                              const vehiclesNeeded = isExceeded && allowMulti ? Math.ceil(totalPax / maxSeats) : 1;
-
-                              const baseNet = prod.vehicleConfig?.unitVehicleNetCost || prod.adultNetPrice || 100;
-                              const markupPct = prod.b2bAgentMarkupPercent || prod.defaultMarkupPercent || 15;
-                              const unitSelling = Math.round(baseNet * (1 + markupPct / 100));
-                              const totalSelling = unitSelling * vehiclesNeeded;
-                              const convertedSelling = convertCurrency(totalSelling, prod.currency || 'USD', currency);
+                              const isExceeded = !tierRes.hasMatchedTier || totalPax > maxSeats;
+                              const vehiclesNeeded = tierRes.vehiclesRequired;
+                              const convertedSelling = convertCurrency(tierRes.calculatedPrice, tierRes.currency, currency);
 
                               return (
                                 <div key={prod.id} className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col justify-between space-y-3 hover:shadow-xs transition-shadow">

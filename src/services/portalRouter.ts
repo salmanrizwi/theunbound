@@ -43,12 +43,70 @@ export function parseRoute(pathString?: string): ParsedRoute {
 
   // ADMIN / CMS Namespace
   if (normalized.startsWith('/admin') || normalized.startsWith('/cms')) {
-    const segments = normalized.replace(/^\/(admin|cms)\/?/, '').split('/').filter(Boolean);
+    const rawSegments = normalized.replace(/^\/(admin|cms)\/?/, '').split('/').filter(Boolean);
+    let subTab = rawSegments[0] || 'dashboard';
+    let param = rawSegments[1];
+
+    // Normalize operations nested paths:
+    // e.g. /admin/operations/visa-ancillary-services/travel-protection
+    // /admin/operations/visa-ancillary/travel-protection
+    // /admin/operations/visa/travel-protection
+    // /admin/operations/travel-protection
+    if (subTab === 'operations' && rawSegments[1]) {
+      const second = rawSegments[1].toLowerCase().replace(/[-_]/g, '');
+      if (second === 'visasancillary' || second === 'visaancillary' || second === 'visasancillaries' || second === 'visaancillaryservices' || second === 'visasancillaryservices' || second === 'visa' || second === 'visas' || second === 'ancillary' || second === 'ancillaries') {
+        subTab = 'visas-ancillary';
+        param = rawSegments[2] || 'visa_services';
+      } else if (second === 'travelprotection' || second === 'protection' || second === 'insurance') {
+        subTab = 'visas-ancillary';
+        param = 'travel_protection';
+      } else if (second === 'groundconnectivity' || second === 'ground' || second === 'vip' || second === 'vipground' || second === 'connectivity' || second === 'esim') {
+        subTab = 'visas-ancillary';
+        param = 'ground_connectivity';
+      } else if (second === 'masterschemamatrix' || second === 'fieldparity' || second === 'schemamatrix' || second === 'matrix') {
+        subTab = 'visas-ancillary';
+        param = 'field_parity';
+      } else if (second === 'visaservices' || second === 'visaservice') {
+        subTab = 'visas-ancillary';
+        param = 'visa_services';
+      }
+    }
+
+    // Direct module aliases at /admin level:
+    const firstClean = subTab.toLowerCase().replace(/[-_]/g, '');
+    if (firstClean === 'travelprotection' || firstClean === 'protection' || firstClean === 'insurance') {
+      subTab = 'visas-ancillary';
+      param = 'travel_protection';
+    } else if (firstClean === 'groundconnectivity' || firstClean === 'ground' || firstClean === 'connectivity' || firstClean === 'vipground' || firstClean === 'vip' || firstClean === 'esim') {
+      subTab = 'visas-ancillary';
+      param = 'ground_connectivity';
+    } else if (firstClean === 'masterschemamatrix' || firstClean === 'fieldparity' || firstClean === 'schemamatrix' || firstClean === 'matrix') {
+      subTab = 'visas-ancillary';
+      param = 'field_parity';
+    } else if (firstClean === 'visasancillary' || firstClean === 'visaancillary' || firstClean === 'visasancillaries' || firstClean === 'visaancillaries' || firstClean === 'visaancillaryservices' || firstClean === 'visasancillaryservices' || firstClean === 'visaservices' || firstClean === 'visaservice' || firstClean === 'visa' || firstClean === 'visas' || firstClean === 'ancillary' || firstClean === 'ancillaries') {
+      subTab = 'visas-ancillary';
+      if (!param) param = 'visa_services';
+    }
+
+    // Normalize param format (underscores for subTab matching)
+    if (param) {
+      const pClean = param.toLowerCase().replace(/[-_]/g, '');
+      if (pClean === 'travelprotection' || pClean === 'protection' || pClean === 'insurance') {
+        param = 'travel_protection';
+      } else if (pClean === 'groundconnectivity' || pClean === 'ground' || pClean === 'connectivity' || pClean === 'vip' || pClean === 'vipground' || pClean === 'esim') {
+        param = 'ground_connectivity';
+      } else if (pClean === 'masterschemamatrix' || pClean === 'fieldparity' || pClean === 'schemamatrix' || pClean === 'matrix') {
+        param = 'field_parity';
+      } else if (pClean === 'visaservices' || pClean === 'visaservice' || pClean === 'visas' || pClean === 'visa') {
+        param = 'visa_services';
+      }
+    }
+
     return {
       namespace: 'ADMIN',
       pathname: normalized,
-      subTab: segments[0] || 'dashboard',
-      param: segments[1],
+      subTab,
+      param,
       rawPath: normalized
     };
   }
@@ -59,6 +117,8 @@ export function parseRoute(pathString?: string): ParsedRoute {
     let subTab = segments[0] || 'home';
     let param = segments[1];
 
+    const firstClean = subTab.toLowerCase().replace(/[-_]/g, '');
+
     // Canonical redirect for Assigned Leads:
     // Any legacy route (/b2b/leads, /b2b/assigned-leads) redirects to canonical /b2b/crm
     if (subTab === 'leads' || subTab === 'assigned-leads') {
@@ -67,6 +127,26 @@ export function parseRoute(pathString?: string): ParsedRoute {
     } else if (subTab === 'customers') {
       subTab = 'crm';
       param = 'clients';
+    } else if (firstClean === 'travelprotection' || firstClean === 'protection' || firstClean === 'insurance') {
+      subTab = 'visa';
+      param = 'PROTECTION';
+    } else if (firstClean === 'groundconnectivity' || firstClean === 'ground' || firstClean === 'connectivity' || firstClean === 'esim' || firstClean === 'vip') {
+      subTab = 'visa';
+      param = 'GROUND';
+    } else if (firstClean === 'visa' || firstClean === 'visas' || firstClean === 'visaservices' || firstClean === 'ancillary' || firstClean === 'ancillaries' || firstClean === 'visasancillary' || firstClean === 'visaancillary') {
+      subTab = 'visa';
+      if (!param || param === 'all') {
+        param = 'ALL';
+      } else {
+        const pClean = param.toLowerCase().replace(/[-_]/g, '');
+        if (pClean === 'travelprotection' || pClean === 'protection' || pClean === 'insurance') param = 'PROTECTION';
+        else if (pClean === 'groundconnectivity' || pClean === 'ground' || pClean === 'connectivity' || pClean === 'esim' || pClean === 'vip') param = 'GROUND';
+        else if (pClean === 'visaservices' || pClean === 'visaservice' || pClean === 'visa' || pClean === 'visas') param = 'VISA';
+        else if (pClean === 'masterschemamatrix' || pClean === 'fieldparity' || pClean === 'schemamatrix' || pClean === 'matrix') {
+          // Master Schema Matrix is internal CMS admin only; do not expose to B2B Agents
+          param = 'ALL';
+        } else param = 'ALL';
+      }
     }
 
     return {

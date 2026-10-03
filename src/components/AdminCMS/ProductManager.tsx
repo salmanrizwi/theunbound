@@ -339,7 +339,9 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     const effectiveFee = fee !== undefined && !isNaN(fee) ? fee : 0;
     const markupAmt = net * (effectiveMarkup / 100);
     const taxAmt = markupAmt * (effectiveTax / 100);
-    return Math.round(net + markupAmt + taxAmt + effectiveFee);
+    const subtotal = net + markupAmt + taxAmt;
+    const feeAmt = subtotal * (effectiveFee / 100);
+    return Math.round(subtotal + feeAmt);
   };
 
   const handleSave = (e: React.FormEvent) => {
@@ -353,11 +355,11 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     const adultNet = isCapacityBased ? vehicleNet : (Number(formData.adultNetPrice) || 0);
     const childNet = isCapacityBased ? 0 : (Number(formData.childNetPrice) || 0);
     const infantNet = isCapacityBased ? 0 : (Number(formData.infantNetPrice) || 0);
-    const marginPercent = Number(formData.b2bAgentMarkupPercent) !== undefined && !isNaN(Number(formData.b2bAgentMarkupPercent))
+    const marginPercent = formData.b2bAgentMarkupPercent !== undefined && !isNaN(Number(formData.b2bAgentMarkupPercent))
       ? Number(formData.b2bAgentMarkupPercent)
-      : (Number(formData.defaultMarkupPercent) || 0);
-    const tax = Number(formData.taxPercent) || 0;
-    const fee = Number(formData.serviceFeeFixed) || 0;
+      : (formData.defaultMarkupPercent !== undefined && !isNaN(Number(formData.defaultMarkupPercent)) ? Number(formData.defaultMarkupPercent) : 0);
+    const tax = formData.taxPercent !== undefined && !isNaN(Number(formData.taxPercent)) ? Number(formData.taxPercent) : 0;
+    const fee = formData.serviceFeeFixed !== undefined && !isNaN(Number(formData.serviceFeeFixed)) ? Number(formData.serviceFeeFixed) : 0;
     
     const b2bCalc = calculateB2BAgentPrice({
       nettCost: adultNet,
@@ -1235,8 +1237,10 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                         </div>
                       )}
 
-                      {/* Searchable Database Operational Asset Selector */}
-                      <div className="space-y-2">
+                      {formData.category !== 'Transfers' && (
+                        <>
+                          {/* Searchable Database Operational Asset Selector */}
+                          <div className="space-y-2">
                         <label className="text-xs text-slate-300 font-semibold block">
                           {formData.category === 'Private Yacht' 
                             ? 'Select Operational Yacht from Authoritative Master Database *' 
@@ -1537,10 +1541,13 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                           {formData.category === 'Private Yacht' ? 'Max charter: 5 yachts' : 'Max fleet: 5 vehicles'}
                         </span>
                       </div>
+                        </>
+                      )}
                     </div>
 
                     {/* LIVE INTERACTIVE PASSENGER CAPACITY SIMULATION TABLE */}
-                    <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2.5">
+                    {formData.category !== 'Transfers' && (
+                      <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2.5">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-[#00E5C0] flex items-center gap-1.5">
                           <Calculator className="w-3.5 h-3.5" />
@@ -1592,8 +1599,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                                     {formData.category === 'Private Yacht' ? 'Total Yacht Nett' : 'Total Vehicle Nett'}
                                   </th>
                                   <th className="pb-1.5 font-semibold text-right text-[#00E5C0]">Per-Person Nett</th>
-                                  <th className="pb-1.5 font-semibold text-right text-emerald-400">Buyer Delivered Total</th>
-                                  <th className="pb-1.5 font-semibold text-right text-emerald-300">Buyer Per-Person</th>
+                                  <th className="pb-1.5 font-semibold text-right text-teal-400">Price</th>
+                                  <th className="pb-1.5 font-semibold text-right text-teal-300">Per-Person</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-900 text-slate-300">
@@ -1601,12 +1608,19 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                                   const vehCount = Math.max(1, Math.ceil(simPax / maxS));
                                   const totalVehNett = vehCount * unitCost;
                                   const perPersonNett = totalVehNett / simPax;
-                                  const buyerMarkup = formData.buyerMarkupPercent !== undefined ? formData.buyerMarkupPercent : (formData.defaultMarkupPercent || 0);
+                                  const marginPct = formData.b2bAgentMarkupPercent !== undefined ? formData.b2bAgentMarkupPercent : (formData.defaultMarkupPercent || 0);
                                   const taxPct = formData.taxPercent !== undefined ? formData.taxPercent : 0;
-                                  const markupAmt = totalVehNett * (buyerMarkup / 100);
-                                  const taxAmt = markupAmt * (taxPct / 100);
-                                  const totalSelling = totalVehNett + markupAmt + taxAmt + (formData.serviceFeeFixed || 0);
-                                  const perPersonSelling = totalSelling / simPax;
+                                  const feePct = formData.serviceFeeFixed !== undefined ? formData.serviceFeeFixed : 0;
+                                  
+                                  const b2bCalc = calculateB2BAgentPrice({
+                                    nettCost: totalVehNett,
+                                    marginPercent: marginPct,
+                                    taxPercent: taxPct,
+                                    serviceFeePercent: feePct,
+                                    currency: (formData.currency as CurrencyCode) || 'USD'
+                                  });
+                                  const totalSelling = b2bCalc.price;
+                                  const perPersonSelling = Math.round((totalSelling / simPax) * 100) / 100;
                                   const isFull = simPax === maxS;
                                   const isOver = simPax > maxS;
 
@@ -1627,8 +1641,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                                       </td>
                                       <td className="py-1.5 text-right font-mono">{formatCurrency(totalVehNett, formData.currency || 'USD')}</td>
                                       <td className="py-1.5 text-right font-mono font-bold text-[#00E5C0]">{formatCurrency(perPersonNett, formData.currency || 'USD')}</td>
-                                      <td className="py-1.5 text-right font-mono text-emerald-400">{formatCurrency(totalSelling, formData.currency || 'USD')}</td>
-                                      <td className="py-1.5 text-right font-mono font-bold text-emerald-300">{formatCurrency(perPersonSelling, formData.currency || 'USD')}</td>
+                                      <td className="py-1.5 text-right font-mono text-teal-400">{formatCurrency(totalSelling, formData.currency || 'USD')}</td>
+                                      <td className="py-1.5 text-right font-mono font-bold text-teal-300">{formatCurrency(perPersonSelling, formData.currency || 'USD')}</td>
                                     </tr>
                                   );
                                 })}
@@ -1638,6 +1652,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                         );
                       })()}
                     </div>
+                    )}
                   </div>
                 ) : (
                   /* 2. CATEGORY: STANDARD PER-PERSON PRICING INPUTS (Group Tours, Tickets, Ferries, Guides, Restaurant) */

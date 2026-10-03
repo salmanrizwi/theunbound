@@ -1624,6 +1624,9 @@ export class AppDatabase {
       this.syncCollectionSafely<RailRoute>('rail_routes', 'rail_routes');
       this.syncCollectionSafely<RailRate>('rail_rates', 'rail_rates');
       this.syncCollectionSafely<RailSeasonCalendarPeriod>('rail_seasons', 'rail_seasons');
+      this.syncCollectionSafely<VehicleMaster>('master_vehicles', 'master_vehicles');
+      this.syncCollectionSafely<YachtMaster>('master_yachts', 'master_yachts');
+      this.syncCollectionSafely<FerryMaster>('master_ferries', 'master_ferries');
 
       // Check if user is already authenticated at init
       if (auth.currentUser) {
@@ -1838,6 +1841,15 @@ export class AppDatabase {
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'visas')) {
       this.setItem('visas', INITIAL_VISAS);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'travel_protection_plans')) {
+      this.setItem('travel_protection_plans', INITIAL_TRAVEL_PROTECTION_PLANS);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'vip_ground_services')) {
+      this.setItem('vip_ground_services', INITIAL_VIP_GROUND_SERVICES);
+    }
+    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'connectivity_plans')) {
+      this.setItem('connectivity_plans', INITIAL_CONNECTIVITY_PLANS);
     }
     if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'footer_config')) {
       this.setItem('footer_config', INITIAL_FOOTER_CONFIG);
@@ -16476,7 +16488,7 @@ export class AppDatabase {
   // TRAVEL PROTECTION & INTERNATIONAL MEDICAL
   // ==========================================
   public getTravelProtectionPlans(): TravelProtectionPlan[] {
-    return this.getItem<TravelProtectionPlan[]>('travel_protection_plans', envService.allowDemoData() ? INITIAL_TRAVEL_PROTECTION_PLANS : []);
+    return this.getItem<TravelProtectionPlan[]>('travel_protection_plans', INITIAL_TRAVEL_PROTECTION_PLANS);
   }
 
   public getTravelProtectionPlanById(id: string): TravelProtectionPlan | undefined {
@@ -16515,7 +16527,7 @@ export class AppDatabase {
   // VIP GROUND SERVICES
   // ==========================================
   public getVipGroundServices(): VipGroundService[] {
-    return this.getItem<VipGroundService[]>('vip_ground_services', envService.allowDemoData() ? INITIAL_VIP_GROUND_SERVICES : []);
+    return this.getItem<VipGroundService[]>('vip_ground_services', INITIAL_VIP_GROUND_SERVICES);
   }
 
   public getVipGroundServiceById(id: string): VipGroundService | undefined {
@@ -16554,7 +16566,7 @@ export class AppDatabase {
   // 5G CONNECTIVITY & eSIM PACKAGES
   // ==========================================
   public getConnectivityPlans(): ConnectivityPlan[] {
-    return this.getItem<ConnectivityPlan[]>('connectivity_plans', envService.allowDemoData() ? INITIAL_CONNECTIVITY_PLANS : []);
+    return this.getItem<ConnectivityPlan[]>('connectivity_plans', INITIAL_CONNECTIVITY_PLANS);
   }
 
   public getConnectivityPlanById(id: string): ConnectivityPlan | undefined {
@@ -19101,6 +19113,40 @@ export class AppDatabase {
       for (const c of merged) {
         if (!deletedSet.has(c.id) && !deletedSet.has(`ConnectivityPlan_${c.id}`)) {
           this.syncFirestoreDoc('connectivity_plans', c.id, c);
+        }
+      }
+    }
+
+    // --- AUTHORITATIVE OPERATIONAL MASTER INVENTORY (Vehicles, Yachts, Ferries) ---
+    if ((syncedData as any).vehicles && (syncedData as any).vehicles.length > 0) {
+      const existing = this.getVehicles();
+      const merged = this.mergeEntitiesById(existing, (syncedData as any).vehicles, 'VehicleMaster');
+      this.setItem('master_vehicles', merged, false);
+      for (const v of merged) {
+        if (!deletedSet.has(v.id) && !deletedSet.has(`VehicleMaster_${v.id}`)) {
+          this.syncFirestoreDoc('master_vehicles', v.id, v);
+        }
+      }
+    }
+
+    if ((syncedData as any).yachts && (syncedData as any).yachts.length > 0) {
+      const existing = this.getYachts();
+      const merged = this.mergeEntitiesById(existing, (syncedData as any).yachts, 'YachtMaster');
+      this.setItem('master_yachts', merged, false);
+      for (const y of merged) {
+        if (!deletedSet.has(y.id) && !deletedSet.has(`YachtMaster_${y.id}`)) {
+          this.syncFirestoreDoc('master_yachts', y.id, y);
+        }
+      }
+    }
+
+    if ((syncedData as any).ferries && (syncedData as any).ferries.length > 0) {
+      const existing = this.getFerries();
+      const merged = this.mergeEntitiesById(existing, (syncedData as any).ferries, 'FerryMaster');
+      this.setItem('master_ferries', merged, false);
+      for (const f of merged) {
+        if (!deletedSet.has(f.id) && !deletedSet.has(`FerryMaster_${f.id}`)) {
+          this.syncFirestoreDoc('master_ferries', f.id, f);
         }
       }
     }

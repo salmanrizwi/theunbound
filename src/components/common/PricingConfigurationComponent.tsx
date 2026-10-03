@@ -1555,79 +1555,81 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
       </div>
 
       {/* 02 FLEET / ASSET MASTER LINK (Section 5) */}
-      <div className="bg-slate-950/60 p-5 rounded-2xl border border-slate-800 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div className="flex items-center space-x-2">
-            <div className="w-6 h-6 rounded-lg bg-teal-500/10 border border-teal-500/20 text-[#00C6A6] flex items-center justify-center font-black text-xs">
-              02
+      {!isTransfer && (
+        <div className="bg-slate-950/60 p-5 rounded-2xl border border-slate-800 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center space-x-2">
+              <div className="w-6 h-6 rounded-lg bg-teal-500/10 border border-teal-500/20 text-[#00C6A6] flex items-center justify-center font-black text-xs">
+                02
+              </div>
+              <h3 className="text-xs font-black uppercase text-white tracking-wider">
+                {isYacht ? 'Yacht Master Asset' : 'Fleet Vehicle Asset'}
+              </h3>
             </div>
-            <h3 className="text-xs font-black uppercase text-white tracking-wider">
-              {isYacht ? 'Yacht Master Asset' : 'Fleet Vehicle Asset'}
-            </h3>
+
+            <span className="text-[10px] text-slate-400 italic">
+              Physical seating capacity is for reference only and does NOT automatically restrict product capacity.
+            </span>
           </div>
 
-          <span className="text-[10px] text-slate-400 italic">
-            Physical seating capacity is for reference only and does NOT automatically restrict product capacity.
-          </span>
+          <OperationalAssetSelector
+            assetType={isYacht ? 'YACHT' : 'VEHICLE'}
+            selectedId={vehicleId || vehicleConfig?.vehicleId}
+            selectedName={vehicleNameSnapshot || vehicleConfig?.vehicleModel}
+            selectedType={vehicleTypeSnapshot || vehicleConfig?.vehicleType}
+            selectedCapacity={capacitySnapshot || vehicleConfig?.maxSeats}
+            destinationId={destinationId}
+            hubId={hubId}
+            onSelect={(asset: SelectedAssetPayload) => {
+              if (onVehicleIdChange) onVehicleIdChange(asset.id);
+              if (onVehicleNameSnapshotChange) onVehicleNameSnapshotChange(asset.name);
+              if (onVehicleTypeSnapshotChange) onVehicleTypeSnapshotChange(asset.type);
+              if (onCapacitySnapshotChange) onCapacitySnapshotChange(asset.capacity);
+
+              if (onVehicleConfigChange) {
+                onVehicleConfigChange({
+                  ...vehicleConfig,
+                  vehicleId: asset.id,
+                  vehicleModel: asset.name,
+                  vehicleName: asset.name,
+                  vehicleType: asset.type,
+                  maxSeats: asset.capacity,
+                  passengerCapacity: asset.capacity,
+                  totalSeats: asset.capacity,
+                  unitVehicleNetCost: adultNetPrice || vehicleConfig?.unitVehicleNetCost || 45000,
+                  allowMultipleVehicles: true,
+                  maxVehicles: 5
+                });
+              }
+            }}
+            onClear={() => {
+              if (onVehicleIdChange) onVehicleIdChange(undefined);
+              if (onVehicleNameSnapshotChange) onVehicleNameSnapshotChange(undefined);
+              if (onVehicleTypeSnapshotChange) onVehicleTypeSnapshotChange(undefined);
+              if (onCapacitySnapshotChange) onCapacitySnapshotChange(undefined);
+              if (onVehicleConfigChange) onVehicleConfigChange(undefined);
+            }}
+          />
         </div>
+      )}
 
-        <OperationalAssetSelector
-          assetType={isYacht ? 'YACHT' : 'VEHICLE'}
-          selectedId={vehicleId || vehicleConfig?.vehicleId}
-          selectedName={vehicleNameSnapshot || vehicleConfig?.vehicleModel}
-          selectedType={vehicleTypeSnapshot || vehicleConfig?.vehicleType}
-          selectedCapacity={capacitySnapshot || vehicleConfig?.maxSeats}
-          destinationId={destinationId}
-          hubId={hubId}
-          onSelect={(asset: SelectedAssetPayload) => {
-            if (onVehicleIdChange) onVehicleIdChange(asset.id);
-            if (onVehicleNameSnapshotChange) onVehicleNameSnapshotChange(asset.name);
-            if (onVehicleTypeSnapshotChange) onVehicleTypeSnapshotChange(asset.type);
-            if (onCapacitySnapshotChange) onCapacitySnapshotChange(asset.capacity);
-
-            if (onVehicleConfigChange) {
-              onVehicleConfigChange({
-                ...vehicleConfig,
-                vehicleId: asset.id,
-                vehicleModel: asset.name,
-                vehicleName: asset.name,
-                vehicleType: asset.type,
-                maxSeats: asset.capacity,
-                passengerCapacity: asset.capacity,
-                totalSeats: asset.capacity,
-                unitVehicleNetCost: adultNetPrice || vehicleConfig?.unitVehicleNetCost || 45000,
-                allowMultipleVehicles: true,
-                maxVehicles: 5
-              });
-            }
-          }}
-          onClear={() => {
-            if (onVehicleIdChange) onVehicleIdChange(undefined);
-            if (onVehicleNameSnapshotChange) onVehicleNameSnapshotChange(undefined);
-            if (onVehicleTypeSnapshotChange) onVehicleTypeSnapshotChange(undefined);
-            if (onCapacitySnapshotChange) onCapacitySnapshotChange(undefined);
-            if (onVehicleConfigChange) onVehicleConfigChange(undefined);
-          }}
-        />
-
-        {/* Transfer Route Context (Section 13) */}
-        {isTransfer && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-xs">
-            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
-              <span className="text-[10px] text-slate-500 block uppercase font-bold tracking-wider">Transfer Origin & Destination</span>
-              <span className="text-white font-bold block mt-0.5">
-                {fromHubName || 'From Hub'} ➔ {toHubName || 'To Hub'}
-              </span>
-            </div>
-            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
-              <span className="text-[10px] text-slate-500 block uppercase font-bold tracking-wider">Transfer Capacity Rule Separation</span>
-              <span className="text-teal-400 font-bold block mt-0.5">
-                Transfer rules are strictly separate from Private Tour rules.
-              </span>
-            </div>
+      {/* Transfer Route Context (Section 13) */}
+      {isTransfer && (
+        <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+            <span className="text-[10px] text-slate-500 block uppercase font-bold tracking-wider">Transfer Origin & Destination</span>
+            <span className="text-white font-bold block mt-0.5">
+              {fromHubName || 'From Hub'} ➔ {toHubName || 'To Hub'}
+            </span>
           </div>
-        )}
-      </div>
+          <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+            <span className="text-[10px] text-slate-500 block uppercase font-bold tracking-wider">Transfer Capacity Rule Separation</span>
+            <span className="text-teal-400 font-bold block mt-0.5">
+              Transfer rules are strictly separate from Private Tour rules.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* 03 DYNAMIC CAPACITY & TIERED PRICING MODULE (Sections 7, 8, 12, 13, 20, 42) */}
       <div className="bg-slate-950/60 p-5 rounded-2xl border border-slate-800 space-y-4">
@@ -1679,7 +1681,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                 <th className="p-3 w-32 text-center">Margin</th>
                 <th className="p-3 w-28 text-center">Tax</th>
                 <th className="p-3 w-28 text-center">Service Fee</th>
-                <th className="p-3 w-36 text-right">Final Price</th>
+                <th className="p-3 w-36 text-right">Price</th>
                 <th className="p-3 w-20 text-center">Status</th>
                 <th className="p-3 w-20 text-center">Actions</th>
               </tr>
@@ -1876,13 +1878,10 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                       </div>
                     </td>
 
-                    {/* Calculated Final Price (Buyer & B2B Wholesale) */}
+                    {/* Calculated Final Price (B2B Price) */}
                     <td className="p-2.5 text-right font-mono">
-                      <span className="font-black text-emerald-400 text-xs block">
-                        {buyerFinal !== undefined ? formatCurrency(buyerFinal, tier.currency || currency) : '—'}
-                      </span>
-                      <span className="text-[10px] text-teal-300 block">
-                        B2B: {agentFinal !== undefined ? formatCurrency(agentFinal, tier.currency || currency) : '—'}
+                      <span className="font-black text-[#00E5C0] text-xs block">
+                        {calculatedTierFinal !== undefined ? formatCurrency(calculatedTierFinal, tier.currency || currency) : '—'}
                       </span>
                     </td>
 

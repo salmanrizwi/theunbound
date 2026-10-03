@@ -723,6 +723,76 @@
         "taxPercent": { "type": "number", "required": true },
         "lastUpdated": { "type": "string", "required": true }
       }
+    },
+    "VehicleMaster": {
+      "collection": "master_vehicles",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "model": { "type": "string", "required": true },
+        "type": { "type": "string", "required": true },
+        "classification": { "type": "string", "required": true },
+        "manufacturer": { "type": "string", "required": true },
+        "seatingCapacity": { "type": "number", "required": true },
+        "luggageCapacity": { "type": "number", "required": false },
+        "destinationId": { "type": "string", "required": false },
+        "destinationName": { "type": "string", "required": false },
+        "hubId": { "type": "string", "required": false },
+        "hubName": { "type": "string", "required": false },
+        "supplierId": { "type": "string", "required": false },
+        "supplierName": { "type": "string", "required": false },
+        "status": { "type": "string", "required": true, "enum": ["ACTIVE", "INACTIVE", "MAINTENANCE", "ARCHIVED"] },
+        "notes": { "type": "string", "required": false },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": true }
+      }
+    },
+    "YachtMaster": {
+      "collection": "master_yachts",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "model": { "type": "string", "required": true },
+        "type": { "type": "string", "required": true },
+        "classification": { "type": "string", "required": true },
+        "capacity": { "type": "number", "required": true },
+        "length": { "type": "string", "required": false },
+        "dimensions": { "type": "string", "required": false },
+        "destinationId": { "type": "string", "required": false },
+        "destinationName": { "type": "string", "required": false },
+        "hubId": { "type": "string", "required": false },
+        "hubName": { "type": "string", "required": false },
+        "supplierId": { "type": "string", "required": false },
+        "supplierName": { "type": "string", "required": false },
+        "status": { "type": "string", "required": true, "enum": ["ACTIVE", "INACTIVE", "MAINTENANCE", "ARCHIVED"] },
+        "notes": { "type": "string", "required": false },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": true }
+      }
+    },
+    "FerryMaster": {
+      "collection": "master_ferries",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "type": { "type": "string", "required": true },
+        "vesselClass": { "type": "string", "required": true },
+        "capacity": { "type": "number", "required": true },
+        "route": { "type": "string", "required": true },
+        "origin": { "type": "string", "required": true },
+        "destination": { "type": "string", "required": true },
+        "operator": { "type": "string", "required": false },
+        "destinationId": { "type": "string", "required": false },
+        "destinationName": { "type": "string", "required": false },
+        "hubId": { "type": "string", "required": false },
+        "hubName": { "type": "string", "required": false },
+        "supplierId": { "type": "string", "required": false },
+        "supplierName": { "type": "string", "required": false },
+        "status": { "type": "string", "required": true, "enum": ["ACTIVE", "INACTIVE", "MAINTENANCE", "ARCHIVED"] },
+        "notes": { "type": "string", "required": false },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": true }
+      }
     }
   }
 }

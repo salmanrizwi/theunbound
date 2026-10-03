@@ -205,7 +205,7 @@ function resolveSectionFromSlug(slug?: string): CMSSection {
   if (!slug) return 'DASHBOARD';
   const clean = slug.trim().toUpperCase().replace(/[-_]/g, '');
   if (clean === 'PRODUCTS' || clean === 'PRODUCT' || clean === 'PRODUCTMANAGEMENT') return 'PRODUCT_MANAGEMENT';
-  if (clean === 'VISA' || clean === 'VISAS' || clean === 'VISAANCILLARYSERVICES' || clean === 'ANCILLARY' || clean === 'ANCILLARIES' || clean === 'VISASERVICES' || clean === 'TRAVELPROTECTION' || clean === 'VISASANCILLARY') return 'VISA_ANCILLARY_SERVICES';
+  if (clean === 'VISA' || clean === 'VISAS' || clean === 'VISAANCILLARYSERVICES' || clean === 'ANCILLARY' || clean === 'ANCILLARIES' || clean === 'VISASERVICES' || clean === 'TRAVELPROTECTION' || clean === 'VISASANCILLARY' || clean === 'GROUNDCONNECTIVITY' || clean === 'VIP' || clean === 'CONNECTIVITY' || clean === 'ESIM' || clean === 'MASTERSCHEMAMATRIX' || clean === 'FIELDPARITY' || clean === 'SCHEMAMATRIX' || clean === 'MATRIX' || clean === 'PROTECTION' || clean === 'INSURANCE') return 'VISA_ANCILLARY_SERVICES';
   if (clean === 'RAIL' || clean === 'JAPANRAIL' || clean === 'RAILMANAGEMENT' || clean === 'SHINKANSEN') return 'RAIL_MANAGEMENT';
   if (clean === 'HOTELS' || clean === 'HOTEL' || clean === 'HOTELMANAGEMENT') return 'HOTEL_MANAGEMENT';
   if (clean === 'PACKAGES' || clean === 'PACKAGE' || clean === 'PACKAGEMANAGEMENT') return 'PACKAGE_MANAGEMENT';
@@ -226,6 +226,33 @@ function resolveSectionFromSlug(slug?: string): CMSSection {
   return 'DASHBOARD';
 }
 
+function resolveSubTabFromRoute(tab?: string, subTab?: string): string {
+  const target = (subTab || tab || '').trim();
+  const clean = target.toUpperCase().replace(/[-_]/g, '');
+
+  if (clean === 'TRAVELPROTECTION' || clean === 'PROTECTION' || clean === 'INSURANCE') {
+    return 'TRAVEL_PROTECTION';
+  }
+  if (clean === 'GROUNDCONNECTIVITY' || clean === 'GROUND' || clean === 'CONNECTIVITY' || clean === 'VIP' || clean === 'ESIM') {
+    return 'GROUND_CONNECTIVITY';
+  }
+  if (clean === 'MASTERSCHEMAMATRIX' || clean === 'FIELDPARITY' || clean === 'SCHEMAMATRIX' || clean === 'MATRIX' || clean === 'SCHEMA' || clean === 'PARITY') {
+    return 'FIELD_PARITY';
+  }
+  if (clean === 'VISASERVICES' || clean === 'VISASERVICE' || clean === 'VISAS' || clean === 'VISA' || clean === 'VISASANCILLARY' || clean === 'ANCILLARY' || clean === 'ANCILLARIES') {
+    return 'VISA_SERVICES';
+  }
+
+  if (subTab) {
+    const subUpper = subTab.toUpperCase();
+    if (subUpper === 'MENU' || subUpper === 'NAVIGATION') return 'NAVIGATION_MENU';
+    if (subUpper === 'CUSTOM_PAGES' || subUpper === 'PAGES') return 'CUSTOM_PAGES';
+    return subUpper;
+  }
+
+  return 'OVERVIEW';
+}
+
 export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   destinations,
   products,
@@ -244,6 +271,10 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   const [activeSection, setActiveSection] = useState<CMSSection>(() => resolveSectionFromSlug(initialTab));
 
   const [activeSubTab, setActiveSubTab] = useState<string>(() => {
+    const sec = resolveSectionFromSlug(initialTab);
+    if (sec === 'VISA_ANCILLARY_SERVICES') {
+      return resolveSubTabFromRoute(initialTab, initialSubTab);
+    }
     if (initialSubTab) {
       const subUpper = initialSubTab.toUpperCase();
       if (subUpper === 'MENU' || subUpper === 'NAVIGATION') return 'NAVIGATION_MENU';
@@ -261,15 +292,21 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       if (initialTab.toUpperCase() === 'SUPPLIERS') {
         setActiveSubTab('SUPPLIERS');
       }
+      if (resolved === 'VISA_ANCILLARY_SERVICES') {
+        setActiveSubTab(resolveSubTabFromRoute(initialTab, initialSubTab));
+      }
     }
     if (initialSubTab) {
-      const subUpper = initialSubTab.toUpperCase();
-      if (subUpper === 'MENU' || subUpper === 'NAVIGATION') {
-        setActiveSubTab('NAVIGATION_MENU');
-      } else if (subUpper === 'CUSTOM_PAGES' || subUpper === 'PAGES') {
-        setActiveSubTab('CUSTOM_PAGES');
-      } else {
-        setActiveSubTab(subUpper);
+      const resolved = resolveSectionFromSlug(initialTab);
+      if (resolved !== 'VISA_ANCILLARY_SERVICES') {
+        const subUpper = initialSubTab.toUpperCase();
+        if (subUpper === 'MENU' || subUpper === 'NAVIGATION') {
+          setActiveSubTab('NAVIGATION_MENU');
+        } else if (subUpper === 'CUSTOM_PAGES' || subUpper === 'PAGES') {
+          setActiveSubTab('CUSTOM_PAGES');
+        } else {
+          setActiveSubTab(subUpper);
+        }
       }
     }
   }, [initialTab, initialSubTab]);
@@ -479,7 +516,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           description: 'Master ground tour inventory engine, SKU specifications, child/infant rates, and adult tiers.',
           subTabs: [
             { id: 'PRODUCTS', label: `Product Inventory (${counts.totalProducts})`, icon: Package },
-            { id: 'OPERATIONAL_ASSETS', label: 'Operational Asset Master', icon: Database },
+            { id: 'OPERATIONAL_ASSETS', label: 'Authoritative Operational Master Inventory', icon: Database },
             { id: 'VISAS', label: 'Visa Requirements & Checklists', icon: FileText }
           ]
         },
@@ -494,7 +531,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             { id: 'VISA_SERVICES', label: 'Visa Services & Assistance', icon: FileText },
             { id: 'TRAVEL_PROTECTION', label: 'Travel Protection & Medical', icon: ShieldCheck },
             { id: 'GROUND_CONNECTIVITY', label: 'Ground & Connectivity', icon: Sparkles },
-            { id: 'FIELD_PARITY', label: 'Field Contract Matrix', icon: FileSpreadsheet }
+            { id: 'FIELD_PARITY', label: 'Master Schema Matrix', icon: FileSpreadsheet }
           ]
         },
         {
@@ -829,7 +866,13 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
         setActiveSubTab(chosenSubTab);
       }
       const slug = SECTION_SLUG_MAP[targetModule.id] || targetModule.id.toLowerCase();
-      const subSlug = chosenSubTab && chosenSubTab !== 'OVERVIEW' ? `/${chosenSubTab.toLowerCase()}` : '';
+      let subSlug = '';
+      if (targetModule.id === 'VISA_ANCILLARY_SERVICES') {
+        const cleanSub = (chosenSubTab || 'VISA_SERVICES').toLowerCase().replace(/_/g, '-');
+        subSlug = `/${cleanSub === 'field-parity' ? 'master-schema-matrix' : cleanSub}`;
+      } else if (chosenSubTab && chosenSubTab !== 'OVERVIEW') {
+        subSlug = `/${chosenSubTab.toLowerCase()}`;
+      }
       const targetUrl = `/admin/${slug}${subSlug}`;
       if (typeof window !== 'undefined' && window.location.pathname !== targetUrl) {
         navigateTo(targetUrl);
@@ -891,7 +934,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   };
 
   return (
-    <div id="theunbound-admin-cms-root" className="min-h-screen w-full max-w-full overflow-x-hidden min-w-0 bg-[#F8FAFB] text-slate-900 flex font-sans selection:bg-[#00C6A6] selection:text-slate-950">
+    <div id="theunbound-admin-cms-root" className="flex h-screen w-full max-w-full overflow-hidden bg-[#F8FAFB] text-slate-900 font-sans selection:bg-[#00C6A6] selection:text-slate-950">
       
       {/* Global Command Palette / Search Modal */}
       <CMSGlobalSearch
@@ -901,7 +944,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
         currentUser={currentUser}
       />
 
-      {/* Standard Admin Sidebar */}
+      {/* Standard Admin Sidebar (Fixed to Viewport, Independent Navigation Scroll) */}
       <AdminSidebar
         activeSection={activeSection}
         activeSubTab={activeSubTab}
@@ -923,8 +966,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
         }}
       />
 
-      {/* Right Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 max-w-full overflow-x-hidden">
+      {/* Right Main Content Area (Independently Scrollable Workspace Column) */}
+      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto w-full">
         
         {/* Standard Top Header */}
         <AdminHeader
@@ -947,12 +990,24 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             <div className="bg-white border-b border-slate-200/80 px-4 sm:px-6 py-2.5 flex items-center space-x-1.5 overflow-x-auto scrollbar-none shrink-0 w-full select-none shadow-2xs">
               {permittedSubTabs.map((st) => {
                 const SubIcon = st.icon || Layers;
-                const isTabActive = activeSubTab === st.id;
+                const isTabActive = activeSubTab === st.id || 
+                  (st.id === 'VISA_SERVICES' && (activeSubTab === 'VISAS' || activeSubTab === 'OVERVIEW')) ||
+                  (st.id === 'FIELD_PARITY' && (activeSubTab === 'MASTER_SCHEMA_MATRIX' || activeSubTab === 'SCHEMA_MATRIX'));
                 return (
                   <button
                     key={st.id}
                     id={`cms-subtab-${st.id}`}
-                    onClick={() => setActiveSubTab(st.id)}
+                    onClick={() => {
+                      setActiveSubTab(st.id);
+                      if (currentModuleConfig.id === 'VISA_ANCILLARY_SERVICES') {
+                        const cleanSub = st.id.toLowerCase().replace(/_/g, '-');
+                        const subSlug = cleanSub === 'field-parity' ? 'master-schema-matrix' : cleanSub;
+                        const targetUrl = `/admin/visas-ancillary/${subSlug}`;
+                        if (typeof window !== 'undefined' && window.location.pathname !== targetUrl) {
+                          window.history.replaceState(null, '', targetUrl);
+                        }
+                      }
+                    }}
                     className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                       isTabActive
                         ? 'bg-[#00C6A6]/15 text-[#008972] border border-[#00C6A6]/40 shadow-2xs'
@@ -1035,11 +1090,19 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                   />
                 </div>
               )}
-              {activeSubTab === 'VISAS' && (
+              {(activeSubTab === 'VISAS' || activeSubTab === 'VISA_SERVICES' || activeSubTab === 'TRAVEL_PROTECTION' || activeSubTab === 'GROUND_CONNECTIVITY' || activeSubTab === 'FIELD_PARITY') && (
                 <VisaCMSManager 
                   destinations={destinations} 
-                  initialSubTab="VISA_SERVICES"
-                  onSubTabChange={setActiveSubTab}
+                  initialSubTab={activeSubTab === 'VISAS' ? 'VISA_SERVICES' : activeSubTab}
+                  onSubTabChange={(tab) => {
+                    setActiveSubTab(tab);
+                    setActiveSection('VISA_ANCILLARY_SERVICES');
+                    const subSlug = tab.toLowerCase().replace(/_/g, '-');
+                    const targetUrl = `/admin/visas-ancillary/${subSlug}`;
+                    if (typeof window !== 'undefined' && window.location.pathname !== targetUrl) {
+                      window.history.replaceState(null, '', targetUrl);
+                    }
+                  }}
                 />
               )}
             </>
@@ -1050,7 +1113,15 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             <VisaCMSManager 
               destinations={destinations} 
               initialSubTab={activeSubTab}
-              onSubTabChange={setActiveSubTab}
+              onSubTabChange={(tab) => {
+                setActiveSubTab(tab);
+                const cleanSub = tab.toLowerCase().replace(/_/g, '-');
+                const subSlug = cleanSub === 'field-parity' ? 'master-schema-matrix' : cleanSub;
+                const targetUrl = `/admin/visas-ancillary/${subSlug}`;
+                if (typeof window !== 'undefined' && window.location.pathname !== targetUrl) {
+                  window.history.replaceState(null, '', targetUrl);
+                }
+              }}
             />
           )}
 

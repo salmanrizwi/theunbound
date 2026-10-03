@@ -1098,6 +1098,8 @@ export type PricingModelType =
   | 'PLAN_DURATION';
 
 export interface FerryConfig {
+  vesselId?: string;
+  vesselName?: string;
   ferryLine?: string;
   departurePort?: string;
   arrivalPort?: string;
@@ -1142,6 +1144,8 @@ export interface TieredPrice {
   productCategory?: string;
   fleetId?: string;
   fleetName?: string;
+  vehicleId?: string;
+  vehicleName?: string;
   minPassengers?: number;
   maxPassengers?: number;
   pricingUnit?: 'Per Vehicle' | 'Per Person' | 'Per Tier';

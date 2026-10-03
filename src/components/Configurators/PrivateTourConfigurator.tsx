@@ -1,9 +1,11 @@
 import React, { useState, useMemo } from 'react';
-import { Product, QuoteItem, CurrencyCode } from '../../types';
+import { Product, QuoteItem, CurrencyCode, VehicleMaster } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
 import { formatCurrency, calculateProductPrice } from '../../services/pricingEngine';
 import { generateConfigurationIdentity, getActiveUpsellsForProduct, createUpsellSnapshot } from '../../services/configuratorRegistry';
+import { operationalMasterInventory } from '../../services/operationalMasterInventoryService';
+import { operationalAssetEligibility } from '../../services/operationalAssetEligibilityService';
 import { 
   X, 
   Crown, 
@@ -100,11 +102,21 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
     existingConfig.selectedAddons || (itemOrProduct as QuoteItem)?.selectedAddonIds || []
   );
 
-  // Authoritative Master Product Details (Layer 1)
-  const vehicleName = product?.vehicleNameSnapshot || product?.vehicleConfig?.vehicleModel || 'Authoritative Fleet Vehicle';
-  const vehicleType = product?.vehicleTypeSnapshot || product?.vehicleConfig?.vehicleType || 'Executive MPV';
-  const masterCapacity = Number(product?.capacitySnapshot) || Number(product?.vehicleConfig?.maxSeats) || Number(product?.maxPax) || 7;
-  const luggageCapacity = Number(product?.vehicleConfig?.maxLuggage) || 4;
+  // Authoritative Master Operational Vehicle Details (Layer 1: Resolved from Master Inventory)
+  const masterVehicle = useMemo(() => {
+    const vId = product?.vehicleId || product?.vehicleConfig?.vehicleId;
+    if (vId) {
+      const found = operationalMasterInventory.getVehicleById(vId);
+      if (found && found.status === 'ACTIVE') return found;
+    }
+    const eligible = operationalAssetEligibility.getEligibleVehiclesForPrivateTour(product, adults + children);
+    return eligible[0] || null;
+  }, [product, adults, children]);
+
+  const vehicleName = masterVehicle?.name || product?.vehicleNameSnapshot || product?.vehicleConfig?.vehicleModel || product?.name || 'Chauffeured Executive Vehicle';
+  const vehicleType = masterVehicle?.classification || masterVehicle?.type || product?.vehicleTypeSnapshot || product?.vehicleConfig?.vehicleType || 'Executive MPV';
+  const masterCapacity = Number(masterVehicle?.seatingCapacity) || Number(product?.capacitySnapshot) || Number(product?.vehicleConfig?.maxSeats) || Number(product?.maxPax) || 7;
+  const luggageCapacity = Number(masterVehicle?.luggageCapacity) || Number(product?.vehicleConfig?.maxLuggage) || 4;
 
   // Authoritative Product Upsells (Layer 2)
   const availableUpsells = useMemo(() => {
@@ -165,12 +177,21 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
 
     const configurationPayload = {
       ...configIdentity,
-      travelDate,
-      serviceTime,
-      duration: product.duration || 'Full Day (8 Hours)',
+      assetType: 'VEHICLE',
+      assetId: masterVehicle?.id || product.vehicleId || null,
+      assetName: vehicleName,
+      assetModel: masterVehicle?.model || vehicleName,
+      assetClassification: vehicleType,
+      supplierId: masterVehicle?.supplierId || product.supplierId,
+      supplierName: masterVehicle?.supplierName || product.supplierName,
+      vehicleId: masterVehicle?.id || product.vehicleId,
       vehicleName,
       vehicleType,
       masterCapacity,
+      luggageCapacity,
+      travelDate,
+      serviceTime,
+      duration: product.duration || 'Full Day (8 Hours)',
       adults,
       children,
       infants,

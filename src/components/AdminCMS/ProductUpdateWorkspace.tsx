@@ -233,7 +233,9 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     if (net === undefined || net === null || isNaN(net) || net <= 0) return 0;
     const markupAmt = net * ((markupPercent || 0) / 100);
     const taxAmt = markupAmt * ((formData.taxPercent || 0) / 100);
-    return Math.round(net + markupAmt + taxAmt + (formData.serviceFeeFixed || 0));
+    const subtotal = net + markupAmt + taxAmt;
+    const feeAmt = subtotal * ((formData.serviceFeeFixed || 0) / 100);
+    return Math.round(subtotal + feeAmt);
   };
 
   // Authoritative B2B Agent Price calculation

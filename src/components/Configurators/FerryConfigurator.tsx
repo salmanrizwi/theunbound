@@ -1,9 +1,11 @@
 import React, { useState, useMemo } from 'react';
-import { Product, QuoteItem, CurrencyCode } from '../../types';
+import { Product, QuoteItem, CurrencyCode, FerryMaster } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
 import { formatCurrency, calculateProductPrice } from '../../services/pricingEngine';
 import { generateConfigurationIdentity, getActiveUpsellsForProduct, createUpsellSnapshot } from '../../services/configuratorRegistry';
+import { operationalMasterInventory } from '../../services/operationalMasterInventoryService';
+import { operationalAssetEligibility } from '../../services/operationalAssetEligibilityService';
 import { 
   X, 
   Anchor, 
@@ -71,13 +73,6 @@ export const FerryConfigurator: React.FC<FerryConfiguratorProps> = ({
   const existingConfig = (itemOrProduct as any)?.configuration_payload ||
     (itemOrProduct as any)?.metadata?.configuration_payload || {};
 
-  // Authoritative Vessel & Route Data (Layer 1)
-  const vesselName = product?.ferryNameSnapshot || product?.ferryConfig?.ferryLine || product?.name || 'Authoritative Marine Ferry';
-  const vesselClass = product?.ferryTypeSnapshot || product?.ferryConfig?.vesselClass || 'High-Speed Express Ferry';
-  const departurePort = product?.ferryConfig?.departurePort || product?.city || 'Departure Port';
-  const arrivalPort = product?.ferryConfig?.arrivalPort || 'Island Port Terminal';
-  const masterCapacity = Number(product?.ferryCapacitySnapshot) || Number(product?.ferryConfig?.capacity) || Number(product?.maxPax) || 200;
-
   // Form State (Layer 3: Transaction Details)
   const [tripType, setTripType] = useState<'ONE_WAY' | 'ROUND_TRIP'>(
     existingConfig.tripType || 'ONE_WAY'
@@ -107,6 +102,23 @@ export const FerryConfigurator: React.FC<FerryConfiguratorProps> = ({
   const [specialInstructions, setSpecialInstructions] = useState<string>(
     existingConfig.specialInstructions || initialNotes || (itemOrProduct as QuoteItem)?.notes || ''
   );
+
+  // Authoritative Master Operational Vessel & Route Data (Layer 1: Resolved from Master Inventory)
+  const masterVessel = useMemo(() => {
+    const fId = (product as any)?.ferryId || (product as any)?.vesselId || product?.ferryConfig?.vesselId;
+    if (fId) {
+      const found = operationalMasterInventory.getVesselById(fId);
+      if (found && found.status === 'ACTIVE') return found;
+    }
+    const eligible = operationalAssetEligibility.getEligibleVesselsForFerry(product, adults + children);
+    return eligible[0] || null;
+  }, [product, adults, children]);
+
+  const vesselName = masterVessel?.name || product?.ferryNameSnapshot || product?.ferryConfig?.ferryLine || product?.name || 'Authoritative Marine Ferry';
+  const vesselClass = masterVessel?.vesselClass || masterVessel?.type || product?.ferryTypeSnapshot || product?.ferryConfig?.vesselClass || 'High-Speed Express Ferry';
+  const departurePort = masterVessel?.origin || product?.ferryConfig?.departurePort || product?.city || 'Departure Port';
+  const arrivalPort = masterVessel?.destination || product?.ferryConfig?.arrivalPort || 'Island Port Terminal';
+  const masterCapacity = Number(masterVessel?.capacity) || Number(product?.ferryCapacitySnapshot) || Number(product?.ferryConfig?.capacity) || Number(product?.maxPax) || 200;
 
   // Authoritative Product Upsells (Layer 2)
   const availableUpsells = useMemo(() => {
@@ -166,8 +178,17 @@ export const FerryConfigurator: React.FC<FerryConfiguratorProps> = ({
 
     const configurationPayload = {
       ...configIdentity,
+      assetType: 'FERRY_VESSEL',
+      assetId: masterVessel?.id || (product as any).ferryId || (product as any).vesselId || null,
+      assetName: vesselName,
+      assetModel: masterVessel?.name || vesselName,
+      assetClassification: vesselClass,
+      supplierId: masterVessel?.supplierId || product.supplierId,
+      supplierName: masterVessel?.supplierName || product.supplierName,
+      vesselId: masterVessel?.id || (product as any).ferryId || (product as any).vesselId,
       vesselName,
       vesselClass,
+      masterCapacity,
       departurePort,
       arrivalPort,
       tripType,

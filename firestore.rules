@@ -367,6 +367,24 @@ service cloud.firestore {
       allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
     }
 
+    match /master_vehicles/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+    }
+
+    match /master_yachts/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+    }
+
+    match /master_ferries/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+    }
+
     match /product_pricing_rates/{document=**} {
       allow read: if true;
       allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();

@@ -1,9 +1,11 @@
 import React, { useState, useMemo } from 'react';
-import { Product, QuoteItem, CurrencyCode } from '../../types';
+import { Product, QuoteItem, CurrencyCode, YachtMaster } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
 import { formatCurrency, calculateProductPrice } from '../../services/pricingEngine';
 import { generateConfigurationIdentity, getActiveUpsellsForProduct, createUpsellSnapshot } from '../../services/configuratorRegistry';
+import { operationalMasterInventory } from '../../services/operationalMasterInventoryService';
+import { operationalAssetEligibility } from '../../services/operationalAssetEligibilityService';
 import { 
   X, 
   Ship, 
@@ -103,11 +105,21 @@ export const PrivateYachtConfigurator: React.FC<PrivateYachtConfiguratorProps> =
     existingConfig.selectedAddons || (itemOrProduct as QuoteItem)?.selectedAddonIds || []
   );
 
-  // Authoritative Yacht Details (Layer 1)
-  const yachtName = product?.yachtNameSnapshot || product?.vehicleConfig?.yachtModel || product?.name || 'Luxury Motor Yacht';
-  const yachtType = product?.yachtTypeSnapshot || product?.vehicleConfig?.yachtType || 'Flybridge Cruiser';
-  const yachtDimensions = product?.vehicleConfig?.yachtSize || '65 ft / 20m';
-  const masterCapacity = Number(product?.yachtCapacitySnapshot) || Number(product?.capacitySnapshot) || Number(product?.vehicleConfig?.maxSeats) || Number(product?.maxPax) || 12;
+  // Authoritative Master Operational Yacht Details (Layer 1: Resolved from Master Inventory)
+  const masterYacht = useMemo(() => {
+    const yId = product?.yachtId || product?.vehicleConfig?.yachtId;
+    if (yId) {
+      const found = operationalMasterInventory.getYachtById(yId);
+      if (found && found.status === 'ACTIVE') return found;
+    }
+    const eligible = operationalAssetEligibility.getEligibleYachtsForProduct(product, adults + children);
+    return eligible[0] || null;
+  }, [product, adults, children]);
+
+  const yachtName = masterYacht?.name || product?.yachtNameSnapshot || product?.vehicleConfig?.yachtModel || product?.name || 'Luxury Motor Yacht';
+  const yachtType = masterYacht?.classification || masterYacht?.type || product?.yachtTypeSnapshot || product?.vehicleConfig?.yachtType || 'Flybridge Cruiser';
+  const yachtDimensions = masterYacht?.dimensions || masterYacht?.length || product?.vehicleConfig?.yachtSize || '65 ft / 20m';
+  const masterCapacity = Number(masterYacht?.capacity) || Number(product?.yachtCapacitySnapshot) || Number(product?.capacitySnapshot) || Number(product?.vehicleConfig?.maxSeats) || Number(product?.maxPax) || 12;
 
   // Authoritative Product Upsells (Layer 2)
   const availableUpsells = useMemo(() => {
@@ -168,6 +180,14 @@ export const PrivateYachtConfigurator: React.FC<PrivateYachtConfiguratorProps> =
 
     const configurationPayload = {
       ...configIdentity,
+      assetType: 'YACHT',
+      assetId: masterYacht?.id || product.yachtId || null,
+      assetName: yachtName,
+      assetModel: masterYacht?.model || yachtName,
+      assetClassification: yachtType,
+      supplierId: masterYacht?.supplierId || product.supplierId,
+      supplierName: masterYacht?.supplierName || product.supplierName,
+      yachtId: masterYacht?.id || product.yachtId,
       yachtName,
       yachtType,
       yachtDimensions,

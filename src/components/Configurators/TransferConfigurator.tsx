@@ -1,9 +1,11 @@
 import React, { useState, useMemo } from 'react';
-import { Product, QuoteItem, CurrencyCode } from '../../types';
+import { Product, QuoteItem, CurrencyCode, VehicleMaster } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
-import { formatCurrency, calculateProductPrice } from '../../services/pricingEngine';
+import { formatCurrency, calculateProductPrice, calculateB2BAgentPrice, convertCurrency } from '../../services/pricingEngine';
 import { generateConfigurationIdentity, getActiveUpsellsForProduct, createUpsellSnapshot } from '../../services/configuratorRegistry';
+import { operationalMasterInventory } from '../../services/operationalMasterInventoryService';
+import { operationalAssetEligibility } from '../../services/operationalAssetEligibilityService';
 import { 
   X, 
   Car, 
@@ -118,10 +120,105 @@ export const TransferConfigurator: React.FC<TransferConfiguratorProps> = ({
   const originHubName = product?.fromHubName || (product?.fromHubId ? `Hub: ${product.fromHubId}` : `${product?.city || product?.destinationName || 'Origin Hub'}`);
   const destinationHubName = product?.toHubName || (product?.toHubId ? `Hub: ${product.toHubId}` : 'Destination Hub');
   
-  const vehicleName = product?.vehicleNameSnapshot || product?.vehicleConfig?.vehicleModel || 'Authoritative Fleet Vehicle';
-  const vehicleType = product?.vehicleTypeSnapshot || product?.vehicleConfig?.vehicleType || 'Executive MPV';
-  const masterCapacity = Number(product?.capacitySnapshot) || Number(product?.vehicleConfig?.maxSeats) || Number(product?.maxPax) || 5;
-  const maxLuggage = Number(product?.vehicleConfig?.maxLuggage) || 4;
+  // Step 3 pricing tiers is single authoritative configuration
+  const step3Tiers = useMemo(() => {
+    return (product?.tieredPricing || []).filter(t => t.status !== 'INACTIVE');
+  }, [product]);
+
+  // Extract unique active Master Vehicles from Step 3 pricing tiers & central Master Inventory
+  const availableVehicles = useMemo(() => {
+    // 1. Get eligible active vehicles from central Master Inventory
+    const eligibleMasterVehicles = operationalAssetEligibility.getEligibleVehiclesForTransfer(product, adults + children);
+
+    // 2. Identify referenced vehicle IDs in product's Step 3 tiers
+    const tierVehicleIds = new Set<string>();
+    for (const t of step3Tiers) {
+      if (t.fleetId) tierVehicleIds.add(t.fleetId);
+      if (t.vehicleId) tierVehicleIds.add(t.vehicleId);
+    }
+
+    if (tierVehicleIds.size > 0) {
+      const matched = eligibleMasterVehicles.filter(v => tierVehicleIds.has(v.id));
+      if (matched.length > 0) {
+        return matched.map(v => ({
+          id: v.id,
+          name: v.name,
+          model: v.model,
+          type: v.classification || v.type,
+          maxCapacity: v.seatingCapacity,
+          luggageCapacity: v.luggageCapacity || 4,
+          supplierId: v.supplierId,
+          supplierName: v.supplierName,
+          masterRecord: v
+        }));
+      }
+    }
+
+    // If product specifies vehicleId directly
+    if (product?.vehicleId) {
+      const found = operationalMasterInventory.getVehicleById(product.vehicleId);
+      if (found && found.status === 'ACTIVE') {
+        return [{
+          id: found.id,
+          name: found.name,
+          model: found.model,
+          type: found.classification || found.type,
+          maxCapacity: found.seatingCapacity,
+          luggageCapacity: found.luggageCapacity || 4,
+          supplierId: found.supplierId,
+          supplierName: found.supplierName,
+          masterRecord: found
+        }];
+      }
+    }
+
+    // Fall back to all active master vehicles for this destination / fleet
+    return eligibleMasterVehicles.map(v => ({
+      id: v.id,
+      name: v.name,
+      model: v.model,
+      type: v.classification || v.type,
+      maxCapacity: v.seatingCapacity,
+      luggageCapacity: v.luggageCapacity || 4,
+      supplierId: v.supplierId,
+      supplierName: v.supplierName,
+      masterRecord: v
+    }));
+  }, [step3Tiers, product, adults, children]);
+
+  // State for selected vehicle
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>(() => {
+    if (existingConfig.vehicleId) return existingConfig.vehicleId;
+    if (existingConfig.assetId) return existingConfig.assetId;
+    return availableVehicles[0]?.id || '';
+  });
+
+  const selectedVehicle = useMemo(() => {
+    return availableVehicles.find(v => v.id === selectedVehicleId) || availableVehicles[0];
+  }, [availableVehicles, selectedVehicleId]);
+
+  const vehicleName = selectedVehicle?.name || 'Selected Vehicle';
+  const vehicleType = selectedVehicle?.type || product?.vehicleTypeSnapshot || 'Executive MPV';
+  
+  const totalPax = adults + children;
+
+  // Match exact step 3 pricing tier
+  const matchedTier = useMemo(() => {
+    return step3Tiers.find(t => {
+      const vId = t.fleetId || t.vehicleId;
+      const idMatches = !vId || vId === selectedVehicleId || (selectedVehicle && vId === selectedVehicle.id);
+      return idMatches &&
+             totalPax >= t.minPax &&
+             totalPax <= t.maxPax;
+    });
+  }, [step3Tiers, selectedVehicleId, selectedVehicle, totalPax]);
+
+  // Capacity validation
+  const hasMatchedTier = step3Tiers.length === 0 || Boolean(matchedTier);
+  const masterCapacity = matchedTier ? (matchedTier.maxPax || matchedTier.maxPassengers || selectedVehicle?.maxCapacity || 5) : (selectedVehicle?.maxCapacity || 5);
+  const isCapacityExceeded = !hasMatchedTier || totalPax > masterCapacity;
+  const maxLuggage = Number(selectedVehicle?.luggageCapacity) || Number(product?.vehicleConfig?.maxLuggage) || 4;
+  const isLuggageExceeded = checkedLuggageCount > maxLuggage;
 
   // Authoritative Product Upsells (Layer 2)
   const availableUpsells = useMemo(() => {
@@ -134,35 +231,86 @@ export const TransferConfigurator: React.FC<TransferConfiguratorProps> = ({
     );
   };
 
-  // Capacity Validation
-  const totalPax = adults + children;
-  const isCapacityExceeded = totalPax > masterCapacity;
-  const isLuggageExceeded = checkedLuggageCount > maxLuggage;
-
-  // Centralized Authoritative Pricing Calculation
+  // Centralized Authoritative Pricing Calculation exclusively from Step 3 Matched Row
   const pricing = useMemo(() => {
     if (!product) return { grossSellingPrice: 0, finalPrice: 0, baseSelling: 0, addonsCost: 0, currency };
-    const calc = calculateProductPrice(product, {
-      productId: product.id,
-      adults,
-      children,
-      infants,
-      travelDate,
-      targetCurrency: currency,
-      user,
-      selectedAddonIds: selectedAddons,
-      selectedUpsellIds: selectedAddons
-    });
+
+    let baseSelling = 0;
+    let currencyToUse = product.currency || 'USD';
+    let matchedTierSnapshot = matchedTier;
+
+    if (step3Tiers.length > 0) {
+      if (!matchedTier) {
+        return { grossSellingPrice: 0, finalPrice: 0, baseSelling: 0, addonsCost: 0, currency };
+      }
+      const tierNett = matchedTier.supplierNett !== undefined ? matchedTier.supplierNett : (matchedTier.nettPrice !== undefined ? matchedTier.nettPrice : matchedTier.netCostPerPax || 0);
+      const marginPct = matchedTier.marginValue !== undefined ? matchedTier.marginValue : (product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 20);
+      const taxPct = matchedTier.taxValue !== undefined ? matchedTier.taxValue : (product.taxPercent ?? 10);
+      const feePct = matchedTier.serviceChargeValue !== undefined ? matchedTier.serviceChargeValue : (product.serviceFeeFixed ?? 0);
+      currencyToUse = matchedTier.currency || product.currency || 'USD';
+
+      const b2bCalc = calculateB2BAgentPrice({
+        nettCost: tierNett,
+        marginPercent: marginPct,
+        taxPercent: taxPct,
+        serviceFeePercent: feePct,
+        currency: currencyToUse as CurrencyCode
+      });
+      baseSelling = convertCurrency(b2bCalc.price, currencyToUse as CurrencyCode, currency);
+    } else {
+      // Fallback if no Step 3 tiers are defined
+      const calc = calculateProductPrice(product, {
+        productId: product.id,
+        adults,
+        children,
+        infants,
+        travelDate,
+        targetCurrency: currency,
+        user,
+        selectedAddonIds: selectedAddons,
+        selectedUpsellIds: selectedAddons
+      });
+      return {
+        grossSellingPrice: calc.finalTotalSellingPrice,
+        finalPrice: calc.finalTotalSellingPrice,
+        baseSelling: calc.adultsSubtotalSelling,
+        addonsCost: calc.addonsSubtotalSelling || 0,
+        currency: calc.currency,
+        calcResult: calc
+      };
+    }
+
+    // Addons calculation
+    let addonsCost = 0;
+    if (selectedAddons.length > 0) {
+      const upsells = availableUpsells.filter(u => selectedAddons.includes(u.id));
+      for (const u of upsells) {
+        const isPerBooking = u.priceType === 'PER_BOOKING' || u.priceType === 'PER_VEHICLE';
+        const quantity = isPerBooking ? 1 : (adults + children);
+        const unitCost = u.netCost !== undefined ? u.netCost : u.price;
+        // Calculate B2B price for addon
+        const addonPrice = calculateB2BAgentPrice({
+          nettCost: unitCost * quantity,
+          marginPercent: product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 20,
+          taxPercent: product.taxPercent ?? 10,
+          serviceFeePercent: product.serviceFeeFixed ?? 0,
+          currency: u.currency || product.currency || 'USD'
+        }).price;
+        addonsCost += convertCurrency(addonPrice, u.currency || product.currency || 'USD', currency);
+      }
+    }
+
+    const finalPrice = baseSelling + addonsCost;
 
     return {
-      grossSellingPrice: calc.finalTotalSellingPrice,
-      finalPrice: calc.finalTotalSellingPrice,
-      baseSelling: calc.adultsSubtotalSelling,
-      addonsCost: calc.addonsSubtotalSelling || 0,
-      currency: calc.currency,
-      calcResult: calc
+      grossSellingPrice: finalPrice,
+      finalPrice: finalPrice,
+      baseSelling,
+      addonsCost,
+      currency,
+      matchedTier: matchedTierSnapshot
     };
-  }, [product, adults, children, infants, travelDate, selectedAddons, currency, user]);
+  }, [product, step3Tiers, matchedTier, adults, children, infants, travelDate, selectedAddons, currency, user, availableUpsells]);
 
   if (!isOpen || !product) return null;
 
@@ -185,7 +333,15 @@ export const TransferConfigurator: React.FC<TransferConfiguratorProps> = ({
       ...configIdentity,
       fromHub: originHubName,
       toHub: destinationHubName,
-      vehicleName,
+      assetType: 'VEHICLE',
+      assetId: selectedVehicle?.id || selectedVehicleId,
+      assetName: selectedVehicle?.name || vehicleName,
+      assetModel: selectedVehicle?.model || vehicleName,
+      assetClassification: vehicleType,
+      supplierId: selectedVehicle?.supplierId || product.supplierId,
+      supplierName: selectedVehicle?.supplierName || product.supplierName,
+      vehicleId: selectedVehicle?.id || selectedVehicleId,
+      vehicleName: selectedVehicle?.name || vehicleName,
       vehicleType,
       masterCapacity,
       maxLuggage,
@@ -202,7 +358,8 @@ export const TransferConfigurator: React.FC<TransferConfiguratorProps> = ({
       selectedAddons,
       selectedUpsellSnapshots,
       specialInstructions,
-      pricingSummary: pricing
+      pricingSummary: pricing,
+      matchedTierId: matchedTier?.id || null
     };
 
     if (isEditing && existingQuoteItemId) {
@@ -282,14 +439,14 @@ export const TransferConfigurator: React.FC<TransferConfiguratorProps> = ({
         {/* MODAL BODY (SCROLLABLE) */}
         <div className="p-4 sm:p-6 overflow-y-auto space-y-5">
           
-          {/* LAYER 1: PRODUCT INFORMATION (READ-ONLY) */}
+          {/* LAYER 1: PRODUCT INFORMATION & VEHICLE SELECTION */}
           <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                1. Product Route & Vehicle
+                1. Product Route & Vehicle Selection
               </span>
-              <span className="text-[10px] text-slate-400 bg-white px-2 py-0.5 rounded-md border border-slate-200">
-                Authoritative Master Data
+              <span className="text-[10px] text-[#00C6A6] bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800 font-bold uppercase">
+                Step 3 Dynamic Pricing Assets
               </span>
             </div>
 
@@ -310,23 +467,36 @@ export const TransferConfigurator: React.FC<TransferConfiguratorProps> = ({
               </div>
             </div>
 
-            {/* Selected Vehicle Specs (Read-Only) */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1 text-xs">
-              <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                <span className="text-[10px] text-slate-400 block uppercase font-bold">Vehicle Model</span>
-                <span className="text-slate-900 font-bold truncate block mt-0.5">{vehicleName}</span>
+            {/* Dynamic Vehicle Selection Dropdown */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Select Fleet Vehicle *
+                </label>
+                <select
+                  value={selectedVehicleId}
+                  onChange={e => setSelectedVehicleId(e.target.value)}
+                  className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-[#00C6A6] focus:outline-none focus:border-[#00C6A6]"
+                >
+                  {availableVehicles.map(v => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                <span className="text-[10px] text-slate-400 block uppercase font-bold">Classification</span>
-                <span className="text-slate-700 font-semibold truncate block mt-0.5">{vehicleType}</span>
-              </div>
-              <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                <span className="text-[10px] text-slate-400 block uppercase font-bold">Master Capacity</span>
-                <span className="text-[#00C6A6] font-bold block mt-0.5">{masterCapacity} Passengers</span>
-              </div>
-              <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                <span className="text-[10px] text-slate-400 block uppercase font-bold">Max Luggage</span>
-                <span className="text-slate-700 font-semibold block mt-0.5">{maxLuggage} Large Bags</span>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-[10px] text-slate-400 block uppercase font-bold">Capacity Range</span>
+                  <span className="text-[#00C6A6] font-bold block mt-0.5">
+                    {matchedTier ? `${matchedTier.minPax}–${matchedTier.maxPax} Pax` : `${selectedVehicle?.maxCapacity || masterCapacity} Pax`}
+                  </span>
+                </div>
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-[10px] text-slate-400 block uppercase font-bold">Max Luggage</span>
+                  <span className="text-slate-700 font-semibold block mt-0.5">{maxLuggage} Large Bags</span>
+                </div>
               </div>
             </div>
           </div>
@@ -489,9 +659,12 @@ export const TransferConfigurator: React.FC<TransferConfiguratorProps> = ({
               <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-start space-x-2.5 text-xs text-rose-800 animate-in fade-in">
                 <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-bold block">Vehicle Capacity Exceeded</span>
+                  <span className="font-bold block">Vehicle Capacity Mismatch</span>
                   <span>
-                    The total passenger count ({totalPax} Pax) exceeds the maximum capacity ({masterCapacity} Seats) for {vehicleName}. Please adjust passengers or select an appropriate Transfer Product.
+                    {!hasMatchedTier 
+                      ? `No pricing configured for ${vehicleName} for ${totalPax} passengers.`
+                      : `The total passenger count (${totalPax} Pax) exceeds the maximum capacity (${masterCapacity} Seats) for ${vehicleName}. Please adjust passengers or select an appropriate Transfer Product.`
+                    }
                   </span>
                 </div>
               </div>

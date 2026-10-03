@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { Component, useState, useEffect, useMemo } from 'react';
 import { AppDatabase } from '../../services/db';
 import { 
   VisaProduct, 
@@ -81,8 +81,86 @@ interface VisaCMSManagerProps {
 
 export type AncillaryServiceCategory = 'VISA_SERVICES' | 'TRAVEL_PROTECTION' | 'GROUND_CONNECTIVITY' | 'FIELD_PARITY';
 
-export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({ 
-  destinations, 
+export interface VisaCMSErrorBoundaryProps {
+  children: React.ReactNode;
+  fallbackTitle?: string;
+}
+
+export interface VisaCMSErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export class VisaCMSErrorBoundary extends Component<VisaCMSErrorBoundaryProps, VisaCMSErrorBoundaryState> {
+  public state: VisaCMSErrorBoundaryState = { hasError: false, error: null };
+
+  constructor(props: VisaCMSErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): VisaCMSErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('[VisaCMSManager] Uncaught rendering exception:', error, errorInfo);
+  }
+
+  render() {
+    const self = this as any;
+    if (self.state.hasError) {
+      return (
+        <div className="bg-white rounded-3xl border border-rose-200 p-8 sm:p-12 text-center max-w-xl mx-auto my-12 space-y-4 shadow-sm animate-in fade-in">
+          <div className="w-14 h-14 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mx-auto border border-rose-100">
+            <AlertTriangle className="w-7 h-7 text-rose-600" />
+          </div>
+          <h3 className="text-lg font-black text-slate-900">
+            {self.props.fallbackTitle || 'Visa & Ancillary Services encountered a component error.'}
+          </h3>
+          <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed font-mono bg-slate-50 p-3 rounded-xl border border-slate-200">
+            {self.state.error?.message || 'An unexpected rendering error occurred while mounting this module.'}
+          </p>
+          <div className="pt-3 flex items-center justify-center gap-3">
+            <button
+              onClick={() => self.setState({ hasError: false, error: null })}
+              className="px-5 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs"
+            >
+              Retry
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+            >
+              Reload Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return self.props.children;
+  }
+}
+
+export const resolveAncillaryTab = (tab?: string): AncillaryServiceCategory => {
+  if (!tab) return 'VISA_SERVICES';
+  const clean = tab.toUpperCase().replace(/[-_]/g, '');
+  if (clean === 'TRAVELPROTECTION' || clean === 'PROTECTION' || clean === 'INSURANCE') return 'TRAVEL_PROTECTION';
+  if (clean === 'GROUNDCONNECTIVITY' || clean === 'GROUND' || clean === 'CONNECTIVITY' || clean === 'VIP' || clean === 'VIPCONNECTIVITY' || clean === 'VIPGROUND' || clean === 'ESIM') return 'GROUND_CONNECTIVITY';
+  if (clean === 'MASTERSCHEMAMATRIX' || clean === 'FIELDPARITY' || clean === 'SCHEMAMATRIX' || clean === 'MATRIX' || clean === 'SCHEMA' || clean === 'PARITY') return 'FIELD_PARITY';
+  return 'VISA_SERVICES';
+};
+
+export const VisaCMSManager: React.FC<VisaCMSManagerProps> = (props) => {
+  return (
+    <VisaCMSErrorBoundary fallbackTitle="Visa & Ancillary Services could not be loaded.">
+      <VisaCMSManagerInner {...props} />
+    </VisaCMSErrorBoundary>
+  );
+};
+
+const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({ 
+  destinations = [], 
   initialSubTab, 
   onSubTabChange 
 }) => {
@@ -90,30 +168,12 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
   const db = AppDatabase.getInstance();
 
   // Primary Workspace Tabs
-  const [activeMainTab, setActiveMainTab] = useState<AncillaryServiceCategory>(() => {
-    if (initialSubTab) {
-      const upper = initialSubTab.toUpperCase();
-      if (upper === 'TRAVEL_PROTECTION' || upper === 'PROTECTION' || upper === 'INSURANCE') return 'TRAVEL_PROTECTION';
-      if (upper === 'GROUND_CONNECTIVITY' || upper === 'VIP_CONNECTIVITY' || upper === 'VIP' || upper === 'CONNECTIVITY' || upper === 'ESIM' || upper === 'GROUND') return 'GROUND_CONNECTIVITY';
-      if (upper === 'FIELD_PARITY' || upper === 'PARITY' || upper === 'SCHEMA') return 'FIELD_PARITY';
-      return 'VISA_SERVICES';
-    }
-    return 'VISA_SERVICES';
-  });
+  const [activeMainTab, setActiveMainTab] = useState<AncillaryServiceCategory>(() => resolveAncillaryTab(initialSubTab));
 
   // Synchronize with external tab selection
   useEffect(() => {
     if (initialSubTab) {
-      const upper = initialSubTab.toUpperCase();
-      if (upper === 'TRAVEL_PROTECTION' || upper === 'PROTECTION' || upper === 'INSURANCE') {
-        setActiveMainTab('TRAVEL_PROTECTION');
-      } else if (upper === 'GROUND_CONNECTIVITY' || upper === 'VIP_CONNECTIVITY' || upper === 'VIP' || upper === 'CONNECTIVITY' || upper === 'ESIM' || upper === 'GROUND') {
-        setActiveMainTab('GROUND_CONNECTIVITY');
-      } else if (upper === 'FIELD_PARITY' || upper === 'PARITY' || upper === 'SCHEMA') {
-        setActiveMainTab('FIELD_PARITY');
-      } else if (upper === 'VISA_SERVICES' || upper === 'VISAS') {
-        setActiveMainTab('VISA_SERVICES');
-      }
+      setActiveMainTab(resolveAncillaryTab(initialSubTab));
     }
   }, [initialSubTab]);
 
@@ -123,10 +183,33 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
   };
 
   // Database States
-  const [visas, setVisas] = useState<VisaProduct[]>(() => db.getVisas());
-  const [protectionPlans, setProtectionPlans] = useState<TravelProtectionPlan[]>(() => db.getTravelProtectionPlans());
-  const [vipServices, setVipServices] = useState<VipGroundService[]>(() => db.getVipGroundServices());
-  const [connectivityPlans, setConnectivityPlans] = useState<ConnectivityPlan[]>(() => db.getConnectivityPlans());
+  const [visas, setVisas] = useState<VisaProduct[]>(() => db.getVisas() || []);
+  const [protectionPlans, setProtectionPlans] = useState<TravelProtectionPlan[]>(() => db.getTravelProtectionPlans() || []);
+  const [vipServices, setVipServices] = useState<VipGroundService[]>(() => db.getVipGroundServices() || []);
+  const [connectivityPlans, setConnectivityPlans] = useState<ConnectivityPlan[]>(() => db.getConnectivityPlans() || []);
+
+  // Loading & Error States (Requirement #3: Explicit LOADING, EMPTY, ERROR, SUCCESS states)
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const handleReloadData = () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      setVisas(db.getVisas() || []);
+      setProtectionPlans(db.getTravelProtectionPlans() || []);
+      setVipServices(db.getVipGroundServices() || []);
+      setConnectivityPlans(db.getConnectivityPlans() || []);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Failed to reload services from database');
+    } finally {
+      setTimeout(() => setIsLoading(false), 200);
+    }
+  };
+
+  const isVisaEmpty = (visas || []).length === 0;
+  const isProtectionEmpty = (protectionPlans || []).length === 0;
+  const isGroundEmpty = (vipServices || []).length === 0 && (connectivityPlans || []).length === 0;
 
   // Search & Filter States
   const [searchQuery, setSearchQuery] = useState('');
@@ -254,13 +337,14 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
     // 3. VIP Ground Services
     vipServices.forEach(vip => {
       const finalPrice = vip.pricing?.finalPrice ?? vip.sellingPrice;
-      const destName = destinations.find(d => d.id === vip.destinationId)?.name || 'International Hub';
+      const destName = (destinations || []).find(d => d.id === vip.destinationId)?.name || 'International Hub';
+      const cleanType = (vip.serviceType || 'MEET_AND_GREET').replace(/_/g, ' ');
       list.push({
         id: vip.id,
         name: vip.name,
         category: 'Ground & Connectivity',
         rawCategory: 'VIP',
-        serviceType: vip.serviceType.replace(/_/g, ' '),
+        serviceType: cleanType,
         destination: destName,
         provider: vip.supplierName || 'Executive Ground Partner',
         currency: vip.currency || 'USD',
@@ -879,6 +963,9 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
     { category: 'Commercial Pricing', cmsField: 'Margin (Type & Value)', sheetTab: 'VISA_RATES', sheetColumn: 'markup_agent', firestoreField: 'pricing.marginValue / marginType', dataType: 'Percent / Fixed', required: 'Yes', syncStatus: 'CENTRALIZED' },
     { category: 'Commercial Pricing', cmsField: 'Service Charge', sheetTab: 'VISA_RATES', sheetColumn: 'service_fee', firestoreField: 'pricing.serviceChargeValue', dataType: 'Number / Percent', required: 'Yes', syncStatus: 'CENTRALIZED' },
     { category: 'Commercial Pricing', cmsField: 'Final Selling Price', sheetTab: 'VISA_RATES', sheetColumn: 'selling_price', firestoreField: 'pricing.finalPrice', dataType: 'Calculated Engine Output', required: 'Yes', syncStatus: 'AUTHORITATIVE' },
+    { category: 'Operational Fleet', cmsField: 'Vehicles (Transfer / Private Tour)', sheetTab: 'MASTER_VEHICLES', sheetColumn: 'id / name / seatingCapacity', firestoreField: 'master_vehicles', dataType: 'VehicleMaster', required: 'Yes', syncStatus: 'AUTHORITATIVE' },
+    { category: 'Operational Fleet', cmsField: 'Yachts (Private Yacht Charters)', sheetTab: 'MASTER_YACHTS', sheetColumn: 'id / name / capacity / length', firestoreField: 'master_yachts', dataType: 'YachtMaster', required: 'Yes', syncStatus: 'AUTHORITATIVE' },
+    { category: 'Operational Fleet', cmsField: 'Ferries & Vessels (Marine Transits)', sheetTab: 'MASTER_FERRIES', sheetColumn: 'id / name / capacity / route', firestoreField: 'master_ferries', dataType: 'FerryMaster', required: 'Yes', syncStatus: 'AUTHORITATIVE' },
     { category: 'Travel Protection', cmsField: 'Medical Cover Amount', sheetTab: 'PROTECTION', sheetColumn: 'coverage_amount', firestoreField: 'medicalCoverageAmount', dataType: 'Number', required: 'Yes', syncStatus: 'DATABASE_BACKED' },
     { category: 'VIP Ground', cmsField: 'VIP Service Type', sheetTab: 'TRANSFER_ROUTES', sheetColumn: 'service_type', firestoreField: 'serviceType', dataType: 'Enum', required: 'Yes', syncStatus: 'VERIFIED' },
     { category: '5G Connectivity', cmsField: 'Data Allowance', sheetTab: 'PRODUCTS', sheetColumn: 'description', firestoreField: 'dataAllowance', dataType: 'String (e.g. 10GB)', required: 'Yes', syncStatus: 'DATABASE_BACKED' }
@@ -1082,9 +1169,136 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* MAIN LISTING TABLE & CARDS                                                */}
+      {/* 4 EXPLICIT STATES LIFECYCLE: LOADING | ERROR | EMPTY | SUCCESS            */}
       {/* ========================================================================= */}
-      {activeMainTab !== 'FIELD_PARITY' && (
+
+      {/* 1. LOADING STATE */}
+      {isLoading && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs space-y-4 animate-in fade-in">
+          <div className="w-12 h-12 rounded-2xl bg-[#00C6A6]/10 text-[#008972] flex items-center justify-center mx-auto border border-[#00C6A6]/20">
+            <Clock className="w-6 h-6 animate-spin" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">
+              {activeMainTab === 'VISA_SERVICES' && 'Loading Visa Services...'}
+              {activeMainTab === 'TRAVEL_PROTECTION' && 'Loading Travel Protection...'}
+              {activeMainTab === 'GROUND_CONNECTIVITY' && 'Loading Ground & Connectivity Services...'}
+              {activeMainTab === 'FIELD_PARITY' && 'Loading Master Schema Matrix...'}
+            </h3>
+            <p className="text-xs text-slate-400 mt-1">Retrieving verified inventory from Firestore and master sync ledger.</p>
+          </div>
+        </div>
+      )}
+
+      {/* 2. ERROR STATE */}
+      {!isLoading && loadError && (
+        <div className="bg-white rounded-2xl border border-rose-200 p-10 text-center shadow-xs space-y-4 animate-in fade-in">
+          <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto border border-rose-100">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">
+              {activeMainTab === 'VISA_SERVICES' && 'Visa Services could not be loaded.'}
+              {activeMainTab === 'TRAVEL_PROTECTION' && 'Travel Protection could not be loaded.'}
+              {activeMainTab === 'GROUND_CONNECTIVITY' && 'Ground & Connectivity could not be loaded.'}
+              {activeMainTab === 'FIELD_PARITY' && 'Master Schema Matrix could not be loaded.'}
+            </h3>
+            <p className="text-xs text-rose-600 mt-1 font-mono">{loadError}</p>
+          </div>
+          <div className="pt-2">
+            <button
+              onClick={handleReloadData}
+              className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3. DEDICATED EMPTY STATE (When catalog has zero records configured) */}
+      {!isLoading && !loadError && activeMainTab === 'VISA_SERVICES' && isVisaEmpty && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs space-y-4 animate-in fade-in">
+          <div className="w-14 h-14 rounded-2xl bg-[#00C6A6]/10 text-[#008972] flex items-center justify-center mx-auto border border-[#00C6A6]/20">
+            <FileText className="w-7 h-7" />
+          </div>
+          <div className="max-w-md mx-auto">
+            <h3 className="text-base font-bold text-slate-900">Visa Services</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              No Visa Services available for this destination. Add your first consular visa requirements or sync from Master Google Sheets.
+            </p>
+          </div>
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <button
+              onClick={() => handleOpenCreateService('VISA')}
+              className="px-4 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Add Visa Service</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!isLoading && !loadError && activeMainTab === 'TRAVEL_PROTECTION' && isProtectionEmpty && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs space-y-4 animate-in fade-in">
+          <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto border border-emerald-100">
+            <ShieldCheck className="w-7 h-7" />
+          </div>
+          <div className="max-w-md mx-auto">
+            <h3 className="text-base font-bold text-slate-900">Travel Protection</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              No Travel Protection services have been configured yet.
+            </p>
+          </div>
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <button
+              onClick={() => handleOpenCreateService('PROTECTION')}
+              className="px-4 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Add Protection Plan</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!isLoading && !loadError && activeMainTab === 'GROUND_CONNECTIVITY' && isGroundEmpty && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-xs space-y-4 animate-in fade-in">
+          <div className="w-14 h-14 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center mx-auto border border-purple-100">
+            <Sparkles className="w-7 h-7" />
+          </div>
+          <div className="max-w-md mx-auto">
+            <h3 className="text-base font-bold text-slate-900">Ground & Connectivity</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              No Ground & Connectivity services have been configured yet.
+            </p>
+          </div>
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <button
+              onClick={() => handleOpenCreateService('VIP')}
+              className="px-4 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Add VIP Ground Service</span>
+            </button>
+            <button
+              onClick={() => handleOpenCreateService('CONNECTIVITY')}
+              className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-4 h-4 text-[#00C6A6]" />
+              <span>+ Add eSIM Plan</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 4. SUCCESS STATE: MAIN LISTING TABLE (when category has records) */}
+      {!isLoading && !loadError && activeMainTab !== 'FIELD_PARITY' && !(
+        (activeMainTab === 'VISA_SERVICES' && isVisaEmpty) ||
+        (activeMainTab === 'TRAVEL_PROTECTION' && isProtectionEmpty) ||
+        (activeMainTab === 'GROUND_CONNECTIVITY' && isGroundEmpty)
+      ) && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
@@ -1103,7 +1317,22 @@ export const VisaCMSManager: React.FC<VisaCMSManagerProps> = ({
                 {filteredItems.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="py-12 text-center text-slate-400">
-                      No services match your active search or filter criteria.
+                      <div className="flex flex-col items-center justify-center space-y-2">
+                        <span>No services match your active search or filter criteria.</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSearchQuery('');
+                            setCategoryFilter('all');
+                            setSelectedDestination('all');
+                            setStatusFilter('ALL');
+                            setCurrencyFilter('all');
+                          }}
+                          className="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                        >
+                          Clear Search & Filters
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ) : (
