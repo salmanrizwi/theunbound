@@ -1851,7 +1851,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                         <label className="font-bold text-slate-700 block mb-1">Validity (Days)</label>
                         <input
                           type="number"
-                          value={editingVisa.validityDays}
+                          value={editingVisa.validityDays !== undefined && !Number.isNaN(editingVisa.validityDays) ? editingVisa.validityDays : ''}
                           onChange={e => setEditingVisa({ ...editingVisa, validityDays: Number(e.target.value) })}
                           className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
                         />
@@ -1861,7 +1861,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                         <label className="font-bold text-slate-700 block mb-1">Permitted Stay (Days)</label>
                         <input
                           type="number"
-                          value={editingVisa.stayDurationDays}
+                          value={editingVisa.stayDurationDays !== undefined && !Number.isNaN(editingVisa.stayDurationDays) ? editingVisa.stayDurationDays : ''}
                           onChange={e => setEditingVisa({ ...editingVisa, stayDurationDays: Number(e.target.value) })}
                           className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
                         />
@@ -1939,7 +1939,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                         <label className="font-bold text-slate-700 block mb-1">Validity (Days)</label>
                         <input
                           type="number"
-                          value={editingConnectivity.validityDays || 15}
+                          value={editingConnectivity.validityDays !== undefined && !Number.isNaN(editingConnectivity.validityDays) ? editingConnectivity.validityDays : 15}
                           onChange={e => setEditingConnectivity({ ...editingConnectivity, validityDays: Number(e.target.value) })}
                           className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
                         />

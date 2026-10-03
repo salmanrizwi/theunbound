@@ -64,6 +64,9 @@ interface SupplierNettInputProps {
   onChange: (val: number | undefined) => void;
 }
 
+const isSafeNumber = (val: any): boolean => val !== undefined && val !== null && typeof val === 'number' && !Number.isNaN(val);
+const safeNumVal = (val: any, fallback: any = ''): any => (val !== undefined && val !== null && typeof val === 'number' && !Number.isNaN(val) ? val : fallback);
+
 export const SupplierNettInput: React.FC<SupplierNettInputProps> = ({
   value,
   placeholder = 'Nett Cost',
@@ -71,12 +74,12 @@ export const SupplierNettInput: React.FC<SupplierNettInputProps> = ({
   className = "p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-28 text-right text-xs focus:outline-none focus:border-[#00C6A6]",
   onChange
 }) => {
-  const [buffer, setBuffer] = useState<string>(() => (value !== undefined && value !== null ? String(value) : ''));
+  const [buffer, setBuffer] = useState<string>(() => (isSafeNumber(value) ? String(value) : ''));
 
   useEffect(() => {
     const clean = buffer.trim();
     const currentNum = (clean === '' || clean === '.') ? undefined : parseFloat(clean);
-    const normalizedValue = (value !== undefined && value !== null) ? value : undefined;
+    const normalizedValue = isSafeNumber(value) ? value : undefined;
     if (normalizedValue !== currentNum) {
       setBuffer(normalizedValue !== undefined ? String(normalizedValue) : '');
     }
@@ -145,12 +148,12 @@ export const DecimalInput: React.FC<DecimalInputProps> = ({
   className = "p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono text-white text-xs w-14 text-right focus:outline-none focus:border-[#00C6A6]",
   onChange
 }) => {
-  const [buffer, setBuffer] = useState<string>(() => (value !== undefined && value !== null ? String(value) : ''));
+  const [buffer, setBuffer] = useState<string>(() => (isSafeNumber(value) ? String(value) : ''));
 
   useEffect(() => {
     const clean = buffer.trim();
     const currentNum = (clean === '' || clean === '.') ? undefined : parseFloat(clean);
-    const normalizedValue = (value !== undefined && value !== null) ? value : undefined;
+    const normalizedValue = isSafeNumber(value) ? value : undefined;
     if (normalizedValue !== currentNum) {
       setBuffer(normalizedValue !== undefined ? String(normalizedValue) : '');
     }
@@ -338,7 +341,10 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
       category === 'Transfers' || 
       category === 'Transfer' || 
       category === 'Private Yacht' || 
-      category === 'Yacht'
+      category === 'Yacht' ||
+      category === 'Ferries' ||
+      category === 'Ferry' ||
+      category === 'Ferries & Vessels'
     ) {
       return 'capacity_based';
     }
@@ -356,11 +362,12 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
 
   const isTransfer = category === 'Transfers' || category === 'Transfer';
   const isYacht = category === 'Private Yacht' || category === 'Yacht';
+  const isFerry = category === 'Ferries' || category === 'Ferry' || category === 'Ferries & Vessels';
 
   // Live Simulator state
   const [testPassengerCount, setTestPassengerCount] = useState<number>(2);
 
-  // Available Fleet assets for tier row fleet/vehicle selection
+  // Available Fleet / Yacht / Ferry assets for tier row selection
   const availableVehicles = useMemo(() => {
     try {
       return AppDatabase.getInstance().getVehicles().filter(v => v.status !== 'INACTIVE');
@@ -372,6 +379,14 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
   const availableYachts = useMemo(() => {
     try {
       return AppDatabase.getInstance().getYachts().filter(y => y.status !== 'INACTIVE');
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const availableFerries = useMemo(() => {
+    try {
+      return AppDatabase.getInstance().getFerries().filter(f => f.status !== 'INACTIVE');
     } catch {
       return [];
     }
@@ -477,16 +492,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
     const nextMin = lastTier?.maxPax ? lastTier.maxPax + 1 : 1;
     const nextMax = nextMin + 2;
 
-    const defaultFleetName = vehicleNameSnapshot || 
-      vehicleConfig?.vehicleName || 
-      vehicleConfig?.vehicleModel || 
-      (isYacht ? 'Azimut 66 Flybridge' : 'Toyota Alphard Executive MPV');
-
-    const defaultFleetId = vehicleId || 
-      vehicleConfig?.vehicleId || 
-      (isYacht ? 'yacht-azimut-66' : 'veh-alphard-01');
-
-    // Section 8: Empty Input State on creation (no forced default numbers, zeros or fake costs)
+    // Requirement 17: A new pricing tier should begin with no asset selected. The Admin explicitly selects the asset.
     const newTier: TieredPrice = {
       id: `tier-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
       capacityPricingRuleId: `CPR-${Date.now()}`,
@@ -497,8 +503,8 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
       minPassengers: nextMin,
       maxPassengers: nextMax,
       vehicleCount: 1,
-      fleetId: defaultFleetId,
-      fleetName: defaultFleetName,
+      fleetId: '',
+      fleetName: '',
       pricingUnit: 'Per Vehicle',
       currency: currency || 'USD',
       nativeCurrency: currency || 'USD',
@@ -831,7 +837,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={b2bAgentMarginPercent ?? buyerMarginPercent ?? ''}
+              value={safeNumVal(b2bAgentMarginPercent ?? buyerMarginPercent)}
               onChange={(e) => {
                 const val = Number(e.target.value);
                 onB2bAgentMarginChange(val);
@@ -845,7 +851,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={taxPercent ?? ''}
+              value={safeNumVal(taxPercent)}
               onChange={(e) => onTaxPercentChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -855,7 +861,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={serviceFeeFixed ?? ''}
+              value={safeNumVal(serviceFeeFixed)}
               onChange={(e) => onServiceFeeFixedChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -890,7 +896,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                       <input
                         type="number"
                         min="0"
-                        value={item.adultNettPrice ?? ''}
+                        value={safeNumVal(item.adultNettPrice)}
                         onChange={(e) => handleUpdateMealPrice(item.meal, 'adultNettPrice', Number(e.target.value))}
                         className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
                       />
@@ -902,7 +908,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                       <input
                         type="number"
                         min="0"
-                        value={item.childNettPrice ?? ''}
+                        value={safeNumVal(item.childNettPrice)}
                         onChange={(e) => handleUpdateMealPrice(item.meal, 'childNettPrice', Number(e.target.value))}
                         className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
                       />
@@ -967,7 +973,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={buyerMarginPercent ?? ''}
+              value={safeNumVal(buyerMarginPercent)}
               onChange={(e) => onBuyerMarginChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -977,7 +983,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={b2bAgentMarginPercent ?? ''}
+              value={safeNumVal(b2bAgentMarginPercent)}
               onChange={(e) => onB2bAgentMarginChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -987,7 +993,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={taxPercent ?? ''}
+              value={safeNumVal(taxPercent)}
               onChange={(e) => onTaxPercentChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -997,7 +1003,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={serviceFeeFixed ?? ''}
+              value={safeNumVal(serviceFeeFixed)}
               onChange={(e) => onServiceFeeFixedChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -1037,7 +1043,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                       <input
                         type="number"
                         min="0"
-                        value={tier.adultNetPrice ?? ''}
+                        value={safeNumVal(tier.adultNetPrice)}
                         onChange={(e) => handleUpdateTicketTier(idx, 'adultNetPrice', Number(e.target.value))}
                         className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-28 text-xs focus:outline-none focus:border-[#00C6A6]"
                       />
@@ -1049,7 +1055,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                       <input
                         type="number"
                         min="0"
-                        value={tier.childNetPrice ?? ''}
+                        value={safeNumVal(tier.childNetPrice)}
                         onChange={(e) => handleUpdateTicketTier(idx, 'childNetPrice', Number(e.target.value))}
                         className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-28 text-xs focus:outline-none focus:border-[#00C6A6]"
                       />
@@ -1061,7 +1067,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                       <input
                         type="number"
                         min="0"
-                        value={tier.infantNetPrice ?? ''}
+                        value={safeNumVal(tier.infantNetPrice)}
                         onChange={(e) => handleUpdateTicketTier(idx, 'infantNetPrice', Number(e.target.value))}
                         className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-24 text-xs focus:outline-none focus:border-[#00C6A6]"
                       />
@@ -1139,7 +1145,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={buyerMarginPercent ?? ''}
+              value={safeNumVal(buyerMarginPercent)}
               onChange={(e) => onBuyerMarginChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -1149,7 +1155,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={b2bAgentMarginPercent ?? ''}
+              value={safeNumVal(b2bAgentMarginPercent)}
               onChange={(e) => onB2bAgentMarginChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -1159,7 +1165,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={taxPercent ?? ''}
+              value={safeNumVal(taxPercent)}
               onChange={(e) => onTaxPercentChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -1169,7 +1175,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={serviceFeeFixed ?? ''}
+              value={safeNumVal(serviceFeeFixed)}
               onChange={(e) => onServiceFeeFixedChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -1312,7 +1318,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={buyerMarginPercent ?? ''}
+              value={safeNumVal(buyerMarginPercent)}
               onChange={(e) => onBuyerMarginChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -1322,7 +1328,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={b2bAgentMarginPercent ?? ''}
+              value={safeNumVal(b2bAgentMarginPercent)}
               onChange={(e) => onB2bAgentMarginChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -1332,7 +1338,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={taxPercent ?? ''}
+              value={safeNumVal(taxPercent)}
               onChange={(e) => onTaxPercentChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -1342,7 +1348,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={serviceFeeFixed ?? ''}
+              value={safeNumVal(serviceFeeFixed)}
               onChange={(e) => onServiceFeeFixedChange(Number(e.target.value))}
               className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -1367,7 +1373,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                   <input
                     type="number"
                     min="0"
-                    value={adultNetPrice ?? ''}
+                    value={safeNumVal(adultNetPrice)}
                     onChange={(e) => onAdultNetPriceChange(Number(e.target.value))}
                     className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
                   />
@@ -1386,7 +1392,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                   <input
                     type="number"
                     min="0"
-                    value={childNetPrice ?? ''}
+                    value={safeNumVal(childNetPrice)}
                     onChange={(e) => onChildNetPriceChange(Number(e.target.value))}
                     className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
                   />
@@ -1405,7 +1411,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                   <input
                     type="number"
                     min="0"
-                    value={infantNetPrice ?? ''}
+                    value={safeNumVal(infantNetPrice)}
                     onChange={(e) => onInfantNetPriceChange(Number(e.target.value))}
                     className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
                   />
@@ -1503,7 +1509,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                 type="number"
                 min="0"
                 max="200"
-                value={buyerMarginPercent ?? ''}
+                value={safeNumVal(buyerMarginPercent)}
                 onChange={(e) => onBuyerMarginChange(Number(e.target.value))}
                 className="w-full p-2 bg-slate-900 border border-slate-700 rounded-xl font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
               />
@@ -1518,7 +1524,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                 type="number"
                 min="0"
                 max="200"
-                value={b2bAgentMarginPercent ?? ''}
+                value={safeNumVal(b2bAgentMarginPercent)}
                 onChange={(e) => onB2bAgentMarginChange(Number(e.target.value))}
                 className="w-full p-2 bg-slate-900 border border-slate-700 rounded-xl font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
               />
@@ -1533,7 +1539,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                 type="number"
                 min="0"
                 max="100"
-                value={taxPercent ?? ''}
+                value={safeNumVal(taxPercent)}
                 onChange={(e) => onTaxPercentChange(Number(e.target.value))}
                 className="w-full p-2 bg-slate-900 border border-slate-700 rounded-xl font-bold text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
               />
@@ -1546,7 +1552,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <input
               type="number"
               min="0"
-              value={serviceFeeFixed ?? ''}
+              value={safeNumVal(serviceFeeFixed)}
               onChange={(e) => onServiceFeeFixedChange(Number(e.target.value))}
               className="w-full p-2 bg-slate-900 border border-slate-700 rounded-xl font-bold text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -1554,66 +1560,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
         </div>
       </div>
 
-      {/* 02 FLEET / ASSET MASTER LINK (Section 5) */}
-      {!isTransfer && (
-        <div className="bg-slate-950/60 p-5 rounded-2xl border border-slate-800 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div className="flex items-center space-x-2">
-              <div className="w-6 h-6 rounded-lg bg-teal-500/10 border border-teal-500/20 text-[#00C6A6] flex items-center justify-center font-black text-xs">
-                02
-              </div>
-              <h3 className="text-xs font-black uppercase text-white tracking-wider">
-                {isYacht ? 'Yacht Master Asset' : 'Fleet Vehicle Asset'}
-              </h3>
-            </div>
-
-            <span className="text-[10px] text-slate-400 italic">
-              Physical seating capacity is for reference only and does NOT automatically restrict product capacity.
-            </span>
-          </div>
-
-          <OperationalAssetSelector
-            assetType={isYacht ? 'YACHT' : 'VEHICLE'}
-            selectedId={vehicleId || vehicleConfig?.vehicleId}
-            selectedName={vehicleNameSnapshot || vehicleConfig?.vehicleModel}
-            selectedType={vehicleTypeSnapshot || vehicleConfig?.vehicleType}
-            selectedCapacity={capacitySnapshot || vehicleConfig?.maxSeats}
-            destinationId={destinationId}
-            hubId={hubId}
-            onSelect={(asset: SelectedAssetPayload) => {
-              if (onVehicleIdChange) onVehicleIdChange(asset.id);
-              if (onVehicleNameSnapshotChange) onVehicleNameSnapshotChange(asset.name);
-              if (onVehicleTypeSnapshotChange) onVehicleTypeSnapshotChange(asset.type);
-              if (onCapacitySnapshotChange) onCapacitySnapshotChange(asset.capacity);
-
-              if (onVehicleConfigChange) {
-                onVehicleConfigChange({
-                  ...vehicleConfig,
-                  vehicleId: asset.id,
-                  vehicleModel: asset.name,
-                  vehicleName: asset.name,
-                  vehicleType: asset.type,
-                  maxSeats: asset.capacity,
-                  passengerCapacity: asset.capacity,
-                  totalSeats: asset.capacity,
-                  unitVehicleNetCost: adultNetPrice || vehicleConfig?.unitVehicleNetCost || 45000,
-                  allowMultipleVehicles: true,
-                  maxVehicles: 5
-                });
-              }
-            }}
-            onClear={() => {
-              if (onVehicleIdChange) onVehicleIdChange(undefined);
-              if (onVehicleNameSnapshotChange) onVehicleNameSnapshotChange(undefined);
-              if (onVehicleTypeSnapshotChange) onVehicleTypeSnapshotChange(undefined);
-              if (onCapacitySnapshotChange) onCapacitySnapshotChange(undefined);
-              if (onVehicleConfigChange) onVehicleConfigChange(undefined);
-            }}
-          />
-        </div>
-      )}
-
-      {/* Transfer Route Context (Section 13) */}
+      {/* Transfer Route Context */}
       {isTransfer && (
         <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
           <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
@@ -1631,12 +1578,12 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
         </div>
       )}
 
-      {/* 03 DYNAMIC CAPACITY & TIERED PRICING MODULE (Sections 7, 8, 12, 13, 20, 42) */}
+      {/* 02 DYNAMIC CAPACITY & TIERED PRICING MODULE */}
       <div className="bg-slate-950/60 p-5 rounded-2xl border border-slate-800 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
           <div className="flex items-center space-x-2">
             <div className="w-6 h-6 rounded-lg bg-teal-500/10 border border-teal-500/20 text-[#00C6A6] flex items-center justify-center font-black text-xs">
-              03
+              02
             </div>
             <h3 className="text-xs font-black uppercase text-white tracking-wider">
               Product-Specific Capacity Pricing Tiers
@@ -1668,12 +1615,12 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
           </div>
         )}
 
-        {/* Tiers Editor Table (Sections 5, 6, 7, 8, 9, 10) */}
+        {/* Tiers Editor Table */}
         <div className="border border-slate-800 rounded-xl overflow-x-auto bg-slate-950/90 shadow-2xs">
           <table className="w-full text-left text-xs border-collapse min-w-[1050px]">
             <thead>
               <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-bold uppercase text-[9px] tracking-wider">
-                <th className="p-3 w-40">Fleet / Vehicle</th>
+                <th className="p-3 w-48">{isYacht ? 'Yacht Asset' : isFerry ? 'Ferry / Vessel' : 'Fleet Vehicle'}</th>
                 <th className="p-3 w-32">Pax Range</th>
                 <th className="p-3 w-20 text-center">Vehicles</th>
                 <th className="p-3 w-20">Currency</th>
@@ -1698,17 +1645,17 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                   : undefined;
                 const vehicleCountVal = tier.vehicleCount !== undefined && tier.vehicleCount > 0 ? tier.vehicleCount : 1;
 
+                const activeAssetList = isYacht ? availableYachts : isFerry ? availableFerries : availableVehicles;
+
                 return (
                   <tr key={tier.id || idx} className="hover:bg-slate-900/60 transition-colors">
-                    {/* Fleet / Vehicle selection */}
+                    {/* Fleet / Vehicle / Yacht / Vessel selection directly inside Step 3 */}
                     <td className="p-2.5">
                       <select
-                        value={tier.fleetId || tier.fleetName || ''}
+                        value={tier.fleetId || ''}
                         onChange={(e) => {
                           const val = e.target.value;
-                          const foundAsset = isYacht
-                            ? availableYachts.find(y => y.id === val || y.name === val)
-                            : availableVehicles.find(v => v.id === val || v.name === val);
+                          const foundAsset = activeAssetList.find(a => a.id === val || a.name === val);
                           handleUpdateTier(idx, {
                             fleetId: foundAsset?.id || val,
                             fleetName: foundAsset?.name || val
@@ -1716,8 +1663,10 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         }}
                         className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-medium text-xs focus:outline-none focus:border-[#00C6A6] w-full"
                       >
-                        <option value="">{tier.fleetName || (isYacht ? 'Private Yacht' : 'Toyota Alphard')}</option>
-                        {(isYacht ? availableYachts : availableVehicles).map(a => (
+                        <option value="">
+                          {tier.fleetName ? tier.fleetName : `-- Select ${isYacht ? 'Yacht' : isFerry ? 'Ferry / Vessel' : 'Vehicle'} --`}
+                        </option>
+                        {activeAssetList.map(a => (
                           <option key={a.id} value={a.id}>
                             {a.name}
                           </option>

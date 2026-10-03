@@ -22,6 +22,8 @@ import {
   Ticket, 
   Compass, 
   Ship, 
+  Anchor,
+  ExternalLink,
   Languages, 
   Utensils, 
   Clock, 
@@ -58,6 +60,7 @@ import { ExistingProductUpsellSelectorModal } from './ExistingProductUpsellSelec
 import { OperationalAssetSelector, SelectedAssetPayload } from './OperationalAssetSelector';
 import { OperationalAssetsManager } from './OperationalAssetsManager';
 import { calculateUnifiedPrice, calculateB2BAgentPrice } from '../../services/pricingEngine';
+import { RichTextEditor } from '../common/RichTextEditor';
 
 interface ProductUpdateWorkspaceProps {
   product: Product | null; // null means Create mode
@@ -77,6 +80,7 @@ const CATEGORIES_MAPPING: { label: string; value: ProductCategory; icon: any; de
   { label: 'Guide', value: 'Guides', icon: Languages, desc: 'Licensed local multilingual guide services.' },
   { label: 'Restaurant', value: 'Lunch / Dinner Restaurant', icon: Utensils, desc: 'Gourmet meal courses and dining reservations.' },
   { label: 'Private Yacht', value: 'Private Yacht', icon: Ship, desc: 'Luxury yacht charters and skipper services.' },
+  { label: 'Ferry', value: 'Ferry', icon: Anchor, desc: 'Scheduled passenger ferry and maritime transit with route ports.' },
 ];
 
 export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
@@ -425,7 +429,34 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       activeCategory === 'Private Yacht' || 
       activeCategory === 'Private Tour' || 
       activeCategory === 'Transfer' || 
-      activeCategory === 'Yacht';
+      activeCategory === 'Yacht' ||
+      activeCategory === 'Ferry' ||
+      activeCategory === 'Ferries';
+
+    // Requirement 13: Master Inventory Validation when saving a Ferry Product
+    if (activeCategory === 'Ferry' || activeCategory === 'Ferries') {
+      const masterFerries = db.getFerries();
+      const configuredVesselIds = new Set<string>();
+      if (formData.vehicleConfig?.vesselId) configuredVesselIds.add(formData.vehicleConfig.vesselId);
+      if ((formData as any).vesselId) configuredVesselIds.add((formData as any).vesselId);
+      (formData.tieredPricing || []).forEach(t => {
+        if (t.fleetId) configuredVesselIds.add(t.fleetId);
+      });
+
+      if (configuredVesselIds.size > 0) {
+        for (const vId of configuredVesselIds) {
+          const vessel = masterFerries.find(f => f.id === vId || f.name === vId);
+          if (!vessel) {
+            alert(`Invalid Ferry/Vessel ("${vId}"): Vessel does not exist in Authoritative Operational Master Inventory.`);
+            return;
+          }
+          if (vessel.status === 'INACTIVE') {
+            alert(`Invalid Ferry/Vessel ("${vessel.name}"): Vessel is marked as INACTIVE in Authoritative Operational Master Inventory.`);
+            return;
+          }
+        }
+      }
+    }
 
     const sortedTiers = [...(formData.tieredPricing || [])].sort((a, b) => a.minPax - b.minPax);
 
@@ -1068,9 +1099,9 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                   <input
                     type="number"
                     min="1"
-                    value={formData.minHours !== undefined ? formData.minHours : (formData.guideConfig?.minHours !== undefined ? formData.guideConfig.minHours : '')}
+                    value={formData.minHours !== undefined && !Number.isNaN(formData.minHours) ? formData.minHours : (formData.guideConfig?.minHours !== undefined && !Number.isNaN(formData.guideConfig.minHours) ? formData.guideConfig.minHours : '')}
                     onChange={e => {
-                      const val = e.target.value === '' ? undefined : Number(e.target.value);
+                      const val = e.target.value === '' || isNaN(Number(e.target.value)) ? undefined : Number(e.target.value);
                       setFormData({
                         ...formData,
                         minHours: val,
@@ -1086,9 +1117,9 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                   <input
                     type="number"
                     min="0"
-                    value={formData.hourlyNettCost !== undefined ? formData.hourlyNettCost : (formData.adultNetPrice !== undefined ? formData.adultNetPrice : '')}
+                    value={formData.hourlyNettCost !== undefined && !Number.isNaN(formData.hourlyNettCost) ? formData.hourlyNettCost : (formData.adultNetPrice !== undefined && !Number.isNaN(formData.adultNetPrice) ? formData.adultNetPrice : '')}
                     onChange={e => {
-                      const val = e.target.value === '' ? undefined : Number(e.target.value);
+                      const val = e.target.value === '' || isNaN(Number(e.target.value)) ? undefined : Number(e.target.value);
                       setFormData({
                         ...formData,
                         hourlyNettCost: val,
@@ -1104,10 +1135,10 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                   <input
                     type="number"
                     min="0"
-                    value={formData.hourlyPrice !== undefined ? formData.hourlyPrice : ''}
+                    value={formData.hourlyPrice !== undefined && !Number.isNaN(formData.hourlyPrice) ? formData.hourlyPrice : ''}
                     onChange={e => setFormData({
                       ...formData,
-                      hourlyPrice: e.target.value === '' ? undefined : Number(e.target.value)
+                      hourlyPrice: e.target.value === '' || isNaN(Number(e.target.value)) ? undefined : Number(e.target.value)
                     })}
                     placeholder="Auto-calculated from markup or enter rate"
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono font-bold text-emerald-700"
@@ -1175,6 +1206,45 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                     onChange={e => setFormData({ ...formData, adultNetPrice: e.target.value === '' ? undefined : Number(e.target.value) })}
                     placeholder="Enter Course Base Net Price"
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono"
+                  />
+                </FormField>
+              </div>
+            </SectionCard>
+          )}
+
+          {/* FERRY */}
+          {(activeCategory === 'Ferry' || activeCategory === 'Ferries') && (
+            <SectionCard title="2. Ferry / Vessel Master & Route Specifications" description="Configure departure/arrival ports, vessel specifications, and baggage policies.">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField label="Departure Port / Pier" required>
+                  <input
+                    type="text"
+                    value={formData.ferryConfig?.departurePort || ''}
+                    onChange={e => setFormData({
+                      ...formData,
+                      ferryConfig: {
+                        ...(formData.ferryConfig || {}),
+                        departurePort: e.target.value
+                      }
+                    })}
+                    placeholder="e.g. Miyajimaguchi Pier"
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold"
+                  />
+                </FormField>
+
+                <FormField label="Arrival Port / Pier" required>
+                  <input
+                    type="text"
+                    value={formData.ferryConfig?.arrivalPort || ''}
+                    onChange={e => setFormData({
+                      ...formData,
+                      ferryConfig: {
+                        ...(formData.ferryConfig || {}),
+                        arrivalPort: e.target.value
+                      }
+                    })}
+                    placeholder="e.g. Miyajima Ferry Terminal"
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold"
                   />
                 </FormField>
               </div>
@@ -1543,16 +1613,14 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
           </SectionCard>
 
           {/* Card 5: Tour Description */}
-          <SectionCard title="5. Product Description" description="Write a compelling overview for agents and travelers.">
-            <FormField label="Full Description">
-              <textarea
-                value={formData.longDescription || formData.shortDescription || ''}
-                onChange={e => setFormData({ ...formData, longDescription: e.target.value })}
-                rows={5}
-                placeholder="Details of the operational workflow, highlights, and itinerary..."
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:bg-white focus:border-[#00C6A6] focus:outline-none"
-              />
-            </FormField>
+          <SectionCard title="5. Product Description" description="Write a compelling, structured overview with headings, paragraphs, and lists for agents and travelers.">
+            <RichTextEditor
+              value={formData.longDescription || formData.shortDescription || ''}
+              onChange={html => setFormData({ ...formData, longDescription: html, description: html })}
+              placeholder="Detailed overview of the operational workflow, highlights, and itinerary..."
+              minHeight="200px"
+              helperText="Use Headings (H2, H3), bullet points, and emphasis to present a professional, structured overview."
+            />
           </SectionCard>
 
           {/* Card 6: Summary */}

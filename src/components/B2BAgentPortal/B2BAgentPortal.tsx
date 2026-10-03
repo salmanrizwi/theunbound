@@ -14,10 +14,9 @@ import { B2BCustomersCRMView } from './B2BCustomersCRMView';
 import { B2BMyLeadsAndClientsCRMView } from './B2BMyLeadsAndClientsCRMView';
 import { B2BTasksManagerView } from './B2BTasksManagerView';
 import { B2BAccountView } from './B2BAccountView';
-import { HotelDetailModal } from '../HotelDetailModal';
-import { ProductDetailModal } from '../ProductDetailModal';
+import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
+import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
 import { RailJourneyModal } from '../RailJourneyModal';
-import { PackageDetailModal } from '../PackageDetailModal';
 import { PricingCalculatorModal } from '../PricingCalculatorModal';
 import { isRailProduct } from '../../services/rail/JapanRailJourneyDataService';
 import { BookingModal } from '../BookingModal';
@@ -69,6 +68,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
 
   // Global Modals State
   const [inspectingHotel, setInspectingHotel] = useState<Hotel | null>(null);
+  const [configuringHotel, setConfiguringHotel] = useState<Hotel | null>(null);
   const [inspectingProduct, setInspectingProduct] = useState<Product | null>(null);
   const [calculatorProduct, setCalculatorProduct] = useState<Product | null>(null);
   const [inspectingPackage, setInspectingPackage] = useState<B2BPackage | null>(null);
@@ -451,10 +451,26 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
 
       {/* Global Hotel Details & Stay Modal */}
       {inspectingHotel && (
-        <HotelDetailModal
+        <B2BViewDetailsModal
           hotel={inspectingHotel}
           onClose={() => setInspectingHotel(null)}
-          onInstantBook={(h, r, rate, nights) => handleBookHotelDirect(h, r, rate, nights)}
+          onConfigureHotel={(h) => {
+            setInspectingHotel(null);
+            setConfiguringHotel(h);
+          }}
+          onInstantBookHotel={(h, r, rate, nights) => handleBookHotelDirect(h, r, rate, nights)}
+        />
+      )}
+
+      {/* Global Hotel Configuration & Add To Quote Modal */}
+      {configuringHotel && (
+        <AddHotelToQuoteModal
+          hotel={configuringHotel}
+          isOpen={!!configuringHotel}
+          onClose={() => setConfiguringHotel(null)}
+          onSuccess={(h, details) => {
+            showToast('Stay Added to Quotation', h.name);
+          }}
         />
       )}
 
@@ -477,7 +493,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
 
       {/* Global Product Details Modal */}
       {inspectingProduct && !isRailProduct(inspectingProduct) && (
-        <ProductDetailModal
+        <B2BViewDetailsModal
           product={inspectingProduct}
           onClose={() => setInspectingProduct(null)}
           onOpenCalculator={(p) => {
@@ -502,14 +518,14 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
 
       {/* Global Package Itinerary Modal */}
       {inspectingPackage && (
-        <PackageDetailModal
+        <B2BViewDetailsModal
           packageItem={inspectingPackage}
           onClose={() => setInspectingPackage(null)}
           onCustomizePackage={(pkg) => {
             setInspectingPackage(null);
             handleCustomizePackage(pkg);
           }}
-          onInstantBook={(pkg) => {
+          onInstantBookPackage={(pkg) => {
             setInspectingPackage(null);
             handleBookPackageDirect(pkg);
           }}

@@ -288,7 +288,7 @@ export const CapacityPricingModule: React.FC<CapacityPricingModuleProps> = ({
                 type="number"
                 min="1"
                 max="100"
-                value={currentCfg.maxSeats}
+                value={currentCfg.maxSeats !== undefined && !Number.isNaN(currentCfg.maxSeats) ? currentCfg.maxSeats : ''}
                 onChange={e => {
                   const seats = Math.max(1, Number(e.target.value));
                   updateConfig({ maxSeats: seats, totalSeats: seats, passengerCapacity: seats });
@@ -421,7 +421,7 @@ export const CapacityPricingModule: React.FC<CapacityPricingModuleProps> = ({
               type="number"
               required
               min="0"
-              value={currentCfg.unitVehicleNetCost}
+              value={currentCfg.unitVehicleNetCost !== undefined && !Number.isNaN(currentCfg.unitVehicleNetCost) ? currentCfg.unitVehicleNetCost : ''}
               onChange={e => updateConfig({ unitVehicleNetCost: Number(e.target.value), totalTransferCost: Number(e.target.value) })}
               placeholder="e.g. 500"
               className="w-full p-2 bg-white rounded-lg font-bold text-sm"
@@ -581,7 +581,7 @@ export const CapacityPricingModule: React.FC<CapacityPricingModuleProps> = ({
                         <input
                           type="number"
                           min="1"
-                          value={tier.minPax !== undefined ? tier.minPax : (tier.minPassengers !== undefined ? tier.minPassengers : '')}
+                          value={tier.minPax !== undefined && !Number.isNaN(tier.minPax) ? tier.minPax : (tier.minPassengers !== undefined && !Number.isNaN(tier.minPassengers) ? tier.minPassengers : '')}
                           onChange={(e) => {
                             const raw = e.target.value;
                             const num = raw === '' ? undefined : parseInt(raw, 10);
@@ -594,7 +594,7 @@ export const CapacityPricingModule: React.FC<CapacityPricingModuleProps> = ({
                         <input
                           type="number"
                           min="1"
-                          value={tier.maxPax !== undefined ? tier.maxPax : (tier.maxPassengers !== undefined ? tier.maxPassengers : '')}
+                          value={tier.maxPax !== undefined && !Number.isNaN(tier.maxPax) ? tier.maxPax : (tier.maxPassengers !== undefined && !Number.isNaN(tier.maxPassengers) ? tier.maxPassengers : '')}
                           onChange={(e) => {
                             const raw = e.target.value;
                             const num = raw === '' ? undefined : parseInt(raw, 10);

@@ -25,7 +25,7 @@ import { Hotel, Destination, Product } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { formatCurrency } from '../../services/pricingEngine';
 import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
-import { HotelDetailModal } from '../HotelDetailModal';
+import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
 
 interface B2BHotelsCatalogViewProps {
   hotels: Hotel[];
@@ -318,9 +318,13 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
 
       {/* Standardized Buyer-style Hotel Details Modal */}
       {selectedHotelForDetails && (
-        <HotelDetailModal
+        <B2BViewDetailsModal
           hotel={selectedHotelForDetails}
           onClose={() => setSelectedHotelForDetails(null)}
+          onConfigureHotel={(h) => {
+            setSelectedHotelForDetails(null);
+            setSelectedHotelForQuote(h);
+          }}
         />
       )}
     </div>

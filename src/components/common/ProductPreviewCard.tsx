@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MapPin, Clock, Users, Car, Ship, Ticket, Languages, Utensils, Compass } from 'lucide-react';
+import { MapPin, Clock, Users, Car, Ship, Anchor, Ticket, Languages, Utensils, Compass } from 'lucide-react';
 import { CurrencyCode, ProductCategory } from '../../types';
 
 interface ProductPreviewCardProps {
@@ -54,6 +54,9 @@ export const ProductPreviewCard: React.FC<ProductPreviewCardProps> = ({
         return <Utensils className="w-3.5 h-3.5" />;
       case 'Private Yacht':
         return <Ship className="w-3.5 h-3.5" />;
+      case 'Ferries':
+      case 'Ferry':
+        return <Anchor className="w-3.5 h-3.5" />;
       default:
         return <Compass className="w-3.5 h-3.5" />;
     }

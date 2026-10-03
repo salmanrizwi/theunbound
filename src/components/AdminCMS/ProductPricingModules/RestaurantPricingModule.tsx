@@ -242,13 +242,13 @@ export const RestaurantPricingModule: React.FC<RestaurantPricingModuleProps> = (
             </select>
           </div>
 
-          <div className="space-y-1">
+           <div className="space-y-1">
             <label className="text-[11px] text-slate-300 font-medium">Adult Meal Nett Cost *</label>
             <input
               type="number"
               min="0"
               required
-              value={adultNetPrice}
+              value={adultNetPrice !== undefined && !Number.isNaN(adultNetPrice) ? adultNetPrice : ''}
               onChange={e => onPriceChange(Number(e.target.value), childNetPrice)}
               className="w-full p-2 bg-white rounded-lg font-bold"
             />
@@ -259,7 +259,7 @@ export const RestaurantPricingModule: React.FC<RestaurantPricingModuleProps> = (
             <input
               type="number"
               min="0"
-              value={childNetPrice}
+              value={childNetPrice !== undefined && !Number.isNaN(childNetPrice) ? childNetPrice : ''}
               onChange={e => onPriceChange(adultNetPrice, Number(e.target.value))}
               className="w-full p-2 bg-white rounded-lg"
             />

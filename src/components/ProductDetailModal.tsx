@@ -38,6 +38,7 @@ import { isRailProduct } from '../services/rail/JapanRailJourneyDataService';
 import { isHotelService, isVisaService } from '../services/configuratorRoutingEngine';
 import { HotelConfigurator } from './B2BAgentPortal/AddHotelToQuoteModal';
 import { VisaServiceAndFacilitationConfigurator } from './Configurators/VisaServiceAndFacilitationConfigurator';
+import { RichTextRenderer } from './common/RichTextRenderer';
 
 interface ProductDetailModalProps {
   product: Product;
@@ -358,12 +359,13 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             <div className="lg:col-span-8 space-y-6">
               {/* Long Description */}
               <div>
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900 mb-2">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900 mb-3 pb-2 border-b border-slate-100">
                   Experience Overview & Itinerary
                 </h3>
-                <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">
-                  {product.longDescription || product.shortDescription}
-                </p>
+                <RichTextRenderer 
+                  content={product.longDescription || product.shortDescription} 
+                  className="bg-slate-50/50 p-4 rounded-2xl border border-slate-100/80"
+                />
               </div>
 
               {/* Inclusions & Exclusions */}

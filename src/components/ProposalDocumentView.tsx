@@ -30,6 +30,7 @@ import {
   Train
 } from 'lucide-react';
 import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
+import { RichTextRenderer } from './common/RichTextRenderer';
 
 interface ProposalDocumentViewProps {
   quote: Quotation;
@@ -518,9 +519,10 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                     </h4>
 
                     {item.product.shortDescription && (
-                      <p className="text-xs text-slate-600 leading-relaxed">
-                        {item.product.shortDescription}
-                      </p>
+                      <RichTextRenderer 
+                        content={item.product.shortDescription}
+                        className="text-xs text-slate-600 leading-relaxed"
+                      />
                     )}
 
                     {item.product.inclusions && item.product.inclusions.length > 0 && (
@@ -685,9 +687,10 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                                 )}
 
                                 {item.product.shortDescription && !isRailQuoteItem(item) && (
-                                  <p className="text-xs text-slate-600 leading-relaxed">
-                                    {item.product.shortDescription}
-                                  </p>
+                                  <RichTextRenderer 
+                                    content={item.product.shortDescription}
+                                    className="text-xs text-slate-600 leading-relaxed"
+                                  />
                                 )}
 
                                 {/* Key Inclusions Checklist */}

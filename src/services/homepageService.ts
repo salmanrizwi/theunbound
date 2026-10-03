@@ -292,11 +292,17 @@ export class HomepageService {
         const cleanItemId = item.hubId.trim().toUpperCase();
         const hub = cityHubs.find(h => {
           const hId = h.id.trim().toUpperCase();
+          const hName = h.name.toLowerCase();
+          const itemLower = item.hubId.toLowerCase().replace(/^(hub-?|dst-?)/i, '');
           return hId === cleanItemId || 
                  hId === `HUB-${cleanItemId}` || 
                  cleanItemId === `HUB-${hId}` ||
                  cleanItemId.endsWith(hId) ||
-                 hId.endsWith(cleanItemId);
+                 hId.endsWith(cleanItemId) ||
+                 hName === itemLower ||
+                 hName.includes(itemLower) ||
+                 itemLower.includes(hName) ||
+                 h.id.toLowerCase().includes(itemLower);
         });
         if (!hub) return null;
         

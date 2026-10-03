@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { formatCurrency, convertCurrency } from '../services/pricingEngine';
 import { calculateHotelStayPrice, getMealPlanLabel, hotelToProduct } from '../utils/hotelHelpers';
+import { RichTextRenderer } from './common/RichTextRenderer';
 import { 
   X, 
   Star, 
@@ -291,9 +292,7 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                   <Info className="w-4 h-4 text-[#00C6A6]" />
                   <span>Property Overview & Atmosphere</span>
                 </h4>
-                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-line">
-                  {hotel.description}
-                </p>
+                <RichTextRenderer content={hotel.description} />
                 <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap gap-2">
                   <div className="flex items-center space-x-1.5 text-xs text-slate-700 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
                     <MapPin className="w-3.5 h-3.5 text-slate-400" />
@@ -587,9 +586,7 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                     <Bed className="w-3.5 h-3.5 text-slate-500" />
                     <span>{selectedRoom.roomName} Features</span>
                   </h5>
-                  <p className="text-slate-600 text-[11px] leading-relaxed">
-                    {selectedRoom.description}
-                  </p>
+                  <RichTextRenderer content={selectedRoom.description} className="text-[11px]" />
                   <div className="pt-2 border-t border-slate-200/60 grid grid-cols-2 gap-2 text-[11px] text-slate-600">
                     <div>
                       <span className="text-slate-400 block">Bed Configuration:</span>

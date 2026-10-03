@@ -19,6 +19,7 @@ export const AUTHORITATIVE_PRODUCT_CATEGORIES = [
   'Tickets',
   'Private Yacht',
   'Ferries',
+  'Ferry',
   'Guides',
   'Hotels',
   'Visa & Ancillary Services',
@@ -30,7 +31,7 @@ export type AuthoritativeProductCategory = typeof AUTHORITATIVE_PRODUCT_CATEGORI
 
 /**
  * Standard Product CMS Categories strictly for Admin CMS -> Products:
- * Contains the 7 core categories managed directly within Product Manager.
+ * Contains the 8 core categories managed directly within Product Manager.
  * (Dedicated modules: Hotels, Rail, Visa & Ancillary Services have their own dedicated interfaces).
  */
 export const PRODUCT_CMS_CATEGORIES = [
@@ -40,7 +41,8 @@ export const PRODUCT_CMS_CATEGORIES = [
   'Transfers',
   'Guides',
   'Lunch / Dinner Restaurant',
-  'Private Yacht'
+  'Private Yacht',
+  'Ferry'
 ] as const;
 
 export type ProductCMSCategory = typeof PRODUCT_CMS_CATEGORIES[number];
@@ -110,6 +112,7 @@ export const DISPLAY_TO_CATEGORY_ENUM: Record<AuthoritativeProductCategory, Prod
   'Tickets': 'TICKETS',
   'Private Yacht': 'PRIVATE_YACHT',
   'Ferries': 'FERRIES',
+  'Ferry': 'FERRIES',
   'Guides': 'GUIDES',
   'Hotels': 'HOTELS',
   'Visa & Ancillary Services': 'VISA_ANCILLARY',
@@ -189,6 +192,15 @@ export const CONFIGURATOR_REGISTRY_MAP: Record<AuthoritativeProductCategory, Con
   },
   'Ferries': {
     category: 'Ferries',
+    categoryEnum: 'FERRIES',
+    configuratorType: 'FERRY_CONFIGURATOR',
+    title: 'Ferry Configurator',
+    description: 'Island sea-lines, passenger class, cabin reservation, vehicle carriage, and port schedules',
+    badgeColor: 'bg-teal-100 text-teal-800 border-teal-200',
+    iconName: 'Anchor'
+  },
+  'Ferry': {
+    category: 'Ferry',
     categoryEnum: 'FERRIES',
     configuratorType: 'FERRY_CONFIGURATOR',
     title: 'Ferry Configurator',

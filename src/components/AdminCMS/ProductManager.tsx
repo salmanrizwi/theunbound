@@ -78,6 +78,7 @@ import { JapanRailJourneyConfigurator } from '../JapanRail/JapanRailJourneyConfi
 import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 import { AUTHORITATIVE_PRODUCT_CATEGORIES, PRODUCT_CMS_CATEGORIES, resolveAuthoritativeCategory, CONFIGURATOR_REGISTRY_MAP } from '../../services/configuratorRegistry';
 import { OperationalAssetSelector, SelectedAssetPayload } from './OperationalAssetSelector';
+import { RichTextEditor } from '../common/RichTextEditor';
 import { OperationalAssetsManager } from './OperationalAssetsManager';
 
 interface ProductManagerProps {
@@ -347,6 +348,31 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.sku) return;
+
+    // Requirement 13: Master Inventory Validation when saving a Ferry Product
+    if (formData.category === 'Ferry' || formData.category === 'Ferries') {
+      const masterFerries = db.getFerries();
+      const configuredVesselIds = new Set<string>();
+      if (formData.vehicleConfig?.vesselId) configuredVesselIds.add(formData.vehicleConfig.vesselId);
+      if ((formData as any).vesselId) configuredVesselIds.add((formData as any).vesselId);
+      (formData.tieredPricing || []).forEach(t => {
+        if (t.fleetId) configuredVesselIds.add(t.fleetId);
+      });
+
+      if (configuredVesselIds.size > 0) {
+        for (const vId of configuredVesselIds) {
+          const vessel = masterFerries.find(f => f.id === vId || f.name === vId);
+          if (!vessel) {
+            alert(`Invalid Ferry/Vessel ("${vId}"): Vessel does not exist in Authoritative Operational Master Inventory.`);
+            return;
+          }
+          if (vessel.status === 'INACTIVE') {
+            alert(`Invalid Ferry/Vessel ("${vessel.name}"): Vessel is marked as INACTIVE in Authoritative Operational Master Inventory.`);
+            return;
+          }
+        }
+      }
+    }
 
     const isCapacityBased = formData.pricingMethod === 'capacity_based' || CAPACITY_BASED_CATEGORIES.includes(formData.category as string);
     const maxSeats = Number(formData.vehicleConfig?.maxSeats) || Number(formData.capacitySnapshot) || Number(formData.maxPax) || 0;
@@ -1237,169 +1263,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                         </div>
                       )}
 
-                      {formData.category !== 'Transfers' && (
-                        <>
-                          {/* Searchable Database Operational Asset Selector */}
-                          <div className="space-y-2">
-                        <label className="text-xs text-slate-300 font-semibold block">
-                          {formData.category === 'Private Yacht' 
-                            ? 'Select Operational Yacht from Authoritative Master Database *' 
-                            : 'Select Operational Vehicle from Authoritative Fleet Database *'}
-                        </label>
-                        <OperationalAssetSelector
-                          assetType={formData.category === 'Private Yacht' ? 'YACHT' : 'VEHICLE'}
-                          selectedId={formData.category === 'Private Yacht' ? (formData.yachtId || formData.vehicleConfig?.yachtId) : (formData.vehicleId || formData.vehicleConfig?.vehicleId)}
-                          selectedName={formData.category === 'Private Yacht' ? (formData.yachtNameSnapshot || formData.vehicleConfig?.yachtName || formData.vehicleConfig?.vehicleModel) : (formData.vehicleNameSnapshot || formData.vehicleConfig?.vehicleName || formData.vehicleConfig?.vehicleModel)}
-                          selectedType={formData.category === 'Private Yacht' ? (formData.yachtTypeSnapshot || formData.vehicleConfig?.yachtType || formData.vehicleConfig?.vehicleType) : (formData.vehicleTypeSnapshot || formData.vehicleConfig?.vehicleType)}
-                          selectedCapacity={formData.category === 'Private Yacht' ? (formData.yachtCapacitySnapshot || formData.vehicleConfig?.maxSeats) : (formData.capacitySnapshot || formData.vehicleConfig?.maxSeats)}
-                          selectedDimensions={formData.vehicleConfig?.yachtSize || formData.vehicleConfig?.yachtLength}
-                          destinationId={formData.destinationId}
-                          hubId={formData.hubId}
-                          onSelect={(asset: SelectedAssetPayload) => {
-                            if (formData.category === 'Private Yacht') {
-                              setFormData(prev => ({
-                                ...prev,
-                                yachtId: asset.id,
-                                yachtNameSnapshot: asset.name,
-                                yachtTypeSnapshot: asset.type,
-                                yachtCapacitySnapshot: asset.capacity,
-                                maxPax: asset.capacity,
-                                vehicleConfig: {
-                                  ...(prev.vehicleConfig || {}),
-                                  yachtId: asset.id,
-                                  yachtName: asset.name,
-                                  yachtModel: asset.model,
-                                  yachtType: asset.type,
-                                  vehicleModel: asset.name,
-                                  vehicleType: asset.type,
-                                  maxSeats: asset.capacity,
-                                  passengerCapacity: asset.capacity,
-                                  totalSeats: asset.capacity,
-                                  yachtSize: asset.length || asset.dimensions || '',
-                                  yachtLength: asset.length || '',
-                                  skipperName: asset.operator || 'Licensed Skipper & Crew',
-                                  allowMultipleVehicles: prev.vehicleConfig?.allowMultipleVehicles ?? true,
-                                  autoAllocateVehicles: prev.vehicleConfig?.autoAllocateVehicles ?? true,
-                                  maxVehicles: prev.vehicleConfig?.maxVehicles || 5
-                                }
-                              }));
-                            } else {
-                              setFormData(prev => ({
-                                ...prev,
-                                vehicleId: asset.id,
-                                vehicleNameSnapshot: asset.name,
-                                vehicleTypeSnapshot: asset.type,
-                                capacitySnapshot: asset.capacity,
-                                maxPax: asset.capacity,
-                                vehicleConfig: {
-                                  ...(prev.vehicleConfig || {}),
-                                  vehicleId: asset.id,
-                                  vehicleName: asset.name,
-                                  vehicleModel: asset.model,
-                                  vehicleType: asset.type,
-                                  maxSeats: asset.capacity,
-                                  passengerCapacity: asset.capacity,
-                                  totalSeats: asset.capacity,
-                                  maxLuggage: asset.luggageCapacity !== undefined ? asset.luggageCapacity : (prev.vehicleConfig?.maxLuggage || 4),
-                                  adultSeatCount: prev.vehicleConfig?.adultSeatCount ?? 1,
-                                  childSeatCount: prev.vehicleConfig?.childSeatCount ?? 1,
-                                  infantSeatCount: prev.vehicleConfig?.infantSeatCount ?? 0,
-                                  allowMultipleVehicles: prev.vehicleConfig?.allowMultipleVehicles ?? true,
-                                  autoAllocateVehicles: prev.vehicleConfig?.autoAllocateVehicles ?? true,
-                                  maxVehicles: prev.vehicleConfig?.maxVehicles || 5
-                                }
-                              }));
-                            }
-                          }}
-                          onClear={() => {
-                            if (formData.category === 'Private Yacht') {
-                              setFormData(prev => ({
-                                ...prev,
-                                yachtId: undefined,
-                                yachtNameSnapshot: undefined,
-                                yachtTypeSnapshot: undefined,
-                                yachtCapacitySnapshot: undefined,
-                                vehicleConfig: prev.vehicleConfig ? {
-                                  ...prev.vehicleConfig,
-                                  yachtId: undefined,
-                                  yachtName: undefined,
-                                  yachtModel: undefined,
-                                  yachtType: undefined,
-                                  yachtSize: undefined,
-                                  maxSeats: 0
-                                } : undefined
-                              }));
-                            } else {
-                              setFormData(prev => ({
-                                ...prev,
-                                vehicleId: undefined,
-                                vehicleNameSnapshot: undefined,
-                                vehicleTypeSnapshot: undefined,
-                                capacitySnapshot: undefined,
-                                vehicleConfig: prev.vehicleConfig ? {
-                                  ...prev.vehicleConfig,
-                                  vehicleId: undefined,
-                                  vehicleName: undefined,
-                                  vehicleModel: undefined,
-                                  vehicleType: undefined,
-                                  maxSeats: 0
-                                } : undefined
-                              }));
-                            }
-                          }}
-                          onOpenMasterManager={() => {
-                            setOperationalAssetsManagerTab(formData.category === 'Private Yacht' ? 'YACHTS' : 'VEHICLES');
-                            setIsOperationalAssetsManagerOpen(true);
-                          }}
-                        />
-                      </div>
-
-                      {/* Authoritative Specs Grid (Loaded from Database Snapshot) */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-700/80 text-xs">
-                        <div>
-                          <span className="text-[10px] text-slate-400 block uppercase font-semibold">
-                            {formData.category === 'Private Yacht' ? 'Yacht Model / Charter' : 'Vehicle Model'}
-                          </span>
-                          <span className="text-white font-bold truncate block">
-                            {formData.category === 'Private Yacht' 
-                              ? (formData.yachtNameSnapshot || formData.vehicleConfig?.vehicleModel || '—')
-                              : (formData.vehicleNameSnapshot || formData.vehicleConfig?.vehicleModel || 'Not Selected')}
-                          </span>
-                        </div>
-
-                        <div>
-                          <span className="text-[10px] text-slate-400 block uppercase font-semibold">Classification</span>
-                          <span className="text-slate-200 font-semibold block">
-                            {formData.category === 'Private Yacht'
-                              ? (formData.yachtTypeSnapshot || formData.vehicleConfig?.vehicleType || '—')
-                              : (formData.vehicleTypeSnapshot || formData.vehicleConfig?.vehicleType || 'Not Selected')}
-                          </span>
-                        </div>
-
-                        <div>
-                          <span className="text-[10px] text-slate-400 block uppercase font-semibold">
-                            {formData.category === 'Private Yacht' ? 'Max Guest Capacity' : 'Authoritative Capacity'}
-                          </span>
-                          <span className="text-[#00E5C0] font-bold block">
-                            {formData.category === 'Private Yacht'
-                              ? (formData.yachtCapacitySnapshot || formData.vehicleConfig?.maxSeats ? `${formData.yachtCapacitySnapshot || formData.vehicleConfig?.maxSeats} Guests` : '—')
-                              : (formData.capacitySnapshot || formData.vehicleConfig?.maxSeats ? `${formData.capacitySnapshot || formData.vehicleConfig?.maxSeats} Seats` : '—')}
-                          </span>
-                        </div>
-
-                        <div>
-                          <span className="text-[10px] text-slate-400 block uppercase font-semibold">
-                            {formData.category === 'Private Yacht' ? 'Length / Dimensions' : 'Luggage Capacity'}
-                          </span>
-                          <span className="text-slate-300 font-medium block">
-                            {formData.category === 'Private Yacht'
-                              ? (formData.vehicleConfig?.yachtSize || formData.vehicleConfig?.yachtLength || '—')
-                              : (formData.vehicleConfig?.maxLuggage !== undefined ? `${formData.vehicleConfig.maxLuggage} Suitcases` : '—')}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Base Currency & Contracted Commercial Nett Cost (Section 10: Empty-First) */}
+                      {/* Base Currency & Contracted Commercial Nett Cost */}
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-800 pt-2 border-t border-slate-700">
                         <div className="space-y-1">
                           <label className="text-[11px] text-slate-300 font-medium">Base Currency</label>
@@ -1426,17 +1290,17 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                           <label className="text-[11px] text-emerald-400 font-bold flex items-center justify-between">
                             <span>
                               {formData.category === 'Private Yacht'
-                                ? `Contracted Charter Nett Cost * (Constant for 1 to ${formData.yachtCapacitySnapshot || formData.vehicleConfig?.maxSeats || 'Max'} Guests)`
-                                : `Contracted Vehicle Unit Nett Cost * (Constant for 1 to ${formData.capacitySnapshot || formData.vehicleConfig?.maxSeats || 'Max'} Seats)`}
+                                ? `Contracted Charter Nett Cost *`
+                                : `Contracted Vehicle Unit Nett Cost *`}
                             </span>
                             <span className="text-[10px] text-slate-400 font-normal">Authoritative Supplier Rate</span>
                           </label>
                           <input
                             type="number"
                             min="0"
-                            value={formData.vehicleConfig?.unitVehicleNetCost !== undefined ? formData.vehicleConfig.unitVehicleNetCost : (formData.adultNetPrice !== undefined ? formData.adultNetPrice : '')}
+                            value={formData.vehicleConfig?.unitVehicleNetCost !== undefined && !Number.isNaN(formData.vehicleConfig.unitVehicleNetCost) ? formData.vehicleConfig.unitVehicleNetCost : (formData.adultNetPrice !== undefined && !Number.isNaN(formData.adultNetPrice) ? formData.adultNetPrice : '')}
                             onChange={e => {
-                              const val = e.target.value === '' ? undefined : Number(e.target.value);
+                              const val = e.target.value === '' || isNaN(Number(e.target.value)) ? undefined : Number(e.target.value);
                               setFormData(prev => ({
                                 ...prev,
                                 adultNetPrice: val,
@@ -1541,8 +1405,6 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                           {formData.category === 'Private Yacht' ? 'Max charter: 5 yachts' : 'Max fleet: 5 vehicles'}
                         </span>
                       </div>
-                        </>
-                      )}
                     </div>
 
                     {/* LIVE INTERACTIVE PASSENGER CAPACITY SIMULATION TABLE */}
@@ -1684,8 +1546,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                         <input
                           type="number"
                           min="0"
-                          value={formData.adultNetPrice !== undefined ? formData.adultNetPrice : ''}
-                          onChange={e => setFormData({ ...formData, adultNetPrice: e.target.value === '' ? undefined : Number(e.target.value) })}
+                          value={formData.adultNetPrice !== undefined && !Number.isNaN(formData.adultNetPrice) ? formData.adultNetPrice : ''}
+                          onChange={e => setFormData({ ...formData, adultNetPrice: e.target.value === '' || isNaN(Number(e.target.value)) ? undefined : Number(e.target.value) })}
                           placeholder="Enter Adult Nett Cost"
                           className="w-full p-2 bg-white rounded-lg font-bold text-slate-900"
                         />
@@ -1696,8 +1558,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                         <input
                           type="number"
                           min="0"
-                          value={formData.childNetPrice !== undefined ? formData.childNetPrice : ''}
-                          onChange={e => setFormData({ ...formData, childNetPrice: e.target.value === '' ? undefined : Number(e.target.value) })}
+                          value={formData.childNetPrice !== undefined && !Number.isNaN(formData.childNetPrice) ? formData.childNetPrice : ''}
+                          onChange={e => setFormData({ ...formData, childNetPrice: e.target.value === '' || isNaN(Number(e.target.value)) ? undefined : Number(e.target.value) })}
                           placeholder="Enter Child Nett Cost"
                           className="w-full p-2 bg-white rounded-lg text-slate-900"
                         />
@@ -1708,8 +1570,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                         <input
                           type="number"
                           min="0"
-                          value={formData.infantNetPrice !== undefined ? formData.infantNetPrice : ''}
-                          onChange={e => setFormData({ ...formData, infantNetPrice: e.target.value === '' ? undefined : Number(e.target.value) })}
+                          value={formData.infantNetPrice !== undefined && !Number.isNaN(formData.infantNetPrice) ? formData.infantNetPrice : ''}
+                          onChange={e => setFormData({ ...formData, infantNetPrice: e.target.value === '' || isNaN(Number(e.target.value)) ? undefined : Number(e.target.value) })}
                           placeholder="Enter Infant Nett Cost"
                           className="w-full p-2 bg-white rounded-lg text-slate-900"
                         />
@@ -2023,81 +1885,6 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                           </button>
                         </div>
 
-                        {/* Searchable Ferry Vessel Selector */}
-                        <div className="space-y-1">
-                          <label className="text-xs text-slate-300 font-semibold block">Select Ferry / Vessel from Master Database *</label>
-                          <OperationalAssetSelector
-                            assetType="FERRY"
-                            selectedId={formData.ferryId || formData.ferryConfig?.vesselId}
-                            selectedName={formData.ferryNameSnapshot || formData.ferryConfig?.ferryLine}
-                            selectedType={formData.ferryTypeSnapshot || formData.ferryConfig?.vesselClass}
-                            selectedCapacity={formData.ferryCapacitySnapshot || formData.ferryConfig?.capacity}
-                            destinationId={formData.destinationId}
-                            hubId={formData.hubId}
-                            onSelect={(asset: SelectedAssetPayload) => {
-                              setFormData(prev => ({
-                                ...prev,
-                                ferryId: asset.id,
-                                ferryNameSnapshot: asset.name,
-                                ferryTypeSnapshot: asset.type,
-                                ferryCapacitySnapshot: asset.capacity,
-                                ferryConfig: {
-                                  ...(prev.ferryConfig || {}),
-                                  vesselId: asset.id,
-                                  ferryLine: asset.name,
-                                  vesselClass: asset.classification || asset.type,
-                                  capacity: asset.capacity,
-                                  departurePort: asset.origin || prev.ferryConfig?.departurePort || '',
-                                  arrivalPort: asset.destination || prev.ferryConfig?.arrivalPort || '',
-                                  operator: asset.operator || ''
-                                }
-                              }));
-                            }}
-                            onClear={() => {
-                              setFormData(prev => ({
-                                ...prev,
-                                ferryId: undefined,
-                                ferryNameSnapshot: undefined,
-                                ferryTypeSnapshot: undefined,
-                                ferryCapacitySnapshot: undefined,
-                                ferryConfig: undefined
-                              }));
-                            }}
-                            onOpenMasterManager={() => {
-                              setOperationalAssetsManagerTab('FERRIES');
-                              setIsOperationalAssetsManagerOpen(true);
-                            }}
-                          />
-                        </div>
-
-                        {/* Specs Grid from Snapshot */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-700/80 text-xs">
-                          <div>
-                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Vessel Line</span>
-                            <span className="text-white font-bold truncate block">
-                              {formData.ferryNameSnapshot || formData.ferryConfig?.ferryLine || '—'}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Vessel Class</span>
-                            <span className="text-slate-200 font-semibold block">
-                              {formData.ferryTypeSnapshot || formData.ferryConfig?.vesselClass || '—'}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Capacity</span>
-                            <span className="text-cyan-300 font-bold block">
-                              {formData.ferryCapacitySnapshot || formData.ferryConfig?.capacity ? `${formData.ferryCapacitySnapshot || formData.ferryConfig?.capacity} Pax` : '—'}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-[10px] text-slate-400 block uppercase font-semibold">Departure / Arrival</span>
-                            <span className="text-slate-300 font-medium block truncate">
-                              {formData.ferryConfig?.departurePort && formData.ferryConfig?.arrivalPort ? `${formData.ferryConfig.departurePort} ➔ ${formData.ferryConfig.arrivalPort}` : '—'}
-                            </span>
-                          </div>
-                        </div>
-
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-800 pt-1">
                           <div className="space-y-1">
                             <label className="text-[11px] text-slate-300 font-medium">Departure Port / Pier</label>
@@ -2317,13 +2104,12 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
               </div>
 
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700">Full Itinerary Description</label>
-                <textarea
-                  rows={3}
+                <label className="font-semibold text-slate-700 block text-xs uppercase tracking-wider">Full Itinerary Description</label>
+                <RichTextEditor
                   value={formData.longDescription || ''}
-                  onChange={e => setFormData({ ...formData, longDescription: e.target.value })}
-                  placeholder="Detailed tour schedule, VIP benefits..."
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl"
+                  onChange={html => setFormData({ ...formData, longDescription: html, description: html })}
+                  placeholder="Detailed tour schedule, highlights, VIP benefits..."
+                  minHeight="150px"
                 />
               </div>
 

@@ -94,7 +94,7 @@ export const MASTER_SHEETS_TAB_DEFINITIONS: MasterSheetTabDefinition[] = [
       { name: 'product_id', key: 'product_id', type: 'string', required: true, sampleValue: 'PROD-001', description: 'Unique permanent Product ID (e.g. PROD-001, PRD-TYO-001)' },
       { name: 'product_code', key: 'product_code', type: 'string', required: true, sampleValue: 'PRD-TYO-001', description: 'Short product reference code' },
       { name: 'product_name', key: 'product_name', type: 'string', required: true, sampleValue: 'Tokyo Private Highlights & Tea Ceremony', description: 'Official product title' },
-      { name: 'category', key: 'category', type: 'enum', required: true, sampleValue: 'Private Tour', description: 'Product Category', allowedValues: ['Private Tour', 'Group Tour', 'Ticket', 'Transfer', 'Guide', 'Restaurant', 'Private Yacht'] },
+      { name: 'category', key: 'category', type: 'enum', required: true, sampleValue: 'Private Tour', description: 'Product Category', allowedValues: ['Private Tour', 'Group Tour', 'Ticket', 'Transfer', 'Guide', 'Restaurant', 'Private Yacht', 'Ferry', 'Ferries'] },
       { name: 'region_id', key: 'region_id', type: 'string', required: true, sampleValue: 'REG-001', description: 'Parent Region ID', foreignKeyTab: 'MASTER_DATA', foreignKeyColumn: 'entity_id' },
       { name: 'destination_id', key: 'destination_id', type: 'string', required: true, sampleValue: 'DST-JPN', description: 'Parent Destination ID', foreignKeyTab: 'MASTER_DATA', foreignKeyColumn: 'entity_id' },
       { name: 'hub_id', key: 'hub_id', type: 'string', required: true, sampleValue: 'HUB-TOKYO', description: 'Parent Hub ID', foreignKeyTab: 'MASTER_DATA', foreignKeyColumn: 'entity_id' },

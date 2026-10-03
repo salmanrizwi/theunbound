@@ -140,21 +140,45 @@ export interface CapacityTierResolutionResult {
 /**
  * Authoritative Central Service for Capacity Tier Resolution
  * Step 3 (Product-Specific Capacity Pricing Tiers) is the primary commercial pricing mechanism
- * based on passenger count. Step 2 Fleet Assets do NOT block or restrict Step 3 tier selection.
+ * based on passenger count and asset selection.
  */
 export function resolveCapacityPricingTier(params: CapacityTierResolutionParams): CapacityTierResolutionResult {
-  const { product, passengerCount } = params;
+  const { product, passengerCount, travelDate, configuration } = params;
   const curr: CurrencyCode = product.currency || product.nativeCurrency || 'USD';
-  const activeTiers = (product.tieredPricing || []).filter(t => t.status !== 'INACTIVE');
-  const sortedTiers = [...activeTiers].sort((a, b) => a.minPax - b.minPax);
+  const targetAssetId = configuration?.vehicleId || configuration?.yachtId || configuration?.vesselId || configuration?.ferryId || configuration?.assetId;
 
+  let activeTiers = (product.tieredPricing || []).filter(t => t.status !== 'INACTIVE');
+
+  // Date validity check if travelDate is provided
+  if (travelDate) {
+    activeTiers = activeTiers.filter(t => {
+      if (t.effectiveFrom && travelDate < t.effectiveFrom) return false;
+      if (t.effectiveTo && travelDate > t.effectiveTo) return false;
+      return true;
+    });
+  }
+
+  // Filter by target asset if specified, otherwise search all active product tiers
+  let tiersToSearch = activeTiers;
+  if (targetAssetId) {
+    const assetSpecificTiers = activeTiers.filter(t => 
+      t.fleetId === targetAssetId || 
+      (t as any).vehicleId === targetAssetId || 
+      (t as any).assetId === targetAssetId
+    );
+    if (assetSpecificTiers.length > 0) {
+      tiersToSearch = assetSpecificTiers;
+    }
+  }
+
+  const sortedTiers = [...tiersToSearch].sort((a, b) => a.minPax - b.minPax);
   const totalPax = Math.max(1, passengerCount || 1);
   const vehicleConfig = product.vehicleConfig;
   const defaultVehicleName = vehicleConfig?.vehicleName || vehicleConfig?.vehicleModel || product.name;
-  const defaultVehicleType = vehicleConfig?.vehicleType || 'Executive Chauffeur';
+  const defaultVehicleType = vehicleConfig?.vehicleType || 'Executive Fleet';
   const defaultUnitNett = vehicleConfig?.unitVehicleNetCost ?? vehicleConfig?.totalTransferCost ?? product.adultNetPrice ?? 0;
 
-  // Step 3: Product-Specific Capacity Pricing Tiers is AUTHORITATIVE for passenger count match
+  // Match exact passenger range: minPax <= totalPax <= maxPax
   if (sortedTiers.length > 0) {
     const matched = sortedTiers.find(t => totalPax >= t.minPax && totalPax <= t.maxPax);
 
@@ -187,11 +211,6 @@ export function resolveCapacityPricingTier(params: CapacityTierResolutionParams)
 
       const tierVehicles = matched.vehicleCount !== undefined && matched.vehicleCount > 0 ? matched.vehicleCount : 1;
 
-      let validationError: string | undefined = undefined;
-      if (matched.maxPax && totalPax > matched.maxPax) {
-        validationError = `Configuration Error: Selected fleet asset capacity does not support the configured passenger range (${totalPax} Pax).`;
-      }
-
       return {
         hasMatchedTier: true,
         matchingTier: matched,
@@ -204,8 +223,7 @@ export function resolveCapacityPricingTier(params: CapacityTierResolutionParams)
         maxPassengers: matched.maxPax,
         vehiclesRequired: tierVehicles,
         calculatedPrice: b2bCalc.price,
-        currency: curr,
-        validationError
+        currency: curr
       };
     } else {
       // Step 3 tiers exist, but passenger count does NOT match any configured tier range
@@ -220,12 +238,12 @@ export function resolveCapacityPricingTier(params: CapacityTierResolutionParams)
         calculatedPrice: 0,
         currency: curr,
         isCapacityExceeded: true,
-        validationError: `No configured pricing tier is available for this passenger count (${totalPax} Pax).`
+        validationError: `No pricing configured for this asset and passenger count (${totalPax} Pax).`
       };
     }
   }
 
-  // Fallback if no Step 3 tiers are defined at all
+  // Fallback if no Step 3 tiers are defined at all on product
   const maxSeats = Math.max(1, vehicleConfig?.maxSeats || vehicleConfig?.passengerCapacity || product.maxPax || 7);
   const allowMultiple = vehicleConfig?.allowMultipleVehicles ?? true;
   const vehiclesNeeded = totalPax > maxSeats && allowMultiple ? Math.ceil(totalPax / maxSeats) : 1;
@@ -256,9 +274,108 @@ export function resolveCapacityPricingTier(params: CapacityTierResolutionParams)
     calculatedPrice: b2bCalc.price,
     currency: curr,
     validationError: (totalPax > maxSeats && !allowMultiple) 
-      ? `No configured pricing tier is available for this passenger count (${totalPax} Pax).` 
+      ? `No pricing configured for this asset and passenger count (${totalPax} Pax).` 
       : undefined
   };
+}
+
+export function resolveVehiclePricingTier(
+  productIdOrProduct: string | Product,
+  vehicleId?: string,
+  passengerCount: number = 1,
+  travelDate?: string
+): CapacityTierResolutionResult {
+  const product = typeof productIdOrProduct === 'string'
+    ? AppDatabase.getInstance().getProductById(productIdOrProduct)
+    : productIdOrProduct;
+
+  if (!product) {
+    return {
+      hasMatchedTier: false,
+      vehicleName: 'Vehicle',
+      vehicleType: 'Executive Chauffeur',
+      supplierNett: 0,
+      minPassengers: 1,
+      maxPassengers: 1,
+      vehiclesRequired: 1,
+      calculatedPrice: 0,
+      currency: 'USD',
+      validationError: 'Product not found.'
+    };
+  }
+
+  return resolveCapacityPricingTier({
+    product,
+    passengerCount,
+    travelDate,
+    configuration: { vehicleId }
+  });
+}
+
+export function resolveYachtPricingTier(
+  productIdOrProduct: string | Product,
+  yachtId?: string,
+  passengerCount: number = 1,
+  travelDate?: string
+): CapacityTierResolutionResult {
+  const product = typeof productIdOrProduct === 'string'
+    ? AppDatabase.getInstance().getProductById(productIdOrProduct)
+    : productIdOrProduct;
+
+  if (!product) {
+    return {
+      hasMatchedTier: false,
+      vehicleName: 'Yacht',
+      vehicleType: 'Luxury Yacht Charter',
+      supplierNett: 0,
+      minPassengers: 1,
+      maxPassengers: 1,
+      vehiclesRequired: 1,
+      calculatedPrice: 0,
+      currency: 'USD',
+      validationError: 'Product not found.'
+    };
+  }
+
+  return resolveCapacityPricingTier({
+    product,
+    passengerCount,
+    travelDate,
+    configuration: { yachtId, vehicleId: yachtId }
+  });
+}
+
+export function resolveVesselPricingTier(
+  productIdOrProduct: string | Product,
+  vesselId?: string,
+  passengerCount: number = 1,
+  travelDate?: string
+): CapacityTierResolutionResult {
+  const product = typeof productIdOrProduct === 'string'
+    ? AppDatabase.getInstance().getProductById(productIdOrProduct)
+    : productIdOrProduct;
+
+  if (!product) {
+    return {
+      hasMatchedTier: false,
+      vehicleName: 'Vessel',
+      vehicleType: 'Maritime Ferry / Vessel',
+      supplierNett: 0,
+      minPassengers: 1,
+      maxPassengers: 1,
+      vehiclesRequired: 1,
+      calculatedPrice: 0,
+      currency: 'USD',
+      validationError: 'Product not found.'
+    };
+  }
+
+  return resolveCapacityPricingTier({
+    product,
+    passengerCount,
+    travelDate,
+    configuration: { vesselId, ferryId: vesselId, vehicleId: vesselId }
+  });
 }
 
 export class CapacityTierResolver {

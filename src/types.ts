@@ -24,6 +24,7 @@ export type ProductCategory =
   | 'Tickets'
   | 'Private Yacht' 
   | 'Ferries' 
+  | 'Ferry'
   | 'Guides' 
   | 'Hotels'
   | 'Visa & Ancillary Services'

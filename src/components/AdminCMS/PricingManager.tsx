@@ -19,6 +19,9 @@ import {
   ArrowRight
 } from 'lucide-react';
 
+
+const safeNumVal = (val: any, fallback: any = ''): any => (val !== undefined && val !== null && typeof val === 'number' && !Number.isNaN(val) ? val : fallback);
+
 interface PricingManagerProps {
   destinations: Destination[];
 }
@@ -311,7 +314,7 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) 
                       <input
                         type="number"
                         min="0"
-                        value={product.adultNetPrice ?? ''}
+                        value={safeNumVal(product.adultNetPrice)}
                         onChange={e => handleProductChange(product.id, 'adultNetPrice', Number(e.target.value))}
                         className="w-20 py-1 px-2 bg-slate-50 border border-slate-200 rounded font-mono font-bold text-slate-900 text-xs focus:bg-white focus:border-[#00C6A6]"
                       />
@@ -321,7 +324,7 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) 
                       <input
                         type="number"
                         min="0"
-                        value={product.childNetPrice ?? ''}
+                        value={safeNumVal(product.childNetPrice)}
                         onChange={e => handleProductChange(product.id, 'childNetPrice', Number(e.target.value))}
                         className="w-18 py-1 px-2 bg-slate-50 border border-slate-200 rounded font-mono text-xs focus:bg-white focus:border-[#00C6A6]"
                       />
@@ -511,10 +514,10 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) 
                       <input
                         type="number"
                         min="1"
-                        value={tier.minPax !== undefined ? tier.minPax : (tier.minPassengers !== undefined ? tier.minPassengers : '')}
+                        value={tier.minPax !== undefined && !Number.isNaN(tier.minPax) ? tier.minPax : (tier.minPassengers !== undefined && !Number.isNaN(tier.minPassengers) ? tier.minPassengers : '')}
                         onChange={e => {
                           const raw = e.target.value;
-                          const v = raw === '' ? undefined : parseInt(raw, 10);
+                          const v = raw === '' || isNaN(parseInt(raw, 10)) ? undefined : parseInt(raw, 10);
                           const updated = [...(editingTierProduct.tieredPricing || [])];
                           updated[idx] = { ...updated[idx], minPax: v as any, minPassengers: v as any };
                           setEditingTierProduct({ ...editingTierProduct, tieredPricing: updated });
@@ -527,10 +530,10 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) 
                       <input
                         type="number"
                         min="1"
-                        value={tier.maxPax !== undefined ? tier.maxPax : (tier.maxPassengers !== undefined ? tier.maxPassengers : '')}
+                        value={tier.maxPax !== undefined && !Number.isNaN(tier.maxPax) ? tier.maxPax : (tier.maxPassengers !== undefined && !Number.isNaN(tier.maxPassengers) ? tier.maxPassengers : '')}
                         onChange={e => {
                           const raw = e.target.value;
-                          const v = raw === '' ? undefined : parseInt(raw, 10);
+                          const v = raw === '' || isNaN(parseInt(raw, 10)) ? undefined : parseInt(raw, 10);
                           const updated = [...(editingTierProduct.tieredPricing || [])];
                           updated[idx] = { ...updated[idx], maxPax: v as any, maxPassengers: v as any };
                           setEditingTierProduct({ ...editingTierProduct, tieredPricing: updated });
@@ -544,7 +547,7 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) 
                         type="number"
                         min="1"
                         max="20"
-                        value={tier.vehicleCount || 1}
+                        value={tier.vehicleCount && !Number.isNaN(tier.vehicleCount) ? tier.vehicleCount : 1}
                         onChange={e => {
                           const raw = e.target.value;
                           const v = raw === '' ? 1 : Math.max(1, parseInt(raw, 10) || 1);
@@ -561,7 +564,7 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) 
                         type="number"
                         step="any"
                         min="0"
-                        value={tier.nettPrice !== undefined ? tier.nettPrice : (tier.netCostPerPax !== undefined ? tier.netCostPerPax : '')}
+                        value={tier.nettPrice !== undefined && !Number.isNaN(tier.nettPrice) ? tier.nettPrice : (tier.netCostPerPax !== undefined && !Number.isNaN(tier.netCostPerPax as any) ? tier.netCostPerPax : '')}
                         onChange={e => {
                           const raw = e.target.value;
                           const updated = [...(editingTierProduct.tieredPricing || [])];

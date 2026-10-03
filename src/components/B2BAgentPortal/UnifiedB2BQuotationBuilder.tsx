@@ -73,7 +73,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
 import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
 import { ProposalDocumentView } from '../ProposalDocumentView';
-import { ProductDetailModal } from '../ProductDetailModal';
+import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
 import { RailJourneyModal } from '../RailJourneyModal';
 import { PricingCalculatorModal } from '../PricingCalculatorModal';
 import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
@@ -1971,7 +1971,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   }, [currentDestination, quickAddModalDay]);
 
   // Product categories for filter
-  const productCategories = ['ALL', 'Activity', 'Tour', 'Transfer', 'Transport', 'Rail', 'Guide', 'Restaurant', 'Private Yacht'];
+  const productCategories = ['ALL', 'Activity', 'Tour', 'Transfer', 'Transport', 'Rail', 'Guide', 'Restaurant', 'Private Yacht', 'Ferry'];
 
   if (loadError) {
     return (
@@ -2845,7 +2845,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       {/* MODAL: PRODUCT DETAIL MODAL */}
       {/* ========================================================================= */}
       {inspectingProduct && !isRailProduct(inspectingProduct) && (
-        <ProductDetailModal
+        <B2BViewDetailsModal
           product={inspectingProduct}
           onClose={() => setInspectingProduct(null)}
           onOpenCalculator={(prod) => {

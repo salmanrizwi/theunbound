@@ -30,6 +30,7 @@ export const CATEGORIES: { name: ProductCategory; icon: React.ElementType }[] = 
   { name: 'Tickets', icon: Ticket },
   { name: 'Private Yacht', icon: Ship },
   { name: 'Ferries', icon: Anchor },
+  { name: 'Ferry', icon: Anchor },
   { name: 'Guides', icon: UserCheck },
   { name: 'Hotels', icon: Building2 },
   { name: 'Visa & Ancillary Services', icon: ShieldCheck },

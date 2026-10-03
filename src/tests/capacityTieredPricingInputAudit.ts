@@ -117,6 +117,8 @@ console.log('\n--- 3. Testing Tier Synchronization & Final Price Formula ---');
 console.log('\n--- 4. Testing Persistence Across Three Capacity Categories ---');
 {
   // 1. Private Tour
+  const activeHubId = db.getCityHubs()[0]?.id || 'hub-tokyo';
+
   const tourProduct = {
     id: `prod-test-tour-${Date.now()}`,
     sku: 'UB-TOUR-CAP-01',
@@ -126,7 +128,7 @@ console.log('\n--- 4. Testing Persistence Across Three Capacity Categories ---')
     pricingMethod: 'capacity_based',
     regionId: 'REG-001',
     destinationId: 'DST-JPN',
-    hubId: 'HUB-TYO',
+    hubId: activeHubId,
     destination: 'Japan',
     city: 'Tokyo',
     currency: 'JPY',
@@ -193,7 +195,7 @@ console.log('\n--- 4. Testing Persistence Across Three Capacity Categories ---')
     pricingMethod: 'capacity_based',
     regionId: 'REG-001',
     destinationId: 'DST-JPN',
-    hubId: 'HUB-TYO',
+    hubId: activeHubId,
     destination: 'Japan',
     city: 'Tokyo',
     currency: 'JPY',
@@ -202,8 +204,8 @@ console.log('\n--- 4. Testing Persistence Across Three Capacity Categories ---')
     status: 'ACTIVE',
     inclusions: ['Flight Tracking', 'Luggage Assist'],
     exclusions: ['Extra Stops'],
-    fromHubId: 'HUB-HND',
-    toHubId: 'HUB-TYO',
+    fromHubId: activeHubId,
+    toHubId: activeHubId,
     vehicleConfig: {
       vehicleType: 'Executive MPV',
       vehicleModel: 'Toyota Alphard',
@@ -262,7 +264,7 @@ console.log('\n--- 4. Testing Persistence Across Three Capacity Categories ---')
     pricingMethod: 'capacity_based',
     regionId: 'REG-001',
     destinationId: 'DST-JPN',
-    hubId: 'HUB-TYO',
+    hubId: activeHubId,
     destination: 'Japan',
     city: 'Tokyo',
     currency: 'JPY',
@@ -469,7 +471,7 @@ console.log('\n--- 8. Testing Google Sheets Master Sync Governance ---');
     pricingModel: 'CAPACITY_TIERED',
     regionId: 'REG-001',
     destinationId: 'DST-JPN',
-    hubId: 'HUB-TYO',
+    hubId: db.getCityHubs()[0]?.id || 'hub-tokyo',
     currency: 'JPY',
     nativeCurrency: 'JPY',
     status: 'ACTIVE',

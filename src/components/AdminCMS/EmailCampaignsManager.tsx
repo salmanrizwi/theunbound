@@ -171,8 +171,8 @@ export const EmailCampaignsManager: React.FC = () => {
 
       {/* Campaigns Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {filteredCampaigns.map(camp => (
-          <div key={camp.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:border-slate-300 transition-all flex flex-col justify-between space-y-4">
+        {filteredCampaigns.map((camp, idx) => (
+          <div key={camp.id || `camp-${idx}`} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:border-slate-300 transition-all flex flex-col justify-between space-y-4">
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
@@ -212,12 +212,12 @@ export const EmailCampaignsManager: React.FC = () => {
               <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 text-center">
                 <div className="bg-slate-50 p-2 rounded-xl">
                   <span className="text-[9px] text-slate-400 font-bold uppercase block">Dispatches</span>
-                  <span className="text-xs font-bold font-mono text-slate-800">{camp.sentCount} Runs</span>
+                  <span className="text-xs font-bold font-mono text-slate-800">{camp.sentCount || 0} Runs</span>
                 </div>
                 <div className="bg-slate-50 p-2 rounded-xl">
                   <span className="text-[9px] text-slate-400 font-bold uppercase block">Delay SLA</span>
                   <span className="text-xs font-bold font-mono text-emerald-700">
-                    {camp.delayHours === 0 ? 'Instant' : `${camp.delayHours} Hours`}
+                    {camp.delayHours === 0 ? 'Instant' : `${camp.delayHours || 0} Hours`}
                   </span>
                 </div>
               </div>
@@ -311,8 +311,8 @@ export const EmailCampaignsManager: React.FC = () => {
                   </label>
                   <input
                     type="number"
-                    value={editingCampaign.delayHours || 0}
-                    onChange={e => setEditingCampaign({ ...editingCampaign, delayHours: Number(e.target.value) })}
+                    value={editingCampaign.delayHours === undefined || isNaN(Number(editingCampaign.delayHours)) ? '' : editingCampaign.delayHours}
+                    onChange={e => setEditingCampaign({ ...editingCampaign, delayHours: e.target.value === '' ? 0 : Number(e.target.value) })}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono font-bold"
                   />
                 </div>

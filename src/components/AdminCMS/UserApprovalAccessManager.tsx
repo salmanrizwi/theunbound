@@ -789,7 +789,7 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                   type="number"
                   min="0"
                   max="100"
-                  value={defaultBuyerMargin}
+                  value={defaultBuyerMargin !== undefined && !Number.isNaN(defaultBuyerMargin) ? defaultBuyerMargin : ''}
                   onChange={e => setDefaultBuyerMargin(Number(e.target.value))}
                   className="w-16 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-center font-mono font-bold text-xs"
                 />
@@ -801,7 +801,7 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                   type="number"
                   min="0"
                   max="100"
-                  value={defaultAgentMargin}
+                  value={defaultAgentMargin !== undefined && !Number.isNaN(defaultAgentMargin) ? defaultAgentMargin : ''}
                   onChange={e => setDefaultAgentMargin(Number(e.target.value))}
                   className="w-16 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-center font-mono font-bold text-xs"
                 />

@@ -8,6 +8,7 @@ import {
 import { AppDatabase } from '../services/db';
 import { formatCurrency } from '../services/pricingEngine';
 import { useAuth } from '../context/AuthContext';
+import { RichTextRenderer } from './common/RichTextRenderer';
 import { 
   X, 
   MapPin, 
@@ -267,9 +268,10 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
                       {/* Day Expanded Details */}
                       {isExpanded && (
                         <div className="px-4 pb-4 pt-1 space-y-3 border-t border-slate-200/60 bg-white">
-                          <p className="text-xs text-slate-600 leading-relaxed">
-                            {day.description || 'Full day of bespoke touring, cultural discoveries, and private transport.'}
-                          </p>
+                          <RichTextRenderer
+                            content={day.description || 'Full day of bespoke touring, cultural discoveries, and private transport.'}
+                            className="text-xs text-slate-600 leading-relaxed"
+                          />
 
                           {/* Master Products assigned */}
                           {dayProducts.length > 0 && (

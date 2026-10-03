@@ -1308,7 +1308,7 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
                       type="number"
                       min="0"
                       max="100"
-                      value={buyerMargin}
+                      value={buyerMargin !== undefined && !Number.isNaN(buyerMargin) ? buyerMargin : ''}
                       onChange={e => setBuyerMargin(Number(e.target.value))}
                       className="w-24 p-2 bg-white border border-slate-300 rounded-lg font-mono font-bold text-sm text-slate-900 text-center"
                     />
@@ -1328,7 +1328,7 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
                       type="number"
                       min="0"
                       max="100"
-                      value={agentMargin}
+                      value={agentMargin !== undefined && !Number.isNaN(agentMargin) ? agentMargin : ''}
                       onChange={e => setAgentMargin(Number(e.target.value))}
                       className="w-24 p-2 bg-white border border-slate-300 rounded-lg font-mono font-bold text-sm text-slate-900 text-center"
                     />

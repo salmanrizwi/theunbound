@@ -75,7 +75,7 @@ export const PerPersonPricingModule: React.FC<PerPersonPricingModuleProps> = ({
               type="number"
               required
               min="0"
-              value={adultNetPrice}
+              value={adultNetPrice !== undefined && !Number.isNaN(adultNetPrice) ? adultNetPrice : ''}
               onChange={e => onPriceChange(Number(e.target.value), childNetPrice, infantNetPrice)}
               className="w-full p-2 bg-white rounded-lg font-bold"
             />
@@ -86,7 +86,7 @@ export const PerPersonPricingModule: React.FC<PerPersonPricingModuleProps> = ({
             <input
               type="number"
               min="0"
-              value={childNetPrice}
+              value={childNetPrice !== undefined && !Number.isNaN(childNetPrice) ? childNetPrice : ''}
               onChange={e => onPriceChange(adultNetPrice, Number(e.target.value), infantNetPrice)}
               className="w-full p-2 bg-white rounded-lg"
             />
@@ -97,7 +97,7 @@ export const PerPersonPricingModule: React.FC<PerPersonPricingModuleProps> = ({
             <input
               type="number"
               min="0"
-              value={infantNetPrice}
+              value={infantNetPrice !== undefined && !Number.isNaN(infantNetPrice) ? infantNetPrice : ''}
               onChange={e => onPriceChange(adultNetPrice, childNetPrice, Number(e.target.value))}
               className="w-full p-2 bg-white rounded-lg"
             />

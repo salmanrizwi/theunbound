@@ -105,7 +105,7 @@ export const HourlyPricingModule: React.FC<HourlyPricingModuleProps> = ({
               type="number"
               min="0"
               required
-              value={currentConfig.hourlyNetRate}
+              value={currentConfig.hourlyNetRate !== undefined && !Number.isNaN(currentConfig.hourlyNetRate) ? currentConfig.hourlyNetRate : ''}
               onChange={e => updateConfig({ hourlyNetRate: Number(e.target.value) })}
               placeholder="e.g. 60"
               className="w-full p-2 bg-white rounded-lg font-bold text-sm"
@@ -118,7 +118,7 @@ export const HourlyPricingModule: React.FC<HourlyPricingModuleProps> = ({
               type="number"
               min="1"
               max="24"
-              value={currentConfig.minHours}
+              value={currentConfig.minHours !== undefined && !Number.isNaN(currentConfig.minHours) ? currentConfig.minHours : ''}
               onChange={e => updateConfig({ minHours: Number(e.target.value) })}
               className="w-full p-2 bg-white rounded-lg font-bold"
             />
@@ -129,7 +129,7 @@ export const HourlyPricingModule: React.FC<HourlyPricingModuleProps> = ({
             <input
               type="number"
               min="0"
-              value={currentConfig.overtimeHourlyRate}
+              value={currentConfig.overtimeHourlyRate !== undefined && !Number.isNaN(currentConfig.overtimeHourlyRate) ? currentConfig.overtimeHourlyRate : ''}
               onChange={e => updateConfig({ overtimeHourlyRate: Number(e.target.value) })}
               placeholder="e.g. 80"
               className="w-full p-2 bg-white rounded-lg"
@@ -190,7 +190,7 @@ export const HourlyPricingModule: React.FC<HourlyPricingModuleProps> = ({
               type="number"
               min="1"
               max="50"
-              value={currentConfig.maxGroupSize}
+              value={currentConfig.maxGroupSize !== undefined && !Number.isNaN(currentConfig.maxGroupSize) ? currentConfig.maxGroupSize : ''}
               onChange={e => updateConfig({ maxGroupSize: Number(e.target.value) })}
               className="w-full p-2 bg-white rounded-lg font-bold text-xs"
             />
