@@ -11488,10 +11488,17 @@ export class AppDatabase {
    */
   public generateProformaInvoice(
     bookingId: string,
-    user: User | null
+    user: User | null,
+    forceRegenerate: boolean = false
   ): { success: boolean; invoice?: BookingInvoice; error?: string } {
     const b = this.getBookingById(bookingId);
     if (!b) return { success: false, error: 'Booking not found' };
+
+    // Server-side idempotency check: Return existing active invoice unless explicit regeneration requested
+    const existingInvoices = this.getBookingInvoices(b.id);
+    if (existingInvoices.length > 0 && !forceRegenerate) {
+      return { success: true, invoice: existingInvoices[0] };
+    }
 
     const now = new Date().toISOString();
     const issueDateStr = now.split('T')[0];
@@ -11505,10 +11512,11 @@ export class AppDatabase {
     const destination = b.destination || (b as any).primaryDestination || 'Ground Destination';
     const travelDates = b.travelStartDate ? `${b.travelStartDate}${b.travelEndDate ? ' - ' + b.travelEndDate : ''}` : 'Scheduled';
 
-    const mappedItems: any[] = (b.items || []).map((it, idx) => ({
+    let mappedItems: any[] = (b.items || []).map((it, idx) => ({
       id: it.id || `inv-item-${idx}`,
       productName: it.productName || (it as any).title || 'Travel Ground Service',
       serviceName: it.productName || (it as any).title || 'Travel Ground Service',
+      description: it.productName || (it as any).title || (it as any).description || 'Travel Ground Service',
       category: it.category || 'SERVICE',
       serviceDate: it.serviceDate || it.travelDate || b.travelStartDate || 'Scheduled',
       travelDate: it.travelDate || it.serviceDate || b.travelStartDate || 'Scheduled',
@@ -11517,6 +11525,7 @@ export class AppDatabase {
       unitPrice: it.totalPrice || it.unitSellingPrice || 0,
       taxAmount: 0,
       totalPrice: it.totalPrice || (it.unitSellingPrice ? it.unitSellingPrice : 0),
+      amount: it.totalPrice || (it.unitSellingPrice ? it.unitSellingPrice : 0),
       currency: b.currency || 'USD'
     }));
 
@@ -11526,6 +11535,26 @@ export class AppDatabase {
       : ((b as any).pricing?.totalPrice && (b as any).pricing.totalPrice > 0)
         ? (b as any).pricing.totalPrice
         : (itemsTotalSum > 0 ? itemsTotalSum : 0);
+
+    if (mappedItems.length === 0 && subtotal > 0) {
+      const bTitle = (b as any).title || (b as any).packageName || (b as any).destination || `Ground Itinerary Arrangements & VIP Concierge (${destination})`;
+      mappedItems = [{
+        id: `inv-item-0`,
+        productName: bTitle,
+        serviceName: bTitle,
+        description: bTitle,
+        category: 'PACKAGE',
+        serviceDate: b.travelStartDate || 'Scheduled',
+        travelDate: b.travelStartDate || 'Scheduled',
+        pax: totalPax,
+        quantity: 1,
+        unitPrice: subtotal,
+        taxAmount: 0,
+        totalPrice: subtotal,
+        amount: subtotal,
+        currency: b.currency || 'USD'
+      }];
+    }
 
     const amountPaid = (b as any).paidAmount || (b.paymentStatus === 'PAID' ? subtotal : 0);
     const balanceDue = Math.max(0, subtotal - amountPaid);

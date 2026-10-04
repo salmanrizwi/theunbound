@@ -44,6 +44,7 @@ export const DeskProformaInvoiceSection: React.FC<DeskProformaInvoiceSectionProp
   const isInternal = isInternalStaff(currentUser);
 
   // Modals
+  const [isGenerating, setIsGenerating] = useState(false);
   const [selectedInvoiceForPreview, setSelectedInvoiceForPreview] = useState<BookingInvoice | null>(null);
   const [invoiceToEdit, setInvoiceToEdit] = useState<BookingInvoice | null>(null);
   const [historyInvoice, setHistoryInvoice] = useState<BookingInvoice | null>(null);
@@ -71,12 +72,21 @@ export const DeskProformaInvoiceSection: React.FC<DeskProformaInvoiceSectionProp
   const activeInvoice = allInvoices[0]; // Most recent
 
   const handleGenerateInvoice = () => {
-    const res = db.generateProformaInvoice(booking.id, currentUser);
-    if (res.success && res.invoice) {
-      setSelectedInvoiceForPreview(res.invoice);
-      onRefresh();
-    } else {
-      alert(res.error || 'Failed to generate Proforma Invoice');
+    if (isGenerating) return;
+    setIsGenerating(true);
+    try {
+      const forceRegenerate = allInvoices.length > 0;
+      const res = db.generateProformaInvoice(booking.id, currentUser, forceRegenerate);
+      if (res.success && res.invoice) {
+        setSelectedInvoiceForPreview(res.invoice);
+        onRefresh();
+      } else {
+        alert(res.error || 'Failed to generate Proforma Invoice');
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Error generating Proforma Invoice');
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -225,10 +235,22 @@ TheUnbound Finance & Operations Desk`
           <div className="flex items-center gap-2">
             <button
               onClick={handleGenerateInvoice}
-              className="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+              disabled={isGenerating}
+              className={`px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs ${
+                isGenerating ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+              }`}
             >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>{allInvoices.length > 0 ? 'Generate New Proforma' : 'Generate Proforma Invoice'}</span>
+              {isGenerating ? (
+                <>
+                  <Clock className="w-3.5 h-3.5 animate-spin" />
+                  <span>Generating Proforma...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>{allInvoices.length > 0 ? 'Generate New Proforma' : 'Generate Proforma Invoice'}</span>
+                </>
+              )}
             </button>
           </div>
         )}
@@ -381,16 +403,16 @@ TheUnbound Finance & Operations Desk`
                   </div>
 
                   <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100">
-                    {(invoice.services || []).map((srv, sIdx) => (
+                    {((invoice.services && invoice.services.length > 0) ? invoice.services : (invoice.items || [])).map((srv: any, sIdx: number) => (
                       <div key={srv.id || sIdx} className="p-3 bg-white flex items-center justify-between text-xs">
                         <div>
-                          <span className="font-bold text-slate-800">{srv.description}</span>
+                          <span className="font-bold text-slate-800">{srv.description || srv.serviceName || srv.productName || 'Travel Ground Service'}</span>
                           <span className="text-[10px] text-slate-400 block">
-                            {srv.category} • Qty: {srv.quantity} Pax
+                            {srv.category || 'SERVICE'} • Qty: {srv.quantity || srv.pax || 1} Pax
                           </span>
                         </div>
                         <span className="font-mono font-bold text-slate-900">
-                          {formatCurrency(srv.amount, invoice.currency)}
+                          {formatCurrency(srv.amount ?? srv.totalPrice ?? srv.unitPrice ?? 0, invoice.currency)}
                         </span>
                       </div>
                     ))}

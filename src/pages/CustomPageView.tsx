@@ -44,16 +44,28 @@ export const CustomPageView: React.FC<CustomPageViewProps> = ({
   const [copied, setCopied] = useState(false);
   const [expandedFaqIndex, setExpandedFaqIndex] = useState<number | null>(null);
 
-  // SEO synchronization: update document title and meta description
+  // SEO synchronization: update document title, meta description, and OpenGraph tags
   useEffect(() => {
     if (!isAboutPage && page) {
-      const pageTitle = page.metaTitle || `${page.title} | TheUnbound DMC`;
-      document.title = pageTitle;
+      const seoTitle = page.seo?.title || (page.seo as any)?.metaTitle || page.metaTitle || page.seoTitle || `${page.title} | TheUnbound DMC`;
+      const seoDesc = page.seo?.metaDescription || page.metaDescription || page.seoDescription || page.subtitle || '';
+      const seoImage = page.seo?.ogImage || page.ogImage || page.heroImage || '';
+
+      document.title = seoTitle;
 
       let metaDesc = document.querySelector('meta[name="description"]');
-      if (metaDesc && page.metaDescription) {
-        metaDesc.setAttribute('content', page.metaDescription);
+      if (metaDesc && seoDesc) {
+        metaDesc.setAttribute('content', seoDesc);
       }
+
+      let ogTitle = document.querySelector('meta[property="og:title"]');
+      if (ogTitle) ogTitle.setAttribute('content', seoTitle);
+
+      let ogDesc = document.querySelector('meta[property="og:description"]');
+      if (ogDesc && seoDesc) ogDesc.setAttribute('content', seoDesc);
+
+      let ogImg = document.querySelector('meta[property="og:image"]');
+      if (ogImg && seoImage) ogImg.setAttribute('content', seoImage);
     }
   }, [page, isAboutPage]);
 

@@ -17,6 +17,7 @@ import { QuoteMasterManager } from './QuoteMasterManager';
 import { HomepageManager } from './HomepageManager';
 import { InstitutionalPagesManager } from './InstitutionalPagesManager';
 import { MenuAndPagesManager } from './MenuAndPagesManager';
+import { PageSEOManager } from './PageSEOManager';
 import { FooterNavigationBuilder } from './FooterNavigationBuilder';
 import { BlogCMSManager } from './BlogCMSManager';
 import { GalleryManager } from './GalleryManager';
@@ -635,6 +636,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           subTabs: [
             { id: 'HOMEPAGE', label: 'Homepage & Hero Control', icon: LayoutTemplate },
             { id: 'NAVIGATION_MENU', label: 'Menu & Custom Pages', icon: Layers },
+            { id: 'PAGE_SEO', label: 'Page SEO Management', icon: Globe2 },
             { id: 'PAGES_LEGAL', label: 'Site Pages & Legal Policies', icon: ShieldCheck },
             { id: 'FOOTER_NAV', label: 'Footer Navigation Builder', icon: SlidersHorizontal }
           ]
@@ -1275,6 +1277,9 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                 />
               )}
               {activeSubTab === 'PAGES_LEGAL' && <InstitutionalPagesManager />}
+              {(activeSubTab === 'PAGE_SEO' || activeSubTab === 'PAGES_SEO' || activeSubTab === 'SEO') && (
+                <PageSEOManager currentUser={currentUser} />
+              )}
               {activeSubTab === 'FOOTER_NAV' && <FooterNavigationBuilder />}
             </>
           )}

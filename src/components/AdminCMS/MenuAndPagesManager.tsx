@@ -13,6 +13,7 @@ import {
 } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { FooterNavigationBuilder } from './FooterNavigationBuilder';
+import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { 
   Menu, 
   Layers, 
@@ -79,6 +80,7 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
   const [isCreatingPage, setIsCreatingPage] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
   const [pagePreviewTab, setPagePreviewTab] = useState<'EDIT' | 'PREVIEW'>('EDIT');
+  const [pageEditorSubTab, setPageEditorSubTab] = useState<'CONTENT' | 'SEO'>('CONTENT');
 
   // Block Builder modal state inside Page Editor
   const [isAddingBlock, setIsAddingBlock] = useState(false);
@@ -947,19 +949,35 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                         className="px-2.5 py-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer flex items-center space-x-1"
                       >
                         <ExternalLink className="w-3 h-3" />
-                        <span>View Page</span>
+                        <span>View</span>
                       </a>
+                      <button
+                        id={`edit-page-seo-btn-${page.id}`}
+                        onClick={() => {
+                          setPageError(null);
+                          setPagePreviewTab('EDIT');
+                          setPageEditorSubTab('SEO');
+                          setEditingPage({ ...page });
+                          setIsCreatingPage(false);
+                        }}
+                        className="px-2.5 py-1 text-xs font-bold bg-[#008972] hover:bg-[#00705d] text-white rounded-lg cursor-pointer flex items-center gap-1 shadow-xs"
+                        title="Edit Page SEO & Meta Tags"
+                      >
+                        <Globe className="w-3 h-3 text-white" />
+                        <span>SEO</span>
+                      </button>
                       <button
                         id={`edit-page-btn-${page.id}`}
                         onClick={() => {
                           setPageError(null);
                           setPagePreviewTab('EDIT');
+                          setPageEditorSubTab('CONTENT');
                           setEditingPage({ ...page });
                           setIsCreatingPage(false);
                         }}
                         className="px-2.5 py-1 text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg cursor-pointer"
                       >
-                        Edit Page
+                        Edit
                       </button>
                       <button
                         id={`delete-page-btn-${page.id}`}
@@ -995,21 +1013,34 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                   <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl">
                     <button
                       type="button"
-                      onClick={() => setPagePreviewTab('EDIT')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        pagePreviewTab === 'EDIT' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                      onClick={() => { setPagePreviewTab('EDIT'); setPageEditorSubTab('CONTENT'); }}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        pagePreviewTab === 'EDIT' && pageEditorSubTab === 'CONTENT' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
                       }`}
                     >
-                      Editor
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>1. Content & Structure</span>
+                    </button>
+                    <button
+                      type="button"
+                      id="btn-page-seo-tab"
+                      onClick={() => { setPagePreviewTab('EDIT'); setPageEditorSubTab('SEO'); }}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        pagePreviewTab === 'EDIT' && pageEditorSubTab === 'SEO' ? 'bg-[#008972] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      <Globe className="w-3.5 h-3.5" />
+                      <span>2. SEO & Search Indexing</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setPagePreviewTab('PREVIEW')}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                         pagePreviewTab === 'PREVIEW' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
                       }`}
                     >
-                      Live Preview
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Live Preview</span>
                     </button>
                   </div>
                 </div>
@@ -1081,6 +1112,34 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                         ))}
                       </div>
                     )}
+                  </div>
+                ) : pageEditorSubTab === 'SEO' ? (
+                  <div className="py-2 space-y-4">
+                    <EntitySEOSettingsTab
+                      entityType="CUSTOM_PAGE"
+                      entity={editingPage}
+                      seo={editingPage.seo || {
+                        metaTitle: editingPage.metaTitle || editingPage.seoTitle || editingPage.title || '',
+                        metaDescription: editingPage.metaDescription || editingPage.seoDescription || editingPage.subtitle || '',
+                        slug: editingPage.slug,
+                        canonicalUrl: `https://theunbound.in/${editingPage.slug}`,
+                        keywords: editingPage.keywords || [],
+                        ogImage: editingPage.ogImage || editingPage.heroImage
+                      }}
+                      onChange={(newSeo) => {
+                        setEditingPage(prev => prev ? {
+                          ...prev,
+                          seo: newSeo,
+                          metaTitle: newSeo.metaTitle || newSeo.title || prev.metaTitle,
+                          metaDescription: newSeo.metaDescription || prev.metaDescription,
+                          seoTitle: newSeo.metaTitle || newSeo.title || prev.seoTitle,
+                          seoDescription: newSeo.metaDescription || prev.seoDescription,
+                          keywords: newSeo.keywords || prev.keywords,
+                          ogImage: newSeo.ogImage || prev.ogImage,
+                          slug: newSeo.slug || prev.slug
+                        } : null);
+                      }}
+                    />
                   </div>
                 ) : (
                   <>
