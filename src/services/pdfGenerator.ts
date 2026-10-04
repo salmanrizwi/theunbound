@@ -204,6 +204,216 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
     currentY += 11;
   };
 
+  const drawQuoteItemCard = (
+    item: QuoteItem,
+    title: string,
+    badgeLabel: string,
+    sublineText: string,
+    priceText: string,
+    isEven: boolean
+  ) => {
+    const cleanLine = (str: string) => {
+      return str
+        .replace(/<[^>]*>/g, '') // strip HTML tags
+        .replace(/\*\*|__/g, '') // strip bold markdown
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .trim();
+    };
+
+    const overviewRaw = item.contentSnapshot?.overviewSpecifications || 
+                        item.product?.longDescription || 
+                        item.product?.description || 
+                        item.product?.shortDescription || '';
+    
+    const overview = cleanLine(overviewRaw);
+
+    const rawInclusions = item.contentSnapshot?.inclusions || item.product?.inclusions || [];
+    const inclusions = Array.isArray(rawInclusions) ? rawInclusions.map(inc => cleanLine(String(inc))).filter(Boolean) : [];
+
+    const rawExclusions = item.contentSnapshot?.exclusions || item.product?.exclusions || [];
+    const exclusions = Array.isArray(rawExclusions) ? rawExclusions.map(exc => cleanLine(String(exc))).filter(Boolean) : [];
+
+    const notes = cleanLine(item.notes || '');
+
+    // Wrap all text lines to estimate height
+    const wrappedOverviewLines = overview ? doc.splitTextToSize(overview, contentWidth - 16) : [];
+    const overviewHeight = wrappedOverviewLines.length > 0 ? (wrappedOverviewLines.length * 3.5 + 4) : 0;
+
+    const inclusionLines: string[][] = inclusions.map(inc => doc.splitTextToSize(`✓  ${inc}`, contentWidth - 18));
+    const totalInclusionLines = inclusionLines.reduce((sum, lines) => sum + lines.length, 0);
+    const inclusionsHeight = totalInclusionLines > 0 ? (totalInclusionLines * 3.2 + 4) : 0;
+
+    const exclusionLines: string[][] = exclusions.map(exc => doc.splitTextToSize(`✕  ${exc}`, contentWidth - 18));
+    const totalExclusionLines = exclusionLines.reduce((sum, lines) => sum + lines.length, 0);
+    const exclusionsHeight = totalExclusionLines > 0 ? (totalExclusionLines * 3.2 + 4) : 0;
+
+    const wrappedNotesLines = notes ? doc.splitTextToSize(`Special Instructions: ${notes}`, contentWidth - 16) : [];
+    const notesHeight = wrappedNotesLines.length > 0 ? (wrappedNotesLines.length * 3.2 + 4) : 0;
+
+    // Header, subline + padding = 13mm
+    const totalCardHeight = 13 + overviewHeight + inclusionsHeight + exclusionsHeight + notesHeight + 2;
+
+    const checkBreak = (neededHeight: number) => {
+      if (currentY + neededHeight > pageHeight - 16) {
+        doc.addPage();
+        currentY = margin;
+        drawSubsequentHeader();
+        return true;
+      }
+      return false;
+    };
+
+    // Perform a break check for the total card height (or a minimum of 35mm if the card is huge, so it breaks at header)
+    checkBreak(Math.min(totalCardHeight, 35));
+
+    const cardStartY = currentY;
+
+    // Draw background card container FIRST so text lays on top
+    doc.setFillColor(isEven ? 248 : 255, isEven ? 250 : 255, isEven ? 252 : 255);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(margin + 2, cardStartY, contentWidth - 4, totalCardHeight - 2, 1.5, 1.5, 'FD');
+
+    let cardY = cardStartY + 5;
+
+    // 1. Badge, Title & Price Header
+    // Badge background
+    doc.setFillColor(241, 245, 249);
+    doc.roundedRect(margin + 4, cardY - 2.5, 24, 4.5, 0.5, 0.5, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(5.5);
+    doc.setTextColor(51, 65, 85);
+    doc.text(badgeLabel.toUpperCase().substring(0, 16), margin + 16, cardY + 0.5, { align: 'center' });
+
+    // Title
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(15, 23, 42);
+    const truncatedTitle = title.length > 55 ? title.substring(0, 52) + '...' : title;
+    doc.text(truncatedTitle, margin + 31, cardY + 1);
+
+    // Price (on the right)
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(15, 23, 42);
+    doc.text(priceText, pageWidth - margin - 5, cardY + 1, { align: 'right' });
+
+    cardY += 4.5;
+
+    // 2. Subline Details & Confirmed badge
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(sublineText, margin + 31, cardY + 0.5);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(5.5);
+    doc.setTextColor(0, 168, 143);
+    doc.text('Confirmed Allotment', pageWidth - margin - 5, cardY + 0.5, { align: 'right' });
+
+    cardY += 5;
+
+    // 3. Overview & Specifications
+    if (wrappedOverviewLines.length > 0) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6);
+      doc.setTextColor(148, 163, 184);
+      doc.text('OVERVIEW & SPECIFICATIONS', margin + 6, cardY);
+      cardY += 3;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(51, 65, 85);
+      wrappedOverviewLines.forEach(line => {
+        if (checkBreak(4)) {
+          // If a page break occurred during text drawing, redraw background rect for continuity
+          doc.setFillColor(isEven ? 248 : 255, isEven ? 250 : 255, isEven ? 252 : 255);
+          doc.setDrawColor(226, 232, 240);
+          doc.roundedRect(margin + 2, currentY, contentWidth - 4, pageHeight - 16 - currentY, 1.5, 1.5, 'FD');
+          cardY = currentY + 5;
+        }
+        doc.text(line, margin + 6, cardY);
+        cardY += 3.2;
+      });
+      cardY += 1;
+    }
+
+    // 4. Inclusions
+    if (inclusions.length > 0) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6);
+      doc.setTextColor(5, 150, 105); // emerald-600
+      doc.text('INCLUSIONS', margin + 6, cardY);
+      cardY += 3;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(51, 65, 85);
+      inclusionLines.forEach(lines => {
+        lines.forEach(line => {
+          if (checkBreak(4)) {
+            doc.setFillColor(isEven ? 248 : 255, isEven ? 250 : 255, isEven ? 252 : 255);
+            doc.setDrawColor(226, 232, 240);
+            doc.roundedRect(margin + 2, currentY, contentWidth - 4, pageHeight - 16 - currentY, 1.5, 1.5, 'FD');
+            cardY = currentY + 5;
+          }
+          doc.text(line, margin + 6, cardY);
+          cardY += 3.2;
+        });
+      });
+      cardY += 1;
+    }
+
+    // 5. Exclusions
+    if (exclusions.length > 0) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6);
+      doc.setTextColor(225, 29, 72); // rose-600
+      doc.text('EXCLUSIONS', margin + 6, cardY);
+      cardY += 3;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(51, 65, 85);
+      exclusionLines.forEach(lines => {
+        lines.forEach(line => {
+          if (checkBreak(4)) {
+            doc.setFillColor(isEven ? 248 : 255, isEven ? 250 : 255, isEven ? 252 : 255);
+            doc.setDrawColor(226, 232, 240);
+            doc.roundedRect(margin + 2, currentY, contentWidth - 4, pageHeight - 16 - currentY, 1.5, 1.5, 'FD');
+            cardY = currentY + 5;
+          }
+          doc.text(line, margin + 6, cardY);
+          cardY += 3.2;
+        });
+      });
+      cardY += 1;
+    }
+
+    // 6. Notes
+    if (wrappedNotesLines.length > 0) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(6.5);
+      doc.setTextColor(71, 85, 105);
+      wrappedNotesLines.forEach(line => {
+        if (checkBreak(4)) {
+          doc.setFillColor(isEven ? 248 : 255, isEven ? 250 : 255, isEven ? 252 : 255);
+          doc.setDrawColor(226, 232, 240);
+          doc.roundedRect(margin + 2, currentY, contentWidth - 4, pageHeight - 16 - currentY, 1.5, 1.5, 'FD');
+          cardY = currentY + 5;
+        }
+        doc.text(line, margin + 6, cardY);
+        cardY += 3.2;
+      });
+      cardY += 1;
+    }
+
+    currentY = cardY + 2;
+  };
+
+
   // ----------------------------------------------------
   // 1. TOP HEADER & BRANDING BAR (With Partner Agency Co-Branding)
   // ----------------------------------------------------
@@ -420,18 +630,7 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
     currentY += 9;
 
     visaItems.forEach((vItem, vIdx) => {
-      checkPageBreak(14);
       const isEven = vIdx % 2 === 0;
-      doc.setFillColor(isEven ? 240 : 255, isEven ? 253 : 255, isEven ? 244 : 255); // emerald-50 / white
-      doc.setDrawColor(167, 243, 208); // emerald-200
-      doc.roundedRect(margin + 2, currentY, contentWidth - 4, 12, 1, 1, 'FD');
-
-      // Badge
-      doc.setFillColor(209, 250, 229);
-      doc.roundedRect(margin + 4, currentY + 2, 22, 4.5, 0.5, 0.5, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(5.5);
-      doc.setTextColor(6, 78, 59);
       const serviceBadgeText = vItem.service_type === 'TRAVEL_PROTECTION' || vItem.product.subcategory === 'Travel Insurance'
         ? 'INSURANCE'
         : vItem.service_type === 'CONNECTIVITY' || vItem.product.subcategory === 'eSIM Connectivity'
@@ -439,43 +638,18 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
         : vItem.service_type === 'VIP_GROUND' || vItem.product.subcategory === 'Ground VIP Services'
         ? 'VIP GROUND'
         : 'VISA SERVICE';
-      doc.text(serviceBadgeText, margin + 15, currentY + 5, { align: 'center' });
-
-      // Name
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(15, 23, 42);
-      const vName = vItem.product.name || 'Visa Application Package';
-      const truncatedVName = vName.length > 55 ? vName.substring(0, 52) + '...' : vName;
-      doc.text(truncatedVName, margin + 29, currentY + 5.5);
-
-      // Sub-details
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
-      doc.setTextColor(51, 65, 85);
-      const vSub = [
+        
+      const title = vItem.product.name || 'Visa Application Package';
+      const subDetails = [
         `${(vItem.pax?.adults || 0) + (vItem.pax?.children || 0)} Applicant(s)`,
         vItem.product.sku || 'VSA-EXP',
         vItem.product.duration ? `Processing: ${vItem.product.duration}` : 'Official Consular Track'
       ].join(' • ');
-      doc.text(vSub, margin + 29, currentY + 9.5);
+      
+      const priceText = formatCurrency(vItem.calculation?.finalTotalSellingPrice || 0, quote.currency);
 
-      // Price
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(15, 23, 42);
-      const vPriceStr = formatCurrency(vItem.calculation?.finalTotalSellingPrice || 0, quote.currency);
-      doc.text(vPriceStr, pageWidth - margin - 5, currentY + 5.5, { align: 'right' });
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(5.5);
-      doc.setTextColor(5, 150, 105);
-      doc.text('Complete Submission Included', pageWidth - margin - 5, currentY + 9.5, { align: 'right' });
-
-      currentY += 14;
+      drawQuoteItemCard(vItem, title, serviceBadgeText, subDetails, priceText, isEven);
     });
-
-    currentY += 3;
   }
 
   // ----------------------------------------------------
@@ -547,38 +721,15 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
     // Day Items
     if (hasItems) {
       day.items.forEach((item, itemIdx) => {
-        checkPageBreak(16);
-
         const isEven = itemIdx % 2 === 0;
-        doc.setFillColor(isEven ? 248 : 255, isEven ? 250 : 255, isEven ? 252 : 255);
-        doc.setDrawColor(226, 232, 240);
-        doc.roundedRect(margin + 2, currentY, contentWidth - 4, 13, 1, 1, 'FD');
-
-        // Service Category Badge
         const cat = (item.product.category || item.product.productType || 'EXPERIENCE').toUpperCase();
-        doc.setFillColor(241, 245, 249);
-        doc.roundedRect(margin + 4, currentY + 2, 24, 4.5, 0.5, 0.5, 'F');
-        // Category tag pill text
         const isRail = item.category === 'Rail' || Boolean(item.railJourneyDetails) || (item.product?.category === 'Rail');
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(5.5);
-        doc.setTextColor(51, 65, 85);
-        doc.text(isRail ? 'SHINKANSEN' : cat.substring(0, 16), margin + 16, currentY + 5, { align: 'center' });
-
-        // Service Name (Bold)
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(15, 23, 42);
-        const pName = isRail && item.railJourneyDetails
+        
+        const badgeLabel = isRail ? 'SHINKANSEN' : cat;
+        const title = isRail && item.railJourneyDetails
           ? `Shinkansen: ${item.railJourneyDetails.originStationName} to ${item.railJourneyDetails.destinationStationName}`
-          : (item.product.name || 'Curated Experience');
-        const truncatedName = pName.length > 55 ? pName.substring(0, 52) + '...' : pName;
-        doc.text(truncatedName, margin + 31, currentY + 5.5);
-
-        // Details Sub-line (Duration, Timing, Pax, Location)
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(6.5);
-        doc.setTextColor(100, 116, 139);
+          : (item.customTitle || item.title || item.product.name || 'Curated Experience');
+        
         const subDetails = isRail && item.railJourneyDetails
           ? [
               item.serviceTime ? `Dep: ${item.serviceTime}` : null,
@@ -593,21 +744,10 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
               `${item.pax?.adults || 2} Adults${item.pax?.children ? `, ${item.pax.children} Ch` : ''}`,
               item.product.city || dayCity
             ].filter(Boolean).join(' • ');
-        doc.text(subDetails, margin + 31, currentY + 10);
+            
+        const priceText = formatCurrency(item.calculation?.finalTotalSellingPrice || 0, quote.currency);
 
-        // Price
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(15, 23, 42);
-        const itemPriceStr = formatCurrency(item.calculation?.finalTotalSellingPrice || 0, quote.currency);
-        doc.text(itemPriceStr, pageWidth - margin - 5, currentY + 6, { align: 'right' });
-
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(5.5);
-        doc.setTextColor(0, 168, 143);
-        doc.text('Confirmed Allotment', pageWidth - margin - 5, currentY + 10, { align: 'right' });
-
-        currentY += 15;
+        drawQuoteItemCard(item, title, badgeLabel, subDetails, priceText, isEven);
       });
     } else {
       // Leisure Box

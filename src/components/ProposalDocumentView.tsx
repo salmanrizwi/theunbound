@@ -258,7 +258,7 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
   };
 
   return (
-    <div className="bg-white text-slate-900 font-sans p-6 sm:p-10 space-y-8 rounded-3xl border border-slate-200 print:border-none print:p-0 print:shadow-none shadow-2xl max-w-5xl mx-auto">
+    <div className="print-proposal-canvas bg-white text-slate-900 font-sans p-6 sm:p-10 space-y-8 rounded-3xl border border-slate-200 print:border-none print:p-0 print:shadow-none shadow-2xl max-w-5xl mx-auto">
       
       {/* ---------------------------------------------------- */}
       {/* TOP ACTION BAR (Hidden during Print / PDF generation) */}
@@ -518,21 +518,42 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                       {item.product.name}
                     </h4>
 
-                    {item.product.shortDescription && (
+                    {/* Overview & Specifications */}
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Overview & Specifications</span>
                       <RichTextRenderer 
-                        content={item.product.shortDescription}
+                        content={item.contentSnapshot?.overviewSpecifications || item.product.longDescription || item.product.description || item.product.shortDescription || ''}
                         className="text-xs text-slate-600 leading-relaxed"
                       />
+                    </div>
+
+                    {/* Inclusions */}
+                    {((item.contentSnapshot?.inclusions && item.contentSnapshot.inclusions.length > 0) || (item.product.inclusions && item.product.inclusions.length > 0)) && (
+                      <div className="space-y-1 pt-1.5">
+                        <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">Inclusions</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(item.contentSnapshot?.inclusions || item.product.inclusions || []).map((inc: string, iIdx: number) => (
+                            <span key={iIdx} className="text-[10px] bg-white text-emerald-950 px-2 py-0.5 rounded border border-emerald-200 flex items-center space-x-1">
+                              <Check className="w-2.5 h-2.5 text-emerald-600" />
+                              <span>{inc}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
                     )}
 
-                    {item.product.inclusions && item.product.inclusions.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 pt-1">
-                        {item.product.inclusions.map((inc, iIdx) => (
-                          <span key={iIdx} className="text-[10px] bg-white text-emerald-900 px-2 py-0.5 rounded border border-emerald-200 flex items-center space-x-1">
-                            <Check className="w-2.5 h-2.5 text-emerald-600" />
-                            <span>{inc}</span>
-                          </span>
-                        ))}
+                    {/* Exclusions */}
+                    {((item.contentSnapshot?.exclusions && item.contentSnapshot.exclusions.length > 0) || (item.product.exclusions && item.product.exclusions.length > 0)) && (
+                      <div className="space-y-1 pt-1.5">
+                        <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider block">Exclusions</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(item.contentSnapshot?.exclusions || item.product.exclusions || []).map((exc: string, eIdx: number) => (
+                            <span key={eIdx} className="text-[10px] bg-white text-rose-950 px-2 py-0.5 rounded border border-rose-200 flex items-center space-x-1">
+                              <span className="text-rose-500 font-bold">✕</span>
+                              <span>{exc}</span>
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     )}
 
@@ -686,22 +707,42 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                                   </div>
                                 )}
 
-                                {item.product.shortDescription && !isRailQuoteItem(item) && (
+                                {/* Overview & Specifications */}
+                                <div className="space-y-1 mt-1.5">
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Overview & Specifications</span>
                                   <RichTextRenderer 
-                                    content={item.product.shortDescription}
+                                    content={item.contentSnapshot?.overviewSpecifications || item.product.longDescription || item.product.description || item.product.shortDescription || ''}
                                     className="text-xs text-slate-600 leading-relaxed"
                                   />
+                                </div>
+
+                                {/* Inclusions */}
+                                {((item.contentSnapshot?.inclusions && item.contentSnapshot.inclusions.length > 0) || (item.product.inclusions && item.product.inclusions.length > 0)) && (
+                                  <div className="space-y-1 pt-1.5">
+                                    <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">Inclusions</span>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {(item.contentSnapshot?.inclusions || item.product.inclusions || []).map((inc: string, iIdx: number) => (
+                                        <span key={iIdx} className="text-[10px] bg-white/90 text-slate-700 px-2 py-0.5 rounded border border-slate-200/80 flex items-center space-x-1">
+                                          <Check className="w-2.5 h-2.5 text-emerald-600" />
+                                          <span>{inc}</span>
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
                                 )}
 
-                                {/* Key Inclusions Checklist */}
-                                {item.product.inclusions && item.product.inclusions.length > 0 && (
-                                  <div className="flex flex-wrap gap-1.5 pt-1">
-                                    {item.product.inclusions.slice(0, 3).map((inc, iIdx) => (
-                                      <span key={iIdx} className="text-[10px] bg-white/90 text-slate-700 px-2 py-0.5 rounded border border-slate-200/80 flex items-center space-x-1">
-                                        <Check className="w-2.5 h-2.5 text-emerald-600" />
-                                        <span>{inc}</span>
-                                      </span>
-                                    ))}
+                                {/* Exclusions */}
+                                {((item.contentSnapshot?.exclusions && item.contentSnapshot.exclusions.length > 0) || (item.product.exclusions && item.product.exclusions.length > 0)) && (
+                                  <div className="space-y-1 pt-1.5">
+                                    <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider block">Exclusions</span>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {(item.contentSnapshot?.exclusions || item.product.exclusions || []).map((exc: string, eIdx: number) => (
+                                        <span key={eIdx} className="text-[10px] bg-white/90 text-rose-950 px-2 py-0.5 rounded border border-rose-200 flex items-center space-x-1">
+                                          <span className="text-rose-500 font-bold">✕</span>
+                                          <span>{exc}</span>
+                                        </span>
+                                      ))}
+                                    </div>
                                   </div>
                                 )}
 

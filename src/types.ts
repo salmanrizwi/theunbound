@@ -1499,6 +1499,16 @@ export interface AgentPricingResponse {
 
 export type QuoteItemSource = 'AI_PLANNER' | 'USER' | 'SYSTEM';
 
+export interface QuoteItemContentSnapshot {
+  overviewSpecifications: string;
+  inclusions: string[];
+  exclusions: string[];
+  snapshotVersion?: string;
+  sourceType: string;
+  sourceId: string;
+  capturedAt: string;
+}
+
 export interface QuoteItem {
   id: string;
   product: Product;
@@ -1541,6 +1551,7 @@ export interface QuoteItem {
   is_upsell?: boolean; // Indicates if this quote item was added as an upsell
   upsell_type?: 'EXISTING_PRODUCT' | 'STANDALONE';
   visaSnapshot?: QuoteVisaSnapshot;
+  contentSnapshot?: QuoteItemContentSnapshot;
   metadata?: Record<string, any>;
 }
 
@@ -6386,6 +6397,7 @@ export interface B2BTask {
 export type B2BTabType = 
   | 'home'
   | 'dashboard' 
+  | 'wishlist'
   | 'create-quote' 
   | 'packages' 
   | 'products' 

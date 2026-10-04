@@ -5,6 +5,7 @@ import { sanitizeProductForAgent } from '../utils/customerQuoteSanitizer';
 import { AppDatabase } from '../services/db';
 import { campaignAnalytics } from '../services/campaignAnalyticsService';
 import { useAuth } from './AuthContext';
+import { createQuoteItemContentSnapshot } from '../utils/b2bQuotationHelpers';
 
 interface QuotationContextType {
   items: QuoteItem[];
@@ -330,6 +331,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     };
 
+    newItem.contentSnapshot = createQuoteItemContentSnapshot(effectiveProduct, newItem);
+
     setItems(prev => [...prev, newItem]);
     if (options?.openDrawer !== false) {
       setIsQuoteDrawerOpen(true);
@@ -354,13 +357,15 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           targetCurrency: currency,
           selectedAddonIds: item.selectedAddonIds
         });
-        return {
+        const updated = {
           ...item,
           pax,
           calculation,
           source: 'USER',
           aiSuggested: false
         };
+        updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
+        return updated;
       })
     );
   };
@@ -379,20 +384,27 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           targetCurrency: currency,
           selectedAddonIds: item.selectedAddonIds
         });
-        return {
+        const updated = {
           ...item,
           travelDate: date,
           calculation,
           source: 'USER',
           aiSuggested: false
         };
+        updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
+        return updated;
       })
     );
   };
 
   const updateItemServiceTime = (itemId: string, time: string) => {
     setItems(prev =>
-      prev.map(item => (item.id === itemId ? { ...item, serviceTime: time, source: 'USER', aiSuggested: false } : item))
+      prev.map(item => {
+        if (item.id !== itemId) return item;
+        const updated = { ...item, serviceTime: time, source: 'USER', aiSuggested: false };
+        updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
+        return updated;
+      })
     );
   };
 
@@ -427,7 +439,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           selectedAddonIds: nextAddons
         });
 
-        return {
+        const updated = {
           ...item,
           travelDate: nextDate,
           serviceTime: nextServiceTime,
@@ -438,6 +450,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           source: updates.source ?? 'USER',
           aiSuggested: updates.source === 'AI_PLANNER'
         };
+        updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
+        return updated;
       })
     );
   };
@@ -488,7 +502,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           selectedAddonIds
         });
 
-        return {
+        const updated = {
           ...item,
           product: effectiveProduct,
           pax: { adults, children, infants },
@@ -515,6 +529,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             service_id: options.service_id || item.service_id || effectiveProduct.id
           }
         };
+        updated.contentSnapshot = createQuoteItemContentSnapshot(effectiveProduct, updated);
+        return updated;
       })
     );
   };

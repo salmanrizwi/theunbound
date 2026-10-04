@@ -18,6 +18,7 @@ import {
   MapPin, 
   Sparkles, 
   ArrowUpRight, 
+  Heart, 
   ChevronRight, 
   FileDown, 
   AlertCircle,
@@ -92,6 +93,96 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
 
   // Pending urgent tasks
   const pendingTasks = tasks.filter(t => t.status !== 'COMPLETED').slice(0, 4);
+
+  // Wishlist metrics & previews
+  const wishlistItems = useMemo(() => {
+    return user ? db.getWishlistItems(user.id) : [];
+  }, [user, db, dbTick]);
+
+  const availableWishlistCount = useMemo(() => {
+    let available = 0;
+    wishlistItems.forEach(item => {
+      const product = products.find(p => p.id === item.productId);
+      if (product && product.status !== 'INACTIVE' && product.status !== 'ARCHIVED') {
+        available++;
+        return;
+      }
+      const hotel = hotels.find(h => h.id === item.productId);
+      if (hotel && hotel.status !== 'INACTIVE' && hotel.status !== 'ARCHIVED') {
+        available++;
+        return;
+      }
+      const pkg = db.getPackages().find(pk => pk.id === item.productId);
+      if (pkg && pkg.status === 'PUBLISHED') {
+        available++;
+        return;
+      }
+      const visa = db.getVisas().find(v => v.id === item.productId);
+      if (visa && visa.status === 'ACTIVE') {
+        available++;
+        return;
+      }
+    });
+    return available;
+  }, [wishlistItems, products, hotels, dbTick]);
+
+  const recentWishlistPreviews = useMemo(() => {
+    const sorted = [...wishlistItems].sort((a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime());
+    return sorted.slice(0, 3).map(item => {
+      const p = products.find(prod => prod.id === item.productId);
+      if (p) {
+        return {
+          id: item.id,
+          name: p.name,
+          category: p.category || 'Product',
+          destination: p.destinationName,
+          image: p.imageUrl || p.heroImage,
+          status: p.status === 'INACTIVE' || p.status === 'ARCHIVED' ? 'UNAVAILABLE' : 'AVAILABLE'
+        };
+      }
+      const h = hotels.find(hot => hot.id === item.productId);
+      if (h) {
+        return {
+          id: item.id,
+          name: h.name,
+          category: 'Hotel',
+          destination: h.destinationName,
+          image: h.imageUrl || h.heroImage,
+          status: h.status === 'INACTIVE' || h.status === 'ARCHIVED' ? 'UNAVAILABLE' : 'AVAILABLE'
+        };
+      }
+      const pkg = db.getPackages().find(pack => pack.id === item.productId);
+      if (pkg) {
+        return {
+          id: item.id,
+          name: pkg.title,
+          category: 'Package',
+          destination: pkg.destinationName,
+          image: pkg.heroImage,
+          status: pkg.status === 'UNPUBLISHED' || pkg.status === 'ARCHIVED' ? 'UNAVAILABLE' : 'AVAILABLE'
+        };
+      }
+      const visa = db.getVisas().find(v => v.id === item.productId);
+      if (visa) {
+        return {
+          id: item.id,
+          name: visa.visaType + ' for ' + visa.country,
+          category: 'Visa Service',
+          destination: visa.country || 'Japan',
+          image: '',
+          status: visa.status !== 'ACTIVE' ? 'UNAVAILABLE' : 'AVAILABLE'
+        };
+      }
+      return {
+        id: item.id,
+        name: 'Saved Item',
+        category: 'Travel Service',
+        destination: 'Japan',
+        image: '',
+        status: 'AVAILABLE' as const
+      };
+    });
+  }, [wishlistItems, products, hotels, dbTick]);
 
   return (
     <div className="w-full max-w-full min-w-0 px-4 sm:px-6 lg:px-8 py-6 space-y-6">
@@ -274,6 +365,15 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
           <CheckSquare className="w-5 h-5 text-rose-600" />
           <span className="text-xs font-bold">Follow-Ups</span>
           <span className="text-[10px] text-rose-600 font-bold">{pendingTasks.length} Pending</span>
+        </button>
+
+        <button
+          onClick={() => onNavigate('wishlist')}
+          className="p-3.5 bg-white hover:bg-slate-50 text-slate-900 rounded-2xl border border-slate-200/80 flex flex-col items-center justify-center text-center space-y-1.5 transition-all hover:scale-[1.02] cursor-pointer"
+        >
+          <Heart className="w-5 h-5 text-[#00C6A6] fill-[#00C6A6]" />
+          <span className="text-xs font-bold">Wishlist</span>
+          <span className="text-[10px] text-teal-600 font-bold">{wishlistItems.length} Items</span>
         </button>
       </div>
 
@@ -528,6 +628,74 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                 ))}
               </div>
             )}
+          </div>
+
+          {/* Dedicated B2B Wishlist Card */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Heart className="w-5 h-5 text-teal-500 fill-teal-500" />
+                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                  Wishlist
+                </h2>
+              </div>
+              <span className="text-xs font-bold text-slate-500">
+                {wishlistItems.length} {wishlistItems.length === 1 ? 'Item' : 'Items'}
+              </span>
+            </div>
+
+            <div className="text-xs text-slate-500 space-y-3">
+              <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-2xl border border-slate-100">
+                <span>Total Saved: <strong>{wishlistItems.length}</strong></span>
+                <span className="text-teal-600 font-semibold">Available: <strong>{availableWishlistCount}</strong></span>
+              </div>
+
+              {/* Previews */}
+              {recentWishlistPreviews.length === 0 ? (
+                <p className="text-[11px] text-slate-400 italic text-center py-2">
+                  No saved items in your wishlist yet.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {recentWishlistPreviews.map((item, idx) => (
+                    <div key={item.id || idx} className="flex items-center justify-between gap-3 p-2 rounded-xl bg-slate-50/50 hover:bg-slate-50 border border-slate-100 transition-colors">
+                      <div className="flex items-center space-x-2.5 min-w-0">
+                        {item.image ? (
+                          <img src={item.image} alt={item.name} className="w-8 h-8 rounded-lg object-cover shrink-0" />
+                        ) : (
+                          <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                            <Heart className="w-4 h-4 text-slate-400" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <span className="text-slate-800 font-semibold text-[11px] truncate block leading-tight">
+                            {item.name}
+                          </span>
+                          <span className="text-[10px] text-slate-400 block truncate">
+                            {item.category} · {item.destination}
+                          </span>
+                        </div>
+                      </div>
+                      <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded uppercase shrink-0 ${
+                        item.status === 'AVAILABLE' 
+                          ? 'bg-teal-50 text-teal-700 border border-teal-200' 
+                          : 'bg-slate-200 text-slate-700'
+                      }`}>
+                        {item.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => onNavigate('wishlist')}
+              className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
+            >
+              <span>View Wishlist</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
           </div>
 
           {/* Quick Destination Hub Launchpad */}

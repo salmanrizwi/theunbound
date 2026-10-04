@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { B2BPortalSidebar, B2BPortalHeader, B2BTabType } from './B2BPortalNavbar';
 import { B2BHomeDiscoveryView } from './B2BHomeDiscoveryView';
 import { B2BDashboardView } from './B2BDashboardView';
+import { B2BWishlistManagerView } from './B2BWishlistManagerView';
 import { UnifiedB2BQuotationBuilder } from './UnifiedB2BQuotationBuilder';
 import { B2BPackagesView } from './B2BPackagesView';
 import { B2BProductsCatalogView } from './B2BProductsCatalogView';
@@ -127,6 +128,8 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
       'discovery': 'home',
       'DASHBOARD': 'dashboard',
       'dashboard': 'dashboard',
+      'WISHLIST': 'wishlist',
+      'wishlist': 'wishlist',
       'CREATE_QUOTE': 'create-quote',
       'create-quote': 'create-quote',
       'PACKAGES': 'packages',
@@ -349,6 +352,27 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
             destinations={destinations}
             products={products}
             hotels={hotels}
+          />
+        )}
+
+        {activeTab === 'wishlist' && (
+          <B2BWishlistManagerView
+            products={products}
+            hotels={hotels}
+            onNavigate={handleNavigate}
+            onViewProductDetails={(prod) => setInspectingProduct(prod)}
+            onViewHotelDetails={(hotel) => setInspectingHotel(hotel)}
+            onViewPackageDetails={(pkg) => setInspectingPackage(pkg)}
+            onConfigureProduct={(prod) => {
+              if (isRailProduct(prod)) {
+                setRailConfiguringProduct(prod);
+              } else {
+                setCalculatorProduct(prod);
+              }
+            }}
+            onConfigureHotel={(hotel) => setConfiguringHotel(hotel)}
+            onConfigurePackage={handleCustomizePackage}
+            onItemAddedToQuote={(msg) => showToast(msg)}
           />
         )}
 

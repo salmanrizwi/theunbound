@@ -6,7 +6,8 @@ import {
   FeasibilityWarning, 
   Product,
   B2BInsurancePlan,
-  B2BEsimPlan
+  B2BEsimPlan,
+  QuoteItemContentSnapshot
 } from '../types';
 
 /**
@@ -443,5 +444,226 @@ export function checkItineraryFeasibility(
     statusColor,
     warnings,
     recommendations
+  };
+}
+
+/**
+ * Creates a complete customer-facing content snapshot for any QuoteItem.
+ * Ensures historical quote consistency across Saved Quotes, Emails, PDFs, and WhatsApp proposals.
+ */
+export function createQuoteItemContentSnapshot(
+  product: Product,
+  item: QuoteItem | any
+): QuoteItemContentSnapshot {
+  let overviewSpecifications = '';
+  let inclusions: string[] = [];
+  let exclusions: string[] = [];
+  let sourceType = 'PRODUCT';
+  const sourceId = product?.id || item?.productId || '';
+
+  const cat = (product?.category || item?.category || '').toLowerCase();
+  const isVisa = cat.includes('visa') || !!item?.visaSnapshot || (item?.service_type === 'VISA');
+  const isHotel = cat.includes('hotel') || cat.includes('ryokan') || cat.includes('stay') || cat.includes('accommodation') || !!item?.accommodationType || !!item?.isManualHotel;
+  const isRail = cat.includes('rail') || cat.includes('train') || !!item?.railJourneyDetails;
+  
+  // Resolve source type
+  if (isVisa) {
+    sourceType = 'VISA';
+  } else if (isHotel) {
+    sourceType = 'HOTEL';
+  } else if (isRail) {
+    sourceType = 'RAIL';
+  } else if (
+    cat.includes('insurance') || 
+    cat.includes('protection') || 
+    cat.includes('esim') || 
+    cat.includes('connectivity') || 
+    cat.includes('vip') || 
+    cat.includes('ground') || 
+    cat.includes('ancillary') ||
+    item?.service_type === 'TRAVEL_PROTECTION' ||
+    item?.service_type === 'CONNECTIVITY' ||
+    item?.service_type === 'VIP_GROUND'
+  ) {
+    sourceType = 'ANCILLARY';
+  } else {
+    sourceType = 'PRODUCT';
+  }
+
+  // Compile Overview Specifications, Inclusions, and Exclusions
+  if (isVisa) {
+    overviewSpecifications = product?.longDescription || product?.description || product?.shortDescription || '';
+    if (!overviewSpecifications) {
+      overviewSpecifications = `Comprehensive visa services assistance and facilitation support for ${product?.destinationName || product?.country || 'Japan'}.`;
+    }
+    overviewSpecifications += `\n\n**Visa Service Details:**\n`;
+    overviewSpecifications += `• **Service Name:** ${product?.name || 'Official E-Visa Assistance'}\n`;
+    overviewSpecifications += `• **Destination:** ${product?.destinationName || product?.country || 'Japan'}\n`;
+    if ((product as any)?.visaType) overviewSpecifications += `• **Visa Type:** ${(product as any)?.visaType}\n`;
+    if (item?.visaSnapshot?.applicantNationality) {
+      overviewSpecifications += `• **Nationality:** ${item.visaSnapshot.applicantNationality}\n`;
+    }
+    
+    inclusions = product?.inclusions && product.inclusions.length > 0 
+      ? product.inclusions 
+      : ['Application dossier review & indexing', 'Official portal processing & submission coordination', 'Digital visa grant delivery & QR validation'];
+    
+    exclusions = product?.exclusions && product.exclusions.length > 0 
+      ? product.exclusions 
+      : ['Government Embassy Visa Fee (unless paid online)', 'Courier / physical document retrieval charges', 'Re-submission fees in case of client documentation errors'];
+
+  } else if (isHotel) {
+    if (item?.isManualHotel && item?.manualHotelDetails) {
+      const mh = item.manualHotelDetails;
+      overviewSpecifications = `**Bespoke Hotel Stay at ${mh.hotelName || 'Selected Premium Hotel'}**\n`;
+      overviewSpecifications += `• **Location:** ${mh.cityHub || 'Japan'}\n`;
+      overviewSpecifications += `• **Room Category:** ${mh.roomType || 'Standard Room'}\n`;
+      overviewSpecifications += `• **Meal Arrangement:** ${mh.mealPlan || 'Breakfast Included'}\n`;
+      overviewSpecifications += `• **Nights:** ${mh.nights || 1} Night(s)\n`;
+      if (mh.specialRequests) {
+        overviewSpecifications += `• **Special Instructions:** ${mh.specialRequests}\n`;
+      }
+      
+      inclusions = [
+        `${mh.nights || 1} Night(s) Stay in room type ${mh.roomType || 'Standard Room'}`,
+        `Meal Plan: ${mh.mealPlan || 'Breakfast Included'}`,
+        'All applicable local taxes, VAT, and service charges',
+        'Direct 24/7 DMC concierge & support access'
+      ];
+      exclusions = [
+        'Personal room service, telephone, minibar, and incidental bills',
+        'Early check-in or late check-out charges unless pre-confirmed',
+        'Tourism tax or city tourist bed fees payable locally at front desk'
+      ];
+    } else {
+      overviewSpecifications = product?.longDescription || product?.description || product?.shortDescription || '';
+      if (!overviewSpecifications) {
+        overviewSpecifications = `Luxury accommodations and Japanese hospitality services at ${product?.name || 'Curated Hotel'}.`;
+      }
+      overviewSpecifications += `\n\n**Stay Details:**\n`;
+      overviewSpecifications += `• **Hotel:** ${product?.name || 'Selected Property'}\n`;
+      if ((product as any)?.starRating || (product as any)?.rating) overviewSpecifications += `• **Star Rating:** ${(product as any)?.starRating || (product as any)?.rating}★\n`;
+      if ((product as any)?.cityName || product?.city) overviewSpecifications += `• **City:** ${(product as any)?.cityName || product?.city}\n`;
+      if ((product as any)?.address) overviewSpecifications += `• **Address:** ${(product as any)?.address}\n`;
+      if ((product as any)?.starRating) {
+        overviewSpecifications += `• **Property Type:** ${(product as any).propertyType || 'Luxury Stay'}\n`;
+      }
+      
+      inclusions = product?.inclusions && product.inclusions.length > 0 ? product.inclusions : [
+        'Luxury Hotel overnight accommodation stay',
+        'Hotel standard high-speed guest Wi-Fi',
+        'Daily morning breakfast or specified room amenities'
+      ];
+      exclusions = product?.exclusions && product.exclusions.length > 0 ? product.exclusions : [
+        'Personal room incidentals, minibar consumption, and phone charges',
+        'Local city bed taxes or hot spring tax (onsen tax) paid locally'
+      ];
+    }
+
+  } else if (isRail) {
+    if (item?.railJourneyDetails) {
+      const rd = item.railJourneyDetails;
+      overviewSpecifications = `**Shinkansen High-Speed Bullet Train Itinerary**\n`;
+      overviewSpecifications += `• **Journey Route:** ${rd.originStationName} (${rd.originStationCode}) ➔ ${rd.destinationStationName} (${rd.destinationStationCode})\n`;
+      overviewSpecifications += `• **Service Class:** ${rd.carType} Class\n`;
+      overviewSpecifications += `• **Seat Reservation:** ${rd.seatType}\n`;
+      overviewSpecifications += `• **Shinkansen Group:** ${rd.serviceGroup === 'NOZOMI_MIZUHO' ? 'Nozomi Super Express' : 'Hikari/Kodama Super Express'}\n`;
+      if (rd.trainName) overviewSpecifications += `• **Train Name / ID:** ${rd.trainName}\n`;
+      if (rd.departureTime) overviewSpecifications += `• **Scheduled Departure:** ${rd.departureTime}\n`;
+      if (rd.arrivalTime) overviewSpecifications += `• **Scheduled Arrival:** ${rd.arrivalTime}\n`;
+      if (rd.seatPreference) overviewSpecifications += `• **Seat Preference:** ${rd.seatPreference}\n`;
+      if (rd.pnrReference) overviewSpecifications += `• **SmartEX PNR:** ${rd.pnrReference}\n`;
+      if (rd.hasOversizedBaggage) overviewSpecifications += `• **Baggage Category:** Oversized Baggage Area Included\n`;
+      
+      inclusions = [
+        'Authoritative SmartEX high-speed train e-ticket issuance',
+        `Guaranteed ${rd.carType} Class Seat Reservation`,
+        'Oversized luggage area allocation (where selected)',
+        'DMC digital ticket dispatch and platform guidance notes'
+      ];
+      exclusions = [
+        'Onboard bento meals, drinks, and snacks',
+        'Station porterage and terminal transfers',
+        'Refund or modification fees once tickets are confirmed'
+      ];
+    } else {
+      overviewSpecifications = product?.longDescription || product?.description || product?.shortDescription || '';
+      if (!overviewSpecifications) {
+        overviewSpecifications = `High-speed Shinkansen bullet train transit across the Japan golden route corridor.`;
+      }
+      
+      inclusions = product?.inclusions && product.inclusions.length > 0 ? product.inclusions : [
+        'Guaranteed seat reservations',
+        'Bullet train ticketing & digital voucher'
+      ];
+      exclusions = product?.exclusions && product.exclusions.length > 0 ? product.exclusions : [
+        'Onboard food and personal refreshments'
+      ];
+    }
+
+  } else if (sourceType === 'ANCILLARY') {
+    overviewSpecifications = product?.longDescription || product?.description || product?.shortDescription || '';
+    if (!overviewSpecifications) {
+      overviewSpecifications = `Bespoke ancillary travel support service: ${product?.name || 'Selected Ancillary Plan'}.`;
+    }
+    overviewSpecifications += `\n\n**Service Overview:**\n`;
+    overviewSpecifications += `• **Service:** ${product?.name || 'Travel Add-on'}\n`;
+    if (product?.category) overviewSpecifications += `• **Category:** ${product.category}\n`;
+    if (product?.destinationName || product?.country) {
+      overviewSpecifications += `• **Coverage/Destination:** ${product.destinationName || product.country}\n`;
+    }
+    
+    inclusions = product?.inclusions && product.inclusions.length > 0 ? product.inclusions : [
+      'Comprehensive customer assistance and setup support',
+      'Authorized supplier coordination and tracking'
+    ];
+    exclusions = product?.exclusions && product.exclusions.length > 0 ? product.exclusions : [
+      'Additional incidental fees outside the standard plan coverage',
+      'Modifications or upgrades beyond the selected service plan'
+    ];
+
+  } else {
+    // General Product (Private Tours, Day Trips, Activities)
+    overviewSpecifications = product?.longDescription || product?.description || product?.shortDescription || '';
+    if (!overviewSpecifications) {
+      overviewSpecifications = `Bespoke curated travel experience: ${product?.name || 'Curated Activity'}.`;
+    }
+    
+    overviewSpecifications += `\n\n**Experience Details:**\n`;
+    overviewSpecifications += `• **Activity:** ${product?.name}\n`;
+    if (product?.duration) overviewSpecifications += `• **Duration:** ${product.duration}\n`;
+    if (product?.city || product?.location) overviewSpecifications += `• **Location:** ${product.city || product.location}\n`;
+    if (product?.meetingPoint) overviewSpecifications += `• **Meeting Point:** ${product.meetingPoint}\n`;
+    if (product?.pickupPoint || product?.pickupInformation) {
+      overviewSpecifications += `• **Pickup Point:** ${product.pickupPoint || product.pickupInformation}\n`;
+    }
+    if (product?.dropoffPoint || product?.dropoffLocation) {
+      overviewSpecifications += `• **Drop-off Point:** ${product.dropoffPoint || product.dropoffLocation}\n`;
+    }
+    if (product?.operatingHours) overviewSpecifications += `• **Timing:** ${product.operatingHours}\n`;
+    
+    inclusions = product?.inclusions && product.inclusions.length > 0 ? product.inclusions : [
+      'Licensed English-speaking local expert guide',
+      'All listed sight admissions & experience admissions',
+      'Air-conditioned private chauffeur transport as detailed'
+    ];
+    exclusions = product?.exclusions && product.exclusions.length > 0 ? product.exclusions : [
+      'Personal food, dining, and snacks unless listed',
+      'Guide/driver gratuities and voluntary tips',
+      'Souvenir costs and personal retail shopping'
+    ];
+  }
+
+  // Handle sanitization/cleanup to ensure rich text formatting isn't lost
+  const cleanSpecs = overviewSpecifications ? overviewSpecifications.trim() : '';
+
+  return {
+    overviewSpecifications: cleanSpecs,
+    inclusions: Array.isArray(inclusions) ? inclusions.map(s => String(s).trim()) : [],
+    exclusions: Array.isArray(exclusions) ? exclusions.map(s => String(s).trim()) : [],
+    snapshotVersion: '1.0',
+    sourceType,
+    sourceId,
+    capturedAt: new Date().toISOString()
   };
 }

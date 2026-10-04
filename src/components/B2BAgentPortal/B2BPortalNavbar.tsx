@@ -10,6 +10,7 @@ import {
   Users, 
   CheckSquare, 
   User as UserIcon, 
+  Heart, 
   LogOut, 
   Clock, 
   ShieldCheck, 
@@ -147,6 +148,7 @@ export const B2BPortalSidebar: React.FC<B2BPortalSidebarProps> = ({
   
   const authorizedLeads = user ? db.getLeadsAuthorized(user) : [];
   const leadsCount = authorizedLeads.length;
+  const wishlistCount = user ? db.getWishlistItems(user.id).length : 0;
 
   const allTasks = db.getB2BTasks(user?.id);
   const pendingTasksCount = allTasks.filter(t => t.status !== 'COMPLETED').length;
@@ -180,7 +182,8 @@ export const B2BPortalSidebar: React.FC<B2BPortalSidebarProps> = ({
             { id: 'ground_connectivity', label: 'Ground & Connectivity', subCategory: 'GROUND', icon: Sparkles }
           ]
         },
-        { id: 'packages', label: 'Tour Packages', icon: Layers, count: packagesCount }
+        { id: 'packages', label: 'Tour Packages', icon: Layers, count: packagesCount },
+        { id: 'wishlist', label: 'Wishlist', icon: Heart, count: wishlistCount }
       ]
     },
     {
