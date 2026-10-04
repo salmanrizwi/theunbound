@@ -120,8 +120,46 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
       if (target) {
         setSelectedLead(target);
       }
+    } else if (!initialLeadId && typeof window !== 'undefined' && leads.length > 0) {
+      const searchParams = new URLSearchParams(window.location.search);
+      const urlId = searchParams.get('id') || window.location.pathname.split('/admin/leads/')[1];
+      if (urlId) {
+        const clean = urlId.replace(/^#/, '').trim().toLowerCase();
+        const target = leads.find(l => 
+          l.id === urlId || 
+          l.leadNumber === urlId ||
+          (l.id || '').toLowerCase() === clean ||
+          l.leadNumber?.toLowerCase() === clean
+        );
+        if (target) setSelectedLead(target);
+      }
     }
   }, [initialLeadId, leads]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      if (typeof window !== 'undefined') {
+        const searchParams = new URLSearchParams(window.location.search);
+        const urlId = searchParams.get('id') || window.location.pathname.split('/admin/leads/')[1];
+        if (urlId && leads.length > 0) {
+          const clean = urlId.replace(/^#/, '').trim().toLowerCase();
+          const target = leads.find(l => 
+            l.id === urlId || 
+            l.leadNumber === urlId ||
+            (l.id || '').toLowerCase() === clean ||
+            l.leadNumber?.toLowerCase() === clean
+          );
+          if (target) {
+            setSelectedLead(target);
+            return;
+          }
+        }
+        setSelectedLead(null);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [leads]);
 
   // Lead metrics calculations
   const totalLeads = leads.length;
@@ -267,6 +305,17 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
 
   const handleOpenDetail = (lead: TravelLead) => {
     setSelectedLead(lead);
+    if (typeof window !== 'undefined') {
+      const targetUrl = `/admin/leads?id=${lead.id}`;
+      window.history.pushState({ leadId: lead.id }, '', targetUrl);
+    }
+  };
+
+  const handleCloseDetail = () => {
+    setSelectedLead(null);
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', '/admin/leads');
+    }
   };
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
@@ -321,6 +370,43 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
     setOwnershipFilter('all');
     setSearchQuery('');
   };
+
+  // If a Lead is selected, render full-page Lead Detail Workspace
+  if (selectedLead) {
+    return (
+      <div className="space-y-6 w-full min-w-0">
+        <LeadDetailDrawer
+          lead={selectedLead}
+          onClose={handleCloseDetail}
+          onUpdateLead={updatedLead => {
+            setSelectedLead(updatedLead);
+            setLeads(db.getLeadsAuthorized(user));
+          }}
+          onOpenBooking={onOpenBooking}
+          onOpenQuote={onOpenQuote}
+          onOpenEdit={leadToEdit => handleOpenEdit(leadToEdit)}
+        />
+
+        {/* Edit / Add Modal */}
+        {isEditModalOpen && (
+          <LeadEditModal
+            lead={editingLead}
+            isOpen={isEditModalOpen}
+            onClose={() => {
+              setIsEditModalOpen(false);
+              setEditingLead(null);
+            }}
+            onSaved={savedLead => {
+              setLeads(db.getLeadsAuthorized(user));
+              if (selectedLead && (savedLead.id === selectedLead.id || savedLead.leadNumber === selectedLead.leadNumber)) {
+                setSelectedLead(savedLead);
+              }
+            }}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 w-full max-w-[1920px] mx-auto min-w-0 pb-12">
@@ -1178,20 +1264,6 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
             </div>
           )}
         </div>
-      )}
-
-      {/* Detail Drawer */}
-      {selectedLead && (
-        <LeadDetailDrawer
-          lead={selectedLead}
-          onClose={() => setSelectedLead(null)}
-          onUpdateLead={updatedLead => {
-            setSelectedLead(updatedLead);
-            setLeads(db.getLeadsAuthorized(user));
-          }}
-          onOpenBooking={onOpenBooking}
-          onOpenQuote={onOpenQuote}
-        />
       )}
 
       {/* Edit / Add Modal */}

@@ -55,7 +55,10 @@ import {
   CreditCard,
   ArrowUpRight,
   Eye,
-  FileCheck
+  FileCheck,
+  ArrowLeft,
+  Edit,
+  Edit3
 } from 'lucide-react';
 import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
 import { LeadTasksSection } from './tasks/LeadTasksSection';
@@ -68,6 +71,8 @@ interface LeadDetailDrawerProps {
   onNavigateToTasks?: () => void;
   onOpenBooking?: (bookingId: string) => void;
   onOpenQuote?: (quoteId: string, options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly'; leadId?: string }) => void;
+  onOpenEdit?: (lead: TravelLead) => void;
+  onCreateQuoteForLead?: (lead: TravelLead) => void;
 }
 
 export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
@@ -76,7 +81,9 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   onUpdateLead,
   onNavigateToTasks,
   onOpenBooking,
-  onOpenQuote
+  onOpenQuote,
+  onOpenEdit,
+  onCreateQuoteForLead
 }) => {
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
@@ -336,130 +343,158 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden bg-slate-950/60 backdrop-blur-xs flex justify-end animate-in fade-in duration-200">
-      <div 
-        id={`lead-drawer-${lead.id}`}
-        className="w-full max-w-4xl bg-white h-full shadow-2xl flex flex-col overflow-hidden border-l border-slate-200"
-      >
-        {/* Top Header */}
-        <div className="p-4 sm:p-6 bg-slate-900 text-white flex flex-col gap-3.5 sm:gap-4 border-b border-slate-800 shrink-0">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="font-mono text-xs font-bold bg-white/10 text-[#00C6A6] px-2.5 py-1 rounded-md">
-                {lead.leadNumber}
-              </span>
-              <RecordReminderIndicator
-                entityType="LEAD"
-                entityId={lead.id}
-                entityReference={lead.leadNumber}
-                currentUser={user}
-                variant="header"
-              />
-              <span className={`text-xs font-bold px-3 py-1 rounded-full border ${getStatusBadge(lead.status)}`}>
+    <div id={`lead-workspace-${lead.id}`} className="w-full min-w-0 bg-[#F8FAFA] space-y-6 pb-12 animate-in fade-in duration-200">
+      {/* Top Breadcrumb & Header Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            id="lead-detail-back-btn"
+            onClick={onClose}
+            className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+          >
+            <ArrowLeft className="w-4 h-4 text-slate-600" />
+            <span>Back to Leads</span>
+          </button>
+          <span className="text-slate-300 font-bold">/</span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs font-bold bg-teal-50 text-[#008f77] px-2.5 py-1 rounded-lg border border-teal-200/80">
+              #{lead.leadNumber}
+            </span>
+            <span className="text-base font-black text-slate-900">{lead.contactName}</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <RecordReminderIndicator
+            entityType="LEAD"
+            entityId={lead.id}
+            entityReference={lead.leadNumber}
+            currentUser={user}
+            variant="header"
+          />
+          {onOpenEdit && (
+            <button
+              type="button"
+              onClick={() => onOpenEdit(lead)}
+              className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 border border-slate-200"
+            >
+              <Edit3 className="w-3.5 h-3.5 text-slate-600" />
+              <span>Edit Lead</span>
+            </button>
+          )}
+          {onCreateQuoteForLead && (
+            <button
+              type="button"
+              onClick={() => onCreateQuoteForLead(lead)}
+              className="px-3.5 py-1.5 rounded-xl bg-[#008f77] hover:bg-[#00705d] text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Create Quotation</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Main Lead Record Header */}
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+          <div>
+            <div className="flex flex-wrap items-center gap-2.5 mb-1.5">
+              <h1 className="text-2xl font-black text-slate-900 tracking-tight">{lead.contactName}</h1>
+              <span className={`text-xs font-extrabold px-3 py-1 rounded-full border ${getStatusBadge(lead.status)}`}>
                 {(lead.status || 'NEW').replace(/_/g, ' ')}
               </span>
               {getPriorityBadge(lead.priority)}
             </div>
 
-            <button
-              id="lead-drawer-close-btn"
-              onClick={onClose}
-              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h2 className="text-2xl font-bold text-white tracking-tight">{lead.contactName}</h2>
-              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300 mt-1">
-                {lead.agencyName && (
-                  <span className="flex items-center gap-1 text-[#00C6A6] font-semibold">
-                    <Building className="w-3.5 h-3.5" />
-                    {lead.agencyName}
-                  </span>
-                )}
-                <span className="flex items-center gap-1">
-                  <Mail className="w-3.5 h-3.5 text-slate-400" />
-                  {lead.email}
+            <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
+              {lead.agencyName && (
+                <span className="flex items-center gap-1 text-[#008f77] font-bold">
+                  <Building className="w-3.5 h-3.5" />
+                  {lead.agencyName}
                 </span>
-                {lead.phone && (
-                  <span className="flex items-center gap-1">
-                    <Phone className="w-3.5 h-3.5 text-slate-400" />
-                    {lead.phone}
-                  </span>
-                )}
-                {lead.country && (
-                  <span className="flex items-center gap-1">
-                    <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                    {lead.country}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Quick Action Controls */}
-            <div className="flex items-center gap-2">
-              <div className="flex flex-col">
-                <span className="text-[10px] text-slate-400 uppercase font-semibold">Status</span>
-                <select
-                  id="lead-status-quick-select"
-                  value={lead.status}
-                  onChange={e => handleStatusChange(e.target.value as LeadStatus)}
-                  className="bg-slate-800 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700 focus:outline-none focus:border-[#00C6A6]"
-                >
-                  <option value="NEW">New</option>
-                  <option value="CONTACTED">Contacted</option>
-                  <option value="PROPOSAL_SAVED">Proposal Saved</option>
-                  <option value="QUOTE_DOWNLOADED">Quote Downloaded</option>
-                  <option value="QUALIFIED">Qualified</option>
-                  <option value="QUOTED">Quoted</option>
-                  <option value="BOOKING_SUBMITTED">Booking Submitted</option>
-                  <option value="WON">Won (Converted)</option>
-                  <option value="LOST">Lost</option>
-                </select>
-              </div>
-
-              <div className="flex flex-col">
-                <span className="text-[10px] text-slate-400 uppercase font-semibold">Priority</span>
-                <select
-                  id="lead-priority-quick-select"
-                  value={lead.priority || 'NORMAL'}
-                  onChange={e => handlePriorityChange(e.target.value as LeadPriority)}
-                  className="bg-slate-800 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700 focus:outline-none focus:border-[#00C6A6]"
-                >
-                  <option value="LOW">Low</option>
-                  <option value="NORMAL">Normal</option>
-                  <option value="HIGH">High</option>
-                  <option value="URGENT">Urgent SLA</option>
-                </select>
-              </div>
+              )}
+              <span className="flex items-center gap-1">
+                <Mail className="w-3.5 h-3.5 text-slate-400" />
+                {lead.email}
+              </span>
+              {lead.phone && (
+                <span className="flex items-center gap-1">
+                  <Phone className="w-3.5 h-3.5 text-slate-400" />
+                  {lead.phone}
+                </span>
+              )}
+              {lead.country && (
+                <span className="flex items-center gap-1">
+                  <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                  {lead.country}
+                </span>
+              )}
             </div>
           </div>
 
-          {/* Quick Metrics Ribbon */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-slate-800/80 text-xs">
-            <div className="bg-slate-800/60 p-2 rounded-lg">
-              <span className="text-slate-400 block text-[10px] uppercase font-semibold">Destination</span>
-              <span className="font-bold text-white">{lead.destinationName}</span>
+          {/* Quick Header Selectors */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-col">
+              <span className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Stage / Status</span>
+              <select
+                id="lead-status-quick-select"
+                value={lead.status}
+                onChange={e => handleStatusChange(e.target.value as LeadStatus)}
+                className="bg-slate-50 text-slate-900 text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#008f77]"
+              >
+                <option value="NEW">New</option>
+                <option value="CONTACTED">Contacted</option>
+                <option value="PROPOSAL_SAVED">Proposal Saved</option>
+                <option value="QUOTE_DOWNLOADED">Quote Downloaded</option>
+                <option value="QUALIFIED">Qualified</option>
+                <option value="QUOTED">Quoted</option>
+                <option value="BOOKING_SUBMITTED">Booking Submitted</option>
+                <option value="WON">Won (Converted)</option>
+                <option value="LOST">Lost</option>
+              </select>
             </div>
-            <div className="bg-slate-800/60 p-2 rounded-lg">
-              <span className="text-slate-400 block text-[10px] uppercase font-semibold">Est. Value</span>
-              <span className="font-bold text-[#00C6A6]">
-                {lead.currency || 'USD'} {(Number(lead.estimatedBudget || lead.bookingValue || 0)).toLocaleString()}
-              </span>
-            </div>
-            <div className="bg-slate-800/60 p-2 rounded-lg">
-              <span className="text-slate-400 block text-[10px] uppercase font-semibold">Travel Dates</span>
-              <span className="font-bold text-white truncate block">{lead.travelDates || 'Flexible 2026'}</span>
-            </div>
-            <div className="bg-slate-800/60 p-2 rounded-lg">
-              <span className="text-slate-400 block text-[10px] uppercase font-semibold">Lead Source</span>
-              <span className="font-bold text-amber-300 truncate block">{lead.source}</span>
+
+            <div className="flex flex-col">
+              <span className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Priority</span>
+              <select
+                id="lead-priority-quick-select"
+                value={lead.priority || 'NORMAL'}
+                onChange={e => handlePriorityChange(e.target.value as LeadPriority)}
+                className="bg-slate-50 text-slate-900 text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#008f77]"
+              >
+                <option value="LOW">Low</option>
+                <option value="NORMAL">Normal</option>
+                <option value="HIGH">High</option>
+                <option value="URGENT">Urgent SLA</option>
+              </select>
             </div>
           </div>
         </div>
+
+        {/* Quick Metrics Ribbon */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+            <span className="text-[10px] font-bold uppercase text-slate-400 block">Primary Destination</span>
+            <span className="font-bold text-slate-900 text-sm mt-0.5 block">{lead.destinationName}</span>
+          </div>
+          <div className="p-3 rounded-xl bg-teal-50/60 border border-teal-200/60">
+            <span className="text-[10px] font-bold uppercase text-teal-800 block">Estimated Deal Value</span>
+            <span className="font-extrabold text-[#008f77] text-base mt-0.5 block">
+              {lead.currency || 'USD'} {(Number(lead.estimatedBudget || lead.bookingValue || 0)).toLocaleString()}
+            </span>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+            <span className="text-[10px] font-bold uppercase text-slate-400 block">Travel Schedule</span>
+            <span className="font-bold text-slate-900 truncate block mt-0.5">{lead.travelDates || 'Flexible 2026'}</span>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+            <span className="text-[10px] font-bold uppercase text-slate-400 block">Lead Source</span>
+            <span className="font-bold text-amber-700 truncate block mt-0.5">{lead.source}</span>
+          </div>
+        </div>
+      </div>
 
         {/* Navigation Tabs */}
         <div className="bg-slate-100 px-3 sm:px-6 py-2 border-b border-slate-200 flex items-center gap-1.5 sm:gap-2 overflow-x-auto shrink-0 scrollbar-none">
@@ -1333,7 +1368,6 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
             </div>
           )}
         </div>
-      </div>
 
       {/* Voucher Document Preview Modal */}
       {previewVoucher && (
@@ -1358,3 +1392,5 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
     </div>
   );
 };
+
+export const LeadDetailView = LeadDetailDrawer;
