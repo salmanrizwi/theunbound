@@ -155,18 +155,18 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
     <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
       <div className="bg-white rounded-2xl sm:rounded-3xl max-w-3xl w-full max-h-[94dvh] sm:max-h-[90vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in zoom-in-95 duration-150">
         {/* Modal Header */}
-        <div className="p-4 sm:p-6 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
+        <div className="p-4 sm:p-6 bg-white text-slate-800 flex items-center justify-between border-b border-slate-100 shrink-0">
           <div>
-            <span className="text-[#00C6A6] text-[10px] sm:text-xs font-bold uppercase tracking-wider block">
+            <span className="text-[#008972] text-[10px] sm:text-xs font-bold uppercase tracking-wider block">
               Lead Management CRM
             </span>
-            <h2 className="text-base sm:text-xl font-bold text-white">
+            <h2 className="text-base sm:text-xl font-bold text-slate-900">
               {formData.id && formData.contactName ? `Edit Lead: ${formData.contactName}` : 'Capture New Travel Lead'}
             </h2>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 sm:p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>

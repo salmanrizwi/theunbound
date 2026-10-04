@@ -71,7 +71,7 @@ export const SupplierNettInput: React.FC<SupplierNettInputProps> = ({
   value,
   placeholder = 'Nett Cost',
   id,
-  className = "p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-28 text-right text-xs focus:outline-none focus:border-[#00C6A6]",
+  className = "p-1.5 bg-white border border-slate-200 rounded-lg font-mono font-bold text-[#008972] w-28 text-right text-xs focus:outline-none focus:border-[#00C6A6] focus:ring-1 focus:ring-[#00C6A6]",
   onChange
 }) => {
   const [buffer, setBuffer] = useState<string>(() => (isSafeNumber(value) ? String(value) : ''));
@@ -145,7 +145,7 @@ interface DecimalInputProps {
 export const DecimalInput: React.FC<DecimalInputProps> = ({
   value,
   placeholder = '',
-  className = "p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono text-white text-xs w-14 text-right focus:outline-none focus:border-[#00C6A6]",
+  className = "p-1.5 bg-white border border-slate-200 rounded-lg font-mono text-slate-800 text-xs w-14 text-right focus:outline-none focus:border-[#00C6A6] focus:ring-1 focus:ring-[#00C6A6]",
   onChange
 }) => {
   const [buffer, setBuffer] = useState<string>(() => (isSafeNumber(value) ? String(value) : ''));
@@ -792,31 +792,31 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
   // --------------------------------------------------------------------------
   if (pricingMode === 'restaurant') {
     return (
-      <div className="space-y-6 bg-slate-900 text-slate-200 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+      <div className="space-y-6 bg-white text-slate-800 border border-slate-200/90 rounded-2xl p-6 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
           <div>
-            <div className="flex items-center space-x-2 text-xs font-black text-[#00C6A6] uppercase tracking-wider mb-1">
+            <div className="flex items-center space-x-2 text-xs font-black text-[#008972] uppercase tracking-wider mb-1">
               <Utensils className="w-4 h-4 shrink-0" />
               <span>MEAL & PASSENGER PRICING ENGINE</span>
-              <span className="bg-rose-500/10 border border-rose-500/30 text-rose-300 font-extrabold px-2 py-0.5 rounded text-[10px] tracking-widest uppercase">
+              <span className="bg-rose-50 border border-rose-200 text-rose-700 font-extrabold px-2 py-0.5 rounded text-[10px] tracking-widest uppercase">
                 RESTAURANT
               </span>
             </div>
-            <h2 className="text-base font-black text-white">
+            <h2 className="text-base font-black text-slate-900">
               Restaurant Meal Regimes & Passenger Tariffs
             </h2>
-            <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+            <p className="text-xs text-slate-500 mt-1 max-w-2xl">
               Configure independent Adult and Child pricing across Breakfast, Lunch, and Dinner. Adult and Child tariffs are never combined.
             </p>
           </div>
 
           <div className="flex items-center gap-3">
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Native Currency</label>
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Native Currency</label>
               <select
                 value={currency}
                 onChange={(e) => onCurrencyChange(e.target.value as CurrencyCode)}
-                className="p-2 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-[#00E5C0] focus:outline-none focus:border-[#00C6A6]"
+                className="p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-[#00C6A6]"
               >
                 <option value="JPY">JPY (¥)</option>
                 <option value="USD">USD ($)</option>
@@ -831,9 +831,9 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
         </div>
 
         {/* Global Commercial Margins */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5 bg-slate-950/60 p-4 rounded-xl border border-slate-800 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5 bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 text-xs">
           <div>
-            <label className="text-[10px] text-[#00E5C0] font-bold uppercase tracking-wider block">B2B Margin (%)</label>
+            <label className="text-[10px] text-[#008972] font-bold uppercase tracking-wider block">B2B Margin (%)</label>
             <input
               type="number"
               min="0"
@@ -843,53 +843,53 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                 onB2bAgentMarginChange(val);
                 if (onBuyerMarginChange) onBuyerMarginChange(val);
               }}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Tax / VAT (%)</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Tax / VAT (%)</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(taxPercent)}
               onChange={(e) => onTaxPercentChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-medium text-slate-700 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Service Fee ({currency})</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Service Fee ({currency})</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(serviceFeeFixed)}
               onChange={(e) => onServiceFeeFixedChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-medium text-slate-700 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
         </div>
 
         {/* Meal-Specific Pricing Table */}
-        <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/90 shadow-2xs">
+        <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-bold uppercase text-[9px] tracking-wider">
+              <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[9px] tracking-wider">
                 <th className="p-3.5">Meal Regime</th>
                 <th className="p-3.5">Adult Nett Cost ({currency}) *</th>
-                <th className="p-3.5 text-emerald-400">Adult Final Price</th>
+                <th className="p-3.5 text-[#008972]">Adult Final Price</th>
                 <th className="p-3.5">Child Nett Cost ({currency}) *</th>
-                <th className="p-3.5 text-emerald-400">Child Final Price</th>
+                <th className="p-3.5 text-[#008972]">Child Final Price</th>
                 <th className="p-3.5 text-center">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-slate-100">
               {currentMealPricing.map((item) => {
                 const adultFinal = calcSellingPrice(item.adultNettPrice, buyerMarginPercent);
                 const childFinal = calcSellingPrice(item.childNettPrice, buyerMarginPercent);
 
                 return (
-                  <tr key={item.meal} className="hover:bg-slate-900/60 transition-colors">
-                    <td className="p-3.5 font-bold text-white flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-rose-400" />
+                  <tr key={item.meal} className="hover:bg-slate-50/60 transition-colors">
+                    <td className="p-3.5 font-bold text-slate-900 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-rose-500" />
                       <span>{item.meal}</span>
                     </td>
                     <td className="p-3.5">
@@ -898,10 +898,10 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         min="0"
                         value={safeNumVal(item.adultNettPrice)}
                         onChange={(e) => handleUpdateMealPrice(item.meal, 'adultNettPrice', Number(e.target.value))}
-                        className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
+                        className="p-1.5 bg-white border border-slate-200 rounded-lg font-mono font-bold text-[#008972] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
                       />
                     </td>
-                    <td className="p-3.5 font-mono font-black text-emerald-400">
+                    <td className="p-3.5 font-mono font-black text-[#008972]">
                       {formatCurrency(adultFinal, currency)}
                     </td>
                     <td className="p-3.5">
@@ -910,14 +910,14 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         min="0"
                         value={safeNumVal(item.childNettPrice)}
                         onChange={(e) => handleUpdateMealPrice(item.meal, 'childNettPrice', Number(e.target.value))}
-                        className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
+                        className="p-1.5 bg-white border border-slate-200 rounded-lg font-mono font-bold text-[#008972] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
                       />
                     </td>
-                    <td className="p-3.5 font-mono font-black text-emerald-400">
+                    <td className="p-3.5 font-mono font-black text-[#008972]">
                       {formatCurrency(childFinal, currency)}
                     </td>
                     <td className="p-3.5 text-center">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-500/10 text-teal-400 border border-teal-500/20">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-[#008972] border border-teal-200">
                         Active
                       </span>
                     </td>
@@ -936,20 +936,20 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
   // --------------------------------------------------------------------------
   if (pricingMode === 'ticket') {
     return (
-      <div className="space-y-6 bg-slate-900 text-slate-200 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+      <div className="space-y-6 bg-white text-slate-800 border border-slate-200/90 rounded-2xl p-6 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
           <div>
-            <div className="flex items-center space-x-2 text-xs font-black text-[#00C6A6] uppercase tracking-wider mb-1">
+            <div className="flex items-center space-x-2 text-xs font-black text-[#008972] uppercase tracking-wider mb-1">
               <TicketIcon className="w-4 h-4 shrink-0" />
               <span>PER-PERSON TICKET PRICING ENGINE</span>
-              <span className="bg-purple-500/10 border border-purple-500/30 text-purple-300 font-extrabold px-2 py-0.5 rounded text-[10px] tracking-widest uppercase">
+              <span className="bg-purple-50 border border-purple-200 text-purple-700 font-extrabold px-2 py-0.5 rounded text-[10px] tracking-widest uppercase">
                 TICKETS
               </span>
             </div>
-            <h2 className="text-base font-black text-white">
+            <h2 className="text-base font-black text-slate-900">
               Ticket Tier Structure & Passenger Classifications
             </h2>
-            <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+            <p className="text-xs text-slate-500 mt-1 max-w-2xl">
               Configure Ticket Types (Standard Admission, VIP, Timed Entry) with distinct Adult, Child, and Infant rates.
             </p>
           </div>
@@ -958,7 +958,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <button
               type="button"
               onClick={handleAddTicketTier}
-              className="text-xs font-black text-[#00E5C0] hover:text-[#00C6A6] transition-colors flex items-center gap-1 cursor-pointer bg-teal-500/10 border border-teal-500/20 px-3 py-1.5 rounded-xl"
+              className="text-xs font-black text-[#008972] hover:text-[#00C6A6] transition-colors flex items-center gap-1 cursor-pointer bg-teal-50 border border-teal-200 px-3 py-1.5 rounded-xl shadow-2xs"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Add Ticket Tier</span>
@@ -967,76 +967,76 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
         </div>
 
         {/* Global Commercial Margins */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 bg-slate-950/60 p-4 rounded-xl border border-slate-800 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 text-xs">
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Buyer Margin (%)</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Buyer Margin (%)</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(buyerMarginPercent)}
               onChange={(e) => onBuyerMarginChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">B2B Agent Margin (%)</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">B2B Agent Margin (%)</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(b2bAgentMarginPercent)}
               onChange={(e) => onB2bAgentMarginChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Tax / VAT (%)</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Tax / VAT (%)</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(taxPercent)}
               onChange={(e) => onTaxPercentChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-medium text-slate-700 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Service Fee ({currency})</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Service Fee ({currency})</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(serviceFeeFixed)}
               onChange={(e) => onServiceFeeFixedChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-medium text-slate-700 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
         </div>
 
         {/* Ticket Tiers Editor Table */}
-        <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/90 shadow-2xs">
+        <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-bold uppercase text-[9px] tracking-wider">
+              <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[9px] tracking-wider">
                 <th className="p-3.5">Ticket Tier Name</th>
                 <th className="p-3.5">Adult Nett ({currency}) *</th>
-                <th className="p-3.5 text-emerald-400">Adult Final</th>
+                <th className="p-3.5 text-[#008972]">Adult Final</th>
                 <th className="p-3.5">Child Nett ({currency})</th>
-                <th className="p-3.5 text-emerald-400">Child Final</th>
+                <th className="p-3.5 text-[#008972]">Child Final</th>
                 <th className="p-3.5">Infant Nett ({currency})</th>
                 <th className="p-3.5 text-center">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-slate-100">
               {ticketTiers.map((tier, idx) => {
                 const adultFinal = calcSellingPrice(tier.adultNetPrice, buyerMarginPercent);
                 const childFinal = calcSellingPrice(tier.childNetPrice || 0, buyerMarginPercent);
 
                 return (
-                  <tr key={tier.id} className="hover:bg-slate-900/60 transition-colors">
+                  <tr key={tier.id} className="hover:bg-slate-50/60 transition-colors">
                     <td className="p-3.5">
                       <input
                         type="text"
                         value={tier.name || ''}
                         onChange={(e) => handleUpdateTicketTier(idx, 'name', e.target.value)}
-                        className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white w-44 text-xs focus:outline-none focus:border-[#00C6A6]"
+                        className="p-1.5 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 w-44 text-xs focus:outline-none focus:border-[#00C6A6]"
                       />
                     </td>
                     <td className="p-3.5">
@@ -1045,10 +1045,10 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         min="0"
                         value={safeNumVal(tier.adultNetPrice)}
                         onChange={(e) => handleUpdateTicketTier(idx, 'adultNetPrice', Number(e.target.value))}
-                        className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-28 text-xs focus:outline-none focus:border-[#00C6A6]"
+                        className="p-1.5 bg-white border border-slate-200 rounded-lg font-mono font-bold text-[#008972] w-28 text-xs focus:outline-none focus:border-[#00C6A6]"
                       />
                     </td>
-                    <td className="p-3.5 font-mono font-black text-emerald-400">
+                    <td className="p-3.5 font-mono font-black text-[#008972]">
                       {formatCurrency(adultFinal, currency)}
                     </td>
                     <td className="p-3.5">
@@ -1057,10 +1057,10 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         min="0"
                         value={safeNumVal(tier.childNetPrice)}
                         onChange={(e) => handleUpdateTicketTier(idx, 'childNetPrice', Number(e.target.value))}
-                        className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-28 text-xs focus:outline-none focus:border-[#00C6A6]"
+                        className="p-1.5 bg-white border border-slate-200 rounded-lg font-mono font-bold text-[#008972] w-28 text-xs focus:outline-none focus:border-[#00C6A6]"
                       />
                     </td>
-                    <td className="p-3.5 font-mono font-black text-emerald-400">
+                    <td className="p-3.5 font-mono font-black text-[#008972]">
                       {formatCurrency(childFinal, currency)}
                     </td>
                     <td className="p-3.5">
@@ -1069,7 +1069,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         min="0"
                         value={safeNumVal(tier.infantNetPrice)}
                         onChange={(e) => handleUpdateTicketTier(idx, 'infantNetPrice', Number(e.target.value))}
-                        className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-24 text-xs focus:outline-none focus:border-[#00C6A6]"
+                        className="p-1.5 bg-white border border-slate-200 rounded-lg font-mono font-bold text-[#008972] w-24 text-xs focus:outline-none focus:border-[#00C6A6]"
                       />
                     </td>
                     <td className="p-3.5 text-center">
@@ -1077,7 +1077,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         type="button"
                         onClick={() => handleRemoveTicketTier(idx)}
                         disabled={ticketTiers.length === 1}
-                        className="text-slate-500 hover:text-red-400 transition-colors p-1.5 cursor-pointer disabled:opacity-30"
+                        className="text-slate-400 hover:text-red-500 transition-colors p-1.5 cursor-pointer disabled:opacity-30"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -1102,31 +1102,31 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
     const hourlyAgentSelling = calcSellingPrice(hourlyNet, b2bAgentMarginPercent);
 
     return (
-      <div className="space-y-6 bg-slate-900 text-slate-200 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+      <div className="space-y-6 bg-white text-slate-800 border border-slate-200/90 rounded-2xl p-6 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
           <div>
-            <div className="flex items-center space-x-2 text-xs font-black text-[#00C6A6] uppercase tracking-wider mb-1">
+            <div className="flex items-center space-x-2 text-xs font-black text-[#008972] uppercase tracking-wider mb-1">
               <Clock className="w-4 h-4 shrink-0" />
               <span>PER-HOUR GUIDE PRICING ENGINE</span>
-              <span className="bg-amber-500/10 border border-amber-500/30 text-amber-300 font-extrabold px-2 py-0.5 rounded text-[10px] tracking-widest uppercase">
+              <span className="bg-amber-50 border border-amber-200 text-amber-700 font-extrabold px-2 py-0.5 rounded text-[10px] tracking-widest uppercase">
                 HOURLY
               </span>
             </div>
-            <h2 className="text-base font-black text-white">
+            <h2 className="text-base font-black text-slate-900">
               Professional Guide Tariff & Minimum Hours Commitment
             </h2>
-            <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+            <p className="text-xs text-slate-500 mt-1 max-w-2xl">
               Configure base hourly supplier costs and minimum hours. Multi-hour bookings calculate directly as Hourly Final Price × Hours.
             </p>
           </div>
 
           <div className="flex items-center gap-3">
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Native Currency</label>
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Native Currency</label>
               <select
                 value={currency}
                 onChange={(e) => onCurrencyChange(e.target.value as CurrencyCode)}
-                className="p-2 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-[#00E5C0] focus:outline-none focus:border-[#00C6A6]"
+                className="p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-[#00C6A6]"
               >
                 <option value="JPY">JPY (¥)</option>
                 <option value="USD">USD ($)</option>
@@ -1139,53 +1139,53 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
         </div>
 
         {/* Global Commercial Margins */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 bg-slate-950/60 p-4 rounded-xl border border-slate-800 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 text-xs">
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Buyer Margin (%)</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Buyer Margin (%)</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(buyerMarginPercent)}
               onChange={(e) => onBuyerMarginChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">B2B Agent Margin (%)</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">B2B Agent Margin (%)</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(b2bAgentMarginPercent)}
               onChange={(e) => onB2bAgentMarginChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Tax / VAT (%)</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Tax / VAT (%)</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(taxPercent)}
               onChange={(e) => onTaxPercentChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-medium text-slate-700 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Service Fee ({currency})</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Service Fee ({currency})</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(serviceFeeFixed)}
               onChange={(e) => onServiceFeeFixedChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-medium text-slate-700 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
         </div>
 
         {/* Hourly Inputs */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950/60 p-4 rounded-xl border border-slate-800">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50/80 p-4 rounded-xl border border-slate-200/80">
           <div className="space-y-1">
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
               Base Hourly Nett Cost ({currency}) *
             </label>
             <input
@@ -1197,12 +1197,12 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                 if (onHourlyNetPriceChange) onHourlyNetPriceChange(val);
                 if (onAdultNetPriceChange) onAdultNetPriceChange(val);
               }}
-              className="w-full p-2 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full p-2 bg-white border border-slate-200 rounded-lg font-mono font-bold text-[#008972] text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
 
           <div className="space-y-1">
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
               Minimum Commitment (Hours) *
             </label>
             <input
@@ -1211,24 +1211,24 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
               max="12"
               value={effectiveMinHours}
               onChange={(e) => onMinHoursChange && onMinHoursChange(Number(e.target.value))}
-              className="w-full p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full p-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
         </div>
 
         {/* Multi-hour Pricing Simulation Table */}
-        <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/90 shadow-2xs">
+        <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-bold uppercase text-[9px] tracking-wider">
+              <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[9px] tracking-wider">
                 <th className="p-3.5">Duration</th>
                 <th className="p-3.5">Supplier Nett Cost</th>
-                <th className="p-3.5 text-emerald-400">Buyer Final Selling Price</th>
-                <th className="p-3.5 text-teal-300">B2B Agent Final Price</th>
+                <th className="p-3.5 text-[#008972]">Buyer Final Selling Price</th>
+                <th className="p-3.5 text-[#008972]">B2B Agent Final Price</th>
                 <th className="p-3.5 text-center">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-slate-100">
               {[1, 2, 4, 6, 8].map((hrs) => {
                 const billable = Math.max(effectiveMinHours, hrs);
                 const net = billable * hourlyNet;
@@ -1236,21 +1236,21 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                 const agentPrice = calcSellingPrice(net, b2bAgentMarginPercent);
 
                 return (
-                  <tr key={hrs} className="hover:bg-slate-900/60 transition-colors">
-                    <td className="p-3.5 font-bold text-white">
-                      {hrs} Hour{hrs > 1 ? 's' : ''} Service {hrs < effectiveMinHours && <span className="text-[10px] text-amber-400 italic">({effectiveMinHours}h minimum applies)</span>}
+                  <tr key={hrs} className="hover:bg-slate-50/60 transition-colors">
+                    <td className="p-3.5 font-bold text-slate-900">
+                      {hrs} Hour{hrs > 1 ? 's' : ''} Service {hrs < effectiveMinHours && <span className="text-[10px] text-amber-600 italic font-normal">({effectiveMinHours}h minimum applies)</span>}
                     </td>
-                    <td className="p-3.5 font-mono font-bold text-slate-300">
+                    <td className="p-3.5 font-mono font-bold text-slate-600">
                       {formatCurrency(net, currency)}
                     </td>
-                    <td className="p-3.5 font-mono font-black text-emerald-400">
+                    <td className="p-3.5 font-mono font-black text-[#008972]">
                       {formatCurrency(buyerPrice, currency)}
                     </td>
-                    <td className="p-3.5 font-mono font-bold text-teal-300">
+                    <td className="p-3.5 font-mono font-bold text-[#008972]">
                       {formatCurrency(agentPrice, currency)}
                     </td>
                     <td className="p-3.5 text-center">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-500/10 text-teal-400 border border-teal-500/20">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-[#008972] border border-teal-200">
                         {hrs >= effectiveMinHours ? 'Standard' : 'Min Billed'}
                       </span>
                     </td>
@@ -1273,31 +1273,31 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
     const infantSelling = calcSellingPrice(infantNetPrice, buyerMarginPercent);
 
     return (
-      <div className="space-y-6 bg-slate-900 text-slate-200 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+      <div className="space-y-6 bg-white text-slate-800 border border-slate-200/90 rounded-2xl p-6 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
           <div>
-            <div className="flex items-center space-x-2 text-xs font-black text-[#00C6A6] uppercase tracking-wider mb-1">
+            <div className="flex items-center space-x-2 text-xs font-black text-[#008972] uppercase tracking-wider mb-1">
               <Users className="w-4 h-4 shrink-0" />
               <span>PER-PERSON PASSENGER PRICING ENGINE</span>
-              <span className="bg-blue-500/10 border border-blue-500/30 text-blue-300 font-extrabold px-2 py-0.5 rounded text-[10px] tracking-widest uppercase">
+              <span className="bg-blue-50 border border-blue-200 text-blue-700 font-extrabold px-2 py-0.5 rounded text-[10px] tracking-widest uppercase">
                 GROUP TOUR
               </span>
             </div>
-            <h2 className="text-base font-black text-white">
+            <h2 className="text-base font-black text-slate-900">
               Group Tour Passenger Classifications & Net Tariffs
             </h2>
-            <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+            <p className="text-xs text-slate-500 mt-1 max-w-2xl">
               Configure baseline wholesale supplier costs and commercial markups across Adult, Child, and Infant classifications.
             </p>
           </div>
 
           <div className="flex items-center gap-3">
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Native Currency</label>
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Native Currency</label>
               <select
                 value={currency}
                 onChange={(e) => onCurrencyChange(e.target.value as CurrencyCode)}
-                className="p-2 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-[#00E5C0] focus:outline-none focus:border-[#00C6A6]"
+                className="p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-[#00C6A6]"
               >
                 <option value="JPY">JPY (¥)</option>
                 <option value="USD">USD ($)</option>
@@ -1312,114 +1312,114 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
         </div>
 
         {/* Commercial margins grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 bg-slate-950/60 p-4 rounded-xl border border-slate-800 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 text-xs">
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Buyer Margin (%)</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Buyer Margin (%)</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(buyerMarginPercent)}
               onChange={(e) => onBuyerMarginChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">B2B Agent Margin (%)</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">B2B Agent Margin (%)</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(b2bAgentMarginPercent)}
               onChange={(e) => onB2bAgentMarginChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Tax / VAT (%)</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Tax / VAT (%)</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(taxPercent)}
               onChange={(e) => onTaxPercentChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-medium text-slate-700 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Service Fee ({currency})</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Service Fee ({currency})</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(serviceFeeFixed)}
               onChange={(e) => onServiceFeeFixedChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-slate-900 border border-slate-700 rounded-lg font-medium text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-medium text-slate-700 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
           </div>
         </div>
 
         {/* Passenger classifications table */}
-        <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/90 shadow-2xs">
+        <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-bold uppercase text-[9px] tracking-wider">
+              <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[9px] tracking-wider">
                 <th className="p-3.5">Passenger Classification</th>
                 <th className="p-3.5">Wholesale Nett Cost ({currency}) *</th>
-                <th className="p-3.5 text-emerald-400">Buyer Final Selling Price</th>
-                <th className="p-3.5 text-teal-300">B2B Agent Price</th>
+                <th className="p-3.5 text-[#008972]">Buyer Final Selling Price</th>
+                <th className="p-3.5 text-[#008972]">B2B Agent Price</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
-              <tr className="hover:bg-slate-900/60 transition-colors">
-                <td className="p-3.5 font-bold text-white">Adult (12+ Yrs)</td>
+            <tbody className="divide-y divide-slate-100">
+              <tr className="hover:bg-slate-50/60 transition-colors">
+                <td className="p-3.5 font-bold text-slate-900">Adult (12+ Yrs)</td>
                 <td className="p-3.5">
                   <input
                     type="number"
                     min="0"
                     value={safeNumVal(adultNetPrice)}
                     onChange={(e) => onAdultNetPriceChange(Number(e.target.value))}
-                    className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
+                    className="p-1.5 bg-white border border-slate-200 rounded-lg font-mono font-bold text-[#008972] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
                   />
                 </td>
-                <td className="p-3.5 font-mono font-black text-emerald-400">
+                <td className="p-3.5 font-mono font-black text-[#008972]">
                   {formatCurrency(adultSelling, currency)}
                 </td>
-                <td className="p-3.5 font-mono font-bold text-teal-300">
+                <td className="p-3.5 font-mono font-bold text-[#008972]">
                   {formatCurrency(calcSellingPrice(adultNetPrice, b2bAgentMarginPercent), currency)}
                 </td>
               </tr>
 
-              <tr className="hover:bg-slate-900/60 transition-colors">
-                <td className="p-3.5 font-bold text-white">Child (2–11 Yrs)</td>
+              <tr className="hover:bg-slate-50/60 transition-colors">
+                <td className="p-3.5 font-bold text-slate-900">Child (2–11 Yrs)</td>
                 <td className="p-3.5">
                   <input
                     type="number"
                     min="0"
                     value={safeNumVal(childNetPrice)}
                     onChange={(e) => onChildNetPriceChange(Number(e.target.value))}
-                    className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
+                    className="p-1.5 bg-white border border-slate-200 rounded-lg font-mono font-bold text-[#008972] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
                   />
                 </td>
-                <td className="p-3.5 font-mono font-black text-emerald-400">
+                <td className="p-3.5 font-mono font-black text-[#008972]">
                   {formatCurrency(childSelling, currency)}
                 </td>
-                <td className="p-3.5 font-mono font-bold text-teal-300">
+                <td className="p-3.5 font-mono font-bold text-[#008972]">
                   {formatCurrency(calcSellingPrice(childNetPrice, b2bAgentMarginPercent), currency)}
                 </td>
               </tr>
 
-              <tr className="hover:bg-slate-900/60 transition-colors">
-                <td className="p-3.5 font-bold text-white">Infant (0–1 Yr)</td>
+              <tr className="hover:bg-slate-50/60 transition-colors">
+                <td className="p-3.5 font-bold text-slate-900">Infant (0–1 Yr)</td>
                 <td className="p-3.5">
                   <input
                     type="number"
                     min="0"
                     value={safeNumVal(infantNetPrice)}
                     onChange={(e) => onInfantNetPriceChange(Number(e.target.value))}
-                    className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono font-bold text-[#00E5C0] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
+                    className="p-1.5 bg-white border border-slate-200 rounded-lg font-mono font-bold text-[#008972] w-32 text-xs focus:outline-none focus:border-[#00C6A6]"
                   />
                 </td>
-                <td className="p-3.5 font-mono font-black text-emerald-400">
+                <td className="p-3.5 font-mono font-black text-[#008972]">
                   {formatCurrency(infantSelling, currency)}
                 </td>
-                <td className="p-3.5 font-mono font-bold text-teal-300">
+                <td className="p-3.5 font-mono font-bold text-[#008972]">
                   {formatCurrency(calcSellingPrice(infantNetPrice, b2bAgentMarginPercent), currency)}
                 </td>
               </tr>
@@ -1434,38 +1434,38 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
   // 5. RENDER CAPACITY & TIERED PRICING MODULE (Sections 2–14, 20)
   // --------------------------------------------------------------------------
   return (
-    <div className="space-y-6 bg-slate-900 text-slate-200 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+    <div className="space-y-6 bg-white text-slate-800 border border-slate-200/90 rounded-2xl p-6 shadow-xs relative overflow-hidden">
       
-      {/* Decorative premium glow */}
-      <div className="absolute top-0 right-0 w-32 h-32 bg-teal-500/5 rounded-full blur-3xl pointer-events-none" />
+      {/* Decorative subtle tint */}
+      <div className="absolute top-0 right-0 w-48 h-48 bg-teal-500/5 rounded-full blur-3xl pointer-events-none" />
 
       {/* Main Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
         <div>
-          <div className="flex items-center space-x-2 text-xs font-black text-[#00C6A6] uppercase tracking-wider mb-1">
-            <Calculator className="w-4 h-4 shrink-0" />
+          <div className="flex items-center space-x-2 text-xs font-black text-[#008972] uppercase tracking-wider mb-1">
+            <Calculator className="w-4 h-4 shrink-0 text-[#00C6A6]" />
             <span>CAPACITY & TIERED PRICING ENGINE</span>
-            <span className="bg-teal-500/10 border border-teal-500/30 text-[#00E5C0] font-extrabold px-2 py-0.5 rounded text-[10px] tracking-widest uppercase">
+            <span className="bg-teal-50 border border-teal-200/80 text-[#008972] font-extrabold px-2 py-0.5 rounded text-[10px] tracking-widest uppercase">
               {isTransfer ? 'TRANSFERS' : isYacht ? 'PRIVATE YACHT' : 'PRIVATE TOURS'}
             </span>
           </div>
-          <h2 className="text-base font-black text-white">
+          <h2 className="text-base font-black text-slate-900">
             {isYacht ? 'Private Yacht Charter' : isTransfer ? 'Transfer Route' : 'Private Tour'} Capacity & Tiered Pricing Architecture
           </h2>
-          <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+          <p className="text-xs text-slate-500 mt-1 max-w-2xl">
             Commercial capacity is product-specific and completely independent of vehicle physical seating. Each tier maps a passenger range to required vehicle count and applicable price.
           </p>
         </div>
 
-        <div className="flex flex-row items-center gap-3 bg-slate-950 p-2.5 rounded-xl border border-slate-800 self-start sm:self-center">
+        <div className="flex flex-row items-center gap-3 bg-[#F8FAFA] p-2.5 rounded-xl border border-slate-200 self-start sm:self-center">
           <div className="text-xs">
             <span className="text-slate-500 block text-[9px] font-bold uppercase tracking-wider">Currency</span>
-            <span className="font-bold text-[#00E5C0]">{currency}</span>
+            <span className="font-bold text-[#008972]">{currency}</span>
           </div>
-          <div className="w-[1px] h-6 bg-slate-800" />
+          <div className="w-[1px] h-6 bg-slate-200" />
           <div className="text-xs">
             <span className="text-slate-500 block text-[9px] font-bold uppercase tracking-wider">Status</span>
-            <span className={`inline-flex items-center gap-1 font-bold ${status === 'ACTIVE' ? 'text-teal-400' : 'text-amber-400'}`}>
+            <span className={`inline-flex items-center gap-1 font-bold ${status === 'ACTIVE' ? 'text-[#008972]' : 'text-amber-600'}`}>
               <Check className="w-2.5 h-2.5 shrink-0" />
               {status}
             </span>
@@ -1474,21 +1474,21 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
       </div>
 
       {/* 01 COMMERCIAL RULES SECTION */}
-      <div className="bg-slate-950/60 p-5 rounded-2xl border border-slate-800 space-y-4">
+      <div className="bg-[#F8FAFA] p-5 rounded-2xl border border-slate-200/80 space-y-4">
         <div className="flex items-center space-x-2">
-          <div className="w-6 h-6 rounded-lg bg-teal-500/10 border border-teal-500/20 text-[#00C6A6] flex items-center justify-center font-black text-xs">
+          <div className="w-6 h-6 rounded-lg bg-teal-50 border border-teal-200/80 text-[#008972] flex items-center justify-center font-black text-xs">
             01
           </div>
-          <h3 className="text-xs font-black uppercase text-white tracking-wider">Commercial Rules & Markups</h3>
+          <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider">Commercial Rules & Markups</h3>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3.5 text-xs">
           <div className="space-y-1">
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Native Currency *</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Native Currency *</label>
             <select
               value={currency}
               onChange={(e) => onCurrencyChange(e.target.value as CurrencyCode)}
-              className="w-full p-2 bg-slate-900 border border-slate-700 rounded-xl font-black text-[#00E5C0] text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full p-2 bg-white border border-slate-200 rounded-xl font-black text-[#008972] text-xs focus:outline-none focus:border-[#00C6A6] focus:ring-1 focus:ring-[#00C6A6]"
             >
               <option value="JPY">JPY (¥)</option>
               <option value="USD">USD ($)</option>
@@ -1503,7 +1503,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
           </div>
 
           <div className="space-y-1">
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Buyer Margin (%) *</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Buyer Margin (%) *</label>
             <div className="relative">
               <input
                 type="number"
@@ -1511,14 +1511,14 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                 max="200"
                 value={safeNumVal(buyerMarginPercent)}
                 onChange={(e) => onBuyerMarginChange(Number(e.target.value))}
-                className="w-full p-2 bg-slate-900 border border-slate-700 rounded-xl font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
+                className="w-full p-2 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 text-xs focus:outline-none focus:border-[#00C6A6] focus:ring-1 focus:ring-[#00C6A6]"
               />
-              <span className="absolute right-2.5 top-2 text-slate-500 font-bold text-[10px]">%</span>
+              <span className="absolute right-2.5 top-2 text-slate-400 font-bold text-[10px]">%</span>
             </div>
           </div>
 
           <div className="space-y-1">
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">B2B Agent Margin (%) *</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">B2B Agent Margin (%) *</label>
             <div className="relative">
               <input
                 type="number"
@@ -1526,14 +1526,14 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                 max="200"
                 value={safeNumVal(b2bAgentMarginPercent)}
                 onChange={(e) => onB2bAgentMarginChange(Number(e.target.value))}
-                className="w-full p-2 bg-slate-900 border border-slate-700 rounded-xl font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
+                className="w-full p-2 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 text-xs focus:outline-none focus:border-[#00C6A6] focus:ring-1 focus:ring-[#00C6A6]"
               />
-              <span className="absolute right-2.5 top-2 text-slate-500 font-bold text-[10px]">%</span>
+              <span className="absolute right-2.5 top-2 text-slate-400 font-bold text-[10px]">%</span>
             </div>
           </div>
 
           <div className="space-y-1">
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Tax / VAT (%) *</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Tax / VAT (%) *</label>
             <div className="relative">
               <input
                 type="number"
@@ -1541,20 +1541,20 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                 max="100"
                 value={safeNumVal(taxPercent)}
                 onChange={(e) => onTaxPercentChange(Number(e.target.value))}
-                className="w-full p-2 bg-slate-900 border border-slate-700 rounded-xl font-bold text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
+                className="w-full p-2 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 text-xs focus:outline-none focus:border-[#00C6A6] focus:ring-1 focus:ring-[#00C6A6]"
               />
-              <span className="absolute right-2.5 top-2 text-slate-500 font-bold text-[10px]">%</span>
+              <span className="absolute right-2.5 top-2 text-slate-400 font-bold text-[10px]">%</span>
             </div>
           </div>
 
           <div className="space-y-1 col-span-2 sm:col-span-1">
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Service Charge *</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Service Charge *</label>
             <input
               type="number"
               min="0"
               value={safeNumVal(serviceFeeFixed)}
               onChange={(e) => onServiceFeeFixedChange(Number(e.target.value))}
-              className="w-full p-2 bg-slate-900 border border-slate-700 rounded-xl font-bold text-slate-300 text-xs focus:outline-none focus:border-[#00C6A6]"
+              className="w-full p-2 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 text-xs focus:outline-none focus:border-[#00C6A6] focus:ring-1 focus:ring-[#00C6A6]"
             />
           </div>
         </div>
@@ -1562,16 +1562,16 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
 
       {/* Transfer Route Context */}
       {isTransfer && (
-        <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-          <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+        <div className="bg-[#F8FAFA] p-4 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <div className="p-3 bg-white rounded-xl border border-slate-200">
             <span className="text-[10px] text-slate-500 block uppercase font-bold tracking-wider">Transfer Origin & Destination</span>
-            <span className="text-white font-bold block mt-0.5">
+            <span className="text-slate-800 font-bold block mt-0.5">
               {fromHubName || 'From Hub'} ➔ {toHubName || 'To Hub'}
             </span>
           </div>
-          <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+          <div className="p-3 bg-white rounded-xl border border-slate-200">
             <span className="text-[10px] text-slate-500 block uppercase font-bold tracking-wider">Transfer Capacity Rule Separation</span>
-            <span className="text-teal-400 font-bold block mt-0.5">
+            <span className="text-[#008972] font-bold block mt-0.5">
               Transfer rules are strictly separate from Private Tour rules.
             </span>
           </div>
@@ -1579,13 +1579,13 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
       )}
 
       {/* 02 DYNAMIC CAPACITY & TIERED PRICING MODULE */}
-      <div className="bg-slate-950/60 p-5 rounded-2xl border border-slate-800 space-y-4">
+      <div className="bg-[#F8FAFA] p-5 rounded-2xl border border-slate-200/80 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
           <div className="flex items-center space-x-2">
-            <div className="w-6 h-6 rounded-lg bg-teal-500/10 border border-teal-500/20 text-[#00C6A6] flex items-center justify-center font-black text-xs">
+            <div className="w-6 h-6 rounded-lg bg-teal-50 border border-teal-200/80 text-[#008972] flex items-center justify-center font-black text-xs">
               02
             </div>
-            <h3 className="text-xs font-black uppercase text-white tracking-wider">
+            <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider">
               Product-Specific Capacity Pricing Tiers
             </h3>
           </div>
@@ -1593,21 +1593,21 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
           <button
             type="button"
             onClick={handleAddTier}
-            className="text-xs font-black text-[#00E5C0] hover:text-[#00C6A6] transition-colors flex items-center gap-1 cursor-pointer bg-teal-500/10 border border-teal-500/20 px-3 py-1.5 rounded-xl self-start sm:self-center"
+            className="text-xs font-black text-[#008972] hover:text-[#00C6A6] transition-colors flex items-center gap-1 cursor-pointer bg-teal-50 border border-teal-200 px-3 py-1.5 rounded-xl self-start sm:self-center"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3.5 h-3.5 text-[#00C6A6]" />
             <span>Add Capacity Tier</span>
           </button>
         </div>
 
         {/* Validation Errors */}
         {tierValidationErrors.length > 0 && (
-          <div className="p-3.5 bg-red-950/40 border border-red-500/30 rounded-xl text-red-200 text-xs space-y-1">
-            <div className="flex items-center gap-1.5 font-bold text-red-400">
+          <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs space-y-1">
+            <div className="flex items-center gap-1.5 font-bold text-red-700">
               <AlertTriangle className="w-4 h-4 shrink-0" />
               <span>Configuration Validation Notices ({tierValidationErrors.length})</span>
             </div>
-            <ul className="list-disc pl-4 space-y-0.5 font-medium text-red-300">
+            <ul className="list-disc pl-4 space-y-0.5 font-medium text-red-600">
               {tierValidationErrors.map((err, idx) => (
                 <li key={idx}>{err.message}</li>
               ))}
@@ -1616,10 +1616,10 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
         )}
 
         {/* Tiers Editor Table */}
-        <div className="border border-slate-800 rounded-xl overflow-x-auto bg-slate-950/90 shadow-2xs">
+        <div className="border border-slate-200 rounded-xl overflow-x-auto bg-white shadow-2xs">
           <table className="w-full text-left text-xs border-collapse min-w-[1050px]">
             <thead>
-              <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-bold uppercase text-[9px] tracking-wider">
+              <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[9px] tracking-wider">
                 <th className="p-3 w-48">{isYacht ? 'Yacht Asset' : isFerry ? 'Ferry / Vessel' : 'Fleet Vehicle'}</th>
                 <th className="p-3 w-32">Pax Range</th>
                 <th className="p-3 w-20 text-center">Vehicles</th>
@@ -1633,7 +1633,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                 <th className="p-3 w-20 text-center">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-slate-100">
               {tieredPricing.map((tier, idx) => {
                 const tierNett = tier.supplierNett !== undefined ? tier.supplierNett : (tier.nettPrice !== undefined ? tier.nettPrice : tier.netCostPerPax);
                 const calculatedTierFinal = calcTierFinalPrice(tier);
@@ -1648,7 +1648,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                 const activeAssetList = isYacht ? availableYachts : isFerry ? availableFerries : availableVehicles;
 
                 return (
-                  <tr key={tier.id || idx} className="hover:bg-slate-900/60 transition-colors">
+                  <tr key={tier.id || idx} className="hover:bg-slate-50/80 transition-colors">
                     {/* Fleet / Vehicle / Yacht / Vessel selection directly inside Step 3 */}
                     <td className="p-2.5">
                       <select
@@ -1661,7 +1661,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                             fleetName: foundAsset?.name || val
                           });
                         }}
-                        className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-medium text-xs focus:outline-none focus:border-[#00C6A6] w-full"
+                        className="p-1.5 bg-white border border-slate-200 rounded-lg text-slate-800 font-medium text-xs focus:outline-none focus:border-[#00C6A6] w-full"
                       >
                         <option value="">
                           {tier.fleetName ? tier.fleetName : `-- Select ${isYacht ? 'Yacht' : isFerry ? 'Ferry / Vessel' : 'Vehicle'} --`}
@@ -1687,9 +1687,9 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                             handleUpdateTier(idx, { minPax: num, minPassengers: num });
                           }}
                           placeholder="Min"
-                          className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white w-14 text-center text-xs font-semibold focus:outline-none focus:border-[#00C6A6]"
+                          className="p-1.5 bg-white border border-slate-200 rounded-lg text-slate-800 w-14 text-center text-xs font-semibold focus:outline-none focus:border-[#00C6A6]"
                         />
-                        <span className="text-slate-500 font-bold text-xs">–</span>
+                        <span className="text-slate-400 font-bold text-xs">–</span>
                         <input
                           type="number"
                           min="1"
@@ -1700,7 +1700,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                             handleUpdateTier(idx, { maxPax: num, maxPassengers: num });
                           }}
                           placeholder="Max"
-                          className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white w-14 text-center text-xs font-semibold focus:outline-none focus:border-[#00C6A6]"
+                          className="p-1.5 bg-white border border-slate-200 rounded-lg text-slate-800 w-14 text-center text-xs font-semibold focus:outline-none focus:border-[#00C6A6]"
                         />
                       </div>
                     </td>
@@ -1717,7 +1717,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                           const num = raw === '' ? 1 : Math.max(1, parseInt(raw, 10) || 1);
                           handleUpdateTier(idx, { vehicleCount: num });
                         }}
-                        className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg text-[#00E5C0] w-14 text-center text-xs font-black focus:outline-none focus:border-[#00C6A6]"
+                        className="p-1.5 bg-white border border-slate-200 rounded-lg text-[#008972] w-14 text-center text-xs font-black focus:outline-none focus:border-[#00C6A6]"
                       />
                     </td>
 
@@ -1729,7 +1729,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                           const c = e.target.value as CurrencyCode;
                           handleUpdateTier(idx, { currency: c, nativeCurrency: c });
                         }}
-                        className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-200 text-xs font-bold focus:outline-none focus:border-[#00C6A6] w-full"
+                        className="p-1.5 bg-white border border-slate-200 rounded-lg text-slate-800 text-xs font-bold focus:outline-none focus:border-[#00C6A6] w-full"
                       >
                         <option value="JPY">JPY</option>
                         <option value="USD">USD</option>
@@ -1768,7 +1768,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         <select
                           value={tier.marginType || 'PERCENTAGE'}
                           onChange={(e) => handleUpdateTier(idx, { marginType: e.target.value as 'PERCENTAGE' | 'FIXED' })}
-                          className="p-1 bg-slate-900 border border-slate-700 rounded text-[10px] text-slate-300 font-bold"
+                          className="p-1 bg-white border border-slate-200 rounded text-[10px] text-slate-700 font-bold"
                         >
                           <option value="PERCENTAGE">%</option>
                           <option value="FIXED">Fix</option>
@@ -1787,7 +1787,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         <select
                           value={tier.taxType || 'PERCENTAGE'}
                           onChange={(e) => handleUpdateTier(idx, { taxType: e.target.value as any })}
-                          className="p-1 bg-slate-900 border border-slate-700 rounded text-[10px] text-slate-300 font-bold"
+                          className="p-1 bg-white border border-slate-200 rounded text-[10px] text-slate-700 font-bold"
                         >
                           <option value="PERCENTAGE">%</option>
                           <option value="FIXED">Fix</option>
@@ -1797,7 +1797,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                           <DecimalInput
                             value={tier.taxValue}
                             placeholder={`${taxPercent || 10}`}
-                            className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono text-white text-xs w-12 text-right focus:outline-none focus:border-[#00C6A6]"
+                            className="p-1.5 bg-white border border-slate-200 rounded-lg font-mono text-slate-800 text-xs w-12 text-right focus:outline-none focus:border-[#00C6A6]"
                             onChange={(num) => handleUpdateTier(idx, { taxValue: num })}
                           />
                         )}
@@ -1810,7 +1810,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         <select
                           value={tier.serviceChargeType || 'FIXED'}
                           onChange={(e) => handleUpdateTier(idx, { serviceChargeType: e.target.value as any })}
-                          className="p-1 bg-slate-900 border border-slate-700 rounded text-[10px] text-slate-300 font-bold"
+                          className="p-1 bg-white border border-slate-200 rounded text-[10px] text-slate-700 font-bold"
                         >
                           <option value="FIXED">Fix</option>
                           <option value="PERCENTAGE">%</option>
@@ -1820,7 +1820,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                           <DecimalInput
                             value={tier.serviceChargeValue}
                             placeholder={`${serviceFeeFixed || 0}`}
-                            className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono text-white text-xs w-12 text-right focus:outline-none focus:border-[#00C6A6]"
+                            className="p-1.5 bg-white border border-slate-200 rounded-lg font-mono text-slate-800 text-xs w-12 text-right focus:outline-none focus:border-[#00C6A6]"
                             onChange={(num) => handleUpdateTier(idx, { serviceChargeValue: num })}
                           />
                         )}
@@ -1829,7 +1829,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
 
                     {/* Calculated Final Price (B2B Price) */}
                     <td className="p-2.5 text-right font-mono">
-                      <span className="font-black text-[#00E5C0] text-xs block">
+                      <span className="font-black text-[#008972] text-xs block">
                         {calculatedTierFinal !== undefined ? formatCurrency(calculatedTierFinal, tier.currency || currency) : '—'}
                       </span>
                     </td>
@@ -1841,8 +1841,8 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         onClick={() => handleUpdateTier(idx, { status: tier.status === 'INACTIVE' ? 'ACTIVE' : 'INACTIVE' })}
                         className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
                           tier.status === 'INACTIVE'
-                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                            : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                            : 'bg-teal-50 text-[#008972] border border-teal-200'
                         }`}
                       >
                         {tier.status || 'ACTIVE'}
@@ -1855,7 +1855,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         <button
                           type="button"
                           onClick={() => handleDuplicateTier(idx)}
-                          className="text-slate-400 hover:text-white transition-colors p-1.5 cursor-pointer bg-slate-800 hover:bg-slate-700 rounded-lg"
+                          className="text-slate-500 hover:text-slate-800 transition-colors p-1.5 cursor-pointer bg-slate-100 hover:bg-slate-200 rounded-lg"
                           title="Duplicate Tier"
                         >
                           <Copy className="w-3.5 h-3.5" />
@@ -1863,7 +1863,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         <button
                           type="button"
                           onClick={() => handleRemoveTier(idx)}
-                          className="text-slate-400 hover:text-red-400 transition-colors p-1.5 cursor-pointer bg-red-500/10 hover:bg-red-500/20 rounded-lg"
+                          className="text-slate-400 hover:text-red-600 transition-colors p-1.5 cursor-pointer bg-red-50 hover:bg-red-100 rounded-lg"
                           title="Delete Tier"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -1876,9 +1876,9 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
 
               {tieredPricing.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="p-8 text-center text-slate-500">
-                    <Layers className="w-8 h-8 text-slate-700 mx-auto mb-2" />
-                    <span className="font-bold text-xs block">No Capacity Tiers Configured</span>
+                  <td colSpan={11} className="p-8 text-center text-slate-400">
+                    <Layers className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                    <span className="font-bold text-xs block text-slate-700">No Capacity Tiers Configured</span>
                     <span className="text-[11px] mt-1 block">Click "Add Capacity Tier" to configure product-specific passenger ranges, vehicles, and rates.</span>
                   </td>
                 </tr>
@@ -1890,22 +1890,22 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
 
       {/* 04 LIVE CAPACITY SIMULATOR (Section 9 & 10) */}
       {simulation && (
-        <div className="bg-slate-950/60 p-5 rounded-2xl border border-slate-800 space-y-4">
+        <div className="bg-[#F8FAFA] p-5 rounded-2xl border border-slate-200/80 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="flex items-center space-x-2">
-              <div className="w-6 h-6 rounded-lg bg-teal-500/10 border border-teal-500/20 text-[#00C6A6] flex items-center justify-center font-black text-xs">
+              <div className="w-6 h-6 rounded-lg bg-teal-50 border border-teal-200/80 text-[#008972] flex items-center justify-center font-black text-xs">
                 04
               </div>
-              <h3 className="text-xs font-black uppercase text-white tracking-wider">Live Pricing & Vehicle Scale Simulator</h3>
+              <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider">Live Pricing & Vehicle Scale Simulator</h3>
             </div>
-            <span className="text-[10px] text-slate-400">
+            <span className="text-[10px] text-slate-500">
               Evaluates rules for quotes and agent bookings.
             </span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-center">
             <div className="space-y-1">
-              <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+              <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
                 Test Passenger Headcount
               </label>
               <div className="flex items-center gap-2">
@@ -1915,29 +1915,29 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                   max="50"
                   value={testPassengerCount}
                   onChange={(e) => setTestPassengerCount(Math.max(1, Number(e.target.value)))}
-                  className="w-24 p-2 bg-slate-900 border border-slate-700 rounded-xl font-bold text-white text-xs focus:outline-none focus:border-[#00C6A6]"
+                  className="w-24 p-2 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 text-xs focus:outline-none focus:border-[#00C6A6]"
                 />
-                <span className="text-xs text-slate-400">Pax</span>
+                <span className="text-xs text-slate-500">Pax</span>
               </div>
             </div>
 
-            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+            <div className="p-3 bg-white rounded-xl border border-slate-200">
               <span className="text-[10px] text-slate-500 block uppercase font-bold tracking-wider">Applicable Tier Rule</span>
-              <span className="text-[#00E5C0] font-black text-xs block mt-0.5">
+              <span className="text-[#008972] font-black text-xs block mt-0.5">
                 {simulation.tierDescription}
               </span>
             </div>
 
-            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
+            <div className="p-3 bg-white rounded-xl border border-slate-200">
               <span className="text-[10px] text-slate-500 block uppercase font-bold tracking-wider">Vehicles Required</span>
-              <span className="text-white font-black text-xs block mt-0.5">
+              <span className="text-slate-800 font-black text-xs block mt-0.5">
                 {simulation.vehiclesRequired} {simulation.vehiclesRequired > 1 ? 'Vehicles' : 'Vehicle'}
               </span>
             </div>
 
-            <div className="p-3 bg-emerald-950/20 rounded-xl border border-emerald-500/30">
-              <span className="text-[10px] text-emerald-400 block uppercase font-black tracking-wider">Delivered Final Price</span>
-              <span className="text-emerald-300 font-black text-sm block mt-0.5">
+            <div className="p-3 bg-teal-50 rounded-xl border border-teal-200/80">
+              <span className="text-[10px] text-[#008972] block uppercase font-black tracking-wider">Delivered Final Price</span>
+              <span className="text-[#008972] font-black text-sm block mt-0.5">
                 {formatCurrency(simulation.buyerSelling, currency)}
               </span>
             </div>

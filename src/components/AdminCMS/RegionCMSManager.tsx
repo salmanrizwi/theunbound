@@ -225,20 +225,20 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
       <MasterDataDiagnosticBanner />
 
       {/* Top Architecture Banner */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 text-white shadow-xl">
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-5 text-slate-800 shadow-xs">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1.5">
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider bg-teal-50 text-[#008972] border border-teal-200">
                 Tier 1 Root Level
               </span>
-              <span className="text-xs text-slate-400">Master Hierarchy Schema</span>
+              <span className="text-xs text-slate-500 font-medium">Master Hierarchy Schema</span>
             </div>
-            <h2 className="text-xl font-bold text-white flex items-center gap-2">
-              <Globe2 className="w-6 h-6 text-amber-400" />
+            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+              <Globe2 className="w-6 h-6 text-[#00C6A6]" />
               Master Macro Regions Manager
             </h2>
-            <p className="text-sm text-slate-300 mt-1 max-w-3xl">
+            <p className="text-sm text-slate-600 mt-1 max-w-3xl">
               Regions are the top-level parent entities in the connected DMC data architecture. Every Destination, City Hub, Hotel, and Product flows downward from here.
             </p>
           </div>
@@ -247,7 +247,7 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
             <button
               onClick={handleCreateNew}
               id="btn-create-master-region"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm shadow-lg shadow-amber-500/20 transition-all active:scale-95 cursor-pointer"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-sm shadow-xs transition-all active:scale-95 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               Add Master Region
@@ -256,33 +256,33 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
         </div>
 
         {/* Visual Hierarchy Flow Map */}
-        <div className="mt-5 pt-4 border-t border-slate-800/80 grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-amber-500 text-slate-950 font-black text-sm flex items-center justify-center">1</div>
+        <div className="mt-5 pt-4 border-t border-slate-100 grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="p-3 rounded-xl bg-teal-50/70 border border-teal-200 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-[#00C6A6] text-slate-950 font-black text-sm flex items-center justify-center">1</div>
             <div>
-              <div className="text-xs font-bold text-amber-300 uppercase tracking-wide">REGION (Active)</div>
-              <div className="text-[11px] text-slate-300">East Asia, W. Europe, etc.</div>
+              <div className="text-xs font-bold text-[#008972] uppercase tracking-wide">REGION (Active)</div>
+              <div className="text-[11px] text-slate-600 font-medium">East Asia, W. Europe, etc.</div>
             </div>
           </div>
-          <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-slate-700 text-slate-200 font-bold text-sm flex items-center justify-center">2</div>
+          <div className="p-3 rounded-xl bg-[#F8FAFA] border border-slate-200 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-slate-200 text-slate-700 font-bold text-sm flex items-center justify-center">2</div>
             <div>
-              <div className="text-xs font-bold text-slate-200 uppercase tracking-wide">DESTINATION</div>
-              <div className="text-[11px] text-slate-400">Japan, UK, France, UAE</div>
+              <div className="text-xs font-bold text-slate-800 uppercase tracking-wide">DESTINATION</div>
+              <div className="text-[11px] text-slate-500">Japan, UK, France, UAE</div>
             </div>
           </div>
-          <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-slate-700 text-slate-200 font-bold text-sm flex items-center justify-center">3</div>
+          <div className="p-3 rounded-xl bg-[#F8FAFA] border border-slate-200 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-slate-200 text-slate-700 font-bold text-sm flex items-center justify-center">3</div>
             <div>
-              <div className="text-xs font-bold text-slate-200 uppercase tracking-wide">CITY HUB</div>
-              <div className="text-[11px] text-slate-400">Tokyo, London, Paris</div>
+              <div className="text-xs font-bold text-slate-800 uppercase tracking-wide">CITY HUB</div>
+              <div className="text-[11px] text-slate-500">Tokyo, London, Paris</div>
             </div>
           </div>
-          <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-slate-700 text-slate-200 font-bold text-sm flex items-center justify-center">4</div>
+          <div className="p-3 rounded-xl bg-[#F8FAFA] border border-slate-200 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-slate-200 text-slate-700 font-bold text-sm flex items-center justify-center">4</div>
             <div>
-              <div className="text-xs font-bold text-slate-200 uppercase tracking-wide">SERVICES & INVENTORY</div>
-              <div className="text-[11px] text-slate-400">Products, Hotels, Guides</div>
+              <div className="text-xs font-bold text-slate-800 uppercase tracking-wide">SERVICES & INVENTORY</div>
+              <div className="text-[11px] text-slate-500">Products, Hotels, Guides</div>
             </div>
           </div>
         </div>
@@ -517,23 +517,23 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200 shadow-2xl max-w-2xl w-full max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden animate-scale-in">
             {/* Modal Header */}
-            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-900 text-white shrink-0">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-white text-slate-800 shrink-0">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-amber-500 text-slate-950 font-black shrink-0">
+                <div className="p-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 font-black shrink-0">
                   <Globe2 className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-white">
+                  <h3 className="text-base font-bold text-slate-900">
                     {isCreating ? 'Create New Master Region' : `Edit Region: ${formData.name}`}
                   </h3>
-                  <p className="text-xs text-slate-300">
+                  <p className="text-xs text-slate-500">
                     Tier 1 of the connected hierarchy (Region → Destination → Hub → Product/Hotel)
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => { setIsCreating(false); setIsEditing(false); }}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 ✕
               </button>

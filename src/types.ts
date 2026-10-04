@@ -2164,7 +2164,9 @@ export interface BookingItem {
   productId: string;
   productName: string;
   title?: string;
+  sku?: string;
   productSku?: string;
+  vehicle?: string;
   destinationName?: string;
   destination?: string;
   city?: string;
@@ -2576,6 +2578,8 @@ export interface Booking {
   bookingVersionNumber?: number;
   voucherIds?: string[];
   completeVoucherId?: string;
+  completeBookingVoucherId?: string;
+  activityVoucherIds?: string[];
   proformaInvoiceIds?: string[];
   activeProformaInvoiceId?: string;
   paymentIds?: string[];
@@ -5055,6 +5059,7 @@ export interface TravelLead {
   // Operational & Commercial Documents & Financial linkage
   voucherIds?: string[];
   completeVoucherId?: string;
+  activityVoucherIds?: string[];
   invoiceIds?: string[];
   activeInvoiceId?: string;
   paymentIds?: string[];
@@ -5165,6 +5170,19 @@ export interface BookingInvoice {
     totalAmount: number;
     currency: string;
   }[];
+  // Modal & Printable Display Alias Fields
+  issueDate?: string;
+  billedToAgency?: string;
+  billedToName?: string;
+  billedToEmail?: string;
+  billedToGstin?: string;
+  leadTravelerName?: string;
+  totalPax?: number;
+  destination?: string;
+  travelDates?: string;
+  items?: InvoiceServiceItem[] | any[];
+  paidAmount?: number;
+  taxAmount?: number;
 }
 
 export interface BookingVoucher {
@@ -5220,6 +5238,29 @@ export interface BookingVoucher {
   activityDescription?: string;
   category?: string;
   groupingType?: 'activity' | 'service_item' | 'category' | 'day' | 'combined';
+  bookedPrice?: number;
+  currency?: string;
+  pricingSnapshot?: { customerPrice: number; currency: string };
+  configurationSnapshot?: any;
+  vehicle?: string;
+  capacityTier?: string;
+  guide?: string;
+  guideLanguage?: string;
+  ticketType?: string;
+  meal?: string;
+  selectedOptions?: string[];
+  startTime?: string;
+  endTime?: string;
+  reportingTime?: string;
+  operationalInstructions?: string;
+  importantInformation?: string;
+  productId?: string;
+  productSku?: string;
+  hub?: string;
+  adults?: number;
+  children?: number;
+  infants?: number;
+  passengerNames?: string[];
   inclusions?: string[];
   exclusions?: string[];
   amendmentReason?: string;

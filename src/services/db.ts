@@ -10755,12 +10755,56 @@ export class AppDatabase {
   }
 
   /**
-   * Generates an activity-level voucher for a specific confirmed service item in a booking
+   * Authoritative helper to determine if a service item is an Activity / Experience eligible for activity-level vouchers
+   */
+  public isActivityVoucherEligible(itemOrProduct: any): boolean {
+    if (!itemOrProduct) return false;
+    const category = (itemOrProduct.category || itemOrProduct.product?.category || '').toLowerCase();
+    const productType = (itemOrProduct.productType || itemOrProduct.product?.productType || '').toLowerCase();
+    const sku = (itemOrProduct.sku || itemOrProduct.product?.sku || '').toUpperCase();
+    const name = (itemOrProduct.productName || itemOrProduct.name || itemOrProduct.title || '').toLowerCase();
+
+    // Strictly exclude Non-Activity Categories per Operational Specification
+    if (
+      category.includes('hotel') || category.includes('accommodation') || category.includes('lodging') ||
+      category.includes('resort') || productType.includes('hotel') || sku.startsWith('HTL-') || sku.startsWith('HOTEL-')
+    ) {
+      return false;
+    }
+    if (
+      category.includes('shinkansen') || category.includes('rail') || category.includes('train') ||
+      productType.includes('rail') || productType.includes('shinkansen') || sku.startsWith('JRP-') || sku.startsWith('SHK-') || sku.startsWith('RAIL-')
+    ) {
+      return false;
+    }
+    if (
+      category.includes('visa') || category.includes('esim') || category.includes('insurance') ||
+      productType.includes('visa') || sku.startsWith('VSA-') || sku.startsWith('VISA-') || sku.startsWith('ADD-')
+    ) {
+      return false;
+    }
+    if (category.includes('flight') || productType.includes('flight') || sku.startsWith('FLT-')) {
+      return false;
+    }
+    if (
+      (category === 'transfer' || category === 'transfers' || category === 'airport transfer' || category === 'intercity transfer' ||
+       productType === 'transfer' || productType === 'airport_transfer' || sku.startsWith('TRF-') || sku.startsWith('TRANS-')) &&
+      !name.includes('tour') && !name.includes('sightseeing') && !name.includes('excursion')
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Generates an authoritative activity-level voucher for a specific confirmed service item in a booking
    */
   public generateActivityVoucher(
     bookingId: string,
     serviceItemId: string,
-    user: User | null
+    user: User | null,
+    forceRegenerate: boolean = false
   ): { success: boolean; voucher?: BookingVoucher; error?: string } {
     const b = this.getBookingById(bookingId);
     if (!b) return { success: false, error: 'Booking not found' };
@@ -10768,36 +10812,134 @@ export class AppDatabase {
     const item = (b.items || []).find(it => it.id === serviceItemId);
     if (!item) return { success: false, error: 'Service item not found in booking' };
 
-    if (item.supplierConfirmationStatus !== 'Confirmed') {
-      return { 
-        success: false, 
-        error: `Activity voucher cannot be generated: service item is ${item.supplierConfirmationStatus || 'Pending'}. Only confirmed services are eligible.` 
+    if (!this.isActivityVoucherEligible(item)) {
+      return {
+        success: false,
+        error: `Service "${item.productName}" (${item.category || 'Service'}) is not an activity-eligible service item.`
       };
     }
 
+    const isConfirmed = item.supplierConfirmationStatus === 'Confirmed' || item.supplierStatus === 'CONFIRMED_BY_SUPPLIER' || forceRegenerate;
+    if (!isConfirmed) {
+      return { 
+        success: false, 
+        error: `Activity voucher cannot be generated: "${item.productName}" is ${item.supplierConfirmationStatus || 'Pending'}. Supplier confirmation is required.` 
+      };
+    }
+
+    const serviceDate = item.serviceDate || item.travelDate || b.travelStartDate;
+    if (!serviceDate) {
+      return {
+        success: false,
+        error: `Cannot generate voucher for "${item.productName}": Travel / service date is missing.`
+      };
+    }
+
+    // Idempotency: Check if an active voucher already exists for this booking + service item
+    const existingVouchers = b.vouchersList || [];
+    const existingVoucher = existingVouchers.find(
+      v => v.serviceItemId === item.id && !v.isCompleteBookingVoucher && v.status !== 'CANCELLED'
+    );
+    if (existingVoucher && !forceRegenerate) {
+      return { success: true, voucher: existingVoucher };
+    }
+
     const now = new Date().toISOString();
-    const voucherNumber = `TUB-ACTV-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    let newVersion = 1;
+    let previousVoucherId: string | undefined = undefined;
+
+    if (existingVoucher && forceRegenerate) {
+      newVersion = (existingVoucher.version || 1) + 1;
+      previousVoucherId = existingVoucher.id;
+      existingVoucher.status = 'OUTDATED';
+      existingVoucher.outdatedReason = `Superseded by reissued activity voucher (v${newVersion})`;
+    }
+
+    const voucherNumber = `TUB-ACTV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const voucherId = `vou-actv-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+
+    // Calculate passenger totals and breakdown
+    const adults = item.adults ?? (item as any).adultCount ?? b.customer?.totalAdults ?? 1;
+    const children = item.children ?? (item as any).childCount ?? b.customer?.totalChildren ?? 0;
+    const infants = (item as any).infants ?? (item as any).infantCount ?? 0;
+    const totalPax = item.totalPax ?? (adults + children + infants);
+    const passengerBreakdown = `${adults} Adults${children ? `, ${children} Children` : ''}${infants ? `, ${infants} Infants` : ''}`;
+    const leadPaxName = b.customer?.leadTravelerName || 'Lead Traveler';
+
+    // Retrieve historical configuration snapshot
+    const configSnap = (item as any).configurationSnapshot || {};
+    const vehicle = item.vehicle || (item as any).vehicleType || (item as any).vehicleName || configSnap.vehicle || configSnap.vehicleType;
+    const capacityTier = (item as any).capacityTier || configSnap.capacityTier;
+    const guide = (item as any).guide || (item as any).guideLanguage || configSnap.guide || configSnap.guideLanguage;
+    const guideLanguage = (item as any).guideLanguage || configSnap.guideLanguage;
+    const ticketType = (item as any).ticketType || configSnap.ticketType;
+    const meal = (item as any).meal || (item as any).mealPlan || configSnap.meal || configSnap.mealPlan;
+    const selectedOptions = (item as any).selectedOptions || (item as any).selectedUpsells || configSnap.selectedOptions || [];
+
+    // Retrieve historical booked price snapshot (Customer-facing only, strictly NO internal nett or margin)
+    const bookedPrice = item.totalPrice ?? (item as any).finalPrice ?? (item as any).sellingPrice ?? (item as any).price ?? 0;
+    const currency = item.currency || b.currency || 'JPY';
+    const pricingSnapshot = {
+      customerPrice: bookedPrice,
+      currency
+    };
+
+    // Operational and supplier details
+    const serviceName = item.productName || 'Activity Service';
+    const destination = item.destination || item.destinationName || b.destinationName || 'Japan';
+    const city = item.city || item.hub || 'Local Area';
+    const serviceTime = item.serviceTime || (item as any).startTime || '09:00 AM';
+    const startTime = (item as any).startTime || serviceTime;
+    const endTime = (item as any).endTime;
+    const reportingTime = (item as any).reportingTime;
+    const supplierName = item.supplierName || 'TheUnbound Authorized Ground Partner';
+    const supplierContact = item.supplierContact || (item as any).supplierPhone || '+91 9811654959 (TheUnbound Operations)';
+    const supplierConfirmationRef = item.supplierConfirmationRef || (item as any).confirmationReference || (item as any).supplierRef || 'CONFIRMED';
+    const meetingPoint = (item as any).meetingPoint || (item as any).pickupPoint || b.customer?.pickupLocation || 'Designated Meeting Point / Hotel Lobby';
+    const pickupInfo = (item as any).pickupInfo || (item as any).pickupLocation || (b.customer?.pickupLocation ? `Pickup at ${b.customer.pickupLocation}. Please be ready 15 mins prior.` : 'Please arrive at the designated meeting point at least 15 minutes prior to scheduled departure.');
+    const dropoffInfo = (item as any).dropoffInfo || (item as any).dropoffLocation || b.customer?.dropoffLocation;
+    const specialInstructions = (item as any).specialInstructions || (item as any).operationalInstructions || (item as any).importantInformation || 'Please show this activity voucher (digital or printed) to your local guide or driver upon pickup. Valid photo identification matching passport name is required.';
+    const inclusions = Array.isArray((item as any).inclusions) ? (item as any).inclusions : (Array.isArray((item as any).includedServices) ? (item as any).includedServices : ['Confirmed Activity Admission / Service', 'Authorized DMC Ground Dispatch Coordination']);
+    const exclusions = Array.isArray((item as any).exclusions) ? (item as any).exclusions : ['Personal expenses and gratuities', 'Services not explicitly specified in voucher inclusions'];
 
     const singleItemSnapshot = [{
       itemId: item.id,
-      productName: item.productName,
-      category: item.category,
-      destination: item.destination || item.destinationName || b.destinationName,
-      city: item.city || 'Tokyo',
-      serviceDate: item.serviceDate || item.travelDate || b.travelStartDate,
-      serviceTime: item.serviceTime || '09:00 AM',
-      supplierName: item.supplierName || 'Authorized Ground Supplier',
-      supplierConfirmationRef: item.supplierConfirmationRef || 'CONFIRMED',
-      adults: item.adults || b.customer?.totalAdults || 1,
-      children: item.children || 0,
-      totalPax: item.totalPax || (item.adults || 1) + (item.children || 0)
+      productId: item.productId,
+      productSku: item.sku,
+      productName: serviceName,
+      category: item.category || 'Activity',
+      destination,
+      city,
+      serviceDate,
+      serviceTime,
+      startTime,
+      endTime,
+      supplierName,
+      supplierContact,
+      supplierConfirmationRef,
+      adults,
+      children,
+      infants,
+      totalPax,
+      meetingPoint,
+      pickupInfo,
+      dropoffInfo,
+      vehicle,
+      capacityTier,
+      guide,
+      guideLanguage,
+      ticketType,
+      meal,
+      selectedOptions,
+      bookedPrice,
+      currency
     }];
 
     const newVoucher: BookingVoucher = {
-      id: `vou-actv-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      voucherId: `vou-actv-${Date.now()}`,
+      id: voucherId,
+      voucherId,
       voucherNumber,
-      version: 1,
+      version: newVersion,
       bookingId: b.id,
       bookingReference: b.bookingReference,
       leadId: b.leadId || b.linkedLeadId,
@@ -10805,42 +10947,79 @@ export class AppDatabase {
       responsibleAgentId: b.submittingAgentId || b.agentId,
       assignedTeamMemberId: b.assignedTeamMemberId,
       serviceItemId: item.id,
+      productId: item.productId,
+      productSku: item.sku,
+      category: item.category || 'Activity',
+      destination,
+      city,
+      hub: city,
       customerName: b.customer?.leadTravelerName || 'Guest',
-      leadPaxName: b.customer?.leadTravelerName || 'Lead Traveler',
-      totalPax: singleItemSnapshot[0].totalPax,
-      destination: singleItemSnapshot[0].destination || 'Japan',
-      city: singleItemSnapshot[0].city || 'Tokyo',
-      serviceName: item.productName,
-      serviceDate: singleItemSnapshot[0].serviceDate,
-      serviceTime: singleItemSnapshot[0].serviceTime,
-      supplierName: item.supplierName || 'TheUnbound Authorized Ground Partner',
-      supplierContact: item.supplierContact || '+91 9811654959 (TheUnbound Operations)',
-      supplierConfirmationRef: item.supplierConfirmationRef || 'CONFIRMED',
-      meetingPoint: (item as any).meetingPoint || b.customer?.pickupLocation || 'Hotel Lobby / Arrival Terminal',
-      pickupInfo: (item as any).pickupInfo || (b.customer?.pickupLocation ? `Pick up at ${b.customer.pickupLocation}. Be ready 15 mins prior.` : 'Standard pickup at hotel lobby.'),
-      dropoffInfo: (item as any).dropoffInfo || b.customer?.dropoffLocation,
-      emergencyContact: '+91 9811654959 / 24-Hour Operations Hotline',
-      passengerBreakdown: `${singleItemSnapshot[0].adults} Adults${singleItemSnapshot[0].children ? `, ${singleItemSnapshot[0].children} Children` : ''}`,
-      specialInstructions: (item as any).specialInstructions || 'Please show this activity voucher to your local guide or driver upon pickup. Valid photo identification is required.',
-      termsAndConditions: 'Activity voucher issued by TheUnbound DMC. Valid strictly for confirmed date and designated passenger.',
+      leadPaxName,
+      adults,
+      children,
+      infants,
+      totalPax,
+      passengerBreakdown,
+      serviceName,
+      serviceDate,
+      serviceTime,
+      startTime,
+      endTime,
+      reportingTime,
+      supplierName,
+      supplierContact,
+      supplierConfirmationRef,
+      meetingPoint,
+      pickupInfo,
+      dropoffInfo,
+      emergencyContact: '+91 9811654959 / 24-Hour Emergency Ground Operations Desk',
+      specialInstructions,
+      operationalInstructions: specialInstructions,
+      inclusions,
+      exclusions,
+      termsAndConditions: 'Activity voucher issued by TheUnbound DMC. Valid strictly for confirmed date and designated passenger(s). Non-transferable.',
       status: 'ISSUED',
       generatedAt: now,
+      issuedAt: now,
       generatedBy: user?.id || 'admin',
       generatedByName: user?.name || 'Operations Desk',
       templateVersion: 'v2.4-Activity-Voucher',
       serviceItemsSnapshot: singleItemSnapshot,
+      bookedPrice,
+      currency,
+      pricingSnapshot,
+      configurationSnapshot: {
+        vehicle,
+        capacityTier,
+        guide,
+        guideLanguage,
+        ticketType,
+        meal,
+        selectedOptions
+      },
+      vehicle,
+      capacityTier,
+      guide,
+      guideLanguage,
+      ticketType,
+      meal,
+      selectedOptions,
       isOutdated: false,
-      issuedAt: now
+      previousVoucherId
     };
 
     if (!b.vouchersList) b.vouchersList = [];
     b.vouchersList.unshift(newVoucher);
     if (!b.voucherIds) b.voucherIds = [];
     b.voucherIds = Array.from(new Set([...b.voucherIds, newVoucher.id]));
+    if (!b.activityVoucherIds) b.activityVoucherIds = [];
+    b.activityVoucherIds = Array.from(new Set([...b.activityVoucherIds, newVoucher.id]));
     b.updatedAt = now;
 
     // Update item's voucher status
     item.voucherStatus = 'Generated';
+    (item as any).voucherId = newVoucher.id;
+    (item as any).voucherCode = newVoucher.voucherNumber;
 
     this.saveVoucher(newVoucher, user);
 
@@ -10851,17 +11030,36 @@ export class AppDatabase {
       if (lIdx >= 0) {
         const lead = allLeads[lIdx];
         lead.voucherIds = Array.from(new Set([...(lead.voucherIds || []), newVoucher.id]));
+        lead.activityVoucherIds = Array.from(new Set([...(lead.activityVoucherIds || []), newVoucher.id]));
         lead.lastBookingActivityAt = now;
         allLeads[lIdx] = lead;
         this.setItem('leads', allLeads);
         this.syncFirestoreDoc('leads', lead.id, {
           voucherIds: lead.voucherIds,
+          activityVoucherIds: lead.activityVoucherIds,
           lastBookingActivityAt: now
         });
       }
     }
 
     this.saveBooking(b, user);
+
+    this.recordBookingActivity({
+      eventId: `act-vou-actv-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      bookingId: b.id,
+      eventType: previousVoucherId ? 'VOUCHER_REGENERATED' : 'VOUCHER_GENERATED',
+      previousValue: previousVoucherId ? `Previous v${newVersion - 1}` : 'None',
+      newValue: `v${newVersion} (${voucherNumber})`,
+      actorId: user?.id || 'admin',
+      actorRole: user?.role || 'TEAM_MEMBER',
+      actorName: user?.name || 'Operations Desk',
+      timestamp: now,
+      relatedVoucherId: newVoucher.id,
+      metadata: { voucherNumber, serviceItemId: item.id, serviceName: item.productName },
+      description: previousVoucherId
+        ? `Activity Voucher RE-GENERATED: ${item.productName} (#${voucherNumber}, v${newVersion})`
+        : `Activity Voucher GENERATED: ${item.productName} (#${voucherNumber})`
+    }, user);
 
     this.logAudit(
       user,
@@ -10948,37 +11146,81 @@ export class AppDatabase {
   /**
    * Generates Activity-Level vouchers grouped by selected criteria:
    * 'activity' | 'service_item' | 'category' | 'day' | 'combined'
+   * Returns explicit result with total, successful, failed, vouchers, and detailed error items.
    */
   public generateActivityVouchersGrouped(
     bookingId: string,
     groupingType: 'activity' | 'service_item' | 'category' | 'day' | 'combined',
     selectedItemIds: string[] | undefined,
-    user: User | null
-  ): { success: boolean; vouchers?: BookingVoucher[]; error?: string } {
+    user: User | null,
+    forceRegenerate: boolean = false
+  ): {
+    success: boolean;
+    total: number;
+    successful: number;
+    failed: number;
+    vouchers: BookingVoucher[];
+    errors: { itemId: string; productName?: string; reason: string }[];
+    error?: string;
+  } {
     const b = this.getBookingById(bookingId);
-    if (!b) return { success: false, error: 'Booking not found' };
+    if (!b) {
+      return {
+        success: false,
+        total: 0,
+        successful: 0,
+        failed: 0,
+        vouchers: [],
+        errors: [],
+        error: 'Booking not found'
+      };
+    }
 
-    let candidateItems = b.items || [];
+    let candidateItems = (b.items || []).filter(it => this.isActivityVoucherEligible(it));
     if (selectedItemIds && selectedItemIds.length > 0) {
       candidateItems = candidateItems.filter(it => selectedItemIds.includes(it.id));
     }
 
-    const confirmedItems = candidateItems.filter(it => it.supplierConfirmationStatus === 'Confirmed');
-    if (confirmedItems.length === 0) {
+    if (candidateItems.length === 0) {
       return {
         success: false,
-        error: 'No confirmed service items available to generate activity vouchers.'
+        total: 0,
+        successful: 0,
+        failed: 0,
+        vouchers: [],
+        errors: [],
+        error: 'No activity-eligible service items available to generate vouchers.'
       };
     }
 
     const now = new Date().toISOString();
     const generatedVouchers: BookingVoucher[] = [];
+    const itemErrors: { itemId: string; productName?: string; reason: string }[] = [];
 
     if (groupingType === 'combined') {
-      const voucherNumber = `TUB-ACTV-COMB-${Math.floor(1000 + Math.random() * 9000)}`;
+      const confirmedItems = candidateItems.filter(it => it.supplierConfirmationStatus === 'Confirmed' || it.supplierStatus === 'CONFIRMED_BY_SUPPLIER' || forceRegenerate);
+      if (confirmedItems.length === 0) {
+        return {
+          success: false,
+          total: candidateItems.length,
+          successful: 0,
+          failed: candidateItems.length,
+          vouchers: [],
+          errors: candidateItems.map(it => ({
+            itemId: it.id,
+            productName: it.productName,
+            reason: `Supplier confirmation pending (${it.supplierConfirmationStatus || 'Pending'})`
+          })),
+          error: 'No confirmed activity items available for combined voucher.'
+        };
+      }
+
+      const voucherNumber = `TUB-ACTV-COMB-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const voucherId = `vou-actv-comb-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+
       const vch: BookingVoucher = {
-        id: `vou-actv-${Date.now()}-${Math.floor(Math.random()*1000)}`,
-        voucherId: `vou-actv-${Date.now()}`,
+        id: voucherId,
+        voucherId,
         voucherNumber,
         version: 1,
         bookingId: b.id,
@@ -10993,47 +11235,83 @@ export class AppDatabase {
         city: confirmedItems[0]?.city || 'Local Area',
         serviceName: `${confirmedItems.length} Activities & Excursions Combined Voucher`,
         serviceDate: b.travelStartDate || confirmedItems[0]?.serviceDate || now.split('T')[0],
-        serviceTime: 'As per itinerary',
-        supplierName: confirmedItems.map(i => i.supplierName).filter(Boolean).join(', ') || 'Local Ground Partners',
-        supplierContact: '+91 9811654959 (TheUnbound 24/7 Dispatch)',
-        meetingPoint: b.customer?.pickupLocation || 'Hotel Lobby / Scheduled Meeting Point',
-        pickupInfo: 'Please refer to individual day timings.',
-        emergencyContact: '+91 9811654959 / 24-Hour Hotline',
+        serviceTime: 'As per itinerary schedule',
+        supplierName: confirmedItems.map(i => i.supplierName).filter(Boolean).join(', ') || 'Authorized Ground Partners',
+        supplierContact: '+91 9811654959 (TheUnbound 24/7 Ground Dispatch)',
+        meetingPoint: b.customer?.pickupLocation || 'Hotel Lobby / Scheduled Meeting Points',
+        pickupInfo: 'Please refer to individual day timings and meeting locations.',
+        emergencyContact: '+91 9811654959 / 24-Hour Emergency Ground Operations Desk',
         passengerBreakdown: `${b.customer?.totalAdults || 1} Adults${b.customer?.totalChildren ? `, ${b.customer.totalChildren} Children` : ''}`,
         specialInstructions: 'Combined activity pass. Present to local guide or representative at each scheduled activity.',
-        termsAndConditions: 'Valid strictly for specified services and dates.',
+        termsAndConditions: 'Activity voucher issued by TheUnbound DMC. Valid strictly for specified services and dates.',
         status: 'ISSUED',
         generatedAt: now,
+        issuedAt: now,
         generatedBy: user?.id || 'admin',
         generatedByName: user?.name || 'Operations Desk',
         templateVersion: 'v2.4-Combined-Activity',
         groupingType: 'combined',
         serviceItemsSnapshot: confirmedItems.map(it => ({
           itemId: it.id,
+          productId: it.productId,
+          productSku: it.sku,
           productName: it.productName,
           category: it.category,
           serviceDate: it.serviceDate || it.travelDate,
           serviceTime: it.serviceTime || '09:00 AM',
           supplierName: it.supplierName,
           supplierConfirmationRef: it.supplierConfirmationRef,
-          totalPax: it.totalPax || 1
+          totalPax: it.totalPax || 1,
+          meetingPoint: (it as any).meetingPoint,
+          pickupInfo: (it as any).pickupInfo,
+          bookedPrice: it.totalPrice || 0,
+          currency: it.currency || b.currency || 'JPY'
         })),
-        isOutdated: false,
-        issuedAt: now
+        isOutdated: false
       };
       generatedVouchers.push(vch);
+
+      if (!b.vouchersList) b.vouchersList = [];
+      b.vouchersList.unshift(vch);
+      if (!b.voucherIds) b.voucherIds = [];
+      b.voucherIds = Array.from(new Set([...b.voucherIds, vch.id]));
+      if (!b.activityVoucherIds) b.activityVoucherIds = [];
+      b.activityVoucherIds = Array.from(new Set([...b.activityVoucherIds, vch.id]));
+      b.updatedAt = now;
+
+      confirmedItems.forEach(it => {
+        it.voucherStatus = 'Generated';
+        (it as any).voucherId = vch.id;
+        (it as any).voucherCode = vch.voucherNumber;
+      });
+
+      this.saveVoucher(vch, user);
+      this.saveBooking(b, user);
+
+      return {
+        success: true,
+        total: candidateItems.length,
+        successful: confirmedItems.length,
+        failed: candidateItems.length - confirmedItems.length,
+        vouchers: generatedVouchers,
+        errors: []
+      };
     } else if (groupingType === 'category') {
+      const confirmedItems = candidateItems.filter(it => it.supplierConfirmationStatus === 'Confirmed' || it.supplierStatus === 'CONFIRMED_BY_SUPPLIER' || forceRegenerate);
       const byCategory: Record<string, typeof confirmedItems> = {};
       confirmedItems.forEach(it => {
-        const cat = it.category || 'OTHER';
+        const cat = it.category || 'ACTIVITIES';
         if (!byCategory[cat]) byCategory[cat] = [];
         byCategory[cat].push(it);
       });
 
       Object.entries(byCategory).forEach(([cat, catItems]) => {
-        const voucherNumber = `TUB-VOU-${cat.substring(0,4).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+        const voucherNumber = `TUB-VOU-${cat.substring(0, 4).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+        const voucherId = `vou-cat-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+
         const vch: BookingVoucher = {
-          id: `vou-cat-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+          id: voucherId,
+          voucherId,
           voucherNumber,
           version: 1,
           bookingId: b.id,
@@ -11049,15 +11327,16 @@ export class AppDatabase {
           serviceName: `${cat} Services Voucher (${catItems.length} items)`,
           serviceDate: catItems[0]?.serviceDate || b.travelStartDate || now.split('T')[0],
           serviceTime: catItems[0]?.serviceTime || '09:00 AM',
-          supplierName: catItems.map(i => i.supplierName).filter(Boolean).join(', ') || 'Local Ground Partners',
+          supplierName: catItems.map(i => i.supplierName).filter(Boolean).join(', ') || 'Authorized Ground Partners',
           supplierContact: '+91 9811654959',
           meetingPoint: b.customer?.pickupLocation || 'Hotel Lobby',
           pickupInfo: 'Present to designated representative.',
-          emergencyContact: '+91 9811654959',
+          emergencyContact: '+91 9811654959 / 24-Hour Emergency Ground Desk',
           passengerBreakdown: `${b.customer?.totalAdults || 1} Adults`,
           specialInstructions: `Valid for all ${cat} services listed on this voucher.`,
           status: 'ISSUED',
           generatedAt: now,
+          issuedAt: now,
           generatedBy: user?.id || 'admin',
           generatedByName: user?.name || 'Operations Desk',
           serviceItemsSnapshot: catItems.map(it => ({
@@ -11068,34 +11347,70 @@ export class AppDatabase {
             serviceTime: it.serviceTime || '09:00 AM',
             supplierName: it.supplierName,
             supplierConfirmationRef: it.supplierConfirmationRef,
-            totalPax: it.totalPax || 1
+            totalPax: it.totalPax || 1,
+            bookedPrice: it.totalPrice || 0,
+            currency: it.currency || b.currency || 'JPY'
           })),
-          isOutdated: false,
-          issuedAt: now
+          isOutdated: false
         };
         generatedVouchers.push(vch);
+
+        if (!b.vouchersList) b.vouchersList = [];
+        b.vouchersList.unshift(vch);
+        if (!b.voucherIds) b.voucherIds = [];
+        b.voucherIds = Array.from(new Set([...b.voucherIds, vch.id]));
+        if (!b.activityVoucherIds) b.activityVoucherIds = [];
+        b.activityVoucherIds = Array.from(new Set([...b.activityVoucherIds, vch.id]));
+
+        catItems.forEach(it => {
+          it.voucherStatus = 'Generated';
+          (it as any).voucherId = vch.id;
+          (it as any).voucherCode = vch.voucherNumber;
+        });
+
+        this.saveVoucher(vch, user);
       });
+
+      b.updatedAt = now;
+      this.saveBooking(b, user);
+
+      return {
+        success: generatedVouchers.length > 0,
+        total: candidateItems.length,
+        successful: confirmedItems.length,
+        failed: candidateItems.length - confirmedItems.length,
+        vouchers: generatedVouchers,
+        errors: []
+      };
     } else {
-      // One per activity / service item
-      confirmedItems.forEach(it => {
-        const res = this.generateActivityVoucher(b.id, it.id, user);
+      // Standard: 1 authoritative voucher per Activity / Item
+      candidateItems.forEach(it => {
+        const res = this.generateActivityVoucher(b.id, it.id, user, forceRegenerate);
         if (res.success && res.voucher) {
           generatedVouchers.push(res.voucher);
+        } else {
+          itemErrors.push({
+            itemId: it.id,
+            productName: it.productName,
+            reason: res.error || 'Failed to generate voucher'
+          });
         }
       });
-      return { success: true, vouchers: generatedVouchers };
+
+      const total = candidateItems.length;
+      const successful = generatedVouchers.length;
+      const failed = itemErrors.length;
+
+      return {
+        success: successful > 0,
+        total,
+        successful,
+        failed,
+        vouchers: generatedVouchers,
+        errors: itemErrors,
+        error: failed > 0 && successful === 0 ? itemErrors[0]?.reason : undefined
+      };
     }
-
-    if (!b.vouchersList) b.vouchersList = [];
-    b.vouchersList.unshift(...generatedVouchers);
-    if (!b.voucherIds) b.voucherIds = [];
-    b.voucherIds = Array.from(new Set([...b.voucherIds, ...generatedVouchers.map(v => v.id)]));
-    b.updatedAt = now;
-
-    generatedVouchers.forEach(v => this.saveVoucher(v, user));
-    this.saveBooking(b, user);
-
-    return { success: true, vouchers: generatedVouchers };
   }
 
   /**
@@ -11179,21 +11494,39 @@ export class AppDatabase {
     if (!b) return { success: false, error: 'Booking not found' };
 
     const now = new Date().toISOString();
+    const issueDateStr = now.split('T')[0];
     const invoiceNumber = `TUB-PINV-2026-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const services: InvoiceServiceItem[] = (b.items || []).map((it, idx) => ({
+    const customerName = b.customer?.leadTravelerName || b.customer?.bookerName || b.customer?.name || (b as any).guestName || (b as any).leadName || 'Valued Client';
+    const customerEmail = b.customer?.email || (b as any).guestEmail || (b as any).leadEmail || 'client@theunbound.com';
+    const agencyName = b.agentAgency || b.customer?.agencyName || (b as any).agencyName || 'TheUnbound Partner Network';
+    const agentName = b.agentName || (b as any).submittingAgentName || user?.name || 'Authorized Operations Desk';
+    const totalPax = typeof (b as any).totalPax === 'number' ? (b as any).totalPax : (typeof (b as any).pax === 'number' ? (b as any).pax : 1);
+    const destination = b.destination || (b as any).primaryDestination || 'Ground Destination';
+    const travelDates = b.travelStartDate ? `${b.travelStartDate}${b.travelEndDate ? ' - ' + b.travelEndDate : ''}` : 'Scheduled';
+
+    const mappedItems: any[] = (b.items || []).map((it, idx) => ({
       id: it.id || `inv-item-${idx}`,
-      serviceName: it.productName || 'Travel Ground Service',
+      productName: it.productName || (it as any).title || 'Travel Ground Service',
+      serviceName: it.productName || (it as any).title || 'Travel Ground Service',
       category: it.category || 'SERVICE',
-      travelDate: it.travelDate || it.serviceDate || b.travelStartDate,
+      serviceDate: it.serviceDate || it.travelDate || b.travelStartDate || 'Scheduled',
+      travelDate: it.travelDate || it.serviceDate || b.travelStartDate || 'Scheduled',
+      pax: typeof (it as any).pax === 'number' ? (it as any).pax : totalPax,
       quantity: 1,
       unitPrice: it.totalPrice || it.unitSellingPrice || 0,
       taxAmount: 0,
-      totalPrice: it.totalPrice || it.unitSellingPrice || 0,
+      totalPrice: it.totalPrice || (it.unitSellingPrice ? it.unitSellingPrice : 0),
       currency: b.currency || 'USD'
     }));
 
-    const subtotal = b.totalAmount || 0;
+    const itemsTotalSum = mappedItems.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+    const subtotal = (b.totalAmount && b.totalAmount > 0)
+      ? b.totalAmount
+      : ((b as any).pricing?.totalPrice && (b as any).pricing.totalPrice > 0)
+        ? (b as any).pricing.totalPrice
+        : (itemsTotalSum > 0 ? itemsTotalSum : 0);
+
     const amountPaid = (b as any).paidAmount || (b.paymentStatus === 'PAID' ? subtotal : 0);
     const balanceDue = Math.max(0, subtotal - amountPaid);
     const paymentStatus: InvoicePaymentStatus = balanceDue === 0 && subtotal > 0 ? 'PAID' : amountPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
@@ -11211,20 +11544,32 @@ export class AppDatabase {
       isProforma: true,
       responsibleAgentId: b.submittingAgentId || b.agentId,
       assignedTeamMemberId: b.assignedTeamMemberId,
-      customerName: b.customer?.leadTravelerName || b.customer?.bookerName || 'Valued Client',
-      customerEmail: b.customer?.email || 'client@theunbound.com',
-      customerPhone: b.customer?.phone,
-      agentName: b.agentName || user?.name,
-      agencyName: b.agentAgency || b.customer?.agencyName || 'TheUnbound Partner Network',
-      invoiceDate: now.split('T')[0],
+      customerName,
+      customerEmail,
+      customerPhone: b.customer?.phone || (b as any).guestPhone,
+      agentName,
+      agencyName,
+      invoiceDate: issueDateStr,
+      issueDate: issueDateStr,
       dueDate,
-      services,
+      services: mappedItems as InvoiceServiceItem[],
+      items: mappedItems,
+      billedToAgency: agencyName,
+      billedToName: customerName,
+      billedToEmail: customerEmail,
+      billedToGstin: (b.customer as any)?.gstin || (b as any).gstin || '',
+      leadTravelerName: customerName,
+      totalPax,
+      destination,
+      travelDates,
       subtotal,
       taxTotal: 0,
+      taxAmount: 0,
       serviceFeeTotal: 0,
       discountTotal: 0,
       totalAmount: subtotal,
       amountPaid,
+      paidAmount: amountPaid,
       balanceDue,
       currency: b.currency || 'USD',
       paymentStatus,

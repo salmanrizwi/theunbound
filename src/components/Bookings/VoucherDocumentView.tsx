@@ -56,25 +56,27 @@ export const VoucherDocumentView: React.FC<VoucherDocumentViewProps> = ({
   return (
     <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden print:shadow-none print:border-none">
       {/* Top Action Bar */}
-      <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between print:hidden">
+      <div className="bg-white text-slate-800 px-6 py-4 flex items-center justify-between border-b border-slate-200 print:hidden">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-teal-500/20 text-teal-400 flex items-center justify-center font-black text-xs">
+          <div className="w-8 h-8 rounded-xl bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-black text-xs">
             TUB
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold text-white">Official Service Voucher</h3>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-500/30 text-teal-300 border border-teal-500/40">
+              <h3 className="text-sm font-bold text-slate-900">
+                {voucher.isCompleteBookingVoucher ? 'Official Master Booking Voucher' : 'Official Activity Service Voucher'}
+              </h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-50 text-[#008972] border border-teal-200">
                 v{voucher.version || 1}
               </span>
               {isOutdated && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/30 text-amber-300 border border-amber-500/40 flex items-center gap-1">
-                  <AlertTriangle className="w-3 h-3" /> Potentially Outdated
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-800 border border-amber-300 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3 text-amber-600" /> Potentially Outdated
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-slate-400">
-              Voucher No: {voucher.voucherNumber} • Ref: {voucher.bookingReference}
+            <p className="text-[11px] text-slate-500">
+              Voucher No: <strong className="font-mono text-slate-700">{voucher.voucherNumber}</strong> • Ref: <strong className="text-slate-700">{voucher.bookingReference}</strong>
             </p>
           </div>
         </div>
@@ -83,21 +85,21 @@ export const VoucherDocumentView: React.FC<VoucherDocumentViewProps> = ({
           {isOutdated && onRegenerate && (
             <button
               onClick={onRegenerate}
-              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
             >
               Regenerate Voucher
             </button>
           )}
           <button
             onClick={handlePrint}
-            className="px-3.5 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+            className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
           >
             <Printer className="w-3.5 h-3.5" /> Print / PDF
           </button>
           {onClose && (
             <button
               onClick={onClose}
-              className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-white transition-all cursor-pointer"
+              className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-all cursor-pointer"
               title="Close"
             >
               <X className="w-5 h-5" />
@@ -278,6 +280,66 @@ export const VoucherDocumentView: React.FC<VoucherDocumentViewProps> = ({
             </table>
           </div>
         </div>
+
+        {/* Operational & Activity Specifications (when configured) */}
+        {(voucher.vehicle || voucher.guide || voucher.ticketType || voucher.meal || voucher.capacityTier || (voucher.selectedOptions && voucher.selectedOptions.length > 0) || (voucher.bookedPrice !== undefined && voucher.bookedPrice > 0)) && (
+          <div className="p-4 rounded-2xl bg-[#F8FAFA] border border-slate-200/90 space-y-3">
+            <h5 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-[#00C6A6]" />
+              Confirmed Operational Specifications & Configuration
+            </h5>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-xs">
+              {voucher.vehicle && (
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Vehicle Allocation</span>
+                  <span className="font-bold text-slate-800">{voucher.vehicle}</span>
+                  {voucher.capacityTier && (
+                    <span className="text-[10px] text-slate-500 block">Tier: {voucher.capacityTier}</span>
+                  )}
+                </div>
+              )}
+              {voucher.guide && (
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Guide & Language</span>
+                  <span className="font-bold text-slate-800">{voucher.guide}</span>
+                  {voucher.guideLanguage && (
+                    <span className="text-[10px] text-slate-500 block">Lang: {voucher.guideLanguage}</span>
+                  )}
+                </div>
+              )}
+              {voucher.ticketType && (
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Ticket Category</span>
+                  <span className="font-bold text-slate-800">{voucher.ticketType}</span>
+                </div>
+              )}
+              {voucher.meal && (
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Dining / Meal Plan</span>
+                  <span className="font-bold text-slate-800">{voucher.meal}</span>
+                </div>
+              )}
+              {voucher.bookedPrice !== undefined && voucher.bookedPrice > 0 && (
+                <div className="bg-white p-2.5 rounded-xl border border-teal-200">
+                  <span className="text-[10px] uppercase font-bold text-[#008972] block">Authorized Booked Rate</span>
+                  <span className="font-black text-slate-900">
+                    {voucher.currency || 'JPY'} {voucher.bookedPrice.toLocaleString()}
+                  </span>
+                </div>
+              )}
+            </div>
+            {voucher.selectedOptions && voucher.selectedOptions.length > 0 && (
+              <div className="pt-2 border-t border-slate-200/60 flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] uppercase font-bold text-slate-400 mr-1">Selected Options:</span>
+                {voucher.selectedOptions.map((opt, i) => (
+                  <span key={i} className="px-2 py-0.5 rounded-md bg-white border border-slate-200 text-[11px] font-medium text-slate-700">
+                    {opt}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Meeting, Pickup & Ground Instructions */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Booking, BookingItem, User, Supplier } from '../../../types';
+import { Booking, BookingItem, BookingVoucher, User, Supplier } from '../../../types';
 import { AppDatabase } from '../../../services/db';
 import { formatCurrency } from '../../../services/pricingEngine';
 import { hasBookingOperationsPermission } from '../../../services/permissionEngine';
@@ -57,7 +57,7 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<BookingItem | null>(null);
   const [configuringItem, setConfiguringItem] = useState<BookingItem | null>(null);
-  const [selectedVoucherItem, setSelectedVoucherItem] = useState<BookingItem | null>(null);
+  const [selectedVoucherForPreview, setSelectedVoucherForPreview] = useState<BookingVoucher | null>(null);
   const [deletingItem, setDeletingItem] = useState<BookingItem | null>(null);
   const [overrideItem, setOverrideItem] = useState<BookingItem | null>(null);
 
@@ -479,9 +479,17 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
 
                           {/* Voucher View / Download */}
                           <button
-                            onClick={() => setSelectedVoucherItem(item)}
-                            className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700 cursor-pointer"
-                            title="Generate / View Service Voucher"
+                            onClick={() => {
+                              const res = db.generateActivityVoucher(booking.id, item.id, currentUser);
+                              if (res.success && res.voucher) {
+                                setSelectedVoucherForPreview(res.voucher);
+                                onRefresh();
+                              } else {
+                                alert(res.error || 'Failed to generate activity voucher. Ensure item is confirmed.');
+                              }
+                            }}
+                            className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-[#008972] cursor-pointer"
+                            title="Generate / View Activity-Level Voucher"
                           >
                             <FileText className="w-3.5 h-3.5" />
                           </button>
@@ -561,44 +569,25 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
       )}
 
       {/* 3. VOUCHER DOCUMENT PREVIEW MODAL */}
-      {selectedVoucherItem && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-4xl w-full p-6 shadow-2xl space-y-4">
+      {selectedVoucherForPreview && (
+        <div className="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-4xl w-full p-6 shadow-2xl space-y-4 border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-[#008f77]" />
-                Luxury Service Voucher • {selectedVoucherItem.productName}
+                <FileText className="w-4 h-4 text-[#00C6A6]" />
+                Activity Service Voucher • {selectedVoucherForPreview.serviceName}
               </h3>
               <button
-                onClick={() => setSelectedVoucherItem(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                onClick={() => setSelectedVoucherForPreview(null)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <VoucherDocumentView
-              voucher={{
-                voucherNumber: `VCH-${booking.bookingReference}-${selectedVoucherItem.id.slice(-4)}`,
-                serviceItemId: selectedVoucherItem.id,
-                serviceName: selectedVoucherItem.productName,
-                bookingReference: booking.bookingReference,
-                leadTravelerName: booking.customer?.leadTravelerName || 'Guest',
-                totalPax: selectedVoucherItem.totalPax || 1,
-                destination: selectedVoucherItem.destinationName || 'Japan',
-                city: selectedVoucherItem.city || 'Tokyo',
-                serviceDate: selectedVoucherItem.serviceDate || selectedVoucherItem.travelDate || 'TBA',
-                serviceTime: selectedVoucherItem.serviceTime || '09:00 AM',
-                supplierName: selectedVoucherItem.supplierName || 'Unbound Ground Operations',
-                supplierContact: selectedVoucherItem.supplierContact,
-                supplierConfirmationRef: selectedVoucherItem.supplierConfirmationRef || 'CONFIRMED',
-                emergencyContact: '+81 3 5555 0192',
-                notes: selectedVoucherItem.supplierNotes || selectedVoucherItem.operationalInstructions,
-                meetingPoint: selectedVoucherItem.pickupLocation || 'Hotel Lobby / Airport Arrival Gate',
-                issuedAt: new Date().toISOString(),
-                status: 'ISSUED'
-              }}
-              onClose={() => setSelectedVoucherItem(null)}
+              voucher={selectedVoucherForPreview}
+              onClose={() => setSelectedVoucherForPreview(null)}
             />
           </div>
         </div>

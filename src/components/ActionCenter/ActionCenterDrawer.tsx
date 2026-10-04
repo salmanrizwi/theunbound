@@ -333,7 +333,7 @@ export const ActionCenterDrawer: React.FC<ActionCenterDrawerProps> = ({
               }}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 viewMode === 'ACTIVE'
-                  ? 'bg-slate-900 text-white shadow-xs'
+                  ? 'bg-[#00C6A6] text-white shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
               }`}
             >
@@ -343,7 +343,7 @@ export const ActionCenterDrawer: React.FC<ActionCenterDrawerProps> = ({
               onClick={() => setViewMode('SNOOZED')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 viewMode === 'SNOOZED'
-                  ? 'bg-slate-900 text-white shadow-xs'
+                  ? 'bg-[#00C6A6] text-white shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
               }`}
             >
@@ -353,7 +353,7 @@ export const ActionCenterDrawer: React.FC<ActionCenterDrawerProps> = ({
               onClick={() => setViewMode('COMPLETED')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 viewMode === 'COMPLETED'
-                  ? 'bg-slate-900 text-white shadow-xs'
+                  ? 'bg-[#00C6A6] text-white shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
               }`}
             >
@@ -416,7 +416,7 @@ export const ActionCenterDrawer: React.FC<ActionCenterDrawerProps> = ({
               onClick={() => setActiveCountTab('UPCOMING')}
               className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors whitespace-nowrap cursor-pointer ${
                 activeCountTab === 'UPCOMING'
-                  ? 'bg-slate-900 text-white'
+                  ? 'bg-[#00C6A6] text-white'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
@@ -460,9 +460,9 @@ export const ActionCenterDrawer: React.FC<ActionCenterDrawerProps> = ({
               <button
                 key={tab.id}
                 onClick={() => setSelectedEntityType(tab.id as any)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                   selectedEntityType === tab.id
-                    ? 'bg-slate-900 text-white font-bold'
+                    ? 'bg-teal-50 text-[#008972] border border-teal-200 font-bold'
                     : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200/60'
                 }`}
               >
@@ -609,7 +609,7 @@ export const ActionCenterDrawer: React.FC<ActionCenterDrawerProps> = ({
                       <button
                         type="button"
                         onClick={() => handleOpenRecord(task)}
-                        className="px-3 py-1.5 bg-slate-900 hover:bg-[#00C6A6] text-white rounded-xl text-xs font-bold flex items-center space-x-1 transition-colors cursor-pointer shadow-2xs"
+                        className="px-3 py-1.5 bg-[#00C6A6] hover:bg-[#00b094] text-white rounded-xl text-xs font-bold flex items-center space-x-1 transition-colors cursor-pointer shadow-2xs"
                       >
                         <span>Open Record</span>
                         <ExternalLink className="w-3 h-3" />

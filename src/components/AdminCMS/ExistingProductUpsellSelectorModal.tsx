@@ -198,21 +198,21 @@ export const ExistingProductUpsellSelectorModal: React.FC<ExistingProductUpsellS
       <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-4xl w-full flex flex-col max-h-[92vh] overflow-hidden animate-scaleUp">
         
         {/* Header */}
-        <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between shrink-0 border-b border-slate-800">
+        <div className="px-6 py-4 bg-white text-slate-800 flex items-center justify-between shrink-0 border-b border-slate-100">
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-2xl bg-[#00C6A6]/20 border border-[#00C6A6]/40 text-[#00C6A6] flex items-center justify-center">
-              <Sparkles className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200/80 text-[#008972] flex items-center justify-center">
+              <Sparkles className="w-5 h-5 text-[#00C6A6]" />
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#00C6A6] text-slate-950">
+                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-teal-50 text-[#008972] border border-teal-200/60">
                   Master Product Selector
                 </span>
-                <span className="text-xs text-slate-400">
+                <span className="text-xs text-slate-500">
                   Add Existing Product as Upsell
                 </span>
               </div>
-              <h2 className="text-base font-black text-white truncate mt-0.5">
+              <h2 className="text-base font-black text-slate-900 truncate mt-0.5">
                 Link Live Experience Upgrade to "{currentProduct.name || 'Current Product'}"
               </h2>
             </div>
@@ -221,7 +221,7 @@ export const ExistingProductUpsellSelectorModal: React.FC<ExistingProductUpsellS
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -283,11 +283,11 @@ export const ExistingProductUpsellSelectorModal: React.FC<ExistingProductUpsellS
                   onClick={() => setSelectedCategory(tab.value)}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center space-x-1.5 cursor-pointer ${
                     isSelected
-                      ? 'bg-slate-900 text-white shadow-xs'
-                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 hover:text-slate-900'
+                      ? 'bg-teal-50 border border-teal-200/90 text-[#008972] shadow-2xs'
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 hover:text-slate-900'
                   }`}
                 >
-                  <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-[#00C6A6]' : 'text-slate-400'}`} />
+                  <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-[#008972]' : 'text-slate-400'}`} />
                   <span>{tab.label}</span>
                 </button>
               );
@@ -551,7 +551,7 @@ export const ExistingProductUpsellSelectorModal: React.FC<ExistingProductUpsellS
                                 e.stopPropagation();
                                 handleSelect(p);
                               }}
-                              className="px-3 py-1.5 rounded-xl bg-slate-900 group-hover:bg-[#00C6A6] text-white group-hover:text-slate-950 text-xs font-bold transition-colors flex items-center space-x-1 cursor-pointer"
+                              className="px-3 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#008972] text-slate-950 hover:text-white text-xs font-bold transition-colors flex items-center space-x-1 cursor-pointer shadow-2xs"
                             >
                               <span>Select</span>
                               <ArrowRight className="w-3 h-3" />

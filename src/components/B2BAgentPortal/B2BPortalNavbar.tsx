@@ -454,25 +454,24 @@ export const B2BPortalSidebar: React.FC<B2BPortalSidebarProps> = ({
       {/* Bottom Card: Trusted Japan Partner Banner (Visible when expanded) */}
       {!isCollapsed && (
         <div className="p-3 shrink-0 border-t border-slate-100">
-          <div className="bg-gradient-to-br from-slate-900 to-slate-950 text-white p-3.5 rounded-2xl space-y-2.5 shadow-md relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-24 h-24 bg-[#00C6A6]/10 rounded-full blur-xl pointer-events-none" />
+          <div className="bg-gradient-to-br from-teal-50/90 via-emerald-50/40 to-slate-50 text-slate-800 p-3.5 rounded-2xl space-y-2.5 border border-teal-100/90 shadow-2xs relative overflow-hidden">
             <div className="flex items-center space-x-2">
-              <span className="w-2 h-2 rounded-full bg-[#00E5C0] animate-pulse" />
-              <span className="text-[10px] font-extrabold text-[#00E5C0] uppercase tracking-wider">
+              <span className="w-2 h-2 rounded-full bg-[#00C6A6] animate-pulse" />
+              <span className="text-[10px] font-black text-[#008972] uppercase tracking-wider">
                 Trusted DMC Partner
               </span>
             </div>
-            <div className="space-y-1 text-[11px] text-slate-300">
+            <div className="space-y-1 text-[11px] text-slate-600 font-medium">
               <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3 h-3 text-[#00C6A6] shrink-0" />
+                <CheckCircle2 className="w-3.5 h-3.5 text-[#00C6A6] shrink-0" />
                 <span>Real-time Wholesale Pricing</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3 h-3 text-[#00C6A6] shrink-0" />
+                <CheckCircle2 className="w-3.5 h-3.5 text-[#00C6A6] shrink-0" />
                 <span>Instant Quotation Engine</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3 h-3 text-[#00C6A6] shrink-0" />
+                <CheckCircle2 className="w-3.5 h-3.5 text-[#00C6A6] shrink-0" />
                 <span>Dedicated On-Ground Support</span>
               </div>
             </div>
@@ -809,7 +808,7 @@ export const B2BPortalHeader: React.FC<B2BPortalHeaderProps> = ({
             onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
             className="flex items-center space-x-2 p-1 pr-2 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-colors cursor-pointer text-xs"
           >
-            <div className="w-8 h-8 rounded-xl bg-slate-900 text-[#00E5C0] font-black flex items-center justify-center text-xs shrink-0 shadow-2xs">
+            <div className="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200/80 text-[#008972] font-black flex items-center justify-center text-xs shrink-0 shadow-2xs">
               {user?.name ? user.name.charAt(0).toUpperCase() : 'A'}
             </div>
             <div className="text-left hidden md:block max-w-[110px] truncate">

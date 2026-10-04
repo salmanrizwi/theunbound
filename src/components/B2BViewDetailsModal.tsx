@@ -237,25 +237,25 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
       <div 
         id="b2b-view-details-modal"
-        className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 max-w-6xl w-full overflow-hidden flex flex-col max-h-[92dvh] sm:max-h-[90vh]"
+        className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200/90 max-w-6xl w-full overflow-hidden flex flex-col max-h-[92dvh] sm:max-h-[90vh]"
       >
         {/* 1. FIXED HEADER */}
-        <div className="bg-slate-900 text-white px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between border-b border-slate-800 shrink-0">
+        <div className="bg-white text-slate-900 px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-between border-b border-slate-200/80 shrink-0">
           <div className="truncate pr-4 space-y-0.5">
-            <h1 className="text-sm sm:text-lg font-black text-white truncate leading-tight">
+            <h1 className="text-sm sm:text-lg font-black text-slate-900 truncate leading-tight">
               {name}
             </h1>
-            <div className="flex items-center gap-1.5 text-slate-400 text-[10px] sm:text-xs">
-              <span className="font-bold text-[#00E5C0]">{category}</span>
+            <div className="flex items-center gap-2 text-slate-500 text-[11px] sm:text-xs">
+              <span className="font-bold text-[#008972] bg-teal-50 px-2 py-0.5 rounded-md border border-teal-100">{category}</span>
               <span>·</span>
-              <span>{destination}</span>
+              <span className="font-medium text-slate-600">{destination}</span>
               {hub && (
                 <>
                   <span>·</span>
-                  <span>{hub}</span>
+                  <span className="text-slate-500">{hub}</span>
                 </>
               )}
             </div>
@@ -263,17 +263,17 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
 
           <div className="flex items-center space-x-2 shrink-0">
             {/* Currency Selector */}
-            <div className="flex items-center space-x-1.5 bg-slate-800/90 border border-slate-700/80 rounded-xl px-2 sm:px-2.5 py-1 text-xs text-slate-300">
+            <div className="flex items-center space-x-1.5 bg-slate-50 border border-slate-200/90 rounded-xl px-2 sm:px-2.5 py-1 text-xs text-slate-700 shadow-2xs">
               <Globe2 className="w-3.5 h-3.5 text-[#00C6A6] shrink-0" />
               <select
                 id="details-currency-select"
                 value={currency}
                 onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                className="bg-transparent text-white font-bold text-xs focus:outline-none cursor-pointer pr-1"
+                className="bg-transparent text-slate-800 font-bold text-xs focus:outline-none cursor-pointer pr-1"
                 title="Change display currency"
               >
                 {SUPPORTED_CURRENCIES.map(c => (
-                  <option key={c.code} value={c.code} className="bg-slate-900 text-white">
+                  <option key={c.code} value={c.code} className="bg-white text-slate-800">
                     {c.code}
                   </option>
                 ))}
@@ -283,16 +283,18 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
             {/* Share link button */}
             <button
               onClick={handleShare}
-              className="text-xs text-slate-300 hover:text-white flex items-center space-x-1.5 bg-slate-800 px-2.5 sm:px-3 py-1.5 rounded-xl transition-colors cursor-pointer active:scale-95"
+              className="text-xs text-slate-600 hover:text-slate-900 flex items-center space-x-1.5 bg-slate-100 hover:bg-slate-200/80 px-2.5 sm:px-3 py-1.5 rounded-xl transition-colors cursor-pointer active:scale-95 font-medium border border-slate-200/60"
             >
-              {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5" />}
+              {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-600 font-bold" /> : <Share2 className="w-3.5 h-3.5 text-slate-500" />}
               <span className="hidden sm:inline">{copiedLink ? 'Link Copied' : 'Share'}</span>
             </button>
 
             {/* Close button */}
             <button
               onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer active:scale-95 border border-slate-800"
+              className="p-1.5 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer active:scale-95 border border-slate-200/80"
+              title="Close Modal"
+              aria-label="Close Modal"
             >
               <X className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
@@ -300,7 +302,7 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
         </div>
 
         {/* 2. SCROLLABLE CONTENT BODY */}
-        <div className="overflow-y-auto p-4 sm:p-6 flex-1 bg-slate-50/50">
+        <div className="overflow-y-auto p-4 sm:p-6 flex-1 bg-[#F8FAFA]">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
             
             {/* LEFT COLUMN: Media Area, Summary & Descriptions */}
@@ -308,7 +310,7 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
               
               {/* Image Area with Gallery Grid */}
               <div className="space-y-2">
-                <div className="aspect-16/10 sm:aspect-16/8 w-full rounded-2xl overflow-hidden bg-slate-900 relative shadow-inner border border-slate-200">
+                <div className="aspect-16/10 sm:aspect-16/8 w-full rounded-2xl overflow-hidden bg-slate-100 relative shadow-inner border border-slate-200/80">
                   <img
                     src={images[activeImageIdx] || defaultImage}
                     alt={name}
@@ -317,7 +319,7 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
                     }}
                     className="w-full h-full object-cover"
                   />
-                  <div className="absolute bottom-3 right-3 bg-slate-950/80 backdrop-blur-md text-white text-[10px] sm:text-xs px-2.5 py-1 rounded-xl">
+                  <div className="absolute bottom-3 right-3 bg-slate-900/80 backdrop-blur-md text-white text-[10px] sm:text-xs px-2.5 py-1 rounded-xl font-medium">
                     Photo {activeImageIdx + 1} of {images.length}
                   </div>
                 </div>
@@ -552,35 +554,35 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
 
             {/* RIGHT COLUMN: Read-Only Service Specifications & Action Panel */}
             <div className="lg:col-span-5 xl:col-span-4 space-y-4">
-              <div className="bg-slate-900 text-white rounded-3xl p-5 sm:p-6 shadow-xl sticky top-4 border border-slate-800">
+              <div className="bg-white text-slate-800 rounded-3xl p-5 sm:p-6 shadow-sm sticky top-4 border border-slate-200/90">
                 
                 {/* A. Display Price */}
                 <div className="mb-4">
-                  <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-wider text-[#00E5C0] block mb-1">
+                  <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-wider text-[#008972] block mb-1">
                     Partner Rate Display
                   </span>
                   
                   {hidePrice ? (
-                    <div className="bg-slate-850 border border-slate-800 rounded-xl p-3.5 text-xs text-slate-300">
-                      <p className="font-bold text-white flex items-center gap-1.5 mb-0.5">
-                        <Lock className="w-3.5 h-3.5 text-teal-400" />
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-xs text-slate-600">
+                      <p className="font-bold text-slate-800 flex items-center gap-1.5 mb-0.5">
+                        <Lock className="w-3.5 h-3.5 text-[#008972]" />
                         <span>Wholesale Rate Protected</span>
                       </p>
-                      <p className="text-[11px] text-slate-400 leading-normal">
+                      <p className="text-[11px] text-slate-500 leading-normal">
                         Partner agent rates are automatically applied upon configuring and adding to day quotation.
                       </p>
                     </div>
                   ) : (
                     <div className="space-y-1">
                       <div className="flex items-baseline space-x-2">
-                        <span className="text-2xl sm:text-3xl font-black text-white tracking-tight font-mono tabular-nums">
+                        <span className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight font-mono tabular-nums">
                           {product && productStartingPrice > 0 && formatCurrency(productStartingPrice, currency)}
                           {product && productStartingPrice <= 0 && 'Configure to see Price'}
                           {hotel && hotelStartingPrice > 0 && formatCurrency(hotelStartingPrice, currency)}
                           {hotel && hotelStartingPrice <= 0 && 'Configure to see Price'}
                           {packageItem && formatCurrency(packageDisplayPrice, currency)}
                         </span>
-                        <span className="text-xs text-slate-400 font-semibold">
+                        <span className="text-xs text-slate-500 font-semibold">
                           {product && productStartingPrice > 0 && '/ Guest'}
                           {hotel && hotelStartingPrice > 0 && '/ Starting Night'}
                           {packageItem && '/ Pax'}
@@ -591,32 +593,32 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
                 </div>
 
                 {/* B. CATEGORY-SPECIFIC GENERAL SPECIFICATIONS (Strictly Read-Only) */}
-                <div className="space-y-4 pt-4 border-t border-slate-800/80 mb-6 text-xs text-slate-300">
-                  <div className="font-bold text-[#00E5C0] text-[10px] uppercase tracking-wider mb-2">
+                <div className="space-y-3 pt-4 border-t border-slate-100 mb-6 text-xs text-slate-600">
+                  <div className="font-bold text-[#008972] text-[10px] uppercase tracking-wider mb-2">
                     General Service Specifications
                   </div>
 
                   {product && (
-                    <div className="space-y-3">
-                      <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                        <span className="text-slate-400">Standard Capacity:</span>
-                        <span className="font-bold text-white">Up to {product.maxPax || 15} Guests</span>
+                    <div className="space-y-2.5">
+                      <div className="flex justify-between border-b border-slate-100 pb-2">
+                        <span className="text-slate-500">Standard Capacity:</span>
+                        <span className="font-bold text-slate-900">Up to {product.maxPax || 15} Guests</span>
                       </div>
                       
                       {product.category?.includes('Transfer') && (
                         <>
-                          <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                            <span className="text-slate-400">Transfer Route:</span>
-                            <span className="font-bold text-white">{product.routeType || 'Airport ↔ Destination Hotel'}</span>
+                          <div className="flex justify-between border-b border-slate-100 pb-2">
+                            <span className="text-slate-500">Transfer Route:</span>
+                            <span className="font-bold text-slate-900">{product.routeType || 'Airport ↔ Destination Hotel'}</span>
                           </div>
-                          <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                            <span className="text-slate-400">Executive Asset:</span>
-                            <span className="font-bold text-white">{product.vehicleConfig?.name || 'Luxury Alphard MPV'}</span>
+                          <div className="flex justify-between border-b border-slate-100 pb-2">
+                            <span className="text-slate-500">Executive Asset:</span>
+                            <span className="font-bold text-slate-900">{product.vehicleConfig?.name || 'Luxury Alphard MPV'}</span>
                           </div>
                           {product.vehicleConfig?.luggageCapacity && (
-                            <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                              <span className="text-slate-400">Luggage Allowance:</span>
-                              <span className="font-bold text-white">{product.vehicleConfig.luggageCapacity} Bags</span>
+                            <div className="flex justify-between border-b border-slate-100 pb-2">
+                              <span className="text-slate-500">Luggage Allowance:</span>
+                              <span className="font-bold text-slate-900">{product.vehicleConfig.luggageCapacity} Bags</span>
                             </div>
                           )}
                         </>
@@ -624,53 +626,53 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
 
                       {product.category?.includes('Tour') && (
                         <>
-                          <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                            <span className="text-slate-400">Tour Duration:</span>
-                            <span className="font-bold text-white">{product.durationHours || 4} Hours</span>
+                          <div className="flex justify-between border-b border-slate-100 pb-2">
+                            <span className="text-slate-500">Tour Duration:</span>
+                            <span className="font-bold text-slate-900">{product.durationHours || 4} Hours</span>
                           </div>
-                          <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                            <span className="text-slate-400">Guide Accompany:</span>
-                            <span className="font-bold text-white">{product.guideConfig?.guideType ? 'Private English Docent' : 'Professional Chauffeur Only'}</span>
+                          <div className="flex justify-between border-b border-slate-100 pb-2">
+                            <span className="text-slate-500">Guide Accompany:</span>
+                            <span className="font-bold text-slate-900">{product.guideConfig?.guideType ? 'Private English Docent' : 'Professional Chauffeur Only'}</span>
                           </div>
                         </>
                       )}
 
                       {product.category?.includes('Yacht') && (
                         <>
-                          <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                            <span className="text-slate-400">Yacht Asset:</span>
-                            <span className="font-bold text-white">{product.yachtConfig?.name || 'Luxury Motor Yacht'}</span>
+                          <div className="flex justify-between border-b border-slate-100 pb-2">
+                            <span className="text-slate-500">Yacht Asset:</span>
+                            <span className="font-bold text-slate-900">{product.yachtConfig?.name || 'Luxury Motor Yacht'}</span>
                           </div>
-                          <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                            <span className="text-slate-400">Yacht Length:</span>
-                            <span className="font-bold text-white">{product.yachtConfig?.length || '66 ft'}</span>
+                          <div className="flex justify-between border-b border-slate-100 pb-2">
+                            <span className="text-slate-500">Yacht Length:</span>
+                            <span className="font-bold text-slate-900">{product.yachtConfig?.length || '66 ft'}</span>
                           </div>
                         </>
                       )}
 
                       {product.category?.includes('Ferry') && (
                         <>
-                          <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                            <span className="text-slate-400">Transit Ports:</span>
-                            <span className="font-bold text-white">{product.ferryConfig?.departurePort || 'Tokyo'} ↔ {product.ferryConfig?.arrivalPort || 'Kyoto'}</span>
+                          <div className="flex justify-between border-b border-slate-100 pb-2">
+                            <span className="text-slate-500">Transit Ports:</span>
+                            <span className="font-bold text-slate-900">{product.ferryConfig?.departurePort || 'Tokyo'} ↔ {product.ferryConfig?.arrivalPort || 'Kyoto'}</span>
                           </div>
-                          <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                            <span className="text-slate-400">Vessel Class:</span>
-                            <span className="font-bold text-white">{product.ferryConfig?.name || 'Standard Ferry Liner'}</span>
+                          <div className="flex justify-between border-b border-slate-100 pb-2">
+                            <span className="text-slate-500">Vessel Class:</span>
+                            <span className="font-bold text-slate-900">{product.ferryConfig?.name || 'Standard Ferry Liner'}</span>
                           </div>
                         </>
                       )}
 
                       {product.category?.includes('Visa') && (
                         <>
-                          <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                            <span className="text-slate-400">Processing Time:</span>
-                            <span className="font-bold text-white">{product.processingTimeDays || 5} Business Days</span>
+                          <div className="flex justify-between border-b border-slate-100 pb-2">
+                            <span className="text-slate-500">Processing Time:</span>
+                            <span className="font-bold text-slate-900">{product.processingTimeDays || 5} Business Days</span>
                           </div>
                           {product.expressProcessingAvailable && (
-                            <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                              <span className="text-slate-400">Express Option:</span>
-                              <span className="font-bold text-white">Yes ({product.expressProcessingTimeDays || 2} Days)</span>
+                            <div className="flex justify-between border-b border-slate-100 pb-2">
+                              <span className="text-slate-500">Express Option:</span>
+                              <span className="font-bold text-slate-900">Yes ({product.expressProcessingTimeDays || 2} Days)</span>
                             </div>
                           )}
                         </>
@@ -679,49 +681,49 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
                   )}
 
                   {hotel && (
-                    <div className="space-y-3">
-                      <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                        <span className="text-slate-400">Star Rating:</span>
-                        <span className="font-bold text-white">{hotel.starRating || 5} Star Luxury</span>
+                    <div className="space-y-2.5">
+                      <div className="flex justify-between border-b border-slate-100 pb-2">
+                        <span className="text-slate-500">Star Rating:</span>
+                        <span className="font-bold text-slate-900">{hotel.starRating || 5} Star Luxury</span>
                       </div>
-                      <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                        <span className="text-slate-400">Location Address:</span>
-                        <span className="font-bold text-white truncate max-w-[180px]">{hotel.address || hotel.city}</span>
+                      <div className="flex justify-between border-b border-slate-100 pb-2">
+                        <span className="text-slate-500">Location Address:</span>
+                        <span className="font-bold text-slate-900 truncate max-w-[180px]">{hotel.address || hotel.city}</span>
                       </div>
-                      <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                        <span className="text-slate-400">Room Categories:</span>
-                        <span className="font-bold text-white">{hotel.roomTypes?.length || 1} Types Available</span>
+                      <div className="flex justify-between border-b border-slate-100 pb-2">
+                        <span className="text-slate-500">Room Categories:</span>
+                        <span className="font-bold text-slate-900">{hotel.roomTypes?.length || 1} Types Available</span>
                       </div>
                     </div>
                   )}
 
                   {packageItem && (
-                    <div className="space-y-3">
-                      <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                        <span className="text-slate-400">Days / Nights:</span>
-                        <span className="font-bold text-white">{packageDurationText}</span>
+                    <div className="space-y-2.5">
+                      <div className="flex justify-between border-b border-slate-100 pb-2">
+                        <span className="text-slate-500">Days / Nights:</span>
+                        <span className="font-bold text-slate-900">{packageDurationText}</span>
                       </div>
-                      <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                        <span className="text-slate-400">Tour Style:</span>
-                        <span className="font-bold text-white">{packageItem.tripType || 'Premium Custom Circuit'}</span>
+                      <div className="flex justify-between border-b border-slate-100 pb-2">
+                        <span className="text-slate-500">Tour Style:</span>
+                        <span className="font-bold text-slate-900">{packageItem.tripType || 'Premium Custom Circuit'}</span>
                       </div>
-                      <div className="flex justify-between border-b border-slate-800/60 pb-2">
-                        <span className="text-slate-400">Total Cities:</span>
-                        <span className="font-bold text-white">{(packageItem.routeSummary || []).length} hubs</span>
+                      <div className="flex justify-between border-b border-slate-100 pb-2">
+                        <span className="text-slate-500">Total Cities:</span>
+                        <span className="font-bold text-slate-900">{(packageItem.routeSummary || []).length} hubs</span>
                       </div>
                     </div>
                   )}
                 </div>
 
                 {/* C. LOWER CTAs */}
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {/* Standard Products */}
                   {product && onOpenCalculator && (
                     <button
                       onClick={handleConfigureProduct}
-                      className="w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-md bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-black cursor-pointer hover:scale-102 shadow-[#00C6A6]/20 flex items-center justify-center space-x-2"
+                      className="w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-md bg-[#00C6A6] hover:bg-[#00b094] text-white font-extrabold cursor-pointer hover:scale-102 shadow-[#00C6A6]/20 flex items-center justify-center space-x-2"
                     >
-                      <Plus className="w-4 h-4 shrink-0" />
+                      <Plus className="w-4 h-4 shrink-0 stroke-[2.5]" />
                       <span>Configure & Add to Quote</span>
                     </button>
                   )}
@@ -730,9 +732,9 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
                   {hotel && onConfigureHotel && (
                     <button
                       onClick={handleConfigureHotel}
-                      className="w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-md bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-black cursor-pointer hover:scale-102 shadow-[#00C6A6]/20 flex items-center justify-center space-x-2"
+                      className="w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-md bg-[#00C6A6] hover:bg-[#00b094] text-white font-extrabold cursor-pointer hover:scale-102 shadow-[#00C6A6]/20 flex items-center justify-center space-x-2"
                     >
-                      <Plus className="w-4 h-4" />
+                      <Plus className="w-4 h-4 stroke-[2.5]" />
                       <span>Configure & Add to Quote</span>
                     </button>
                   )}
@@ -741,16 +743,16 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
                   {packageItem && onCustomizePackage && (
                     <button
                       onClick={handleConfigurePackage}
-                      className="w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-md bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-black cursor-pointer hover:scale-102 shadow-[#00C6A6]/20 flex items-center justify-center space-x-2"
+                      className="w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-md bg-[#00C6A6] hover:bg-[#00b094] text-white font-extrabold cursor-pointer hover:scale-102 shadow-[#00C6A6]/20 flex items-center justify-center space-x-2"
                     >
-                      <Plus className="w-4 h-4" />
+                      <Plus className="w-4 h-4 stroke-[2.5]" />
                       <span>Customize Circuit & Import</span>
                     </button>
                   )}
 
                   {/* Standard Wishlist Anchor */}
                   {product && (
-                    <div className="pt-2">
+                    <div className="pt-1">
                       <WishlistButton product={product} variant="button" />
                     </div>
                   )}
@@ -758,12 +760,12 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
 
                 {/* Confidential Admin contract margin info */}
                 {(role === 'ADMIN' || role === 'DMC_STAFF') && (
-                  <div className="mt-4 p-3 rounded-2xl bg-slate-800 border border-slate-700 text-[10px] space-y-1">
-                    <p className="font-bold text-[#00E5C0] uppercase tracking-wider flex items-center space-x-1">
+                  <div className="mt-4 p-3 rounded-2xl bg-slate-50 border border-slate-200 text-[10px] space-y-1">
+                    <p className="font-bold text-[#008972] uppercase tracking-wider flex items-center space-x-1">
                       <Building2 className="w-3.5 h-3.5" />
                       <span>Confidential DMC Internals</span>
                     </p>
-                    <p className="text-slate-300">
+                    <p className="text-slate-600">
                       {product && `Contracted Net Adult: ${formatCurrency(product.adultNetPrice, product.currency)} (Margin: ${product.defaultMarkupPercent}%)`}
                       {packageItem && `Base Net Cost: ${formatCurrency(packageItem.baseNetCostUSD || 2500, 'USD')} (B2B Markup: ${packageItem.pricingConfiguration?.b2bMarkupPercent || 12}%)`}
                     </p>
@@ -775,16 +777,16 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
         </div>
 
         {/* 3. FIXED ACTIONS FOOTER */}
-        <div className="bg-slate-900 text-white px-4 sm:px-6 py-2.5 sm:py-3.5 border-t border-slate-800 flex items-center justify-between shrink-0 text-xs">
-          <div className="text-slate-400 font-bold hidden sm:block">
+        <div className="bg-white text-slate-800 px-4 sm:px-6 py-3 sm:py-3.5 border-t border-slate-200/80 flex items-center justify-between shrink-0 text-xs">
+          <div className="text-slate-500 font-semibold hidden sm:block">
             {product && `${product.category} · Service Details Reference`}
             {hotel && `${hotel.starRating || 5} Star Hotel · Location Info`}
             {packageItem && `Itinerary Circuit: ${packageDurationText}`}
           </div>
-          <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
+          <div className="flex items-center space-x-2.5 w-full sm:w-auto justify-end">
             <button
               onClick={onClose}
-              className="px-4 py-2 border border-slate-700 bg-transparent hover:bg-slate-800 text-white font-bold text-xs rounded-xl cursor-pointer transition-colors"
+              className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl cursor-pointer transition-colors shadow-2xs"
             >
               Close Details
             </button>
@@ -793,7 +795,7 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
             {product && onOpenCalculator && (
               <button
                 onClick={handleConfigureProduct}
-                className="px-4 py-2 rounded-xl text-xs bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-black cursor-pointer transition-all"
+                className="px-4 py-2 rounded-xl text-xs bg-[#00C6A6] hover:bg-[#00b094] text-white font-bold cursor-pointer transition-all shadow-xs shadow-[#00C6A6]/20"
               >
                 Configure & Add to Quote
               </button>
@@ -802,7 +804,7 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
             {hotel && onConfigureHotel && (
               <button
                 onClick={handleConfigureHotel}
-                className="px-4 py-2 rounded-xl text-xs bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-black cursor-pointer transition-all"
+                className="px-4 py-2 rounded-xl text-xs bg-[#00C6A6] hover:bg-[#00b094] text-white font-bold cursor-pointer transition-all shadow-xs shadow-[#00C6A6]/20"
               >
                 Configure & Add to Quote
               </button>
@@ -811,7 +813,7 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
             {packageItem && onCustomizePackage && (
               <button
                 onClick={handleConfigurePackage}
-                className="px-4 py-2 rounded-xl text-xs bg-[#00C6A6] hover:bg-[#00b094] text-[#00E5C0] font-black cursor-pointer transition-all"
+                className="px-4 py-2 rounded-xl text-xs bg-[#00C6A6] hover:bg-[#00b094] text-white font-bold cursor-pointer transition-all shadow-xs shadow-[#00C6A6]/20"
               >
                 Customize Circuit
               </button>

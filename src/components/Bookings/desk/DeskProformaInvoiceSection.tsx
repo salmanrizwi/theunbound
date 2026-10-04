@@ -72,7 +72,8 @@ export const DeskProformaInvoiceSection: React.FC<DeskProformaInvoiceSectionProp
 
   const handleGenerateInvoice = () => {
     const res = db.generateProformaInvoice(booking.id, currentUser);
-    if (res.success) {
+    if (res.success && res.invoice) {
+      setSelectedInvoiceForPreview(res.invoice);
       onRefresh();
     } else {
       alert(res.error || 'Failed to generate Proforma Invoice');

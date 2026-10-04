@@ -36,6 +36,7 @@ import { formatCurrency } from '../../services/pricingEngine';
 import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 import { isRailProduct } from '../../services/rail/JapanRailJourneyDataService';
 import { AppDatabase } from '../../services/db';
+import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
 
 // Safely normalize any value to a lowercase trimmed string to prevent undefined property crashes
 const safeStr = (val: any): string => {
@@ -110,12 +111,14 @@ interface B2BProductsCatalogViewProps {
   products?: Product[];
   destinations?: Destination[];
   onOpenCreateQuote: () => void;
+  onViewProductDetails?: (prod: Product) => void;
 }
 
 export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> = ({
   products = [],
   destinations = [],
-  onOpenCreateQuote
+  onOpenCreateQuote,
+  onViewProductDetails
 }) => {
   const db = AppDatabase.getInstance();
   const { items, removeProductFromQuote, currency, setIsQuoteDrawerOpen } = useQuotation();
@@ -372,8 +375,8 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
   };
 
   const handleOpenProductDetails = (prod: Product) => {
-    if (isRailProduct(prod)) {
-      setSelectedProductForQuoteModal(prod);
+    if (onViewProductDetails) {
+      onViewProductDetails(prod);
     } else {
       setSelectedProductDetails(prod);
     }
@@ -994,117 +997,16 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
         </div>
       )}
 
-      {/* Product Details Modal */}
+      {/* Standardized B2B View Details Modal */}
       {selectedProductDetails && (
-        <div 
-          className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-hidden"
-          onClick={() => setSelectedProductDetails(null)}
-        >
-          <div 
-            className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-pop-in"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 shrink-0">
-              <div>
-                <span className="text-[10px] font-bold text-[#00a88c] uppercase tracking-wider block">
-                  {selectedProductDetails.city || 'Japan'}, {selectedProductDetails.country || 'Japan'} • {selectedProductDetails.category || 'Tour'}
-                </span>
-                <h2 className="text-lg font-black text-slate-900 font-sans">
-                  {selectedProductDetails.name}
-                </h2>
-                <span className="text-xs text-slate-400 font-mono">SKU: {selectedProductDetails.sku || selectedProductDetails.id}</span>
-              </div>
-              <button
-                onClick={() => setSelectedProductDetails(null)}
-                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Scrollable Body */}
-            <div className="p-6 overflow-y-auto space-y-5 flex-1 text-xs">
-              {selectedProductDetails.heroImage && (
-                <div className="h-52 rounded-2xl overflow-hidden bg-slate-100">
-                  <img
-                    src={selectedProductDetails.heroImage}
-                    alt={selectedProductDetails.name}
-                    className="w-full h-full object-cover"
-                    referrerPolicy="no-referrer"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src = 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop';
-                    }}
-                  />
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <h4 className="font-bold text-slate-900 uppercase tracking-wider text-[11px]">Product Description</h4>
-                <p className="text-slate-600 leading-relaxed">
-                  {selectedProductDetails.longDescription || selectedProductDetails.shortDescription || 'Professional ground logistics and local escort.'}
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-100 space-y-2">
-                  <span className="font-bold text-emerald-900 uppercase text-[10px] tracking-wider block">Inclusions</span>
-                  <ul className="space-y-1 text-emerald-950 text-[11px]">
-                    {selectedProductDetails.inclusions?.map((inc, i) => (
-                      <li key={i} className="flex items-start space-x-1.5">
-                        <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                        <span>{inc}</span>
-                      </li>
-                    )) || <li>Full ground logistics and licensed guide escort.</li>}
-                  </ul>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-                  <span className="font-bold text-slate-700 uppercase text-[10px] tracking-wider block">Terms & SLA</span>
-                  <p className="text-slate-600 text-[11px]">
-                    {selectedProductDetails.cancellationPolicy || 'Standard 48-hour free cancellation prior to service start date.'}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0 gap-3">
-              <div>
-                <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
-                <div className="flex items-baseline space-x-1">
-                  <span className="text-base font-extrabold text-slate-900 font-mono">
-                    {formatCurrency(
-                      typeof selectedProductDetails.sellingPriceStartingFrom === 'number' ? selectedProductDetails.sellingPriceStartingFrom : (selectedProductDetails.adultNetPrice || 0),
-                      selectedProductDetails.currency || currency
-                    )}
-                  </span>
-                  <span className="text-xs text-slate-500 font-medium">/ person</span>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => setSelectedProductDetails(null)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-white text-slate-700 font-bold text-xs cursor-pointer"
-                >
-                  Close
-                </button>
-                <button
-                  onClick={() => {
-                    const p = selectedProductDetails;
-                    setSelectedProductDetails(null);
-                    handleOpenAddProductModal(p);
-                  }}
-                  className="px-5 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 font-black text-xs transition-all shadow-xs flex items-center space-x-1.5 cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Configure & Add to Cart</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <B2BViewDetailsModal
+          product={selectedProductDetails}
+          onClose={() => setSelectedProductDetails(null)}
+          onOpenCalculator={(p) => {
+            setSelectedProductDetails(null);
+            handleOpenAddProductModal(p);
+          }}
+        />
       )}
 
       {/* Dedicated Category Configurator Router */}

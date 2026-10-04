@@ -65,28 +65,28 @@ export const ProductPreviewCard: React.FC<ProductPreviewCardProps> = ({
   const defaultImage = 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=800';
 
   return (
-    <div className={`bg-slate-900 text-white rounded-2xl overflow-hidden shadow-md border border-slate-800 ${className}`}>
-      <div className="h-44 bg-slate-800 relative">
+    <div className={`bg-white text-slate-800 rounded-2xl overflow-hidden shadow-xs border border-slate-200/90 ${className}`}>
+      <div className="h-44 bg-slate-100 relative">
         {!imgError && (imageUrl || defaultImage) ? (
           <img
             src={imageUrl || defaultImage}
             alt={name || 'Product Preview'}
             onError={() => setImgError(true)}
             referrerPolicy="no-referrer"
-            className="w-full h-full object-cover opacity-90 transition-opacity duration-200"
+            className="w-full h-full object-cover transition-opacity duration-200"
           />
         ) : (
-          <div className="w-full h-full bg-gradient-to-br from-slate-800 to-indigo-950 flex flex-col items-center justify-center p-4 text-center">
+          <div className="w-full h-full bg-slate-50 flex flex-col items-center justify-center p-4 text-center">
             {getCategoryIcon(category)}
-            <span className="text-xs font-bold text-slate-300 mt-2">{name || 'Product Image'}</span>
+            <span className="text-xs font-bold text-slate-500 mt-2">{name || 'Product Image'}</span>
           </div>
         )}
 
         <div className="absolute top-3 left-3 flex items-center gap-2">
-          <span className="bg-[#00C6A6] text-slate-950 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded shadow-xs">
+          <span className="bg-[#00C6A6] text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded shadow-xs">
             Product Preview
           </span>
-          <span className="bg-slate-950/80 text-white text-[10px] font-bold px-2 py-0.5 rounded border border-slate-800">
+          <span className="bg-white/90 backdrop-blur-xs text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded border border-slate-200 shadow-2xs">
             {status}
           </span>
         </div>
@@ -94,16 +94,16 @@ export const ProductPreviewCard: React.FC<ProductPreviewCardProps> = ({
 
       <div className="p-4 space-y-3">
         <div>
-          <div className="flex items-center gap-1.5 text-[#00E5C0] text-[10px] font-bold uppercase tracking-wider mb-0.5">
+          <div className="flex items-center gap-1.5 text-[#008972] text-[10px] font-bold uppercase tracking-wider mb-0.5">
             {getCategoryIcon(category)}
             <span>{category}</span>
           </div>
-          <h4 className="text-sm font-black text-white leading-snug line-clamp-2">
+          <h4 className="text-sm font-black text-slate-900 leading-snug line-clamp-2">
             {name || 'Mt. Fuji Private Tour'}
           </h4>
         </div>
 
-        <div className="flex items-center gap-3 text-xs text-slate-400">
+        <div className="flex items-center gap-3 text-xs text-slate-500">
           <span className="flex items-center gap-1">
             <MapPin className="w-3 h-3 text-[#00C6A6]" />
             <span>{cityName}, {destinationName}</span>
@@ -117,30 +117,30 @@ export const ProductPreviewCard: React.FC<ProductPreviewCardProps> = ({
         {/* Category-Specific Preview Badges */}
         <div className="space-y-1 text-[11px]">
           {routeText && (
-            <div className="text-teal-300 font-medium truncate">
+            <div className="text-[#008972] font-semibold truncate">
               Route: <strong>{routeText}</strong>
             </div>
           )}
           {languageText && (
-            <div className="text-slate-300 truncate">
+            <div className="text-slate-600 truncate">
               Languages: <strong>{languageText}</strong>
             </div>
           )}
           {mealsText && (
-            <div className="text-amber-300 truncate">
+            <div className="text-amber-700 truncate">
               Regime: <strong>{mealsText}</strong>
             </div>
           )}
           {upsellCount > 0 && (
-            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-teal-900/60 border border-teal-700/60 text-teal-300 text-[10px] font-bold">
+            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-teal-50 border border-teal-200 text-[#008972] text-[10px] font-bold">
               <span>✨ {upsellCount} Optional Experience{upsellCount > 1 ? 's' : ''} Available</span>
             </div>
           )}
         </div>
 
-        <div className="flex items-center justify-between text-xs pt-3 border-t border-slate-800">
+        <div className="flex items-center justify-between text-xs pt-3 border-t border-slate-100">
           <div>
-            <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-semibold">
+            <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-semibold">
               Final Price
             </span>
             {capacityText && (
@@ -148,7 +148,7 @@ export const ProductPreviewCard: React.FC<ProductPreviewCardProps> = ({
             )}
           </div>
           <div className="text-right">
-            <span className="text-base font-black font-mono text-[#00C6A6]">
+            <span className="text-base font-black font-mono text-[#008972]">
               {currency} {startingPrice ? startingPrice.toLocaleString() : '0'}
             </span>
           </div>

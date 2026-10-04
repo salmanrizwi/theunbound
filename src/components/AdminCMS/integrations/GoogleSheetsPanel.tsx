@@ -534,22 +534,22 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
       {/* ---------------------------------------------------- */}
       {/* MASTER SYNC HEADER & SUB-NAVIGATION */}
       {/* ---------------------------------------------------- */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-teal-500/5 rounded-full blur-3xl pointer-events-none" />
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 relative z-10">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-teal-500/20 border border-teal-500/30 flex items-center justify-center text-teal-400 shadow-inner">
-                <FileSpreadsheet className="w-6 h-6" />
+              <div className="w-12 h-12 rounded-xl bg-teal-50 border border-teal-200/80 flex items-center justify-center text-[#008972] shadow-2xs">
+                <FileSpreadsheet className="w-6 h-6 text-[#00C6A6]" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h1 className="text-2xl font-bold text-white tracking-tight">Google Sheets ↔ Firebase Master Sync</h1>
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                  <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Google Sheets ↔ Firebase Master Sync</h1>
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-50 text-[#008972] border border-teal-200/60">
                     Schema-Driven Presets
                   </span>
                 </div>
-                <p className="text-sm text-slate-400 mt-0.5">
+                <p className="text-sm text-slate-500 mt-0.5">
                   Dynamic module presets, canonical schema mapping, relationship validation, and safe upserts.
                 </p>
               </div>
@@ -559,10 +559,10 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setManagerView('IMPORTER')}
-              className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+              className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 cursor-pointer ${
                 managerView === 'IMPORTER'
-                  ? 'bg-teal-500 text-slate-950 font-bold shadow-lg shadow-teal-500/20'
-                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700'
+                  ? 'bg-[#00C6A6] text-slate-950 font-bold shadow-xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200'
               }`}
             >
               <Zap className="w-4 h-4" />
@@ -570,10 +570,10 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
             </button>
             <button
               onClick={() => setManagerView('TEMPLATES')}
-              className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+              className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 cursor-pointer ${
                 managerView === 'TEMPLATES'
-                  ? 'bg-teal-500 text-slate-950 font-bold shadow-lg shadow-teal-500/20'
-                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700'
+                  ? 'bg-[#00C6A6] text-slate-950 font-bold shadow-xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200'
               }`}
             >
               <Download className="w-4 h-4" />
@@ -581,10 +581,10 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
             </button>
             <button
               onClick={() => setManagerView('CONNECTION_HEALTH')}
-              className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+              className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 cursor-pointer ${
                 managerView === 'CONNECTION_HEALTH'
-                  ? 'bg-teal-500 text-slate-950 font-bold shadow-lg shadow-teal-500/20'
-                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700'
+                  ? 'bg-[#00C6A6] text-slate-950 font-bold shadow-xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200'
               }`}
             >
               <Activity className="w-4 h-4" />
@@ -592,10 +592,10 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
             </button>
             <button
               onClick={() => setManagerView('HISTORY')}
-              className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${
+              className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 cursor-pointer ${
                 managerView === 'HISTORY'
-                  ? 'bg-teal-500 text-slate-950 font-bold shadow-lg shadow-teal-500/20'
-                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700'
+                  ? 'bg-[#00C6A6] text-slate-950 font-bold shadow-xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-slate-200'
               }`}
             >
               <History className="w-4 h-4" />
@@ -605,12 +605,12 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
         </div>
 
         {healthStatusNotice && (
-          <div className="mt-4 p-3 rounded-xl bg-teal-500/10 border border-teal-500/30 text-teal-300 text-xs flex items-center justify-between animate-fadeIn">
-            <span className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+          <div className="mt-4 p-3 rounded-xl bg-teal-50 border border-teal-200 text-[#008972] text-xs flex items-center justify-between animate-fadeIn">
+            <span className="flex items-center gap-2 font-medium">
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-[#00C6A6]" />
               {healthStatusNotice}
             </span>
-            <button onClick={() => setHealthStatusNotice(null)} className="text-slate-400 hover:text-white">✕</button>
+            <button onClick={() => setHealthStatusNotice(null)} className="text-slate-400 hover:text-slate-700 cursor-pointer">✕</button>
           </div>
         )}
       </div>
@@ -621,18 +621,18 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
       {managerView === 'IMPORTER' && (
         <div className="space-y-6">
           {/* STEP INDICATOR BAR */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg">
+          <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs">
             <div className="grid grid-cols-4 gap-2 text-center text-xs font-semibold">
               <div className={`p-3 rounded-xl border transition-all ${
                 currentStep === 1 
-                  ? 'bg-teal-500/10 border-teal-500/40 text-teal-400' 
+                  ? 'bg-teal-50/80 border-teal-200 text-[#008972]' 
                   : currentStep > 1 
-                  ? 'bg-slate-800/80 border-slate-700 text-teal-300' 
-                  : 'bg-slate-950/40 border-slate-800 text-slate-500'
+                  ? 'bg-[#F8FAFA] border-slate-200 text-[#008972]' 
+                  : 'bg-[#F8FAFA] border-slate-200/80 text-slate-400'
               }`}>
                 <div className="flex items-center justify-center gap-2 mb-1">
                   <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
-                    currentStep > 1 ? 'bg-teal-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-300'
+                    currentStep > 1 ? 'bg-[#00C6A6] text-slate-950 font-bold' : 'bg-slate-100 text-slate-600'
                   }`}>
                     {currentStep > 1 ? '✓' : '1'}
                   </span>
@@ -642,14 +642,14 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
 
               <div className={`p-3 rounded-xl border transition-all ${
                 currentStep === 2 
-                  ? 'bg-teal-500/10 border-teal-500/40 text-teal-400' 
+                  ? 'bg-teal-50/80 border-teal-200 text-[#008972]' 
                   : currentStep > 2 
-                  ? 'bg-slate-800/80 border-slate-700 text-teal-300' 
-                  : 'bg-slate-950/40 border-slate-800 text-slate-500'
+                  ? 'bg-[#F8FAFA] border-slate-200 text-[#008972]' 
+                  : 'bg-[#F8FAFA] border-slate-200/80 text-slate-400'
               }`}>
                 <div className="flex items-center justify-center gap-2 mb-1">
                   <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
-                    currentStep > 2 ? 'bg-teal-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-300'
+                    currentStep > 2 ? 'bg-[#00C6A6] text-slate-950 font-bold' : 'bg-slate-100 text-slate-600'
                   }`}>
                     {currentStep > 2 ? '✓' : '2'}
                   </span>
@@ -659,14 +659,14 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
 
               <div className={`p-3 rounded-xl border transition-all ${
                 currentStep === 3 
-                  ? 'bg-teal-500/10 border-teal-500/40 text-teal-400' 
+                  ? 'bg-teal-50/80 border-teal-200 text-[#008972]' 
                   : currentStep > 3 
-                  ? 'bg-slate-800/80 border-slate-700 text-teal-300' 
-                  : 'bg-slate-950/40 border-slate-800 text-slate-500'
+                  ? 'bg-[#F8FAFA] border-slate-200 text-[#008972]' 
+                  : 'bg-[#F8FAFA] border-slate-200/80 text-slate-400'
               }`}>
                 <div className="flex items-center justify-center gap-2 mb-1">
                   <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
-                    currentStep > 3 ? 'bg-teal-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-300'
+                    currentStep > 3 ? 'bg-[#00C6A6] text-slate-950 font-bold' : 'bg-slate-100 text-slate-600'
                   }`}>
                     {currentStep > 3 ? '✓' : '3'}
                   </span>
@@ -676,12 +676,12 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
 
               <div className={`p-3 rounded-xl border transition-all ${
                 currentStep === 4 
-                  ? 'bg-teal-500/10 border-teal-500/40 text-teal-400' 
-                  : 'bg-slate-950/40 border-slate-800 text-slate-500'
+                  ? 'bg-teal-50/80 border-teal-200 text-[#008972]' 
+                  : 'bg-[#F8FAFA] border-slate-200/80 text-slate-400'
               }`}>
                 <div className="flex items-center justify-center gap-2 mb-1">
                   <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
-                    currentStep === 4 ? 'bg-teal-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-300'
+                    currentStep === 4 ? 'bg-[#00C6A6] text-slate-950 font-bold' : 'bg-slate-100 text-slate-600'
                   }`}>
                     4
                   </span>
@@ -695,18 +695,18 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
           {currentStep === 1 && (
             <div className="space-y-6">
               {/* 1. MODULE PRESET SELECTOR CARDS */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                      <Layers className="w-5 h-5 text-teal-400" />
+                    <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                      <Layers className="w-5 h-5 text-[#008972]" />
                       Select Module Preset
                     </h2>
-                    <p className="text-xs text-slate-400 mt-0.5">
+                    <p className="text-xs text-slate-500 mt-0.5">
                       Choose which inventory or tariff module you want to synchronize. The schema, required worksheets, and relationships adapt dynamically.
                     </p>
                   </div>
-                  <span className="text-xs text-slate-400 bg-slate-800 px-3 py-1 rounded-lg border border-slate-700">
+                  <span className="text-xs text-slate-600 bg-[#F8FAFA] px-3 py-1 rounded-lg border border-slate-200 font-semibold">
                     5 Authoritative Presets
                   </span>
                 </div>
@@ -724,30 +724,30 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                             handleLoadCanonicalDatasetForPreset(preset.id);
                           }
                         }}
-                        className={`p-4 rounded-xl border text-left transition-all relative overflow-hidden flex flex-col justify-between ${
+                        className={`p-4 rounded-xl border text-left transition-all relative overflow-hidden flex flex-col justify-between cursor-pointer ${
                           isSelected
-                            ? 'bg-slate-800/90 border-teal-500 ring-2 ring-teal-500/20 shadow-lg'
-                            : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 hover:bg-slate-850'
+                            ? 'bg-teal-50/50 border-[#00C6A6] ring-2 ring-[#00C6A6]/20 shadow-xs'
+                            : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/60'
                         }`}
                       >
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
-                            <span className="px-2 py-0.5 text-[10px] font-bold rounded uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
+                            <span className="px-2 py-0.5 text-[10px] font-bold rounded uppercase tracking-wider bg-slate-100 text-slate-700 border border-slate-200">
                               {preset.badgeText}
                             </span>
                             {isSelected && (
-                              <CheckCircle2 className="w-4 h-4 text-teal-400" />
+                              <CheckCircle2 className="w-4 h-4 text-[#00C6A6]" />
                             )}
                           </div>
-                          <h3 className="text-sm font-bold text-white">{preset.name}</h3>
-                          <p className="text-[11px] text-slate-400 line-clamp-3 leading-relaxed">
+                          <h3 className="text-sm font-bold text-slate-900">{preset.name}</h3>
+                          <p className="text-[11px] text-slate-500 line-clamp-3 leading-relaxed">
                             {preset.description}
                           </p>
                         </div>
 
-                        <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                        <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-500 font-mono">
                           <span>{preset.schemaVersion}</span>
-                          <span className="text-teal-400 font-semibold">{preset.requiredSchemaIds.length} Required Tab{preset.requiredSchemaIds.length > 1 ? 's' : ''}</span>
+                          <span className="text-[#008972] font-semibold">{preset.requiredSchemaIds.length} Required Tab{preset.requiredSchemaIds.length > 1 ? 's' : ''}</span>
                         </div>
                       </button>
                     );
@@ -756,47 +756,47 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
               </div>
 
               {/* 2. DATA INPUT SOURCE */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                   <div>
-                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                      <Database className="w-5 h-5 text-teal-400" />
+                    <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                      <Database className="w-5 h-5 text-[#008972]" />
                       Workbook Source & Discovery
                     </h2>
-                    <p className="text-xs text-slate-400 mt-0.5">
+                    <p className="text-xs text-slate-500 mt-0.5">
                       Fetch remote Google Sheets via backend proxy, upload a local Excel workbook, paste CSV, or test with canonical sample dataset.
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                  <div className="flex items-center gap-2 bg-[#F8FAFA] p-1 rounded-xl border border-slate-200">
                     <button
                       onClick={() => setInputMode('GOOGLE_SHEET')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                        inputMode === 'GOOGLE_SHEET' ? 'bg-teal-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                        inputMode === 'GOOGLE_SHEET' ? 'bg-[#00C6A6] text-slate-950 font-bold shadow-2xs' : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
                       Google Sheet URL / ID
                     </button>
                     <button
                       onClick={() => setInputMode('FILE_UPLOAD')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                        inputMode === 'FILE_UPLOAD' ? 'bg-teal-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                        inputMode === 'FILE_UPLOAD' ? 'bg-[#00C6A6] text-slate-950 font-bold shadow-2xs' : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
                       Upload File (.xlsx)
                     </button>
                     <button
                       onClick={() => setInputMode('MANUAL_CSV')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                        inputMode === 'MANUAL_CSV' ? 'bg-teal-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                        inputMode === 'MANUAL_CSV' ? 'bg-[#00C6A6] text-slate-950 font-bold shadow-2xs' : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
                       Paste CSV
                     </button>
                     <button
                       onClick={() => handleLoadCanonicalDatasetForPreset(selectedPresetId)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                        inputMode === 'CANONICAL_DATASET' ? 'bg-teal-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                        inputMode === 'CANONICAL_DATASET' ? 'bg-[#00C6A6] text-slate-950 font-bold shadow-2xs' : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
                       Load Demo Dataset
@@ -808,7 +808,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                 {inputMode === 'GOOGLE_SHEET' && (
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
                         Target Google Spreadsheet URL or Key
                       </label>
                       <div className="flex gap-3">
@@ -817,19 +817,19 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                           value={sheetInput}
                           onChange={(e) => setSheetInput(e.target.value)}
                           placeholder="https://docs.google.com/spreadsheets/d/1C8I2TOnc_7_u07_G_Pz705yGg4Y6U5BPyY4t-rG9Hzo/edit"
-                          className="flex-1 px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 font-mono"
+                          className="flex-1 px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#00C6A6] focus:ring-1 focus:ring-[#00C6A6] font-mono"
                         />
                         <button
                           onClick={handleSaveMasterSheetConfig}
                           disabled={isSavingConfig}
-                          className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold border border-slate-700 flex items-center gap-2"
+                          className="px-4 py-3 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 flex items-center gap-2 cursor-pointer shadow-2xs"
                         >
-                          <Save className="w-4 h-4" />
+                          <Save className="w-4 h-4 text-[#008972]" />
                           {isSavingConfig ? 'Saving...' : 'Save Default'}
                         </button>
                       </div>
-                      <p className="text-xs text-slate-400 mt-2">
-                        Resolved Spreadsheet ID: <span className="font-mono text-teal-400">{cleanSheetId || 'Not configured'}</span>
+                      <p className="text-xs text-slate-500 mt-2">
+                        Resolved Spreadsheet ID: <span className="font-mono text-[#008972] font-semibold">{cleanSheetId || 'Not configured'}</span>
                       </p>
                     </div>
                   </div>
@@ -838,10 +838,10 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                 {/* FILE UPLOAD INPUT */}
                 {inputMode === 'FILE_UPLOAD' && (
                   <div className="space-y-4">
-                    <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+                    <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
                       Upload Local Excel Spreadsheet (.xlsx, .xls)
                     </label>
-                    <div className="border-2 border-dashed border-slate-700 hover:border-teal-500/50 rounded-2xl p-8 text-center transition-all bg-slate-950/40">
+                    <div className="border-2 border-dashed border-slate-200 hover:border-[#00C6A6] rounded-2xl p-8 text-center transition-all bg-[#F8FAFA]">
                       <input
                         type="file"
                         accept=".xlsx,.xls,.csv"
@@ -850,13 +850,13 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                         id="sheet-file-upload-input"
                       />
                       <label htmlFor="sheet-file-upload-input" className="cursor-pointer space-y-3 block">
-                        <div className="w-12 h-12 rounded-xl bg-teal-500/10 text-teal-400 flex items-center justify-center mx-auto border border-teal-500/20">
-                          <Upload className="w-6 h-6" />
+                        <div className="w-12 h-12 rounded-xl bg-teal-50 text-[#008972] flex items-center justify-center mx-auto border border-teal-200">
+                          <Upload className="w-6 h-6 text-[#00C6A6]" />
                         </div>
-                        <div className="text-sm font-semibold text-white">
+                        <div className="text-sm font-semibold text-slate-900">
                           Click to browse or drop your Excel workbook here
                         </div>
-                        <p className="text-xs text-slate-400">
+                        <p className="text-xs text-slate-500">
                           Supports multi-tab workbooks formatted for "{activePreset.name}".
                         </p>
                       </label>
@@ -868,15 +868,15 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                 {inputMode === 'MANUAL_CSV' && (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
                         Direct CSV Raw Text Input
                       </label>
                       <div className="flex items-center gap-2 text-xs">
-                        <span className="text-slate-400">Target Schema Tab:</span>
+                        <span className="text-slate-500">Target Schema Tab:</span>
                         <select
                           value={manualCsvTabTarget}
                           onChange={(e) => setManualCsvTabTarget(e.target.value)}
-                          className="bg-slate-950 border border-slate-700 text-white rounded-lg px-2.5 py-1 text-xs"
+                          className="bg-white border border-slate-200 text-slate-800 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-[#00C6A6]"
                         >
                           {ModulePresetRegistry.getSchemasForPreset(selectedPresetId, true).map(s => (
                             <option key={s.schemaId} value={s.canonicalTabName}>{s.canonicalTabName} ({s.displayName})</option>
@@ -889,11 +889,11 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                       onChange={(e) => setManualCsvText(e.target.value)}
                       placeholder="product_id,product_code,product_name,category,region_id,destination_id,hub_id,supplier_id,native_currency,supplier_nett,margin_type,b2b_margin_value,status&#10;PROD-001,PRD-TYO-001,Tokyo Private Tour,Private Tour,REG-001,DST-JPN,HUB-TOKYO,SUP001,JPY,66000,PERCENTAGE,15,ACTIVE"
                       rows={6}
-                      className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-600 font-mono focus:outline-none focus:border-teal-500"
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 font-mono focus:outline-none focus:border-[#00C6A6]"
                     />
                     <button
                       onClick={handleApplyManualCsv}
-                      className="px-4 py-2 bg-teal-500 text-slate-950 font-bold rounded-xl text-xs flex items-center gap-2"
+                      className="px-4 py-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold rounded-xl text-xs flex items-center gap-2 cursor-pointer shadow-xs"
                     >
                       <Check className="w-4 h-4" />
                       Parse & Apply to Staged Data
@@ -903,14 +903,14 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
 
                 {/* CANONICAL DATASET ACTIVE NOTIFICATION */}
                 {inputMode === 'CANONICAL_DATASET' && (
-                  <div className="p-4 rounded-xl bg-teal-500/10 border border-teal-500/30 text-teal-300 text-xs flex items-center justify-between">
+                  <div className="p-4 rounded-xl bg-teal-50 border border-teal-200 text-[#008972] text-xs flex items-center justify-between">
                     <span className="flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-teal-400" />
+                      <Sparkles className="w-4 h-4 text-[#00C6A6]" />
                       Official canonical demo dataset loaded for <strong>{activePreset.name}</strong> ({Object.keys(stagedData).length} worksheets staged).
                     </span>
                     <button
                       onClick={() => handleDownloadTemplate(selectedPresetId, true)}
-                      className="px-3 py-1 bg-teal-500 text-slate-950 rounded-lg font-bold text-xs flex items-center gap-1.5"
+                      className="px-3 py-1 bg-[#00C6A6] text-slate-950 rounded-lg font-bold text-xs flex items-center gap-1.5 cursor-pointer"
                     >
                       <Download className="w-3.5 h-3.5" />
                       Download Workbook (.xlsx)
@@ -920,56 +920,56 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
 
                 {/* 3. DYNAMIC PRESET WORKBOOK INSPECTION RESULTS */}
                 {inspectionReport && (
-                  <div className="mt-6 border border-slate-800 rounded-xl p-5 bg-slate-950/60 space-y-4">
+                  <div className="mt-6 border border-slate-200 rounded-xl p-5 bg-[#F8FAFA] space-y-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
                         <span className={`w-3 h-3 rounded-full ${
-                          inspectionReport.isValid ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' : 'bg-amber-400 shadow-sm shadow-amber-400/50'
+                          inspectionReport.isValid ? 'bg-emerald-500 shadow-xs' : 'bg-amber-500 shadow-xs'
                         }`} />
-                        <h3 className="text-sm font-bold text-white">
+                        <h3 className="text-sm font-bold text-slate-900">
                           Workbook Discovery & Schema Matching Report
                         </h3>
-                        <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 font-mono">
+                        <span className="text-xs px-2 py-0.5 rounded bg-white text-slate-700 border border-slate-200 font-mono">
                           Preset: {inspectionReport.presetName} ({inspectionReport.schemaVersion})
                         </span>
                       </div>
                       <span className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${
                         inspectionReport.isValid 
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
-                          : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                          : 'bg-amber-50 text-amber-800 border-amber-200'
                       }`}>
                         {inspectionReport.isValid ? 'SCHEMA PASSED' : 'SCHEMA REVIEW REQUIRED'}
                       </span>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
-                      <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
-                        <span className="text-slate-400 block mb-1">Required Tabs</span>
-                        <span className="font-bold text-white">{inspectionReport.requiredTabs.length}</span>
-                        <div className="text-[10px] text-slate-500 truncate mt-1">
+                      <div className="p-3 rounded-lg bg-white border border-slate-200">
+                        <span className="text-slate-500 block mb-1">Required Tabs</span>
+                        <span className="font-bold text-slate-900">{inspectionReport.requiredTabs.length}</span>
+                        <div className="text-[10px] text-slate-400 truncate mt-1">
                           {inspectionReport.requiredTabs.join(', ')}
                         </div>
                       </div>
-                      <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
-                        <span className="text-slate-400 block mb-1">Found Canonical Tabs</span>
-                        <span className="font-bold text-emerald-400">{inspectionReport.foundTabs.length}</span>
-                        <div className="text-[10px] text-emerald-500/80 truncate mt-1">
+                      <div className="p-3 rounded-lg bg-white border border-slate-200">
+                        <span className="text-slate-500 block mb-1">Found Canonical Tabs</span>
+                        <span className="font-bold text-[#008972]">{inspectionReport.foundTabs.length}</span>
+                        <div className="text-[10px] text-emerald-600 truncate mt-1">
                           {inspectionReport.foundTabs.join(', ') || 'None'}
                         </div>
                       </div>
-                      <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
-                        <span className="text-slate-400 block mb-1">Missing Required Tabs</span>
-                        <span className={`font-bold ${inspectionReport.missingTabs.length > 0 ? 'text-rose-400' : 'text-slate-400'}`}>
+                      <div className="p-3 rounded-lg bg-white border border-slate-200">
+                        <span className="text-slate-500 block mb-1">Missing Required Tabs</span>
+                        <span className={`font-bold ${inspectionReport.missingTabs.length > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
                           {inspectionReport.missingTabs.length}
                         </span>
-                        <div className="text-[10px] text-rose-400/80 truncate mt-1">
+                        <div className="text-[10px] text-rose-500 truncate mt-1">
                           {inspectionReport.missingTabs.join(', ') || 'None (All present)'}
                         </div>
                       </div>
-                      <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
-                        <span className="text-slate-400 block mb-1">Unexpected Worksheets</span>
-                        <span className="font-bold text-slate-400">{inspectionReport.unexpectedTabs.length}</span>
-                        <div className="text-[10px] text-slate-500 truncate mt-1">
+                      <div className="p-3 rounded-lg bg-white border border-slate-200">
+                        <span className="text-slate-500 block mb-1">Unexpected Worksheets</span>
+                        <span className="font-bold text-slate-700">{inspectionReport.unexpectedTabs.length}</span>
+                        <div className="text-[10px] text-slate-400 truncate mt-1">
                           {inspectionReport.unexpectedTabs.join(', ') || 'None'}
                         </div>
                       </div>
@@ -977,36 +977,36 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
 
                     {/* MATCHED SCHEMAS COLUMN BREAKDOWN */}
                     <div className="space-y-2 pt-2">
-                      <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                      <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
                         Matched Worksheets & Column Status
                       </h4>
-                      <div className="divide-y divide-slate-800/80 border border-slate-800 rounded-lg overflow-hidden bg-slate-900">
+                      <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden bg-white">
                         {inspectionReport.matchedSchemas.map((m) => (
-                          <div key={m.schemaId} className="p-3 flex items-center justify-between text-xs hover:bg-slate-850">
+                          <div key={m.schemaId} className="p-3 flex items-center justify-between text-xs hover:bg-slate-50">
                             <div className="space-y-0.5">
                               <div className="flex items-center gap-2">
-                                <span className="font-bold text-white">{m.matchedSheetName}</span>
-                                <span className="text-[10px] text-slate-400 font-mono">→ {m.canonicalTabName}</span>
-                                <span className="text-[10px] text-teal-400 font-semibold">({m.totalRows} data rows)</span>
+                                <span className="font-bold text-slate-900">{m.matchedSheetName}</span>
+                                <span className="text-[10px] text-slate-500 font-mono">→ {m.canonicalTabName}</span>
+                                <span className="text-[10px] text-[#008972] font-semibold">({m.totalRows} data rows)</span>
                               </div>
-                              <div className="text-[11px] text-slate-400">
+                              <div className="text-[11px] text-slate-500">
                                 Discovered {m.discoveredColumns.length} columns: {m.discoveredColumns.slice(0, 6).join(', ')}{m.discoveredColumns.length > 6 ? ` (+${m.discoveredColumns.length - 6} more)` : ''}
                               </div>
                             </div>
 
                             <div>
                               {m.status === 'READY' && (
-                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
                                   <CheckCircle2 className="w-3 h-3" /> Ready
                                 </span>
                               )}
                               {m.status === 'WARNING' && (
-                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1">
                                   <AlertTriangle className="w-3 h-3" /> Notice
                                 </span>
                               )}
                               {m.status === 'BLOCKED' && (
-                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1">
                                   <XCircle className="w-3 h-3" /> Missing Required Columns
                                 </span>
                               )}
@@ -1019,15 +1019,15 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                 )}
 
                 {/* WIZARD ACTIONS */}
-                <div className="flex items-center justify-between pt-4 border-t border-slate-800">
-                  <div className="text-xs text-slate-400">
-                    Preset: <strong className="text-white">{activePreset.name}</strong> • Mode: <strong className="text-teal-400">{inputMode}</strong>
+                <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                  <div className="text-xs text-slate-500">
+                    Preset: <strong className="text-slate-800">{activePreset.name}</strong> • Mode: <strong className="text-[#008972]">{inputMode}</strong>
                   </div>
 
                   <button
                     onClick={handleProceedToValidation}
                     disabled={isProcessing}
-                    className="px-6 py-3 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl text-sm transition-all shadow-lg shadow-teal-500/20 flex items-center gap-2"
+                    className="px-6 py-3 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold rounded-xl text-sm transition-all shadow-xs flex items-center gap-2 cursor-pointer"
                   >
                     {isProcessing ? (
                       <>
@@ -1049,23 +1049,23 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
           {/* STEP 2: SCHEMA & RELATIONSHIP VALIDATION */}
           {currentStep === 2 && validationReport && (
             <div className="space-y-6">
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-800 pb-4">
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs space-y-6">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-100 pb-4">
                   <div>
                     <div className="flex items-center gap-3">
-                      <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                        <ShieldCheck className="w-5 h-5 text-teal-400" />
+                      <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                        <ShieldCheck className="w-5 h-5 text-[#008972]" />
                         Validation Results for {activePreset.name}
                       </h2>
                       <span className={`px-3 py-1 rounded-full text-xs font-bold border ${
                         validationReport.isValid 
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
-                          : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                          : 'bg-amber-50 text-amber-800 border-amber-200'
                       }`}>
                         {validationReport.isValid ? 'ALL VALIDATIONS PASSED' : `${validationReport.errors.length} ISSUES DETECTED`}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-400 mt-1">
+                    <p className="text-xs text-slate-500 mt-1">
                       Verified data types, required fields, and relational foreign keys against database state.
                     </p>
                   </div>
@@ -1073,14 +1073,14 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => setCurrentStep(1)}
-                      className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs font-semibold"
+                      className="px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold cursor-pointer shadow-2xs"
                     >
                       ← Back to Setup
                     </button>
                     <button
                       onClick={handleProceedToPreview}
                       disabled={isProcessing}
-                      className="px-5 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-bold shadow-lg shadow-teal-500/20 flex items-center gap-2"
+                      className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 text-xs font-bold shadow-xs flex items-center gap-2 cursor-pointer"
                     >
                       Continue to Diff Preview →
                     </button>
@@ -1089,23 +1089,23 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
 
                 {/* SUMMARY STATS GRID */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-                    <span className="text-xs text-slate-400 block mb-1">Total Staged Records</span>
-                    <span className="text-2xl font-bold text-white">{validationReport.totalRows}</span>
+                  <div className="p-4 rounded-xl bg-[#F8FAFA] border border-slate-200">
+                    <span className="text-xs text-slate-500 block mb-1">Total Staged Records</span>
+                    <span className="text-2xl font-bold text-slate-900">{validationReport.totalRows}</span>
                   </div>
-                  <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-                    <span className="text-xs text-slate-400 block mb-1">Valid Records</span>
-                    <span className="text-2xl font-bold text-emerald-400">{validationReport.validRows}</span>
+                  <div className="p-4 rounded-xl bg-[#F8FAFA] border border-slate-200">
+                    <span className="text-xs text-slate-500 block mb-1">Valid Records</span>
+                    <span className="text-2xl font-bold text-[#008972]">{validationReport.validRows}</span>
                   </div>
-                  <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-                    <span className="text-xs text-slate-400 block mb-1">Errors</span>
-                    <span className={`text-2xl font-bold ${validationReport.errorRows > 0 ? 'text-rose-400' : 'text-slate-400'}`}>
+                  <div className="p-4 rounded-xl bg-[#F8FAFA] border border-slate-200">
+                    <span className="text-xs text-slate-500 block mb-1">Errors</span>
+                    <span className={`text-2xl font-bold ${validationReport.errorRows > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
                       {validationReport.errorRows}
                     </span>
                   </div>
-                  <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-                    <span className="text-xs text-slate-400 block mb-1">Active Schema Tabs</span>
-                    <span className="text-2xl font-bold text-teal-400">{Object.keys(validationReport.tabSummaries).length}</span>
+                  <div className="p-4 rounded-xl bg-[#F8FAFA] border border-slate-200">
+                    <span className="text-xs text-slate-500 block mb-1">Active Schema Tabs</span>
+                    <span className="text-2xl font-bold text-[#008972]">{Object.keys(validationReport.tabSummaries).length}</span>
                   </div>
                 </div>
 
@@ -1113,31 +1113,31 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                 {validationReport.errors.length > 0 && (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4 text-amber-400" />
+                      <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-500" />
                         Detailed Issues List ({validationReport.errors.length})
                       </h3>
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => setValidationFilter('ALL')}
-                          className={`px-2.5 py-1 rounded text-xs font-semibold ${
-                            validationFilter === 'ALL' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'
+                          className={`px-2.5 py-1 rounded text-xs font-semibold cursor-pointer ${
+                            validationFilter === 'ALL' ? 'bg-teal-50 text-[#008972] border border-teal-200' : 'text-slate-500 hover:text-slate-900 bg-white border border-slate-200'
                           }`}
                         >
                           All ({validationReport.errors.length})
                         </button>
                         <button
                           onClick={() => setValidationFilter('CRITICAL')}
-                          className={`px-2.5 py-1 rounded text-xs font-semibold ${
-                            validationFilter === 'CRITICAL' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'text-slate-400 hover:text-white'
+                          className={`px-2.5 py-1 rounded text-xs font-semibold cursor-pointer ${
+                            validationFilter === 'CRITICAL' ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'text-slate-500 hover:text-slate-900 bg-white border border-slate-200'
                           }`}
                         >
                           Critical ({validationReport.errors.filter(e => e.severity === 'CRITICAL').length})
                         </button>
                         <button
                           onClick={() => setValidationFilter('WARNING')}
-                          className={`px-2.5 py-1 rounded text-xs font-semibold ${
-                            validationFilter === 'WARNING' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'text-slate-400 hover:text-white'
+                          className={`px-2.5 py-1 rounded text-xs font-semibold cursor-pointer ${
+                            validationFilter === 'WARNING' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'text-slate-500 hover:text-slate-900 bg-white border border-slate-200'
                           }`}
                         >
                           Warnings ({validationReport.errors.filter(e => e.severity === 'WARNING').length})
@@ -1145,28 +1145,28 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                       </div>
                     </div>
 
-                    <div className="max-h-80 overflow-y-auto border border-slate-800 rounded-xl divide-y divide-slate-800 bg-slate-950">
+                    <div className="max-h-80 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-white">
                       {validationReport.errors
                         .filter(e => validationFilter === 'ALL' || e.severity === validationFilter)
                         .map((err, idx) => (
-                          <div key={idx} className="p-3 text-xs flex items-start gap-3 hover:bg-slate-900/60">
+                          <div key={idx} className="p-3 text-xs flex items-start gap-3 hover:bg-slate-50/80">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                               err.severity === 'CRITICAL' 
-                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' 
-                                : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                ? 'bg-rose-50 text-rose-700 border border-rose-200' 
+                                : 'bg-amber-50 text-amber-700 border border-amber-200'
                             }`}>
                               {err.severity}
                             </span>
                             <div className="space-y-1 flex-1">
                               <div className="flex items-center gap-2 font-mono">
-                                <span className="font-bold text-white">{err.tabName}</span>
-                                <span className="text-slate-500">Row {err.rowNumber}</span>
-                                {err.recordId && <span className="text-teal-400">ID: {err.recordId}</span>}
-                                <span className="text-slate-400 font-semibold">[{err.field}]</span>
+                                <span className="font-bold text-slate-900">{err.tabName}</span>
+                                <span className="text-slate-400">Row {err.rowNumber}</span>
+                                {err.recordId && <span className="text-[#008972] font-semibold">ID: {err.recordId}</span>}
+                                <span className="text-slate-500 font-semibold">[{err.field}]</span>
                               </div>
-                              <p className="text-slate-300">{err.error}</p>
+                              <p className="text-slate-700">{err.error}</p>
                               {err.suggestedFix && (
-                                <p className="text-[11px] text-teal-400/90 font-mono">
+                                <p className="text-[11px] text-[#008972] font-mono">
                                   Suggested Fix: {err.suggestedFix}
                                 </p>
                               )}
@@ -1183,14 +1183,14 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
           {/* STEP 3: DIFF PREVIEW MATRIX */}
           {currentStep === 3 && (
             <div className="space-y-6">
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-800 pb-4">
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs space-y-6">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-100 pb-4">
                   <div>
-                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                      <Eye className="w-5 h-5 text-teal-400" />
+                    <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                      <Eye className="w-5 h-5 text-[#008972]" />
                       Database Diff & Transformation Matrix
                     </h2>
-                    <p className="text-xs text-slate-400 mt-0.5">
+                    <p className="text-xs text-slate-500 mt-0.5">
                       Review records to be created, updated, or left unchanged before executing atomic commit.
                     </p>
                   </div>
@@ -1198,14 +1198,14 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => setCurrentStep(2)}
-                      className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs font-semibold"
+                      className="px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold cursor-pointer shadow-2xs"
                     >
                       ← Back to Validation
                     </button>
                     <button
                       onClick={handleExecuteCommit}
                       disabled={isProcessing}
-                      className="px-6 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-bold shadow-lg shadow-teal-500/20 flex items-center gap-2"
+                      className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 text-xs font-bold shadow-xs flex items-center gap-2 cursor-pointer"
                     >
                       {isProcessing ? 'Executing Commit...' : 'Execute Safe Commit to Firebase →'}
                     </button>
@@ -1221,15 +1221,15 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                       <button
                         key={tabKey}
                         onClick={() => setActivePreviewTab(tabKey)}
-                        className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-2 border ${
+                        className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-2 border cursor-pointer ${
                           isActive
-                            ? 'bg-teal-500 text-slate-950 border-teal-400 font-bold'
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                            ? 'bg-teal-50 border-[#00C6A6] text-[#008972] font-bold shadow-2xs'
+                            : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                         }`}
                       >
                         <span>{tabKey}</span>
                         <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${
-                          isActive ? 'bg-slate-950 text-teal-300' : 'bg-slate-800 text-slate-300'
+                          isActive ? 'bg-white text-[#008972] border border-teal-200' : 'bg-slate-100 text-slate-600'
                         }`}>
                           +{diff.createdCount} ~{diff.updatedCount} ={diff.unchangedCount}
                         </span>
@@ -1242,47 +1242,47 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                 {previewDiffs[activePreviewTab] && (
                   <div className="space-y-4">
                     <div className="grid grid-cols-4 gap-3 text-center text-xs">
-                      <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-                        <span className="block text-[11px] uppercase tracking-wider text-emerald-500">To Create</span>
+                      <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700">
+                        <span className="block text-[11px] uppercase tracking-wider text-emerald-600 font-bold">To Create</span>
                         <span className="text-xl font-bold">{previewDiffs[activePreviewTab].createdCount}</span>
                       </div>
-                      <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400">
-                        <span className="block text-[11px] uppercase tracking-wider text-blue-500">To Update</span>
+                      <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-700">
+                        <span className="block text-[11px] uppercase tracking-wider text-blue-600 font-bold">To Update</span>
                         <span className="text-xl font-bold">{previewDiffs[activePreviewTab].updatedCount}</span>
                       </div>
-                      <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-400">
-                        <span className="block text-[11px] uppercase tracking-wider text-slate-500">Unchanged</span>
+                      <div className="p-3 rounded-xl bg-[#F8FAFA] border border-slate-200 text-slate-600">
+                        <span className="block text-[11px] uppercase tracking-wider text-slate-500 font-bold">Unchanged</span>
                         <span className="text-xl font-bold">{previewDiffs[activePreviewTab].unchangedCount}</span>
                       </div>
-                      <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
-                        <span className="block text-[11px] uppercase tracking-wider text-rose-500">Blocked / Error</span>
+                      <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700">
+                        <span className="block text-[11px] uppercase tracking-wider text-rose-600 font-bold">Blocked / Error</span>
                         <span className="text-xl font-bold">{previewDiffs[activePreviewTab].errorCount}</span>
                       </div>
                     </div>
 
-                    <div className="border border-slate-800 rounded-xl divide-y divide-slate-800 bg-slate-950 max-h-96 overflow-y-auto">
+                    <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 bg-white max-h-96 overflow-y-auto">
                       {previewDiffs[activePreviewTab].items.length === 0 ? (
-                        <div className="p-8 text-center text-slate-500 text-xs">
+                        <div className="p-8 text-center text-slate-400 text-xs">
                           No items to preview for this worksheet.
                         </div>
                       ) : (
                         previewDiffs[activePreviewTab].items.map((item, idx) => (
-                          <div key={idx} className="p-3 text-xs flex items-center justify-between hover:bg-slate-900/60">
+                          <div key={idx} className="p-3 text-xs flex items-center justify-between hover:bg-slate-50/80">
                             <div className="space-y-1">
                               <div className="flex items-center gap-2">
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                  item.action === 'CREATE' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
-                                  item.action === 'UPDATE' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
-                                  item.action === 'BLOCKED' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' :
-                                  'bg-slate-800 text-slate-400'
+                                  item.action === 'CREATE' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                                  item.action === 'UPDATE' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                                  item.action === 'BLOCKED' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                                  'bg-slate-100 text-slate-600 border border-slate-200'
                                 }`}>
                                   {item.action}
                                 </span>
-                                <span className="font-bold text-white font-mono">{item.id}</span>
-                                <span className="text-slate-300">{item.title}</span>
+                                <span className="font-bold text-slate-900 font-mono">{item.id}</span>
+                                <span className="text-slate-700">{item.title}</span>
                               </div>
                               {item.changedFields && item.changedFields.length > 0 && (
-                                <div className="text-[11px] text-blue-400 font-mono">
+                                <div className="text-[11px] text-blue-600 font-mono">
                                   Changed fields: {item.changedFields.join(', ')}
                                 </div>
                               )}
@@ -1301,44 +1301,44 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
           {/* STEP 4: SAFE COMMIT & RESULTS */}
           {currentStep === 4 && latestReport && (
             <div className="space-y-6">
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+              <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs space-y-6">
                 <div className="text-center py-6 space-y-3">
-                  <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto shadow-inner">
+                  <div className="w-16 h-16 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center mx-auto shadow-2xs">
                     <CheckCircle2 className="w-8 h-8" />
                   </div>
-                  <h2 className="text-2xl font-bold text-white">
+                  <h2 className="text-2xl font-bold text-slate-900">
                     Master Synchronization Complete!
                   </h2>
-                  <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
                     Preset <strong>{latestReport.presetName || activePreset.name}</strong> successfully synchronized into local database & Firestore in {latestReport.durationMs}ms.
                   </p>
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800">
-                    <span className="text-xs text-slate-400 block mb-1">Total Processed</span>
-                    <span className="text-2xl font-bold text-white">{latestReport.totalRecords}</span>
+                  <div className="p-4 rounded-xl bg-[#F8FAFA] border border-slate-200">
+                    <span className="text-xs text-slate-500 block mb-1">Total Processed</span>
+                    <span className="text-2xl font-bold text-slate-900">{latestReport.totalRecords}</span>
                   </div>
-                  <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-                    <span className="text-xs text-emerald-400 block mb-1">Created Records</span>
-                    <span className="text-2xl font-bold text-emerald-400">+{latestReport.createdTotal}</span>
+                  <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200">
+                    <span className="text-xs text-emerald-700 block mb-1 font-bold">Created Records</span>
+                    <span className="text-2xl font-bold text-emerald-700">+{latestReport.createdTotal}</span>
                   </div>
-                  <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
-                    <span className="text-xs text-blue-400 block mb-1">Updated Records</span>
-                    <span className="text-2xl font-bold text-blue-400">~{latestReport.updatedTotal}</span>
+                  <div className="p-4 rounded-xl bg-blue-50 border border-blue-200">
+                    <span className="text-xs text-blue-700 block mb-1 font-bold">Updated Records</span>
+                    <span className="text-2xl font-bold text-blue-700">~{latestReport.updatedTotal}</span>
                   </div>
-                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800">
-                    <span className="text-xs text-slate-400 block mb-1">Unchanged</span>
-                    <span className="text-2xl font-bold text-slate-400">={latestReport.unchangedTotal}</span>
+                  <div className="p-4 rounded-xl bg-[#F8FAFA] border border-slate-200">
+                    <span className="text-xs text-slate-500 block mb-1 font-bold">Unchanged</span>
+                    <span className="text-2xl font-bold text-slate-700">={latestReport.unchangedTotal}</span>
                   </div>
                 </div>
 
                 {/* EXECUTION LOGS */}
                 <div className="space-y-2">
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                  <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
                     Real-Time Execution Logs
                   </h3>
-                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-slate-300 space-y-1.5 max-h-64 overflow-y-auto">
+                  <div className="p-4 rounded-xl bg-[#F8FAFA] border border-slate-200 font-mono text-xs text-slate-700 space-y-1.5 max-h-64 overflow-y-auto">
                     {latestReport.logs.map((log, i) => (
                       <div key={i} className="leading-relaxed">
                         {log}
@@ -1347,7 +1347,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+                <div className="flex items-center justify-between pt-4 border-t border-slate-100">
                   <button
                     onClick={() => {
                       setCurrentStep(1);
@@ -1355,14 +1355,14 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                       setInspectionReport(null);
                       setValidationReport(null);
                     }}
-                    className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold"
+                    className="px-5 py-2.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold cursor-pointer shadow-2xs"
                   >
                     Start New Sync Job
                   </button>
 
                   <button
                     onClick={() => setManagerView('HISTORY')}
-                    className="px-5 py-2.5 rounded-xl bg-teal-500 text-slate-950 font-bold text-xs"
+                    className="px-5 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-xs cursor-pointer shadow-xs"
                   >
                     View in Audit History →
                   </button>
@@ -1378,32 +1378,32 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
       {/* ---------------------------------------------------- */}
       {managerView === 'TEMPLATES' && (
         <div className="space-y-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-800 pb-4">
+          <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs space-y-6">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-100 pb-4">
               <div>
-                <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Download className="w-5 h-5 text-teal-400" />
+                <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <Download className="w-5 h-5 text-[#008972]" />
                   Dynamic Schema & Template Generator
                 </h2>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-xs text-slate-500 mt-0.5">
                   Download authentic, schema-validated Google Sheets & Excel templates for any module preset.
                 </p>
               </div>
 
               <div className="flex items-center gap-3">
-                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={includeDemoDataInTemplate}
                     onChange={(e) => setIncludeDemoDataInTemplate(e.target.checked)}
-                    className="rounded border-slate-700 text-teal-500 focus:ring-teal-500"
+                    className="rounded border-slate-300 text-[#00C6A6] focus:ring-[#00C6A6]"
                   />
                   <span>Include Demo Rows (DEMO ONLY)</span>
                 </label>
 
                 <button
                   onClick={() => handleDownloadTemplate(selectedSchemaPreset, includeDemoDataInTemplate)}
-                  className="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-teal-500/20"
+                  className="px-4 py-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold rounded-xl text-xs flex items-center gap-2 shadow-xs cursor-pointer"
                 >
                   <Download className="w-4 h-4" />
                   Download Preset Workbook (.xlsx)
@@ -1423,14 +1423,14 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                       setSelectedSchemaTab(schemas[0].schemaId);
                     }
                   }}
-                  className={`p-3 rounded-xl border text-left text-xs transition-all ${
+                  className={`p-3 rounded-xl border text-left text-xs transition-all cursor-pointer ${
                     selectedSchemaPreset === preset.id
-                      ? 'bg-slate-800 border-teal-500 text-white font-bold'
-                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                      ? 'bg-teal-50 border-[#00C6A6] text-[#008972] font-bold shadow-2xs'
+                      : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                   }`}
                 >
-                  <div className="text-[10px] text-teal-400 uppercase font-bold">{preset.badgeText}</div>
-                  <div className="truncate mt-0.5">{preset.name}</div>
+                  <div className="text-[10px] text-[#008972] uppercase font-bold">{preset.badgeText}</div>
+                  <div className="truncate mt-0.5 font-semibold text-slate-900">{preset.name}</div>
                 </button>
               ))}
             </div>
@@ -1439,7 +1439,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
               {/* SCHEMA TABS LIST */}
               <div className="space-y-2">
-                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Worksheets in this Preset
                 </h3>
                 <div className="space-y-1.5">
@@ -1449,17 +1449,17 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                       <button
                         key={schema.schemaId}
                         onClick={() => setSelectedSchemaTab(schema.schemaId)}
-                        className={`w-full p-3 rounded-xl border text-left text-xs transition-all flex items-center justify-between ${
+                        className={`w-full p-3 rounded-xl border text-left text-xs transition-all flex items-center justify-between cursor-pointer ${
                           isSelected
-                            ? 'bg-teal-500/10 border-teal-500/40 text-teal-300 font-bold'
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                            ? 'bg-teal-50 border-teal-200/90 text-[#008972] font-bold shadow-2xs'
+                            : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                         }`}
                       >
                         <div>
-                          <div className="font-mono text-white">{schema.canonicalTabName}</div>
+                          <div className="font-mono text-slate-900 font-bold">{schema.canonicalTabName}</div>
                           <div className="text-[11px] text-slate-500 truncate">{schema.displayName}</div>
                         </div>
-                        <ChevronRight className="w-4 h-4 text-slate-500" />
+                        <ChevronRight className="w-4 h-4 text-slate-400" />
                       </button>
                     );
                   })}
@@ -1472,35 +1472,35 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                   const schema = CanonicalSchemaRegistry.getSchema(selectedSchemaTab) || CanonicalSchemaRegistry.getAllSchemas()[0];
                   if (!schema) return null;
                   return (
-                    <div className="border border-slate-800 rounded-xl p-5 bg-slate-950 space-y-4">
+                    <div className="border border-slate-200 rounded-xl p-5 bg-[#F8FAFA] space-y-4">
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="flex items-center gap-2">
-                            <h3 className="text-base font-bold text-white font-mono">{schema.canonicalTabName}</h3>
-                            <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-teal-300 border border-slate-700 font-mono">
+                            <h3 className="text-base font-bold text-slate-900 font-mono">{schema.canonicalTabName}</h3>
+                            <span className="text-xs px-2 py-0.5 rounded bg-white text-[#008972] border border-slate-200 font-mono font-bold">
                               {schema.schemaVersion}
                             </span>
                           </div>
-                          <p className="text-xs text-slate-400 mt-1">{schema.description}</p>
+                          <p className="text-xs text-slate-500 mt-1">{schema.description}</p>
                         </div>
 
                         <button
                           onClick={() => handleDownloadSingleSchemaCsv(schema.schemaId, includeDemoDataInTemplate)}
-                          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 border border-slate-700"
+                          className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 border border-slate-200 cursor-pointer shadow-2xs"
                         >
-                          <Download className="w-3.5 h-3.5 text-teal-400" />
+                          <Download className="w-3.5 h-3.5 text-[#008972]" />
                           Download CSV
                         </button>
                       </div>
 
                       {/* COLUMNS TABLE */}
                       <div className="space-y-2">
-                        <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                        <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
                           Canonical Column Definitions ({schema.columns.length} columns)
                         </h4>
-                        <div className="max-h-72 overflow-y-auto border border-slate-800 rounded-lg">
+                        <div className="max-h-72 overflow-y-auto border border-slate-200 rounded-lg bg-white">
                           <table className="w-full text-left text-xs">
-                            <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
+                            <thead className="bg-slate-50 text-slate-600 sticky top-0 border-b border-slate-200">
                               <tr>
                                 <th className="p-2.5 font-semibold">Column Key</th>
                                 <th className="p-2.5 font-semibold">Type</th>
@@ -1509,20 +1509,20 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
                                 <th className="p-2.5 font-semibold">Description</th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-slate-800/60 font-mono">
+                            <tbody className="divide-y divide-slate-100 font-mono">
                               {schema.columns.map((col, idx) => (
-                                <tr key={idx} className="hover:bg-slate-900/40">
-                                  <td className="p-2.5 font-bold text-white">{col.key}</td>
-                                  <td className="p-2.5 text-teal-400">{col.type}</td>
+                                <tr key={idx} className="hover:bg-slate-50/80">
+                                  <td className="p-2.5 font-bold text-slate-900">{col.key}</td>
+                                  <td className="p-2.5 text-[#008972] font-semibold">{col.type}</td>
                                   <td className="p-2.5">
                                     {col.required ? (
-                                      <span className="text-rose-400 font-bold">YES</span>
+                                      <span className="text-rose-600 font-bold">YES</span>
                                     ) : (
-                                      <span className="text-slate-500">OPTIONAL</span>
+                                      <span className="text-slate-400">OPTIONAL</span>
                                     )}
                                   </td>
-                                  <td className="p-2.5 text-slate-300 max-w-xs truncate">{col.sampleValue}</td>
-                                  <td className="p-2.5 font-sans text-slate-400">{col.description}</td>
+                                  <td className="p-2.5 text-slate-600 max-w-xs truncate">{col.sampleValue}</td>
+                                  <td className="p-2.5 font-sans text-slate-500">{col.description}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -1543,14 +1543,14 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
       {/* ---------------------------------------------------- */}
       {managerView === 'CONNECTION_HEALTH' && (
         <div className="space-y-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+          <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs space-y-6">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <div>
-                <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Activity className="w-5 h-5 text-teal-400" />
+                <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-[#008972]" />
                   Google Sheets Connection Health & Webhooks
                 </h2>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-xs text-slate-500 mt-0.5">
                   Verify backend API connectivity, token status, and Apps Script real-time sync hooks.
                 </p>
               </div>
@@ -1558,7 +1558,7 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
               <button
                 onClick={handleTestConnectionProbe}
                 disabled={isTestingProbe}
-                className="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-teal-500/20"
+                className="px-4 py-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold rounded-xl text-xs flex items-center gap-2 shadow-xs cursor-pointer"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isTestingProbe ? 'animate-spin' : ''}`} />
                 {isTestingProbe ? 'Probing Gateway...' : 'Test Connection Probe'}
@@ -1566,43 +1566,43 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
-                <span className="text-xs text-slate-400 block">Connection Status</span>
-                <span className={`text-lg font-bold ${config.connectionStatus === 'CONNECTED' ? 'text-emerald-400' : 'text-amber-400'}`}>
+              <div className="p-4 rounded-xl bg-[#F8FAFA] border border-slate-200 space-y-1">
+                <span className="text-xs text-slate-500 block">Connection Status</span>
+                <span className={`text-lg font-bold ${config.connectionStatus === 'CONNECTED' ? 'text-emerald-700' : 'text-amber-700'}`}>
                   {config.connectionStatus}
                 </span>
-                <p className="text-[11px] text-slate-500">
+                <p className="text-[11px] text-slate-400">
                   Last checked: {config.lastSuccessfulConnectionCheck ? new Date(config.lastSuccessfulConnectionCheck).toLocaleString() : 'Never'}
                 </p>
               </div>
 
-              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
-                <span className="text-xs text-slate-400 block">Master Spreadsheet ID</span>
-                <span className="text-sm font-bold text-white font-mono truncate block">
+              <div className="p-4 rounded-xl bg-[#F8FAFA] border border-slate-200 space-y-1">
+                <span className="text-xs text-slate-500 block">Master Spreadsheet ID</span>
+                <span className="text-sm font-bold text-slate-900 font-mono truncate block">
                   {config.masterSpreadsheetId || 'None'}
                 </span>
-                <p className="text-[11px] text-slate-500">
+                <p className="text-[11px] text-slate-400">
                   {config.spreadsheetName || 'Master Rate Sheet'}
                 </p>
               </div>
 
-              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
-                <span className="text-xs text-slate-400 block">Sync History Total</span>
-                <span className="text-lg font-bold text-teal-400">
+              <div className="p-4 rounded-xl bg-[#F8FAFA] border border-slate-200 space-y-1">
+                <span className="text-xs text-slate-500 block">Sync History Total</span>
+                <span className="text-lg font-bold text-[#008972]">
                   {syncHistory.length} Jobs
                 </span>
-                <p className="text-[11px] text-slate-500">
+                <p className="text-[11px] text-slate-400">
                   Total safe upserts logged
                 </p>
               </div>
             </div>
 
             {testProbeResult && (
-              <div className="border border-slate-800 rounded-xl p-4 bg-slate-950 space-y-2">
-                <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+              <div className="border border-slate-200 rounded-xl p-4 bg-[#F8FAFA] space-y-2">
+                <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wider">
                   Probe Diagnostic Output
                 </h3>
-                <pre className="p-3 rounded-lg bg-slate-900 text-xs font-mono text-teal-300 overflow-x-auto">
+                <pre className="p-3 rounded-lg bg-white border border-slate-200 text-xs font-mono text-[#008972] overflow-x-auto">
                   {JSON.stringify(testProbeResult, null, 2)}
                 </pre>
               </div>
@@ -1616,53 +1616,53 @@ export const GoogleSheetsPanel: React.FC<GoogleSheetsPanelProps> = ({
       {/* ---------------------------------------------------- */}
       {managerView === 'HISTORY' && (
         <div className="space-y-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+          <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-xs space-y-6">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <div>
-                <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                  <History className="w-5 h-5 text-teal-400" />
+                <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <History className="w-5 h-5 text-[#008972]" />
                   Master Synchronization Audit Trail
                 </h2>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-xs text-slate-500 mt-0.5">
                   Complete historical record of schema synchronizations, created/updated records, and duration.
                 </p>
               </div>
-              <span className="text-xs text-slate-400 bg-slate-800 px-3 py-1 rounded-lg">
+              <span className="text-xs text-slate-600 bg-[#F8FAFA] px-3 py-1 rounded-lg border border-slate-200 font-semibold">
                 {syncHistory.length} Total Executions
               </span>
             </div>
 
-            <div className="divide-y divide-slate-800 border border-slate-800 rounded-xl overflow-hidden bg-slate-950">
+            <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-white">
               {syncHistory.length === 0 ? (
-                <div className="p-8 text-center text-slate-500 text-xs">
+                <div className="p-8 text-center text-slate-400 text-xs">
                   No synchronization runs recorded yet.
                 </div>
               ) : (
                 syncHistory.map((report) => (
-                  <div key={report.id} className="p-4 space-y-2 hover:bg-slate-900/60 transition-all">
+                  <div key={report.id} className="p-4 space-y-2 hover:bg-slate-50/80 transition-all">
                     <div className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2">
                         <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                          report.status === 'SUCCESS' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                          report.status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
                         }`}>
                           {report.status}
                         </span>
-                        <span className="font-bold text-white font-mono">
+                        <span className="font-bold text-slate-900 font-mono">
                           {report.presetName || report.presetId || 'Canonical Sync'}
                         </span>
-                        <span className="text-slate-500">• {new Date(report.timestamp).toLocaleString()}</span>
+                        <span className="text-slate-400">• {new Date(report.timestamp).toLocaleString()}</span>
                       </div>
 
-                      <span className="text-slate-400 font-mono text-[11px]">
+                      <span className="text-slate-500 font-mono text-[11px]">
                         {report.durationMs}ms
                       </span>
                     </div>
 
                     <div className="flex items-center gap-4 text-xs font-mono">
-                      <span className="text-emerald-400 font-bold">+{report.createdTotal} Created</span>
-                      <span className="text-blue-400 font-bold">~{report.updatedTotal} Updated</span>
-                      <span className="text-slate-400">={report.unchangedTotal} Unchanged</span>
-                      <span className="text-slate-500">Processed {report.tabsProcessed.length} Tabs: [{report.tabsProcessed.join(', ')}]</span>
+                      <span className="text-emerald-700 font-bold">+{report.createdTotal} Created</span>
+                      <span className="text-blue-700 font-bold">~{report.updatedTotal} Updated</span>
+                      <span className="text-slate-500">={report.unchangedTotal} Unchanged</span>
+                      <span className="text-slate-400">Processed {report.tabsProcessed.length} Tabs: [{report.tabsProcessed.join(', ')}]</span>
                     </div>
                   </div>
                 ))

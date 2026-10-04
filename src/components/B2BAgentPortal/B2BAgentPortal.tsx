@@ -71,6 +71,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
   const [configuringHotel, setConfiguringHotel] = useState<Hotel | null>(null);
   const [inspectingProduct, setInspectingProduct] = useState<Product | null>(null);
   const [calculatorProduct, setCalculatorProduct] = useState<Product | null>(null);
+  const [railConfiguringProduct, setRailConfiguringProduct] = useState<Product | null>(null);
   const [inspectingPackage, setInspectingPackage] = useState<B2BPackage | null>(null);
   
   // Booking Modal State
@@ -390,6 +391,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
           <B2BPackagesView
             onCustomizePackage={handleCustomizePackage}
             onOpenCreateQuote={() => handleOpenCreateQuote()}
+            onViewPackageDetails={(pkg) => setInspectingPackage(pkg)}
           />
         )}
 
@@ -398,6 +400,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
             products={products}
             destinations={destinations}
             onOpenCreateQuote={() => handleOpenCreateQuote()}
+            onViewProductDetails={(prod) => setInspectingProduct(prod)}
           />
         )}
 
@@ -406,6 +409,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
             hotels={hotels}
             destinations={destinations}
             onOpenCreateQuote={() => handleOpenCreateQuote()}
+            onViewHotelDetails={(hotel) => setInspectingHotel(hotel)}
           />
         )}
 
@@ -474,33 +478,37 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
         />
       )}
 
-      {/* Dynamic Japan Rail Journey Configurator */}
-      {inspectingProduct && isRailProduct(inspectingProduct) && (
-        <RailJourneyModal
-          product={inspectingProduct}
-          portalOrigin="B2B_AGENT"
-          onClose={() => setInspectingProduct(null)}
-          onAddToQuote={() => {
-            setInspectingProduct(null);
-            setIsQuoteDrawerOpen(true);
-          }}
-          onInstantBook={(p) => {
-            setInspectingProduct(null);
-            handleBookProductDirect(p);
-          }}
-        />
-      )}
-
-      {/* Global Product Details Modal */}
-      {inspectingProduct && !isRailProduct(inspectingProduct) && (
+      {/* Global Product Details Modal (Unified Read-Only Information Modal for ALL Products) */}
+      {inspectingProduct && (
         <B2BViewDetailsModal
           product={inspectingProduct}
           onClose={() => setInspectingProduct(null)}
           onOpenCalculator={(p) => {
             setInspectingProduct(null);
-            setCalculatorProduct(p);
+            if (isRailProduct(p)) {
+              setRailConfiguringProduct(p);
+            } else {
+              setCalculatorProduct(p);
+            }
           }}
           onBookProduct={(p) => handleBookProductDirect(p)}
+        />
+      )}
+
+      {/* Dynamic Japan Rail Journey Configurator */}
+      {railConfiguringProduct && (
+        <RailJourneyModal
+          product={railConfiguringProduct}
+          portalOrigin="B2B_AGENT"
+          onClose={() => setRailConfiguringProduct(null)}
+          onAddToQuote={() => {
+            setRailConfiguringProduct(null);
+            setIsQuoteDrawerOpen(true);
+          }}
+          onInstantBook={(p) => {
+            setRailConfiguringProduct(null);
+            handleBookProductDirect(p);
+          }}
         />
       )}
 

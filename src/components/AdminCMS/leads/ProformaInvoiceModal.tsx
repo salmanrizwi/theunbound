@@ -98,7 +98,7 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
                 {invoice.invoiceNumber}
               </div>
               <div className="text-xs text-slate-500">
-                Issue Date: <strong className="text-slate-800">{new Date(invoice.issueDate).toLocaleDateString()}</strong>
+                Issue Date: <strong className="text-slate-800">{new Date(invoice.issueDate || invoice.invoiceDate || Date.now()).toLocaleDateString()}</strong>
               </div>
               {invoice.dueDate && (
                 <div className="text-xs text-slate-500">
@@ -115,13 +115,13 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
                 Billed To (B2B Partner / Client)
               </span>
               <div className="font-bold text-sm text-slate-900">
-                {invoice.billedToAgency || invoice.billedToName || 'Direct VIP Client'}
+                {invoice.billedToAgency || invoice.agencyName || invoice.billedToName || invoice.customerName || 'Direct VIP Client'}
               </div>
-              {invoice.billedToAgency && invoice.billedToName && (
-                <div className="text-slate-600 mt-0.5">Attn: {invoice.billedToName}</div>
+              {(invoice.billedToName || invoice.customerName) && (
+                <div className="text-slate-600 mt-0.5">Attn: {invoice.billedToName || invoice.customerName}</div>
               )}
-              {invoice.billedToEmail && (
-                <div className="text-slate-500 mt-0.5">{invoice.billedToEmail}</div>
+              {(invoice.billedToEmail || invoice.customerEmail) && (
+                <div className="text-slate-500 mt-0.5">{invoice.billedToEmail || invoice.customerEmail}</div>
               )}
               {invoice.billedToGstin && (
                 <div className="text-slate-500 mt-0.5 font-mono">GSTIN: {invoice.billedToGstin}</div>
@@ -166,24 +166,24 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {invoice.items && invoice.items.length > 0 ? (
-                  invoice.items.map((item, idx) => (
+                {((invoice.items && invoice.items.length > 0) ? invoice.items : (invoice.services && invoice.services.length > 0) ? invoice.services : []).length > 0 ? (
+                  ((invoice.items && invoice.items.length > 0) ? invoice.items : (invoice.services || [])).map((item, idx) => (
                     <tr key={item.id || idx} className="hover:bg-slate-50/60">
                       <td className="py-3 px-4 text-slate-400 font-mono">{idx + 1}</td>
                       <td className="py-3 px-4">
-                        <span className="font-bold text-slate-900 block">{item.productName}</span>
+                        <span className="font-bold text-slate-900 block">{item.productName || item.serviceName || 'Travel Ground Service'}</span>
                         {item.category && (
                           <span className="text-[10px] text-slate-500 uppercase">{item.category}</span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-slate-600">{item.serviceDate || 'Scheduled'}</td>
+                      <td className="py-3 px-4 text-slate-600">{item.serviceDate || item.travelDate || 'Scheduled'}</td>
                       <td className="py-3 px-4 text-center font-semibold text-slate-700">
                         {typeof (item as any).pax === 'object' && (item as any).pax !== null
                           ? (((item as any).pax.adults ?? 0) + ((item as any).pax.children ?? 0) + ((item as any).pax.infants ?? 0)) || 1
-                          : (item.pax || 1)}
+                          : (item.pax || item.quantity || 1)}
                       </td>
                       <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
-                        {formatCurrency(item.totalPrice || 0, invoice.currency)}
+                        {formatCurrency(item.totalPrice || item.unitPrice || 0, invoice.currency)}
                       </td>
                     </tr>
                   ))

@@ -925,8 +925,8 @@ export const DataSyncAuditViewer: React.FC<{ currentUser?: User | null }> = ({ c
                   onClick={() => setStatusFilter(st)}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
                     statusFilter === st
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      ? 'bg-teal-50 text-[#008972] border border-teal-200 shadow-2xs'
+                      : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
                   {st}
@@ -1042,17 +1042,17 @@ export const DataSyncAuditViewer: React.FC<{ currentUser?: User | null }> = ({ c
       {/* TAB 2: MASTER SYNCHRONIZATION MATRIX */}
       {activeTab === 'MATRIX' && (
         <div className="space-y-4">
-          <div className="bg-slate-900 text-white p-5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="bg-white text-slate-800 p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h3 className="text-base font-bold flex items-center space-x-2">
-                <Layers className="w-4 h-4 text-[#00C6A6]" />
+              <h3 className="text-base font-bold text-slate-900 flex items-center space-x-2">
+                <Layers className="w-4 h-4 text-[#008972]" />
                 <span>Cross-Interface Synchronization Matrix (20 Production Surfaces)</span>
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-500 mt-0.5">
                 Verifies that every user interface queries the database directly, enforces role gating, and uses canonical pricing routines.
               </p>
             </div>
-            <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold px-3 py-1 rounded-xl self-start sm:self-auto">
+            <span className="bg-teal-50 text-[#008972] border border-teal-200 text-xs font-bold px-3 py-1 rounded-xl self-start sm:self-auto">
               100% Surfaces Audited
             </span>
           </div>
