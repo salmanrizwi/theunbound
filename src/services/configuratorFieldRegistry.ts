@@ -860,6 +860,65 @@ export const CONFIGURATOR_FIELD_REGISTRY: Record<ProductCategoryEnum, Configurat
       booking_impact: true,
       description: 'Total passengers for smartEX tariff calculation.'
     }
+  ],
+
+  RAIL: [
+    {
+      field_id: 'journey_info',
+      category: 'RAIL',
+      label: 'Japan Rail Network & Service',
+      type: 'TEXT',
+      source: 'PRODUCT_MASTER',
+      visibility: 'AGENT',
+      editable: false,
+      configurable: false,
+      required: true,
+      pricing_impact: false,
+      booking_impact: true,
+      description: 'smartEX dynamic Shinkansen route, stations, and train classes.'
+    },
+    {
+      field_id: 'journey_date',
+      category: 'RAIL',
+      label: 'Travel Date & Departure Time',
+      type: 'DATE',
+      source: 'TRANSACTION_CONTEXT',
+      visibility: 'AGENT',
+      editable: true,
+      configurable: true,
+      required: true,
+      pricing_impact: true,
+      booking_impact: true,
+      description: 'Selected Shinkansen journey date.'
+    },
+    {
+      field_id: 'car_class',
+      category: 'RAIL',
+      label: 'Seat Class (Ordinary / Green Car / Gran Class)',
+      type: 'SELECT',
+      source: 'PRODUCT_OPERATIONAL_CONFIGURATION',
+      visibility: 'AGENT',
+      editable: false,
+      configurable: true,
+      required: true,
+      pricing_impact: true,
+      booking_impact: true,
+      description: 'Shinkansen car accommodation tier.'
+    },
+    {
+      field_id: 'pax_composition',
+      category: 'RAIL',
+      label: 'Passengers (Adults, Children, Infants)',
+      type: 'NUMBER',
+      source: 'TRANSACTION_CONTEXT',
+      visibility: 'AGENT',
+      editable: true,
+      configurable: true,
+      required: true,
+      pricing_impact: true,
+      booking_impact: true,
+      description: 'Total passengers for smartEX tariff calculation.'
+    }
   ]
 };
 

@@ -479,23 +479,65 @@ export class SheetsSyncService {
             rowHasCritical = true;
           }
         } else if (tabKey === 'PRODUCTS') {
-          const hubId = (row.hub_id || '').trim();
+          const rawCat = row.product_category || row.category || '';
+          const isRail = rawCat.toLowerCase().includes('rail') || rawCat.toLowerCase().includes('shinkansen');
           const destId = (row.destination_id || '').trim();
-          if (hubId && !validHubIds.has(hubId)) {
-            errors.push({
-              tabName: tabKey,
-              rowNumber: rowNum,
-              recordId: pkVal,
-              field: 'hub_id',
-              value: hubId,
-              error: `Invalid hub_id '${hubId}'. Hub does not exist in HUBS tab or database.`,
-              severity: 'CRITICAL',
-              suggestedFix: `Define Hub '${hubId}' in HUBS tab or use an existing Hub ID.`
-            });
-            orphanProducts++;
-            tabErrors++;
-            rowHasCritical = true;
+
+          if (isRail) {
+            const hubStr = (row.hub_ids || row.hub_id || '').trim();
+            const hubIdsList = hubStr ? hubStr.split('|').map((s: string) => s.trim()).filter(Boolean) : [];
+            if (hubIdsList.length === 0) {
+              errors.push({
+                tabName: tabKey,
+                rowNumber: rowNum,
+                recordId: pkVal,
+                field: 'hub_id',
+                value: '',
+                error: `Missing hub_id/hub_ids for Rail Product '${row.product_name || pkVal}'.`,
+                severity: 'CRITICAL',
+                suggestedFix: `Specify at least one valid hub_id or multiple separated by pipe (e.g. HUB-TYO|HUB-OSA).`
+              });
+              orphanProducts++;
+              tabErrors++;
+              rowHasCritical = true;
+            } else {
+              for (const hId of hubIdsList) {
+                if (!validHubIds.has(hId)) {
+                  errors.push({
+                    tabName: tabKey,
+                    rowNumber: rowNum,
+                    recordId: pkVal,
+                    field: 'hub_id',
+                    value: hId,
+                    error: `Invalid hub_id '${hId}' in multi-hub association for Rail. Hub does not exist in HUBS tab or database.`,
+                    severity: 'CRITICAL',
+                    suggestedFix: `Define Hub '${hId}' in HUBS tab or use an existing Hub ID.`
+                  });
+                  orphanProducts++;
+                  tabErrors++;
+                  rowHasCritical = true;
+                }
+              }
+            }
+          } else {
+            const hubId = (row.hub_id || '').trim();
+            if (hubId && !validHubIds.has(hubId)) {
+              errors.push({
+                tabName: tabKey,
+                rowNumber: rowNum,
+                recordId: pkVal,
+                field: 'hub_id',
+                value: hubId,
+                error: `Invalid hub_id '${hubId}'. Hub does not exist in HUBS tab or database.`,
+                severity: 'CRITICAL',
+                suggestedFix: `Define Hub '${hubId}' in HUBS tab or use an existing Hub ID.`
+              });
+              orphanProducts++;
+              tabErrors++;
+              rowHasCritical = true;
+            }
           }
+
           if (destId && !validDestIds.has(destId)) {
             errors.push({
               tabName: tabKey,
@@ -1424,11 +1466,27 @@ export class SheetsSyncService {
 
           const destObj = MasterDataService.getInstance().getDestinationById(rawDestId);
           const regObj = MasterDataService.getInstance().getRegionById(rawRegId) || (destObj ? MasterDataService.getInstance().getRegionById(destObj.regionId) : undefined);
-          const hubObj = MasterDataService.getInstance().getHubById(rawHubId);
 
           const canonicalDestId = destObj ? destObj.id : rawDestId;
           const canonicalRegId = regObj ? regObj.id : rawRegId;
-          const canonicalHubId = hubObj ? hubObj.id : rawHubId;
+
+          const isRail = authoritativeCat === 'Rail' || rawCat.toLowerCase().includes('rail') || rawCat.toLowerCase().includes('shinkansen');
+          let hubIds: string[] = [];
+          let canonicalHubId = '';
+          let city = '';
+
+          if (isRail) {
+            const hubStr = (p.hub_ids || p.hub_id || 'HUB-TYO').trim();
+            hubIds = hubStr ? hubStr.split('|').map((s: string) => s.trim()).filter(Boolean) : [];
+            canonicalHubId = hubIds[0] || 'HUB-TYO';
+            const hubObj = MasterDataService.getInstance().getHubById(canonicalHubId);
+            city = hubObj?.name || p.city || 'Tokyo';
+          } else {
+            const hubObj = MasterDataService.getInstance().getHubById(rawHubId);
+            canonicalHubId = hubObj ? hubObj.id : rawHubId;
+            city = hubObj?.name || p.city || 'Tokyo';
+            hubIds = [canonicalHubId];
+          }
 
           const partialProd: Product = {
             id: p.product_id || p.sku || `PRD-${Date.now()}`,
@@ -1439,7 +1497,8 @@ export class SheetsSyncService {
             regionId: canonicalRegId,
             regionName: regObj?.name || 'East Asia',
             hubId: canonicalHubId,
-            city: hubObj?.name || p.city || 'Tokyo',
+            hubIds: hubIds,
+            city: city,
             country: destObj?.country || destObj?.name || p.country || 'Japan',
             productType: p.product_category || p.category || authoritativeCat,
             category: authoritativeCat as any,

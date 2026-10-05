@@ -4,6 +4,7 @@ import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
 import { formatCurrency, calculateProductPrice, calculateB2BAgentPrice, convertCurrency } from '../../services/pricingEngine';
 import { generateConfigurationIdentity, getActiveUpsellsForProduct, createUpsellSnapshot } from '../../services/configuratorRegistry';
+import { getInventoryDisplayName } from '../../utils/inventoryDisplayHelpers';
 import { operationalMasterInventory } from '../../services/operationalMasterInventoryService';
 import { operationalAssetEligibility } from '../../services/operationalAssetEligibilityService';
 import { 
@@ -423,7 +424,7 @@ export const TransferConfigurator: React.FC<TransferConfiguratorProps> = ({
                 </span>
               </div>
               <h2 className="text-base sm:text-lg font-bold text-white truncate mt-0.5">
-                {product.name || 'Private Airport & City Transfer'}
+                {getInventoryDisplayName(product)}
               </h2>
             </div>
           </div>

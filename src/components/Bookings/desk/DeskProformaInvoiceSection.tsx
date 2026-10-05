@@ -4,6 +4,8 @@ import { AppDatabase } from '../../../services/db';
 import { isInternalStaff } from '../../../services/permissionEngine';
 import { formatCurrency } from '../../../services/pricingEngine';
 import { ProformaInvoiceModal } from '../../AdminCMS/leads/ProformaInvoiceModal';
+import { validateProformaInvoicePreflight, ProformaPreflightError } from '../../../services/proformaInvoicePreflight';
+import { ProformaGenerationErrorModal, ProformaGenerationSuccessModal } from '../../AdminCMS/invoices/ProformaGenerationModals';
 import { 
   Receipt, 
   Plus, 
@@ -56,6 +58,8 @@ export const DeskProformaInvoiceSection: React.FC<DeskProformaInvoiceSectionProp
 
   // Modals & States for Proforma Invoices
   const [isGenerating, setIsGenerating] = useState(false);
+  const [preflightError, setPreflightError] = useState<ProformaPreflightError | null>(null);
+  const [successModalInvoice, setSuccessModalInvoice] = useState<BookingInvoice | null>(null);
   const [selectedInvoiceForPreview, setSelectedInvoiceForPreview] = useState<BookingInvoice | null>(null);
   const [invoiceToEdit, setInvoiceToEdit] = useState<BookingInvoice | null>(null);
   const [historyInvoice, setHistoryInvoice] = useState<BookingInvoice | null>(null);
@@ -117,16 +121,39 @@ export const DeskProformaInvoiceSection: React.FC<DeskProformaInvoiceSectionProp
     if (isGenerating) return;
     setIsGenerating(true);
     try {
+      // 1. Preflight Validation Check
+      const precheck = validateProformaInvoicePreflight(booking.id, currentUser);
+      if (!precheck.valid || precheck.error) {
+        setPreflightError(precheck.error || null);
+        setIsGenerating(false);
+        return;
+      }
+
+      // 2. Perform Generation
       const forceRegenerate = allInvoices.length > 0;
       const res = db.generateProformaInvoice(booking.id, currentUser, forceRegenerate);
       if (res.success && res.invoice) {
-        setSelectedInvoiceForPreview(res.invoice);
+        setSuccessModalInvoice(res.invoice);
         onRefresh();
       } else {
-        alert(res.error || 'Failed to generate Proforma Invoice');
+        setPreflightError({
+          code: 'UNKNOWN_ERROR',
+          title: 'Invoice Generation Failed',
+          message: res.error || 'The system could not generate the Proforma Invoice.',
+          missingRequirements: ['Valid booking pricing data'],
+          actionableInstruction: 'Please check your connection or contact Admin support.',
+          bookingId: booking.id
+        });
       }
     } catch (err: any) {
-      alert(err?.message || 'Error generating Proforma Invoice');
+      setPreflightError({
+        code: 'UNKNOWN_ERROR',
+        title: 'Execution Error During Invoice Generation',
+        message: err?.message || 'An unexpected error occurred during Proforma Invoice creation.',
+        missingRequirements: ['Valid booking record'],
+        actionableInstruction: 'Please refresh the page and try again.',
+        bookingId: booking.id
+      });
     } finally {
       setIsGenerating(false);
     }
@@ -1101,6 +1128,19 @@ TheUnbound Finance & Operations Desk`
           </div>
         </div>
       )}
+
+      {/* PREFLIGHT ERROR MODAL */}
+      <ProformaGenerationErrorModal
+        error={preflightError}
+        onClose={() => setPreflightError(null)}
+      />
+
+      {/* SUCCESS MODAL */}
+      <ProformaGenerationSuccessModal
+        invoice={successModalInvoice}
+        onClose={() => setSuccessModalInvoice(null)}
+        onViewInvoice={(inv) => setSelectedInvoiceForPreview(inv)}
+      />
     </div>
   );
 };

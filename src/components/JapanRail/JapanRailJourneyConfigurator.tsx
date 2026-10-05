@@ -78,6 +78,15 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
 
   // Initialize the shared dynamic journey
   const [journey, setJourney] = useState<JapanRailJourney>(() => {
+    if (existingJourneySnapshot) {
+      const restored = japanRailJourneyService.restoreJourneyFromSnapshot(
+        existingJourneySnapshot,
+        user?.role,
+        (typeof currency === 'string' ? currency : 'JPY') as CurrencyCode
+      );
+      if (restored) return restored;
+    }
+
     return japanRailJourneyService.createDefaultJourney({
       portalOrigin: (portalOrigin || 'BUYER') as JourneyPortalOrigin,
       userRole: user?.role,

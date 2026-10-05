@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
 import { RichTextRenderer } from './common/RichTextRenderer';
+import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../utils/inventoryDisplayHelpers';
 
 interface ProposalDocumentViewProps {
   quote: Quotation;
@@ -515,8 +516,13 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                     </div>
 
                     <h4 className="text-sm sm:text-base font-bold text-slate-900">
-                      {item.product.name}
+                      {getInventoryDisplayName(item)}
                     </h4>
+                    {getInventoryConfigurationSummary(item) && (
+                      <p className="text-xs text-emerald-800 font-medium">
+                        {getInventoryConfigurationSummary(item)}
+                      </p>
+                    )}
 
                     {/* Overview & Specifications */}
                     <div className="space-y-1">
@@ -680,8 +686,13 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                                 </div>
 
                                 <h4 className="text-sm font-bold text-slate-900">
-                                  {item.customTitle || item.title || item.product.name}
+                                  {getInventoryDisplayName(item)}
                                 </h4>
+                                {getInventoryConfigurationSummary(item) && !isRailQuoteItem(item) && (
+                                  <p className="text-xs text-slate-600 font-medium">
+                                    {getInventoryConfigurationSummary(item)}
+                                  </p>
+                                )}
 
                                 {/* Shinkansen Bullet Train Route & Allotment Box */}
                                 {isRailQuoteItem(item) && item.railJourneyDetails && (
@@ -806,8 +817,8 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
             {generalInclusionItems.map((item, idx) => (
               <div key={item.id || idx} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 text-xs flex justify-between items-start">
                 <div>
-                  <div className="font-bold text-slate-900">{item.product.name}</div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">{item.product.category} • {item.product.city || quote.destination}</div>
+                  <div className="font-bold text-slate-900">{getInventoryDisplayName(item)}</div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">{getInventoryConfigurationSummary(item) || `${item.product.category} • ${item.product.city || quote.destination}`}</div>
                 </div>
                 <div className="font-mono font-bold text-slate-900 text-xs">
                   {formatCurrency(item.calculation?.finalTotalSellingPrice || 0, quote.currency)}

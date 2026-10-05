@@ -874,6 +874,7 @@ export interface Product {
   regionId?: string;
   regionName?: string;
   hubId?: string;
+  hubIds?: string[];
   fromHubId?: string;
   toHubId?: string;
   fromHubName?: string;
@@ -882,6 +883,7 @@ export interface Product {
   country: string;
   city: string;
   productType: string;
+  listingName?: string;
   name: string;
   title?: string;
   slug?: string;
@@ -1821,6 +1823,9 @@ export interface Quotation {
   pricing_version?: number | string;
   pricingSnapshot?: PricingSnapshot;
   pricing_snapshot?: PricingSnapshot;
+  totalGroundLogisticsSnapshot?: number;
+  transactionCurrencySnapshot?: CurrencyCode;
+  pricingVersionSnapshot?: number | string;
   updatedBy?: string;
   updated_by?: string;
 
@@ -5797,6 +5802,7 @@ export interface VisaDocumentRequirement {
 
 export interface VisaProduct {
   id: string;
+  listingName?: string;
   country: string;
   countryCode?: string;
   destinationId?: string;

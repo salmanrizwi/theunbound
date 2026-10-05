@@ -347,13 +347,6 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
           icon: CircleDollarSign
         },
         {
-          id: 'payments',
-          label: 'Payments',
-          section: 'ANALYTICS_MANAGEMENT',
-          subTab: 'FINANCIALS',
-          icon: Receipt
-        },
-        {
           id: 'invoices',
           label: 'Invoices',
           section: 'ANALYTICS_MANAGEMENT',

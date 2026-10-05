@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { Quotation, QuoteItem, CurrencyCode, TripRouteHub } from '../types';
 import { formatCurrency } from './pricingEngine';
+import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../utils/inventoryDisplayHelpers';
 import { AppDatabase } from './db';
 
 export interface PDFExportOptions {
@@ -726,24 +727,15 @@ export function generateQuotationPDF(options: PDFExportOptions): jsPDF {
         const isRail = item.category === 'Rail' || Boolean(item.railJourneyDetails) || (item.product?.category === 'Rail');
         
         const badgeLabel = isRail ? 'SHINKANSEN' : cat;
-        const title = isRail && item.railJourneyDetails
-          ? `Shinkansen: ${item.railJourneyDetails.originStationName} to ${item.railJourneyDetails.destinationStationName}`
-          : (item.customTitle || item.title || item.product.name || 'Curated Experience');
+        const title = getInventoryDisplayName(item);
         
-        const subDetails = isRail && item.railJourneyDetails
-          ? [
-              item.serviceTime ? `Dep: ${item.serviceTime}` : null,
-              `${item.railJourneyDetails.carType} Class (${item.railJourneyDetails.seatType})`,
-              item.railJourneyDetails.serviceGroup === 'NOZOMI_MIZUHO' ? 'Nozomi Super Express' : 'Hikari/Kodama',
-              `Seat: ${item.railJourneyDetails.seatPreference || 'Reserved'}`,
-              `${item.pax?.adults || 2} Adults${item.pax?.children ? `, ${item.pax.children} Ch` : ''}`
-            ].filter(Boolean).join(' • ')
-          : [
-              item.serviceTime ? `Time: ${item.serviceTime}` : null,
-              item.product.duration ? `Duration: ${item.product.duration}` : null,
-              `${item.pax?.adults || 2} Adults${item.pax?.children ? `, ${item.pax.children} Ch` : ''}`,
-              item.product.city || dayCity
-            ].filter(Boolean).join(' • ');
+        const configSummary = getInventoryConfigurationSummary(item);
+        const subDetails = [
+          configSummary || null,
+          item.serviceTime ? `Time: ${item.serviceTime}` : null,
+          `${item.pax?.adults || 2} Adults${item.pax?.children ? `, ${item.pax.children} Ch` : ''}`,
+          item.product?.city || dayCity
+        ].filter(Boolean).join(' • ');
             
         const priceText = formatCurrency(item.calculation?.finalTotalSellingPrice || 0, quote.currency);
 

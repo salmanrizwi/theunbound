@@ -7,6 +7,7 @@ import {
 const RAW_VISAS: VisaProduct[] = [
   {
     id: 'visa-jp-tourist',
+    listingName: 'Japan Tourist Visa Assistance',
     country: 'Japan',
     countryCode: 'JP',
     destinationId: 'dest-japan',
@@ -74,6 +75,7 @@ const RAW_VISAS: VisaProduct[] = [
   },
   {
     id: 'visa-uk-standard',
+    listingName: 'United Kingdom Standard Visitor Visa Assistance',
     country: 'United Kingdom',
     countryCode: 'GB',
     destinationId: 'dest-uk',
@@ -129,6 +131,7 @@ const RAW_VISAS: VisaProduct[] = [
   },
   {
     id: 'visa-schengen-tourist',
+    listingName: 'Europe Schengen Tourist Visa Assistance',
     country: 'Europe (Schengen)',
     countryCode: 'EU',
     destinationId: 'dest-europe',
@@ -182,6 +185,7 @@ const RAW_VISAS: VisaProduct[] = [
   },
   {
     id: 'visa-thailand-evisa',
+    listingName: 'Thailand Tourist Visa Assistance',
     country: 'Thailand',
     countryCode: 'TH',
     destinationId: 'dest-thailand',
@@ -227,6 +231,7 @@ const RAW_VISAS: VisaProduct[] = [
   },
   {
     id: 'visa-uae-tourist',
+    listingName: 'UAE (Dubai & Abu Dhabi) Tourist Visa Assistance',
     country: 'UAE (Dubai & Abu Dhabi)',
     countryCode: 'AE',
     destinationId: 'dest-dubai',
@@ -266,6 +271,7 @@ const RAW_VISAS: VisaProduct[] = [
   },
   {
     id: 'visa-singapore-evisa',
+    listingName: 'Singapore Entry Visa Assistance',
     country: 'Singapore',
     countryCode: 'SG',
     destinationId: 'dest-singapore',

@@ -396,11 +396,35 @@ export class MasterDataService {
       isLegacyMappingApplicable = true;
     }
 
-    if (hubId) {
-      if (!canonicalHubId) {
-        issues.push(`Unknown or inactive hubId: "${hubId}"`);
-      } else if (hubId !== canonicalHubId) {
-        isLegacyMappingApplicable = true;
+    const isRail = product.category === 'Rail' || product.category === 'Rail / Shinkansen';
+
+    if (isRail) {
+      const hubIds = product.hubIds || (hubId ? [hubId] : []);
+      for (const hId of hubIds) {
+        const canonicalHId = hId ? this.getHubById(hId)?.id : undefined;
+        if (!canonicalHId) {
+          issues.push(`Unknown or inactive hubId in rail: "${hId}"`);
+        } else {
+          const hub = this.getHubById(canonicalHId);
+          if (hub && canonicalDestinationId && hub.destinationId !== canonicalDestinationId) {
+            issues.push(`Associated Hub ${hub.name} belongs to destination ${hub.destinationId}, but product specifies destination ${canonicalDestinationId}`);
+          }
+        }
+      }
+    } else {
+      if (hubId) {
+        if (!canonicalHubId) {
+          issues.push(`Unknown or inactive hubId: "${hubId}"`);
+        } else if (hubId !== canonicalHubId) {
+          isLegacyMappingApplicable = true;
+        }
+      }
+
+      if (canonicalDestinationId && canonicalHubId) {
+        const hub = this.getHubById(canonicalHubId);
+        if (hub && hub.destinationId !== canonicalDestinationId) {
+          issues.push(`Hub ${hub.name} belongs to destination ${hub.destinationId}, but product specifies destination ${canonicalDestinationId}`);
+        }
       }
     }
 
@@ -409,13 +433,6 @@ export class MasterDataService {
       const dest = this.getDestinationById(canonicalDestinationId);
       if (dest && dest.regionId !== canonicalRegionId) {
         issues.push(`Destination ${dest.name} belongs to ${dest.regionId}, but product specifies region ${canonicalRegionId}`);
-      }
-    }
-
-    if (canonicalDestinationId && canonicalHubId) {
-      const hub = this.getHubById(canonicalHubId);
-      if (hub && hub.destinationId !== canonicalDestinationId) {
-        issues.push(`Hub ${hub.name} belongs to destination ${hub.destinationId}, but product specifies destination ${canonicalDestinationId}`);
       }
     }
 

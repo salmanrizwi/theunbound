@@ -17,6 +17,8 @@ import { useAuth } from '../../context/AuthContext';
 import { formatCurrency } from '../../services/pricingEngine';
 import { VoucherDocumentView } from '../Bookings/VoucherDocumentView';
 import { ProformaInvoiceModal } from './leads/ProformaInvoiceModal';
+import { validateProformaInvoicePreflight, ProformaPreflightError } from '../../services/proformaInvoicePreflight';
+import { ProformaGenerationErrorModal, ProformaGenerationSuccessModal } from './invoices/ProformaGenerationModals';
 import { LeadQuotesTab } from './leads/LeadQuotesTab';
 import { LeadBookingsTab } from './leads/LeadBookingsTab';
 import { LeadVouchersTab } from './leads/LeadVouchersTab';
@@ -120,6 +122,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [assignmentNote, setAssignmentNote] = useState('');
   const [isAssigningAgent, setIsAssigningAgent] = useState(false);
+  const [preflightError, setPreflightError] = useState<ProformaPreflightError | null>(null);
 
   const b2bAgents = React.useMemo(() => {
     return db.getUsers().filter(u => u.role === 'B2B_AGENT' && u.approvalStatus === 'APPROVED');
@@ -214,17 +217,40 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
 
   const handleGenerateInvoice = (bookingId: string) => {
     try {
-      const res = db.generateProformaInvoice(bookingId, user);
-      if (!res.success || !res.invoice) {
-        setActionErrorMessage(res.error || 'Failed to generate commercial proforma invoice');
+      // 1. Preflight Validation Check
+      const precheck = validateProformaInvoicePreflight(bookingId, user);
+      if (!precheck.valid || precheck.error) {
+        setPreflightError(precheck.error || null);
         return;
       }
+
+      // 2. Perform Generation
+      const res = db.generateProformaInvoice(bookingId, user, true);
+      if (!res.success || !res.invoice) {
+        setPreflightError({
+          code: 'UNKNOWN_ERROR',
+          title: 'Invoice Generation Failed',
+          message: res.error || 'Failed to generate commercial proforma invoice.',
+          missingRequirements: ['Valid booking data structure'],
+          actionableInstruction: 'Please check your connection and try again.',
+          bookingId
+        });
+        return;
+      }
+
       const refreshed = db.getLeadById(lead.id);
       if (refreshed) onUpdateLead(refreshed);
       setPreviewInvoice(res.invoice);
       setActionSuccessMessage(`Issued commercial proforma invoice #${res.invoice.invoiceNumber}`);
     } catch (err: any) {
-      setActionErrorMessage(err.message || 'Failed to generate proforma invoice');
+      setPreflightError({
+        code: 'UNKNOWN_ERROR',
+        title: 'Execution Error',
+        message: err.message || 'Failed to generate proforma invoice.',
+        missingRequirements: ['Valid booking record'],
+        actionableInstruction: 'Please refresh and try again.',
+        bookingId
+      });
     }
   };
 
@@ -1389,6 +1415,12 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
           onClose={() => setPreviewInvoice(null)}
         />
       )}
+
+      {/* Preflight Error Modal */}
+      <ProformaGenerationErrorModal
+        error={preflightError}
+        onClose={() => setPreflightError(null)}
+      />
     </div>
   );
 };

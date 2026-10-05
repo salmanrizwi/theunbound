@@ -24,6 +24,7 @@ export const AUTHORITATIVE_PRODUCT_CATEGORIES = [
   'Hotels',
   'Visa & Ancillary Services',
   'Rail / Shinkansen',
+  'Rail',
   'Lunch / Dinner Restaurant'
 ] as const;
 
@@ -31,8 +32,7 @@ export type AuthoritativeProductCategory = typeof AUTHORITATIVE_PRODUCT_CATEGORI
 
 /**
  * Standard Product CMS Categories strictly for Admin CMS -> Products:
- * Contains the 8 core categories managed directly within Product Manager.
- * (Dedicated modules: Hotels, Rail, Visa & Ancillary Services have their own dedicated interfaces).
+ * Contains the 9 core categories managed directly within Product Manager.
  */
 export const PRODUCT_CMS_CATEGORIES = [
   'Private Tours',
@@ -42,7 +42,8 @@ export const PRODUCT_CMS_CATEGORIES = [
   'Guides',
   'Lunch / Dinner Restaurant',
   'Private Yacht',
-  'Ferry'
+  'Ferry',
+  'Rail'
 ] as const;
 
 export type ProductCMSCategory = typeof PRODUCT_CMS_CATEGORIES[number];
@@ -62,6 +63,7 @@ export type ProductCategoryEnum =
   | 'HOTELS'
   | 'VISA_ANCILLARY'
   | 'SHINKANSEN'
+  | 'RAIL'
   | 'RESTAURANT';
 
 export const ALL_PRODUCT_CATEGORY_ENUMS: readonly ProductCategoryEnum[] = [
@@ -75,6 +77,7 @@ export const ALL_PRODUCT_CATEGORY_ENUMS: readonly ProductCategoryEnum[] = [
   'HOTELS',
   'VISA_ANCILLARY',
   'SHINKANSEN',
+  'RAIL',
   'RESTAURANT'
 ] as const;
 
@@ -102,6 +105,7 @@ export const CATEGORY_ENUM_TO_DISPLAY: Record<ProductCategoryEnum, Authoritative
   HOTELS: 'Hotels',
   VISA_ANCILLARY: 'Visa & Ancillary Services',
   SHINKANSEN: 'Rail / Shinkansen',
+  RAIL: 'Rail',
   RESTAURANT: 'Lunch / Dinner Restaurant'
 };
 
@@ -116,7 +120,8 @@ export const DISPLAY_TO_CATEGORY_ENUM: Record<AuthoritativeProductCategory, Prod
   'Guides': 'GUIDES',
   'Hotels': 'HOTELS',
   'Visa & Ancillary Services': 'VISA_ANCILLARY',
-  'Rail / Shinkansen': 'SHINKANSEN',
+  'Rail / Shinkansen': 'RAIL',
+  'Rail': 'RAIL',
   'Lunch / Dinner Restaurant': 'RESTAURANT'
 };
 
@@ -131,6 +136,7 @@ export const CATEGORY_ENUM_TO_CONFIGURATOR: Record<ProductCategoryEnum, Dedicate
   HOTELS: 'HOTEL_CONFIGURATOR',
   VISA_ANCILLARY: 'VISA_ANCILLARY_CONFIGURATOR',
   SHINKANSEN: 'SHINKANSEN_DYNAMIC_JOURNEY_CONFIGURATOR',
+  RAIL: 'SHINKANSEN_DYNAMIC_JOURNEY_CONFIGURATOR',
   RESTAURANT: 'RESTAURANT_CONFIGURATOR'
 };
 
@@ -237,7 +243,16 @@ export const CONFIGURATOR_REGISTRY_MAP: Record<AuthoritativeProductCategory, Con
   },
   'Rail / Shinkansen': {
     category: 'Rail / Shinkansen',
-    categoryEnum: 'SHINKANSEN',
+    categoryEnum: 'RAIL',
+    configuratorType: 'SHINKANSEN_DYNAMIC_JOURNEY_CONFIGURATOR',
+    title: 'Shinkansen Dynamic Journey Configurator',
+    description: 'High-speed bullet train smartEX inventory, station pair graph, car type, and seat allocation',
+    badgeColor: 'bg-teal-100 text-teal-900 border-teal-300',
+    iconName: 'Train'
+  },
+  'Rail': {
+    category: 'Rail',
+    categoryEnum: 'RAIL',
     configuratorType: 'SHINKANSEN_DYNAMIC_JOURNEY_CONFIGURATOR',
     title: 'Shinkansen Dynamic Journey Configurator',
     description: 'High-speed bullet train smartEX inventory, station pair graph, car type, and seat allocation',
@@ -446,7 +461,7 @@ export function resolveProductCategoryEnum(itemOrProduct: any): ProductCategoryE
     if (upper === 'GUIDES' || upper === 'GUIDE' || upper === 'INTERPRETER') return 'GUIDES';
     if (upper === 'HOTELS' || upper === 'HOTEL' || upper === 'ACCOMMODATION' || upper === 'ACCOMMODATIONS' || upper === 'HOTEL_ACCOMMODATION') return 'HOTELS';
     if (upper === 'VISA_ANCILLARY' || upper === 'VISA_ANCILLARY_SERVICES' || upper === 'VISA' || upper === 'VISAS' || upper === 'ANCILLARY' || upper === 'VISA_SERVICES') return 'VISA_ANCILLARY';
-    if (upper === 'RAIL_SHINKANSEN' || upper === 'SHINKANSEN' || upper === 'RAIL' || upper === 'TRAIN' || upper === 'JAPAN_RAIL') return 'SHINKANSEN';
+    if (upper === 'RAIL_SHINKANSEN' || upper === 'SHINKANSEN' || upper === 'RAIL' || upper === 'TRAIN' || upper === 'JAPAN_RAIL') return 'RAIL';
     if (upper === 'LUNCH_DINNER_RESTAURANT' || upper === 'RESTAURANT' || upper === 'RESTAURANTS' || upper === 'DINING') return 'RESTAURANT';
 
     // Display Name matching
@@ -459,13 +474,13 @@ export function resolveProductCategoryEnum(itemOrProduct: any): ProductCategoryE
     if (lower === 'guides' || lower === 'guide' || lower === 'licensed guide' || lower === 'interpreter') return 'GUIDES';
     if (lower === 'hotels' || lower === 'hotel' || lower === 'accommodation' || lower === 'accommodations' || lower === 'resort' || lower === 'ryokan') return 'HOTELS';
     if (lower === 'visa & ancillary services' || lower === 'visa' || lower === 'visas' || lower === 'ancillary' || lower === 'visa & ancillary') return 'VISA_ANCILLARY';
-    if (lower === 'rail / shinkansen' || lower === 'rail' || lower === 'shinkansen' || lower === 'bullet train') return 'SHINKANSEN';
+    if (lower === 'rail / shinkansen' || lower === 'rail' || lower === 'shinkansen' || lower === 'bullet train') return 'RAIL';
     if (lower === 'lunch / dinner restaurant' || lower === 'restaurant' || lower === 'restaurants' || lower === 'dining' || lower === 'fine dining') return 'RESTAURANT';
   }
 
   // 2. Authoritative domain signatures on quote item or special inventory entities
   if (isRailQuoteItem(itemOrProduct) || isRailProduct(itemOrProduct) || (itemOrProduct.product && isRailProduct(itemOrProduct.product))) {
-    return 'SHINKANSEN';
+    return 'RAIL';
   }
   if (itemOrProduct.serviceVisaDetails || itemOrProduct.visaSnapshot || itemOrProduct.visaConfigurationPayload) {
     return 'VISA_ANCILLARY';
@@ -483,7 +498,7 @@ export function resolveProductCategoryEnum(itemOrProduct: any): ProductCategoryE
   }
   if (sku.startsWith('TRF-') || id.startsWith('TRF-')) return 'TRANSFERS';
   if (sku.startsWith('VSA-') || sku.startsWith('VISA-') || id.startsWith('VISA-') || id.startsWith('VSA-')) return 'VISA_ANCILLARY';
-  if (sku.startsWith('JP-SHINKANSEN') || id.startsWith('RAIL-JP')) return 'SHINKANSEN';
+  if (sku.startsWith('JP-SHINKANSEN') || id.startsWith('RAIL-JP')) return 'RAIL';
   if (sku.startsWith('YCH-') || id.startsWith('YCH-')) return 'PRIVATE_YACHT';
   if (sku.startsWith('FRY-') || id.startsWith('FRY-')) return 'FERRIES';
   if (sku.startsWith('GDE-') || id.startsWith('GDE-')) return 'GUIDES';
@@ -500,7 +515,8 @@ export function resolveProductCategoryEnum(itemOrProduct: any): ProductCategoryE
  */
 export function isShinkansenProductOrItem(itemOrProduct: any): boolean {
   if (!itemOrProduct) return false;
-  return resolveProductCategoryEnum(itemOrProduct) === 'SHINKANSEN';
+  const cat = resolveProductCategoryEnum(itemOrProduct);
+  return cat === 'RAIL' || cat === 'SHINKANSEN';
 }
 
 /**
@@ -1264,6 +1280,21 @@ export const CATEGORY_FIELD_REGISTRY: Record<ProductCategoryEnum, CategoryFieldR
   SHINKANSEN: {
     categoryEnum: 'SHINKANSEN',
     categoryDisplay: 'Rail / Shinkansen',
+    pricingModel: 'journey_graph',
+    masterFields: ['routeId', 'originStationId', 'destinationStationId', 'rates', 'carClasses', 'status'],
+    configurableFields: ['travelDate', 'originStation', 'destinationStation', 'carClass', 'trainName', 'passengers'],
+    pricingFields: ['baseFare', 'superExpressFare', 'currency', 'markupPercent'],
+    systemFields: ['id', 'route_code'],
+    prohibitedFields: ['arbitrary_non_station_stops'],
+    fieldDefinitions: [
+      { fieldName: 'originStationId', classification: 'MASTER_ADMIN_MANAGED', description: 'Valid SmartEX origin station code', source: 'PRODUCT_MANAGEMENT', affectsPricing: true, affectsBooking: true }
+    ],
+    requiredFieldsForSave: ['name']
+  },
+
+  RAIL: {
+    categoryEnum: 'RAIL',
+    categoryDisplay: 'Rail',
     pricingModel: 'journey_graph',
     masterFields: ['routeId', 'originStationId', 'destinationStationId', 'rates', 'carClasses', 'status'],
     configurableFields: ['travelDate', 'originStation', 'destinationStation', 'carClass', 'trainName', 'passengers'],

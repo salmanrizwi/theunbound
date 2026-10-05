@@ -49,6 +49,7 @@ import {
   X
 } from 'lucide-react';
 import { isRailQuoteItem } from '../../services/rail/JapanRailJourneyDataService';
+import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../../utils/inventoryDisplayHelpers';
 import { 
   QuoteItem, 
   QuotationOption, 
@@ -417,6 +418,40 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     }
   }, [products, currentDestination]);
 
+  const isJapan = useMemo(() => {
+    return matchesDestination(currentDestination?.id, 'dest-japan', 'Japan', 'Japan') ||
+      (currentDestination?.name || '').toLowerCase().includes('japan') ||
+      (currentDestination?.country || '').toLowerCase().includes('japan') ||
+      (currentDestination?.slug || '').toLowerCase().includes('japan');
+  }, [currentDestination]);
+
+  const japanRailMasterProducts = useMemo(() => {
+    const relevanceService = DestinationRelevanceService.getInstance();
+    const railList = relevanceService.getRelevantRailProducts(currentDestination?.id || currentDestination?.name);
+    if (railList.length > 0) return railList;
+    try {
+      const db = AppDatabase.getInstance();
+      return db.getProducts().filter(p => 
+        (p.status === 'ACTIVE' || !p.status) &&
+        (p.id === 'RAIL-JP-ORD-RESERVED' || p.id === 'RAIL-JP-GREEN-RESERVED' || (p.category || '').toLowerCase() === 'rail')
+      );
+    } catch {
+      return (products || []).filter(p => p.id === 'RAIL-JP-ORD-RESERVED' || p.id === 'RAIL-JP-GREEN-RESERVED');
+    }
+  }, [products, currentDestination]);
+
+  const railItems = useMemo(() => items.filter(it => 
+    isRailQuoteItem(it) || 
+    (it.product?.category || '').toLowerCase() === 'rail' || 
+    it.railJourneyDetails ||
+    it.product?.id === 'RAIL-JP-ORD-RESERVED' ||
+    it.product?.id === 'RAIL-JP-GREEN-RESERVED'
+  ), [items]);
+
+  const totalRailSellingPrice = useMemo(() => {
+    return railItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+  }, [railItems]);
+
   // Hub Matching Algorithm for movements
   const getMatchingTransfersForMovement = (
     movement: { type: string; fromHubId?: string; toHubId?: string; fromHub?: TripRouteHub; toHub?: TripRouteHub; hub?: TripRouteHub },
@@ -645,10 +680,114 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     return transferItems.reduce((sum, it) => sum + (it.calculation?.totalNetCost || 0), 0);
   }, [transferItems]);
 
-  // Step 4 UI State
-  const [step4ViewTab, setStep4ViewTab] = useState<'ROUTE_MOVEMENTS' | 'ALL_FLEET'>('ROUTE_MOVEMENTS');
+  // Combined Ground Logistics (All Transfer Fleet + Rail + Custom Transfers)
+  const groundLogisticsItems = useMemo(() => {
+    return [...transferItems, ...railItems];
+  }, [transferItems, railItems]);
+
+  const failedGroundItems = useMemo(() => {
+    return groundLogisticsItems.filter(it => 
+      !it.calculation || 
+      it.calculation.finalTotalSellingPrice === undefined || 
+      it.calculation.finalTotalSellingPrice === null || 
+      (it.calculation as any).error ||
+      (it as any).pricingError
+    );
+  }, [groundLogisticsItems]);
+
+  const isGroundPricingFailed = failedGroundItems.length > 0;
+
+  const isGroundPricingLoading = useMemo(() => {
+    return groundLogisticsItems.some(it => 
+      (it as any).isCalculating || 
+      (it.calculation as any)?.isLoading || 
+      (it.calculation as any)?.status === 'PENDING'
+    );
+  }, [groundLogisticsItems]);
+
+  const totalGroundLogisticsPrice = useMemo(() => {
+    if (isGroundPricingFailed) return null;
+    return groundLogisticsItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+  }, [groundLogisticsItems, isGroundPricingFailed]);
+
+  const totalGroundLogisticsNet = useMemo(() => {
+    return groundLogisticsItems.reduce((sum, it) => sum + (it.calculation?.totalNetCost || 0), 0);
+  }, [groundLogisticsItems]);
+
+  const railTotal = useMemo(() => {
+    return railItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+  }, [railItems]);
+
+  const customTransferTotal = useMemo(() => {
+    return transferItems
+      .filter(it => it.product.id.includes('custom-transfer') || it.product.sku?.startsWith('TRF-CUST'))
+      .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+  }, [transferItems]);
+
+  const transferFleetTotal = useMemo(() => {
+    return transferItems
+      .filter(it => !it.product.id.includes('custom-transfer') && !it.product.sku?.startsWith('TRF-CUST'))
+      .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+  }, [transferItems]);
+
+  const getLegIndexForItem = (item: QuoteItem) => {
+    const legId = (item as any).quoteLegId || (item as any).legId;
+    if (legId) {
+      return transitMovements.findIndex(m => m.id === legId);
+    }
+    return transitMovements.findIndex(m => {
+      if (item.travelDate && m.suggestedDate && item.travelDate === m.suggestedDate) {
+        if (m.fromHubId && (item.product.fromHubId === m.fromHubId || item.product.hubId === m.fromHubId)) return true;
+        if (m.toHubId && (item.product.toHubId === m.toHubId || item.product.hubId === m.toHubId)) return true;
+      }
+      return false;
+    });
+  };
+
+  // Step 4 UI State - Leg-Scoped Ground Movement Selection
+  const [legOptionState, setLegOptionState] = useState<Record<string, 'NONE' | 'OPTIONS' | 'FLEET' | 'RAIL' | 'CUSTOM'>>({});
   const [step4FleetSearch, setStep4FleetSearch] = useState('');
   const [step4SelectedHubFilter, setStep4SelectedHubFilter] = useState<string>('ALL');
+
+  // Day-Wise Ground Movement Management State (Step 4)
+  const [expandedDayNumbers, setExpandedDayNumbers] = useState<Record<number, boolean>>({ 1: true });
+  const [activeAddMovementDayNumber, setActiveAddMovementDayNumber] = useState<number | null>(null);
+
+  const toggleExpandDay = (dayNum: number) => {
+    setExpandedDayNumbers(prev => ({ ...prev, [dayNum]: prev[dayNum] === false }));
+  };
+
+  const handleOpenCustomTransferModalForDay = (slot: any) => {
+    const dayNum = slot.dayNumber;
+    const dateStr = slot.dateString || startDate;
+    const fromCity = slot.prevHub?.hubName || slot.hub?.hubName || currentDestination.name;
+    const toCity = slot.hub?.hubName || currentDestination.name;
+
+    setCustomTransferMovement({
+      suggestedDate: dateStr,
+      suggestedDay: dayNum,
+      fromName: fromCity,
+      toName: toCity,
+      hub: slot.hub
+    });
+
+    setCustomTransferForm({
+      routeName: `${fromCity} ➔ ${toCity} Private Transfer`,
+      fromLocation: `${fromCity} Pickup Point / Hotel`,
+      toLocation: `${toCity} Drop-off Destination / Hotel`,
+      travelDate: dateStr,
+      serviceTime: '10:00 AM',
+      vehicleType: 'Executive MPV / Van (Toyota Alphard)',
+      maxPax: Math.max(4, adultsCount + childrenCount),
+      maxLuggage: 5,
+      netCost: 150,
+      currency: currency as CurrencyCode,
+      markupPercent: 15,
+      specialNotes: `Day ${dayNum} ground transfer for ${adultsCount + childrenCount} Passengers.`
+    });
+
+    setIsCustomTransferModalOpen(true);
+  };
 
   // Transfer Configurator Modal state
   const [isTransferConfiguratorOpen, setIsTransferConfiguratorOpen] = useState(false);
@@ -709,6 +848,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       children: childrenCount,
       infants: infantsCount,
       notes,
+      quoteLegId: movement?.id,
+      legId: movement?.id,
       openDrawer: false
     });
   };
@@ -807,6 +948,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       children: childrenCount,
       infants: infantsCount,
       notes: `${customTransferForm.fromLocation} ➔ ${customTransferForm.toLocation} | Time: ${customTransferForm.serviceTime} | ${customTransferForm.specialNotes || 'Custom Transfer'}`,
+      quoteLegId: customTransferMovement?.id,
+      legId: customTransferMovement?.id,
       openDrawer: false
     });
 
@@ -1176,10 +1319,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     },
     {
       id: 4,
-      name: 'Transfers & Transport',
+      name: 'Transfers & Ground Logistics',
       shortDesc: 'Airport & Intercity Ground Logistics',
       status: stepStatuses.step4,
-      summary: `${transferItems.length} Transfers Included`,
+      summary: `${groundLogisticsItems.length} Services Booked`,
       icon: Car
     },
     {
@@ -2465,10 +2608,71 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     Step 4 of 9
                   </span>
                   <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-slate-900 text-[#00E5C0]">
-                    {transferItems.length} Booked • {formatCurrency(totalTransfersSellingPrice, currency)}
+                    {groundLogisticsItems.length} Booked • {isGroundPricingFailed ? 'Price unavailable' : formatCurrency(totalGroundLogisticsPrice ?? 0, currency)}
                   </span>
                 </div>
               </div>
+
+              {/* Authoritative Total Ground Logistics Card & Service Type Breakdown */}
+              <div className="p-6 bg-slate-900 text-white rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-6 animate-fadeIn shadow-xs border border-slate-800">
+                <div className="space-y-1">
+                  <div className="text-[10px] uppercase font-black text-slate-400 tracking-wider">Authoritative Aggregate</div>
+                  <h3 className="text-sm font-bold text-slate-300">Total Ground Logistics</h3>
+                  <div className="text-3xl font-mono font-black text-[#00E5C0]">
+                    {isGroundPricingLoading ? (
+                      <span className="animate-pulse">Calculating...</span>
+                    ) : isGroundPricingFailed ? (
+                      <span className="text-rose-400 text-xl">Price unavailable</span>
+                    ) : (
+                      formatCurrency(totalGroundLogisticsPrice ?? 0, currency)
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 pt-4 md:pt-0 border-t border-slate-800 md:border-t-0 text-xs font-mono w-full md:w-auto md:min-w-[480px]">
+                  <div className="space-y-1 bg-slate-800/40 p-3 rounded-2xl border border-slate-800/80">
+                    <span className="text-slate-400 text-[10px] block uppercase font-bold leading-none">All Transfer Fleet</span>
+                    <span className="font-bold text-slate-200">{isGroundPricingFailed ? '—' : formatCurrency(transferFleetTotal, currency)}</span>
+                  </div>
+                  <div className="space-y-1 bg-slate-800/40 p-3 rounded-2xl border border-slate-800/80">
+                    <span className="text-slate-400 text-[10px] block uppercase font-bold leading-none">Rail</span>
+                    <span className="font-bold text-slate-200">{isGroundPricingFailed ? '—' : formatCurrency(railTotal, currency)}</span>
+                  </div>
+                  <div className="space-y-1 bg-slate-800/40 p-3 rounded-2xl border border-slate-800/80">
+                    <span className="text-slate-400 text-[10px] block uppercase font-bold leading-none">Custom Service</span>
+                    <span className="font-bold text-slate-200">{isGroundPricingFailed ? '—' : formatCurrency(customTransferTotal, currency)}</span>
+                  </div>
+                  <div className="space-y-1 bg-slate-800/40 p-3 rounded-2xl border border-slate-800/80">
+                    <span className="text-slate-400 text-[10px] block uppercase font-bold leading-none">Wholesale Net</span>
+                    <span className="text-slate-300 font-bold">{formatCurrency(totalGroundLogisticsNet, currency)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Pricing Failure Warning Alert Banner */}
+              {isGroundPricingFailed && (
+                <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex items-start space-x-3 animate-fadeIn">
+                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1 w-full">
+                    <h4 className="text-xs font-black text-rose-900 uppercase tracking-wider">
+                      Ground Logistics Pricing Failure — Action Required
+                    </h4>
+                    <p className="text-xs text-rose-800">
+                      One or more configured ground logistics services could not be priced. Stale prices, zero prices, or Net fallbacks are rejected. Please review and adjust the configurations below:
+                    </p>
+                    <ul className="list-disc pl-5 mt-2 space-y-1 text-xs text-rose-700 font-bold">
+                      {failedGroundItems.map(it => {
+                        const legIdx = getLegIndexForItem(it);
+                        return (
+                          <li key={it.id}>
+                            {getInventoryDisplayName(it)} in Leg {legIdx + 1} ({it.notes || 'No description'})
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                </div>
+              )}
 
               {/* Empty Route Hubs State */}
               {routeHubs.length === 0 ? (
@@ -2501,7 +2705,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             Route Hub Changed — Incompatible Transfers Detected
                           </h4>
                           <p className="text-xs text-amber-800 mt-0.5">
-                            {invalidTransfers.length} {invalidTransfers.length === 1 ? 'transfer' : 'transfers'} in your quote ({invalidTransfers.map(t => t.product.name).join(', ')}) belong to hubs that are no longer part of your active itinerary.
+                            {invalidTransfers.length} {invalidTransfers.length === 1 ? 'transfer' : 'transfers'} in your quote ({invalidTransfers.map(t => getInventoryDisplayName(t)).join(', ')}) belong to hubs that are no longer part of your active itinerary.
                           </p>
                         </div>
                       </div>
@@ -2517,504 +2721,468 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     </div>
                   )}
 
-                  {/* Navigation Tabs between Route Movements and All Fleet Browse */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 pb-1 border-b border-slate-100">
-                    <div className="flex items-center space-x-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setStep4ViewTab('ROUTE_MOVEMENTS')}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
-                          step4ViewTab === 'ROUTE_MOVEMENTS'
-                            ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}
-                      >
-                        <Car className="w-3.5 h-3.5" />
-                        <span>Route Transit Movements ({transitMovements.length} Legs)</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setStep4ViewTab('ALL_FLEET')}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
-                          step4ViewTab === 'ALL_FLEET'
-                            ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}
-                      >
-                        <Layers className="w-3.5 h-3.5" />
-                        <span>All {currentDestination.name} Transfer Fleet ({allMasterTransferProducts.length})</span>
-                      </button>
+                  {/* STEP 4: ITINERARY LEGS LIST (Strict Leg-Only Ground Logistics) */}
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <div>
+                        <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">
+                          Itinerary Legs & Ground Movements ({transitMovements.length} Legs)
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                          Select a Leg below to configure or add All Transfer Fleet, Rail, or Custom Transfer Services.
+                        </p>
+                      </div>
+                      <span className="text-xs font-mono font-bold text-slate-700 bg-slate-100 px-3 py-1 rounded-xl">
+                        {transferItems.length + railItems.length} Services Booked
+                      </span>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleOpenCustomTransferModal()}
-                      className="px-3 py-1.5 rounded-xl bg-teal-50 hover:bg-[#00C6A6] text-teal-800 hover:text-white border border-teal-200 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>+ Custom Transfer Service</span>
-                    </button>
-                  </div>
+                    {transitMovements.map((movement, idx) => {
+                      const totalPax = adultsCount + childrenCount;
+                      
+                      // Find items booked for this specific leg
+                      const legBookedItems = items.filter(it => {
+                        const isTrfOrRail = (it.product as any).isTransfer || 
+                                            (it.product as any).isRail ||
+                                            (it.product.category || '').toLowerCase().includes('transfer') ||
+                                            (it.product.category || '').toLowerCase().includes('rail') ||
+                                            (it.product.productType || '').toLowerCase().includes('transfer') ||
+                                            (it.product.productType || '').toLowerCase().includes('rail');
+                        if (!isTrfOrRail) return false;
 
-                  {/* TAB 1: ROUTE MOVEMENTS (Primary Itinerary Transit Flow) */}
-                  {step4ViewTab === 'ROUTE_MOVEMENTS' && (
-                    <div className="space-y-6">
-                      {transitMovements.map((movement, idx) => {
-                        const totalPax = adultsCount + childrenCount;
-                        // Check if an item is already added for this movement
-                        const existingCoveredItem = items.find(it => {
-                          const isTrf = (it.product as any).isTransfer || 
-                                        (it.product.category || '').toLowerCase().includes('transfer') ||
-                                        (it.product.productType || '').toLowerCase().includes('transfer');
-                          if (!isTrf) return false;
-                          
-                          if (movement.type === 'ARRIVAL') {
-                            return it.travelDate === movement.suggestedDate || 
-                                   (movement.toHubId && (it.product.toHubId === movement.toHubId || it.product.hubId === movement.toHubId)) ||
-                                   (movement.hub && it.notes?.includes(movement.hub.hubName));
-                          }
-                          if (movement.type === 'INTERCITY') {
-                            return (movement.fromHub && movement.toHub && 
-                                    it.notes?.includes(movement.fromHub.hubName) && it.notes?.includes(movement.toHub.hubName)) ||
-                                   (it.travelDate === movement.suggestedDate && (it.product.subcategory || '').toLowerCase().includes('intercity'));
-                          }
-                          if (movement.type === 'DEPARTURE') {
-                            return it.travelDate === movement.suggestedDate ||
-                                   (movement.fromHubId && (it.product.fromHubId === movement.fromHubId || it.product.hubId === movement.fromHubId)) ||
-                                   (movement.hub && it.notes?.includes(movement.hub.hubName) && (it.notes?.includes('Airport') || it.notes?.includes('Departure')));
-                          }
-                          return false;
-                        });
+                        if ((it as any).quoteLegId === movement.id || (it as any).legId === movement.id) return true;
 
-                        return (
-                          <div 
-                            key={movement.id}
-                            className={`p-5 rounded-3xl border transition-all ${
-                              existingCoveredItem 
-                                ? 'bg-emerald-50/40 border-emerald-200 shadow-2xs'
-                                : 'bg-slate-50/70 border-slate-200'
-                            }`}
-                          >
-                            {/* Movement Header */}
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200/80">
-                              <div className="space-y-1">
-                                <div className="flex items-center space-x-2">
-                                  <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-slate-900 text-[#00E5C0]">
-                                    Leg {idx + 1} • Day {movement.suggestedDay}
-                                  </span>
-                                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-teal-100 text-teal-800">
-                                    {movement.badge}
-                                  </span>
-                                  <span className="text-[11px] font-medium text-slate-500">
-                                    📅 {movement.suggestedDate ? new Date(movement.suggestedDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : `Day ${movement.suggestedDay}`}
-                                  </span>
-                                </div>
-                                <h3 className="text-sm font-black text-slate-900 flex items-center space-x-2">
-                                  <span>{movement.fromName}</span>
-                                  <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-                                  <span>{movement.toName}</span>
-                                </h3>
+                        if (it.travelDate && movement.suggestedDate && it.travelDate === movement.suggestedDate) {
+                          if (movement.fromHubId && (it.product.fromHubId === movement.fromHubId || it.product.hubId === movement.fromHubId)) return true;
+                          if (movement.toHubId && (it.product.toHubId === movement.toHubId || it.product.hubId === movement.toHubId)) return true;
+                          if (movement.fromName && it.notes?.toLowerCase().includes(movement.fromName.toLowerCase())) return true;
+                          if (movement.toName && it.notes?.toLowerCase().includes(movement.toName.toLowerCase())) return true;
+                        }
+                        return false;
+                      });
+
+                      const activeLegOption = legOptionState[movement.id] || 'NONE';
+
+                      return (
+                        <div 
+                          key={movement.id}
+                          className={`p-5 rounded-3xl border transition-all ${
+                            legBookedItems.length > 0
+                              ? 'bg-emerald-50/30 border-emerald-200 shadow-2xs'
+                              : 'bg-slate-50/70 border-slate-200'
+                          }`}
+                        >
+                          {/* Movement Header */}
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200/80">
+                            <div className="space-y-1">
+                              <div className="flex items-center space-x-2">
+                                <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-slate-900 text-[#00E5C0]">
+                                  Leg {idx + 1} • Day {movement.suggestedDay}
+                                </span>
+                                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-teal-100 text-teal-800">
+                                  {movement.badge}
+                                </span>
+                                <span className="text-[11px] font-medium text-slate-500">
+                                  📅 {movement.suggestedDate ? new Date(movement.suggestedDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : `Day ${movement.suggestedDay}`}
+                                </span>
                               </div>
-
-                              {/* Status Badge */}
-                              <div>
-                                {existingCoveredItem ? (
-                                  <div className="flex items-center space-x-2 bg-emerald-100/80 px-3 py-1.5 rounded-xl border border-emerald-300">
-                                    <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                                    <div className="text-left">
-                                      <div className="text-[10px] font-black uppercase text-emerald-800">Transfer Booked</div>
-                                      <div className="text-xs font-bold text-emerald-900 truncate max-w-[180px]">
-                                        {existingCoveredItem.product.name}
-                                      </div>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenEditTransferConfig(existingCoveredItem)}
-                                      className="p-1 rounded-lg bg-emerald-200 text-emerald-900 hover:bg-emerald-300 text-[10px] font-bold cursor-pointer"
-                                      title="Edit Transfer Configuration"
-                                    >
-                                      <Edit3 className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => removeProductFromQuote(existingCoveredItem.id)}
-                                      className="p-1 rounded-lg bg-rose-100 text-rose-700 hover:bg-rose-200 text-[10px] font-bold cursor-pointer"
-                                      title="Remove from Quote"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <span className="text-[11px] font-bold text-amber-700 bg-amber-100/70 px-2.5 py-1 rounded-lg border border-amber-200">
-                                    Pending Selection
-                                  </span>
-                                )}
-                              </div>
+                              <h3 className="text-sm font-black text-slate-900 flex items-center space-x-2">
+                                <span>{movement.fromName}</span>
+                                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                                <span>{movement.toName}</span>
+                              </h3>
                             </div>
 
-                            {/* Matching Transfer Products Section */}
-                            <div className="mt-4 space-y-3">
-                              <div className="flex items-center justify-between">
-                                <span className="text-[11px] font-black uppercase tracking-wider text-slate-600">
-                                  Contracted Transfer Products Available ({movement.matchingProducts.length}):
-                                </span>
-                                <span className="text-[11px] text-slate-500">
-                                  Passenger Group: <strong className="text-slate-800">{totalPax} Pax</strong> ({adultsCount} Adults{childrenCount > 0 ? `, ${childrenCount} Children` : ''})
-                                </span>
-                              </div>
-
-                              {movement.matchingProducts.length === 0 ? (
-                                <div className="p-5 bg-white rounded-2xl border border-dashed border-slate-300 text-center space-y-2">
-                                  <div className="flex items-center justify-center space-x-2 text-slate-500">
-                                    <MapPin className="w-4 h-4 text-slate-400" />
-                                    <span className="text-xs font-bold text-slate-700">
-                                      No matching contracted transfer products found for this route leg.
-                                    </span>
-                                  </div>
-                                  <p className="text-[11px] text-slate-400 max-w-md mx-auto">
-                                    No pre-loaded master rate exists between {movement.fromName} and {movement.toName}. You can configure a bespoke chauffeur transit service with custom pricing.
-                                  </p>
-                                  <div className="pt-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenCustomTransferModal(movement)}
-                                      className="px-3.5 py-1.5 rounded-xl bg-teal-50 hover:bg-[#00C6A6] text-teal-800 hover:text-white border border-teal-300 text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5"
-                                    >
-                                      <Plus className="w-3.5 h-3.5" />
-                                      <span>+ Add Custom Transfer Service</span>
-                                    </button>
-                                  </div>
+                            {/* Leg Status Indicator */}
+                            <div>
+                              {legBookedItems.length > 0 ? (
+                                <div className="flex flex-col sm:items-end gap-1.5">
+                                  <span className="inline-flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span>{legBookedItems.length} {legBookedItems.length === 1 ? 'Service' : 'Services'} Configured</span>
+                                  </span>
+                                  <span className="text-xs font-mono font-black text-emerald-800 bg-emerald-100/50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
+                                    Ground Logistics Total: {formatCurrency(legBookedItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), currency)}
+                                  </span>
                                 </div>
                               ) : (
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                  {movement.matchingProducts.map(prod => {
-                                    const tierRes = resolveCapacityPricingTier({ product: prod, passengerCount: totalPax });
-                                    const maxSeats = tierRes.maxPassengers;
-                                    const maxLuggage = prod.vehicleConfig?.maxLuggage || 4;
-                                    const allowMulti = Boolean(prod.vehicleConfig?.allowMultipleVehicles);
-                                    const isCapacityExceeded = !tierRes.hasMatchedTier;
-                                    const vehiclesNeeded = tierRes.vehiclesRequired;
+                                <span className="text-[11px] font-bold text-amber-700 bg-amber-100/70 px-2.5 py-1 rounded-lg border border-amber-200">
+                                  Pending Selection
+                                </span>
+                              )}
+                            </div>
+                          </div>
 
-                                    const unitSelling = tierRes.calculatedPrice / Math.max(1, vehiclesNeeded);
-                                    const convertedSelling = convertCurrency(tierRes.calculatedPrice, tierRes.currency, currency);
+                          {/* Configured Ground Movements for this Leg */}
+                          {legBookedItems.length > 0 && (
+                            <div className="mt-4 space-y-2.5">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+                                Configured Services for Leg {idx + 1}:
+                              </span>
+                              <div className="space-y-2">
+                                {legBookedItems.map(item => (
+                                  <div 
+                                    key={item.id}
+                                    className="p-3.5 bg-white rounded-2xl border border-emerald-300/80 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                                  >
+                                    <div className="space-y-1 min-w-0">
+                                      <div className="flex items-center space-x-2">
+                                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-900">
+                                          {(item.product as any).isRail || (item.product.category || '').toLowerCase().includes('rail') ? 'Japan Rail' : 'Private Transfer'}
+                                        </span>
+                                        <h4 className="text-xs font-black text-slate-900 truncate">
+                                          {getInventoryDisplayName(item)}
+                                        </h4>
+                                      </div>
+                                      <p className="text-[11px] text-slate-600 line-clamp-1">
+                                        {getInventoryConfigurationSummary(item) || item.notes || item.product.name}
+                                      </p>
+                                    </div>
 
-                                    const isAlreadySelected = items.some(it => 
-                                      (it.product.id === prod.id || it.product.sku === prod.sku) &&
-                                      it.travelDate === movement.suggestedDate
-                                    );
+                                    <div className="flex items-center space-x-3 shrink-0">
+                                      <div className="text-right font-mono font-black text-xs text-slate-900">
+                                        {formatCurrency(item.calculation?.finalTotalSellingPrice || 0, currency)}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenEditTransferConfig(item)}
+                                        className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer transition-colors"
+                                        title="Edit Configuration"
+                                      >
+                                        <Edit3 className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => removeProductFromQuote(item.id)}
+                                        className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold cursor-pointer transition-colors"
+                                        title="Remove from Quote"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* IN-LEG GROUND MOVEMENT OPTIONS WORKSPACE */}
+                          <div className="mt-4 pt-3 border-t border-slate-200/80">
+                            {activeLegOption === 'NONE' && (
+                              <button
+                                type="button"
+                                onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'OPTIONS' }))}
+                                className="w-full py-2.5 px-4 rounded-2xl border border-dashed border-teal-300 hover:border-teal-500 bg-teal-50/50 hover:bg-teal-50 text-teal-900 text-xs font-black transition-all cursor-pointer flex items-center justify-center space-x-2 shadow-2xs"
+                              >
+                                <Plus className="w-4 h-4 text-[#00C6A6]" />
+                                <span>
+                                  {legBookedItems.length > 0 ? '+ Add Another Ground Movement to Leg' : '+ Add Ground Movement'}
+                                </span>
+                              </button>
+                            )}
+
+                            {activeLegOption === 'OPTIONS' && (
+                              <div className="p-4 bg-white rounded-2xl border border-teal-300 space-y-3 animate-fadeIn shadow-xs">
+                                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                                  <div>
+                                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                                      Choose Ground Movement Type for Leg {idx + 1}
+                                    </h4>
+                                    <p className="text-[11px] text-slate-500">
+                                      {movement.fromName} ➔ {movement.toName}
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }))}
+                                    className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold cursor-pointer"
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                  {/* 1. All Transfer Fleet */}
+                                  <button
+                                    type="button"
+                                    onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'FLEET' }))}
+                                    className="p-4 rounded-2xl border border-slate-200 hover:border-teal-400 hover:bg-teal-50/40 text-left transition-all cursor-pointer group space-y-2 bg-slate-50/50"
+                                  >
+                                    <div className="w-9 h-9 rounded-xl bg-teal-100 text-teal-800 flex items-center justify-center font-bold group-hover:bg-slate-900 group-hover:text-[#00E5C0] transition-colors">
+                                      <Car className="w-4 h-4" />
+                                    </div>
+                                    <div>
+                                      <h4 className="text-xs font-black text-slate-900 group-hover:text-teal-800">All Transfer Fleet</h4>
+                                      <p className="text-[10px] text-teal-700 font-bold mt-0.5">Browse available vehicles</p>
+                                      <p className="text-[10px] text-slate-500 mt-1 leading-tight">
+                                        Executive Sedan • Alphard MPV • HiAce • Minibus
+                                      </p>
+                                    </div>
+                                  </button>
+
+                                  {/* 2. Rail */}
+                                  <button
+                                    type="button"
+                                    onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'RAIL' }))}
+                                    className="p-4 rounded-2xl border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/40 text-left transition-all cursor-pointer group space-y-2 bg-slate-50/50"
+                                  >
+                                    <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold group-hover:bg-slate-900 group-hover:text-[#00E5C0] transition-colors">
+                                      <Train className="w-4 h-4" />
+                                    </div>
+                                    <div>
+                                      <h4 className="text-xs font-black text-slate-900 group-hover:text-emerald-800">Rail</h4>
+                                      <p className="text-[10px] text-emerald-700 font-bold mt-0.5">Japan rail journey</p>
+                                      <p className="text-[10px] text-slate-500 mt-1 leading-tight">
+                                        Ordinary Reserved Seat & Green Car First Class
+                                      </p>
+                                    </div>
+                                  </button>
+
+                                  {/* 3. + Custom Transfer Service */}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      handleOpenCustomTransferModal(movement);
+                                      setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }));
+                                    }}
+                                    className="p-4 rounded-2xl border border-slate-200 hover:border-amber-400 hover:bg-amber-50/40 text-left transition-all cursor-pointer group space-y-2 bg-slate-50/50"
+                                  >
+                                    <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold group-hover:bg-slate-900 group-hover:text-[#00E5C0] transition-colors">
+                                      <Sliders className="w-4 h-4" />
+                                    </div>
+                                    <div>
+                                      <h4 className="text-xs font-black text-slate-900 group-hover:text-amber-800">+ Custom Transfer Service</h4>
+                                      <p className="text-[10px] text-amber-700 font-bold mt-0.5">Add manually specified transfer</p>
+                                      <p className="text-[10px] text-slate-500 mt-1 leading-tight">
+                                        Bespoke routes, special requests & custom pricing
+                                      </p>
+                                    </div>
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {activeLegOption === 'FLEET' && (
+                              <div className="p-4 bg-white rounded-2xl border border-teal-300 space-y-4 animate-fadeIn shadow-xs">
+                                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                  <div className="flex items-center space-x-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'OPTIONS' }))}
+                                      className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+                                    >
+                                      <ArrowLeft className="w-3.5 h-3.5" />
+                                    </button>
+                                    <div>
+                                      <h4 className="text-xs font-black text-slate-900">
+                                        All Transfer Fleet — Leg {idx + 1} ({movement.fromName} ➔ {movement.toName})
+                                      </h4>
+                                      <p className="text-[11px] text-slate-500">
+                                        Select an available vehicle or contracted route transfer below.
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }))}
+                                    className="text-xs font-bold text-slate-400 hover:text-slate-600"
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+
+                                {/* Contracted Route Products First */}
+                                {movement.matchingProducts.length > 0 && (
+                                  <div className="space-y-2">
+                                    <span className="text-[10px] font-black uppercase text-teal-800 tracking-wider block">
+                                      Contracted Route Match ({movement.matchingProducts.length} Vehicles Available):
+                                    </span>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                      {movement.matchingProducts.map(prod => {
+                                        const tierRes = resolveCapacityPricingTier({ product: prod, passengerCount: totalPax });
+                                        const vehiclesNeeded = tierRes.vehiclesRequired;
+                                        const convertedSelling = convertCurrency(tierRes.calculatedPrice, tierRes.currency, currency);
+
+                                        return (
+                                          <div key={prod.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-col justify-between space-y-2">
+                                            <div>
+                                              <div className="flex items-center justify-between text-[10px]">
+                                                <span className="font-bold text-teal-800 uppercase">{prod.subcategory || 'Private Transfer'}</span>
+                                                <span className="text-slate-400 font-mono">{prod.supplierName || 'Fleet'}</span>
+                                              </div>
+                                              <h5 className="text-xs font-black text-slate-900 mt-1">{getInventoryDisplayName(prod)}</h5>
+                                              <p className="text-[11px] text-slate-500">Vehicle: {prod.vehicleConfig?.vehicleName || 'Executive MPV'} • Capacity: {tierRes.minPassengers}–{tierRes.maxPassengers} Pax</p>
+                                            </div>
+                                            <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between">
+                                              <div className="text-xs font-black font-mono text-slate-900">
+                                                {formatCurrency(convertedSelling, currency)}
+                                              </div>
+                                              <div className="flex items-center space-x-1.5">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    handleQuickAddTransfer(prod, movement);
+                                                    setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }));
+                                                  }}
+                                                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold"
+                                                >
+                                                  + Quick Add
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleOpenConfigureTransfer(prod, movement)}
+                                                  className="px-3 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black"
+                                                >
+                                                  Configure
+                                                </button>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Full Fleet Search & Catalog */}
+                                <div className="space-y-2 pt-2 border-t border-slate-100">
+                                  <div className="flex items-center space-x-2 bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
+                                    <Search className="w-3.5 h-3.5 text-slate-400" />
+                                    <input
+                                      type="text"
+                                      placeholder="Search all master transfer fleet..."
+                                      value={step4FleetSearch}
+                                      onChange={(e) => setStep4FleetSearch(e.target.value)}
+                                      className="w-full bg-transparent text-xs text-slate-900 outline-none"
+                                    />
+                                  </div>
+
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
+                                    {allMasterTransferProducts
+                                      .filter(p => !step4FleetSearch || p.name.toLowerCase().includes(step4FleetSearch.toLowerCase()) || (p.vehicleConfig?.vehicleName || '').toLowerCase().includes(step4FleetSearch.toLowerCase()))
+                                      .map(prod => {
+                                        const tierRes = resolveCapacityPricingTier({ product: prod, passengerCount: totalPax });
+                                        const convertedSelling = convertCurrency(tierRes.calculatedPrice, tierRes.currency, currency);
+
+                                        return (
+                                          <div key={prod.id} className="p-3 bg-white rounded-xl border border-slate-200 flex flex-col justify-between space-y-2">
+                                            <div>
+                                              <h5 className="text-xs font-black text-slate-900">{getInventoryDisplayName(prod)}</h5>
+                                              <p className="text-[11px] text-slate-500">Vehicle: {prod.vehicleConfig?.vehicleName || 'Vehicle'}</p>
+                                            </div>
+                                            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                                              <span className="text-xs font-mono font-black">{formatCurrency(convertedSelling, currency)}</span>
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  handleQuickAddTransfer(prod, movement);
+                                                  setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }));
+                                                }}
+                                                className="px-2.5 py-1 rounded-lg bg-slate-900 text-[#00E5C0] text-xs font-black"
+                                              >
+                                                + Add to Leg
+                                              </button>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {activeLegOption === 'RAIL' && (
+                              <div className="p-4 bg-white rounded-2xl border border-emerald-300 space-y-4 animate-fadeIn shadow-xs">
+                                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                  <div className="flex items-center space-x-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'OPTIONS' }))}
+                                      className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+                                    >
+                                      <ArrowLeft className="w-3.5 h-3.5" />
+                                    </button>
+                                    <div>
+                                      <h4 className="text-xs font-black text-slate-900">
+                                        Rail Journey Configurator — Leg {idx + 1} ({movement.fromName} ➔ {movement.toName})
+                                      </h4>
+                                      <p className="text-[11px] text-slate-500">
+                                        Configure high-speed Shinkansen bullet train routes for this leg.
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }))}
+                                    className="text-xs font-bold text-slate-400 hover:text-slate-600"
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  {japanRailMasterProducts.map(prod => {
+                                    const isGreen = prod.id === 'RAIL-JP-GREEN-RESERVED' || prod.carType === 'Green' || (prod.name || '').toLowerCase().includes('green');
+                                    const canonicalName = isGreen ? 'Green Car — First Class / Reserved' : 'Ordinary Car — Reserved Seat';
 
                                     return (
-                                      <div 
-                                        key={prod.id}
-                                        className={`bg-white rounded-2xl border p-4 flex flex-col justify-between space-y-3 transition-all ${
-                                          isAlreadySelected 
-                                            ? 'border-emerald-400 ring-2 ring-emerald-300/40 bg-emerald-50/20'
-                                            : 'border-slate-200 hover:border-teal-300 hover:shadow-xs'
-                                        }`}
-                                      >
-                                        <div className="space-y-2">
-                                          {/* Vehicle Category & Route Type */}
+                                      <div key={prod.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between space-y-3">
+                                        <div className="space-y-1.5">
                                           <div className="flex items-center justify-between">
-                                            <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                                              {prod.vehicleConfig?.vehicleType || prod.subcategory || 'Private Chauffeur'}
+                                            <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${isGreen ? 'bg-emerald-100 text-emerald-900' : 'bg-slate-200 text-slate-800'}`}>
+                                              {isGreen ? 'First Class (Green Car)' : 'Standard Reserved'}
                                             </span>
-                                            <span className="text-[10px] font-mono font-medium text-slate-400">
-                                              {prod.supplierName || 'Fleet Operator'}
-                                            </span>
+                                            <span className="text-[10px] font-bold text-teal-700">smartEX Network</span>
                                           </div>
-
-                                          {/* Product Name */}
-                                          <div>
-                                            <h4 className="text-xs font-black text-slate-900 leading-snug">
-                                              {prod.vehicleConfig?.vehicleName || prod.name}
-                                            </h4>
-                                            <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
-                                              {prod.shortDescription || prod.longDescription}
-                                            </p>
-                                          </div>
-
-                                          {/* Vehicle Specs & Capacity Pills */}
-                                          <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px] text-slate-600">
-                                            <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium flex items-center space-x-1">
-                                              <Users className="w-3 h-3 text-slate-500" />
-                                              <span>Capacity: {tierRes.minPassengers}–{tierRes.maxPassengers} Pax</span>
-                                            </span>
-                                            <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium flex items-center space-x-1">
-                                              <Luggage className="w-3 h-3 text-slate-500" />
-                                              <span>{maxLuggage} Large Bags</span>
-                                            </span>
-                                            {prod.duration && (
-                                              <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium flex items-center space-x-1">
-                                                <Clock className="w-3 h-3 text-slate-500" />
-                                                <span>{prod.duration}</span>
-                                              </span>
-                                            )}
-                                          </div>
-
-                                          {/* Passenger Capacity Validation Badge */}
-                                          <div className="pt-1">
-                                            {tierRes.hasMatchedTier ? (
-                                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                                                <Check className="w-3 h-3 text-emerald-600" />
-                                                <span>Step 3 Tier Matched ({totalPax} Pax / {tierRes.minPassengers}–{tierRes.maxPassengers} Pax)</span>
-                                              </span>
-                                            ) : (
-                                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 text-rose-800 border border-rose-300">
-                                                <AlertCircle className="w-3 h-3 text-rose-600" />
-                                                <span>{tierRes.validationError || 'No configured pricing tier is available for this passenger count.'}</span>
-                                              </span>
-                                            )}
-                                          </div>
+                                          <h5 className="text-xs font-black text-slate-900">{canonicalName}</h5>
+                                          <p className="text-[11px] text-slate-500 leading-snug">
+                                            {isGreen ? 'First-class luxury travel with 2x2 executive seating, hot towels & quiet atmosphere.' : 'Reserved seating across Japan Shinkansen bullet train network.'}
+                                          </p>
                                         </div>
-
-                                        {/* Pricing & Add Actions */}
-                                        <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-                                          <div>
-                                            <div className="text-xs font-black text-slate-900 font-mono">
-                                              {formatCurrency(convertedSelling, currency)}
-                                            </div>
-                                            <div className="text-[10px] text-slate-400">
-                                              {vehiclesNeeded > 1 ? `${vehiclesNeeded} × Vehicles (${formatCurrency(convertCurrency(unitSelling, prod.currency || 'USD', currency), currency)}/veh)` : 'Contracted B2B Rate'}
-                                            </div>
-                                          </div>
-
-                                          <div className="flex items-center space-x-1.5">
-                                            <button
-                                              type="button"
-                                              onClick={() => onOpenProductDetails(prod)}
-                                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
-                                              title="View Product Specifications"
-                                            >
-                                              <Eye className="w-3.5 h-3.5" />
-                                            </button>
-
-                                            <button
-                                              type="button"
-                                              onClick={() => handleQuickAddTransfer(prod, movement)}
-                                              className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer"
-                                              title="Quick Add with Defaults"
-                                            >
-                                              + Quick Add
-                                            </button>
-
-                                            <button
-                                              type="button"
-                                              onClick={() => handleOpenConfigureTransfer(prod, movement)}
-                                              className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black transition-all cursor-pointer flex items-center space-x-1 shadow-2xs"
-                                            >
-                                              <Sliders className="w-3.5 h-3.5" />
-                                              <span>Configure</span>
-                                            </button>
-                                          </div>
+                                        <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
+                                          <span className="text-[10px] text-slate-500">Dynamic Live Rate</span>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              onOpenProductDetails(prod);
+                                              setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }));
+                                            }}
+                                            className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black flex items-center space-x-1"
+                                          >
+                                            <Sliders className="w-3.5 h-3.5" />
+                                            <span>Configure Rail Journey</span>
+                                          </button>
                                         </div>
                                       </div>
                                     );
                                   })}
                                 </div>
-                              )}
-                            </div>
+                              </div>
+                            )}
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* TAB 2: ALL TRANSFER FLEET BROWSE (Full Master Inventory) */}
-                  {step4ViewTab === 'ALL_FLEET' && (
-                    <div className="space-y-4">
-                      {/* Search and Hub Filter Bar */}
-                      <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-200">
-                        <div className="flex items-center space-x-2 flex-1 max-w-md">
-                          <Search className="w-4 h-4 text-slate-400 shrink-0" />
-                          <input
-                            type="text"
-                            placeholder="Search vehicle model, airport, route, or fleet supplier..."
-                            value={step4FleetSearch}
-                            onChange={(e) => setStep4FleetSearch(e.target.value)}
-                            className="w-full bg-transparent text-xs text-slate-900 outline-none placeholder:text-slate-400"
-                          />
-                          {step4FleetSearch && (
-                            <button type="button" onClick={() => setStep4FleetSearch('')} className="text-slate-400 hover:text-slate-600">
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          )}
                         </div>
-
-                        {/* Hub Filter Pills */}
-                        <div className="flex items-center flex-wrap gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => setStep4SelectedHubFilter('ALL')}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                              step4SelectedHubFilter === 'ALL'
-                                ? 'bg-slate-900 text-[#00E5C0]'
-                                : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
-                            }`}
-                          >
-                            All Hubs ({allMasterTransferProducts.length})
-                          </button>
-                          {routeHubs.map(hub => {
-                            const count = allMasterTransferProducts.filter(p => 
-                              p.hubId === hub.hubId || p.fromHubId === hub.hubId || p.toHubId === hub.hubId ||
-                              p.name.toLowerCase().includes(hub.hubName.toLowerCase()) ||
-                              (p.fromHubName && p.fromHubName.toLowerCase().includes(hub.hubName.toLowerCase())) ||
-                              (p.toHubName && p.toHubName.toLowerCase().includes(hub.hubName.toLowerCase()))
-                            ).length;
-                            return (
-                              <button
-                                key={hub.id}
-                                type="button"
-                                onClick={() => setStep4SelectedHubFilter(hub.hubId || hub.id)}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                                  step4SelectedHubFilter === (hub.hubId || hub.id)
-                                    ? 'bg-slate-900 text-[#00E5C0]'
-                                    : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
-                                }`}
-                              >
-                                {hub.hubName} ({count})
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Fleet Grid */}
-                      {allMasterTransferProducts.length === 0 ? (
-                        <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300 text-xs text-slate-500">
-                          No transfer products found in master inventory for {currentDestination.name}.
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                          {allMasterTransferProducts
-                            .filter(p => {
-                              if (step4FleetSearch) {
-                                const q = step4FleetSearch.toLowerCase();
-                                const matchesSearch = 
-                                  p.name.toLowerCase().includes(q) ||
-                                  (p.vehicleConfig?.vehicleName || '').toLowerCase().includes(q) ||
-                                  (p.vehicleConfig?.vehicleType || '').toLowerCase().includes(q) ||
-                                  (p.fromHubName || '').toLowerCase().includes(q) ||
-                                  (p.toHubName || '').toLowerCase().includes(q);
-                                if (!matchesSearch) return false;
-                              }
-                              if (step4SelectedHubFilter !== 'ALL') {
-                                const matchesH = 
-                                  p.hubId === step4SelectedHubFilter ||
-                                  p.fromHubId === step4SelectedHubFilter ||
-                                  p.toHubId === step4SelectedHubFilter;
-                                if (!matchesH) return false;
-                              }
-                              return true;
-                            })
-                            .map(prod => {
-                              const totalPax = adultsCount + childrenCount;
-                              const tierRes = resolveCapacityPricingTier({ product: prod, passengerCount: totalPax });
-                              const maxSeats = tierRes.maxPassengers;
-                              const maxLuggage = prod.vehicleConfig?.maxLuggage || 4;
-                              const allowMulti = Boolean(prod.vehicleConfig?.allowMultipleVehicles);
-                              const isExceeded = !tierRes.hasMatchedTier || totalPax > maxSeats;
-                              const vehiclesNeeded = tierRes.vehiclesRequired;
-                              const convertedSelling = convertCurrency(tierRes.calculatedPrice, tierRes.currency, currency);
-
-                              return (
-                                <div key={prod.id} className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col justify-between space-y-3 hover:shadow-xs transition-shadow">
-                                  <div className="space-y-2">
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                                        {prod.vehicleConfig?.vehicleType || prod.subcategory || 'Private Chauffeur'}
-                                      </span>
-                                      <span className="text-[10px] text-teal-700 font-bold">
-                                        {prod.fromHubName && prod.toHubName ? `${prod.fromHubName} ➔ ${prod.toHubName}` : prod.city || currentDestination.name}
-                                      </span>
-                                    </div>
-
-                                    <div>
-                                      <h4 className="text-xs font-black text-slate-900 leading-snug">
-                                        {prod.vehicleConfig?.vehicleName || prod.name}
-                                      </h4>
-                                      <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
-                                        {prod.shortDescription || prod.longDescription}
-                                      </p>
-                                    </div>
-
-                                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600">
-                                      <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium">👥 Max {maxSeats} Pax</span>
-                                      <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium">🧳 {maxLuggage} Luggage</span>
-                                      {prod.duration && <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium">⏱️ {prod.duration}</span>}
-                                    </div>
-
-                                    <div className="pt-1">
-                                      {!isExceeded ? (
-                                        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                                          ✓ Fits Group ({totalPax} / {maxSeats})
-                                        </span>
-                                      ) : allowMulti ? (
-                                        <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
-                                          ⚠️ Requires {vehiclesNeeded} Vehicles
-                                        </span>
-                                      ) : (
-                                        <span className="text-[10px] font-bold text-rose-800 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
-                                          ⛔ Max {maxSeats} Seats
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-                                    <div>
-                                      <div className="text-xs font-black text-slate-900 font-mono">
-                                        {formatCurrency(convertedSelling, currency)}
-                                      </div>
-                                      <div className="text-[10px] text-slate-400">
-                                        {vehiclesNeeded > 1 ? `${vehiclesNeeded} Vehicles` : 'B2B Wholesale Price'}
-                                      </div>
-                                    </div>
-
-                                    <div className="flex items-center space-x-1.5">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleQuickAddTransfer(prod)}
-                                        className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer"
-                                      >
-                                        + Quick Add
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleOpenConfigureTransfer(prod)}
-                                        className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black transition-all cursor-pointer flex items-center space-x-1"
-                                      >
-                                        <Sliders className="w-3.5 h-3.5" />
-                                        <span>Configure</span>
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Ground Transfers Included in Current Quotation */}
+                      );
+                    })}
+                  </div>
                   <div className="mt-6 pt-6 border-t border-slate-200/80 space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-black text-slate-800 uppercase tracking-wider block">
-                        Transfers Included in Quotation ({transferItems.length}):
+                        Ground Services Included in Quotation ({groundLogisticsItems.length}):
                       </span>
                       <span className="text-xs font-mono font-bold text-teal-700">
-                        Total Ground Logistics: {formatCurrency(totalTransfersSellingPrice, currency)}
+                        Total Ground Logistics: {isGroundPricingFailed ? 'Price unavailable' : formatCurrency(totalGroundLogisticsPrice ?? 0, currency)}
                       </span>
                     </div>
 
-                    {transferItems.length === 0 ? (
+                    {groundLogisticsItems.length === 0 ? (
                       <div className="p-6 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300 text-xs text-slate-500">
-                        No ground transfers added yet. Click "Configure" or "+ Quick Add" on any movement leg above.
+                        No ground services or rail journeys added yet. Click "Configure" or "+ Quick Add" on any movement leg above.
                       </div>
                     ) : (
                       <div className="space-y-2.5">
-                        {transferItems.map(item => {
+                        {groundLogisticsItems.map(item => {
                           const isInvalid = invalidTransfers.some(inv => inv.id === item.id);
+                          const isRail = (item.product as any).isRail || (item.product.category || '').toLowerCase().includes('rail');
 
                           return (
                             <div 
@@ -3027,13 +3195,21 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             >
                               <div className="space-y-1">
                                 <div className="flex items-center space-x-2">
-                                  <h4 className="text-xs font-black text-slate-900">{item.product.name}</h4>
+                                  <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${isRail ? 'bg-emerald-100 text-emerald-950' : 'bg-teal-100 text-teal-950'}`}>
+                                    {isRail ? 'Rail' : 'Private Transfer'}
+                                  </span>
+                                  <h4 className="text-xs font-black text-slate-900">
+                                    {getInventoryDisplayName(item)}
+                                  </h4>
                                   {isInvalid && (
                                     <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-200 text-amber-900">
                                       ⚠️ Route Hub Removed
                                     </span>
                                   )}
                                 </div>
+                                <p className="text-[11px] text-slate-600">
+                                  {getInventoryConfigurationSummary(item) || `${item.product.name} • ${item.travelDate || startDate}`}
+                                </p>
                                 <p className="text-[11px] text-slate-500">
                                   Date: <strong className="text-slate-700">{item.travelDate || startDate}</strong>
                                   {item.serviceTime && ` • Time: ${item.serviceTime}`}
@@ -3071,21 +3247,21 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                           <div>
                             <div className="text-[10px] uppercase font-bold text-slate-400">Total Ground Logistics</div>
                             <div className="text-sm font-black font-mono text-[#00E5C0]">
-                              {formatCurrency(totalTransfersSellingPrice, currency)}
+                              {isGroundPricingFailed ? 'Price unavailable' : formatCurrency(totalGroundLogisticsPrice ?? 0, currency)}
                             </div>
                           </div>
                           <div className="flex items-center space-x-6 text-xs font-mono">
                             <div>
                               <span className="text-slate-400 text-[10px] block">Wholesale Net</span>
-                              <span>{formatCurrency(totalTransfersNetCost, currency)}</span>
+                              <span>{formatCurrency(totalGroundLogisticsNet, currency)}</span>
                             </div>
                             <div>
                               <span className="text-slate-400 text-[10px] block">Margin</span>
-                              <span className="text-emerald-400">+{formatCurrency(totalTransfersSellingPrice - totalTransfersNetCost, currency)}</span>
+                              <span className="text-emerald-400">+{isGroundPricingFailed ? '—' : formatCurrency((totalGroundLogisticsPrice ?? 0) - totalGroundLogisticsNet, currency)}</span>
                             </div>
                             <div>
                               <span className="text-slate-400 text-[10px] block">Movements Covered</span>
-                              <span>{transferItems.length} / {transitMovements.length}</span>
+                              <span>{groundLogisticsItems.length} / {transitMovements.length}</span>
                             </div>
                           </div>
                         </div>
@@ -3625,7 +3801,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                               <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
                                 <div className="flex items-center space-x-2 truncate">
                                   <Building2 className="w-4 h-4 text-teal-600 shrink-0" />
-                                  <span className="font-bold text-slate-900 truncate">{it.product.name}</span>
+                                  <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
                                 </div>
                                 <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
                                   {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
@@ -3636,7 +3812,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                               <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
                                 <div className="flex items-center space-x-2 truncate">
                                   <Car className="w-4 h-4 text-teal-600 shrink-0" />
-                                  <span className="font-bold text-slate-900 truncate">{it.product.name}</span>
+                                  <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
                                 </div>
                                 <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
                                   {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
@@ -3647,7 +3823,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                               <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
                                 <div className="flex items-center space-x-2 truncate">
                                   <Compass className="w-4 h-4 text-teal-600 shrink-0" />
-                                  <span className="font-bold text-slate-900 truncate">{it.product.name}</span>
+                                  <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
                                 </div>
                                 <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
                                   {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
@@ -3658,7 +3834,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                               <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
                                 <div className="flex items-center space-x-2 truncate">
                                   <ShieldCheck className="w-4 h-4 text-teal-600 shrink-0" />
-                                  <span className="font-bold text-slate-900 truncate">{it.product.name}</span>
+                                  <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
                                 </div>
                                 <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
                                   {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}

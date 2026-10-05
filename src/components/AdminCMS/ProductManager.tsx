@@ -309,7 +309,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       vehicleConfig: product.vehicleConfig,
       buyerMarkupPercent: product.buyerMarkupPercent,
       b2bAgentMarkupPercent: product.b2bAgentMarkupPercent,
-      optionalUpgradeProductIds: product.optionalUpgradeProductIds || []
+      optionalUpgradeProductIds: product.optionalUpgradeProductIds || [],
+      hubIds: product.hubIds || (product.hubId ? [product.hubId] : [])
     });
     setIsModalOpen(true);
   };
@@ -398,22 +399,51 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
 
     // Canonical Hierarchy Validation
     const masterData = MasterDataService.getInstance();
-    const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, formData.hubId);
-    if (!hierarchy.valid) {
-      alert(`Data Integrity Error: ${hierarchy.error}`);
-      return;
+    let validatedRegion: any;
+    let validatedDestination: any;
+    let validatedHub: any;
+
+    if (formData.category === 'Rail') {
+      const hubIds = formData.hubIds || [];
+      if (hubIds.length === 0) {
+        alert('At least one associated City Hub is required for Rail products.');
+        return;
+      }
+      for (const hId of hubIds) {
+        const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, hId);
+        if (!hierarchy.valid) {
+          alert(`Data Integrity Error for Associated Hub (${hId}): ${hierarchy.error}`);
+          return;
+        }
+        validatedRegion = hierarchy.region;
+        validatedDestination = hierarchy.destination;
+      }
+      if (hubIds[0]) {
+        validatedHub = masterData.getHubById(hubIds[0]);
+      }
+    } else {
+      const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, formData.hubId);
+      if (!hierarchy.valid) {
+        alert(`Data Integrity Error: ${hierarchy.error}`);
+        return;
+      }
+      validatedRegion = hierarchy.region;
+      validatedDestination = hierarchy.destination;
+      validatedHub = hierarchy.hub;
     }
 
     const productToSave: Product = {
+      ...(formData as Product),
       id: editingProduct ? editingProduct.id : `prod-${Date.now()}`,
       sku: formData.sku || `SKU-${Date.now()}`,
-      regionId: hierarchy.region!.id,
-      regionName: hierarchy.region!.name,
-      destinationId: hierarchy.destination!.id,
-      destinationName: hierarchy.destination!.name,
-      country: hierarchy.destination!.country || hierarchy.destination!.name,
-      hubId: hierarchy.hub ? hierarchy.hub.id : (formData.hubId || ''),
-      city: hierarchy.hub ? hierarchy.hub.name : (formData.city || hierarchy.destination!.name),
+      regionId: validatedRegion.id,
+      regionName: validatedRegion.name,
+      destinationId: validatedDestination.id,
+      destinationName: validatedDestination.name,
+      country: validatedDestination.country || validatedDestination.name,
+      hubId: validatedHub ? validatedHub.id : (formData.hubId || ''),
+      city: validatedHub ? validatedHub.name : (formData.city || validatedDestination.name),
+      hubIds: formData.hubIds || (validatedHub ? [validatedHub.id] : []),
       productType: formData.productType || '',
       name: formData.name || '',
       shortDescription: formData.shortDescription || '',
@@ -1035,31 +1065,78 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700">3. Destination Hub / City (Tier 3) *</label>
-                    <div className="flex gap-1.5">
-                      <select
-                        disabled={!formData.destinationId}
-                        value={formData.hubId || ''}
-                        onChange={e => {
-                          const hId = e.target.value;
-                          const hub = cityHubs.find(h => h.id === hId);
-                          setFormData({
-                            ...formData,
-                            hubId: hId,
-                            city: hub?.name || formData.city || '',
-                            location: `${hub?.name || formData.city || ''}, ${formData.destinationName || ''}`.replace(/^,\s*|,\s*$/g, '')
-                          });
-                        }}
-                        className={`w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-[#00C6A6] ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
-                      >
-                        <option value="">{formData.destinationId ? '-- Select City Hub --' : '-- Select Destination First --'}</option>
-                        {cityHubs
-                          .filter(h => h.destinationId === formData.destinationId)
-                          .map(h => (
-                            <option key={h.id} value={h.id}>{h.name} ({h.id})</option>
-                          ))}
-                      </select>
-                    </div>
+                    {formData.category === 'Rail' ? (
+                      <>
+                        <label className="text-xs font-semibold text-slate-700">Associated City Hubs (Multi-Hub Selection) *</label>
+                        <div className={`p-2 bg-white border border-slate-200 rounded-xl space-y-1.5 max-h-32 overflow-y-auto ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}>
+                          {!formData.destinationId ? (
+                            <div className="text-slate-400 text-xs">-- Select Destination First --</div>
+                          ) : (
+                            cityHubs
+                              .filter(h => h.destinationId === formData.destinationId)
+                              .map(h => {
+                                const isChecked = (formData.hubIds || []).includes(h.id);
+                                return (
+                                  <label key={h.id} className="flex items-center space-x-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={e => {
+                                        const checked = e.target.checked;
+                                        const currentIds = formData.hubIds || [];
+                                        let nextIds: string[];
+                                        if (checked) {
+                                          nextIds = [...currentIds, h.id];
+                                        } else {
+                                          nextIds = currentIds.filter(id => id !== h.id);
+                                        }
+                                        setFormData({
+                                          ...formData,
+                                          hubIds: nextIds,
+                                          hubId: nextIds[0] || '',
+                                          city: cityHubs.find(ch => ch.id === nextIds[0])?.name || '',
+                                          location: `${cityHubs.find(ch => ch.id === nextIds[0])?.name || ''}, ${formData.destinationName || ''}`.replace(/^,\s*|,\s*$/g, '')
+                                        });
+                                      }}
+                                      className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                                    />
+                                    <span>{h.name} ({h.id})</span>
+                                  </label>
+                                );
+                              })
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <label className="text-xs font-semibold text-slate-700">3. Destination Hub / City (Tier 3) *</label>
+                        <div className="flex gap-1.5">
+                          <select
+                            disabled={!formData.destinationId}
+                            value={formData.hubId || ''}
+                            onChange={e => {
+                              const hId = e.target.value;
+                              const hub = cityHubs.find(h => h.id === hId);
+                              setFormData({
+                                ...formData,
+                                hubId: hId,
+                                city: hub?.name || formData.city || '',
+                                location: `${hub?.name || formData.city || ''}, ${formData.destinationName || ''}`.replace(/^,\s*|,\s*$/g, ''),
+                                hubIds: hId ? [hId] : []
+                              });
+                            }}
+                            className={`w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-[#00C6A6] ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
+                          >
+                            <option value="">{formData.destinationId ? '-- Select City Hub --' : '-- Select Destination First --'}</option>
+                            {cityHubs
+                              .filter(h => h.destinationId === formData.destinationId)
+                              .map(h => (
+                                <option key={h.id} value={h.id}>{h.name} ({h.id})</option>
+                              ))}
+                          </select>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
 

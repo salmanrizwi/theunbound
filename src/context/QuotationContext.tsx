@@ -6,6 +6,7 @@ import { AppDatabase } from '../services/db';
 import { campaignAnalytics } from '../services/campaignAnalyticsService';
 import { useAuth } from './AuthContext';
 import { createQuoteItemContentSnapshot } from '../utils/b2bQuotationHelpers';
+import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
 
 interface QuotationContextType {
   items: QuoteItem[];
@@ -748,6 +749,25 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const quoteIdToUse = activeQuoteId || `quote-${Date.now()}`;
     const quoteNumberToUse = existingQuote?.quoteNumber || `UBQ-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    const groundItems = items.filter(it => {
+      const cat = (it.product?.category || '').toLowerCase();
+      const pType = (it.product?.productType || '').toLowerCase();
+      const sub = (it.product?.subcategory || '').toLowerCase();
+      const isTrf = Boolean((it.product as any).isTransfer) ||
+                    cat.includes('transfer') ||
+                    pType.includes('transfer') ||
+                    sub.includes('transfer') ||
+                    sub.includes('chauffeur') ||
+                    cat.includes('transport');
+      const isRail = isRailQuoteItem(it) || 
+                     cat === 'rail' || 
+                     Boolean(it.railJourneyDetails) ||
+                     it.product?.id === 'RAIL-JP-ORD-RESERVED' ||
+                     it.product?.id === 'RAIL-JP-GREEN-RESERVED';
+      return isTrf || isRail;
+    });
+    const totalGroundPrice = groundItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+
     const newQuote: Quotation = {
       id: quoteIdToUse,
       quoteNumber: quoteNumberToUse,
@@ -775,7 +795,10 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       totalNetCost: isAgent ? 0 : totals.totalNetCost,
       totalSellingPrice: totals.totalSellingPrice,
       totalTaxes: totals.totalTaxes,
-      totalMargin: isAgent ? 0 : totals.totalMarginAmount
+      totalMargin: isAgent ? 0 : totals.totalMarginAmount,
+      totalGroundLogisticsSnapshot: totalGroundPrice,
+      transactionCurrencySnapshot: currency,
+      pricingVersionSnapshot: currentVersion || 1
     };
 
     // Save to AppDatabase (which persists and notifies subscribers)

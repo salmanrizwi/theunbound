@@ -1227,6 +1227,25 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     setHasExplicitlySaved(true);
     setAutoSaveStatus('SAVING');
     try {
+      const groundItems = items.filter(it => {
+        const cat = (it.product?.category || '').toLowerCase();
+        const pType = (it.product?.productType || '').toLowerCase();
+        const sub = (it.product?.subcategory || '').toLowerCase();
+        const isTrf = Boolean((it.product as any).isTransfer) ||
+                      cat.includes('transfer') ||
+                      pType.includes('transfer') ||
+                      sub.includes('transfer') ||
+                      sub.includes('chauffeur') ||
+                      cat.includes('transport');
+        const isRail = isRailQuoteItem(it) || 
+                       cat === 'rail' || 
+                       Boolean(it.railJourneyDetails) ||
+                       it.product?.id === 'RAIL-JP-ORD-RESERVED' ||
+                       it.product?.id === 'RAIL-JP-GREEN-RESERVED';
+        return isTrf || isRail;
+      });
+      const totalGroundPrice = groundItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+
       const activeQuote: Quotation = {
         id: activeQuoteId,
         quoteNumber,
@@ -1257,6 +1276,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         pricing_calculated_at: new Date().toISOString(),
         pricingVersion: quoteVersion || 1,
         pricing_version: quoteVersion || 1,
+        totalGroundLogisticsSnapshot: totalGroundPrice,
+        transactionCurrencySnapshot: currency,
+        pricingVersionSnapshot: quoteVersion || 1,
         pricingSnapshot: {
           baseFinalSellingPrice,
           currency,
@@ -1652,7 +1674,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   // Open Dedicated Configurator for Service Item (Hotel -> Hotel Configurator, Rail -> Shinkansen Configurator, Activity -> Activity Configurator)
   const handleOpenEditItem = (item: QuoteItem) => {
-    setEditingServiceItem(item);
+    if (isRailQuoteItem(item) || isRailProduct(item.product) || item.railJourneyDetails || (item.product.category || '').toLowerCase() === 'rail') {
+      setEditingRailItem(item);
+    } else {
+      setEditingServiceItem(item);
+    }
   };
 
   // Download PDF Action

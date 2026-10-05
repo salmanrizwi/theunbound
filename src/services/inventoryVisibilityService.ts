@@ -234,6 +234,7 @@ export class InventoryVisibilityService {
     // Active products for hub
     const activeProducts = this.getActiveProducts().filter(p => 
       p.hubId === hId || 
+      (p.hubIds && p.hubIds.includes(hId)) ||
       matchesHub(hName, p.hubId, p.city, (p as any).cityId) ||
       matchesHub(hId, p.hubId, p.city, (p as any).cityId)
     );

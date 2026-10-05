@@ -160,10 +160,13 @@ export class JapanRailJourneyMapper {
   ): QuoteItem {
     const snapshot = this.toSnapshot(journey);
     const shinkansenPayload = this.toShinkansenPayload(journey);
-    const primarySegment = journey.segments[0] || null;
-    const primaryProd = japanRailJourneyDataService.getRailProduct(primarySegment?.productId || 'RAIL-JP-ORD-RESERVED') || {
-      id: primarySegment?.productId || 'RAIL-JP-ORD-RESERVED',
-      name: 'Japan Rail Shinkansen High-Speed Network',
+    const primarySegment = journey.segments[0];
+    const isGreen = primarySegment?.carClass === 'Green' || primarySegment?.productId === 'RAIL-JP-GREEN-RESERVED';
+    const canonicalListingName = isGreen ? 'Green Car — First Class / Reserved' : 'Ordinary Car — Reserved Seat';
+
+    const primaryProd = japanRailJourneyDataService.getRailProduct(primarySegment?.productId || (isGreen ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED')) || {
+      id: primarySegment?.productId || (isGreen ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED'),
+      name: canonicalListingName,
       category: 'Rail',
       productType: 'Rail',
       country: 'Japan',
@@ -191,9 +194,9 @@ export class JapanRailJourneyMapper {
 
     const bookingDetails: RailBookingItemDetails = {
       type: 'JAPAN_RAIL',
-      productId: primarySegment?.productId || 'RAIL-JP-ORD-RESERVED',
-      productName: `Japan Rail Dynamic Journey (${journey.segments.length} Sectors): ${routeSummary}`,
-      carType: primarySegment?.carClass || 'Ordinary',
+      productId: primarySegment?.productId || (isGreen ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED'),
+      productName: canonicalListingName,
+      carType: primarySegment?.carClass || (isGreen ? 'Green' : 'Ordinary'),
       seatType: 'Reserved',
       serviceGroup: primarySegment?.serviceGroup || 'NOZOMI_MIZUHO',
       originStationId: primarySegment?.origin.stationId || 'JP-ST-TOKYO',
@@ -204,7 +207,7 @@ export class JapanRailJourneyMapper {
       destinationStationCode: journey.segments[journey.segments.length - 1]?.destination.stationCode || 'KYO',
       travelDate: journey.startDate,
       departureTime: primarySegment?.departureTime || '09:00',
-      trainName: `Shinkansen (${journey.segments.length} Sectors)`,
+      trainName: `Shinkansen (${journey.segments.length} Sectors: ${routeSummary})`,
       seatPreference: primarySegment?.seatPreference || 'MT_FUJI',
       hasOversizedBaggage: journey.segments.some(s => s.seatPreference === 'OVERSIZED_BAGGAGE'),
       adultsCount: journey.passengers.adults,
@@ -219,16 +222,16 @@ export class JapanRailJourneyMapper {
       id: `quote-rail-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       product: {
         ...primaryProd,
-        name: `Japan Rail Dynamic Journey (${journey.segments.length} ${journey.segments.length === 1 ? 'Sector' : 'Sectors'}): ${routeSummary}`,
-        city: routeSummary
+        name: canonicalListingName,
+        city: 'Japan'
       },
       productId: primaryProd.id,
-      customTitle: `Japan Rail Shinkansen Dynamic Journey: ${routeSummary}`,
-      title: `${routeSummary} (${journey.segments.length} Sectors, ${primarySegment?.carClass || 'Ordinary'} Class)`,
+      customTitle: canonicalListingName,
+      title: canonicalListingName,
       category: 'Rail',
       travelDate: journey.startDate,
       serviceTime: primarySegment?.departureTime || '09:00',
-      notes: `Dynamic Multi-Sector Rail Journey:\n${segmentNotes}\nDay ${dayNumber}. Currency: ${journey.currency}. Total Distance: ${journey.segments.reduce((acc, s) => acc + (s.pricing.route.distanceKm || 0), 0)} km.`,
+      notes: `Dynamic Multi-Sector Rail Journey (${journey.segments.length} Sectors: ${routeSummary}):\n${segmentNotes}\nDay ${dayNumber}. Currency: ${journey.currency}. Total Distance: ${journey.segments.reduce((acc, s) => acc + (s.pricing.route.distanceKm || 0), 0)} km.`,
       pax: {
         adults: journey.passengers.adults,
         children: journey.passengers.children,

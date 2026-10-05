@@ -459,6 +459,161 @@ export class JapanRailJourneyService {
   }
 
   /**
+   * Restores a full JapanRailJourney from an existing snapshot, quote item, or booking details
+   */
+  public restoreJourneyFromSnapshot(
+    snapshotOrDetails: any,
+    userRole?: UserRole,
+    overrideCurrency?: CurrencyCode
+  ): JapanRailJourney | null {
+    if (!snapshotOrDetails) return null;
+
+    try {
+      const snap = snapshotOrDetails.japanRailJourneySnapshot ||
+        snapshotOrDetails.metadata?.journeySnapshot ||
+        snapshotOrDetails.journeySnapshot ||
+        snapshotOrDetails;
+
+      const currency = overrideCurrency || snap.currency || 'JPY';
+      const passengers: JapanRailJourneyPassengerConfig = snap.passengers || {
+        adults: snap.adultsCount || snap.adults || 2,
+        children: snap.childrenCount || snap.children || 0,
+        infants: snap.infantsCount || snap.infants || 0
+      };
+
+      // Case 1: Multi-segment snapshot array
+      if (Array.isArray(snap.segments) && snap.segments.length > 0) {
+        const segments: JapanRailSegment[] = snap.segments.map((segSnap: any, idx: number) => {
+          const originId = segSnap.originStationId || segSnap.origin?.id || segSnap.origin?.stationId || 'JP-ST-TOKYO';
+          const destId = segSnap.destinationStationId || segSnap.destination?.id || segSnap.destination?.stationId || 'JP-ST-KYOTO';
+          const origin = japanRailJourneyDataService.getStationRef(originId);
+          const destination = japanRailJourneyDataService.getStationRef(destId);
+
+          const productId = segSnap.productId || (segSnap.carClass === 'Green' ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED');
+          const carClass = segSnap.carClass || (productId === 'RAIL-JP-GREEN-RESERVED' ? 'Green' : 'Ordinary');
+
+          const seg: JapanRailSegment = {
+            segmentId: segSnap.segmentId || `seg-restored-${Date.now()}-${idx + 1}`,
+            sequence: segSnap.sequence || idx + 1,
+            origin,
+            destination,
+            travelDate: segSnap.travelDate || snap.startDate || new Date().toISOString().split('T')[0],
+            departureTime: segSnap.departureTime || '09:00',
+            productId,
+            productName: productId === 'RAIL-JP-GREEN-RESERVED' 
+              ? 'Green Car — First Class / Reserved' 
+              : 'Ordinary Car — Reserved Seat',
+            carClass,
+            seatType: segSnap.seatType || 'Reserved',
+            serviceGroup: segSnap.serviceGroup || 'NOZOMI_MIZUHO',
+            seatPreference: segSnap.seatPreference || 'MT_FUJI',
+            passengerAllocation: segSnap.passengerAllocation || segSnap.passengers || { ...passengers },
+            estimatedDurationMinutes: segSnap.estimatedDurationMinutes || 135,
+            formattedDuration: segSnap.formattedDuration || '2h 15m',
+            pricing: {} as any,
+            validationErrors: [],
+            validationWarnings: [],
+            isValid: true
+          };
+
+          seg.pricing = japanRailJourneyPricingService.priceSegment(seg, userRole, currency);
+          return seg;
+        });
+
+        const journeyId = snap.journeyId || `JR-JRN-${Date.now().toString(36).toUpperCase()}`;
+        const firstSeg = segments[0];
+        const lastSeg = segments[segments.length - 1];
+
+        const rawJourney: JapanRailJourney = {
+          journeyId,
+          title: snap.title || `Japan Rail Journey: ${firstSeg.origin.stationName} → ${lastSeg.destination.stationName}`,
+          destinationId: snap.destinationId || 'dest-japan',
+          destinationName: 'Japan',
+          regionId: 'reg-east-asia',
+          startDate: snap.startDate || firstSeg.travelDate,
+          endDate: snap.endDate || lastSeg.travelDate,
+          passengers,
+          segments,
+          selectedRailProducts: Array.from(new Set(segments.map(s => s.productId))),
+          pricing: {} as any,
+          currency: (snap.currency as any) || currency || 'JPY',
+          validation: { isValid: true, errors: [], warnings: [], segmentErrors: {}, segmentWarnings: {} },
+          metadata: {
+            createdAt: snap.configuredAt || snap.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            portalOrigin: snap.portalOrigin || 'B2B_QUOTE_BUILDER'
+          }
+        };
+
+        return this.validateAndRecalculate(rawJourney, userRole);
+      }
+
+      // Case 2: Single-leg railJourneyDetails
+      if (snap.originStationId && snap.destinationStationId) {
+        const origin = japanRailJourneyDataService.getStationRef(snap.originStationId);
+        const destination = japanRailJourneyDataService.getStationRef(snap.destinationStationId);
+        const productId = snap.productId || (snap.carType === 'Green' ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED');
+        const carClass = snap.carType === 'Green' || productId === 'RAIL-JP-GREEN-RESERVED' ? 'Green' : 'Ordinary';
+
+        const seg: JapanRailSegment = {
+          segmentId: `seg-restored-${Date.now()}-1`,
+          sequence: 1,
+          origin,
+          destination,
+          travelDate: snap.travelDate || new Date().toISOString().split('T')[0],
+          departureTime: snap.departureTime || '09:00',
+          productId,
+          productName: productId === 'RAIL-JP-GREEN-RESERVED' 
+            ? 'Green Car — First Class / Reserved' 
+            : 'Ordinary Car — Reserved Seat',
+          carClass,
+          seatType: snap.seatType || 'Reserved',
+          serviceGroup: snap.serviceGroup || 'NOZOMI_MIZUHO',
+          seatPreference: snap.seatPreference || 'MT_FUJI',
+          passengerAllocation: { ...passengers },
+          estimatedDurationMinutes: 135,
+          formattedDuration: '2h 15m',
+          pricing: {} as any,
+          validationErrors: [],
+          validationWarnings: [],
+          isValid: true
+        };
+
+        seg.pricing = japanRailJourneyPricingService.priceSegment(seg, userRole, currency);
+
+        const journeyId = `JR-JRN-${Date.now().toString(36).toUpperCase()}`;
+        const rawJourney: JapanRailJourney = {
+          journeyId,
+          title: `Japan Rail Journey: ${origin.stationName} → ${destination.stationName}`,
+          destinationId: 'dest-japan',
+          destinationName: 'Japan',
+          regionId: 'reg-east-asia',
+          startDate: seg.travelDate,
+          endDate: seg.travelDate,
+          passengers,
+          segments: [seg],
+          selectedRailProducts: [productId],
+          pricing: {} as any,
+          currency: currency || 'JPY',
+          validation: { isValid: true, errors: [], warnings: [], segmentErrors: {}, segmentWarnings: {} },
+          metadata: {
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            portalOrigin: 'B2B_QUOTE_BUILDER'
+          }
+        };
+
+        return this.validateAndRecalculate(rawJourney, userRole);
+      }
+
+      return null;
+    } catch (err) {
+      console.warn('Failed to restore Japan Rail journey from snapshot:', err);
+      return null;
+    }
+  }
+
+  /**
    * Creates an immutable snapshot
    */
   public createSnapshot(journey: JapanRailJourney): JapanRailJourneySnapshot {

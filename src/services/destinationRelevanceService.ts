@@ -260,7 +260,10 @@ export class DestinationRelevanceService {
     let hubActivities: Product[] = [];
     if (hubIdOrName) {
       hubActivities = destProducts.filter(p => 
-        !isDestinationWide(p) && matchesHub(hubIdOrName, (p as any).hubId, p.city)
+        !isDestinationWide(p) && (
+          matchesHub(hubIdOrName, (p as any).hubId, p.city) ||
+          (p.hubIds && p.hubIds.some(hId => matchesHub(hubIdOrName, hId)))
+        )
       );
     } else {
       hubActivities = destProducts.filter(p => !isDestinationWide(p));
@@ -271,6 +274,33 @@ export class DestinationRelevanceService {
       destinationWideProducts,
       allDestinationProducts: destProducts
     };
+  }
+
+  /**
+   * LEVEL 3: Rail Commercial Master Products for Destination.
+   * When Japan is selected, returns the canonical Commercial Master Products:
+   * 1. Ordinary Car — Reserved Seat (ORDINARY_RESERVED / RAIL-JP-ORD-RESERVED)
+   * 2. Green Car — First Class / Reserved (GREEN_RESERVED / RAIL-JP-GREEN-RESERVED)
+   */
+  public getRelevantRailProducts(destinationIdOrSlug: string): Product[] {
+    if (!destinationIdOrSlug) return [];
+    const isJapan = matchesDestination(destinationIdOrSlug, 'dest-japan', 'Japan', 'Japan');
+    if (!isJapan) return [];
+
+    const allProducts = this.db.getProducts();
+    const ord = allProducts.find(p => p.id === 'RAIL-JP-ORD-RESERVED');
+    const grn = allProducts.find(p => p.id === 'RAIL-JP-GREEN-RESERVED');
+    const list: Product[] = [];
+    if (ord && (ord.status === 'ACTIVE' || !ord.status)) list.push(ord);
+    if (grn && (grn.status === 'ACTIVE' || !grn.status)) list.push(grn);
+
+    if (list.length > 0) return list;
+
+    // Fallback if not in database
+    return allProducts.filter(p => 
+      (p.status === 'ACTIVE' || !p.status) &&
+      (p.id === 'RAIL-JP-ORD-RESERVED' || p.id === 'RAIL-JP-GREEN-RESERVED')
+    );
   }
 
   /**

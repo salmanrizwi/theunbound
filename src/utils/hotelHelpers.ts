@@ -254,6 +254,8 @@ export function hotelToProduct(
   const safeRooms = Math.max(1, roomsCount || 1);
   const totalNetPrice = basePrice * safeNights * safeRooms;
 
+  const canonicalHotelName = (hotel as any).listingName || hotel.name;
+
   return {
     id: `hotel-prod-${hotel.id}-${selectedRoom?.id || 'std'}-${safeRooms}r-${safeNights}n`,
     sku: `${hotel.code}-${selectedRoom?.id?.substring(0, 4)?.toUpperCase() || 'STD'}`,
@@ -262,8 +264,13 @@ export function hotelToProduct(
     country: hotel.country,
     city: hotel.cityName,
     productType: 'Hotel & Resort',
-    name: `${hotel.name} - ${roomTitle} (${safeRooms} ${safeRooms > 1 ? 'Rooms' : 'Room'}, ${safeNights} ${safeNights > 1 ? 'Nights' : 'Night'})`,
-    shortDescription: `${hotel.starRating}★ ${hotel.propertyType ? hotel.propertyType.replace('_', ' ') : 'Hotel'} in ${hotel.area}, ${hotel.cityName}. Includes ${mealLabel}.`,
+    listingName: canonicalHotelName,
+    name: canonicalHotelName,
+    roomType: roomTitle,
+    mealPlan: mealLabel,
+    roomsCount: safeRooms,
+    nights: safeNights,
+    shortDescription: `${roomTitle} • ${mealLabel} • ${safeRooms} ${safeRooms > 1 ? 'Rooms' : 'Room'}, ${safeNights} ${safeNights > 1 ? 'Nights' : 'Night'}`,
     longDescription: `${hotel.description}\n\nRoom Details: ${selectedRoom?.description || ''}\nAmenities: ${(hotel.amenities || []).join(', ')}`,
     supplierId: `sup-${hotel.code}`,
     supplierName: `${hotel.name} Corporate Reservations`,
@@ -318,7 +325,7 @@ export function hotelToProduct(
     reviewCount: 48,
     status: 'ACTIVE',
     lastUpdated: hotel.updatedAt || '2026-08-20'
-  };
+  } as unknown as Product;
 }
 
 export interface OccupancyValidationResult {
@@ -444,8 +451,13 @@ export function manualHotelToProduct(
     country: destination?.name || 'Local Destination',
     city: manual.city || 'City Center',
     productType: 'Hotel & Resort',
-    name: `${manual.hotelName} - ${manual.roomType} (${rooms} ${rooms > 1 ? 'Rooms' : 'Room'}, ${nights} ${nights > 1 ? 'Nights' : 'Night'})`,
-    shortDescription: `${starLabel} in ${manual.city}. ${rooms} ${rooms > 1 ? 'Rooms' : 'Room'}, ${nights} ${nights > 1 ? 'Nights' : 'Night'}. Includes ${mealLabel}.`,
+    listingName: manual.hotelName,
+    name: manual.hotelName,
+    roomType: manual.roomType,
+    mealPlan: mealLabel,
+    roomsCount: rooms,
+    nights: nights,
+    shortDescription: `${manual.roomType} • ${mealLabel} • ${rooms} ${rooms > 1 ? 'Rooms' : 'Room'}, ${nights} ${nights > 1 ? 'Nights' : 'Night'}`,
     longDescription: `Quotation-level manual accommodation booking at ${manual.hotelName}.\n\nRoom Type: ${manual.roomType}\nMeal Plan: ${mealLabel}\nCheck-in: ${manual.checkInDate} | Check-out: ${manual.checkOutDate}\nLocation/Address: ${manual.address || manual.city}`,
     supplierId: 'sup-manual-quote-entry',
     supplierName: manual.supplierContact || `${manual.hotelName} (Direct Quotation)`,
@@ -502,5 +514,5 @@ export function manualHotelToProduct(
     accommodationType: 'manual',
     isManualHotel: true,
     manualHotelDetails: manual
-  };
+  } as unknown as Product;
 }

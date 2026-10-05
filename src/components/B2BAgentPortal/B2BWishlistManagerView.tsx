@@ -27,6 +27,7 @@ import { Product, Hotel, B2BPackage, B2BTabType } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { formatCurrency, calculatePackagePrice } from '../../services/pricingEngine';
 import { hotelToProduct } from '../../utils/hotelHelpers';
+import { getInventoryDisplayName } from '../../utils/inventoryDisplayHelpers';
 
 interface B2BWishlistManagerViewProps {
   onNavigate: (tab: B2BTabType) => void;
@@ -177,7 +178,7 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
         const prod = products.find(p => p.id === item.productId);
         if (prod) {
           rawProduct = prod;
-          name = prod.name;
+          name = getInventoryDisplayName(prod);
           category = prod.category || 'Product';
           destination = prod.destinationName || prod.country || 'Japan';
           image = prod.imageUrl || prod.heroImage;
@@ -195,7 +196,7 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
           const hot = hotels.find(h => h.id === item.productId);
           if (hot) {
             rawHotel = hot;
-            name = hot.name;
+            name = getInventoryDisplayName(hot);
             category = 'Hotel & Ryokan';
             destination = hot.destinationName || 'Japan';
             image = hot.imageUrl || hot.heroImage;
@@ -215,7 +216,7 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
             const pkg = db.getPackages().find(p => p.id === item.productId);
             if (pkg) {
               rawPackage = pkg;
-              name = pkg.title;
+              name = getInventoryDisplayName(pkg);
               category = 'Tour Package';
               destination = pkg.destinationName || 'Japan';
               image = pkg.heroImage;
@@ -234,7 +235,7 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
               const visa = db.getVisas().find(v => v.id === item.productId);
               if (visa) {
                 rawVisa = visa;
-                name = visa.visaType + ' for ' + visa.country;
+                name = (visa as any).listingName || (visa as any).name || (`${visa.visaType} Assistance (${visa.country})`);
                 category = 'Visa Service';
                 destination = visa.country || 'Japan';
                 isAvailable = visa.status === 'ACTIVE';

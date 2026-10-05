@@ -46,7 +46,8 @@ import {
   Info,
   ShieldCheck,
   Check,
-  X
+  X,
+  Train
 } from 'lucide-react';
 import { SectionCard } from '../common/SectionCard';
 import { FormField } from '../common/FormField';
@@ -81,6 +82,7 @@ const CATEGORIES_MAPPING: { label: string; value: ProductCategory; icon: any; de
   { label: 'Restaurant', value: 'Lunch / Dinner Restaurant', icon: Utensils, desc: 'Gourmet meal courses and dining reservations.' },
   { label: 'Private Yacht', value: 'Private Yacht', icon: Ship, desc: 'Luxury yacht charters and skipper services.' },
   { label: 'Ferry', value: 'Ferry', icon: Anchor, desc: 'Scheduled passenger ferry and maritime transit with route ports.' },
+  { label: 'Rail', value: 'Rail', icon: Train, desc: 'High-speed bullet train smartEX routes and services.' },
 ];
 
 export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
@@ -163,7 +165,10 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
   });
 
   const [formData, setFormData] = useState<Partial<Product>>(() => {
-    if (product) return { ...product };
+    if (product) return { 
+      ...product,
+      hubIds: product.hubIds || (product.hubId ? [product.hubId] : [])
+    };
     return createCleanWorkspaceFormData();
   });
 
@@ -517,10 +522,37 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
 
     // Sections 24 & 25: Canonical hierarchy validation
     const masterData = MasterDataService.getInstance();
-    const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, formData.hubId);
-    if (!hierarchy.valid) {
-      alert(`Data Integrity Error: ${hierarchy.error}`);
-      return;
+    let validatedRegion: any;
+    let validatedDestination: any;
+    let validatedHub: any;
+
+    if (activeCategory === 'Rail') {
+      const hubIds = formData.hubIds || [];
+      if (hubIds.length === 0) {
+        alert('At least one associated City Hub is required for Rail products.');
+        return;
+      }
+      for (const hId of hubIds) {
+        const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, hId);
+        if (!hierarchy.valid) {
+          alert(`Data Integrity Error for Associated Hub (${hId}): ${hierarchy.error}`);
+          return;
+        }
+        validatedRegion = hierarchy.region;
+        validatedDestination = hierarchy.destination;
+      }
+      if (hubIds[0]) {
+        validatedHub = masterData.getHubById(hubIds[0]);
+      }
+    } else {
+      const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, formData.hubId);
+      if (!hierarchy.valid) {
+        alert(`Data Integrity Error: ${hierarchy.error}`);
+        return;
+      }
+      validatedRegion = hierarchy.region;
+      validatedDestination = hierarchy.destination;
+      validatedHub = hierarchy.hub;
     }
 
     const chosenCurrency = (formData.nativeCurrency || formData.currency) as CurrencyCode;
@@ -607,13 +639,14 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       ...(formData as Product),
       id: product?.id || `prod-${Date.now()}`,
       category: activeCategory,
-      regionId: hierarchy.region!.id,
-      regionName: hierarchy.region!.name,
-      destinationId: hierarchy.destination!.id,
-      destinationName: hierarchy.destination!.name,
-      country: hierarchy.destination!.country || hierarchy.destination!.name,
-      hubId: hierarchy.hub ? hierarchy.hub.id : (formData.hubId || ''),
-      city: hierarchy.hub ? hierarchy.hub.name : (formData.city || hierarchy.destination!.name),
+      regionId: validatedRegion.id,
+      regionName: validatedRegion.name,
+      destinationId: validatedDestination.id,
+      destinationName: validatedDestination.name,
+      country: validatedDestination.country || validatedDestination.name,
+      hubId: validatedHub ? validatedHub.id : (formData.hubId || ''),
+      city: validatedHub ? validatedHub.name : (formData.city || validatedDestination.name),
+      hubIds: formData.hubIds || (validatedHub ? [validatedHub.id] : []),
       pricingModel: isCap 
         ? 'CAPACITY_TIERED' 
         : (activeCategory === 'Guides' ? 'PER_HOUR' : (activeCategory === 'Lunch / Dinner Restaurant' ? 'MEAL_PASSENGER' : (activeCategory === 'Tickets' ? 'PER_PERSON' : 'PER_PERSON'))),
@@ -649,10 +682,38 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
 
     // Sections 24 & 25: Canonical hierarchy validation
     const masterData = MasterDataService.getInstance();
-    const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, formData.hubId);
-    if (!hierarchy.valid) {
-      alert(`Data Integrity Error: ${hierarchy.error}`);
-      return;
+    let validatedRegion: any;
+    let validatedDestination: any;
+    let validatedHub: any;
+
+    if (activeCategory === 'Rail') {
+      const hubIds = formData.hubIds || [];
+      if (hubIds.length > 0) {
+        for (const hId of hubIds) {
+          const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, hId);
+          if (hierarchy.valid) {
+            validatedRegion = hierarchy.region;
+            validatedDestination = hierarchy.destination;
+          }
+        }
+        if (hubIds[0]) {
+          validatedHub = masterData.getHubById(hubIds[0]);
+        }
+      }
+      if (!validatedRegion || !validatedDestination) {
+        // Fallback checks
+        validatedRegion = masterData.getRegionById(formData.regionId!);
+        validatedDestination = masterData.getDestinationById(formData.destinationId!);
+      }
+    } else {
+      const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, formData.hubId);
+      if (!hierarchy.valid) {
+        alert(`Data Integrity Error: ${hierarchy.error}`);
+        return;
+      }
+      validatedRegion = hierarchy.region;
+      validatedDestination = hierarchy.destination;
+      validatedHub = hierarchy.hub;
     }
 
     const chosenCurrency = (formData.nativeCurrency || formData.currency) as CurrencyCode;
@@ -661,13 +722,14 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       ...(formData as Product),
       id: product?.id || `prod-${Date.now()}`,
       category: activeCategory,
-      regionId: hierarchy.region!.id,
-      regionName: hierarchy.region!.name,
-      destinationId: hierarchy.destination!.id,
-      destinationName: hierarchy.destination!.name,
-      country: hierarchy.destination!.country || hierarchy.destination!.name,
-      hubId: hierarchy.hub ? hierarchy.hub.id : (formData.hubId || ''),
-      city: hierarchy.hub ? hierarchy.hub.name : (formData.city || hierarchy.destination!.name),
+      regionId: validatedRegion ? validatedRegion.id : (formData.regionId || ''),
+      regionName: validatedRegion ? validatedRegion.name : (formData.regionName || ''),
+      destinationId: validatedDestination ? validatedDestination.id : (formData.destinationId || ''),
+      destinationName: validatedDestination ? validatedDestination.name : (formData.destinationName || ''),
+      country: validatedDestination ? (validatedDestination.country || validatedDestination.name) : (formData.country || ''),
+      hubId: validatedHub ? validatedHub.id : (formData.hubId || ''),
+      city: validatedHub ? validatedHub.name : (formData.city || ''),
+      hubIds: formData.hubIds || (validatedHub ? [validatedHub.id] : []),
       currency: chosenCurrency,
       nativeCurrency: chosenCurrency,
       status: 'DRAFT',
@@ -879,30 +941,73 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
               </FormField>
 
               {/* Cascading City Hub (Tier 3) strictly filtered by selected Destination */}
-              <FormField label="City Hub (Tier 3)" required>
-                <select
-                  required
-                  disabled={!formData.destinationId}
-                  value={formData.hubId || ''}
-                  onChange={e => {
-                    const hubId = e.target.value;
-                    const hub = cityHubs.find(h => h.id === hubId);
-                    setFormData({ 
-                      ...formData, 
-                      hubId: hub?.id || '', 
-                      city: hub?.name || ''
-                    });
-                  }}
-                  className={`w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
-                >
-                  <option value="">{formData.destinationId ? '-- Select City Hub --' : '-- Select Destination First --'}</option>
-                  {cityHubs
-                    .filter(h => h.destinationId === formData.destinationId)
-                    .map(h => (
-                      <option key={h.id} value={h.id}>{h.name} ({h.id})</option>
-                    ))}
-                </select>
-              </FormField>
+              {activeCategory === 'Rail' ? (
+                <FormField label="Associated City Hubs (Multi-Hub Selection)" required>
+                  <div className={`p-3 bg-white border border-slate-200 rounded-lg space-y-2 max-h-40 overflow-y-auto ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}>
+                    {!formData.destinationId ? (
+                      <div className="text-slate-400 text-xs">-- Select Destination First --</div>
+                    ) : (
+                      cityHubs
+                        .filter(h => h.destinationId === formData.destinationId)
+                        .map(h => {
+                          const isChecked = (formData.hubIds || []).includes(h.id);
+                          return (
+                            <label key={h.id} className="flex items-center space-x-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={e => {
+                                  const checked = e.target.checked;
+                                  const currentIds = formData.hubIds || [];
+                                  let nextIds: string[];
+                                  if (checked) {
+                                    nextIds = [...currentIds, h.id];
+                                  } else {
+                                    nextIds = currentIds.filter(id => id !== h.id);
+                                  }
+                                  setFormData({
+                                    ...formData,
+                                    hubIds: nextIds,
+                                    hubId: nextIds[0] || '',
+                                    city: cityHubs.find(ch => ch.id === nextIds[0])?.name || ''
+                                  });
+                                }}
+                                className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                              />
+                              <span>{h.name} ({h.id})</span>
+                            </label>
+                          );
+                        })
+                    )}
+                  </div>
+                </FormField>
+              ) : (
+                <FormField label="City Hub (Tier 3)" required>
+                  <select
+                    required
+                    disabled={!formData.destinationId}
+                    value={formData.hubId || ''}
+                    onChange={e => {
+                      const hubId = e.target.value;
+                      const hub = cityHubs.find(h => h.id === hubId);
+                      setFormData({ 
+                        ...formData, 
+                        hubId: hub?.id || '', 
+                        city: hub?.name || '',
+                        hubIds: hub?.id ? [hub.id] : []
+                      });
+                    }}
+                    className={`w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
+                  >
+                    <option value="">{formData.destinationId ? '-- Select City Hub --' : '-- Select Destination First --'}</option>
+                    {cityHubs
+                      .filter(h => h.destinationId === formData.destinationId)
+                      .map(h => (
+                        <option key={h.id} value={h.id}>{h.name} ({h.id})</option>
+                      ))}
+                  </select>
+                </FormField>
+              )}
 
               <FormField label="Duration (Hours / Days)">
                 <input
