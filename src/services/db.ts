@@ -576,36 +576,107 @@ export type BookingSaveListener = (booking: Booking, user: User | null, isNew: b
 export type QuotationSaveListener = (quote: Quotation, user: User | null, isNew: boolean) => void;
 
 const memoryStorage = new Map<string, string>();
+
+// Bulky collection suffixes that should stay in memoryStorage and not congest window.localStorage (5MB quota)
+const BULKY_COLLECTION_KEYS = new Set([
+  'products', 'gallery', 'blogs', 'blog_articles', 'hotels', 'hotel_rooms',
+  'hotel_rates', 'hotel_meal_plans', 'transfer_routes', 'transfer_rates',
+  'product_pricing_rates', 'product_capacities', 'package_items', 'rail_stations',
+  'rail_routes', 'rail_rates', 'rail_seasons', 'master_vehicles', 'master_yachts',
+  'master_ferries', 'audit_logs', 'sla_automation_audit_logs', 'user_activities',
+  'b2b_packages', 'custom_pages', 'reviews', 'promotions'
+]);
+
+export function pruneBulkyLocalStorageKeys(): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (!k) continue;
+      if (k.startsWith('firestore_mutations_') || k.startsWith('firestore_clients_') || k.startsWith('firestore_')) {
+        keysToRemove.push(k);
+      } else if (k.startsWith(STORAGE_KEY_PREFIX)) {
+        const suffix = k.substring(STORAGE_KEY_PREFIX.length);
+        if (BULKY_COLLECTION_KEYS.has(suffix)) {
+          keysToRemove.push(k);
+        }
+      }
+    }
+    keysToRemove.forEach(k => {
+      try {
+        window.localStorage.removeItem(k);
+      } catch {}
+    });
+  } catch (err) {
+    console.debug('Prune local storage note:', err);
+  }
+}
+
+// Run initial prune once on load so browser has ample quota for auth/sessions/Firestore
+if (typeof window !== 'undefined') {
+  pruneBulkyLocalStorageKeys();
+}
+
 export const safeStorage = {
   getItem: (key: string): string | null => {
+    // Check in-memory store first for instant access
+    const memVal = memoryStorage.get(key);
+    if (memVal !== undefined && memVal !== null) return memVal;
+
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
-        return window.localStorage.getItem(key);
+        const val = window.localStorage.getItem(key);
+        if (val !== null) {
+          memoryStorage.set(key, val);
+          return val;
+        }
       }
-      return memoryStorage.get(key) || null;
+      return null;
     } catch {
-      return memoryStorage.get(key) || null;
+      return null;
     }
   },
   setItem: (key: string, value: string): void => {
+    // Always store in in-memory Map first
+    memoryStorage.set(key, value);
+
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
-        window.localStorage.setItem(key, value);
+        const suffix = key.startsWith(STORAGE_KEY_PREFIX) ? key.substring(STORAGE_KEY_PREFIX.length) : key;
+        
+        // Skip congesting window.localStorage with bulky static collections or large payloads > 80KB
+        if (BULKY_COLLECTION_KEYS.has(suffix) || value.length > 80000) {
+          // If a copy previously existed in localStorage, remove it to reclaim space
+          window.localStorage.removeItem(key);
+          return;
+        }
+
+        try {
+          window.localStorage.setItem(key, value);
+        } catch (e: any) {
+          // If QuotaExceededError, aggressively prune bulky keys and retry once
+          if (e?.name === 'QuotaExceededError' || e?.code === 22 || e?.code === 1014) {
+            pruneBulkyLocalStorageKeys();
+            try {
+              window.localStorage.setItem(key, value);
+            } catch {
+              // Gracefully fallback to memoryStorage only
+            }
+          }
+        }
       }
-      memoryStorage.set(key, value);
     } catch {
-      memoryStorage.set(key, value);
+      // Memory storage is already populated
     }
   },
   removeItem: (key: string): void => {
+    memoryStorage.delete(key);
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
         window.localStorage.removeItem(key);
       }
-      memoryStorage.delete(key);
-    } catch {
-      memoryStorage.delete(key);
-    }
+    } catch {}
   }
 };
 
@@ -1824,79 +1895,79 @@ export class AppDatabase {
       const initialRegions = DESTINATIONS.flatMap(d => d.regions || []);
       this.setItem('regions', initialRegions);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'destination_faqs')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'destination_faqs')) {
       this.setItem('destination_faqs', INITIAL_FAQS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'gallery')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'gallery')) {
       this.setItem('gallery', INITIAL_GALLERY);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'homepage_config')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'homepage_config')) {
       this.setItem('homepage_config', INITIAL_HOMEPAGE_CONFIG);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'menu_items')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'menu_items')) {
       this.setItem('menu_items', INITIAL_MENU_ITEMS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'custom_pages')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'custom_pages')) {
       this.setItem('custom_pages', INITIAL_CUSTOM_PAGES);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'visas')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'visas')) {
       this.setItem('visas', INITIAL_VISAS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'travel_protection_plans')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'travel_protection_plans')) {
       this.setItem('travel_protection_plans', INITIAL_TRAVEL_PROTECTION_PLANS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'vip_ground_services')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'vip_ground_services')) {
       this.setItem('vip_ground_services', INITIAL_VIP_GROUND_SERVICES);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'connectivity_plans')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'connectivity_plans')) {
       this.setItem('connectivity_plans', INITIAL_CONNECTIVITY_PLANS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'footer_config')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'footer_config')) {
       this.setItem('footer_config', INITIAL_FOOTER_CONFIG);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'calendar_tasks')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'calendar_tasks')) {
       this.setItem('calendar_tasks', []);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'user_activities')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'user_activities')) {
       this.setItem('user_activities', []);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'leads')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'leads')) {
       this.setItem('leads', INITIAL_LEADS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'bookings')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'bookings')) {
       this.setItem('bookings', []);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'saved_quotes')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'saved_quotes')) {
       this.setItem('saved_quotes', []);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_customers')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_customers')) {
       this.setItem('b2b_customers', []);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_tasks')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_tasks')) {
       this.setItem('b2b_tasks', []);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'roster_resources')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'roster_resources')) {
       this.setItem('roster_resources', INITIAL_ROSTER_RESOURCES);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'campaigns')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'campaigns')) {
       this.setItem('campaigns', INITIAL_CAMPAIGNS);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'invoices')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'invoices')) {
       this.setItem('invoices', []);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'vouchers')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'vouchers')) {
       this.setItem('vouchers', []);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'job_sheets')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'job_sheets')) {
       this.setItem('job_sheets', []);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'sla_automation_rules')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'sla_automation_rules')) {
       this.setItem('sla_automation_rules', INITIAL_SLA_AUTOMATION_RULES);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'sla_automation_audit_logs')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'sla_automation_audit_logs')) {
       this.setItem('sla_automation_audit_logs', []);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'audit_logs')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'audit_logs')) {
       const defaultLogs: AuditLog[] = [
         {
           id: 'audit-01',
@@ -1912,10 +1983,10 @@ export class AppDatabase {
       ];
       this.setItem('audit_logs', defaultLogs);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'seo_redirects')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'seo_redirects')) {
       this.setItem('seo_redirects', []);
     }
-    if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'seo_settings')) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'seo_settings')) {
       this.setItem('seo_settings', DEFAULT_GLOBAL_SEO_DEFAULTS);
     }
 

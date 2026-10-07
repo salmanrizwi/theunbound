@@ -78,6 +78,13 @@ import { RailJourneyModal } from '../RailJourneyModal';
 import { PricingCalculatorModal } from '../PricingCalculatorModal';
 import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 import { isRailProduct, isRailQuoteItem } from '../../services/rail/JapanRailJourneyDataService';
+import { 
+  AUTHORITATIVE_PRODUCT_CATEGORIES, 
+  AuthoritativeProductCategory, 
+  normalizeProductCategory, 
+  resolveProductCategoryEnum, 
+  DISPLAY_TO_CATEGORY_ENUM 
+} from '../../services/configuratorRegistry';
 import { ManualHotelFormModal } from './ManualHotelFormModal';
 import { VisaProduct } from '../../types';
 import { AddVisaToQuoteModal, visaProductToProduct } from './AddVisaToQuoteModal';
@@ -1951,41 +1958,110 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     setTimeout(() => setPackageSavedNotice(null), 4000);
   };
 
-  // Quick Add Products Filter - strictly filters by the day's city/hub if filterByDayCityOnly is active
-  const quickAddFilteredProducts = useMemo(() => {
+  // Active base products for the day modal based on city filter scope
+  const quickAddBaseProducts = useMemo(() => {
     if (!quickAddModalDay) return [];
     const targetCity = quickAddModalDay.hubName;
     const targetHubId = quickAddModalDay.hubId;
 
-    let baseList: Product[] = [];
     if (filterByDayCityOnly && (targetCity || targetHubId)) {
-      const rel = DestinationRelevanceService.getInstance().getRelevantProducts(
+      return DestinationRelevanceService.getInstance().getRelevantProducts(
         currentDestination.id,
         targetHubId || targetCity
-      );
-      baseList = rel.hubActivities;
+      ).hubActivities;
     } else {
-      baseList = availableProducts;
+      return availableProducts;
+    }
+  }, [quickAddModalDay, filterByDayCityOnly, currentDestination, availableProducts]);
+
+  // Dynamically extract and categorize the actual available product categories for this day/destination context
+  const quickAddAvailableCategories = useMemo(() => {
+    if (!quickAddModalDay || quickAddBaseProducts.length === 0) {
+      return [{ id: 'ALL', label: 'All Experiences', count: quickAddBaseProducts.length }];
     }
 
-    return baseList.filter(p => {
-      // 1. Category Filter
-      const matchCat = quickAddCategory === 'ALL' || p.category === quickAddCategory;
-      if (!matchCat) return false;
+    // Map each base product to its authoritative canonical category
+    const categoryCounts: Record<string, number> = {};
+
+    quickAddBaseProducts.forEach(p => {
+      const canonical = normalizeProductCategory(p.category);
+      if (canonical) {
+        categoryCounts[canonical] = (categoryCounts[canonical] || 0) + 1;
+      } else if (p.category) {
+        categoryCounts[p.category] = (categoryCounts[p.category] || 0) + 1;
+      }
+    });
+
+    // Build the list of categories in authoritative priority order
+    const dynamicList: { id: string; label: string; count: number }[] = [
+      { id: 'ALL', label: 'All Experiences', count: quickAddBaseProducts.length }
+    ];
+
+    AUTHORITATIVE_PRODUCT_CATEGORIES.forEach(cat => {
+      if (categoryCounts[cat] && categoryCounts[cat] > 0) {
+        dynamicList.push({
+          id: cat,
+          label: cat,
+          count: categoryCounts[cat]
+        });
+      }
+    });
+
+    // Any other categories that were not in AUTHORITATIVE_PRODUCT_CATEGORIES
+    Object.keys(categoryCounts).forEach(cat => {
+      if (!(AUTHORITATIVE_PRODUCT_CATEGORIES as readonly string[]).includes(cat) && categoryCounts[cat] > 0) {
+        dynamicList.push({
+          id: cat,
+          label: cat,
+          count: categoryCounts[cat]
+        });
+      }
+    });
+
+    return dynamicList;
+  }, [quickAddModalDay, quickAddBaseProducts]);
+
+  // Quick Add Products Filter - strictly filters by category and search term
+  const quickAddFilteredProducts = useMemo(() => {
+    if (!quickAddModalDay) return [];
+
+    return quickAddBaseProducts.filter(p => {
+      // 1. Category Filter using Canonical Mapping
+      if (quickAddCategory !== 'ALL') {
+        const prodCatEnum = resolveProductCategoryEnum(p);
+        const prodNormCat = normalizeProductCategory(p.category);
+        const targetCatEnum = (DISPLAY_TO_CATEGORY_ENUM as any)[quickAddCategory] || resolveProductCategoryEnum({ category: quickAddCategory });
+
+        const matchesCat = 
+          p.category === quickAddCategory ||
+          prodNormCat === quickAddCategory ||
+          (prodCatEnum && targetCatEnum && (
+            prodCatEnum === targetCatEnum || 
+            (targetCatEnum === 'RAIL' && (prodCatEnum === 'RAIL' || prodCatEnum === 'SHINKANSEN')) ||
+            (targetCatEnum === 'SHINKANSEN' && (prodCatEnum === 'RAIL' || prodCatEnum === 'SHINKANSEN'))
+          )) ||
+          ((p.category || '').toLowerCase().includes(quickAddCategory.toLowerCase())) ||
+          ((p.subcategory || '').toLowerCase().includes(quickAddCategory.toLowerCase()));
+
+        if (!matchesCat) return false;
+      }
 
       // 2. Search text query
-      const q = (quickAddSearch || '').toLowerCase();
-      const matchSearch = !q || 
-        (p.name || '').toLowerCase().includes(q) ||
-        p.longDescription?.toLowerCase().includes(q) ||
-        p.shortDescription?.toLowerCase().includes(q) ||
-        p.city?.toLowerCase().includes(q) ||
-        p.location?.toLowerCase().includes(q) ||
-        p.subcategory?.toLowerCase().includes(q);
+      const q = (quickAddSearch || '').trim().toLowerCase();
+      if (!q) return true;
 
-      return matchCat && matchSearch;
+      const matchSearch =
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.longDescription || '').toLowerCase().includes(q) ||
+        (p.shortDescription || '').toLowerCase().includes(q) ||
+        (p.city || '').toLowerCase().includes(q) ||
+        (p.location || '').toLowerCase().includes(q) ||
+        (p.subcategory || '').toLowerCase().includes(q) ||
+        (p.category || '').toLowerCase().includes(q);
+
+      return matchSearch;
     });
-  }, [availableProducts, currentDestination, quickAddModalDay, quickAddCategory, quickAddSearch, filterByDayCityOnly]);
+  }, [quickAddModalDay, quickAddBaseProducts, quickAddCategory, quickAddSearch]);
 
   // Total products in catalog tagged specifically for this day's city/hub
   const totalCityProductsCount = useMemo(() => {
@@ -1995,9 +2071,6 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       quickAddModalDay.hubId || quickAddModalDay.hubName
     ).hubActivities.length;
   }, [currentDestination, quickAddModalDay]);
-
-  // Product categories for filter
-  const productCategories = ['ALL', 'Activity', 'Tour', 'Transfer', 'Transport', 'Rail', 'Guide', 'Restaurant', 'Private Yacht', 'Ferry'];
 
   if (loadError) {
     return (
@@ -2405,9 +2478,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#00C6A6] text-white shadow-2xs">
                     📍 {quickAddModalDay.hubName}
                   </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-200/80 text-slate-700">
+                    Day {quickAddModalDay.dayNum} • {quickAddModalDay.dateString}
+                  </span>
                 </div>
                 <h3 className="text-base font-bold text-slate-900 mt-0.5">
-                  Add Experience to Day {quickAddModalDay.dayNum}
+                  Browse Experiences for this day
                 </h3>
               </div>
               <button
@@ -2424,7 +2500,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center space-x-1.5 text-xs text-slate-700">
                   <span className="font-bold text-slate-900 flex items-center space-x-1">
-                    <span>Target City:</span>
+                    <span>Target Hub:</span>
                     <span className="text-teal-800 bg-teal-100/70 px-2 py-0.5 rounded-md font-mono">
                       📍 {quickAddModalDay.hubName}
                     </span>
@@ -2435,7 +2511,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                 <div className="flex items-center space-x-1 bg-white p-1 rounded-xl border border-slate-200 shadow-2xs">
                   <button
                     type="button"
-                    onClick={() => setFilterByDayCityOnly(true)}
+                    onClick={() => {
+                      setFilterByDayCityOnly(true);
+                      setQuickAddCategory('ALL');
+                    }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                       filterByDayCityOnly
                         ? 'bg-[#00C6A6] text-white shadow-2xs'
@@ -2446,7 +2525,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                   </button>
                   <button
                     type="button"
-                    onClick={() => setFilterByDayCityOnly(false)}
+                    onClick={() => {
+                      setFilterByDayCityOnly(false);
+                      setQuickAddCategory('ALL');
+                    }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                       !filterByDayCityOnly
                         ? 'bg-[#00C6A6] text-white shadow-2xs'
@@ -2479,22 +2561,32 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                 )}
               </div>
 
-              {/* Category Pills */}
+              {/* Category Pills (Dynamically computed from available products for this day/context) */}
               <div className="flex flex-wrap gap-1.5 pt-0.5">
-                {productCategories.map(cat => (
-                  <button
-                    key={cat}
-                    type="button"
-                    onClick={() => setQuickAddCategory(cat)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                      quickAddCategory === cat
-                        ? 'bg-[#00C6A6] text-white'
-                        : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-200'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
+                {quickAddAvailableCategories.map(catItem => {
+                  const isSelected = quickAddCategory === catItem.id;
+                  return (
+                    <button
+                      key={catItem.id}
+                      type="button"
+                      onClick={() => setQuickAddCategory(catItem.id)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5 ${
+                        isSelected
+                          ? 'bg-[#00C6A6] text-white shadow-2xs'
+                          : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-200'
+                      }`}
+                    >
+                      <span>{catItem.label}</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                        isSelected 
+                          ? 'bg-teal-900/30 text-white' 
+                          : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        {catItem.count}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -2588,14 +2680,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                     <div className="flex items-center justify-end space-x-2 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
                       <button
                         type="button"
-                        onClick={() => {
-                          if (isRailProduct(prod)) {
-                            setQuickAddModalDay(null);
-                            setInspectingProduct(prod);
-                          } else {
-                            handleOpenProductDetails(prod);
-                          }
-                        }}
+                        onClick={() => handleOpenProductDetails(prod)}
                         className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1 border border-slate-200"
                         title="View Product Details, Inclusions, Schedule & Supplier terms"
                       >
@@ -2605,17 +2690,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                       <button
                         type="button"
                         onClick={() => {
-                          if (isRailProduct(prod)) {
-                            setQuickAddModalDay(null);
-                            setInspectingProduct(prod);
-                          } else {
-                            setConfiguringQuickAddProduct({
-                              product: prod,
-                              dateString: quickAddModalDay.dateString,
-                              dayNum: quickAddModalDay.dayNum
-                            });
-                            setQuickAddModalDay(null);
-                          }
+                          setConfiguringQuickAddProduct({
+                            product: prod,
+                            dateString: quickAddModalDay.dateString,
+                            dayNum: quickAddModalDay.dayNum
+                          });
+                          setQuickAddModalDay(null);
                         }}
                         className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00A88F] text-white font-bold text-xs transition-colors cursor-pointer shadow-xs flex items-center space-x-1"
                       >
@@ -2629,52 +2709,6 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             </div>
           </div>
         </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* DEDICATED SERVICE CONFIGURATOR ROUTING ENGINE (ZERO GENERIC CUSTOMIZER) */}
-      {/* ========================================================================= */}
-      {editingServiceItem && (
-        <GlobalConfiguratorRouter
-          isOpen={true}
-          itemOrProduct={editingServiceItem}
-          portalOrigin="B2B_QUOTE_BUILDER"
-          existingQuoteItemId={editingServiceItem.id}
-          initialTravelDate={editingServiceItem.travelDate}
-          initialAdults={editingServiceItem.pax?.adults || adultsCount}
-          initialChildren={editingServiceItem.pax?.children || childrenCount}
-          initialInfants={editingServiceItem.pax?.infants || infantsCount}
-          initialServiceTime={editingServiceItem.serviceTime}
-          initialNotes={editingServiceItem.notes}
-          onClose={() => setEditingServiceItem(null)}
-          onSuccess={() => {
-            setEditingServiceItem(null);
-            handleSaveDraft();
-            showBuilderToast('✓ Service configuration updated successfully', 'SUCCESS');
-          }}
-        />
-      )}
-
-      {/* ========================================================================= */}
-      {/* QUICK ADD SERVICE CONFIGURATION ROUTER */}
-      {/* ========================================================================= */}
-      {configuringQuickAddProduct && (
-        <GlobalConfiguratorRouter
-          isOpen={true}
-          itemOrProduct={configuringQuickAddProduct.product}
-          portalOrigin="B2B_QUOTE_BUILDER"
-          initialTravelDate={configuringQuickAddProduct.dateString}
-          initialAdults={adultsCount}
-          initialChildren={childrenCount}
-          initialInfants={infantsCount}
-          onClose={() => setConfiguringQuickAddProduct(null)}
-          onSuccess={() => {
-            const dayNum = configuringQuickAddProduct.dayNum;
-            setConfiguringQuickAddProduct(null);
-            handleSaveDraft();
-            showBuilderToast(`✓ Added configured service to Day ${dayNum}`, 'SUCCESS');
-          }}
-        />
       )}
 
       {/* ========================================================================= */}
@@ -2844,6 +2878,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           onClose={() => setEditingServiceItem(null)}
           onSuccess={() => {
             setEditingServiceItem(null);
+            handleSaveDraft();
             showBuilderToast('✓ Service configuration updated', 'SUCCESS');
           }}
         />
@@ -2860,9 +2895,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           initialInfants={infantsCount}
           onClose={() => setConfiguringQuickAddProduct(null)}
           onSuccess={(configuredItem) => {
+            const dayNum = configuringQuickAddProduct.dayNum;
+            const prodName = configuredItem?.name || configuringQuickAddProduct.product.name;
             setConfiguringQuickAddProduct(null);
             setQuickAddModalDay(null);
-            showBuilderToast(`✓ Added ${configuredItem?.name || configuringQuickAddProduct.product.name} to Day ${configuringQuickAddProduct.dayNum}`, 'SUCCESS');
+            handleSaveDraft();
+            showBuilderToast(`✓ Added ${prodName} to Day ${dayNum}`, 'SUCCESS');
           }}
         />
       )}

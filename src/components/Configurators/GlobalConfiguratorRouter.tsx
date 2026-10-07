@@ -272,7 +272,8 @@ export const GlobalConfiguratorRouter: React.FC<GlobalConfiguratorRouterProps> =
       );
 
     // 10 — Rail / Shinkansen
-    case 'SHINKANSEN': {
+    case 'SHINKANSEN':
+    case 'RAIL': {
       const product: Product = (itemOrProduct as QuoteItem).product || (itemOrProduct as Product);
       const existingSnapshot = (itemOrProduct as QuoteItem).japanRailJourneySnapshot ||
         (itemOrProduct as any).metadata?.journeySnapshot ||

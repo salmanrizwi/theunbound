@@ -154,24 +154,34 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const { user } = useAuth();
   const [items, setItems] = useState<QuoteItem[]>(() => {
     try {
-      const saved = localStorage.getItem('theunbound_cart_items');
-      if (saved) {
-        return JSON.parse(saved);
+      if (typeof window !== 'undefined') {
+        const saved = sessionStorage.getItem('theunbound_cart_items') || localStorage.getItem('theunbound_cart_items');
+        if (saved) {
+          return JSON.parse(saved);
+        }
       }
     } catch (e) {
-      console.error('Error loading cart items from storage:', e);
+      console.warn('Cart items storage load note:', e);
     }
     return [];
   });
   const [currency, setCurrency] = useState<CurrencyCode>('USD');
   const [isQuoteDrawerOpen, setIsQuoteDrawerOpen] = useState(false);
 
-  // Sync items to localStorage for session and cross-page persistence
+  // Sync items to storage for session and cross-page persistence
   useEffect(() => {
     try {
-      localStorage.setItem('theunbound_cart_items', JSON.stringify(items));
+      if (typeof window !== 'undefined') {
+        const serialized = JSON.stringify(items);
+        try {
+          sessionStorage.setItem('theunbound_cart_items', serialized);
+        } catch {}
+        try {
+          localStorage.setItem('theunbound_cart_items', serialized);
+        } catch {}
+      }
     } catch (e) {
-      console.error('Error saving cart items to storage:', e);
+      console.warn('Cart items storage sync note:', e);
     }
   }, [items]);
   
@@ -595,9 +605,12 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setCurrentVersion(1);
     setIsLocked(false);
     try {
-      localStorage.removeItem('theunbound_cart_items');
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('theunbound_cart_items');
+        localStorage.removeItem('theunbound_cart_items');
+      }
     } catch (e) {
-      console.error('Error clearing cart storage:', e);
+      console.warn('Clear cart storage note:', e);
     }
   };
 

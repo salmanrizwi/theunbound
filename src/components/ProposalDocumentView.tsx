@@ -32,6 +32,7 @@ import {
 import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
 import { RichTextRenderer } from './common/RichTextRenderer';
 import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../utils/inventoryDisplayHelpers';
+import { downloadQuotationPDF } from '../services/pdfGenerator';
 
 interface ProposalDocumentViewProps {
   quote: Quotation;
@@ -54,6 +55,20 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
   onShareLink,
   onShareWhatsApp
 }) => {
+  const handleDownload = () => {
+    if (onDownloadPdf) {
+      onDownloadPdf();
+    } else {
+      downloadQuotationPDF({
+        quote,
+        agentName: agentUser?.name || quote.agentName,
+        agentAgency: agentUser?.agencyName || quote.agentAgency,
+        agentEmail: agentUser?.email || quote.agentEmail,
+        leadId: quote.leadId
+      });
+    }
+  };
+
   const handlePrint = () => {
     if (onPrint) {
       onPrint();
@@ -297,23 +312,23 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
             </button>
           )}
 
-          {onDownloadPdf ? (
-            <button
-              onClick={onDownloadPdf}
-              className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
-            >
-              <Download className="w-3.5 h-3.5 text-[#00E5C0]" />
-              <span>Download PDF</span>
-            </button>
-          ) : (
-            <button
-              onClick={handlePrint}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
-            >
-              <Printer className="w-3.5 h-3.5 text-slate-600" />
-              <span>Print / PDF</span>
-            </button>
-          )}
+          <button
+            onClick={handlePrint}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+            title="Print Proposal"
+          >
+            <Printer className="w-3.5 h-3.5 text-slate-600" />
+            <span>Print</span>
+          </button>
+
+          <button
+            onClick={handleDownload}
+            className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
+            title="Download PDF"
+          >
+            <Download className="w-3.5 h-3.5 text-[#00E5C0]" />
+            <span>Download PDF</span>
+          </button>
           
           {onBookNow && quote.status !== 'BOOKING_REQUESTED' && quote.status !== 'CONFIRMED' && (
             <button

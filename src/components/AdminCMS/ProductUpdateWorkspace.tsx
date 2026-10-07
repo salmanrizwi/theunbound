@@ -466,10 +466,17 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     const sortedTiers = [...(formData.tieredPricing || [])].sort((a, b) => a.minPax - b.minPax);
 
     if (isCap) {
-      if (!formData.vehicleConfig?.vehicleType && activeCategory !== 'Private Yacht' && activeCategory !== 'Yacht') {
+      // Rule 8/9/10: Operational asset is required in tiered pricing for capacity-based categories
+      const hasOperationalAsset = (formData.tieredPricing || []).some(t => t.fleetId || t.vehicleId) || 
+                                  formData.vehicleId || 
+                                  formData.yachtId || 
+                                  (formData.vehicleConfig?.vehicleType && activeCategory !== 'Private Yacht' && activeCategory !== 'Yacht');
+                                  
+      if (!hasOperationalAsset) {
         alert('Vehicle / Fleet Operational Selection is required.');
         return;
       }
+
 
       // Check tiered pricing validation rules (overlap, gap, duplicate, coverage) on save
       if (sortedTiers.length === 0) {

@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   CurrencyCode, 
+  SUPPORTED_CURRENCIES,
   ProductCategory, 
   TieredPrice, 
   CityHub, 
@@ -818,13 +819,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                 onChange={(e) => onCurrencyChange(e.target.value as CurrencyCode)}
                 className="p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-[#00C6A6]"
               >
-                <option value="JPY">JPY (¥)</option>
-                <option value="USD">USD ($)</option>
-                <option value="EUR">EUR (€)</option>
-                <option value="GBP">GBP (£)</option>
-                <option value="THB">THB (฿)</option>
-                <option value="AED">AED (AED)</option>
-                <option value="INR">INR (₹)</option>
+                {SUPPORTED_CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code} ({c.symbol})</option>)}
               </select>
             </div>
           </div>
@@ -955,6 +950,16 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
           </div>
 
           <div className="flex items-center gap-3">
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Native Currency</label>
+              <select
+                value={currency}
+                onChange={(e) => onCurrencyChange(e.target.value as CurrencyCode)}
+                className="p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-[#00C6A6]"
+              >
+                {SUPPORTED_CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.code} ({c.symbol})</option>)}
+              </select>
+            </div>
             <button
               type="button"
               onClick={handleAddTicketTier}

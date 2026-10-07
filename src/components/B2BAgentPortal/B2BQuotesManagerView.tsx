@@ -359,6 +359,7 @@ export const B2BQuotesManagerView: React.FC<B2BQuotesManagerViewProps> = ({
 
             <ProposalDocumentView
               quote={previewingQuote}
+              agentUser={user}
               onClose={() => setPreviewingQuote(null)}
             />
           </div>

@@ -46,6 +46,8 @@ import {
   Save,
   Percent,
   Train,
+  Shield,
+  Smartphone,
   X
 } from 'lucide-react';
 import { isRailQuoteItem } from '../../services/rail/JapanRailJourneyDataService';
@@ -59,6 +61,7 @@ import {
   CityHub, 
   TripRouteHub, 
   CurrencyCode, 
+  SUPPORTED_CURRENCIES,
   ManualHotelDetails,
   PassengerClassification,
   CRMLead,
@@ -68,7 +71,7 @@ import {
   AgentMarginType
 } from '../../types';
 import { formatCurrency, convertCurrency, resolveCapacityPricingTier } from '../../services/pricingEngine';
-import { TransferSuggestion } from '../../utils/b2bQuotationHelpers';
+import { TransferSuggestion, B2B_INSURANCE_PLANS, B2B_ESIM_PLANS } from '../../utils/b2bQuotationHelpers';
 import { validateRoomOccupancy, hotelToProduct, manualHotelToProduct } from '../../utils/hotelHelpers';
 import { VisaServicesAndFacilitationSection } from './VisaServicesAndFacilitationSection';
 import { DestinationRelevanceService, matchesDestination } from '../../services/destinationRelevanceService';
@@ -89,7 +92,7 @@ export const isProductMatchingCity = (product: Product, targetCityName?: string,
 };
 
 export interface StepByStepQuotationWorkspaceProps {
-  // Current Active Step (1 to 8)
+  // Current Active Step (1 to 9)
   activeStepId: number;
   setActiveStepId: (step: number) => void;
 
@@ -957,27 +960,239 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   };
 
   const visaItems = useMemo(() => items.filter(it => 
-    (it.product as any).isVisa ||
-    (it.product.category || '').toLowerCase().includes('visa')
+    Boolean((it.product as any).isVisa) ||
+    it.service_type === 'VISA' ||
+    it.category === 'Visa & Ancillary Services' ||
+    (it.product.category || '').toLowerCase().includes('visa') ||
+    it.product.sku?.startsWith('VSA-') ||
+    it.product.sku?.startsWith('VISA-') ||
+    it.product.productType === 'Visa Service' ||
+    it.product.subcategory === 'Visa Facilitation' ||
+    (it.product.name || '').toLowerCase().includes('visa')
   ), [items]);
 
-  const addonItems = useMemo(() => items.filter(it => 
-    (it.product.category || '').toLowerCase().includes('insurance') ||
-    (it.product.category || '').toLowerCase().includes('esim') ||
-    (it.product.category || '').toLowerCase().includes('service') ||
-    (it.product.category || '').toLowerCase().includes('addon')
-  ), [items]);
+  const addonItems = useMemo(() => items.filter(it => {
+    const cat = (it.product.category || '').toLowerCase();
+    const sub = (it.product.subcategory || '').toLowerCase();
+    const pName = (it.product.name || '').toLowerCase();
+    const isVisaRel = Boolean((it.product as any).isVisa) ||
+      it.service_type === 'VISA' ||
+      it.product.sku?.startsWith('VSA-') ||
+      it.product.sku?.startsWith('VISA-') ||
+      pName.includes('visa');
+    if (isVisaRel) return false;
 
-  const activityItems = useMemo(() => items.filter(it => 
-    !(it.product as any).isTransfer &&
-    !(it.product as any).isVisa &&
-    !(it.product.category || '').toLowerCase().includes('hotel') &&
-    !(it.product.category || '').toLowerCase().includes('accommodation') &&
-    !(it.product.category || '').toLowerCase().includes('insurance') &&
-    !(it.product.category || '').toLowerCase().includes('esim') &&
-    !(it.product.category || '').toLowerCase().includes('addon') &&
-    !(it.product.category || '').toLowerCase().includes('service')
-  ), [items]);
+    return (
+      Boolean((it as any).isOptionalService) ||
+      Boolean((it.product as any).isOptionalService) ||
+      it.product.id?.startsWith('addon-') ||
+      it.service_type === 'TRAVEL_PROTECTION' ||
+      it.service_type === 'CONNECTIVITY' ||
+      it.service_type === 'VIP_GROUND' ||
+      cat.includes('insurance') ||
+      cat.includes('esim') ||
+      cat.includes('service') ||
+      cat.includes('addon') ||
+      cat.includes('optional') ||
+      sub.includes('insurance') ||
+      sub.includes('esim') ||
+      sub.includes('concierge') ||
+      sub.includes('optional')
+    );
+  }), [items]);
+
+  const activityItems = useMemo(() => {
+    const excludedIds = new Set([
+      ...hotelItems.map(i => i.id),
+      ...transferItems.map(i => i.id),
+      ...railItems.map(i => i.id),
+      ...visaItems.map(i => i.id),
+      ...addonItems.map(i => i.id)
+    ]);
+    return items.filter(it => !excludedIds.has(it.id));
+  }, [items, hotelItems, transferItems, railItems, visaItems, addonItems]);
+
+  const addonTotalSelling = useMemo(() => {
+    return addonItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+  }, [addonItems]);
+
+  const handleQuickAddOptionalInsurance = (plan: typeof B2B_INSURANCE_PLANS[0]) => {
+    const totalDays = Math.max(1, tripNights + 1);
+    const totalAdultCost = plan.costPerDayAdultUSD * totalDays * adultsCount;
+    const totalChildCost = plan.costPerDayChildUSD * totalDays * childrenCount;
+    const totalNetCost = totalAdultCost + totalChildCost;
+    const totalAdultSelling = plan.sellingPricePerDayAdultUSD * totalDays * adultsCount;
+    const totalChildSelling = plan.sellingPricePerDayChildUSD * totalDays * childrenCount;
+    const totalSelling = totalAdultSelling + totalChildSelling;
+    const markupPercent = Math.round(((totalSelling - totalNetCost) / Math.max(1, totalNetCost)) * 100);
+
+    const product = {
+      id: `addon-${plan.id}-${Date.now()}`,
+      sku: `INS-${plan.id.toUpperCase()}`,
+      destinationId: currentDestination.id || 'dest-global',
+      destinationName: currentDestination.name || 'Worldwide',
+      country: currentDestination.name || 'International',
+      city: 'Global Protection Desk',
+      productType: 'Travel Insurance',
+      isOptionalService: true,
+      name: `${plan.name} (${totalDays} Days)`,
+      shortDescription: `${plan.coverageSummary} Total Coverage: $${plan.coverageAmountUSD.toLocaleString()} USD. Provider: ${plan.provider}.`,
+      longDescription: `Full comprehensive travel insurance for ${adultsCount} Adults and ${childrenCount} Children covering ${totalDays} days of travel in ${currentDestination.name}. Includes: ${plan.medicalEmergencyCoverage}, ${plan.tripCancellationCoverage}, ${plan.baggageLossCoverage}.`,
+      supplierId: 'sup-insurance-global',
+      supplierName: plan.provider,
+      category: 'Optional Services',
+      subcategory: 'Travel Insurance',
+      adultNetPrice: plan.costPerDayAdultUSD * totalDays,
+      childNetPrice: plan.costPerDayChildUSD * totalDays,
+      infantNetPrice: 0,
+      currency: 'USD' as CurrencyCode,
+      defaultMarkupPercent: markupPercent,
+      taxPercent: 0,
+      commissionPercent: 15,
+      serviceFeeFixed: 0,
+      season: 'All Year',
+      validityFrom: '2026-01-01',
+      validityTo: '2026-12-31',
+      minPax: 1,
+      maxPax: 50,
+      availability: 'INSTANT',
+      inclusions: [
+        plan.medicalEmergencyCoverage,
+        plan.tripCancellationCoverage,
+        plan.baggageLossCoverage,
+        '24/7 International Medical Assistance Helpline'
+      ],
+      exclusions: ['Pre-existing medical conditions unless declared'],
+      status: 'ACTIVE'
+    } as unknown as Product;
+
+    addProductToQuote(product, {
+      adults: adultsCount,
+      children: childrenCount,
+      infants: 0,
+      travelDate: startDate,
+      openDrawer: false
+    });
+  };
+
+  const handleQuickAddOptionalEsim = (plan: typeof B2B_ESIM_PLANS[0]) => {
+    const markupPercent = Math.round(((plan.sellingPriceUSD - plan.netCostUSD) / Math.max(1, plan.netCostUSD)) * 100);
+    const product = {
+      id: `addon-${plan.id}-${Date.now()}`,
+      sku: `ESIM-${plan.id.toUpperCase()}`,
+      destinationId: currentDestination.id,
+      destinationName: currentDestination.name,
+      country: currentDestination.name,
+      city: 'Instant Digital eSIM Portal',
+      productType: 'Digital Connectivity',
+      isOptionalService: true,
+      name: `${currentDestination.name} 5G eSIM (${plan.dataAllowance}, ${plan.validityDays} Days)`,
+      shortDescription: `Instant high-speed 5G/4G connectivity for ${currentDestination.name}. QR-code email delivery.`,
+      longDescription: `Digital eSIM data plan with ${plan.dataAllowance} valid for ${plan.validityDays} days.`,
+      supplierId: 'sup-esim-global',
+      supplierName: plan.carrier,
+      category: 'Optional Services',
+      subcategory: 'eSIM Connectivity',
+      adultNetPrice: plan.netCostUSD,
+      childNetPrice: 0,
+      infantNetPrice: 0,
+      currency: 'USD' as CurrencyCode,
+      defaultMarkupPercent: markupPercent,
+      taxPercent: 0,
+      commissionPercent: 20,
+      serviceFeeFixed: 0,
+      season: 'All Year',
+      validityFrom: '2026-01-01',
+      validityTo: '2026-12-31',
+      minPax: 1,
+      maxPax: 20,
+      availability: 'INSTANT',
+      inclusions: [
+        `${plan.dataAllowance} High-Speed 5G Data`,
+        `${plan.validityDays} Days Continuous Validity`,
+        'Instant QR Code Email Delivery',
+        'Hotspot / Mobile Tethering Allowed'
+      ],
+      exclusions: ['Traditional voice calls / SMS (Data-only)'],
+      status: 'ACTIVE'
+    } as unknown as Product;
+
+    addProductToQuote(product, {
+      adults: Math.max(1, adultsCount),
+      children: 0,
+      infants: 0,
+      travelDate: startDate,
+      openDrawer: false
+    });
+  };
+
+  const handleQuickAddOptionalVipService = (serviceType: 'VIP_MEET_GREET' | 'LUGGAGE_VAN' | 'PORTABLE_WIFI') => {
+    const totalDays = Math.max(1, tripNights + 1);
+    let name = '';
+    let desc = '';
+    let netCost = 45;
+    let selling = 65;
+
+    if (serviceType === 'VIP_MEET_GREET') {
+      name = 'VIP Airport Tarmac / Aerobridge Fast-Track Meet & Greet';
+      desc = 'Dedicated airport escort directly from aerobridge, fast-track immigration clearance, luggage assistance & escort to chauffeur vehicle.';
+      netCost = 75;
+      selling = 110;
+    } else if (serviceType === 'LUGGAGE_VAN') {
+      name = 'Dedicated Chauffeur Luggage Support Van';
+      desc = 'Separate dedicated luggage support van for excess golf bags, family luggage, and VIP shopping boxes.';
+      netCost = 90;
+      selling = 135;
+    } else {
+      name = `Unlimited Pocket Wi-Fi Router (${totalDays} Days Airport Pickup & Drop)`;
+      desc = 'Portable 5G Pocket Wi-Fi connecting up to 8 devices simultaneously with all-day battery life.';
+      netCost = 6 * totalDays;
+      selling = 10 * totalDays;
+    }
+
+    const product = {
+      id: `addon-service-${serviceType.toLowerCase()}-${Date.now()}`,
+      sku: `SVC-${serviceType}`,
+      destinationId: currentDestination.id,
+      destinationName: currentDestination.name,
+      country: currentDestination.name,
+      city: 'Airport VIP Ground Services',
+      productType: 'VIP Concierge Service',
+      isOptionalService: true,
+      name,
+      shortDescription: desc,
+      longDescription: desc,
+      supplierId: 'sup-ground-vip',
+      supplierName: `${currentDestination.name} VIP Concierge Operations`,
+      category: 'Optional Services',
+      subcategory: 'Ground Concierge',
+      adultNetPrice: netCost,
+      childNetPrice: 0,
+      infantNetPrice: 0,
+      currency: 'USD' as CurrencyCode,
+      defaultMarkupPercent: Math.round(((selling - netCost) / Math.max(1, netCost)) * 100),
+      taxPercent: 0,
+      commissionPercent: 10,
+      serviceFeeFixed: 0,
+      season: 'All Year',
+      validityFrom: '2026-01-01',
+      validityTo: '2026-12-31',
+      minPax: 1,
+      maxPax: 20,
+      availability: 'INSTANT',
+      inclusions: [desc, '24/7 Operations Duty Manager Coordination'],
+      exclusions: ['Personal gratuities'],
+      status: 'ACTIVE'
+    } as unknown as Product;
+
+    addProductToQuote(product, {
+      adults: 1,
+      children: 0,
+      infants: 0,
+      travelDate: startDate,
+      openDrawer: false
+    });
+  };
 
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
 
@@ -1187,60 +1402,48 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       }
     }
 
-    // 4. Transfers & Transport
+    // 4. Activities & Experiences
     let s4Status: 'COMPLETED' | 'IN_PROGRESS' | 'WARNING' | 'NOT_STARTED' = 'NOT_STARTED';
-    if (invalidTransfers.length > 0) {
-      s4Status = 'WARNING';
-    } else if (transferItems.length >= transitMovements.length && transitMovements.length > 0) {
+    if (activityItems.length >= 2) {
       s4Status = 'COMPLETED';
-    } else if (transferItems.length > 0) {
+    } else if (activityItems.length === 1) {
       s4Status = 'IN_PROGRESS';
     } else {
       s4Status = 'NOT_STARTED';
     }
 
-    // 5. Activities & Experiences
-    let s5Status: 'COMPLETED' | 'IN_PROGRESS' | 'WARNING' | 'NOT_STARTED' = 'NOT_STARTED';
-    if (activityItems.length >= 2) {
+    // 5. Visa & Ancillary Services
+    let s5Status: 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED' = 'NOT_STARTED';
+    if (visaItems.length > 0) {
       s5Status = 'COMPLETED';
-    } else if (activityItems.length === 1) {
-      s5Status = 'IN_PROGRESS';
     } else {
       s5Status = 'NOT_STARTED';
     }
 
     // 6. Optional Services
     let s6Status: 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED' = 'NOT_STARTED';
-    if (addonItems.length > 0 || visaItems.length > 0) {
+    if (addonItems.length > 0) {
       s6Status = 'COMPLETED';
     } else {
       s6Status = 'NOT_STARTED';
     }
 
-    // 7. Day-by-Day Master Schedule
-    let s7Status: 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED' = 'NOT_STARTED';
-    if (calendarDays.length > 0 && items.length > 0) {
-      s7Status = 'COMPLETED';
-    } else if (calendarDays.length > 0) {
-      s7Status = 'IN_PROGRESS';
-    }
-
-    // 8. Review & Feasibility
-    let s8Status: 'COMPLETED' | 'WARNING' | 'NOT_STARTED' = 'NOT_STARTED';
+    // 7. Review & Feasibility
+    let s7Status: 'COMPLETED' | 'WARNING' | 'NOT_STARTED' = 'NOT_STARTED';
     if (feasibility.score >= 8.5) {
-      s8Status = 'COMPLETED';
+      s7Status = 'COMPLETED';
     } else if (feasibility.warnings.length > 0) {
-      s8Status = 'WARNING';
+      s7Status = 'WARNING';
     } else {
-      s8Status = 'COMPLETED';
+      s7Status = 'COMPLETED';
     }
 
-    // 9. Pricing & Margin
-    let s9Status: 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED' = 'NOT_STARTED';
+    // 8. Pricing & Margin
+    let s8Status: 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED' = 'NOT_STARTED';
     if (items.length > 0 && effectiveFinalPrice > 0) {
-      s9Status = 'COMPLETED';
+      s8Status = 'COMPLETED';
     } else {
-      s9Status = 'NOT_STARTED';
+      s8Status = 'NOT_STARTED';
     }
 
     return {
@@ -1251,8 +1454,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       step5: s5Status,
       step6: s6Status,
       step7: s7Status,
-      step8: s8Status,
-      step9: s9Status
+      step8: s8Status
     };
   }, [
     clientName, 
@@ -1264,7 +1466,6 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     tripNights, 
     quotationScope, 
     hotelItems, 
-    transferItems, 
     activityItems, 
     addonItems, 
     visaItems, 
@@ -1274,7 +1475,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     effectiveFinalPrice
   ]);
 
-  // Overall Quote Completeness Calculation (9 Steps)
+  // Overall Quote Completeness Calculation (8 Steps)
   const quoteCompleteness = useMemo(() => {
     let completedSteps = 0;
     if (stepStatuses.step1 === 'COMPLETED') completedSteps++;
@@ -1285,13 +1486,12 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     if (stepStatuses.step6 === 'COMPLETED') completedSteps++;
     if (stepStatuses.step7 === 'COMPLETED') completedSteps++;
     if (stepStatuses.step8 === 'COMPLETED') completedSteps++;
-    if (stepStatuses.step9 === 'COMPLETED') completedSteps++;
 
-    const percent = Math.round((completedSteps / 9) * 100);
+    const percent = Math.round((completedSteps / 8) * 100);
     return { completedSteps, percent };
   }, [stepStatuses]);
 
-  // Step definitions array (1 to 9)
+  // Step definitions array (1 to 8)
   const stepsList = [
     {
       id: 1,
@@ -1311,7 +1511,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     },
     {
       id: 3,
-      name: 'Hotels & Accommodation',
+      name: 'Hotels & Accommodation Stays',
       shortDesc: 'Contracted Properties & Stays',
       status: stepStatuses.step3,
       summary: quotationScope === 'LAND_ONLY' ? 'Skipped (Land Only)' : `${hotelItems.length} Hotels Booked`,
@@ -1319,49 +1519,41 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     },
     {
       id: 4,
-      name: 'Transfers & Ground Logistics',
-      shortDesc: 'Airport & Intercity Ground Logistics',
-      status: stepStatuses.step4,
-      summary: `${groundLogisticsItems.length} Services Booked`,
-      icon: Car
-    },
-    {
-      id: 5,
       name: 'Activities & Experiences',
-      shortDesc: 'Curated Tours & Sightseeing',
-      status: stepStatuses.step5,
-      summary: `${activityItems.length} Activities Added`,
+      shortDesc: 'Curated Tours, Rail & Experiences',
+      status: stepStatuses.step4,
+      summary: `${activityItems.length} Products Added`,
       icon: Compass
     },
     {
-      id: 6,
+      id: 5,
       name: 'Visa & Ancillary Services',
-      shortDesc: 'Official Visas, Travel Protection, 5G Connectivity & VIP Ground Services',
-      status: stepStatuses.step6,
-      summary: `${addonItems.length + visaItems.length} Services Selected`,
+      shortDesc: 'Official Visas, Travel Protection & VIP Services',
+      status: stepStatuses.step5,
+      summary: `${visaItems.length} Services Configured`,
       icon: ShieldCheck
     },
     {
-      id: 7,
-      name: 'Day-by-Day Itinerary',
-      shortDesc: 'Chronological Master Schedule & Timeline',
-      status: stepStatuses.step7,
-      summary: `${calendarDays.length} Days • ${items.length} Services`,
-      icon: Calendar
+      id: 6,
+      name: 'Optional Services',
+      shortDesc: 'Upgrades & Add-ons',
+      status: stepStatuses.step6,
+      summary: `${addonItems.length} Options Selected`,
+      icon: Sparkles
     },
     {
-      id: 8,
+      id: 7,
       name: 'Review & Feasibility',
       shortDesc: 'Operational Diagnostics & Check',
-      status: stepStatuses.step8,
+      status: stepStatuses.step7,
       summary: `Score ${feasibility.score}/10 (${feasibility.status})`,
       icon: CheckCircle2
     },
     {
-      id: 9,
+      id: 8,
       name: 'Pricing & Margin',
       shortDesc: 'Commercial Calculations & Export',
-      status: stepStatuses.step9,
+      status: stepStatuses.step8,
       summary: `${currency} ${effectiveFinalPrice.toLocaleString()}`,
       icon: DollarSign
     }
@@ -1428,7 +1620,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
               Quote Completeness:
             </span>
             <span className="text-xs font-black text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-200">
-              {quoteCompleteness.percent}% Complete ({quoteCompleteness.completedSteps} of 9 Steps)
+              {quoteCompleteness.percent}% Complete ({quoteCompleteness.completedSteps} of 8 Steps)
             </span>
             <span className="text-[11px] text-slate-400 font-medium">
               • Auto-Saved {lastSavedTimestamp}
@@ -1477,7 +1669,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 Quotation Workflow
               </span>
               <span className="text-[11px] font-bold text-slate-400">
-                Step {activeStepId} of 9
+                Step {activeStepId} of 8
               </span>
             </div>
 
@@ -1577,12 +1769,12 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <Users className="w-5 h-5" />
                   </div>
                   <div>
-                    <h2 className="text-base font-black text-slate-900">Step 1: Trip & Customer Specifications</h2>
+                    <h2 className="text-base font-black text-slate-900">Step 1: Trip Details</h2>
                     <p className="text-xs text-slate-500">Configure traveler profile, travel dates, passenger ages, and rooming.</p>
                   </div>
                 </div>
                 <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                  Step 1 of 9
+                  Step 1 of 8
                 </span>
               </div>
 
@@ -1901,12 +2093,12 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <MapPin className="w-5 h-5" />
                   </div>
                   <div>
-                    <h2 className="text-base font-black text-slate-900">Step 2: Multi-City Route & Hub Sequencer</h2>
+                    <h2 className="text-base font-black text-slate-900">Step 2: Destinations & Route</h2>
                     <p className="text-xs text-slate-500">Configure city hubs, night allocations, and sequence.</p>
                   </div>
                 </div>
                 <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                  Step 2 of 9
+                  Step 2 of 8
                 </span>
               </div>
 
@@ -2115,7 +2307,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     {quotationScope === 'LAND_ONLY' ? '✓ Land-Only Package' : 'Land-Only Mode'}
                   </button>
                   <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                    Step 3 of 9
+                    Step 3 of 8
                   </span>
                 </div>
               </div>
@@ -2587,694 +2779,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             </div>
           )}
 
-          {/* STEP 4: TRANSFERS & GROUND LOGISTICS */}
+          {/* STEP 4: ACTIVITIES & EXPERIENCES */}
           {activeStepId === 4 && (
-            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
-              {/* Header */}
-              <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
-                    <Car className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h2 className="text-base font-black text-slate-900">Step 4: Transfers & Ground Logistics</h2>
-                    <p className="text-xs text-slate-500">
-                      Master transfer inventory dynamically matched to your {routeHubs.length}-hub itinerary ({transitMovements.length} transit movements).
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                    Step 4 of 9
-                  </span>
-                  <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-slate-900 text-[#00E5C0]">
-                    {groundLogisticsItems.length} Booked • {isGroundPricingFailed ? 'Price unavailable' : formatCurrency(totalGroundLogisticsPrice ?? 0, currency)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Authoritative Total Ground Logistics Card & Service Type Breakdown */}
-              <div className="p-6 bg-slate-900 text-white rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-6 animate-fadeIn shadow-xs border border-slate-800">
-                <div className="space-y-1">
-                  <div className="text-[10px] uppercase font-black text-slate-400 tracking-wider">Authoritative Aggregate</div>
-                  <h3 className="text-sm font-bold text-slate-300">Total Ground Logistics</h3>
-                  <div className="text-3xl font-mono font-black text-[#00E5C0]">
-                    {isGroundPricingLoading ? (
-                      <span className="animate-pulse">Calculating...</span>
-                    ) : isGroundPricingFailed ? (
-                      <span className="text-rose-400 text-xl">Price unavailable</span>
-                    ) : (
-                      formatCurrency(totalGroundLogisticsPrice ?? 0, currency)
-                    )}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 pt-4 md:pt-0 border-t border-slate-800 md:border-t-0 text-xs font-mono w-full md:w-auto md:min-w-[480px]">
-                  <div className="space-y-1 bg-slate-800/40 p-3 rounded-2xl border border-slate-800/80">
-                    <span className="text-slate-400 text-[10px] block uppercase font-bold leading-none">All Transfer Fleet</span>
-                    <span className="font-bold text-slate-200">{isGroundPricingFailed ? '—' : formatCurrency(transferFleetTotal, currency)}</span>
-                  </div>
-                  <div className="space-y-1 bg-slate-800/40 p-3 rounded-2xl border border-slate-800/80">
-                    <span className="text-slate-400 text-[10px] block uppercase font-bold leading-none">Rail</span>
-                    <span className="font-bold text-slate-200">{isGroundPricingFailed ? '—' : formatCurrency(railTotal, currency)}</span>
-                  </div>
-                  <div className="space-y-1 bg-slate-800/40 p-3 rounded-2xl border border-slate-800/80">
-                    <span className="text-slate-400 text-[10px] block uppercase font-bold leading-none">Custom Service</span>
-                    <span className="font-bold text-slate-200">{isGroundPricingFailed ? '—' : formatCurrency(customTransferTotal, currency)}</span>
-                  </div>
-                  <div className="space-y-1 bg-slate-800/40 p-3 rounded-2xl border border-slate-800/80">
-                    <span className="text-slate-400 text-[10px] block uppercase font-bold leading-none">Wholesale Net</span>
-                    <span className="text-slate-300 font-bold">{formatCurrency(totalGroundLogisticsNet, currency)}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Pricing Failure Warning Alert Banner */}
-              {isGroundPricingFailed && (
-                <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex items-start space-x-3 animate-fadeIn">
-                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                  <div className="space-y-1 w-full">
-                    <h4 className="text-xs font-black text-rose-900 uppercase tracking-wider">
-                      Ground Logistics Pricing Failure — Action Required
-                    </h4>
-                    <p className="text-xs text-rose-800">
-                      One or more configured ground logistics services could not be priced. Stale prices, zero prices, or Net fallbacks are rejected. Please review and adjust the configurations below:
-                    </p>
-                    <ul className="list-disc pl-5 mt-2 space-y-1 text-xs text-rose-700 font-bold">
-                      {failedGroundItems.map(it => {
-                        const legIdx = getLegIndexForItem(it);
-                        return (
-                          <li key={it.id}>
-                            {getInventoryDisplayName(it)} in Leg {legIdx + 1} ({it.notes || 'No description'})
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                </div>
-              )}
-
-              {/* Empty Route Hubs State */}
-              {routeHubs.length === 0 ? (
-                <div className="p-8 text-center bg-slate-50 rounded-3xl border border-dashed border-slate-300 space-y-3">
-                  <MapPin className="w-10 h-10 text-slate-400 mx-auto" />
-                  <div className="space-y-1">
-                    <h4 className="text-sm font-black text-slate-800">No Itinerary Hubs Configured</h4>
-                    <p className="text-xs text-slate-500 max-w-md mx-auto">
-                      Please define destinations and cities in Step 2 (Route Builder) to automatically generate your ground transit movements and match contracted vehicle inventory.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveStepId(2)}
-                    className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5"
-                  >
-                    <span>Go to Step 2 (Route Builder)</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ) : (
-                <>
-                  {/* Route Hub Change Conflict Notification Banner */}
-                  {invalidTransfers.length > 0 && (
-                    <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
-                      <div className="flex items-start space-x-3">
-                        <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                        <div>
-                          <h4 className="text-xs font-black text-amber-900 uppercase tracking-wider">
-                            Route Hub Changed — Incompatible Transfers Detected
-                          </h4>
-                          <p className="text-xs text-amber-800 mt-0.5">
-                            {invalidTransfers.length} {invalidTransfers.length === 1 ? 'transfer' : 'transfers'} in your quote ({invalidTransfers.map(t => getInventoryDisplayName(t)).join(', ')}) belong to hubs that are no longer part of your active itinerary.
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          invalidTransfers.forEach(t => removeProductFromQuote(t.id));
-                        }}
-                        className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shrink-0 transition-colors cursor-pointer shadow-2xs"
-                      >
-                        Remove Incompatible ({invalidTransfers.length})
-                      </button>
-                    </div>
-                  )}
-
-                  {/* STEP 4: ITINERARY LEGS LIST (Strict Leg-Only Ground Logistics) */}
-                  <div className="space-y-6">
-                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                      <div>
-                        <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">
-                          Itinerary Legs & Ground Movements ({transitMovements.length} Legs)
-                        </h3>
-                        <p className="text-xs text-slate-500">
-                          Select a Leg below to configure or add All Transfer Fleet, Rail, or Custom Transfer Services.
-                        </p>
-                      </div>
-                      <span className="text-xs font-mono font-bold text-slate-700 bg-slate-100 px-3 py-1 rounded-xl">
-                        {transferItems.length + railItems.length} Services Booked
-                      </span>
-                    </div>
-
-                    {transitMovements.map((movement, idx) => {
-                      const totalPax = adultsCount + childrenCount;
-                      
-                      // Find items booked for this specific leg
-                      const legBookedItems = items.filter(it => {
-                        const isTrfOrRail = (it.product as any).isTransfer || 
-                                            (it.product as any).isRail ||
-                                            (it.product.category || '').toLowerCase().includes('transfer') ||
-                                            (it.product.category || '').toLowerCase().includes('rail') ||
-                                            (it.product.productType || '').toLowerCase().includes('transfer') ||
-                                            (it.product.productType || '').toLowerCase().includes('rail');
-                        if (!isTrfOrRail) return false;
-
-                        if ((it as any).quoteLegId === movement.id || (it as any).legId === movement.id) return true;
-
-                        if (it.travelDate && movement.suggestedDate && it.travelDate === movement.suggestedDate) {
-                          if (movement.fromHubId && (it.product.fromHubId === movement.fromHubId || it.product.hubId === movement.fromHubId)) return true;
-                          if (movement.toHubId && (it.product.toHubId === movement.toHubId || it.product.hubId === movement.toHubId)) return true;
-                          if (movement.fromName && it.notes?.toLowerCase().includes(movement.fromName.toLowerCase())) return true;
-                          if (movement.toName && it.notes?.toLowerCase().includes(movement.toName.toLowerCase())) return true;
-                        }
-                        return false;
-                      });
-
-                      const activeLegOption = legOptionState[movement.id] || 'NONE';
-
-                      return (
-                        <div 
-                          key={movement.id}
-                          className={`p-5 rounded-3xl border transition-all ${
-                            legBookedItems.length > 0
-                              ? 'bg-emerald-50/30 border-emerald-200 shadow-2xs'
-                              : 'bg-slate-50/70 border-slate-200'
-                          }`}
-                        >
-                          {/* Movement Header */}
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200/80">
-                            <div className="space-y-1">
-                              <div className="flex items-center space-x-2">
-                                <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-slate-900 text-[#00E5C0]">
-                                  Leg {idx + 1} • Day {movement.suggestedDay}
-                                </span>
-                                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-teal-100 text-teal-800">
-                                  {movement.badge}
-                                </span>
-                                <span className="text-[11px] font-medium text-slate-500">
-                                  📅 {movement.suggestedDate ? new Date(movement.suggestedDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : `Day ${movement.suggestedDay}`}
-                                </span>
-                              </div>
-                              <h3 className="text-sm font-black text-slate-900 flex items-center space-x-2">
-                                <span>{movement.fromName}</span>
-                                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-                                <span>{movement.toName}</span>
-                              </h3>
-                            </div>
-
-                            {/* Leg Status Indicator */}
-                            <div>
-                              {legBookedItems.length > 0 ? (
-                                <div className="flex flex-col sm:items-end gap-1.5">
-                                  <span className="inline-flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
-                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                                    <span>{legBookedItems.length} {legBookedItems.length === 1 ? 'Service' : 'Services'} Configured</span>
-                                  </span>
-                                  <span className="text-xs font-mono font-black text-emerald-800 bg-emerald-100/50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
-                                    Ground Logistics Total: {formatCurrency(legBookedItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), currency)}
-                                  </span>
-                                </div>
-                              ) : (
-                                <span className="text-[11px] font-bold text-amber-700 bg-amber-100/70 px-2.5 py-1 rounded-lg border border-amber-200">
-                                  Pending Selection
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Configured Ground Movements for this Leg */}
-                          {legBookedItems.length > 0 && (
-                            <div className="mt-4 space-y-2.5">
-                              <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
-                                Configured Services for Leg {idx + 1}:
-                              </span>
-                              <div className="space-y-2">
-                                {legBookedItems.map(item => (
-                                  <div 
-                                    key={item.id}
-                                    className="p-3.5 bg-white rounded-2xl border border-emerald-300/80 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                                  >
-                                    <div className="space-y-1 min-w-0">
-                                      <div className="flex items-center space-x-2">
-                                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-900">
-                                          {(item.product as any).isRail || (item.product.category || '').toLowerCase().includes('rail') ? 'Japan Rail' : 'Private Transfer'}
-                                        </span>
-                                        <h4 className="text-xs font-black text-slate-900 truncate">
-                                          {getInventoryDisplayName(item)}
-                                        </h4>
-                                      </div>
-                                      <p className="text-[11px] text-slate-600 line-clamp-1">
-                                        {getInventoryConfigurationSummary(item) || item.notes || item.product.name}
-                                      </p>
-                                    </div>
-
-                                    <div className="flex items-center space-x-3 shrink-0">
-                                      <div className="text-right font-mono font-black text-xs text-slate-900">
-                                        {formatCurrency(item.calculation?.finalTotalSellingPrice || 0, currency)}
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleOpenEditTransferConfig(item)}
-                                        className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer transition-colors"
-                                        title="Edit Configuration"
-                                      >
-                                        <Edit3 className="w-3.5 h-3.5" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => removeProductFromQuote(item.id)}
-                                        className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold cursor-pointer transition-colors"
-                                        title="Remove from Quote"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* IN-LEG GROUND MOVEMENT OPTIONS WORKSPACE */}
-                          <div className="mt-4 pt-3 border-t border-slate-200/80">
-                            {activeLegOption === 'NONE' && (
-                              <button
-                                type="button"
-                                onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'OPTIONS' }))}
-                                className="w-full py-2.5 px-4 rounded-2xl border border-dashed border-teal-300 hover:border-teal-500 bg-teal-50/50 hover:bg-teal-50 text-teal-900 text-xs font-black transition-all cursor-pointer flex items-center justify-center space-x-2 shadow-2xs"
-                              >
-                                <Plus className="w-4 h-4 text-[#00C6A6]" />
-                                <span>
-                                  {legBookedItems.length > 0 ? '+ Add Another Ground Movement to Leg' : '+ Add Ground Movement'}
-                                </span>
-                              </button>
-                            )}
-
-                            {activeLegOption === 'OPTIONS' && (
-                              <div className="p-4 bg-white rounded-2xl border border-teal-300 space-y-3 animate-fadeIn shadow-xs">
-                                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                                  <div>
-                                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                                      Choose Ground Movement Type for Leg {idx + 1}
-                                    </h4>
-                                    <p className="text-[11px] text-slate-500">
-                                      {movement.fromName} ➔ {movement.toName}
-                                    </p>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }))}
-                                    className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-bold cursor-pointer"
-                                  >
-                                    Close
-                                  </button>
-                                </div>
-
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                  {/* 1. All Transfer Fleet */}
-                                  <button
-                                    type="button"
-                                    onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'FLEET' }))}
-                                    className="p-4 rounded-2xl border border-slate-200 hover:border-teal-400 hover:bg-teal-50/40 text-left transition-all cursor-pointer group space-y-2 bg-slate-50/50"
-                                  >
-                                    <div className="w-9 h-9 rounded-xl bg-teal-100 text-teal-800 flex items-center justify-center font-bold group-hover:bg-slate-900 group-hover:text-[#00E5C0] transition-colors">
-                                      <Car className="w-4 h-4" />
-                                    </div>
-                                    <div>
-                                      <h4 className="text-xs font-black text-slate-900 group-hover:text-teal-800">All Transfer Fleet</h4>
-                                      <p className="text-[10px] text-teal-700 font-bold mt-0.5">Browse available vehicles</p>
-                                      <p className="text-[10px] text-slate-500 mt-1 leading-tight">
-                                        Executive Sedan • Alphard MPV • HiAce • Minibus
-                                      </p>
-                                    </div>
-                                  </button>
-
-                                  {/* 2. Rail */}
-                                  <button
-                                    type="button"
-                                    onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'RAIL' }))}
-                                    className="p-4 rounded-2xl border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/40 text-left transition-all cursor-pointer group space-y-2 bg-slate-50/50"
-                                  >
-                                    <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold group-hover:bg-slate-900 group-hover:text-[#00E5C0] transition-colors">
-                                      <Train className="w-4 h-4" />
-                                    </div>
-                                    <div>
-                                      <h4 className="text-xs font-black text-slate-900 group-hover:text-emerald-800">Rail</h4>
-                                      <p className="text-[10px] text-emerald-700 font-bold mt-0.5">Japan rail journey</p>
-                                      <p className="text-[10px] text-slate-500 mt-1 leading-tight">
-                                        Ordinary Reserved Seat & Green Car First Class
-                                      </p>
-                                    </div>
-                                  </button>
-
-                                  {/* 3. + Custom Transfer Service */}
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      handleOpenCustomTransferModal(movement);
-                                      setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }));
-                                    }}
-                                    className="p-4 rounded-2xl border border-slate-200 hover:border-amber-400 hover:bg-amber-50/40 text-left transition-all cursor-pointer group space-y-2 bg-slate-50/50"
-                                  >
-                                    <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold group-hover:bg-slate-900 group-hover:text-[#00E5C0] transition-colors">
-                                      <Sliders className="w-4 h-4" />
-                                    </div>
-                                    <div>
-                                      <h4 className="text-xs font-black text-slate-900 group-hover:text-amber-800">+ Custom Transfer Service</h4>
-                                      <p className="text-[10px] text-amber-700 font-bold mt-0.5">Add manually specified transfer</p>
-                                      <p className="text-[10px] text-slate-500 mt-1 leading-tight">
-                                        Bespoke routes, special requests & custom pricing
-                                      </p>
-                                    </div>
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-
-                            {activeLegOption === 'FLEET' && (
-                              <div className="p-4 bg-white rounded-2xl border border-teal-300 space-y-4 animate-fadeIn shadow-xs">
-                                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                                  <div className="flex items-center space-x-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'OPTIONS' }))}
-                                      className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
-                                    >
-                                      <ArrowLeft className="w-3.5 h-3.5" />
-                                    </button>
-                                    <div>
-                                      <h4 className="text-xs font-black text-slate-900">
-                                        All Transfer Fleet — Leg {idx + 1} ({movement.fromName} ➔ {movement.toName})
-                                      </h4>
-                                      <p className="text-[11px] text-slate-500">
-                                        Select an available vehicle or contracted route transfer below.
-                                      </p>
-                                    </div>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }))}
-                                    className="text-xs font-bold text-slate-400 hover:text-slate-600"
-                                  >
-                                    Close
-                                  </button>
-                                </div>
-
-                                {/* Contracted Route Products First */}
-                                {movement.matchingProducts.length > 0 && (
-                                  <div className="space-y-2">
-                                    <span className="text-[10px] font-black uppercase text-teal-800 tracking-wider block">
-                                      Contracted Route Match ({movement.matchingProducts.length} Vehicles Available):
-                                    </span>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                      {movement.matchingProducts.map(prod => {
-                                        const tierRes = resolveCapacityPricingTier({ product: prod, passengerCount: totalPax });
-                                        const vehiclesNeeded = tierRes.vehiclesRequired;
-                                        const convertedSelling = convertCurrency(tierRes.calculatedPrice, tierRes.currency, currency);
-
-                                        return (
-                                          <div key={prod.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-col justify-between space-y-2">
-                                            <div>
-                                              <div className="flex items-center justify-between text-[10px]">
-                                                <span className="font-bold text-teal-800 uppercase">{prod.subcategory || 'Private Transfer'}</span>
-                                                <span className="text-slate-400 font-mono">{prod.supplierName || 'Fleet'}</span>
-                                              </div>
-                                              <h5 className="text-xs font-black text-slate-900 mt-1">{getInventoryDisplayName(prod)}</h5>
-                                              <p className="text-[11px] text-slate-500">Vehicle: {prod.vehicleConfig?.vehicleName || 'Executive MPV'} • Capacity: {tierRes.minPassengers}–{tierRes.maxPassengers} Pax</p>
-                                            </div>
-                                            <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between">
-                                              <div className="text-xs font-black font-mono text-slate-900">
-                                                {formatCurrency(convertedSelling, currency)}
-                                              </div>
-                                              <div className="flex items-center space-x-1.5">
-                                                <button
-                                                  type="button"
-                                                  onClick={() => {
-                                                    handleQuickAddTransfer(prod, movement);
-                                                    setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }));
-                                                  }}
-                                                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold"
-                                                >
-                                                  + Quick Add
-                                                </button>
-                                                <button
-                                                  type="button"
-                                                  onClick={() => handleOpenConfigureTransfer(prod, movement)}
-                                                  className="px-3 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black"
-                                                >
-                                                  Configure
-                                                </button>
-                                              </div>
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Full Fleet Search & Catalog */}
-                                <div className="space-y-2 pt-2 border-t border-slate-100">
-                                  <div className="flex items-center space-x-2 bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
-                                    <Search className="w-3.5 h-3.5 text-slate-400" />
-                                    <input
-                                      type="text"
-                                      placeholder="Search all master transfer fleet..."
-                                      value={step4FleetSearch}
-                                      onChange={(e) => setStep4FleetSearch(e.target.value)}
-                                      className="w-full bg-transparent text-xs text-slate-900 outline-none"
-                                    />
-                                  </div>
-
-                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
-                                    {allMasterTransferProducts
-                                      .filter(p => !step4FleetSearch || p.name.toLowerCase().includes(step4FleetSearch.toLowerCase()) || (p.vehicleConfig?.vehicleName || '').toLowerCase().includes(step4FleetSearch.toLowerCase()))
-                                      .map(prod => {
-                                        const tierRes = resolveCapacityPricingTier({ product: prod, passengerCount: totalPax });
-                                        const convertedSelling = convertCurrency(tierRes.calculatedPrice, tierRes.currency, currency);
-
-                                        return (
-                                          <div key={prod.id} className="p-3 bg-white rounded-xl border border-slate-200 flex flex-col justify-between space-y-2">
-                                            <div>
-                                              <h5 className="text-xs font-black text-slate-900">{getInventoryDisplayName(prod)}</h5>
-                                              <p className="text-[11px] text-slate-500">Vehicle: {prod.vehicleConfig?.vehicleName || 'Vehicle'}</p>
-                                            </div>
-                                            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                                              <span className="text-xs font-mono font-black">{formatCurrency(convertedSelling, currency)}</span>
-                                              <button
-                                                type="button"
-                                                onClick={() => {
-                                                  handleQuickAddTransfer(prod, movement);
-                                                  setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }));
-                                                }}
-                                                className="px-2.5 py-1 rounded-lg bg-slate-900 text-[#00E5C0] text-xs font-black"
-                                              >
-                                                + Add to Leg
-                                              </button>
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-
-                            {activeLegOption === 'RAIL' && (
-                              <div className="p-4 bg-white rounded-2xl border border-emerald-300 space-y-4 animate-fadeIn shadow-xs">
-                                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                                  <div className="flex items-center space-x-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'OPTIONS' }))}
-                                      className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
-                                    >
-                                      <ArrowLeft className="w-3.5 h-3.5" />
-                                    </button>
-                                    <div>
-                                      <h4 className="text-xs font-black text-slate-900">
-                                        Rail Journey Configurator — Leg {idx + 1} ({movement.fromName} ➔ {movement.toName})
-                                      </h4>
-                                      <p className="text-[11px] text-slate-500">
-                                        Configure high-speed Shinkansen bullet train routes for this leg.
-                                      </p>
-                                    </div>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }))}
-                                    className="text-xs font-bold text-slate-400 hover:text-slate-600"
-                                  >
-                                    Close
-                                  </button>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                  {japanRailMasterProducts.map(prod => {
-                                    const isGreen = prod.id === 'RAIL-JP-GREEN-RESERVED' || prod.carType === 'Green' || (prod.name || '').toLowerCase().includes('green');
-                                    const canonicalName = isGreen ? 'Green Car — First Class / Reserved' : 'Ordinary Car — Reserved Seat';
-
-                                    return (
-                                      <div key={prod.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col justify-between space-y-3">
-                                        <div className="space-y-1.5">
-                                          <div className="flex items-center justify-between">
-                                            <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${isGreen ? 'bg-emerald-100 text-emerald-900' : 'bg-slate-200 text-slate-800'}`}>
-                                              {isGreen ? 'First Class (Green Car)' : 'Standard Reserved'}
-                                            </span>
-                                            <span className="text-[10px] font-bold text-teal-700">smartEX Network</span>
-                                          </div>
-                                          <h5 className="text-xs font-black text-slate-900">{canonicalName}</h5>
-                                          <p className="text-[11px] text-slate-500 leading-snug">
-                                            {isGreen ? 'First-class luxury travel with 2x2 executive seating, hot towels & quiet atmosphere.' : 'Reserved seating across Japan Shinkansen bullet train network.'}
-                                          </p>
-                                        </div>
-                                        <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
-                                          <span className="text-[10px] text-slate-500">Dynamic Live Rate</span>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              onOpenProductDetails(prod);
-                                              setLegOptionState(prev => ({ ...prev, [movement.id]: 'NONE' }));
-                                            }}
-                                            className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black flex items-center space-x-1"
-                                          >
-                                            <Sliders className="w-3.5 h-3.5" />
-                                            <span>Configure Rail Journey</span>
-                                          </button>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="mt-6 pt-6 border-t border-slate-200/80 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-black text-slate-800 uppercase tracking-wider block">
-                        Ground Services Included in Quotation ({groundLogisticsItems.length}):
-                      </span>
-                      <span className="text-xs font-mono font-bold text-teal-700">
-                        Total Ground Logistics: {isGroundPricingFailed ? 'Price unavailable' : formatCurrency(totalGroundLogisticsPrice ?? 0, currency)}
-                      </span>
-                    </div>
-
-                    {groundLogisticsItems.length === 0 ? (
-                      <div className="p-6 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300 text-xs text-slate-500">
-                        No ground services or rail journeys added yet. Click "Configure" or "+ Quick Add" on any movement leg above.
-                      </div>
-                    ) : (
-                      <div className="space-y-2.5">
-                        {groundLogisticsItems.map(item => {
-                          const isInvalid = invalidTransfers.some(inv => inv.id === item.id);
-                          const isRail = (item.product as any).isRail || (item.product.category || '').toLowerCase().includes('rail');
-
-                          return (
-                            <div 
-                              key={item.id} 
-                              className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all ${
-                                isInvalid 
-                                  ? 'bg-amber-50/70 border-amber-300'
-                                  : 'bg-slate-50 border-slate-200'
-                              }`}
-                            >
-                              <div className="space-y-1">
-                                <div className="flex items-center space-x-2">
-                                  <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${isRail ? 'bg-emerald-100 text-emerald-950' : 'bg-teal-100 text-teal-950'}`}>
-                                    {isRail ? 'Rail' : 'Private Transfer'}
-                                  </span>
-                                  <h4 className="text-xs font-black text-slate-900">
-                                    {getInventoryDisplayName(item)}
-                                  </h4>
-                                  {isInvalid && (
-                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-200 text-amber-900">
-                                      ⚠️ Route Hub Removed
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-[11px] text-slate-600">
-                                  {getInventoryConfigurationSummary(item) || `${item.product.name} • ${item.travelDate || startDate}`}
-                                </p>
-                                <p className="text-[11px] text-slate-500">
-                                  Date: <strong className="text-slate-700">{item.travelDate || startDate}</strong>
-                                  {item.serviceTime && ` • Time: ${item.serviceTime}`}
-                                  {item.notes && ` • Notes: ${item.notes}`}
-                                </p>
-                                <span className="text-xs font-mono font-bold text-teal-700 block">
-                                  {formatCurrency(item.calculation.finalTotalSellingPrice, currency)}
-                                </span>
-                              </div>
-
-                              <div className="flex items-center space-x-2 shrink-0">
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenEditTransferConfig(item)}
-                                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1"
-                                >
-                                  <Edit3 className="w-3.5 h-3.5" />
-                                  <span>Edit Config</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => removeProductFromQuote(item.id)}
-                                  className="p-2 rounded-xl bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 cursor-pointer"
-                                  title="Remove from Quote"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-
-                        {/* Ground Logistics Financial Summary Card */}
-                        <div className="p-4 bg-slate-900 text-white rounded-2xl flex flex-wrap items-center justify-between gap-4 mt-3">
-                          <div>
-                            <div className="text-[10px] uppercase font-bold text-slate-400">Total Ground Logistics</div>
-                            <div className="text-sm font-black font-mono text-[#00E5C0]">
-                              {isGroundPricingFailed ? 'Price unavailable' : formatCurrency(totalGroundLogisticsPrice ?? 0, currency)}
-                            </div>
-                          </div>
-                          <div className="flex items-center space-x-6 text-xs font-mono">
-                            <div>
-                              <span className="text-slate-400 text-[10px] block">Wholesale Net</span>
-                              <span>{formatCurrency(totalGroundLogisticsNet, currency)}</span>
-                            </div>
-                            <div>
-                              <span className="text-slate-400 text-[10px] block">Margin</span>
-                              <span className="text-emerald-400">+{isGroundPricingFailed ? '—' : formatCurrency((totalGroundLogisticsPrice ?? 0) - totalGroundLogisticsNet, currency)}</span>
-                            </div>
-                            <div>
-                              <span className="text-slate-400 text-[10px] block">Movements Covered</span>
-                              <span>{groundLogisticsItems.length} / {transitMovements.length}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* STEP 5: ACTIVITIES & EXPERIENCES */}
-          {activeStepId === 5 && (
             <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
               <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
                 <div className="flex items-center space-x-3">
@@ -3282,16 +2788,79 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <Compass className="w-5 h-5" />
                   </div>
                   <div>
-                    <h2 className="text-base font-black text-slate-900">Step 5: Activities & Experiences</h2>
-                    <p className="text-xs text-slate-500">Day-by-day itinerary builder, curated excursions, theme parks, and timing customization.</p>
+                    <h2 className="text-base font-black text-slate-900">Step 4: Activities & Experiences</h2>
+                    <p className="text-xs text-slate-500">Day-by-day itinerary builder, curated excursions, Shinkansen bullet train rail journeys, and product configurations.</p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
+                  {japanRailMasterProducts.length > 0 && matchesDestination(currentDestination.id, 'dest-japan', 'Japan', 'Japan') && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenProductDetails(japanRailMasterProducts[0])}
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs"
+                    >
+                      <Train className="w-3.5 h-3.5" />
+                      <span>🚅 Configure Japan Rail / Shinkansen</span>
+                    </button>
+                  )}
                   <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                    Step 5 of 9
+                    Step 4 of 8
                   </span>
                 </div>
               </div>
+
+              {/* Japan Rail Quick Config Banner if Destination is Japan */}
+              {matchesDestination(currentDestination.id, 'dest-japan', 'Japan', 'Japan') && (
+                <div className="p-4 bg-gradient-to-r from-slate-900 to-indigo-950 text-white rounded-2xl border border-slate-800 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center space-x-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-[#00E5C0] flex items-center justify-center border border-[#00E5C0]/30">
+                        <Train className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black uppercase tracking-wider text-white">
+                          Japan High-Speed Shinkansen Bullet Train Network
+                        </h4>
+                        <p className="text-[11px] text-slate-300">
+                          Configure dynamic smartEX bullet train routes (Tokyo, Kyoto, Osaka, Hiroshima, Hakata & beyond).
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                      Live smartEX Rates (JPY)
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    {japanRailMasterProducts.map(prod => {
+                      const isGreen = prod.id === 'RAIL-JP-GREEN-RESERVED' || prod.carType === 'Green' || (prod.name || '').toLowerCase().includes('green');
+                      const label = isGreen ? 'Green Car (First Class Reserved)' : 'Ordinary Car (Reserved Seat)';
+
+                      return (
+                        <div
+                          key={prod.id}
+                          className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/80 flex items-center justify-between gap-2"
+                        >
+                          <div className="min-w-0">
+                            <span className="text-xs font-bold text-slate-100 block truncate">{label}</span>
+                            <span className="text-[10px] text-slate-400">
+                              {isGreen ? '2x2 luxury seating, hot towel service' : 'Guaranteed reserved seating across Japan network'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => onOpenProductDetails(prod)}
+                            className="px-3 py-1.5 rounded-lg bg-[#00C6A6] hover:bg-[#00A88F] text-slate-950 font-black text-xs transition-colors shrink-0 cursor-pointer flex items-center space-x-1"
+                          >
+                            <Sliders className="w-3 h-3" />
+                            <span>Configure</span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Hub Filter Tabs & Summary */}
               <div className="flex flex-wrap items-center justify-between gap-3 pb-1 border-b border-slate-100">
@@ -3653,9 +3222,24 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             </div>
           )}
 
-          {/* STEP 6: VISA & ANCILLARY SERVICES */}
-          {activeStepId === 6 && (
+          {/* STEP 5: VISA & ANCILLARY SERVICES */}
+          {activeStepId === 5 && (
             <div className="space-y-6 animate-fadeIn">
+              <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-black text-slate-900">Step 5: Visa & Ancillary Services</h2>
+                    <p className="text-xs text-slate-500">Official consular visas, visa facilitation, travel protection, and VIP ancillary services.</p>
+                  </div>
+                </div>
+                <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                  Step 5 of 8
+                </span>
+              </div>
+
               <VisaServicesAndFacilitationSection
                 currentDestination={currentDestination}
                 currency={currency}
@@ -3674,184 +3258,325 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             </div>
           )}
 
-          {/* STEP 7: DAY-BY-DAY MASTER SCHEDULE & TIMELINE */}
-          {activeStepId === 7 && (
+          {/* STEP 6: OPTIONAL SERVICES */}
+          {activeStepId === 6 && (
             <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
               <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
                 <div className="flex items-center space-x-3">
                   <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
-                    <Calendar className="w-5 h-5" />
+                    <Sparkles className="w-5 h-5" />
                   </div>
                   <div>
-                    <h2 className="text-base font-black text-slate-900">Step 7: Day-by-Day Itinerary & Schedule</h2>
-                    <p className="text-xs text-slate-500">Chronological service itinerary, transit connections, daily service agendas, and custom day themes.</p>
+                    <h2 className="text-base font-black text-slate-900">Step 6: Optional Services</h2>
+                    <p className="text-xs text-slate-500">Optional upgrades, international travel protection, 5G eSIM connectivity, and VIP airport & ground add-ons.</p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => onOpenAddonModal('ALL')}
+                    className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ Browse Full Add-ons Catalog</span>
+                  </button>
                   <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                    Step 7 of 9
+                    Step 6 of 8
                   </span>
                 </div>
               </div>
 
-              {/* Hub Filter Tabs */}
-              <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-100">
-                <div className="flex items-center flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedHubFilter('ALL')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                      selectedHubFilter === 'ALL'
-                        ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    All Days ({calendarDays.length})
-                  </button>
-                  {routeHubs.map(h => (
-                    <button
-                      key={h.id}
-                      type="button"
-                      onClick={() => setSelectedHubFilter(h.hubName)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        selectedHubFilter === h.hubName
-                          ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      📍 {h.hubName} ({h.nights}n)
-                    </button>
-                  ))}
+              {/* Optional Services Summary Banner */}
+              <div className="bg-slate-900 text-white p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <span className="text-[10px] font-black uppercase text-[#00E5C0] tracking-wider block">
+                    Optional Services & Upgrades Summary
+                  </span>
+                  <div className="flex items-baseline space-x-2">
+                    <span className="text-2xl font-black font-mono text-white">
+                      {formatCurrency(addonTotalSelling, currency)}
+                    </span>
+                    <span className="text-xs text-slate-400 font-medium">
+                      • {addonItems.length} {addonItems.length === 1 ? 'Option' : 'Options'} Selected
+                    </span>
+                  </div>
                 </div>
 
-                <div className="text-xs text-slate-500 font-medium">
-                  {items.length} Total Services Scheduled
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onOpenAddonModal('INSURANCE')}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5"
+                  >
+                    <Shield className="w-3.5 h-3.5" />
+                    <span>Travel Protection</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onOpenAddonModal('ESIM')}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-blue-300 border border-slate-700 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5"
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span>5G eSIM Data</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onOpenAddonModal('SERVICES')}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-[#00E5C0] border border-slate-700 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5"
+                  >
+                    <Plane className="w-3.5 h-3.5" />
+                    <span>VIP Concierge</span>
+                  </button>
                 </div>
               </div>
 
-              {/* Day Cards */}
-              <div className="space-y-4">
-                {daySlots
-                  .filter(slot => selectedHubFilter === 'ALL' || slot.hub?.hubName === selectedHubFilter)
-                  .map(slot => {
-                    const dayItems = items.filter(it => it.travelDate === slot.dateString);
-                    const dayAccommodations = dayItems.filter(it => (it.product.category || '').toLowerCase().includes('hotel') || (it.product.category || '').toLowerCase().includes('accommodation') || it.isManualHotel);
-                    const dayTransfers = dayItems.filter(it => (it.product as any).isTransfer || (it.product.category || '').toLowerCase().includes('transfer') || (it.product.category || '').toLowerCase().includes('transport'));
-                    const dayActivities = dayItems.filter(it => (it.product.category || '').toLowerCase().includes('tour') || (it.product.category || '').toLowerCase().includes('activit') || (it.product.category || '').toLowerCase().includes('attraction'));
-                    const dayAncillaryItems = dayItems.filter(it => !dayAccommodations.includes(it) && !dayTransfers.includes(it) && !dayActivities.includes(it));
-                    const dayTotalSelling = dayItems.reduce((acc, it) => acc + (it.calculation?.finalTotalSellingPrice || 0), 0);
+              {/* Active Optional Services in Quote */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-black text-slate-700 uppercase tracking-wider">
+                    Selected Optional Services in Quotation ({addonItems.length})
+                  </h3>
+                  {addonItems.length > 0 && (
+                    <span className="text-xs font-mono font-bold text-emerald-700">
+                      Subtotal: {formatCurrency(addonTotalSelling, currency)}
+                    </span>
+                  )}
+                </div>
 
-                    return (
-                      <div key={slot.dayNumber} className="bg-slate-50/70 rounded-2xl border border-slate-200 p-4 space-y-3">
-                        {/* Day Header */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-200/80">
-                          <div className="flex items-center space-x-2.5">
-                            <span className="w-8 h-8 rounded-xl bg-slate-900 text-white font-black text-xs flex items-center justify-center font-mono">
-                              D{slot.dayNumber}
+                {addonItems.length === 0 ? (
+                  <div className="p-6 rounded-2xl bg-slate-50 border border-dashed border-slate-300 text-center space-y-2">
+                    <Sparkles className="w-7 h-7 text-slate-400 mx-auto" />
+                    <h4 className="text-xs font-bold text-slate-800">No Optional Services Added Yet</h4>
+                    <p className="text-[11px] text-slate-500 max-w-md mx-auto">
+                      Select from the optional travel insurance plans, high-speed 5G eSIMs, or VIP airport & ground concierge upgrades below to enhance your client proposal.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {addonItems.map(item => (
+                      <div
+                        key={item.id}
+                        className="p-4 rounded-2xl bg-slate-50 border border-slate-200 hover:border-slate-300 transition-all flex flex-col justify-between space-y-3 shadow-2xs"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1 min-w-0">
+                            <span className="inline-block px-2 py-0.5 rounded text-[10px] font-black uppercase bg-teal-100 text-teal-900 border border-teal-200">
+                              {item.product.subcategory || item.product.category || 'Optional Service'}
                             </span>
-                            <div>
-                              <div className="flex items-center space-x-2">
-                                <span className="font-bold text-xs text-slate-900">{slot.weekday}, {slot.formattedDate}</span>
-                                {slot.hub && (
-                                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                                    📍 {slot.hub.hubName}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
+                            <h4 className="text-xs sm:text-sm font-black text-slate-900 truncate">
+                              {getInventoryDisplayName(item)}
+                            </h4>
+                            <p className="text-[11px] text-slate-500 line-clamp-2">
+                              {item.product.shortDescription || item.notes}
+                            </p>
                           </div>
+                          <div className="text-right shrink-0">
+                            <span className="text-[10px] text-slate-400 block">Selling Price</span>
+                            <span className="text-sm font-black font-mono text-emerald-600">
+                              {formatCurrency(item.calculation?.finalTotalSellingPrice || 0, currency)}
+                            </span>
+                          </div>
+                        </div>
 
-                          <div className="flex items-center space-x-3">
-                            {dayTotalSelling > 0 && (
-                              <span className="text-xs font-mono font-bold text-slate-700">
-                                Day Total: {formatCurrency(dayTotalSelling, currency)}
-                              </span>
+                        <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between text-xs">
+                          <span className="text-[11px] text-slate-500 font-medium">
+                            Pax: <strong className="text-slate-800">{item.pax.adults} Adults{item.pax.children > 0 ? `, ${item.pax.children} Ch` : ''}</strong>
+                          </span>
+                          <div className="flex items-center space-x-2">
+                            {onOpenEditItem && (
+                              <button
+                                type="button"
+                                onClick={() => onOpenEditItem(item)}
+                                className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold cursor-pointer"
+                              >
+                                Configure
+                              </button>
                             )}
                             <button
                               type="button"
-                              onClick={() => onOpenQuickAddProductModal(slot)}
-                              className="px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 shadow-2xs"
+                              onClick={() => removeProductFromQuote(item.id)}
+                              className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-bold cursor-pointer flex items-center space-x-1"
                             >
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>Add Experience</span>
+                              <Trash2 className="w-3 h-3" />
+                              <span>Remove</span>
                             </button>
                           </div>
                         </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
-                        {/* Day Theme Input */}
-                        <div className="flex items-center space-x-2">
-                          <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                          <input
-                            type="text"
-                            value={dayThemes[slot.dayNumber] || ''}
-                            onChange={(e) => setDayThemes?.(prev => ({ ...prev, [slot.dayNumber]: e.target.value }))}
-                            placeholder={`Day ${slot.dayNumber} Theme / Highlights (e.g. Arrival & Marina Sunset Dhow Cruise)`}
-                            className="w-full text-xs font-medium text-slate-800 placeholder-slate-400 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-teal-500 transition-colors"
-                          />
+              {/* 1. Optional VIP Airport & Concierge Upgrades */}
+              <div className="space-y-3 pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Plane className="w-4 h-4 text-emerald-600" />
+                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                      VIP Airport Fast-Track, Luggage & Concierge Upgrades
+                    </h3>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-medium">Instant Confirmation</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-4 rounded-2xl border border-slate-200 bg-emerald-50/30 hover:border-emerald-300 transition-all flex flex-col justify-between space-y-3">
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-900">VIP Fast-Track</span>
+                      <h4 className="text-xs font-bold text-slate-900">Airport Aerobridge Meet & Greet</h4>
+                      <p className="text-[11px] text-slate-600">Personal escort from aircraft door through express immigration & luggage hall.</p>
+                    </div>
+                    <div className="pt-2 border-t border-emerald-200/80 flex items-center justify-between">
+                      <span className="text-sm font-black font-mono text-slate-900">
+                        {formatCurrency(convertCurrency(110, 'USD', currency), currency)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleQuickAddOptionalVipService('VIP_MEET_GREET')}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer flex items-center space-x-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Option</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-2xl border border-slate-200 bg-emerald-50/30 hover:border-emerald-300 transition-all flex flex-col justify-between space-y-3">
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-900">Ground Luggage</span>
+                      <h4 className="text-xs font-bold text-slate-900">Dedicated Luggage Support Van</h4>
+                      <p className="text-[11px] text-slate-600">Separate dedicated luggage van for excess baggage, golf bags, and shopping boxes.</p>
+                    </div>
+                    <div className="pt-2 border-t border-emerald-200/80 flex items-center justify-between">
+                      <span className="text-sm font-black font-mono text-slate-900">
+                        {formatCurrency(convertCurrency(135, 'USD', currency), currency)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleQuickAddOptionalVipService('LUGGAGE_VAN')}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer flex items-center space-x-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Option</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-2xl border border-slate-200 bg-emerald-50/30 hover:border-emerald-300 transition-all flex flex-col justify-between space-y-3">
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-900">5G Device</span>
+                      <h4 className="text-xs font-bold text-slate-900">Pocket Wi-Fi Hotspot ({tripNights + 1} Days)</h4>
+                      <p className="text-[11px] text-slate-600">Unlimited portable 5G hotspot for up to 8 devices with airport pickup & return.</p>
+                    </div>
+                    <div className="pt-2 border-t border-emerald-200/80 flex items-center justify-between">
+                      <span className="text-sm font-black font-mono text-slate-900">
+                        {formatCurrency(convertCurrency(10 * Math.max(1, tripNights + 1), 'USD', currency), currency)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleQuickAddOptionalVipService('PORTABLE_WIFI')}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer flex items-center space-x-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Option</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Optional International Travel Protection Plans */}
+              <div className="space-y-3 pt-2 border-t border-slate-100">
+                <div className="flex items-center space-x-2">
+                  <ShieldCheck className="w-4 h-4 text-amber-600" />
+                  <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                    Optional International Travel Insurance Plans ({tripNights + 1} Days)
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {B2B_INSURANCE_PLANS.map(plan => {
+                    const totalDays = Math.max(1, tripNights + 1);
+                    const estSellingUSD = (plan.sellingPricePerDayAdultUSD * totalDays * adultsCount) +
+                                          (plan.sellingPricePerDayChildUSD * totalDays * childrenCount);
+                    return (
+                      <div key={plan.id} className="p-4 rounded-2xl border border-slate-200 bg-amber-50/30 hover:border-amber-300 transition-all flex flex-col justify-between space-y-3">
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-amber-100 text-amber-900">
+                              ${(plan.coverageAmountUSD / 1000).toFixed(0)}k Medical Cover
+                            </span>
+                            <span className="text-xs font-bold text-slate-500">{plan.provider.split('/')[0]}</span>
+                          </div>
+                          <h4 className="text-xs sm:text-sm font-black text-slate-900">{plan.name}</h4>
+                          <p className="text-[11px] text-slate-600">{plan.coverageSummary}</p>
                         </div>
 
-                        {/* Scheduled Items in Day */}
-                        {dayItems.length === 0 ? (
-                          <div className="p-3 rounded-xl bg-white border border-dashed border-slate-200 text-center text-xs text-slate-400">
-                            No activities or services scheduled for this day yet. Click "+ Add Experience" above to attach tours or excursions.
+                        <div className="pt-2 border-t border-amber-200/80 flex items-center justify-between">
+                          <div>
+                            <span className="text-[10px] text-slate-400 block">Total for {adultsCount + childrenCount} Pax ({totalDays} Days)</span>
+                            <span className="text-sm font-black font-mono text-slate-900">
+                              {formatCurrency(convertCurrency(estSellingUSD, 'USD', currency), currency)}
+                            </span>
                           </div>
-                        ) : (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-                            {dayAccommodations.map((it, idx) => (
-                              <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
-                                <div className="flex items-center space-x-2 truncate">
-                                  <Building2 className="w-4 h-4 text-teal-600 shrink-0" />
-                                  <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
-                                </div>
-                                <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
-                                  {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
-                                </span>
-                              </div>
-                            ))}
-                            {dayTransfers.map((it, idx) => (
-                              <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
-                                <div className="flex items-center space-x-2 truncate">
-                                  <Car className="w-4 h-4 text-teal-600 shrink-0" />
-                                  <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
-                                </div>
-                                <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
-                                  {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
-                                </span>
-                              </div>
-                            ))}
-                            {dayActivities.map((it, idx) => (
-                              <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
-                                <div className="flex items-center space-x-2 truncate">
-                                  <Compass className="w-4 h-4 text-teal-600 shrink-0" />
-                                  <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
-                                </div>
-                                <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
-                                  {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
-                                </span>
-                              </div>
-                            ))}
-                            {dayAncillaryItems.map((it, idx) => (
-                              <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
-                                <div className="flex items-center space-x-2 truncate">
-                                  <ShieldCheck className="w-4 h-4 text-teal-600 shrink-0" />
-                                  <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
-                                </div>
-                                <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
-                                  {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                          <button
+                            type="button"
+                            onClick={() => handleQuickAddOptionalInsurance(plan)}
+                            className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold cursor-pointer flex items-center space-x-1 shadow-2xs"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Add Insurance</span>
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
+                </div>
+              </div>
+
+              {/* 3. Optional 5G eSIM Data Packs */}
+              <div className="space-y-3 pt-2 border-t border-slate-100">
+                <div className="flex items-center space-x-2">
+                  <Smartphone className="w-4 h-4 text-blue-600" />
+                  <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                    Instant International 5G eSIM Connectivity
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {B2B_ESIM_PLANS.map(plan => (
+                    <div key={plan.id} className="p-4 rounded-2xl border border-slate-200 bg-blue-50/30 hover:border-blue-300 transition-all flex flex-col justify-between space-y-3">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-900">
+                          {plan.dataAllowance}
+                        </span>
+                        <h4 className="text-xs font-black text-slate-900 mt-1">{plan.destination}</h4>
+                        <p className="text-[11px] text-slate-600">{plan.validityDays} Days Validity • {plan.carrier}</p>
+                      </div>
+
+                      <div className="pt-2 border-t border-blue-200/80 flex items-center justify-between">
+                        <span className="text-sm font-black font-mono text-slate-900">
+                          {formatCurrency(convertCurrency(plan.sellingPriceUSD, 'USD', currency), currency)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickAddOptionalEsim(plan)}
+                          className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer flex items-center space-x-1 shadow-2xs"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Add eSIM</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}
 
-          {/* STEP 8: REVIEW & OPERATIONAL FEASIBILITY */}
-          {activeStepId === 8 && (
+          {/* STEP 7: REVIEW & FEASIBILITY */}
+          {activeStepId === 7 && (
             <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
               <div className="flex items-center justify-between pb-4 border-b border-slate-100">
                 <div className="flex items-center space-x-3">
@@ -3859,12 +3584,12 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <CheckCircle2 className="w-5 h-5" />
                   </div>
                   <div>
-                    <h2 className="text-base font-black text-slate-900">Step 8: Review & Operational Feasibility</h2>
-                    <p className="text-xs text-slate-500">Live feasibility diagnostics, route coherence, and timeline validation.</p>
+                    <h2 className="text-base font-black text-slate-900">Step 7: Review & Feasibility</h2>
+                    <p className="text-xs text-slate-500">Live feasibility diagnostics, route coherence, and chronological day-by-day itinerary validation.</p>
                   </div>
                 </div>
                 <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                  Step 8 of 9
+                  Step 7 of 8
                 </span>
               </div>
 
@@ -3904,11 +3629,14 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       <button
                         type="button"
                         onClick={() => {
-                          if (w.message.toLowerCase().includes('hotel') || w.message.toLowerCase().includes('accommodation')) {
+                          const msgLower = w.message.toLowerCase();
+                          if (msgLower.includes('hotel') || msgLower.includes('accommodation')) {
                             setActiveStepId(3);
-                          } else if (w.message.toLowerCase().includes('transfer') || w.message.toLowerCase().includes('airport')) {
+                          } else if (msgLower.includes('sightseeing') || msgLower.includes('tour') || msgLower.includes('experiences') || msgLower.includes('activit') || msgLower.includes('transfer') || msgLower.includes('rail') || msgLower.includes('transit')) {
                             setActiveStepId(4);
-                          } else if (w.message.toLowerCase().includes('visa') || w.message.toLowerCase().includes('ancillary')) {
+                          } else if (msgLower.includes('visa') || msgLower.includes('ancillary')) {
+                            setActiveStepId(5);
+                          } else if (msgLower.includes('optional') || msgLower.includes('insurance') || msgLower.includes('esim')) {
                             setActiveStepId(6);
                           } else {
                             setActiveStepId(2);
@@ -3928,45 +3656,200 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 <span className="text-xs font-black text-slate-700 uppercase tracking-wider block">
                   Itinerary Snapshot:
                 </span>
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
                   <div>
-                    <span className="text-[10px] text-slate-400 block font-semibold">Total Destinations</span>
+                    <span className="text-[10px] text-slate-400 block font-semibold">Destinations</span>
                     <span className="font-bold text-slate-900">{routeHubs.length} City Hubs</span>
                   </div>
                   <div>
-                    <span className="text-[10px] text-slate-400 block font-semibold">Accommodations</span>
+                    <span className="text-[10px] text-slate-400 block font-semibold">Hotels & Stays</span>
                     <span className="font-bold text-slate-900">{hotelItems.length} Hotels</span>
                   </div>
                   <div>
-                    <span className="text-[10px] text-slate-400 block font-semibold">Ground Logistics</span>
-                    <span className="font-bold text-slate-900">{transferItems.length} Transfers</span>
+                    <span className="text-[10px] text-slate-400 block font-semibold">Activities & Products</span>
+                    <span className="font-bold text-slate-900">{activityItems.length + groundLogisticsItems.length} Experiences</span>
                   </div>
                   <div>
-                    <span className="text-[10px] text-slate-400 block font-semibold">Tours & Sightseeing</span>
-                    <span className="font-bold text-slate-900">{activityItems.length} Activities</span>
+                    <span className="text-[10px] text-slate-400 block font-semibold">Visa & Ancillary</span>
+                    <span className="font-bold text-slate-900">{visaItems.length} Services</span>
                   </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block font-semibold">Optional Services</span>
+                    <span className="font-bold text-slate-900">{addonItems.length} Options</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Chronological Day-by-Day Itinerary & Schedule Review */}
+              <div className="space-y-4 pt-4 border-t border-slate-100">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                      Chronological Day-by-Day Itinerary Review ({calendarDays.length} Days)
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Complete daily service agenda across accommodations, ground logistics, activities, and ancillary services.
+                    </p>
+                  </div>
+                  <div className="text-xs text-slate-500 font-medium">
+                    {items.length} Total Services Scheduled
+                  </div>
+                </div>
+
+                {/* Hub Filter Tabs */}
+                <div className="flex items-center flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedHubFilter('ALL')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      selectedHubFilter === 'ALL'
+                        ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    All Days ({calendarDays.length})
+                  </button>
+                  {routeHubs.map(h => (
+                    <button
+                      key={h.id}
+                      type="button"
+                      onClick={() => setSelectedHubFilter(h.hubName)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        selectedHubFilter === h.hubName
+                          ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      📍 {h.hubName} ({h.nights}n)
+                    </button>
+                  ))}
+                </div>
+
+                {/* Day Cards */}
+                <div className="space-y-3">
+                  {daySlots
+                    .filter(slot => selectedHubFilter === 'ALL' || slot.hub?.hubName === selectedHubFilter)
+                    .map(slot => {
+                      const dayItems = items.filter(it => it.travelDate === slot.dateString);
+                      const dayAccommodations = dayItems.filter(it => (it.product.category || '').toLowerCase().includes('hotel') || (it.product.category || '').toLowerCase().includes('accommodation') || it.isManualHotel);
+                      const dayTransfers = dayItems.filter(it => (it.product as any).isTransfer || (it.product.category || '').toLowerCase().includes('transfer') || (it.product.category || '').toLowerCase().includes('transport') || isRailQuoteItem(it));
+                      const dayActivities = dayItems.filter(it => !dayAccommodations.includes(it) && !dayTransfers.includes(it) && !visaItems.includes(it) && !addonItems.includes(it));
+                      const dayAncillaryItems = dayItems.filter(it => visaItems.includes(it) || addonItems.includes(it));
+                      const dayTotalSelling = dayItems.reduce((acc, it) => acc + (it.calculation?.finalTotalSellingPrice || 0), 0);
+
+                      return (
+                        <div key={slot.dayNumber} className="bg-slate-50/70 rounded-2xl border border-slate-200 p-4 space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-200/80">
+                            <div className="flex items-center space-x-2.5">
+                              <span className="w-8 h-8 rounded-xl bg-slate-900 text-white font-black text-xs flex items-center justify-center font-mono">
+                                D{slot.dayNumber}
+                              </span>
+                              <div className="flex items-center space-x-2">
+                                <span className="font-bold text-xs text-slate-900">{slot.dayOfWeek}, {slot.formattedDate}</span>
+                                {slot.hub && (
+                                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                                    📍 {slot.hub.hubName}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center space-x-3">
+                              {dayTotalSelling > 0 && (
+                                <span className="text-xs font-mono font-bold text-slate-700">
+                                  Day Total: {formatCurrency(dayTotalSelling, currency)}
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => onOpenQuickAddProductModal(slot)}
+                                className="px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 shadow-2xs"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Add Experience</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Day Theme Input */}
+                          <div className="flex items-center space-x-2">
+                            <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                            <input
+                              type="text"
+                              value={dayThemes[slot.dayNumber] || ''}
+                              onChange={(e) => setDayThemes?.(prev => ({ ...prev, [slot.dayNumber]: e.target.value }))}
+                              placeholder={`Day ${slot.dayNumber} Theme / Highlights (e.g. Arrival & City Discovery)`}
+                              className="w-full text-xs font-medium text-slate-800 placeholder-slate-400 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-teal-500 transition-colors"
+                            />
+                          </div>
+
+                          {dayItems.length === 0 ? (
+                            <div className="p-3 rounded-xl bg-white border border-dashed border-slate-200 text-center text-xs text-slate-400">
+                              No activities or services scheduled for this day yet.
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                              {dayAccommodations.map((it, idx) => (
+                                <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                                  <div className="flex items-center space-x-2 truncate">
+                                    <Building2 className="w-4 h-4 text-teal-600 shrink-0" />
+                                    <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
+                                  </div>
+                                  <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
+                                    {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
+                                  </span>
+                                </div>
+                              ))}
+                              {dayTransfers.map((it, idx) => (
+                                <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                                  <div className="flex items-center space-x-2 truncate">
+                                    <Car className="w-4 h-4 text-teal-600 shrink-0" />
+                                    <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
+                                  </div>
+                                  <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
+                                    {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
+                                  </span>
+                                </div>
+                              ))}
+                              {dayActivities.map((it, idx) => (
+                                <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                                  <div className="flex items-center space-x-2 truncate">
+                                    <Compass className="w-4 h-4 text-teal-600 shrink-0" />
+                                    <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
+                                  </div>
+                                  <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
+                                    {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
+                                  </span>
+                                </div>
+                              ))}
+                              {dayAncillaryItems.map((it, idx) => (
+                                <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                                  <div className="flex items-center space-x-2 truncate">
+                                    <ShieldCheck className="w-4 h-4 text-teal-600 shrink-0" />
+                                    <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
+                                  </div>
+                                  <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
+                                    {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                 </div>
               </div>
             </div>
           )}
 
-          {/* STEP 9: PRICING & MARGIN */}
-          {activeStepId === 9 && (() => {
-            const hotelsTotalSelling = items
-              .filter(it => it.product.category === 'Hotels & Stays' || it.product.category === 'Accommodation' || it.isManualHotel)
-              .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
-            const activitiesTotalSelling = items
-              .filter(it => it.product.category === 'Activities & Tours' || it.product.category === 'Attractions' || it.product.category === 'Activity')
-              .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
-            const transfersTotalSelling = items
-              .filter(it => it.product.category === 'Transfers' || it.product.category === 'Transport' || (it.product as any).isTransfer)
-              .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
-            const visaTotalSelling = items
-              .filter(it => it.product.category === 'Travel Services' || it.product.sku?.startsWith('VSA-') || (it.product.name && (it.product.name || '').toLowerCase().includes('visa')) || (it.product as any).isVisa)
-              .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
-            const otherTotalSelling = items
-              .filter(it => !['Hotels & Stays', 'Accommodation', 'Activities & Tours', 'Attractions', 'Activity', 'Transfers', 'Transport', 'Travel Services'].includes(it.product.category) && !it.isManualHotel && !it.product.sku?.startsWith('VSA-') && !(it.product.name && (it.product.name || '').toLowerCase().includes('visa')) && !(it.product as any).isTransfer && !(it.product as any).isVisa)
-              .reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+          {/* STEP 8: PRICING & MARGIN */}
+          {activeStepId === 8 && (() => {
+            const hotelsTotalSelling = hotelItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+            const activitiesTotalSelling = activityItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+            const transfersTotalSelling = groundLogisticsItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+            const visaTotalSelling = visaItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+            const optionalTotalSelling = addonItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
 
             const totalPax = Math.max(1, adultsCount + childrenCount + infantsCount);
             const marginPercentageValue = effectiveMarginType === 'PERCENTAGE' 
@@ -3987,13 +3870,13 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       <DollarSign className="w-5 h-5" />
                     </div>
                     <div>
-                      <h2 className="text-base font-black text-slate-900">Step 9: Pricing & Margin</h2>
+                      <h2 className="text-base font-black text-slate-900">Step 8: Pricing & Margin</h2>
                       <p className="text-xs text-slate-500">Authoritative system base pricing, partner agent margin controls, and quotation dispatch actions.</p>
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
                     <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                      Step 9 of 9
+                      Step 8 of 8
                     </span>
                     {lastSavedTimestamp && (
                       <span className="text-[11px] font-medium text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
@@ -4020,12 +3903,9 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                           onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
                           className="px-2 py-0.5 rounded-md bg-white border border-slate-300 text-xs font-bold text-slate-900 outline-none cursor-pointer"
                         >
-                          <option value="USD">USD ($)</option>
-                          <option value="INR">INR (₹)</option>
-                          <option value="EUR">EUR (€)</option>
-                          <option value="GBP">GBP (£)</option>
-                          <option value="AED">AED (AED)</option>
-                          <option value="JPY">JPY (¥)</option>
+                          {SUPPORTED_CURRENCIES.map(curr => (
+                            <option key={curr.code} value={curr.code}>{curr.code} ({curr.symbol})</option>
+                          ))}
                         </select>
                       </div>
 
@@ -4047,26 +3927,32 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <div className="pt-2 border-t border-slate-200/80 space-y-1 text-[11px] text-slate-600">
                       {hotelsTotalSelling > 0 && (
                         <div className="flex justify-between">
-                          <span>🏨 Accommodations:</span>
+                          <span>🏨 Hotels & Accommodation Stays:</span>
                           <span className="font-mono font-bold text-slate-800">{formatCurrency(hotelsTotalSelling, currency)}</span>
                         </div>
                       )}
                       {activitiesTotalSelling > 0 && (
                         <div className="flex justify-between">
-                          <span>🎡 Activities & Tours:</span>
+                          <span>🎡 Activities & Experiences:</span>
                           <span className="font-mono font-bold text-slate-800">{formatCurrency(activitiesTotalSelling, currency)}</span>
                         </div>
                       )}
                       {transfersTotalSelling > 0 && (
                         <div className="flex justify-between">
-                          <span>🚗 Transfers:</span>
+                          <span>🚗 Ground & Rail Logistics:</span>
                           <span className="font-mono font-bold text-slate-800">{formatCurrency(transfersTotalSelling, currency)}</span>
                         </div>
                       )}
-                      {(visaTotalSelling > 0 || otherTotalSelling > 0) && (
+                      {visaTotalSelling > 0 && (
                         <div className="flex justify-between">
                           <span>📋 Visa & Ancillary Services:</span>
-                          <span className="font-mono font-bold text-slate-800">{formatCurrency(visaTotalSelling + otherTotalSelling, currency)}</span>
+                          <span className="font-mono font-bold text-slate-800">{formatCurrency(visaTotalSelling, currency)}</span>
+                        </div>
+                      )}
+                      {optionalTotalSelling > 0 && (
+                        <div className="flex justify-between">
+                          <span>✨ Optional Services:</span>
+                          <span className="font-mono font-bold text-slate-800">{formatCurrency(optionalTotalSelling, currency)}</span>
                         </div>
                       )}
                     </div>
@@ -4327,10 +4213,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             </button>
 
             <span className="text-xs font-bold text-slate-400 hidden sm:inline">
-              Step {activeStepId} of 9: {stepsList.find(s => s.id === activeStepId)?.name}
+              Step {activeStepId} of 8: {stepsList.find(s => s.id === activeStepId)?.name}
             </span>
 
-            {activeStepId < 9 ? (
+            {activeStepId < 8 ? (
               <button
                 type="button"
                 onClick={() => setActiveStepId(activeStepId + 1)}

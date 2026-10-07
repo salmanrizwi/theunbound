@@ -4,7 +4,7 @@ import {
   getFirestore, 
   initializeFirestore, 
   persistentLocalCache,
-  persistentMultipleTabManager,
+  persistentSingleTabManager,
   memoryLocalCache,
   setLogLevel,
   doc,
@@ -47,51 +47,27 @@ export const FIRESTORE_DATABASE_ID = (firebaseConfigJson as any).firestoreDataba
 // Initialize Firebase App singleton
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Initialize Firestore with robust multi-platform cache & auto long-polling
+// Initialize Firestore with in-memory cache and auto long-polling to prevent QuotaExceededError and WebStorage locks
 const customDatabaseId = FIRESTORE_DATABASE_ID;
 const dbTargetId = customDatabaseId && customDatabaseId !== '(default)' ? customDatabaseId : undefined;
 
 let firestoreInstance;
 try {
-  let cacheConfig;
-  try {
-    // Attempt persistent multi-tab cache first (supported in desktop & modern mobile)
-    cacheConfig = persistentLocalCache({
-      tabManager: persistentMultipleTabManager()
-    });
-  } catch (cacheErr) {
-    // Fallback to memory cache for restricted storage environments (iOS Safari ITP, private browsing)
-    cacheConfig = memoryLocalCache();
-  }
-
   firestoreInstance = initializeFirestore(
     app,
     {
       experimentalAutoDetectLongPolling: true,
-      localCache: cacheConfig
+      localCache: memoryLocalCache()
     },
     dbTargetId
   );
 } catch (e) {
-  // If persistent cache initialization failed (e.g. on iOS Safari / restricted storage / multi-tab lock),
-  // attempt initialization with memoryLocalCache() preserving the exact same dbTargetId
+  // If already initialized or during hot reloads, fallback to getFirestore
   try {
-    firestoreInstance = initializeFirestore(
-      app,
-      {
-        experimentalAutoDetectLongPolling: true,
-        localCache: memoryLocalCache()
-      },
-      dbTargetId
-    );
-  } catch (memInitErr) {
-    // Fallback if already initialized by another module
-    try {
-      firestoreInstance = dbTargetId ? getFirestore(app, dbTargetId) : getFirestore(app);
-    } catch (fallbackErr) {
-      console.warn('[FIREBASE] Firestore fallback init notice:', fallbackErr);
-      firestoreInstance = dbTargetId ? getFirestore(app, dbTargetId) : getFirestore(app);
-    }
+    firestoreInstance = dbTargetId ? getFirestore(app, dbTargetId) : getFirestore(app);
+  } catch (fallbackErr) {
+    console.warn('[FIREBASE] Firestore fallback init notice:', fallbackErr);
+    firestoreInstance = dbTargetId ? getFirestore(app, dbTargetId) : getFirestore(app);
   }
 }
 

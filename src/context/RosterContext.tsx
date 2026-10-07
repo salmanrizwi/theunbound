@@ -46,20 +46,26 @@ export const RosterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [db]);
 
   const [rosterRules, setRosterRules] = useState<Record<string, ProductRosterRule>>(() => {
-    const saved = localStorage.getItem('unbound_roster_rules');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === 'object') return parsed;
-      } catch (e) {
-        return allowDemo ? INITIAL_PRODUCT_ROSTER_RULES : {};
+    try {
+      if (typeof window !== 'undefined') {
+        const saved = localStorage.getItem('unbound_roster_rules');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && typeof parsed === 'object') return parsed;
+        }
       }
+    } catch (e) {
+      return allowDemo ? INITIAL_PRODUCT_ROSTER_RULES : {};
     }
     return allowDemo ? INITIAL_PRODUCT_ROSTER_RULES : {};
   });
 
   useEffect(() => {
-    localStorage.setItem('unbound_roster_rules', JSON.stringify(rosterRules));
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('unbound_roster_rules', JSON.stringify(rosterRules));
+      }
+    } catch {}
   }, [rosterRules]);
 
   // Helper to parse date string YYYY-MM-DD reliably without timezone shift

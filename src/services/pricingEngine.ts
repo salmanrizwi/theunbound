@@ -1836,7 +1836,7 @@ export function getPricingSourceOfTruthMap(): PricingSourceOfTruthEntry[] {
       effectiveDateField: 'season / validity dates',
       statusField: 'status (ACTIVE / INACTIVE)',
       versionField: 'version',
-      consumers: ['AI Planner Fleet Allocation', 'Capacity Simulation Matrix', 'B2B Quote Builder Step 4', 'Ground Transport Ops']
+      consumers: ['AI Planner Fleet Allocation', 'Capacity Simulation Matrix', 'B2B Quote Builder Step 4 & Step 5', 'Ground Transport Ops']
     },
     {
       inventoryType: 'Hotel & Room Type Rates',
@@ -1849,7 +1849,7 @@ export function getPricingSourceOfTruthMap(): PricingSourceOfTruthEntry[] {
       effectiveDateField: 'validityFrom / validityTo',
       statusField: 'status (ACTIVE / INACTIVE)',
       versionField: 'version',
-      consumers: ['AI Planner Hotel Matching', 'B2B Quote Builder Step 2 (Lodging)', 'calculateHotelStayPrice', 'Buyer Portal']
+      consumers: ['AI Planner Hotel Matching', 'B2B Quote Builder Step 3 (Hotels & Accommodation Stays)', 'calculateHotelStayPrice', 'Buyer Portal']
     },
     {
       inventoryType: 'Hotel Meal Plans',
@@ -1875,7 +1875,7 @@ export function getPricingSourceOfTruthMap(): PricingSourceOfTruthEntry[] {
       effectiveDateField: 'Year-Round / Effective Period',
       statusField: 'status (ACTIVE)',
       versionField: 'version',
-      consumers: ['AI Planner Route Transitions', 'B2B Quote Builder Step 3 (Transfers)', 'Airport Fast-Track']
+      consumers: ['AI Planner Route Transitions', 'B2B Quote Builder Step 4 (Transfers & Ground Logistics)', 'Airport Fast-Track']
     },
     {
       inventoryType: 'Visa & Ancillary Services',
