@@ -1697,3 +1697,11 @@ Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground 
 
   return { htmlBody, textBody };
 }
+
+export {
+  buildQuotePresentationModel,
+  renderQuoteEmailFromPresentationModel,
+  renderQuoteWhatsAppFromPresentationModel,
+  validateQuotePresentationCompleteness
+} from './quotePresentationModel';
+

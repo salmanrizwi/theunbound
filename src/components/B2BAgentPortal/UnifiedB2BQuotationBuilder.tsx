@@ -28,6 +28,7 @@ import {
   BookmarkCheck,
   BedDouble,
   Mail,
+  MessageCircle,
   Sliders,
   Briefcase,
   UserCheck,
@@ -755,11 +756,16 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     dayNum: number;
   } | null>(null);
 
-  // Email Proposal Modal
+  // Email Proposal Modal (Canonical QuotePresentationModel Renderer)
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
+  const [emailModalQuote, setEmailModalQuote] = useState<Quotation | null>(null);
   const [emailRecipient, setEmailRecipient] = useState('');
   const [emailSubject, setEmailSubject] = useState('');
+  const [emailCustomNote, setEmailCustomNote] = useState('');
   const [emailMessage, setEmailMessage] = useState('');
+  const [emailPreviewHtml, setEmailPreviewHtml] = useState('');
+  const [emailPreviewTab, setEmailPreviewTab] = useState<'HTML_PREVIEW' | 'FULL_TEXT'>('HTML_PREVIEW');
+  const [emailCopied, setEmailCopied] = useState(false);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [emailSuccessMessage, setEmailSuccessMessage] = useState<string | null>(null);
   const [emailErrorMessage, setEmailErrorMessage] = useState<string | null>(null);
@@ -1226,9 +1232,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   }, [items, routeHubs, agentMarkupPercent, overallDiscountPercent, optionsData, activeOptionTab]);
 
   // Sync / Auto-Save Quote to AppDatabase
-  const handleSaveDraft = (explicit = false): Quotation | null => {
+  // Default explicit = true so all user action buttons (PDF, WhatsApp, Email, Convert Booking) always save & return the quote
+  const handleSaveDraft = (explicit = true): Quotation | null => {
     if (isNewQuoteMode && !hasExplicitlySaved && !explicit) {
-      // In new quote mode, do not persist to database until user explicitly saves
+      // In new quote mode, do not persist background timer auto-saves until user explicitly saves or triggers an action
       return null;
     }
     setHasExplicitlySaved(true);
@@ -1317,6 +1324,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         agentId: user?.id || 'usr-agent-01',
         agentName: user?.name || 'Travel Consultant',
         agentAgency: user?.agencyName || 'Partner Agency',
+        agentEmail: user?.email || 'sales@theunbound.in',
+        agentPhone: user?.phone || '+91-9811654959',
         agentNotes: agentNotes || '',
         termsAndConditions: 'All wholesale rates valid for 14 days. 20% deposit secures itinerary reservations.',
         status: 'DRAFT',
@@ -1690,7 +1699,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   // Download PDF Action
   const handleDownloadPDF = () => {
-    const saved = handleSaveDraft();
+    const saved = handleSaveDraft(true);
     if (!saved) return;
     try {
       downloadQuotationPDF({
@@ -1712,12 +1721,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     // 1. Check authorization
     const permCheck = canUserShareQuoteWhatsApp(user);
     if (!permCheck.allowed) {
-      alert(permCheck.reason || 'You are not authorized to share quotations via WhatsApp.');
+      showBuilderToast(permCheck.reason || 'You are not authorized to share quotations via WhatsApp.', 'WARNING');
       return;
     }
 
     // 2. Save quote state to ensure latest numbers, items, and version are persisted
-    const saved = handleSaveDraft();
+    const saved = handleSaveDraft(true);
     if (!saved) return;
 
     // 3. Open WhatsApp Modal
@@ -1725,27 +1734,88 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     setIsWhatsAppModalOpen(true);
   };
 
-  // Open Email Modal
-  const handleOpenEmailModal = () => {
-    const saved = handleSaveDraft();
-    if (!saved) return;
-    setEmailRecipient(clientEmail || 'client@example.com');
-    setEmailSubject(`Bespoke Itinerary & Quotation Proposal [${saved.quoteNumber}] - ${currentDestination.name}`);
-    setEmailMessage(
-      `Dear ${clientName || 'Valued Guest'},\n\n` +
-      `We are pleased to present your tailored itinerary proposal for ${currentDestination.name} (${startDate} to ${endDate}).\n\n` +
-      `Total Package Investment: ${formatCurrency(finalClientPrice, currency)}\n\n` +
-      `Please review the attached itinerary breakdown and let us know if you would like any adjustments.`
+  // Helper to sync canonical email preview when note or quote changes
+  const refreshCanonicalEmailContent = (quoteObj: Quotation, customNoteText: string) => {
+    const emailService = EmailNotificationService.getInstance();
+    const canonical = emailService.buildCanonicalQuotationEmail(
+      {
+        ...quoteObj,
+        clientEmail: emailRecipient || clientEmail || quoteObj.clientEmail || 'client@example.com',
+        clientName: clientName || quoteObj.clientName || 'Valued Guest',
+        totalSellingPrice: finalClientPrice
+      },
+      {
+        name: user?.name || quoteObj.agentName || 'B2B Partner Agent',
+        agencyName: user?.agencyName || quoteObj.agentAgency || 'TheUnbound Partner Agency',
+        email: user?.email || quoteObj.agentEmail || 'sales@theunbound.in',
+        phone: user?.phone || quoteObj.agentPhone || '+91-9811654959',
+        selectedOptionIndexOrId: Math.max(0, activeOptionTab - 1),
+        customNote: customNoteText
+      }
     );
+    setEmailMessage(canonical.textBody);
+    setEmailPreviewHtml(canonical.htmlBody);
+    return canonical;
+  };
+
+  // Open Email Modal with Complete Canonical Quotation Content
+  const handleOpenEmailModal = () => {
+    const saved = handleSaveDraft(true);
+    if (!saved) return;
+    setEmailModalQuote(saved);
+    const defaultRecipient = clientEmail || saved.clientEmail || 'client@example.com';
+    setEmailRecipient(defaultRecipient);
+    setEmailCustomNote('');
+    const canonical = refreshCanonicalEmailContent(
+      {
+        ...saved,
+        clientEmail: defaultRecipient,
+        clientName: clientName || saved.clientName || 'Valued Guest',
+        totalSellingPrice: finalClientPrice
+      },
+      ''
+    );
+    setEmailSubject(canonical.subject);
+    setEmailPreviewTab('HTML_PREVIEW');
+    setEmailCopied(false);
     setEmailSuccessMessage(null);
     setEmailErrorMessage(null);
     setIsEmailModalOpen(true);
   };
 
-  // Send Email Proposal via EmailNotificationService
+  // Copy Complete Email Quotation Text to Clipboard
+  const handleCopyEmailText = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(emailMessage);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = emailMessage;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setEmailCopied(true);
+      setTimeout(() => setEmailCopied(false), 3000);
+    } catch (err) {
+      console.error('Failed to copy email content:', err);
+    }
+  };
+
+  // Send Complete Email Proposal via EmailNotificationService
   const handleSendProposalEmail = async () => {
-    const saved = handleSaveDraft();
+    const saved = handleSaveDraft(true);
     if (!saved) return;
+
+    const cleanRecipient = emailRecipient.trim();
+    if (!cleanRecipient || !cleanRecipient.includes('@')) {
+      setEmailErrorMessage('Please enter a valid recipient email address.');
+      return;
+    }
 
     setIsSendingEmail(true);
     setEmailErrorMessage(null);
@@ -1756,20 +1826,25 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       const generatedEmail = emailService.generateQuotationProposalEmail(
         {
           ...saved,
-          clientEmail: emailRecipient,
-          clientName: clientName || 'Valued Guest',
+          clientEmail: cleanRecipient,
+          clientName: clientName || saved.clientName || 'Valued Guest',
           totalSellingPrice: finalClientPrice
         },
         {
-          name: user?.name || 'B2B Partner Agent',
-          agencyName: user?.agencyName || 'Luxury Partner Agency',
-          email: user?.email || 'agent@theunbound.com'
+          name: user?.name || saved.agentName || 'B2B Partner Agent',
+          agencyName: user?.agencyName || saved.agentAgency || 'Luxury Partner Agency',
+          email: user?.email || saved.agentEmail || 'sales@theunbound.in',
+          phone: user?.phone || saved.agentPhone || '+91-9811654959',
+          selectedOptionIndexOrId: Math.max(0, activeOptionTab - 1),
+          customNote: emailCustomNote
         }
       );
 
+      const finalSubject = emailSubject.trim() || generatedEmail.subject;
+
       const result = await emailService.sendViaGmailApi(
-        emailRecipient,
-        emailSubject,
+        cleanRecipient,
+        finalSubject,
         generatedEmail.fullHtml,
         {
           quoteId: saved.id,
@@ -1782,14 +1857,36 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       );
 
       if (result.success) {
-        setEmailSuccessMessage(`Proposal email dispatched successfully to ${emailRecipient}! (Message ID: ${result.messageId || 'SENT'})`);
+        // Update quote status & version history
+        const updatedQuote: Quotation = {
+          ...saved,
+          clientEmail: cleanRecipient,
+          status: saved.status === 'DRAFT' ? 'SENT' : saved.status,
+          versionHistory: [
+            {
+              version: saved.version || 1,
+              updatedAt: new Date().toISOString(),
+              updatedBy: user?.name || saved.agentName || 'Agent',
+              changesSummary: `Complete quotation proposal emailed to ${cleanRecipient}`,
+              totalSellingPrice: finalClientPrice
+            },
+            ...(saved.versionHistory || [])
+          ]
+        };
+        db.saveQuote(updatedQuote, user, 'SENT', `Complete quotation emailed to ${cleanRecipient}`);
+        if (cleanRecipient !== clientEmail) {
+          setClientEmail(cleanRecipient);
+        }
+
+        const msg = `Complete quotation proposal dispatched to ${cleanRecipient}! (Ref: ${saved.quoteNumber} • ID: ${result.messageId || 'SENT'})`;
+        setEmailSuccessMessage(msg);
+        showBuilderToast(`✓ Complete quotation emailed to ${cleanRecipient}`, 'SUCCESS');
         setTimeout(() => {
           setIsEmailModalOpen(false);
           setEmailSuccessMessage(null);
-        }, 3000);
+        }, 2200);
       } else {
-        // Section 33 Mandate: Do NOT show false success when email delivery fails!
-        setEmailErrorMessage(`Email delivery failed. Reason: ${result.error || 'Unable to connect to Google Workspace Gmail service'}. Please check your authorization in Settings.`);
+        setEmailErrorMessage(`Email delivery failed. Reason: ${result.error || 'Unable to dispatch email'}. You can also copy the complete email or open in your mail client.`);
       }
     } catch (err: any) {
       setEmailErrorMessage(`Email delivery failed. Reason: ${err?.message || 'Network error'}. Please retry.`);
@@ -2177,11 +2274,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             </div>
           </div>
 
-          {/* Right: Currency + Save Draft + Preview + Generate Quotation */}
-          <div className="flex items-center space-x-2">
+          {/* Right: Single Authoritative Action Group */}
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
             <select
               value={currency}
               onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
+              aria-label="Quotation Currency"
               className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 border border-slate-200 outline-none cursor-pointer"
             >
               {SUPPORTED_CURRENCIES.map(curr => (
@@ -2192,25 +2290,53 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             <button
               type="button"
               onClick={() => handleSaveDraft(true)}
-              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-200 transition-all cursor-pointer shadow-2xs"
+              className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-200 transition-all cursor-pointer shadow-2xs whitespace-nowrap"
             >
-              Save Draft
+              {autoSaveStatus === 'SAVING' ? 'Saving...' : 'Save Draft'}
             </button>
 
             <button
               type="button"
-              onClick={() => {
-                handleSaveDraft(true);
-                setActiveViewTab(activeViewTab === 'PROPOSAL_PREVIEW' ? 'BUILDER' : 'PROPOSAL_PREVIEW');
-              }}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs ${
-                activeViewTab === 'PROPOSAL_PREVIEW'
-                  ? 'bg-slate-900 text-[#00E5C0]'
-                  : 'bg-white hover:bg-slate-50 text-slate-800 border border-slate-200'
-              }`}
+              onClick={handleShareWhatsApp}
+              className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs whitespace-nowrap"
+              title="Share complete quotation on WhatsApp"
             >
-              <FileText className="w-3.5 h-3.5 text-teal-600" />
-              <span>{activeViewTab === 'PROPOSAL_PREVIEW' ? 'Return to Editor' : 'Preview'}</span>
+              <MessageCircle className="w-3.5 h-3.5 shrink-0" />
+              <span>WhatsApp Quote</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleOpenEmailModal}
+              className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs whitespace-nowrap"
+              title="Send complete quotation via Email"
+            >
+              <Mail className="w-3.5 h-3.5 shrink-0" />
+              <span>Send Email</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDownloadPDF}
+              className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold border border-slate-200 transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs whitespace-nowrap"
+              title="Download official PDF quotation"
+            >
+              <Download className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+              <span>Download PDF</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveViewTab('BUILDER')}
+              className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs whitespace-nowrap ${
+                activeViewTab === 'PROPOSAL_PREVIEW'
+                  ? 'bg-slate-900 text-[#00E5C0] hover:bg-slate-800'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200'
+              }`}
+              title="Return to Quote Editor"
+            >
+              <FileText className="w-3.5 h-3.5 text-teal-500 shrink-0" />
+              <span>Return to Editor</span>
             </button>
 
             <button
@@ -2219,9 +2345,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                 handleSaveDraft(true);
                 setActiveViewTab('PROPOSAL_PREVIEW');
               }}
-              className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 shadow-xs"
+              className="px-3 sm:px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 shadow-xs whitespace-nowrap"
             >
-              <Sparkles className="w-3.5 h-3.5" />
+              <Sparkles className="w-3.5 h-3.5 shrink-0" />
               <span>Generate Quotation</span>
             </button>
           </div>
@@ -2240,36 +2366,13 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         {/* ========================================================================= */}
         {activeViewTab === 'PROPOSAL_PREVIEW' ? (
           <main className="w-full max-w-[1920px] mx-auto min-w-0 px-4 sm:px-6 py-8 space-y-6 pb-32">
-          {/* Back to Editor Bar */}
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 flex items-center justify-between shadow-xs">
-            <div className="flex items-center space-x-2 text-xs text-slate-600">
-              <Sparkles className="w-4 h-4 text-[#00A88F]" />
-              <span>Client Presentation Mode: Review official proposal layout before dispatching.</span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <button
-                type="button"
-                onClick={() => setActiveViewTab('BUILDER')}
-                className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold border border-slate-200 transition-colors cursor-pointer"
-              >
-                ← Return to Editor
-              </button>
-              <button
-                type="button"
-                onClick={handleOpenEmailModal}
-                className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5 shadow-xs"
-              >
-                <Mail className="w-3.5 h-3.5" />
-                <span>Send to Client</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleDownloadPDF}
-                className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] text-slate-950 text-xs font-black hover:bg-[#00B598] transition-colors cursor-pointer flex items-center space-x-1.5 shadow-xs"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Download PDF</span>
-              </button>
+          {/* Client Presentation Mode Informational Strip (No action buttons) */}
+          <div className="bg-white px-4 py-3 rounded-2xl border border-slate-200 flex items-center space-x-2.5 shadow-xs print:hidden max-w-5xl mx-auto">
+            <Sparkles className="w-4 h-4 text-[#00A88F] shrink-0" />
+            <div className="text-xs text-slate-600 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className="font-bold text-slate-900">Client Presentation Mode</span>
+              <span className="text-slate-300 hidden sm:inline">—</span>
+              <span>Review the official proposal layout before dispatching.</span>
             </div>
           </div>
 
@@ -2305,18 +2408,17 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               travelStartDate: startDate,
               travelEndDate: endDate,
               totalPax: adultsCount + childrenCount + infantsCount,
+              adultsCount,
+              childrenCount,
+              infantsCount,
+              childAges,
+              nationality,
+              travelStyle,
+              options: computedQuotationOptions,
               routeHubs,
               dayThemes
             }}
             agentUser={user}
-            onClose={() => setActiveViewTab('BUILDER')}
-            onPrint={() => window.print()}
-            onDownloadPdf={handleDownloadPDF}
-            onShareWhatsApp={handleShareWhatsApp}
-            onShareLink={() => {
-              navigator.clipboard.writeText(window.location.href);
-              alert('Proposal preview link copied to clipboard!');
-            }}
           />
         </main>
       ) : (
@@ -2712,100 +2814,209 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL: EMAIL PROPOSAL */}
+      {/* MODAL: EMAIL PROPOSAL (COMPLETE CANONICAL QUOTATION COMPOSER & PREVIEW) */}
       {/* ========================================================================= */}
       {isEmailModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 border border-slate-200 shadow-2xl animate-scaleUp my-auto max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-4xl w-full border border-slate-200 shadow-2xl animate-scaleUp my-auto max-h-[92vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-gradient-to-r from-indigo-900 via-slate-900 to-slate-900 text-white flex items-center justify-between shrink-0">
               <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 flex items-center justify-center">
                   <Mail className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">Email Itinerary Proposal</h3>
-                  <p className="text-xs text-slate-500">Dispatch bespoke HTML quote to client inbox.</p>
+                  <div className="flex items-center space-x-2">
+                    <h3 className="text-base font-bold text-white">Send Complete Quotation Email</h3>
+                    <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-teal-500/20 text-[#00E5C0] border border-teal-400/30">
+                      100% Quote Preview Parity
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Dispatches the complete day-by-day itinerary, hotels, rail, visa, inclusions, exclusions, and commercial terms.
+                  </p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setIsEmailModalOpen(false)}
-                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Feedback Notifications */}
-            {emailSuccessMessage && (
-              <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl text-xs text-teal-800 font-medium">
-                ✓ {emailSuccessMessage}
-              </div>
-            )}
-            {emailErrorMessage && (
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 font-medium">
-                {emailErrorMessage}
-              </div>
-            )}
+            {/* Modal Body */}
+            <div className="p-6 space-y-4 overflow-y-auto grow">
+              {/* Feedback Notifications */}
+              {emailSuccessMessage && (
+                <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-900 font-semibold flex items-center space-x-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{emailSuccessMessage}</span>
+                </div>
+              )}
+              {emailErrorMessage && (
+                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 font-semibold">
+                  {emailErrorMessage}
+                </div>
+              )}
 
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Recipient Email</label>
-                <input
-                  type="email"
-                  value={emailRecipient}
-                  onChange={(e) => setEmailRecipient(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 font-mono outline-none focus:bg-white focus:border-[#00C6A6]"
-                />
+              {/* Canonical Quotation Summary Strip */}
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono font-bold bg-slate-900 text-[#00E5C0] px-2.5 py-1 rounded-lg">
+                    {quoteNumber} (v{quoteVersion})
+                  </span>
+                  <span className="font-bold text-slate-800">{currentDestination.name}</span>
+                  <span className="text-slate-400">•</span>
+                  <span className="text-slate-600">{tripNights + 1} Days / {tripNights} Nights</span>
+                  <span className="text-slate-400">•</span>
+                  <span className="text-slate-600">{adultsCount} Adults{childrenCount > 0 ? `, ${childrenCount} Children` : ''}</span>
+                  <span className="text-slate-400">•</span>
+                  <span className="text-teal-700 font-bold">{items.length} Configured Services</span>
+                </div>
+                <div className="font-mono font-black text-sm text-slate-900">
+                  Total: {formatCurrency(finalClientPrice, currency)}
+                </div>
+              </div>
+
+              {/* Recipient, Subject & Optional Personal Note */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Recipient Email *</label>
+                  <input
+                    type="email"
+                    value={emailRecipient}
+                    onChange={(e) => setEmailRecipient(e.target.value)}
+                    placeholder="client@example.com"
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 font-mono outline-none focus:bg-white focus:border-[#00C6A6]"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Email Subject Line *</label>
+                  <input
+                    type="text"
+                    value={emailSubject}
+                    onChange={(e) => setEmailSubject(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 font-semibold outline-none focus:bg-white focus:border-[#00C6A6]"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Subject</label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Personal Specialist Note <span className="text-slate-400 font-normal">(Optional — prepended to full quotation)</span>
+                </label>
                 <input
                   type="text"
-                  value={emailSubject}
-                  onChange={(e) => setEmailSubject(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-[#00C6A6]"
+                  value={emailCustomNote}
+                  onChange={(e) => {
+                    const nextNote = e.target.value;
+                    setEmailCustomNote(nextNote);
+                    if (emailModalQuote) {
+                      refreshCanonicalEmailContent(emailModalQuote, nextNote);
+                    }
+                  }}
+                  placeholder="e.g. Please find your complete day-by-day Japan quotation below. All bullet train and hotel allocations are held for 48 hours."
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-[#00C6A6]"
                 />
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Personal Message Note</label>
-                <textarea
-                  rows={4}
-                  value={emailMessage}
-                  onChange={(e) => setEmailMessage(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:bg-white focus:border-[#00C6A6]"
-                />
+              {/* Complete Quotation Content Preview / Full Text Tabs */}
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1 text-xs font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setEmailPreviewTab('HTML_PREVIEW')}
+                      className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                        emailPreviewTab === 'HTML_PREVIEW'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Rich HTML Quotation Preview
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEmailPreviewTab('FULL_TEXT')}
+                      className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                        emailPreviewTab === 'FULL_TEXT'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Complete Plain-Text Quotation ({emailMessage.length} chars)
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleCopyEmailText}
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold border border-slate-200 transition-colors cursor-pointer"
+                  >
+                    {emailCopied ? '✓ Copied Complete Quotation Text!' : 'Copy Complete Email Text'}
+                  </button>
+                </div>
+
+                {emailPreviewTab === 'HTML_PREVIEW' ? (
+                  <div className="border border-slate-200 rounded-2xl bg-slate-100 p-3 sm:p-4 max-h-96 overflow-y-auto">
+                    <div
+                      className="bg-white rounded-xl overflow-hidden"
+                      dangerouslySetInnerHTML={{ __html: emailPreviewHtml }}
+                    />
+                  </div>
+                ) : (
+                  <textarea
+                    rows={14}
+                    value={emailMessage}
+                    onChange={(e) => setEmailMessage(e.target.value)}
+                    className="w-full p-3.5 rounded-2xl bg-slate-900 text-slate-100 border border-slate-800 text-xs font-mono leading-relaxed outline-none"
+                  />
+                )}
               </div>
             </div>
 
-            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-200">
-              <button
-                type="button"
-                onClick={() => setIsEmailModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold hover:bg-slate-200 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isSendingEmail || !emailRecipient}
-                onClick={handleSendProposalEmail}
-                className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold disabled:opacity-50 flex items-center space-x-2 cursor-pointer shadow-xs"
-              >
-                {isSendingEmail ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Sending...</span>
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-3.5 h-3.5" />
-                    <span>Send Proposal Email</span>
-                  </>
-                )}
-              </button>
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center space-x-2">
+                <a
+                  href={`mailto:${encodeURIComponent(emailRecipient)}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailMessage.slice(0, 1800))}`}
+                  className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200 transition-colors no-underline"
+                  title="Open in your default desktop/mobile email app"
+                >
+                  Open in Mail App
+                </a>
+              </div>
+
+              <div className="flex items-center space-x-2 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setIsEmailModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-200/70 text-slate-700 text-xs font-bold hover:bg-slate-200 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isSendingEmail || !emailRecipient}
+                  onClick={handleSendProposalEmail}
+                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black disabled:opacity-50 flex items-center space-x-2 cursor-pointer shadow-md shadow-indigo-600/20"
+                >
+                  {isSendingEmail ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Sending Complete Quotation...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Send Complete Proposal Email</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -2818,7 +3029,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         <ShareWhatsAppModal
           quote={whatsAppModalQuote}
           user={user}
-          selectedOptionIndex={activeOptionTab}
+          selectedOptionIndex={Math.max(0, activeOptionTab - 1)}
           onClose={() => {
             setIsWhatsAppModalOpen(false);
             setWhatsAppModalQuote(null);

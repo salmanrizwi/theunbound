@@ -7,32 +7,29 @@ import {
   Users, 
   Clock, 
   CheckCircle2, 
-  FileText, 
   ShieldCheck, 
   Printer, 
   Download, 
-  Mail, 
-  Phone,
-  Compass,
-  ArrowRight,
-  Send,
-  Car,
-  Building2,
-  Sparkles,
-  Utensils,
-  Share2,
-  Info,
-  Check,
-  PlaneTakeoff,
-  Award,
-  Globe,
-  MessageCircle,
-  Train
+  Compass, 
+  ArrowRight, 
+  Car, 
+  Building2, 
+  Sparkles, 
+  Utensils, 
+  Share2, 
+  Info, 
+  Check, 
+  Award, 
+  Globe, 
+  MessageCircle, 
+  Mail,
+  Train 
 } from 'lucide-react';
 import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
 import { RichTextRenderer } from './common/RichTextRenderer';
 import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../utils/inventoryDisplayHelpers';
 import { downloadQuotationPDF } from '../services/pdfGenerator';
+import { buildQuotePresentationModel } from '../services/quotePresentationModel';
 
 interface ProposalDocumentViewProps {
   quote: Quotation;
@@ -43,6 +40,7 @@ interface ProposalDocumentViewProps {
   onDownloadPdf?: () => void;
   onShareLink?: () => void;
   onShareWhatsApp?: () => void;
+  onSendEmail?: () => void;
 }
 
 export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
@@ -53,8 +51,17 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
   onPrint,
   onDownloadPdf,
   onShareLink,
-  onShareWhatsApp
+  onShareWhatsApp,
+  onSendEmail
 }) => {
+  const model = useMemo(() => {
+    return buildQuotePresentationModel(quote, {
+      name: agentUser?.name,
+      agencyName: agentUser?.agencyName,
+      email: agentUser?.email
+    });
+  }, [quote, agentUser]);
+
   const handleDownload = () => {
     if (onDownloadPdf) {
       onDownloadPdf();
@@ -199,7 +206,12 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
       }
 
       // Filter items for this day
-      const dayItems = items.filter(it => it.travelDate === calDay.dateString);
+      const dayItems = items.filter(it => {
+        if (it.travelDate) {
+          return it.travelDate === calDay.dateString;
+        }
+        return Number((it as any).dayNumber) === calDay.dayNumber;
+      });
       
       // Look up custom theme for this day (from quote.dayThemes or auto-generated)
       const customTheme = quote.dayThemes?.[calDay.dayNumber];
@@ -215,10 +227,16 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
     });
   }, [quote]);
 
-  // Unscheduled or General Inclusions (items not matching any day's date)
+  // Unscheduled or General Inclusions (items not matching any day's date or dayNumber)
   const generalInclusionItems = useMemo(() => {
     const dayDates = new Set(itineraryDays.map(d => d.dateString));
-    return (quote.items || []).filter(it => !it.travelDate || !dayDates.has(it.travelDate));
+    const dayNumbers = new Set(itineraryDays.map(d => d.dayNumber));
+    return (quote.items || []).filter(it => {
+      if (isVisaQuoteItem(it)) return false;
+      if (it.travelDate) return !dayDates.has(it.travelDate);
+      if ((it as any).dayNumber !== undefined) return !dayNumbers.has(Number((it as any).dayNumber));
+      return true;
+    });
   }, [quote.items, itineraryDays]);
 
   const totalNights = useMemo(() => {
@@ -275,82 +293,6 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
 
   return (
     <div className="print-proposal-canvas bg-white text-slate-900 font-sans p-6 sm:p-10 space-y-8 rounded-3xl border border-slate-200 print:border-none print:p-0 print:shadow-none shadow-2xl max-w-5xl mx-auto">
-      
-      {/* ---------------------------------------------------- */}
-      {/* TOP ACTION BAR (Hidden during Print / PDF generation) */}
-      {/* ---------------------------------------------------- */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-5 print:hidden">
-        <div className="flex items-center space-x-2.5">
-          <span className="text-xs font-mono font-bold px-3 py-1.5 rounded-lg bg-slate-950 text-[#00E5C0] shadow-xs">
-            {quote.quoteNumber} (v{quote.version || 1})
-          </span>
-          <span className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
-            {quote.status}
-          </span>
-        </div>
-
-        <div className="flex items-center space-x-2">
-          {onShareLink && (
-            <button
-              onClick={onShareLink}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
-              title="Copy link to clipboard"
-            >
-              <Share2 className="w-3.5 h-3.5 text-slate-500" />
-              <span>Share</span>
-            </button>
-          )}
-
-          {onShareWhatsApp && (
-            <button
-              onClick={onShareWhatsApp}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
-              title="Share quotation via WhatsApp"
-            >
-              <MessageCircle className="w-3.5 h-3.5 text-emerald-200" />
-              <span>WhatsApp</span>
-            </button>
-          )}
-
-          <button
-            onClick={handlePrint}
-            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
-            title="Print Proposal"
-          >
-            <Printer className="w-3.5 h-3.5 text-slate-600" />
-            <span>Print</span>
-          </button>
-
-          <button
-            onClick={handleDownload}
-            className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
-            title="Download PDF"
-          >
-            <Download className="w-3.5 h-3.5 text-[#00E5C0]" />
-            <span>Download PDF</span>
-          </button>
-          
-          {onBookNow && quote.status !== 'BOOKING_REQUESTED' && quote.status !== 'CONFIRMED' && (
-            <button
-              onClick={() => onBookNow(quote)}
-              className="flex items-center space-x-1.5 px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors cursor-pointer shadow-sm"
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Accept & Request Booking</span>
-            </button>
-          )}
-
-          {onClose && (
-            <button
-              onClick={onClose}
-              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 transition-colors cursor-pointer"
-            >
-              Close
-            </button>
-          )}
-        </div>
-      </div>
-
       {/* ---------------------------------------------------- */}
       {/* 1. DOCUMENT HEADER & BRAND IDENTITY */}
       {/* ---------------------------------------------------- */}

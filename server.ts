@@ -4,13 +4,15 @@ import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
 const distBundlePath = path.resolve(process.cwd(), "dist", "server.cjs");
+const buildBundlePath = path.resolve(process.cwd(), "build", "server.cjs");
 const isRunningWithTsx = process.execArgv.some((a) => a.includes("tsx")) || 
                          process.argv.some((a) => a.includes("tsx"));
 
 async function bootstrap() {
-  if (fs.existsSync(distBundlePath) && !isRunningWithTsx) {
+  const bundlePath = fs.existsSync(distBundlePath) ? distBundlePath : fs.existsSync(buildBundlePath) ? buildBundlePath : null;
+  if (bundlePath && !isRunningWithTsx) {
     // Production Cloud Run container execution using compiled bundle
-    const bundle = require(distBundlePath);
+    const bundle = require(bundlePath);
     if (typeof bundle.startServer === "function") {
       await bundle.startServer();
     }

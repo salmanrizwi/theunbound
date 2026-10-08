@@ -5,22 +5,25 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server/main.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server/main.ts --bundle --platform=node --format=cjs --external:vite --minify --outfile=dist/server.cjs && ([ -d /app/applet/node_modules ] && [ -w /app ] && rm -rf /app/node_modules && mv /app/applet/node_modules /app/node_modules || true)",
     "start": "node server.ts",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "tsx src/tests/masterSystemAuditCertification.ts",
-    "test:all": "tsx src/tests/masterSystemAuditCertification.ts && tsx src/tests/masterPricingEngineAudit.ts && tsx src/tests/capacityTieredPricingInputAudit.ts && tsx src/tests/homepageDataSyncAudit.ts && tsx src/tests/japanRailCommercialProductsAudit.ts && tsx src/tests/homepageSequenceAudit.ts"
+    "test:all": "tsx src/tests/masterSystemAuditCertification.ts && tsx src/tests/masterPricingEngineAudit.ts && tsx src/tests/capacityTieredPricingInputAudit.ts && tsx src/tests/homepageDataSyncAudit.ts && tsx src/tests/japanRailCommercialProductsAudit.ts && tsx src/tests/homepageSequenceAudit.ts && tsx src/tests/pdfPaginationEngineAudit.ts && tsx src/tests/quoteCommunicationChannelParityAudit.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
     "@types/express": "^5.0.6",
+    "@types/html2canvas": "^1.0.0",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.4",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.28.2",
     "express": "^5.2.1",
     "firebase": "^12.18.0",
+    "html2canvas": "^1.4.1",
+    "html2canvas-pro": "^2.5.2",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",

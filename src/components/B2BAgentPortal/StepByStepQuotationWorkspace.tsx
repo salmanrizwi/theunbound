@@ -4115,84 +4115,29 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   </div>
                 </div>
 
-                {/* QUOTATION ACTIONS & DISPATCH BAR */}
-                <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                        Quotation Actions & Client Dispatch
-                      </h3>
-                      <p className="text-[11px] text-slate-500">
-                        Distribute, export, or convert this quotation proposal.
-                      </p>
-                    </div>
+                {/* COMMERCIAL SUMMARY & BOOKING CONVERSION */}
+                <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                      Commercial Pricing Ready
+                    </h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Use the top header action bar to save draft, share via WhatsApp, send email, download PDF, or generate the quotation preview.
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-3">
                     {lastSavedTimestamp && (
                       <span className="text-[11px] text-slate-400 font-medium">
                         Last saved: {lastSavedTimestamp}
                       </span>
                     )}
-                  </div>
-
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-1">
-                    {/* Action 1: Save Draft */}
-                    <button
-                      type="button"
-                      onClick={onSaveDraft}
-                      className="px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-800 text-xs font-bold border border-slate-200 transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
-                    >
-                      <Save className="w-3.5 h-3.5 text-slate-600" />
-                      <span>{autoSaveStatus === 'SAVING' ? 'Saving...' : 'Save Draft'}</span>
-                    </button>
-
-                    {/* Action 2: Preview Proposal */}
-                    <button
-                      type="button"
-                      onClick={onPreviewQuotation}
-                      className="px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
-                    >
-                      <Eye className="w-3.5 h-3.5 text-[#00E5C0]" />
-                      <span>Preview Proposal</span>
-                    </button>
-
-                    {/* Action 3: Download PDF */}
-                    <button
-                      type="button"
-                      onClick={onDownloadPDF}
-                      className="px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-800 text-xs font-bold border border-slate-200 transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
-                    >
-                      <Download className="w-3.5 h-3.5 text-teal-600" />
-                      <span>Download PDF</span>
-                    </button>
-
-                    {/* Action 4: Share on WhatsApp */}
-                    <button
-                      type="button"
-                      onClick={onShareWhatsApp}
-                      className="px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
-                      title="Share customer quotation summary directly on WhatsApp"
-                    >
-                      <MessageCircle className="w-3.5 h-3.5 text-emerald-200" />
-                      <span>WhatsApp</span>
-                    </button>
-
-                    {/* Action 5: Email Client */}
-                    <button
-                      type="button"
-                      onClick={onOpenEmailModal}
-                      className="px-3.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
-                    >
-                      <Mail className="w-3.5 h-3.5" />
-                      <span>Email Client</span>
-                    </button>
-
-                    {/* Action 6: Convert to Booking */}
                     <button
                       type="button"
                       onClick={onConvertBooking}
-                      className="px-3.5 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-md"
+                      className="px-4 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
                     >
                       <BookmarkCheck className="w-4 h-4" />
-                      <span>Convert Booking</span>
+                      <span>Convert to Booking</span>
                     </button>
                   </div>
                 </div>
@@ -4226,21 +4171,17 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 <ArrowRight className="w-4 h-4" />
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={onPreviewQuotation}
-                className="px-5 py-2.5 rounded-2xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 shadow-md"
-              >
-                <FileText className="w-4 h-4" />
-                <span>Finish & Preview Proposal →</span>
-              </button>
+              <span className="px-4 py-2 rounded-2xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold flex items-center space-x-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span>All 8 Steps Configured</span>
+              </span>
             )}
           </div>
         </main>
       </div>
 
       {/* ========================================================================= */}
-      {/* REAL-TIME FIXED STICKY PRICING SUMMARY BAR AT BOTTOM */}
+      {/* REAL-TIME FIXED STICKY PRICING SUMMARY BAR AT BOTTOM (INFORMATIONAL ONLY) */}
       {/* ========================================================================= */}
       <div className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-md text-white border-t border-slate-800 px-4 sm:px-8 py-3 shadow-2xl">
         <div className="w-full max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-3">
@@ -4266,33 +4207,11 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             </div>
           </div>
 
-          {/* Right: Fast Action Buttons */}
-          <div className="flex items-center space-x-2.5">
-            <button
-              type="button"
-              onClick={onSaveDraft}
-              className="hidden sm:inline-flex px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-colors cursor-pointer border border-slate-700"
-            >
-              Save Draft
-            </button>
-
-            <button
-              type="button"
-              onClick={onPreviewQuotation}
-              className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5 border border-slate-700"
-            >
-              <FileText className="w-3.5 h-3.5 text-[#00E5C0]" />
-              <span>Preview Proposal</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={onConvertBooking}
-              className="px-4 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 shadow-xs"
-            >
-              <BookmarkCheck className="w-4 h-4" />
-              <span>Convert to Booking</span>
-            </button>
+          {/* Right: Per-Traveler Breakdown */}
+          <div className="flex items-center space-x-3 text-xs text-slate-300 font-mono">
+            <span>
+              {formatCurrency(Math.round(effectiveFinalPrice / Math.max(1, adultsCount + childrenCount + infantsCount)), currency)} / Traveler
+            </span>
           </div>
         </div>
       </div>

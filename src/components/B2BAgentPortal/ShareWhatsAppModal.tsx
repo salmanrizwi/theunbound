@@ -18,6 +18,7 @@ import { AppDatabase } from '../../services/db';
 import {
   generateWhatsAppQuoteMessage,
   generateWhatsAppShareUrl,
+  getWhatsAppPresentationModel,
   validateInternationalPhone,
   recordWhatsAppQuoteShare,
   WhatsAppSenderBranding
@@ -76,7 +77,21 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
     return undefined;
   }, [quote, selectedOptionIndex]);
 
-  // Dynamically generated message
+  const currentOptionTitle = currentOption?.title || (currentOption as any)?.optionTitle;
+
+  // Canonical Presentation Model (shared single source of truth with Preview, PDF, and Email)
+  const presentationModel = useMemo(() => {
+    return getWhatsAppPresentationModel({
+      quote,
+      selectedOptionIndexOrId: selectedOptionIndex,
+      senderBranding,
+      customNote,
+      useEmojis: includeEmojis,
+      formatStyle
+    });
+  }, [quote, selectedOptionIndex, senderBranding, customNote, includeEmojis, formatStyle]);
+
+  // Dynamically generated message from canonical presentation model
   const generatedMessage = useMemo(() => {
     return generateWhatsAppQuoteMessage({
       quote,
@@ -92,6 +107,10 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
   const phoneValidation = useMemo(() => {
     return validateInternationalPhone(phoneNumber);
   }, [phoneNumber]);
+
+  const waShareUrl = useMemo(() => {
+    return generateWhatsAppShareUrl(phoneValidation.normalized, generatedMessage);
+  }, [phoneValidation.normalized, generatedMessage]);
 
   // Handle Copying message to clipboard
   const handleCopyMessage = async () => {
@@ -118,7 +137,7 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
         'QUOTE_SENT',
         'Quotation',
         quote.id,
-        `WHATSAPP_QUOTE_SHARE_INITIATED: Copied WhatsApp proposal message to clipboard for quote ${quote.quoteNumber}`
+        `WHATSAPP_QUOTE_SHARE_INITIATED: Copied complete WhatsApp proposal message to clipboard for quote ${quote.quoteNumber}`
       );
     } catch (err) {
       console.error('Failed to copy to clipboard:', err);
@@ -126,7 +145,7 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
   };
 
   // Handle WhatsApp Link Dispatch
-  const handleLaunchWhatsApp = () => {
+  const handleLaunchWhatsApp = async () => {
     if (!phoneValidation.isValid) {
       return;
     }
@@ -134,31 +153,38 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
     setIsSubmitting(true);
 
     try {
+      // Also copy full message to clipboard as automatic backup
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(generatedMessage);
+          setCopied(true);
+        }
+      } catch {
+        // Ignore clipboard permission errors
+      }
+
       // 1. Audit and record activity in Quotation + Lead Management
       const shareResult = recordWhatsAppQuoteShare(db, quote, {
         quote,
         recipientPhone: phoneValidation.normalized,
         user,
-        selectedOptionTitle: currentOption?.optionTitle,
-        savePhoneToCustomerProfile: saveToProfile
+        selectedOptionTitle: currentOptionTitle,
+        savePhoneToCustomerProfile: saveToProfile && Boolean(phoneValidation.normalized)
       });
 
-      // 2. Generate WhatsApp Web / App deep link
-      const waUrl = generateWhatsAppShareUrl(phoneValidation.normalized, generatedMessage);
+      const recipientDisplay = phoneValidation.normalized
+        ? `+${phoneValidation.normalized}`
+        : 'WhatsApp Contact Picker';
 
-      // 3. Open WhatsApp in new tab / application
-      window.open(waUrl, '_blank', 'noopener,noreferrer');
-
-      setShareSuccessNotice(`WhatsApp chat launched with +${phoneValidation.normalized}. Activity recorded in Quotation history and Lead timeline.`);
+      setShareSuccessNotice(
+        `Complete quotation launched in WhatsApp (${recipientDisplay}) and copied to clipboard. Activity recorded in Quotation history and Lead timeline.`
+      );
 
       if (onSuccess) {
         onSuccess(shareResult.updatedQuote, shareResult.lead);
       }
 
-      // Close modal after brief feedback
-      setTimeout(() => {
-        onClose();
-      }, 1800);
+      setIsSubmitting(false);
     } catch (error) {
       console.error('Failed to record WhatsApp quote share:', error);
       setIsSubmitting(false);
@@ -228,10 +254,10 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
                 </span>
               </div>
 
-              {currentOption && (
+              {currentOptionTitle && (
                 <span className="text-[10px] font-bold bg-purple-100 text-purple-800 px-2.5 py-0.5 rounded-full border border-purple-200 flex items-center space-x-1">
                   <Layers className="w-3 h-3 text-purple-600" />
-                  <span>{currentOption.optionTitle}</span>
+                  <span>{currentOptionTitle}</span>
                 </span>
               )}
             </div>
@@ -260,9 +286,9 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
               <label htmlFor="customer-whatsapp-input" className="text-xs font-bold text-slate-800 flex items-center space-x-1.5">
                 <Phone className="w-3.5 h-3.5 text-emerald-600" />
                 <span>Customer WhatsApp Number</span>
-                <span className="text-red-500">*</span>
+                <span className="text-slate-400 font-normal text-[11px]">(Optional — leave blank to pick contact in WhatsApp)</span>
               </label>
-              {phoneValidation.isValid && (
+              {phoneValidation.isValid && phoneValidation.normalized && (
                 <span className="text-[11px] font-bold text-emerald-600 flex items-center space-x-1">
                   <Check className="w-3 h-3" />
                   <span>+{phoneValidation.normalized}</span>
@@ -433,7 +459,7 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
                 </span>
               </div>
               <span className="text-[10px] text-slate-400 font-mono">
-                {formatStyle === 'DETAILED' ? 'Full Day-by-Day' : 'Summary'}
+                {presentationModel.days.length} Days • {presentationModel.hotels.length} Hotels • {presentationModel.days.reduce((sum, d) => sum + d.services.length, 0) + presentationModel.visaServices.length} Services
               </span>
             </div>
 
@@ -490,16 +516,29 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
               Cancel
             </button>
 
-            <button
-              type="button"
-              disabled={!phoneValidation.isValid || isSubmitting}
-              onClick={handleLaunchWhatsApp}
-              className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-black transition-all flex items-center space-x-2 shadow-md shadow-emerald-700/20 cursor-pointer"
-            >
-              <MessageCircle className="w-4 h-4 text-white" />
-              <span>Continue to WhatsApp</span>
-              <ExternalLink className="w-3.5 h-3.5 text-emerald-200" />
-            </button>
+            {phoneValidation.isValid ? (
+              <a
+                href={waShareUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={handleLaunchWhatsApp}
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition-all flex items-center space-x-2 shadow-md shadow-emerald-700/20 cursor-pointer no-underline"
+              >
+                <MessageCircle className="w-4 h-4 text-white" />
+                <span>{phoneValidation.normalized ? 'Send via WhatsApp' : 'Open WhatsApp & Choose Contact'}</span>
+                <ExternalLink className="w-3.5 h-3.5 text-emerald-200" />
+              </a>
+            ) : (
+              <button
+                type="button"
+                disabled
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 opacity-50 cursor-not-allowed text-white text-xs font-black transition-all flex items-center space-x-2 shadow-md shadow-emerald-700/20"
+              >
+                <MessageCircle className="w-4 h-4 text-white" />
+                <span>Send via WhatsApp</span>
+                <ExternalLink className="w-3.5 h-3.5 text-emerald-200" />
+              </button>
+            )}
           </div>
         </div>
 

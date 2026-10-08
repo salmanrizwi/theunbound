@@ -1,9 +1,10 @@
 import { Quotation, User, TravelLead, CommunicationAuditLog } from '../types';
 import { AppDatabase } from './db';
 import {
-  buildQuoteCommunicationPayload,
-  formatWhatsAppQuoteFromPayload
-} from './communicationDataBuilder';
+  buildQuotePresentationModel,
+  renderQuoteWhatsAppFromPresentationModel,
+  QuotePresentationModel
+} from './quotePresentationModel';
 import {
   CustomerSanitizedQuote,
   sanitizeQuoteForCustomer,
@@ -58,19 +59,23 @@ export function normalizePhoneNumber(rawPhone?: string): string {
 }
 
 /**
- * Validates international phone number for WhatsApp
+ * Validates international phone number for WhatsApp.
+ * Note: If rawPhone is blank, allows opening WhatsApp's native contact picker.
  */
 export function validateInternationalPhone(rawPhone?: string): {
   isValid: boolean;
   normalized: string;
   error?: string;
 } {
-  const normalized = normalizePhoneNumber(rawPhone);
+  let normalized = normalizePhoneNumber(rawPhone);
+  if (normalized.startsWith('00')) {
+    normalized = normalized.slice(2);
+  }
   if (!normalized) {
-    return { isValid: false, normalized: '', error: 'Phone number is required.' };
+    return { isValid: true, normalized: '' };
   }
   if (normalized.length < 7) {
-    return { isValid: false, normalized, error: 'Phone number is too short. Include country code (e.g. +91 or +1).' };
+    return { isValid: false, normalized, error: 'Phone number is too short. Include country code (e.g. +91 or +1) or leave blank to choose contact in WhatsApp.' };
   }
   if (normalized.length > 15) {
     return { isValid: false, normalized, error: 'Phone number exceeds standard international length (max 15 digits).' };
@@ -83,8 +88,9 @@ export function validateInternationalPhone(rawPhone?: string): {
  * Example: "919811654959" -> "+91 •••• ••4959"
  */
 export function maskPhoneNumber(phone?: string): string {
-  if (!phone) return 'Unknown Number';
+  if (!phone) return 'WhatsApp Contact Picker';
   const clean = normalizePhoneNumber(phone);
+  if (!clean) return 'WhatsApp Contact Picker';
   if (clean.length < 6) return '••••••';
   
   const last4 = clean.slice(-4);
@@ -93,30 +99,55 @@ export function maskPhoneNumber(phone?: string): string {
 }
 
 /**
- * Builds the dynamically generated WhatsApp message adhering strictly to TheUnbound Standard (Section 16).
- * MANDATE: Contains trip summary, accommodations, AND complete chronological Day-Wise Plan!
- * GUARANTEE: Never exposes internal costs, supplier rates, or commercial margins.
+ * Builds the canonical QuotePresentationModel for WhatsApp sharing.
  */
-export function generateWhatsAppQuoteMessage(options: GenerateWhatsAppMessageOptions): string {
-  // Derive from authoritative QuoteCommunicationPayload
-  const payload = buildQuoteCommunicationPayload(options.quote, {
-    selectedOptionIndexOrId: options.selectedOptionIndexOrId,
-    role: 'BUYER',
-    senderBranding: options.senderBranding
-  });
-
-  return formatWhatsAppQuoteFromPayload(payload, options.customNote, {
-    useEmojis: options.useEmojis !== false,
-    formatStyle: options.formatStyle || 'DETAILED'
+export function getWhatsAppPresentationModel(options: GenerateWhatsAppMessageOptions): QuotePresentationModel {
+  return buildQuotePresentationModel(options.quote, {
+    name: options.senderBranding?.name,
+    agencyName: options.senderBranding?.agency,
+    email: options.senderBranding?.email,
+    phone: options.senderBranding?.phone,
+    selectedOptionIndexOrId: options.selectedOptionIndexOrId
   });
 }
 
 /**
- * Generates official click-to-chat WhatsApp URL (wa.me)
+ * Builds the dynamically generated WhatsApp message from the canonical QuotePresentationModel
+ * (the exact same single source of truth used by Quote Preview, PDF, and Email).
+ * MANDATE: Contains trip summary, accommodations, visa/ancillary, AND complete chronological Day-Wise Plan
+ * with full descriptions, inclusions, exclusions, meeting/pickup/drop-off points, rail specs, and commercial terms!
+ * GUARANTEE: Never exposes internal costs, supplier rates, or commercial margins.
+ */
+export function generateWhatsAppQuoteMessage(options: GenerateWhatsAppMessageOptions): string {
+  const presentationModel = getWhatsAppPresentationModel(options);
+
+  const fullMessage = renderQuoteWhatsAppFromPresentationModel(presentationModel, {
+    customNote: options.customNote,
+    useEmojis: options.useEmojis !== false,
+    formatStyle: options.formatStyle || 'DETAILED'
+  });
+
+  const leakCheck = verifyNoCommercialLeak(fullMessage);
+  if (!leakCheck.isSafe) {
+    return fullMessage.replace(new RegExp(`\\b(${leakCheck.detectedTerms.join('|')})\\b`, 'gi'), '');
+  }
+
+  return fullMessage;
+}
+
+/**
+ * Generates official click-to-chat WhatsApp URL (wa.me or api.whatsapp.com/send)
  */
 export function generateWhatsAppShareUrl(phoneNumber: string, messageText: string): string {
-  const cleanPhone = normalizePhoneNumber(phoneNumber);
-  const encodedText = encodeURIComponent(messageText);
+  let cleanPhone = normalizePhoneNumber(phoneNumber);
+  if (cleanPhone.startsWith('00')) {
+    cleanPhone = cleanPhone.slice(2);
+  }
+  const normalizedText = messageText.replace(/\r\n/g, '\n');
+  const encodedText = encodeURIComponent(normalizedText);
+  if (!cleanPhone) {
+    return `https://api.whatsapp.com/send?text=${encodedText}`;
+  }
   return `https://wa.me/${cleanPhone}?text=${encodedText}`;
 }
 

@@ -31,11 +31,16 @@ export default defineConfig(() => {
       outDir: 'dist',
       emptyOutDir: true,
       sourcemap: false,
+      reportCompressedSize: false,
+      minify: 'esbuild',
       chunkSizeWarningLimit: 3000,
       rollupOptions: {
         output: {
           manualChunks(id) {
             if (id.includes('node_modules')) {
+              if (id.includes('xlsx')) {
+                return 'vendor-xlsx';
+              }
               if (id.includes('jspdf') || id.includes('html2canvas') || id.includes('dompurify') || id.includes('canvg') || id.includes('fflate')) {
                 return 'vendor-pdf';
               }
@@ -52,15 +57,6 @@ export default defineConfig(() => {
                 return 'vendor-react';
               }
               return 'vendor-misc';
-            }
-            if (id.includes('src/components/AdminCMS/')) {
-              return 'app-admin-cms';
-            }
-            if (id.includes('src/components/QuoteBuilder/')) {
-              return 'app-quote-builder';
-            }
-            if (id.includes('src/services/db.ts')) {
-              return 'app-db';
             }
           },
         },

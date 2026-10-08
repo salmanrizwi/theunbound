@@ -50,7 +50,7 @@ export async function startServer() {
       app.get("/robots.txt", handleRobotsTxt);
 
       // Robust environment detection: in development mode or unless NODE_ENV === "production", mount Vite dev middlewares
-      const distPath = path.resolve(process.cwd(), "dist");
+      const distPath = fs.existsSync(path.resolve(process.cwd(), "dist")) ? path.resolve(process.cwd(), "dist") : path.resolve(process.cwd(), "build");
       const indexPath = path.join(distPath, "index.html");
       const hasDistBuild = fs.existsSync(indexPath);
       const isDev = process.execArgv.some((a) => a.includes("tsx")) || 
