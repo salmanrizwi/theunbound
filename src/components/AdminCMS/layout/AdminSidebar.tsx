@@ -37,6 +37,7 @@ import {
   X,
   ShieldCheck,
   Sparkles,
+  Mail,
   LucideIcon
 } from 'lucide-react';
 import { CMSSection } from '../AdminCMSHub';
@@ -110,7 +111,8 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   });
 
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({
-    visa: true
+    visa: true,
+    promotions: true
   });
 
   const toggleGroup = (groupId: string) => {
@@ -307,10 +309,33 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
         },
         {
           id: 'promotions',
-          label: 'Promotions',
+          label: 'Marketing Management',
           section: 'MARKETING_MANAGEMENT',
-          subTab: 'PROMOTIONS',
-          icon: Megaphone
+          subTab: 'CAMPAIGNS',
+          icon: Megaphone,
+          children: [
+            {
+              id: 'promotions_deals',
+              label: 'Promotions & Deal Campaigns',
+              section: 'MARKETING_MANAGEMENT',
+              subTab: 'PROMOTIONS',
+              icon: Megaphone
+            },
+            {
+              id: 'marketing_triggers_hub',
+              label: 'Marketing Triggers & Automated Email Hub',
+              section: 'MARKETING_MANAGEMENT',
+              subTab: 'CAMPAIGNS',
+              icon: Mail
+            },
+            {
+              id: 'email_logs_reports',
+              label: 'Email Logs / Campaign Reports',
+              section: 'MARKETING_MANAGEMENT',
+              subTab: 'EMAIL_LOGS',
+              icon: History
+            }
+          ]
         },
         {
           id: 'gallery',

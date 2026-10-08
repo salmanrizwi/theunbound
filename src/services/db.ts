@@ -572,7 +572,8 @@ export const INITIAL_SLA_AUTOMATION_RULES: SLAAutomationRule[] = [
 ];
 
 export type BookingSaveListener = (booking: Booking, user: User | null, isNew: boolean) => void;
-export type QuotationSaveListener = (quote: Quotation, user: User | null, isNew: boolean) => void;
+export type QuotationSaveListener = (quote: Quotation, user: User | null, isNew: boolean, actionType?: string) => void;
+export type UserRegisteredListener = (user: User) => void;
 
 const memoryStorage = new Map<string, string>();
 
@@ -684,6 +685,7 @@ export class AppDatabase {
   private listeners: Set<() => void> = new Set();
   private bookingSaveListeners: BookingSaveListener[] = [];
   private quotationSaveListeners: QuotationSaveListener[] = [];
+  private userRegisteredListeners: UserRegisteredListener[] = [];
   private leadSaveListeners: ((lead: TravelLead, user: User | null, isNew: boolean) => void)[] = [];
   private isFirestoreInitialized: boolean = false;
   private notifyTimer: any = null;
@@ -812,6 +814,13 @@ export class AppDatabase {
     this.quotationSaveListeners.push(listener);
     return () => {
       this.quotationSaveListeners = this.quotationSaveListeners.filter(l => l !== listener);
+    };
+  }
+
+  public onUserRegistered(listener: UserRegisteredListener): () => void {
+    this.userRegisteredListeners.push(listener);
+    return () => {
+      this.userRegisteredListeners = this.userRegisteredListeners.filter(l => l !== listener);
     };
   }
 
@@ -6955,7 +6964,7 @@ export class AppDatabase {
     const isNewQuote = existingIndex < 0;
     this.quotationSaveListeners.forEach(listener => {
       try {
-        listener(updatedQuote, user, isNewQuote);
+        listener(updatedQuote, user, isNewQuote, actionType);
       } catch (err) {
         console.error('Error in quotationSaveListener:', err);
       }
@@ -16310,6 +16319,14 @@ export class AppDatabase {
       newUser.id,
       `New user profile created: ${newUser.name} (${newUser.email}), Role=${newUser.role}, Status=${newUser.approvalStatus}, Agency=${newUser.agencyName || 'N/A'}`
     );
+
+    this.userRegisteredListeners.forEach(listener => {
+      try {
+        listener(newUser);
+      } catch (err) {
+        console.error('Error in userRegisteredListener:', err);
+      }
+    });
 
     return {
       success: true,

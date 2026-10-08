@@ -411,6 +411,9 @@ export interface User {
   customBuyerMarginPercent?: number;
   customAgentMarginPercent?: number;
   contactNumber?: string;
+  firstBookingWelcomeSentAt?: string;
+  firstBookingWelcomeMessageId?: string;
+  emailOptOut?: boolean;
 }
 
 export interface DestinationCity {
@@ -5347,29 +5350,117 @@ export interface JobSheet {
 }
 
 // ----------------------------------------------------
-// EMAIL CAMPAIGN MANAGEMENT SYSTEM
+// EMAIL CAMPAIGN & MARKETING AUTOMATION ENGINE
 // ----------------------------------------------------
+export type MarketingTriggerKey =
+  | 'USER_REGISTERED'
+  | 'QUOTE_SAVED'
+  | 'QUOTE_DOWNLOADED'
+  | 'FIRST_BOOKING_COMPLETED'
+  | 'BOOKING_CONFIRMATION_SLA';
+
 export type EmailCampaignType = 
+  | 'USER_REGISTERED'
+  | 'QUOTE_SAVED'
+  | 'QUOTE_DOWNLOADED'
+  | 'FIRST_BOOKING_COMPLETED'
+  | 'BOOKING_CONFIRMATION_SLA'
   | 'BOOKING_CONFIRMATION' 
   | 'SAVED_QUOTE_REMINDER' 
   | 'DOWNLOADED_QUOTE_REMINDER' 
   | 'FIRST_BOOKING_REMINDER';
 
+export type TriggerStatus = 'ACTIVE' | 'INACTIVE' | 'DRAFT';
+export type TriggerTimingMode = 'IMMEDIATE' | 'DELAYED' | 'CUSTOM' | 'SLA';
+export type TriggerDelayUnit = 'MINUTES' | 'HOURS' | 'DAYS';
+
+export interface EmailTemplateVersionRecord {
+  version: string;
+  subject: string;
+  preheaderText?: string;
+  templateHtml: string;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export interface TriggerSLAConfig {
+  slaDuration: number;
+  slaUnit: TriggerDelayUnit;
+  reminderTiming?: string;
+  eligibleStatuses: string[];
+  excludedStatuses: string[];
+}
+
 export interface EmailCampaignConfig {
   id: string;
   campaignType: EmailCampaignType;
+  triggerKey?: MarketingTriggerKey;
   name: string;
   description: string;
   isEnabled: boolean;
+  status?: TriggerStatus;
+  isSystemTrigger?: boolean;
+  priority?: number;
   subject: string;
+  preheaderText?: string;
   templateHtml: string;
   senderName: string;
   senderEmail: string;
+  primaryRecipientRule?: string;
+  internalCopyRecipients?: string[];
   triggerCondition: string;
+  timingMode?: TriggerTimingMode;
   delayHours: number;
-  dynamicVariables: string[]; // e.g. ['{{Customer Name}}', '{{Booking ID}}', '{{Destination}}', '{{Travel Date}}', '{{Amount}}', '{{Booking Link}}']
+  delayValue?: number;
+  delayUnit?: TriggerDelayUnit;
+  slaConfig?: TriggerSLAConfig;
+  dynamicVariables: string[];
+  templateVersion?: string;
+  versionHistory?: EmailTemplateVersionRecord[];
   sentCount: number;
+  skippedCount?: number;
+  failedCount?: number;
+  updatedAt?: string;
   lastDispatchedAt?: string;
+}
+
+export interface ScheduledAutomationJob {
+  id: string;
+  triggerId: string;
+  triggerKey: MarketingTriggerKey;
+  triggerName: string;
+  entityType: 'USER' | 'QUOTE' | 'BOOKING';
+  entityId: string;
+  recipientEmail: string;
+  recipientName?: string;
+  scheduledFor: string;
+  createdAt: string;
+  executedAt?: string;
+  status: 'SCHEDULED' | 'EXECUTED' | 'CANCELLED' | 'SKIPPED' | 'FAILED';
+  statusReason?: string;
+  idempotencyKey: string;
+  retryCount: number;
+  contextSnapshot?: Record<string, any>;
+}
+
+export interface MarketingAutomationExecutionLog {
+  id: string;
+  jobId?: string;
+  triggerId: string;
+  triggerKey: MarketingTriggerKey;
+  triggerName: string;
+  entityType?: 'USER' | 'QUOTE' | 'BOOKING' | 'TEST';
+  entityId?: string;
+  recipientEmail: string;
+  internalCopySentTo?: string[];
+  subject: string;
+  templateVersion: string;
+  status: 'SENT' | 'SKIPPED' | 'CANCELLED' | 'FAILED' | 'TEST_SENT';
+  reason?: string;
+  messageId?: string;
+  executedAt: string;
+  idempotencyKey: string;
+  retryCount?: number;
 }
 
 // Aliases for convenient CMS usage

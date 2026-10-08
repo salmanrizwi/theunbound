@@ -2,151 +2,397 @@ import { EmailCampaignConfig } from '../types';
 
 export const INITIAL_CAMPAIGNS: EmailCampaignConfig[] = [
   {
-    id: 'camp-01',
-    campaignType: 'BOOKING_CONFIRMATION',
-    name: 'Instant Booking & 24–48h SLA Notice',
-    description: 'Triggered immediately when a buyer, B2B agent, or team member registers a confirmed booking.',
+    id: 'trigger-user-registered',
+    campaignType: 'USER_REGISTERED',
+    triggerKey: 'USER_REGISTERED',
+    name: 'New User Registration',
+    description: 'Triggered immediately when a new eligible user or B2B travel partner completes account registration.',
     isEnabled: true,
-    subject: 'Booking Confirmation: {{Booking Reference}} — Ground Services Allocated',
-    templateHtml: `
-<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden;">
-  <div style="background-color: #0f172a; padding: 24px; color: #ffffff; text-align: center;">
-    <h1 style="color: #00C6A6; margin: 0; font-size: 24px;">Booking Confirmation</h1>
-    <p style="margin: 4px 0 0 0; font-size: 12px; color: #94a3b8;">GROUND OPERATIONS DESK</p>
+    status: 'ACTIVE',
+    isSystemTrigger: true,
+    priority: 1,
+    subject: 'Welcome to TheUnbound, {{user.firstName}} — Your Travel & Ground Operations Portal',
+    preheaderText: 'Your account registration is verified. Explore contracted wholesale ground rates and custom itineraries.',
+    templateHtml: `<div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto; color: #1F2933; background-color: #FFFFFF; border: 1px solid #DDE8E6; border-radius: 16px; overflow: hidden;">
+  <div style="background-color: #0F172A; padding: 28px 24px; border-bottom: 3px solid #00C6A6;">
+    <p style="margin: 0 0 4px 0; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #00C6A6; text-transform: uppercase;">TheUnbound Partner &amp; Traveler Network</p>
+    <h1 style="margin: 0; font-size: 22px; font-weight: 800; color: #FFFFFF;">Welcome to TheUnbound, {{user.firstName}}</h1>
   </div>
-  <div style="padding: 24px;">
-    <h2 style="font-size: 18px; color: #0f172a; margin-top: 0;">Booking Received & Locked: {{Booking Reference}}</h2>
-    <p>Dear <strong>{{Customer Name}}</strong>,</p>
-    <p>We are delighted to confirm that your booking request for <strong>{{Destination}}</strong> has been locked with our local DMC operations fleet.</p>
-    
-    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin: 20px 0;">
-      <p style="margin: 4px 0;"><strong>Travel Date:</strong> {{Travel Date}}</p>
-      <p style="margin: 4px 0;"><strong>Total Value:</strong> {{Amount}}</p>
-      <p style="margin: 4px 0;"><strong>Status:</strong> 24–48h Ground Update SLA In Progress</p>
+  <div style="padding: 28px 24px;">
+    <p style="font-size: 15px; line-height: 1.6; color: #1F2933; margin-top: 0;">Dear <strong>{{user.firstName}} {{user.lastName}}</strong>,</p>
+    <p style="font-size: 14px; line-height: 1.6; color: #5F6B73;">Thank you for registering with <strong>TheUnbound</strong> ({{user.companyName}}). Your account (<span style="font-family: monospace; color: #1F2933;">{{user.email}}</span>) is now active on our centralized destination management platform.</p>
+    <div style="background-color: #F8FAFA; border: 1px solid #DDE8E6; border-radius: 12px; padding: 16px; margin: 20px 0;">
+      <p style="margin: 0 0 8px 0; font-size: 13px; font-weight: 700; color: #1F2933;">What You Can Do Next:</p>
+      <ul style="margin: 0; padding-left: 18px; font-size: 13px; color: #5F6B73; line-height: 1.7;">
+        <li>Build itemized multi-city quotations with real-time tariff calculations</li>
+        <li>Access contracted private tours, luxury MPV chauffeurs, and Japan Rail passes</li>
+        <li>Track 24–48h ground confirmation SLAs and official travel vouchers</li>
+      </ul>
     </div>
-
-    <p style="color: #64748b; font-size: 13px;">Our destination operations controller is currently finalizing your licensed bilingual guide allocations and executive vehicle dispatch.</p>
-    
-    <div style="text-align: center; margin: 24px 0;">
-      <a href="{{Booking Link}}" style="background-color: #00C6A6; color: #0f172a; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 8px; display: inline-block;">View Booking Status</a>
+    <div style="margin: 24px 0;">
+      <a href="https://theunbound.in" style="background-color: #00C6A6; color: #0F172A; font-weight: 700; font-size: 13px; text-decoration: none; padding: 12px 24px; border-radius: 10px; display: inline-block;">Access Your Portal Workspace</a>
     </div>
   </div>
-  <div style="background-color: #f1f5f9; padding: 16px; text-align: center; font-size: 11px; color: #64748b;">
-    Destination Management & Ground Operations. All rights reserved.
+  <div style="background-color: #F8FAFA; border-top: 1px solid #DDE8E6; padding: 16px 24px; font-size: 12px; color: #5F6B73;">
+    TheUnbound Destination Management &amp; Ground Operations · <a href="mailto:business@theunbound.in" style="color: #008972; text-decoration: none;">business@theunbound.in</a>
   </div>
-</div>
-    `,
-    senderName: 'Operations Desk',
-    senderEmail: 'operations@theunbound.in',
-    triggerCondition: 'On successful booking creation',
+</div>`,
+    senderName: 'TheUnbound Onboarding Desk',
+    senderEmail: 'partnerships@theunbound.in',
+    primaryRecipientRule: 'User Email',
+    internalCopyRecipients: ['business@theunbound.in'],
+    triggerCondition: 'Immediately on USER_REGISTERED event',
+    timingMode: 'IMMEDIATE',
     delayHours: 0,
-    dynamicVariables: ['{{Customer Name}}', '{{Booking Reference}}', '{{Destination}}', '{{Travel Date}}', '{{Amount}}', '{{Booking Link}}'],
-    sentCount: 142,
-    lastDispatchedAt: '2026-08-23T18:40:00Z'
+    delayValue: 0,
+    delayUnit: 'MINUTES',
+    dynamicVariables: [
+      '{{user.firstName}}',
+      '{{user.lastName}}',
+      '{{user.email}}',
+      '{{user.companyName}}',
+      '{{agent.agencyName}}',
+      '{{agent.agentName}}',
+      '{{agent.agentEmail}}'
+    ],
+    templateVersion: 'v1.0',
+    versionHistory: [
+      {
+        version: 'v1.0',
+        subject: 'Welcome to TheUnbound, {{user.firstName}} — Your Travel & Ground Operations Portal',
+        preheaderText: 'Your account registration is verified. Explore contracted wholesale ground rates and custom itineraries.',
+        templateHtml: 'Initial system registration template',
+        updatedAt: '2026-09-15T09:00:00Z',
+        updatedBy: 'business@theunbound.in'
+      }
+    ],
+    sentCount: 118,
+    skippedCount: 2,
+    failedCount: 0,
+    updatedAt: '2026-10-01T10:30:00Z',
+    lastDispatchedAt: '2026-10-07T16:20:00Z'
   },
   {
-    id: 'camp-02',
-    campaignType: 'SAVED_QUOTE_REMINDER',
-    name: 'Saved Quote Rate Guarantee Expiry Reminder',
-    description: 'Sent to agents or buyers who have saved a quote but have not booked within 48 hours.',
+    id: 'trigger-quote-saved',
+    campaignType: 'QUOTE_SAVED',
+    triggerKey: 'QUOTE_SAVED',
+    name: 'Saved Quote Reminder',
+    description: 'Triggered when a user saves a quote/proposal but does not proceed with booking within the configured window. Automatically skipped if the quote converts to a booking.',
     isEnabled: true,
-    subject: 'Action Needed: Your Quoted Itinerary {{Quote Number}} Rate Guarantee',
-    templateHtml: `
-<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden;">
-  <div style="background-color: #0f172a; padding: 24px; color: #ffffff; text-align: center;">
-    <h1 style="color: #00C6A6; margin: 0; font-size: 24px;">Tariff Guarantee</h1>
-    <p style="margin: 4px 0 0 0; font-size: 12px; color: #94a3b8;">WHOLESALE GROUND CONTRACTS</p>
+    status: 'ACTIVE',
+    isSystemTrigger: true,
+    priority: 2,
+    subject: 'Your TheUnbound Quote {{quote.quoteReference}} for {{trip.destination}} Is Waiting for You',
+    preheaderText: 'Lock in your guaranteed rates before {{quote.validUntil}} for {{trip.destination}}.',
+    templateHtml: `<div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto; color: #1F2933; background-color: #FFFFFF; border: 1px solid #DDE8E6; border-radius: 16px; overflow: hidden;">
+  <div style="background-color: #0F172A; padding: 28px 24px; border-bottom: 3px solid #00C6A6;">
+    <p style="margin: 0 0 4px 0; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #00C6A6; text-transform: uppercase;">Saved Proposal Rate Guarantee</p>
+    <h1 style="margin: 0; font-size: 22px; font-weight: 800; color: #FFFFFF;">Quote {{quote.quoteReference}} — {{trip.destination}}</h1>
   </div>
-  <div style="padding: 24px;">
-    <h2 style="font-size: 18px; color: #0f172a; margin-top: 0;">Your Saved Quote: {{Quote Number}}</h2>
-    <p>Dear <strong>{{Customer Name}}</strong>,</p>
-    <p>Your saved wholesale quotation for <strong>{{Destination}}</strong> (Total: <strong>{{Amount}}</strong>) is currently locked under our 14-day price guarantee.</p>
-    <p>Ground resources for your travel dates ({{Travel Date}}) are experiencing high seasonal demand. Convert your quote into a confirmed booking now to ensure guide and vehicle allotment.</p>
-    <div style="text-align: center; margin: 24px 0;">
-      <a href="{{Quote Link}}" style="background-color: #00C6A6; color: #0f172a; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 8px; display: inline-block;">Review & Confirm Itinerary</a>
+  <div style="padding: 28px 24px;">
+    <p style="font-size: 15px; line-height: 1.6; color: #1F2933; margin-top: 0;">Dear <strong>{{user.firstName}}</strong>,</p>
+    <p style="font-size: 14px; line-height: 1.6; color: #5F6B73;">Your saved quotation for <strong>{{trip.destination}}</strong> is currently held under our rate guarantee until <strong>{{quote.validUntil}}</strong>.</p>
+    <div style="background-color: #F8FAFA; border: 1px solid #DDE8E6; border-radius: 12px; padding: 16px; margin: 20px 0; font-size: 13px; color: #1F2933;">
+      <p style="margin: 4px 0;"><strong>Quote Reference:</strong> <span style="font-family: monospace;">{{quote.quoteReference}}</span></p>
+      <p style="margin: 4px 0;"><strong>Destination:</strong> {{trip.destination}}</p>
+      <p style="margin: 4px 0;"><strong>Travel Window:</strong> {{trip.startDate}} – {{trip.endDate}} ({{trip.passengerCount}} Pax)</p>
+      <p style="margin: 4px 0;"><strong>Quoted Total:</strong> <span style="font-family: monospace; font-weight: 700; color: #008972;">{{quote.currency}} {{quote.total}}</span></p>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #5F6B73;">Ground vehicles and bilingual guides experience high seasonal demand. Proceed to booking confirmation whenever you are ready to lock your allocation.</p>
+    <div style="margin: 24px 0;">
+      <a href="https://theunbound.in" style="background-color: #00C6A6; color: #0F172A; font-weight: 700; font-size: 13px; text-decoration: none; padding: 12px 24px; border-radius: 10px; display: inline-block;">Review &amp; Confirm Quote {{quote.quoteReference}}</a>
     </div>
   </div>
-  <div style="background-color: #f1f5f9; padding: 16px; text-align: center; font-size: 11px; color: #64748b;">
-    Destination Management & Ground Operations. All rights reserved.
+  <div style="background-color: #F8FAFA; border-top: 1px solid #DDE8E6; padding: 16px 24px; font-size: 12px; color: #5F6B73;">
+    TheUnbound Quotation Desk · <a href="mailto:sales@theunbound.in" style="color: #008972; text-decoration: none;">sales@theunbound.in</a>
   </div>
-</div>
-    `,
-    senderName: 'Partner Concierge',
+</div>`,
+    senderName: 'TheUnbound Quotation Desk',
     senderEmail: 'partners@theunbound.in',
-    triggerCondition: '48 hours after quote saved without booking',
-    delayHours: 48,
-    dynamicVariables: ['{{Customer Name}}', '{{Quote Number}}', '{{Destination}}', '{{Travel Date}}', '{{Amount}}', '{{Quote Link}}'],
+    primaryRecipientRule: 'Quote Owner Email',
+    internalCopyRecipients: ['business@theunbound.in'],
+    triggerCondition: 'Wait 24 Hours after QUOTE_SAVED → verify quote not booked/cancelled/expired',
+    timingMode: 'DELAYED',
+    delayHours: 24,
+    delayValue: 24,
+    delayUnit: 'HOURS',
+    dynamicVariables: [
+      '{{user.firstName}}',
+      '{{user.lastName}}',
+      '{{user.email}}',
+      '{{user.companyName}}',
+      '{{quote.quoteId}}',
+      '{{quote.quoteReference}}',
+      '{{quote.createdAt}}',
+      '{{quote.validUntil}}',
+      '{{quote.total}}',
+      '{{quote.currency}}',
+      '{{trip.destination}}',
+      '{{trip.startDate}}',
+      '{{trip.endDate}}',
+      '{{trip.passengerCount}}',
+      '{{agent.agencyName}}',
+      '{{agent.agentName}}',
+      '{{agent.agentEmail}}'
+    ],
+    templateVersion: 'v1.1',
+    versionHistory: [
+      {
+        version: 'v1.1',
+        subject: 'Your TheUnbound Quote {{quote.quoteReference}} for {{trip.destination}} Is Waiting for You',
+        preheaderText: 'Lock in your guaranteed rates before {{quote.validUntil}} for {{trip.destination}}.',
+        templateHtml: 'Updated with dynamic quote validity and passenger count summary',
+        updatedAt: '2026-10-02T14:15:00Z',
+        updatedBy: 'business@theunbound.in'
+      }
+    ],
     sentCount: 89,
-    lastDispatchedAt: '2026-08-22T10:15:00Z'
+    skippedCount: 31,
+    failedCount: 0,
+    updatedAt: '2026-10-02T14:15:00Z',
+    lastDispatchedAt: '2026-10-07T10:15:00Z'
   },
   {
-    id: 'camp-03',
-    campaignType: 'DOWNLOADED_QUOTE_REMINDER',
-    name: 'Downloaded PDF Quote Follow-Up',
-    description: 'Triggered when a user exports/prints a PDF quote to assist with closing the sale.',
+    id: 'trigger-quote-downloaded',
+    campaignType: 'QUOTE_DOWNLOADED',
+    triggerKey: 'QUOTE_DOWNLOADED',
+    name: 'Downloaded Quote Reminder',
+    description: 'Triggered when a user downloads a PDF quotation/proposal. Evaluates booking conversion status after the configured delay before sending.',
     isEnabled: true,
-    subject: 'Questions on your downloaded PDF proposal for {{Destination}}?',
-    templateHtml: `
-<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden;">
-  <div style="background-color: #0f172a; padding: 24px; color: #ffffff; text-align: center;">
-    <h1 style="color: #00C6A6; margin: 0; font-size: 24px;">Proposal Follow-Up</h1>
-    <p style="margin: 4px 0 0 0; font-size: 12px; color: #94a3b8;">VIP GROUND CONCIERGE</p>
+    status: 'ACTIVE',
+    isSystemTrigger: true,
+    priority: 3,
+    subject: 'Follow-Up on Your Downloaded Proposal {{quote.quoteReference}} ({{trip.destination}})',
+    preheaderText: 'Need route adjustments or vehicle upgrades on {{quote.quoteReference}}? Our destination specialists are ready to help.',
+    templateHtml: `<div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto; color: #1F2933; background-color: #FFFFFF; border: 1px solid #DDE8E6; border-radius: 16px; overflow: hidden;">
+  <div style="background-color: #0F172A; padding: 28px 24px; border-bottom: 3px solid #00C6A6;">
+    <p style="margin: 0 0 4px 0; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #00C6A6; text-transform: uppercase;">Proposal Concierge Follow-Up</p>
+    <h1 style="margin: 0; font-size: 22px; font-weight: 800; color: #FFFFFF;">Proposal {{quote.quoteReference}} — {{trip.destination}}</h1>
   </div>
-  <div style="padding: 24px;">
-    <h2 style="font-size: 18px; color: #0f172a; margin-top: 0;">Follow-Up: {{Quote Number}}</h2>
-    <p>Dear <strong>{{Customer Name}}</strong>,</p>
-    <p>We noticed you recently downloaded the itemized itinerary PDF for your upcoming journey to <strong>{{Destination}}</strong>.</p>
-    <p>Do you need custom route adjustments, specialized vehicle upgrades (e.g. Mercedes Maybach / Alphard Executive), or custom dietary accommodations? Our senior destination managers are on standby to assist.</p>
-    <div style="text-align: center; margin: 24px 0;">
-      <a href="{{Quote Link}}" style="background-color: #00C6A6; color: #0f172a; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 8px; display: inline-block;">Speak with Destination Specialist</a>
+  <div style="padding: 28px 24px;">
+    <p style="font-size: 15px; line-height: 1.6; color: #1F2933; margin-top: 0;">Dear <strong>{{user.firstName}}</strong>,</p>
+    <p style="font-size: 14px; line-height: 1.6; color: #5F6B73;">We noticed you recently downloaded the PDF itinerary proposal <strong style="font-family: monospace;">{{quote.quoteReference}}</strong> for <strong>{{trip.destination}}</strong> ({{trip.startDate}} – {{trip.endDate}}).</p>
+    <p style="font-size: 14px; line-height: 1.6; color: #5F6B73;">Whether you need custom day-by-day adjustments, executive vehicle upgrades, or split rooming allocations for your <strong>{{trip.passengerCount}} travelers</strong>, our ground operations desk is ready to assist.</p>
+    <div style="background-color: #F8FAFA; border: 1px solid #DDE8E6; border-radius: 12px; padding: 16px; margin: 20px 0; font-size: 13px; color: #1F2933;">
+      <p style="margin: 4px 0;"><strong>Proposal ID:</strong> <span style="font-family: monospace;">{{quote.quoteReference}}</span></p>
+      <p style="margin: 4px 0;"><strong>Quoted Total:</strong> <span style="font-family: monospace; font-weight: 700; color: #008972;">{{quote.currency}} {{quote.total}}</span></p>
+      <p style="margin: 4px 0;"><strong>Rate Valid Until:</strong> {{quote.validUntil}}</p>
+    </div>
+    <div style="margin: 24px 0;">
+      <a href="https://theunbound.in" style="background-color: #00C6A6; color: #0F172A; font-weight: 700; font-size: 13px; text-decoration: none; padding: 12px 24px; border-radius: 10px; display: inline-block;">Proceed to Booking or Request Adjustment</a>
     </div>
   </div>
-  <div style="background-color: #f1f5f9; padding: 16px; text-align: center; font-size: 11px; color: #64748b;">
-    Destination Management & Ground Operations. All rights reserved.
+  <div style="background-color: #F8FAFA; border-top: 1px solid #DDE8E6; padding: 16px 24px; font-size: 12px; color: #5F6B73;">
+    TheUnbound Destination Specialists · <a href="mailto:sales@theunbound.in" style="color: #008972; text-decoration: none;">sales@theunbound.in</a>
   </div>
-</div>
-    `,
+</div>`,
     senderName: 'Marcus Vance (Senior Destination Lead)',
     senderEmail: 'marcus.vance@theunbound.in',
-    triggerCondition: '24 hours after PDF quote download',
+    primaryRecipientRule: 'Quote Owner Email',
+    internalCopyRecipients: ['business@theunbound.in'],
+    triggerCondition: 'Wait 24 Hours after QUOTE_DOWNLOADED → verify quote not converted to booking',
+    timingMode: 'DELAYED',
     delayHours: 24,
-    dynamicVariables: ['{{Customer Name}}', '{{Quote Number}}', '{{Destination}}', '{{Quote Link}}'],
+    delayValue: 24,
+    delayUnit: 'HOURS',
+    dynamicVariables: [
+      '{{user.firstName}}',
+      '{{user.lastName}}',
+      '{{user.email}}',
+      '{{user.companyName}}',
+      '{{quote.quoteId}}',
+      '{{quote.quoteReference}}',
+      '{{quote.createdAt}}',
+      '{{quote.validUntil}}',
+      '{{quote.total}}',
+      '{{quote.currency}}',
+      '{{trip.destination}}',
+      '{{trip.startDate}}',
+      '{{trip.endDate}}',
+      '{{trip.passengerCount}}',
+      '{{agent.agencyName}}',
+      '{{agent.agentName}}',
+      '{{agent.agentEmail}}'
+    ],
+    templateVersion: 'v1.0',
+    versionHistory: [
+      {
+        version: 'v1.0',
+        subject: 'Follow-Up on Your Downloaded Proposal {{quote.quoteReference}} ({{trip.destination}})',
+        preheaderText: 'Need route adjustments or vehicle upgrades on {{quote.quoteReference}}?',
+        templateHtml: 'Initial PDF quote download follow-up template',
+        updatedAt: '2026-09-20T11:00:00Z',
+        updatedBy: 'business@theunbound.in'
+      }
+    ],
     sentCount: 64,
-    lastDispatchedAt: '2026-08-23T11:00:00Z'
+    skippedCount: 19,
+    failedCount: 0,
+    updatedAt: '2026-10-03T11:00:00Z',
+    lastDispatchedAt: '2026-10-07T11:00:00Z'
   },
   {
-    id: 'camp-04',
-    campaignType: 'FIRST_BOOKING_REMINDER',
-    name: 'New Registered Partner First Booking Welcome',
-    description: 'Sent to newly registered B2B agencies and buyers who have not yet submitted their first booking.',
+    id: 'trigger-first-booking-welcome',
+    campaignType: 'FIRST_BOOKING_COMPLETED',
+    triggerKey: 'FIRST_BOOKING_COMPLETED',
+    name: 'First Booking Welcome',
+    description: 'Triggered strictly once per account/user upon their first successful booking submission. Enforces atomic idempotency so subsequent bookings never re-trigger.',
     isEnabled: true,
-    subject: 'Your Account Registration Request — Wholesale Contract Ground Rates',
-    templateHtml: `
-<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden;">
-  <div style="background-color: #0f172a; padding: 24px; color: #ffffff; text-align: center;">
-    <h1 style="color: #00C6A6; margin: 0; font-size: 24px;">Partner Registration</h1>
-    <p style="margin: 4px 0 0 0; font-size: 12px; color: #94a3b8;">B2B TRAVEL AGENT ONBOARDING</p>
+    status: 'ACTIVE',
+    isSystemTrigger: true,
+    priority: 1,
+    subject: 'Congratulations on Your First Booking with TheUnbound ({{booking.bookingReference}})',
+    preheaderText: 'Welcome to our active ground operations network. Your dedicated operations controller has been assigned.',
+    templateHtml: `<div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto; color: #1F2933; background-color: #FFFFFF; border: 1px solid #DDE8E6; border-radius: 16px; overflow: hidden;">
+  <div style="background-color: #0F172A; padding: 28px 24px; border-bottom: 3px solid #00C6A6;">
+    <p style="margin: 0 0 4px 0; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #00C6A6; text-transform: uppercase;">First Booking Milestone</p>
+    <h1 style="margin: 0; font-size: 22px; font-weight: 800; color: #FFFFFF;">Thank You for Your First Booking!</h1>
   </div>
-  <div style="padding: 24px;">
-    <h2 style="font-size: 18px; color: #0f172a; margin-top: 0;">Welcome to Partner Network</h2>
-    <p>Dear <strong>{{Customer Name}}</strong>,</p>
-    <p>Thank you for creating your partner account. Your agency is now verified to access contracted wholesale ground rates across Japan, the UK, Europe, and Southeast Asia.</p>
-    <p>Ready to build your first client proposal? Explore our live catalog of licensed private guides, luxury MPV transfers, and skip-the-line VIP passes.</p>
-    <div style="text-align: center; margin: 24px 0;">
-      <a href="{{Booking Link}}" style="background-color: #00C6A6; color: #0f172a; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 8px; display: inline-block;">Launch B2B Quotation Studio</a>
+  <div style="padding: 28px 24px;">
+    <p style="font-size: 15px; line-height: 1.6; color: #1F2933; margin-top: 0;">Dear <strong>{{user.firstName}} {{user.lastName}}</strong>,</p>
+    <p style="font-size: 14px; line-height: 1.6; color: #5F6B73;">Congratulations on submitting your first booking with <strong>TheUnbound</strong>! Our destination operations team is thrilled to manage your upcoming ground arrangements in <strong>{{trip.destination}}</strong>.</p>
+    <div style="background-color: #F8FAFA; border: 1px solid #DDE8E6; border-radius: 12px; padding: 16px; margin: 20px 0; font-size: 13px; color: #1F2933;">
+      <p style="margin: 4px 0;"><strong>Booking Reference:</strong> <span style="font-family: monospace; font-weight: 700;">{{booking.bookingReference}}</span></p>
+      <p style="margin: 4px 0;"><strong>Booking Date:</strong> {{booking.bookingDate}}</p>
+      <p style="margin: 4px 0;"><strong>Destination:</strong> {{trip.destination}} ({{trip.startDate}} – {{trip.endDate}})</p>
+      <p style="margin: 4px 0;"><strong>Current Status:</strong> {{booking.status}}</p>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #5F6B73;">As a verified partner, you have direct access to our 24/7 ground dispatch desk, itemized service vouchers, and live chauffeur/guide allocations.</p>
+    <div style="margin: 24px 0;">
+      <a href="https://theunbound.in" style="background-color: #00C6A6; color: #0F172A; font-weight: 700; font-size: 13px; text-decoration: none; padding: 12px 24px; border-radius: 10px; display: inline-block;">View Booking {{booking.bookingReference}}</a>
     </div>
   </div>
-  <div style="background-color: #f1f5f9; padding: 16px; text-align: center; font-size: 11px; color: #64748b;">
-    Destination Management & Ground Operations. All rights reserved.
+  <div style="background-color: #F8FAFA; border-top: 1px solid #DDE8E6; padding: 16px 24px; font-size: 12px; color: #5F6B73;">
+    TheUnbound Ground Operations Desk · <a href="mailto:operations@theunbound.in" style="color: #008972; text-decoration: none;">operations@theunbound.in</a>
   </div>
-</div>
-    `,
-    senderName: 'Agency Partnerships Team',
-    senderEmail: 'partnerships@theunbound.in',
-    triggerCondition: '72 hours after account creation without a booking',
-    delayHours: 72,
-    dynamicVariables: ['{{Customer Name}}', '{{Booking Link}}'],
-    sentCount: 112,
-    lastDispatchedAt: '2026-08-21T16:20:00Z'
+</div>`,
+    senderName: 'Agency Partnerships & Operations',
+    senderEmail: 'operations@theunbound.in',
+    primaryRecipientRule: 'Booking/User Email',
+    internalCopyRecipients: ['business@theunbound.in'],
+    triggerCondition: 'Immediately on FIRST_BOOKING_COMPLETED (Strictly 1st booking per user account)',
+    timingMode: 'IMMEDIATE',
+    delayHours: 0,
+    delayValue: 0,
+    delayUnit: 'MINUTES',
+    dynamicVariables: [
+      '{{user.firstName}}',
+      '{{user.lastName}}',
+      '{{user.email}}',
+      '{{user.companyName}}',
+      '{{booking.bookingId}}',
+      '{{booking.bookingReference}}',
+      '{{booking.bookingDate}}',
+      '{{booking.status}}',
+      '{{trip.destination}}',
+      '{{trip.startDate}}',
+      '{{trip.endDate}}',
+      '{{trip.passengerCount}}',
+      '{{agent.agencyName}}',
+      '{{agent.agentName}}',
+      '{{agent.agentEmail}}'
+    ],
+    templateVersion: 'v1.0',
+    versionHistory: [
+      {
+        version: 'v1.0',
+        subject: 'Congratulations on Your First Booking with TheUnbound ({{booking.bookingReference}})',
+        preheaderText: 'Welcome to our active ground operations network.',
+        templateHtml: 'Initial first-booking milestone template',
+        updatedAt: '2026-09-18T08:30:00Z',
+        updatedBy: 'business@theunbound.in'
+      }
+    ],
+    sentCount: 53,
+    skippedCount: 84,
+    failedCount: 0,
+    updatedAt: '2026-10-04T09:45:00Z',
+    lastDispatchedAt: '2026-10-07T14:10:00Z'
+  },
+  {
+    id: 'trigger-booking-confirmation-sla',
+    campaignType: 'BOOKING_CONFIRMATION_SLA',
+    triggerKey: 'BOOKING_CONFIRMATION_SLA',
+    name: 'Booking Confirmation SLA',
+    description: 'Triggered when a submitted booking reaches the configured SLA threshold and remains awaiting confirmation. Automatically cancelled if confirmed or closed early.',
+    isEnabled: true,
+    status: 'ACTIVE',
+    isSystemTrigger: true,
+    priority: 1,
+    subject: 'SLA Status Update: Booking {{booking.bookingReference}} ({{trip.destination}}) Ground Allocation',
+    preheaderText: 'Your booking {{booking.bookingReference}} is in final ground verification with our local operations team.',
+    templateHtml: `<div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto; color: #1F2933; background-color: #FFFFFF; border: 1px solid #DDE8E6; border-radius: 16px; overflow: hidden;">
+  <div style="background-color: #0F172A; padding: 28px 24px; border-bottom: 3px solid #00C6A6;">
+    <p style="margin: 0 0 4px 0; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #00C6A6; text-transform: uppercase;">Booking Confirmation SLA Workflow</p>
+    <h1 style="margin: 0; font-size: 22px; font-weight: 800; color: #FFFFFF;">SLA Update: {{booking.bookingReference}}</h1>
+  </div>
+  <div style="padding: 28px 24px;">
+    <p style="font-size: 15px; line-height: 1.6; color: #1F2933; margin-top: 0;">Dear <strong>{{user.firstName}}</strong>,</p>
+    <p style="font-size: 14px; line-height: 1.6; color: #5F6B73;">We are providing a scheduled SLA status update regarding your booking <strong style="font-family: monospace;">{{booking.bookingReference}}</strong> for <strong>{{trip.destination}}</strong>.</p>
+    <div style="background-color: #F8FAFA; border: 1px solid #DDE8E6; border-radius: 12px; padding: 16px; margin: 20px 0; font-size: 13px; color: #1F2933;">
+      <p style="margin: 4px 0;"><strong>Booking Reference:</strong> <span style="font-family: monospace; font-weight: 700;">{{booking.bookingReference}}</span></p>
+      <p style="margin: 4px 0;"><strong>Destination:</strong> {{trip.destination}}</p>
+      <p style="margin: 4px 0;"><strong>Travel Dates:</strong> {{trip.startDate}} – {{trip.endDate}} ({{trip.passengerCount}} Pax)</p>
+      <p style="margin: 4px 0;"><strong>Current Status:</strong> <span style="color: #D97706; font-weight: 700;">{{booking.status}}</span></p>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #5F6B73;">Our ground dispatch controllers are completing final supplier and chauffeur confirmations. Your confirmed travel vouchers will be issued immediately upon sign-off.</p>
+    <div style="margin: 24px 0;">
+      <a href="https://theunbound.in" style="background-color: #00C6A6; color: #0F172A; font-weight: 700; font-size: 13px; text-decoration: none; padding: 12px 24px; border-radius: 10px; display: inline-block;">Check Live Booking Status</a>
+    </div>
+  </div>
+  <div style="background-color: #F8FAFA; border-top: 1px solid #DDE8E6; padding: 16px 24px; font-size: 12px; color: #5F6B73;">
+    TheUnbound SLA Operations Desk · <a href="mailto:operations@theunbound.in" style="color: #008972; text-decoration: none;">operations@theunbound.in</a>
+  </div>
+</div>`,
+    senderName: 'TheUnbound SLA Operations Desk',
+    senderEmail: 'operations@theunbound.in',
+    primaryRecipientRule: 'Booking Contact Email',
+    internalCopyRecipients: ['business@theunbound.in', 'operations@theunbound.in'],
+    triggerCondition: 'Configured 24h SLA check while booking status is PENDING_CONFIRMATION',
+    timingMode: 'SLA',
+    delayHours: 24,
+    delayValue: 24,
+    delayUnit: 'HOURS',
+    slaConfig: {
+      slaDuration: 24,
+      slaUnit: 'HOURS',
+      reminderTiming: 'At SLA threshold (24 Hours after submission)',
+      eligibleStatuses: ['PENDING_CONFIRMATION', 'ON_HOLD'],
+      excludedStatuses: ['CONFIRMED', 'CANCELLED', 'COMPLETED', 'CLOSED']
+    },
+    dynamicVariables: [
+      '{{user.firstName}}',
+      '{{user.lastName}}',
+      '{{user.email}}',
+      '{{user.companyName}}',
+      '{{booking.bookingId}}',
+      '{{booking.bookingReference}}',
+      '{{booking.bookingDate}}',
+      '{{booking.status}}',
+      '{{trip.destination}}',
+      '{{trip.startDate}}',
+      '{{trip.endDate}}',
+      '{{trip.passengerCount}}',
+      '{{agent.agencyName}}',
+      '{{agent.agentName}}',
+      '{{agent.agentEmail}}'
+    ],
+    templateVersion: 'v1.2',
+    versionHistory: [
+      {
+        version: 'v1.2',
+        subject: 'SLA Status Update: Booking {{booking.bookingReference}} ({{trip.destination}}) Ground Allocation',
+        preheaderText: 'Your booking {{booking.bookingReference}} is in final ground verification.',
+        templateHtml: 'Standardized 24-hour SLA escalation & customer assurance template',
+        updatedAt: '2026-10-05T12:00:00Z',
+        updatedBy: 'business@theunbound.in'
+      }
+    ],
+    sentCount: 142,
+    skippedCount: 68,
+    failedCount: 1,
+    updatedAt: '2026-10-05T12:00:00Z',
+    lastDispatchedAt: '2026-10-07T18:40:00Z'
   }
 ];
+

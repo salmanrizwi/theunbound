@@ -642,16 +642,17 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
         {
           id: 'MARKETING_MANAGEMENT',
           label: 'Marketing Management',
-          shortLabel: 'Promos & Reviews',
+          shortLabel: 'Promos & Triggers',
           icon: Megaphone,
-          badge: 'Deals',
-          description: 'Promotional discount campaigns, seasonal banners, customer moment gallery, Google reviews, editorial blogs, and automated email triggers.',
+          badge: '5 Triggers',
+          description: 'Promotional discount campaigns, centralized Marketing Triggers & Automated Email Hub, Email Logs / Campaign Reports, customer gallery, reviews, and editorial blogs.',
           subTabs: [
             { id: 'PROMOTIONS', label: 'Promotions & Deal Campaigns', icon: Megaphone },
+            { id: 'CAMPAIGNS', label: 'Marketing Triggers & Automated Email Hub', icon: Mail },
+            { id: 'EMAIL_LOGS', label: 'Email Logs / Campaign Reports', icon: History },
             { id: 'GALLERY', label: 'Happy Customer Gallery', icon: Sparkles },
             { id: 'REVIEWS', label: 'Google Business Reviews', icon: CheckCircle2 },
             { id: 'BLOGS', label: 'Editorial Articles & Guides', icon: Compass },
-            { id: 'CAMPAIGNS', label: 'Email Triggers & Broadcasts', icon: Sparkles },
             { id: 'NEWSLETTER', label: 'Newsletter & Sendy', icon: Mail }
           ]
         },
@@ -1288,7 +1289,12 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
               {activeSubTab === 'GALLERY' && <GalleryManager />}
               {activeSubTab === 'REVIEWS' && <ReviewManager />}
               {activeSubTab === 'BLOGS' && <BlogCMSManager onViewArticle={onViewArticle} />}
-              {activeSubTab === 'CAMPAIGNS' && <EmailCampaignsManager />}
+              {(activeSubTab === 'CAMPAIGNS' || activeSubTab === 'TRIGGERS') && (
+                <EmailCampaignsManager initialView="TRIGGERS" />
+              )}
+              {activeSubTab === 'EMAIL_LOGS' && (
+                <EmailCampaignsManager initialView="LOGS" />
+              )}
               {activeSubTab === 'NEWSLETTER' && <NewsletterManager />}
             </>
           )}

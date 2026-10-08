@@ -1,5 +1,6 @@
 import { AppDatabase } from './db';
 import { CalendarTask, TravelLead, Booking, BookingItem, User } from '../types';
+import { marketingAutomationScheduler } from './marketingAutomationScheduler';
 
 export class AutomaticTaskEngine {
   private static instance: AutomaticTaskEngine;
@@ -29,6 +30,33 @@ export class AutomaticTaskEngine {
     this.db.onBookingSaved((booking, user, isNew) => {
       if (isNew) {
         this.triggerBookingEvent('BOOKING_SUBMITTED', booking, user);
+        marketingAutomationScheduler.onBookingCreated(booking, user).catch(() => {});
+      } else {
+        marketingAutomationScheduler.onBookingStatusChanged(booking);
+      }
+    });
+
+    // 3. Listen for User Registration (USER_REGISTERED)
+    this.db.onUserRegistered((user) => {
+      marketingAutomationScheduler.onUserRegistered(user).catch(() => {});
+    });
+
+    // 4. Listen for Quotation Saved & Downloaded (QUOTE_SAVED & QUOTE_DOWNLOADED)
+    this.db.onQuotationSaved((quote, user, _isNew, actionType) => {
+      const isDownloaded =
+        actionType === 'DOWNLOADED' ||
+        actionType === 'PRINTED' ||
+        quote.status === 'DOWNLOADED_PDF' ||
+        quote.status === 'DOWNLOADED';
+      if (isDownloaded) {
+        marketingAutomationScheduler.onQuoteDownloaded(quote, user).catch(() => {});
+      } else if (
+        quote.status !== 'CONVERTED' &&
+        quote.status !== 'BOOKED' &&
+        quote.status !== 'CANCELLED' &&
+        quote.status !== 'EXPIRED'
+      ) {
+        marketingAutomationScheduler.onQuoteSaved(quote, user).catch(() => {});
       }
     });
   }
