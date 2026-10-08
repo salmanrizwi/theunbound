@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { Hotel, HotelRoomType, HotelRate, MealPlanCode, CurrencyCode, Product } from '../types';
 import { formatCurrency, convertCurrency } from '../services/pricingEngine';
 import { calculateHotelStayPrice, getMealPlanLabel, hotelToProduct } from '../utils/hotelHelpers';
+import { sanitizeImageUrl } from '../utils/imageUtils';
 import { 
   Building, 
   Star, 
@@ -168,7 +169,7 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
             className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-slate-900 shrink-0 cursor-pointer group"
           >
             <img
-              src={hotel.heroImage}
+              src={sanitizeImageUrl(hotel.heroImage || hotel.images?.[0], hotel.cityName || hotel.destinationName)}
               alt={hotel.name}
               className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
             />

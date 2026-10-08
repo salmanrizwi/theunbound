@@ -188,7 +188,7 @@ export function convertUnsplashUrl(inputUrl: string): string {
 
 /**
  * Sanitizes and cleans an image URL.
- * Fixes broken query parameters, Unsplash missing dimensions, and data URLs.
+ * Fixes broken query parameters, Unsplash missing dimensions, data URLs, and invalid keywords.
  */
 export function sanitizeImageUrl(url?: string | null, fallbackKey?: string): string {
   if (!url || typeof url !== 'string' || !url.trim()) {
@@ -198,7 +198,21 @@ export function sanitizeImageUrl(url?: string | null, fallbackKey?: string): str
     return DEFAULT_FALLBACK_IMAGE;
   }
 
-  const clean = convertUnsplashUrl(url);
+  const trimmed = url.trim();
+  if (
+    trimmed === 'null' || 
+    trimmed === 'undefined' || 
+    trimmed === 'coming-soon' || 
+    trimmed === 'placeholder' ||
+    trimmed === 'image.jpg'
+  ) {
+    if (fallbackKey && DESTINATION_FALLBACKS[fallbackKey.toLowerCase()]) {
+      return DESTINATION_FALLBACKS[fallbackKey.toLowerCase()];
+    }
+    return DEFAULT_FALLBACK_IMAGE;
+  }
+
+  const clean = convertUnsplashUrl(trimmed);
   return clean || DEFAULT_FALLBACK_IMAGE;
 }
 

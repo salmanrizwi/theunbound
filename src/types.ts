@@ -6848,4 +6848,33 @@ export interface CommunicationAuditLog {
   failureReason?: string;
 }
 
+// ----------------------------------------------------
+// THEUNBOUND GLOBAL IMAGE ARCHITECTURE TYPES
+// ----------------------------------------------------
+
+export type ImageEntityType = 'PRODUCT' | 'HOTEL' | 'PACKAGE' | 'VISA' | 'RAIL' | 'DESTINATION' | 'REGION' | 'HUB' | 'HERO' | 'BANNER' | 'CUSTOM';
+export type ImageRole = 'PRIMARY' | 'GALLERY' | 'THUMBNAIL' | 'CARD' | 'HERO' | 'LOGO' | 'MAP' | 'DOCUMENT';
+export type ImageSyncStatus = 'PENDING' | 'FETCHING' | 'SYNCED' | 'FAILED' | 'INVALID' | 'STALE' | 'DISABLED';
+
+export interface ImageMetadata {
+  imageId: string;
+  entityType: ImageEntityType;
+  entityId: string;
+  role: ImageRole;
+  storagePath?: string;
+  storageUrl?: string;
+  sourceUrl: string;
+  altText?: string;
+  width?: number;
+  height?: number;
+  mimeType?: string;
+  fileSize?: number;
+  checksum?: string;
+  status: ImageSyncStatus;
+  createdAt: string;
+  updatedAt: string;
+  lastSyncedAt?: string;
+}
+
+
 

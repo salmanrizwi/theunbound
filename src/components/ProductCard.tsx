@@ -5,6 +5,7 @@ import { useQuotation } from '../context/QuotationContext';
 import { formatCurrency, calculateDeliveredPriceForUser } from '../services/pricingEngine';
 import { canUserAccessB2BInventory } from '../services/permissionEngine';
 import { WishlistButton } from './WishlistButton';
+import { sanitizeImageUrl } from '../utils/imageUtils';
 import { 
   Star, 
   Clock, 
@@ -101,7 +102,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         onClick={() => onViewDetails(product)}
       >
         <img
-          src={(product.images && product.images[0]) || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
+          src={sanitizeImageUrl(product.images?.[0] || (product as any).heroImage, product.city)}
           alt={product.name}
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           loading="lazy"
