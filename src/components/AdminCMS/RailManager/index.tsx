@@ -20,7 +20,6 @@ import {
 import { railPricingEngine } from '../../../services/railPricingEngine';
 import { formatCurrency } from '../../../services/currencyEngine';
 import { AppDatabase } from '../../../services/db';
-import { SheetsSyncService } from '../../../services/sheetsSyncService';
 import { useAuth } from '../../../context/AuthContext';
 import { 
   Train, 
@@ -57,10 +56,9 @@ import {
 
 import { JapanRailJourneyConfigurator } from '../../JapanRail/JapanRailJourneyConfigurator';
 import { AdminWorkspaceLayout } from '../../common/AdminWorkspaceLayout';
-import { ModuleMasterSyncBar } from '../common/ModuleMasterSyncBar';
 import { CommercialProductsManager } from './CommercialProductsManager';
 
-type RailTab = 'OVERVIEW' | 'COMMERCIAL_PRODUCTS' | 'STATIONS' | 'ROUTES' | 'RATES' | 'SEASONS' | 'MARKUP' | 'SHEETS_SYNC';
+type RailTab = 'OVERVIEW' | 'COMMERCIAL_PRODUCTS' | 'STATIONS' | 'ROUTES' | 'RATES' | 'SEASONS' | 'MARKUP';
 
 interface RailManagerProps {
   initialTab?: string;
@@ -201,50 +199,7 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
     supplierName: 'JR Central / smartEX'
   });
 
-  // Google Sheets import/export & dynamic sync state
-  const [csvText, setCsvText] = useState('');
-  const [syncStatus, setSyncStatus] = useState<'IDLE' | 'SUCCESS' | 'ERROR'>('IDLE');
-  const [syncMessage, setSyncMessage] = useState('');
   const [isMarkupSavedFeedback, setIsMarkupSavedFeedback] = useState(false);
-
-  // Japan Rail Sheet URL state (persistent and reactive)
-  const [japanRailSheetUrl, setJapanRailSheetUrl] = useState(() => {
-    const config = db.getMasterGoogleSheetConfig();
-    return (config as any).japanRailSheetUrl || 'https://docs.google.com/spreadsheets/d/1C8I2TOnc_7_u07_G_Pz705yGg4Y6U5BPyY4t-rG9Hzo/edit#gid=0';
-  });
-
-  useEffect(() => {
-    const config = db.getMasterGoogleSheetConfig();
-    if ((config as any).japanRailSheetUrl) {
-      setJapanRailSheetUrl((config as any).japanRailSheetUrl);
-    }
-  }, [dbVersion, db]);
-
-  const [isSyncingRail, setIsSyncingRail] = useState(false);
-  const [syncReportCard, setSyncReportCard] = useState<{
-    status: 'SUCCESS' | 'WARNING' | 'CRITICAL_ERROR';
-    stationsCount: { created: number; updated: number };
-    routesCount: { created: number; updated: number };
-    ratesCount: { created: number; updated: number };
-    seasonsCount: { created: number; updated: number };
-    errors: string[];
-    warnings: string[];
-    logs: { type: 'success' | 'warning' | 'error' | 'info'; text: string }[];
-  } | null>(null);
-
-  // Helper converters
-  const extractSpreadsheetId = (url: string): string => {
-    const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-    return match ? match[1] : url.trim();
-  };
-
-  const convertUrlToCsvExport = (url: string): string => {
-    const sheetId = extractSpreadsheetId(url);
-    if (!sheetId) return url;
-    const gidMatch = url.match(/[#&]gid=([0-9]+)/);
-    const gid = gidMatch ? gidMatch[1] : '0';
-    return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
-  };
 
   // Normalization Helpers
   const normalizeStationRow = (row: Record<string, any>): RailStation => {
@@ -415,413 +370,6 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
       errors.push(`End Date '${season.endDate}' cannot be earlier than Start Date '${season.startDate}'.`);
     }
     return errors;
-  };
-
-  const handleSaveSheetUrl = () => {
-    try {
-      db.saveMasterGoogleSheetConfig({
-        ...db.getMasterGoogleSheetConfig(),
-        japanRailSheetUrl
-      } as any, user);
-      setSuccessToast('Google Sheet URL saved persistently in Firebase!');
-    } catch (err: any) {
-      alert(`Save error: ${err?.message || err}`);
-    }
-  };
-
-  const handleSyncFromGoogleSheets = async () => {
-    if (!japanRailSheetUrl.trim()) {
-      alert('Please enter a valid Google Sheets URL.');
-      return;
-    }
-
-    setIsSyncingRail(true);
-    setSyncReportCard(null);
-
-    const logs: { type: 'success' | 'warning' | 'error' | 'info'; text: string }[] = [];
-    const errors: string[] = [];
-    const warnings: string[] = [];
-    
-    let stationsCreated = 0;
-    let stationsUpdated = 0;
-    let routesCreated = 0;
-    let routesUpdated = 0;
-    let ratesCreated = 0;
-    let ratesUpdated = 0;
-    let seasonsCreated = 0;
-    let seasonsUpdated = 0;
-
-    const addLog = (text: string, type: 'success' | 'warning' | 'error' | 'info' = 'info') => {
-      logs.push({ type, text: `[${new Date().toLocaleTimeString()}] ${text}` });
-      if (type === 'error') errors.push(text);
-      if (type === 'warning') warnings.push(text);
-    };
-
-    addLog(`Initiating Japan Rail Google Sheets Sync pipeline...`, 'info');
-    addLog(`Target URL: ${japanRailSheetUrl}`, 'info');
-
-    // Extract Spreadsheet ID
-    const spreadsheetId = extractSpreadsheetId(japanRailSheetUrl);
-
-    if (!spreadsheetId) {
-      addLog(`Failed to extract a valid Google Spreadsheet ID from the URL. Please verify the URL structure.`, 'error');
-      setIsSyncingRail(false);
-      setSyncReportCard({
-        status: 'CRITICAL_ERROR',
-        stationsCount: { created: 0, updated: 0 },
-        routesCount: { created: 0, updated: 0 },
-        ratesCount: { created: 0, updated: 0 },
-        seasonsCount: { created: 0, updated: 0 },
-        errors,
-        warnings,
-        logs
-      });
-      return;
-    }
-
-    addLog(`Extracted Spreadsheet ID: ${spreadsheetId}`, 'info');
-
-    try {
-      const syncService = SheetsSyncService.getInstance();
-      addLog(`Checking for distinct Japan Rail database tabs...`, 'info');
-      
-      let railStationsData: string[][] | null = null;
-      let railRoutesData: string[][] | null = null;
-      let railRatesData: string[][] | null = null;
-      let railSeasonsData: string[][] | null = null;
-
-      try {
-        addLog(`Attempting to fetch RAIL_STATIONS tab...`, 'info');
-        railStationsData = await syncService.fetchRemoteWorksheet(spreadsheetId, 'RAIL_STATIONS');
-        if (!railStationsData) {
-          addLog(`RAIL_STATIONS tab not found. Trying fallback 'Japan Rail Stations'...`, 'info');
-          railStationsData = await syncService.fetchRemoteWorksheet(spreadsheetId, '18. Japan Rail Stations (RAIL_STATIONS)');
-        }
-      } catch (e) {
-        addLog(`Fetch error for RAIL_STATIONS: ${e instanceof Error ? e.message : String(e)}`, 'warning');
-      }
-
-      try {
-        addLog(`Attempting to fetch RAIL_ROUTES tab...`, 'info');
-        railRoutesData = await syncService.fetchRemoteWorksheet(spreadsheetId, 'RAIL_ROUTES');
-        if (!railRoutesData) {
-          addLog(`RAIL_ROUTES tab not found. Trying fallback 'Japan Rail Routes'...`, 'info');
-          railRoutesData = await syncService.fetchRemoteWorksheet(spreadsheetId, '19. Japan Rail Routes (RAIL_ROUTES)');
-        }
-      } catch (e) {
-        addLog(`Fetch error for RAIL_ROUTES: ${e instanceof Error ? e.message : String(e)}`, 'warning');
-      }
-
-      try {
-        addLog(`Attempting to fetch RAIL_RATES tab...`, 'info');
-        railRatesData = await syncService.fetchRemoteWorksheet(spreadsheetId, 'RAIL_RATES');
-        if (!railRatesData) {
-          addLog(`RAIL_RATES tab not found. Trying fallback RAIL_FARES...`, 'info');
-          railRatesData = await syncService.fetchRemoteWorksheet(spreadsheetId, 'RAIL_FARES');
-          if (!railRatesData) {
-            addLog(`RAIL_FARES tab not found. Trying '21. Japan Rail Fares & Pricing (RAIL_FARES)'...`, 'info');
-            railRatesData = await syncService.fetchRemoteWorksheet(spreadsheetId, '21. Japan Rail Fares & Pricing (RAIL_FARES)');
-          }
-        }
-      } catch (e) {
-        addLog(`Fetch error for RAIL_RATES: ${e instanceof Error ? e.message : String(e)}`, 'warning');
-      }
-
-      try {
-        addLog(`Attempting to fetch RAIL_SEASONS tab...`, 'info');
-        railSeasonsData = await syncService.fetchRemoteWorksheet(spreadsheetId, 'RAIL_SEASONS');
-        if (!railSeasonsData) {
-          addLog(`RAIL_SEASONS tab not found. Trying fallback RAIL_CLASS_RULES...`, 'info');
-          railSeasonsData = await syncService.fetchRemoteWorksheet(spreadsheetId, 'RAIL_CLASS_RULES');
-          if (!railSeasonsData) {
-            addLog(`RAIL_CLASS_RULES tab not found. Trying '22. Japan Rail Season Calendar & Rules (RAIL_CLASS_RULES)'...`, 'info');
-            railSeasonsData = await syncService.fetchRemoteWorksheet(spreadsheetId, '22. Japan Rail Season Calendar & Rules (RAIL_CLASS_RULES)');
-          }
-        }
-      } catch (e) {
-        addLog(`Fetch error for RAIL_SEASONS: ${e instanceof Error ? e.message : String(e)}`, 'warning');
-      }
-
-      const hasMultipleTabs = railStationsData || railRoutesData || railRatesData || railSeasonsData;
-
-      if (hasMultipleTabs) {
-        addLog(`Multi-sheet layout detected. Running Multi-Sheet Sync Algorithm...`, 'success');
-        
-        // 1. Process STATIONS
-        const validStationIds = new Set<string>();
-        if (railStationsData && railStationsData.length > 1) {
-          addLog(`Processing ${railStationsData.length - 1} station rows...`, 'info');
-          const objects = syncService.rowsToObjects(railStationsData);
-          for (const obj of objects) {
-            try {
-              const station = normalizeStationRow(obj);
-              const valErrors = validateStation(station);
-              if (valErrors.length > 0) {
-                addLog(`Station validation skipped row ${obj._rowIndex || '?'}: ${valErrors.join('; ')}`, 'warning');
-                continue;
-              }
-              const isNew = !db.getRailStations().some(s => s.stationId === station.stationId);
-              db.saveRailStation(station, user);
-              validStationIds.add(station.stationId);
-              if (isNew) stationsCreated++; else stationsUpdated++;
-            } catch (err: any) {
-              addLog(`Failed to sync station row: ${err?.message || err}`, 'warning');
-            }
-          }
-          addLog(`Stations sync complete. Created: ${stationsCreated}, Updated: ${stationsUpdated}`, 'success');
-        } else {
-          addLog(`No valid Station tab data found or empty. Using existing stations from database.`, 'info');
-          db.getRailStations().forEach(s => validStationIds.add(s.stationId));
-        }
-
-        // 2. Process ROUTES
-        const validRouteIds = new Set<string>();
-        if (railRoutesData && railRoutesData.length > 1) {
-          addLog(`Processing ${railRoutesData.length - 1} route rows...`, 'info');
-          const objects = syncService.rowsToObjects(railRoutesData);
-          for (const obj of objects) {
-            try {
-              const route = normalizeRouteRow(obj);
-              const valErrors = validateRoute(route, validStationIds);
-              if (valErrors.length > 0) {
-                addLog(`Route validation skipped row ${obj._rowIndex || '?'}: ${valErrors.join('; ')}`, 'warning');
-                continue;
-              }
-              const isNew = !db.getRailRoutes().some(r => r.routeId === route.routeId);
-              db.saveRailRoute(route, user);
-              validRouteIds.add(route.routeId);
-              if (isNew) routesCreated++; else routesUpdated++;
-            } catch (err: any) {
-              addLog(`Failed to sync route row: ${err?.message || err}`, 'warning');
-            }
-          }
-          addLog(`Routes sync complete. Created: ${routesCreated}, Updated: ${routesUpdated}`, 'success');
-        } else {
-          addLog(`No valid Route tab data found or empty. Using existing routes from database.`, 'info');
-          db.getRailRoutes().forEach(r => validRouteIds.add(r.routeId));
-        }
-
-        // 3. Process RATES
-        const effectiveDate = new Date().toISOString().split('T')[0];
-        if (railRatesData && railRatesData.length > 1) {
-          addLog(`Processing ${railRatesData.length - 1} rate rows...`, 'info');
-          const objects = syncService.rowsToObjects(railRatesData);
-          for (const obj of objects) {
-            try {
-              const rate = normalizeRateRow(obj, effectiveDate);
-              const valErrors = validateRate(rate, validStationIds, validRouteIds);
-              if (valErrors.length > 0) {
-                addLog(`Rate validation skipped row ${obj._rowIndex || '?'}: ${valErrors.join('; ')}`, 'warning');
-                continue;
-              }
-              const isNew = !db.getRailRates().some(r => r.rateId === rate.rateId);
-              db.saveRailRate(rate, user);
-              if (isNew) ratesCreated++; else ratesUpdated++;
-            } catch (err: any) {
-              addLog(`Failed to sync rate row: ${err?.message || err}`, 'warning');
-            }
-          }
-          addLog(`Rates sync complete. Created: ${ratesCreated}, Updated: ${ratesUpdated}`, 'success');
-        } else {
-          addLog(`No valid Rates/Fares tab data found.`, 'warning');
-        }
-
-        // 4. Process SEASONS
-        if (railSeasonsData && railSeasonsData.length > 1) {
-          addLog(`Processing ${railSeasonsData.length - 1} season rows...`, 'info');
-          const objects = syncService.rowsToObjects(railSeasonsData);
-          for (const obj of objects) {
-            try {
-              const season = normalizeSeasonRow(obj);
-              const valErrors = validateSeason(season);
-              if (valErrors.length > 0) {
-                addLog(`Season validation skipped row ${obj._rowIndex || '?'}: ${valErrors.join('; ')}`, 'warning');
-                continue;
-              }
-              const isNew = !db.getRailSeasons().some(s => s.id === season.id);
-              db.saveRailSeason(season, user);
-              if (isNew) seasonsCreated++; else seasonsUpdated++;
-            } catch (err: any) {
-              addLog(`Failed to sync season row: ${err?.message || err}`, 'warning');
-            }
-          }
-          addLog(`Seasons sync complete. Created: ${seasonsCreated}, Updated: ${seasonsUpdated}`, 'success');
-        } else {
-          addLog(`No valid Season tab data found or empty.`, 'info');
-        }
-
-      } else {
-        // Fallback: single consolidated rate sheet
-        addLog(`No distinct tabs detected. Executing Single-Sheet Consolidated Fallback Sync...`, 'info');
-        addLog(`Fetching direct CSV export endpoint of single sheet...`, 'info');
-        
-        const exportUrl = convertUrlToCsvExport(japanRailSheetUrl);
-        const res = await fetch(exportUrl);
-        if (!res.ok) {
-          throw new Error(`Failed to fetch CSV export. Status: ${res.status}`);
-        }
-        
-        const csvContent = await res.text();
-        const rows = syncService.parseCsvToRows(csvContent);
-        
-        if (rows.length < 2) {
-          throw new Error('Retrieved CSV does not contain a header and record rows.');
-        }
-
-        addLog(`Fetched ${rows.length - 1} records from consolidated sheet. Parsing & reconstructing hierarchy...`, 'info');
-        const objects = syncService.rowsToObjects(rows);
-        
-        const validStationIds = new Set<string>(db.getRailStations().map(s => s.stationId));
-        const validRouteIds = new Set<string>(db.getRailRoutes().map(r => r.routeId));
-        const effectiveDate = new Date().toISOString().split('T')[0];
-
-        for (const obj of objects) {
-          try {
-            // 1. Reconstruct Station (Origin)
-            const originId = (obj.origin_station_id || obj.originStationId || '').trim();
-            if (originId && !validStationIds.has(originId)) {
-              const derivedCode = originId.replace('JP-ST-', '').substring(0, 4).toUpperCase();
-              const derivedName = originId.replace('JP-ST-', '').split('-').map((s: string) => s.charAt(0).toUpperCase() + s.substring(1).toLowerCase()).join(' ');
-              const newStation: RailStation = {
-                stationId: originId,
-                stationCode: derivedCode || 'STN',
-                stationName: derivedName || 'Derived Station',
-                displayName: `${derivedName} (${derivedCode})`,
-                searchAliases: [derivedName, derivedCode].filter(Boolean),
-                city: derivedName,
-                country: 'Japan',
-                regionId: 'reg-east-asia',
-                destinationId: 'dest-japan',
-                railOperator: 'JR Central',
-                latitude: 35.0,
-                longitude: 135.0,
-                timezone: 'Asia/Tokyo',
-                active: true,
-                shinkansenLine: 'Tokaido Shinkansen'
-              };
-              db.saveRailStation(newStation, user);
-              validStationIds.add(originId);
-              stationsCreated++;
-              addLog(`Dynamically reconstructed Station: ${originId}`, 'success');
-            }
-
-            // Reconstruct Station (Destination)
-            const destId = (obj.destination_station_id || obj.destinationStationId || '').trim();
-            if (destId && !validStationIds.has(destId)) {
-              const derivedCode = destId.replace('JP-ST-', '').substring(0, 4).toUpperCase();
-              const derivedName = destId.replace('JP-ST-', '').split('-').map((s: string) => s.charAt(0).toUpperCase() + s.substring(1).toLowerCase()).join(' ');
-              const newStation: RailStation = {
-                stationId: destId,
-                stationCode: derivedCode || 'STN',
-                stationName: derivedName || 'Derived Station',
-                displayName: `${derivedName} (${derivedCode})`,
-                searchAliases: [derivedName, derivedCode].filter(Boolean),
-                city: derivedName,
-                country: 'Japan',
-                regionId: 'reg-east-asia',
-                destinationId: 'dest-japan',
-                railOperator: 'JR Central',
-                latitude: 35.0,
-                longitude: 135.0,
-                timezone: 'Asia/Tokyo',
-                active: true,
-                shinkansenLine: 'Tokaido Shinkansen'
-              };
-              db.saveRailStation(newStation, user);
-              validStationIds.add(destId);
-              stationsCreated++;
-              addLog(`Dynamically reconstructed Station: ${destId}`, 'success');
-            }
-
-            // 2. Reconstruct Route
-            const routeId = (obj.route_id || obj.routeId || '').trim();
-            if (routeId && !validRouteIds.has(routeId)) {
-              const newRoute: RailRoute = {
-                routeId,
-                originStationId: originId,
-                destinationStationId: destId,
-                originStationName: originId.replace('JP-ST-', ''),
-                destinationStationName: destId.replace('JP-ST-', ''),
-                country: 'Japan',
-                destinationId: 'dest-japan',
-                railOperator: 'JR Central / JR West',
-                availableProductIds: ['RAIL-JP-ORD-RESERVED', 'RAIL-JP-GREEN-RESERVED'],
-                availableServiceGroups: ['NOZOMI_MIZUHO', 'HIKARI_KODAMA_SAKURA_TSUBAME'],
-                distanceKm: Number(obj.distance_km || obj.distanceKm) || 100,
-                durationMinutes: Number(obj.duration_minutes || obj.durationMinutes) || 60,
-                active: true
-              };
-              db.saveRailRoute(newRoute, user);
-              validRouteIds.add(routeId);
-              routesCreated++;
-              addLog(`Dynamically reconstructed Route: ${routeId}`, 'success');
-            }
-
-            // 3. Process Rail Rate
-            const rate = normalizeRateRow(obj, effectiveDate);
-            const valErrors = validateRate(rate, validStationIds, validRouteIds);
-            if (valErrors.length > 0) {
-              addLog(`Consolidated rate validation skipped row ${obj._rowIndex || '?'}: ${valErrors.join('; ')}`, 'warning');
-              continue;
-            }
-            const isNew = !db.getRailRates().some(r => r.rateId === rate.rateId);
-            db.saveRailRate(rate, user);
-            if (isNew) ratesCreated++; else ratesUpdated++;
-          } catch (err: any) {
-            addLog(`Failed to process row in single sheet parser: ${err?.message || err}`, 'warning');
-          }
-        }
-      }
-
-      // Save URL config persistently in Firebase
-      db.saveMasterGoogleSheetConfig({
-        ...db.getMasterGoogleSheetConfig(),
-        japanRailSheetUrl
-      } as any, user);
-
-      const status = errors.length > 0 ? 'CRITICAL_ERROR' : (warnings.length > 0 ? 'WARNING' : 'SUCCESS');
-      
-      addLog(`Japan Rail inventory synchronization finalized successfully!`, 'success');
-      
-      // Save global audit log
-      db.logAudit(
-        user || null,
-        'GOOGLE_SHEETS_SYNC',
-        'JapanRailInventory',
-        spreadsheetId,
-        `Synced Japan Rail inventory from Sheet URL. Stations (+${stationsCreated}/~${stationsUpdated}), Routes (+${routesCreated}/~${routesUpdated}), Rates (+${ratesCreated}/~${ratesUpdated}), Seasons (+${seasonsCreated}/~${seasonsUpdated})`
-      );
-
-      setSyncReportCard({
-        status,
-        stationsCount: { created: stationsCreated, updated: stationsUpdated },
-        routesCount: { created: routesCreated, updated: routesUpdated },
-        ratesCount: { created: ratesCreated, updated: ratesUpdated },
-        seasonsCount: { created: seasonsCreated, updated: seasonsUpdated },
-        errors,
-        warnings,
-        logs
-      });
-
-      setSuccessToast(`Synchronized ${stationsCreated + routesCreated + ratesCreated + seasonsCreated} items to active database!`);
-
-    } catch (err: any) {
-      const errMsg = err?.message || String(err);
-      addLog(`CRITICAL ERROR during sync: ${errMsg}`, 'error');
-      
-      setSyncReportCard({
-        status: 'CRITICAL_ERROR',
-        stationsCount: { created: 0, updated: 0 },
-        routesCount: { created: 0, updated: 0 },
-        ratesCount: { created: 0, updated: 0 },
-        seasonsCount: { created: 0, updated: 0 },
-        errors,
-        warnings,
-        logs
-      });
-    } finally {
-      setIsSyncingRail(false);
-    }
   };
 
   // Dismiss toast automatically
@@ -1291,66 +839,6 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
     document.body.removeChild(link);
   };
 
-  const handleImportRatesCsv = () => {
-    try {
-      if (!csvText.trim()) {
-        setSyncStatus('ERROR');
-        setSyncMessage('Please paste valid CSV rate data.');
-        return;
-      }
-
-      const lines = csvText.trim().split(/\r?\n/);
-      if (lines.length < 2) {
-        setSyncStatus('ERROR');
-        setSyncMessage('CSV does not contain header and records.');
-        return;
-      }
-
-      let importedCount = 0;
-      const effectiveDate = new Date().toISOString().split('T')[0];
-
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(',').map(c => c.replace(/^"|"$/g, '').trim());
-        if (cols.length >= 13) {
-          const rate: RailRate = {
-            rateId: cols[0],
-            routeId: cols[1],
-            originStationId: cols[2],
-            destinationStationId: cols[3],
-            productId: cols[4] as any,
-            carType: cols[5] as any,
-            seatType: cols[6] as any,
-            serviceGroup: cols[7] as any,
-            passengerType: cols[8] as any,
-            currency: 'JPY',
-            baseFareJPY: Number(cols[9]) || 0,
-            superExpressSurchargeJPY: Number(cols[10]) || 0,
-            greenCarSurchargeJPY: Number(cols[11]) || 0,
-            regularTotalFareJPY: Number(cols[12]) || 0,
-            supplierId: 'sup-jp-smartex',
-            supplierName: cols[13] || 'smartEX / JR Central & JR West',
-            effectiveDate,
-            active: true
-          };
-          db.saveRailRate(rate, user);
-          importedCount++;
-        }
-      }
-
-      if (importedCount > 0) {
-        setSyncStatus('SUCCESS');
-        setSyncMessage(`Successfully parsed & synced ${importedCount} normalized rail rate records into active database!`);
-        setSuccessToast(`Synced ${importedCount} rates to database.`);
-      } else {
-        setSyncStatus('ERROR');
-        setSyncMessage('Failed to parse rows. Verify column structure matches export format.');
-      }
-    } catch (err: any) {
-      setSyncStatus('ERROR');
-      setSyncMessage(`Sync error: ${err?.message || 'Invalid CSV syntax'}`);
-    }
-  };
-
   return (
     <div className="space-y-6">
       
@@ -1396,17 +884,6 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
           </button>
         </div>
       </div>
-
-      {/* Google Sheets Master Sync Bar */}
-      <ModuleMasterSyncBar 
-        moduleType="JAPAN_RAIL" 
-        onSyncCompleted={() => {
-          setStations(db.getRailStations());
-          setRoutes(db.getRailRoutes());
-          setRates(db.getRailRates());
-          setSeasons(db.getRailSeasons());
-        }}
-      />
 
       {/* Navigation Sub-Tabs Bar & Workspace */}
       <AdminWorkspaceLayout
@@ -1483,8 +960,7 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                 { id: 'ROUTES', label: `Routes (${routes.length})`, icon: RouteIcon },
                 { id: 'RATES', label: `Rate Explorer (${rates.length})`, icon: DollarSign },
                 { id: 'SEASONS', label: `Seasons (${seasons.length})`, icon: Calendar },
-                { id: 'MARKUP', label: 'Markup & Rules', icon: Percent },
-                { id: 'SHEETS_SYNC', label: 'Google Sheets Sync', icon: FileSpreadsheet }
+                { id: 'MARKUP', label: 'Markup & Rules', icon: Percent }
               ].map(tab => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
@@ -1692,9 +1168,8 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
             <button
               type="button"
               onClick={handleOpenCreateStation}
-              className="px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+              className="px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all flex items-center cursor-pointer shadow-xs"
             >
-              <Plus className="w-4 h-4 text-[#00C6A6]" />
               <span>Add Station</span>
             </button>
           </div>
@@ -1940,9 +1415,8 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                 <button
                   type="button"
                   onClick={handleOpenAddRate}
-                  className="px-3 py-1.5 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  className="px-3 py-1.5 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold rounded-xl text-xs flex items-center shadow-xs cursor-pointer"
                 >
-                  <Plus className="w-3.5 h-3.5" />
                   <span>Add Fare / Rate</span>
                 </button>
               </div>
@@ -2150,10 +1624,9 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
             <button
               type="button"
               onClick={handleOpenCreateSeason}
-              className="px-4 py-2 rounded-lg bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shrink-0"
+              className="px-4 py-2 rounded-lg bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 text-xs font-black transition-all flex items-center cursor-pointer shadow-xs shrink-0"
             >
-              <Plus className="w-4 h-4" />
-              <span>+ Add Season</span>
+              <span>Add Season</span>
             </button>
           </div>
 
@@ -2372,156 +1845,7 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* TAB 8: GOOGLE SHEETS SYNC */}
-      {/* ========================================================================= */}
-      {activeTab === 'SHEETS_SYNC' && (
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6">
-          <div className="space-y-1">
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
-              <span>Japan Rail Google Sheets Sync Engine</span>
-            </h3>
-            <p className="text-xs text-slate-500">
-              Synchronize Japan Rail Stations, Routes, Rates, and Surcharge Seasons directly from an authoritative Google Sheets URL.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            {/* Google Sheets URL input */}
-            <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-700">
-                Authoritative Google Sheets URL:
-              </label>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="relative flex-1">
-                  <input
-                    type="text"
-                    value={japanRailSheetUrl}
-                    onChange={(e) => setJapanRailSheetUrl(e.target.value)}
-                    placeholder="https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit#gid=0"
-                    className="w-full text-xs p-2.5 pl-9 rounded-xl border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#00C6A6]"
-                  />
-                  <FileSpreadsheet className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={handleSaveSheetUrl}
-                    className="px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <span>Save URL</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isSyncingRail}
-                    onClick={handleSyncFromGoogleSheets}
-                    className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-xs"
-                  >
-                    {isSyncingRail ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin text-[#00C6A6]" />
-                        <span>Synchronizing...</span>
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="w-4 h-4 text-[#00C6A6]" />
-                        <span>Sync From Google Sheets</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-              <p className="text-[10px] text-slate-400">
-                Default Fallback: <span className="font-mono text-slate-600">https://docs.google.com/spreadsheets/d/1C8I2TOnc_7_u07_G_Pz705yGg4Y6U5BPyY4t-rG9Hzo/edit#gid=0</span>
-              </p>
-            </div>
-
-            {/* Sync Report Card */}
-            {syncReportCard && (
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`w-3 h-3 rounded-full ${
-                      syncReportCard.status === 'SUCCESS' ? 'bg-emerald-500 animate-pulse' :
-                      syncReportCard.status === 'WARNING' ? 'bg-amber-500 animate-pulse' : 'bg-rose-500 animate-pulse'
-                    }`} />
-                    <div>
-                      <h4 className="text-xs font-black text-slate-900 uppercase tracking-wide">
-                        Operational Sync Status
-                      </h4>
-                      <span className={`text-[11px] font-bold ${
-                        syncReportCard.status === 'SUCCESS' ? 'text-emerald-700' :
-                        syncReportCard.status === 'WARNING' ? 'text-amber-700' : 'text-rose-700'
-                      }`}>
-                        {syncReportCard.status === 'SUCCESS' && 'SUCCESS (0 Errors)'}
-                        {syncReportCard.status === 'WARNING' && `COMPLETED WITH ${syncReportCard.warnings.length} WARNINGS`}
-                        {syncReportCard.status === 'CRITICAL_ERROR' && 'CRITICAL ERROR (Sync Halted)'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-slate-400 font-mono">
-                    Batch: sync-{Date.now().toString().substring(6)}
-                  </div>
-                </div>
-
-                {/* Counts Summary Grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center shadow-xs">
-                    <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Stations</span>
-                    <span className="text-sm font-black text-slate-900">
-                      +{syncReportCard.stationsCount.created} / ~{syncReportCard.stationsCount.updated}
-                    </span>
-                    <span className="text-[9px] text-slate-400 block mt-0.5">Created / Updated</span>
-                  </div>
-
-                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center shadow-xs">
-                    <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Routes</span>
-                    <span className="text-sm font-black text-slate-900">
-                      +{syncReportCard.routesCount.created} / ~{syncReportCard.routesCount.updated}
-                    </span>
-                    <span className="text-[9px] text-slate-400 block mt-0.5">Created / Updated</span>
-                  </div>
-
-                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center shadow-xs">
-                    <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Rates</span>
-                    <span className="text-sm font-black text-slate-900">
-                      +{syncReportCard.ratesCount.created} / ~{syncReportCard.ratesCount.updated}
-                    </span>
-                    <span className="text-[9px] text-slate-400 block mt-0.5">Created / Updated</span>
-                  </div>
-
-                  <div className="bg-white p-3 rounded-xl border border-slate-200 text-center shadow-xs">
-                    <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Seasons</span>
-                    <span className="text-sm font-black text-slate-900">
-                      +{syncReportCard.seasonsCount.created} / ~{syncReportCard.seasonsCount.updated}
-                    </span>
-                    <span className="text-[9px] text-slate-400 block mt-0.5">Created / Updated</span>
-                  </div>
-                </div>
-
-                {/* Black Scrollable Console Logs */}
-                <div className="space-y-1.5">
-                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Chronological Audit Trail / Logs:</span>
-                  <div className="bg-slate-950 text-slate-300 font-mono text-[11px] p-4 rounded-xl border border-slate-800 h-64 overflow-y-auto space-y-1 leading-normal shadow-inner animate-in fade-in duration-300">
-                    {syncReportCard.logs.map((log, index) => {
-                      const colorClass = 
-                        log.type === 'success' ? 'text-emerald-400' :
-                        log.type === 'warning' ? 'text-amber-400' :
-                        log.type === 'error' ? 'text-rose-400 font-bold' : 'text-slate-400';
-                      return (
-                        <div key={index} className={`${colorClass} whitespace-pre-wrap`}>
-                          {log.text}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* End of Rail Manager Workspace */}
           </div>
         }
       />

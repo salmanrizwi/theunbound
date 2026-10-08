@@ -197,9 +197,8 @@ export const PromotionManager: React.FC<PromotionManagerProps> = ({ destinations
 
         <button
           onClick={handleOpenCreate}
-          className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold px-4 py-2.5 rounded-xl text-xs transition-all shadow-sm cursor-pointer shrink-0"
+          className="inline-flex items-center bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold px-4 py-2.5 rounded-xl text-xs transition-all shadow-sm cursor-pointer shrink-0"
         >
-          <Plus className="w-4 h-4" />
           <span>Create Promotion</span>
         </button>
       </div>

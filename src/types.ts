@@ -961,6 +961,8 @@ export interface Product {
   images?: string[];
   heroImage?: string;
   galleryImages?: string[];
+  primaryImageId?: string;
+  primaryImage?: CanonicalImageRef;
   videoUrl?: string;
   location?: string;
   latitude?: number;
@@ -2721,41 +2723,7 @@ export interface AgentBookingResponse {
   notificationEmailsSent?: SentEmailRecord[];
 }
 
-export interface GoogleSheetsSyncStatus {
-  lastSyncTimestamp: string;
-  syncStatus: 'SUCCESS' | 'SYNCING' | 'FAILED' | 'IDLE';
-  sheetId: string;
-  sheetName: string;
-  totalRowsProcessed: number;
-  productsUpdated: number;
-  productsCreated: number;
-  productsDeleted: number;
-  validationWarnings: string[];
-  syncHistory: {
-    id: string;
-    timestamp: string;
-    status: 'SUCCESS' | 'WARNING' | 'FAILED';
-    durationMs: number;
-    rowsCount: number;
-    message: string;
-  }[];
-}
 
-export interface MasterGoogleSheetConfig {
-  masterSpreadsheetId: string;
-  spreadsheetName: string;
-  connectionStatus: 'CONNECTED' | 'DISCONNECTED' | 'AUTHENTICATION_REQUIRED' | 'CONFIG_ERROR' | 'UNCHECKED';
-  authStatus: 'AUTHENTICATED' | 'TOKEN_EXPIRED' | 'NOT_AUTHENTICATED';
-  lastSuccessfulConnectionCheck?: string;
-  lastSuccessfulSync?: string;
-  lastFailedSync?: string;
-  syncStatus: 'IDLE' | 'SYNCING' | 'SUCCESS' | 'FAILED' | 'COMPLETED_WITH_WARNINGS';
-  autoSyncEnabled?: boolean;
-  syncSchedule?: string;
-  syncKey?: string;
-  updatedAt?: string;
-  updatedBy?: string;
-}
 
 export interface ProductFilterState {
   searchQuery: string;
@@ -4146,6 +4114,8 @@ export interface Hotel {
   heroImage: string;
   images: string[];
   galleryImages?: string[];
+  primaryImageId?: string;
+  primaryImage?: CanonicalImageRef;
   website?: string;
   googleMapsUrl?: string;
   address: string;
@@ -5830,6 +5800,8 @@ export interface VisaProduct {
   downloadableForms?: { id: string; name: string; url: string; fileSize?: string }[];
   faqs?: { question: string; answer: string }[];
   heroImage?: string;
+  primaryImageId?: string;
+  primaryImage?: CanonicalImageRef;
   status: 'ACTIVE' | 'DRAFT' | 'ARCHIVED';
   featured?: boolean;
   createdAt: string;
@@ -6320,6 +6292,8 @@ export interface B2BPackage {
   durationNights: number;
   heroImage: string;
   galleryImages?: string[];
+  primaryImageId?: string;
+  primaryImage?: CanonicalImageRef;
   tagline: string;
   description: string;
   detailedDescription?: string;
@@ -6855,6 +6829,14 @@ export interface CommunicationAuditLog {
 export type ImageEntityType = 'PRODUCT' | 'HOTEL' | 'PACKAGE' | 'VISA' | 'RAIL' | 'DESTINATION' | 'REGION' | 'HUB' | 'HERO' | 'BANNER' | 'CUSTOM';
 export type ImageRole = 'PRIMARY' | 'GALLERY' | 'THUMBNAIL' | 'CARD' | 'HERO' | 'LOGO' | 'MAP' | 'DOCUMENT';
 export type ImageSyncStatus = 'PENDING' | 'FETCHING' | 'SYNCED' | 'FAILED' | 'INVALID' | 'STALE' | 'DISABLED';
+
+export interface CanonicalImageRef {
+  imageId: string;
+  url: string;
+  version?: string | number;
+  altText?: string;
+  lastSyncedAt?: string;
+}
 
 export interface ImageMetadata {
   imageId: string;

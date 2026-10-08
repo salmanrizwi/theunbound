@@ -198,9 +198,8 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
           <button
             id="btn-create-manual-booking"
             onClick={() => setIsManualModalOpen(true)}
-            className="inline-flex items-center space-x-2 bg-[#008972] hover:bg-[#00705d] text-white font-bold px-4 py-2.5 rounded-2xl transition-all cursor-pointer shadow-xs text-xs sm:text-sm"
+            className="inline-flex items-center bg-[#008972] hover:bg-[#00705d] text-white font-bold px-4 py-2.5 rounded-2xl transition-all cursor-pointer shadow-xs text-xs sm:text-sm"
           >
-            <Plus className="w-4 h-4" />
             <span>Create Booking</span>
           </button>
         </div>

@@ -10,7 +10,6 @@ import { IntegrationDashboardView } from './integrations/IntegrationDashboardVie
 import { FirestoreManagementPanel } from './integrations/FirestoreManagementPanel';
 import { GmailManagementPanel } from './integrations/GmailManagementPanel';
 import { GoogleCalendarPanel } from './integrations/GoogleCalendarPanel';
-import { GoogleSheetsPanel } from './integrations/GoogleSheetsPanel';
 import { AuditGovernanceView } from './integrations/AuditGovernanceView';
 import { IntegrationSetupWizard } from './integrations/IntegrationSetupWizard';
 import { TechnicalGlossaryModal } from './integrations/TechnicalGlossaryModal';
@@ -32,7 +31,7 @@ interface IntegrationsManagerProps {
   currentUser: User | null;
 }
 
-type TabType = 'DASHBOARD' | 'FIRESTORE' | 'GMAIL' | 'CALENDAR' | 'SHEETS' | 'AUDIT' | 'WIZARD';
+type TabType = 'DASHBOARD' | 'FIRESTORE' | 'GMAIL' | 'CALENDAR' | 'AUDIT' | 'WIZARD';
 
 export const IntegrationsManager: React.FC<IntegrationsManagerProps> = ({ currentUser }) => {
   const hubService = IntegrationsHubService.getInstance();
@@ -83,7 +82,6 @@ export const IntegrationsManager: React.FC<IntegrationsManagerProps> = ({ curren
     { id: 'FIRESTORE' as TabType, label: 'Firestore / Database', icon: Database, badge: healthReport && healthReport.totalIssuesCount > 0 ? `${healthReport.totalIssuesCount}` : undefined },
     { id: 'GMAIL' as TabType, label: 'Gmail Operations', icon: Mail },
     { id: 'CALENDAR' as TabType, label: 'Google Calendar & SLAs', icon: Calendar },
-    { id: 'SHEETS' as TabType, label: 'Google Sheets — Master Sync', icon: FileSpreadsheet },
     { id: 'AUDIT' as TabType, label: 'Audit & Governance', icon: ShieldCheck },
     { id: 'WIZARD' as TabType, label: 'Setup Wizard', icon: Sparkles }
   ];
@@ -160,13 +158,6 @@ export const IntegrationsManager: React.FC<IntegrationsManagerProps> = ({ curren
 
       {activeTab === 'CALENDAR' && (
         <GoogleCalendarPanel
-          currentUser={currentUser}
-          onRefresh={loadData}
-        />
-      )}
-
-      {activeTab === 'SHEETS' && (
-        <GoogleSheetsPanel
           currentUser={currentUser}
           onRefresh={loadData}
         />

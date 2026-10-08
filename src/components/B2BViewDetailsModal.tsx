@@ -19,6 +19,7 @@ import { RosterCalendarPicker } from './RosterCalendarPicker';
 import { WishlistButton } from './WishlistButton';
 import { RichTextRenderer } from './common/RichTextRenderer';
 import { AppDatabase } from '../services/db';
+import { canonicalImageService } from '../services/imageService';
 import { 
   X, 
   MapPin, 
@@ -196,11 +197,24 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
   const hub = product?.city || hotel?.country || '';
 
   const images = useMemo(() => {
-    if (product?.images && product.images.length > 0) return product.images;
-    if (hotel?.images && hotel.images.length > 0) return hotel.images;
-    if (hotel?.heroImage) return [hotel.heroImage];
-    if (packageItem?.heroImage) return [packageItem.heroImage];
-    if (packageItem?.images && packageItem.images.length > 0) return packageItem.images;
+    if (product) {
+      const primary = canonicalImageService.resolveProductImage(product);
+      const rest = (product.images || []).map(img => canonicalImageService.resolveImageUrl(img, product.category || product.city));
+      const all = Array.from(new Set([primary, ...rest])).filter(Boolean);
+      return all.length > 0 ? all : [primary];
+    }
+    if (hotel) {
+      const primary = canonicalImageService.resolveHotelImage(hotel);
+      const rest = (hotel.images || []).map(img => canonicalImageService.resolveImageUrl(img, hotel.cityName || hotel.city));
+      const all = Array.from(new Set([primary, ...rest])).filter(Boolean);
+      return all.length > 0 ? all : [primary];
+    }
+    if (packageItem) {
+      const primary = canonicalImageService.resolvePackageImage(packageItem);
+      const rest = (packageItem.images || []).map(img => canonicalImageService.resolveImageUrl(img, packageItem.destinationName || 'Japan'));
+      const all = Array.from(new Set([primary, ...rest])).filter(Boolean);
+      return all.length > 0 ? all : [primary];
+    }
     return ['https://images.unsplash.com/photo-1542051841857-5f90071e7989?q=80&w=1200'];
   }, [product, hotel, packageItem]);
 
@@ -721,9 +735,8 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
                   {product && onOpenCalculator && (
                     <button
                       onClick={handleConfigureProduct}
-                      className="w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-md bg-[#00C6A6] hover:bg-[#00b094] text-white font-extrabold cursor-pointer hover:scale-102 shadow-[#00C6A6]/20 flex items-center justify-center space-x-2"
+                      className="w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-md bg-[#00C6A6] hover:bg-[#00b094] text-white font-extrabold cursor-pointer hover:scale-102 shadow-[#00C6A6]/20 flex items-center justify-center"
                     >
-                      <Plus className="w-4 h-4 shrink-0 stroke-[2.5]" />
                       <span>Configure & Add to Quote</span>
                     </button>
                   )}
@@ -732,9 +745,8 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
                   {hotel && onConfigureHotel && (
                     <button
                       onClick={handleConfigureHotel}
-                      className="w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-md bg-[#00C6A6] hover:bg-[#00b094] text-white font-extrabold cursor-pointer hover:scale-102 shadow-[#00C6A6]/20 flex items-center justify-center space-x-2"
+                      className="w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-md bg-[#00C6A6] hover:bg-[#00b094] text-white font-extrabold cursor-pointer hover:scale-102 shadow-[#00C6A6]/20 flex items-center justify-center"
                     >
-                      <Plus className="w-4 h-4 stroke-[2.5]" />
                       <span>Configure & Add to Quote</span>
                     </button>
                   )}
@@ -743,9 +755,8 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
                   {packageItem && onCustomizePackage && (
                     <button
                       onClick={handleConfigurePackage}
-                      className="w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-md bg-[#00C6A6] hover:bg-[#00b094] text-white font-extrabold cursor-pointer hover:scale-102 shadow-[#00C6A6]/20 flex items-center justify-center space-x-2"
+                      className="w-full py-3 px-4 rounded-xl text-xs font-bold tracking-wider uppercase transition-all shadow-md bg-[#00C6A6] hover:bg-[#00b094] text-white font-extrabold cursor-pointer hover:scale-102 shadow-[#00C6A6]/20 flex items-center justify-center"
                     >
-                      <Plus className="w-4 h-4 stroke-[2.5]" />
                       <span>Customize Circuit & Import</span>
                     </button>
                   )}

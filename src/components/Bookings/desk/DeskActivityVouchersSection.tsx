@@ -320,9 +320,8 @@ TheUnbound Operations Team`
                 setIsGenerateModalOpen(true);
               }}
               disabled={isGenerating}
-              className="px-4 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+              className="px-4 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 text-xs font-bold transition-all flex items-center cursor-pointer shadow-xs disabled:opacity-50"
             >
-              <Plus className="w-3.5 h-3.5" />
               <span>{isGenerating ? 'Generating Vouchers...' : 'Generate Activity-Level Vouchers'}</span>
             </button>
           </div>
@@ -549,9 +548,8 @@ TheUnbound Operations Team`
                 setIsGenerateModalOpen(true);
               }}
               disabled={isGenerating}
-              className="px-4 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 text-xs font-bold transition-all inline-flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+              className="px-4 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 text-xs font-bold transition-all inline-flex items-center cursor-pointer shadow-xs disabled:opacity-50"
             >
-              <Plus className="w-3.5 h-3.5" />
               <span>{isGenerating ? 'Generating Vouchers...' : 'Generate Activity-Level Vouchers'}</span>
             </button>
           )}

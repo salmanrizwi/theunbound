@@ -433,9 +433,8 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
             <button
               id="create-new-lead-btn"
               onClick={handleOpenAdd}
-              className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-black px-6 py-3 rounded-2xl transition-all cursor-pointer shadow-md shadow-[#00C6A6]/20 text-xs sm:text-sm hover:scale-[1.01] active:scale-[0.99]"
+              className="inline-flex items-center bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-black px-6 py-3 rounded-2xl transition-all cursor-pointer shadow-md shadow-[#00C6A6]/20 text-xs sm:text-sm hover:scale-[1.01] active:scale-[0.99]"
             >
-              <Plus className="w-4 h-4 text-slate-950 stroke-[3]" />
               <span>Capture New Lead</span>
             </button>
           </div>

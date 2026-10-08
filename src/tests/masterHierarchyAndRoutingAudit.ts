@@ -1,7 +1,5 @@
 import { AppDatabase } from '../services/db';
 import { MasterDataService, CANONICAL_LEGACY_MAPPINGS } from '../services/masterDataService';
-import { SheetsSyncService } from '../services/sheetsSyncService';
-import { MASTER_SHEETS_TAB_DEFINITIONS } from '../data/googleSheetsTemplate';
 import { Product, MasterRegion, Destination, CityHub, User } from '../types';
 
 function assert(condition: boolean, message: string) {
@@ -19,26 +17,6 @@ async function runMasterHierarchyAndRoutingAudit() {
 
   const db = AppDatabase.getInstance();
   const masterData = MasterDataService.getInstance();
-  const syncEngine = SheetsSyncService.getInstance();
-
-  // 1. Synchronize Master Sheet to ensure canonical 25-tab data is populated in database
-  console.log('--- 1. Authoritative Master Sheet Synchronization ---');
-  const canonicalMultiTabData: Record<string, string[][]> = {};
-  for (const tabDef of MASTER_SHEETS_TAB_DEFINITIONS) {
-    if (tabDef.tabName !== 'INSTRUCTIONS') {
-      canonicalMultiTabData[tabDef.tabName] = [
-        tabDef.columns.map(c => c.key),
-        ...tabDef.sampleRows
-      ];
-    }
-  }
-
-  const syncReport = await syncEngine.commitMultiTabSync(
-    canonicalMultiTabData, 
-    undefined,
-    null
-  );
-  assert(syncReport.status === 'SUCCESS', 'Master Sync executed successfully');
   
   const regions = masterData.getActiveRegions();
   const destinations = masterData.getActiveDestinations();

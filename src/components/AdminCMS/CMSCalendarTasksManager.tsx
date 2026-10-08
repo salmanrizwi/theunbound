@@ -487,10 +487,9 @@ export const CMSCalendarTasksManager: React.FC<CMSCalendarTasksManagerProps> = (
               setInitialTaskDate(todayStr);
               setShowTaskModal(true);
             }}
-            className="px-5 py-2.5 text-xs font-bold text-white bg-[#00C6A6] hover:bg-[#00a88d] rounded-xl shadow-xs transition-all cursor-pointer flex items-center space-x-2"
+            className="px-5 py-2.5 text-xs font-bold text-white bg-[#00C6A6] hover:bg-[#00a88d] rounded-xl shadow-xs transition-all cursor-pointer flex items-center"
           >
-            <Plus className="w-4 h-4" />
-            <span>+ Add Task</span>
+            <span>Add Task</span>
           </button>
         </div>
       </div>
@@ -730,7 +729,7 @@ export const CMSCalendarTasksManager: React.FC<CMSCalendarTasksManagerProps> = (
                   <p className="text-sm font-semibold text-slate-600">No tasks found</p>
                   <p className="text-xs text-slate-400">
                     {activeTab === 'MY_TASKS' 
-                      ? 'You are all caught up! Click "+ Add Task" to schedule a new follow-up.'
+                      ? 'You are all caught up! Click "Add Task" to schedule a new follow-up.'
                       : 'Try adjusting your search or quick filters to see other tasks.'}
                   </p>
                 </div>
@@ -807,10 +806,9 @@ export const CMSCalendarTasksManager: React.FC<CMSCalendarTasksManagerProps> = (
                   setRuleToEdit(null);
                   setShowAutoRuleModal(true);
                 }}
-                className="px-4 py-2 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors cursor-pointer flex items-center space-x-1.5 self-start sm:self-auto"
+                className="px-4 py-2 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors cursor-pointer flex items-center self-start sm:self-auto"
               >
-                <Plus className="w-3.5 h-3.5 text-[#00E5C0]" />
-                <span>+ New Automatic Process</span>
+                <span>New Automatic Process</span>
               </button>
             </div>
 

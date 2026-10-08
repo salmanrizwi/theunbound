@@ -296,7 +296,7 @@ export const OperationalAssetSelector: React.FC<OperationalAssetSelectorProps> =
                         }}
                         className="mt-2 text-xs font-bold text-[#00E5C0] hover:underline cursor-pointer"
                       >
-                        + Create in {assetLabel} Master
+                        Create in {assetLabel} Master
                       </button>
                     )}
                   </div>

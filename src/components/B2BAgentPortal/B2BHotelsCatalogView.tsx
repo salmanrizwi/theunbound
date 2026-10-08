@@ -26,6 +26,7 @@ import { useQuotation } from '../../context/QuotationContext';
 import { formatCurrency } from '../../services/pricingEngine';
 import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
 import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
+import { canonicalImageService } from '../../services/imageService';
 
 interface B2BHotelsCatalogViewProps {
   hotels: Hotel[];
@@ -205,10 +206,13 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
                 onClick={() => handleViewDetails(hotel)}
               >
                 <img
-                  src={hotel.heroImage || 'https://images.unsplash.com/photo-1566073771259-6a8506099945?q=80&w=800&auto=format&fit=crop'}
+                  src={canonicalImageService.resolveHotelImage(hotel)}
                   alt={hotel.name}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                   referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolveHotelImage(hotel);
+                  }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent"></div>
                 <div className="absolute top-3 left-3 px-2.5 py-0.5 rounded-full bg-slate-900/80 backdrop-blur-xs text-[10px] font-bold text-[#00E5C0]">
@@ -282,9 +286,8 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
                   ) : (
                     <button
                       onClick={() => handleOpenAddHotelModal(hotel)}
-                      className="w-full py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs bg-amber-500 hover:bg-amber-600 text-slate-950"
+                      className="w-full py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-xs bg-amber-500 hover:bg-amber-600 text-slate-950"
                     >
-                      <Plus className="w-3.5 h-3.5" />
                       <span>Configure & Add to Cart</span>
                     </button>
                   )}

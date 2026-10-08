@@ -3,6 +3,7 @@ import { Product, CurrencyCode } from '../types';
 import { useRoster } from '../context/RosterContext';
 import { useAuth } from '../context/AuthContext';
 import { formatCurrency, convertCurrency, calculateProductPrice } from '../services/pricingEngine';
+import { canonicalImageService } from '../services/imageService';
 import { RosterCalendarPicker } from './RosterCalendarPicker';
 import { 
   MapPin, 
@@ -157,7 +158,7 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
             className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-slate-100 shrink-0 cursor-pointer group"
           >
             <img
-              src={product.images[0] || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
+              src={canonicalImageService.resolveProductImage(product)}
               alt={product.name}
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
               loading="lazy"
@@ -273,13 +274,11 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
                 </>
               ) : isAlreadyAdded ? (
                 <>
-                  <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#00E5C0]" />
-                  <span>+ Day</span>
+                  <span>Add to Another Day</span>
                   <ChevronDown className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400" />
                 </>
               ) : (
                 <>
-                  <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                   <span>Add <span className="hidden sm:inline">to Itinerary</span></span>
                   <ChevronDown className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-700" />
                 </>
@@ -607,7 +606,6 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
                   </>
                 ) : (
                   <>
-                    <Plus className="w-4 h-4" />
                     <span>Add to Quotation Itinerary</span>
                   </>
                 )}

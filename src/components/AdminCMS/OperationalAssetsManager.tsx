@@ -225,9 +225,8 @@ export const OperationalAssetsManager: React.FC<OperationalAssetsManagerProps> =
             <button
               type="button"
               onClick={handleOpenCreateVehicle}
-              className="flex items-center gap-1.5 px-4 py-2 bg-[#00C6A6] text-slate-950 font-bold rounded-xl text-xs shadow-xs hover:bg-[#00b395] transition-all cursor-pointer"
+              className="flex items-center px-4 py-2 bg-[#00C6A6] text-slate-950 font-bold rounded-xl text-xs shadow-xs hover:bg-[#00b395] transition-all cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
               <span>Add Vehicle Master</span>
             </button>
           )}
@@ -236,9 +235,8 @@ export const OperationalAssetsManager: React.FC<OperationalAssetsManagerProps> =
             <button
               type="button"
               onClick={handleOpenCreateYacht}
-              className="flex items-center gap-1.5 px-4 py-2 bg-[#00C6A6] text-slate-950 font-bold rounded-xl text-xs shadow-xs hover:bg-[#00b395] transition-all cursor-pointer"
+              className="flex items-center px-4 py-2 bg-[#00C6A6] text-slate-950 font-bold rounded-xl text-xs shadow-xs hover:bg-[#00b395] transition-all cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
               <span>Add Yacht Master</span>
             </button>
           )}
@@ -247,9 +245,8 @@ export const OperationalAssetsManager: React.FC<OperationalAssetsManagerProps> =
             <button
               type="button"
               onClick={handleOpenCreateFerry}
-              className="flex items-center gap-1.5 px-4 py-2 bg-[#00C6A6] text-slate-950 font-bold rounded-xl text-xs shadow-xs hover:bg-[#00b395] transition-all cursor-pointer"
+              className="flex items-center px-4 py-2 bg-[#00C6A6] text-slate-950 font-bold rounded-xl text-xs shadow-xs hover:bg-[#00b395] transition-all cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
               <span>Add Ferry / Vessel Master</span>
             </button>
           )}

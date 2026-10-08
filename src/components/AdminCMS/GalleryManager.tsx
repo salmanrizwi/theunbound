@@ -93,9 +93,8 @@ export const GalleryManager: React.FC = () => {
         </div>
         <button
           onClick={handleOpenAdd}
-          className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#008972] text-white font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-xs text-xs sm:text-sm shrink-0"
+          className="inline-flex items-center bg-[#00C6A6] hover:bg-[#008972] text-white font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-xs text-xs sm:text-sm shrink-0"
         >
-          <Plus className="w-4 h-4" />
           <span>Upload Customer Photo</span>
         </button>
       </div>

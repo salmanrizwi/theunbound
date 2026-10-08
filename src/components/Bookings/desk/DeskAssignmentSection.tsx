@@ -278,9 +278,9 @@ export const DeskAssignmentSection: React.FC<DeskAssignmentSectionProps> = ({
               {isInternal && (
                 <button
                   onClick={() => setIsAssignAgentModalOpen(true)}
-                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold cursor-pointer transition-all shadow-xs inline-flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold cursor-pointer transition-all shadow-xs inline-flex items-center"
                 >
-                  <UserPlus className="w-3.5 h-3.5" /> Assign B2B Agent Now
+                  Assign B2B Agent Now
                 </button>
               )}
             </div>
@@ -390,9 +390,9 @@ export const DeskAssignmentSection: React.FC<DeskAssignmentSectionProps> = ({
               {isInternal && (
                 <button
                   onClick={() => setIsAssignTeamModalOpen(true)}
-                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer transition-all shadow-xs inline-flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer transition-all shadow-xs inline-flex items-center"
                 >
-                  <UserPlus className="w-3.5 h-3.5" /> Claim / Assign Owner Now
+                  Claim / Assign Owner Now
                 </button>
               )}
             </div>

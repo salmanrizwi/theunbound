@@ -722,10 +722,9 @@ export const DeskOverviewSection: React.FC<DeskOverviewSectionProps> = ({
                       <button
                         type="button"
                         onClick={() => setIsAssigningTeamMember(true)}
-                        className="text-[11px] font-bold text-amber-600 hover:underline cursor-pointer flex items-center gap-1"
+                        className="text-[11px] font-bold text-amber-600 hover:underline cursor-pointer flex items-center"
                       >
-                        <UserPlus className="w-3.5 h-3.5" />
-                        + Assign Internal Operational Owner
+                        Assign Internal Operational Owner
                       </button>
                     ) : null}
                   </div>

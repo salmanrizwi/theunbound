@@ -171,7 +171,6 @@ export const AdminHeader: React.FC<AdminHeaderProps> = ({
                 onClick={() => setIsCreateOpen(!isCreateOpen)}
                 className="flex items-center space-x-1.5 px-3 sm:px-3.5 py-2 bg-[#00C6A6] hover:bg-[#00A88F] text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer select-none"
               >
-                <Plus className="w-4 h-4" />
                 <span className="hidden sm:inline">Create</span>
                 <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isCreateOpen ? 'rotate-180' : ''}`} />
               </button>

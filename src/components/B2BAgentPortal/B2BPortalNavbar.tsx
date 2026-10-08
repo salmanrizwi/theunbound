@@ -623,10 +623,9 @@ export const B2BPortalHeader: React.FC<B2BPortalHeaderProps> = ({
         <div className="relative" ref={createMenuRef}>
           <button
             onClick={() => setIsCreateMenuOpen(!isCreateMenuOpen)}
-            className="inline-flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 text-xs font-extrabold transition-all shadow-2xs cursor-pointer"
+            className="inline-flex items-center px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 text-xs font-extrabold transition-all shadow-2xs cursor-pointer"
           >
-            <Plus className="w-4 h-4 stroke-[3]" />
-            <span className="hidden sm:inline">Create</span>
+            <span className="hidden sm:inline mr-1">Create</span>
             <ChevronDown className="w-3.5 h-3.5" />
           </button>
 
@@ -638,9 +637,8 @@ export const B2BPortalHeader: React.FC<B2BPortalHeaderProps> = ({
                   if (onOpenCreateQuote) onOpenCreateQuote();
                   else onSelectTab('create-quote');
                 }}
-                className="w-full text-left px-4 py-2 hover:bg-teal-50 hover:text-[#008f77] flex items-center space-x-2 font-bold text-slate-800"
+                className="w-full text-left px-4 py-2 hover:bg-teal-50 hover:text-[#008f77] flex items-center font-bold text-slate-800"
               >
-                <PlusCircle className="w-4 h-4 text-[#00C6A6]" />
                 <span>New Quote</span>
               </button>
               <button

@@ -8,8 +8,6 @@ import { AppDatabase } from '../services/db';
 import { homepageService, HomepageSectionRegistryItem } from '../services/homepageService';
 import { GlobalCountingEngine } from '../services/countingEngine';
 import { inventoryVisibilityService } from '../services/inventoryVisibilityService';
-import { SheetsSyncService } from '../services/sheetsSyncService';
-import { MASTER_SHEETS_TAB_DEFINITIONS } from '../data/googleSheetsTemplate';
 import { 
   Destination, 
   CityHub, 
@@ -46,24 +44,6 @@ export async function runHomepageDataSyncAudit(): Promise<void> {
   console.log('\n================================================================');
   console.log('  THEUNBOUND HOMEPAGE DATA SYNC & REGULATORY AFFILIATIONS AUDIT');
   console.log('================================================================\n');
-
-  // Initialize Canonical Master Sheets sync so Firestore collections have live data
-  const syncEngine = SheetsSyncService.getInstance();
-  const canonicalMultiTabData: Record<string, string[][]> = {};
-  for (const tabDef of MASTER_SHEETS_TAB_DEFINITIONS) {
-    if (tabDef.tabName !== 'INSTRUCTIONS') {
-      canonicalMultiTabData[tabDef.tabName] = [
-        tabDef.columns.map(c => c.key),
-        ...tabDef.sampleRows
-      ];
-    }
-  }
-
-  await syncEngine.commitMultiTabSync(
-    canonicalMultiTabData, 
-    undefined,
-    null
-  );
 
   const db = AppDatabase.getInstance();
   const countingEngine = GlobalCountingEngine.getInstance();

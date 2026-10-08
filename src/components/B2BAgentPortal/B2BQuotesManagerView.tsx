@@ -126,9 +126,8 @@ export const B2BQuotesManagerView: React.FC<B2BQuotesManagerViewProps> = ({
 
         <button
           onClick={onOpenCreateQuote}
-          className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 px-5 py-2.5 rounded-2xl text-xs font-black transition-all shadow-md shrink-0 cursor-pointer"
+          className="inline-flex items-center bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 px-5 py-2.5 rounded-2xl text-xs font-black transition-all shadow-md shrink-0 cursor-pointer"
         >
-          <PlusCircle className="w-4 h-4" />
           <span>Create New Quote</span>
         </button>
       </div>
@@ -191,9 +190,8 @@ export const B2BQuotesManagerView: React.FC<B2BQuotesManagerViewProps> = ({
             </p>
             <button
               onClick={onOpenCreateQuote}
-              className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold cursor-pointer"
+              className="inline-flex items-center px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold cursor-pointer"
             >
-              <PlusCircle className="w-3.5 h-3.5 text-[#00C6A6]" />
               <span>Launch Quotation Builder</span>
             </button>
           </div>

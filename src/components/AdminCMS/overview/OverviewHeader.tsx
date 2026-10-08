@@ -95,9 +95,8 @@ export const OverviewHeader: React.FC<OverviewHeaderProps> = ({
           <div className="flex items-center space-x-3">
             <button
               onClick={() => onNavigate?.('LEAD_MANAGEMENT', 'BUILDER', 'new')}
-              className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] active:scale-98 text-slate-950 font-bold text-xs transition-all shadow-md hover:shadow-lg cursor-pointer select-none"
+              className="flex items-center px-4 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] active:scale-98 text-slate-950 font-bold text-xs transition-all shadow-md hover:shadow-lg cursor-pointer select-none"
             >
-              <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
               <span>Create Quote</span>
             </button>
             <button

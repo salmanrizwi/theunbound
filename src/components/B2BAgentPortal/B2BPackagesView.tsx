@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Layers, 
   Search, 
@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { B2BPackage, CurrencyCode } from '../../types';
 import { AppDatabase } from '../../services/db';
+import { canonicalImageService } from '../../services/imageService';
 import { formatCurrency, calculatePackagePrice } from '../../services/pricingEngine';
 import { useQuotation } from '../../context/QuotationContext';
 import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
@@ -39,7 +40,18 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
   onViewPackageDetails
 }) => {
   const db = AppDatabase.getInstance();
-  const packages = useMemo(() => db.getPackages(), [db]);
+  const [dbTick, setDbTick] = useState(0);
+
+  useEffect(() => {
+    const unsubDb = db.subscribe(() => setDbTick(t => t + 1));
+    const unsubImg = canonicalImageService.subscribe(() => setDbTick(t => t + 1));
+    return () => {
+      unsubDb();
+      unsubImg();
+    };
+  }, [db]);
+
+  const packages = useMemo(() => db.getPackages(), [db, dbTick]);
   const { currency } = useQuotation();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -138,10 +150,13 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
               {/* Card Image */}
               <div className="h-48 relative overflow-hidden bg-slate-900">
                 <img
-                  src={pkg.heroImage}
+                  src={canonicalImageService.resolvePackageImage(pkg)}
                   alt={pkg.title}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                   referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolvePackageImage(pkg);
+                  }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent"></div>
                 <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-xs text-[11px] font-bold text-[#00E5C0] border border-slate-700">

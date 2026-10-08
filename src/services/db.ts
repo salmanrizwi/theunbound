@@ -114,7 +114,6 @@ import {
   HotelMealPlanItem,
   VisaRateItem,
   PackageItemRef,
-  MultiTabSyncReport,
   HotelRoomType,
   HotelRate,
   AdminActivityRecord,
@@ -127,7 +126,6 @@ import {
   EntitySEO,
   SEOAuditItem,
   SEOEntityType,
-  MasterGoogleSheetConfig,
   Supplier,
   SupplierStatus,
   SupplierRateCard,
@@ -158,6 +156,7 @@ import {
   buildMasterProductConfiguration,
   ensureMasterProductConfiguration
 } from './configuratorRegistry';
+import { canonicalImageService } from './imageService';
 import {
   DEFAULT_LEAD_STAGES,
   CUSTOMER_PROGRESS_STAGES,
@@ -5234,6 +5233,9 @@ export class AppDatabase {
 
     const productWithMasterConfig = ensureMasterProductConfiguration(product, user);
 
+    canonicalImageService.extractAllImagesFromRecord(product, 'PRODUCT', product.id);
+    const primaryDto = canonicalImageService.getCanonicalImageDto(product, 'PRODUCT');
+
     const savedProd: Product = {
       ...productWithMasterConfig,
       regionId: hierarchy.region!.id,
@@ -5246,6 +5248,10 @@ export class AppDatabase {
       currency: chosenCurrency,
       nativeCurrency: chosenCurrency,
       product_id: product.id,
+      heroImage: primaryDto.url,
+      images: canonicalImageService.getGalleryImages('PRODUCT', product.id, hierarchy.hub?.name || 'Japan'),
+      primaryImageId: primaryDto.imageId,
+      primaryImage: primaryDto as any,
       lastUpdated: new Date().toISOString().split('T')[0]
     };
 
@@ -5273,6 +5279,21 @@ export class AppDatabase {
     this.unmarkEntityDeleted('products', product.id);
     this.unmarkEntityDeleted('Product', product.id);
     this.syncFirestoreDoc('products', product.id, savedProd);
+    if (primaryDto.imageId) {
+      this.syncFirestoreDoc('image_metadata', primaryDto.imageId, {
+        imageId: primaryDto.imageId,
+        entityType: 'PRODUCT',
+        entityId: product.id,
+        role: 'PRIMARY',
+        sourceUrl: primaryDto.url,
+        storageUrl: primaryDto.url,
+        altText: primaryDto.altText || product.name,
+        status: 'SYNCED',
+        version: primaryDto.version,
+        updatedAt: new Date().toISOString()
+      });
+      canonicalImageService.notify();
+    }
     this.setItem('products', products);
   }
 
@@ -12370,112 +12391,7 @@ export class AppDatabase {
     this.saveUploadedInvoice(updated, user);
   }
 
-  // ==========================================
-  // GOOGLE SHEETS SYNC WITH VERIFICATION REPORT
-  // ==========================================
-  public getSyncReports(): SyncDetailedReport[] {
-    return this.getItem<SyncDetailedReport[]>('sync_reports', []);
-  }
 
-  public async performSyncFromGoogleSheets(user: User | null, sheetId: string, sheetName: string): Promise<SyncDetailedReport> {
-    const startTime = Date.now();
-    const currentProducts = this.getProducts();
-    const logs: string[] = [];
-
-    logs.push(`[${new Date().toISOString()}] Initiating TLS handshake with Google Sheets API v4...`);
-    logs.push(`[${new Date().toISOString()}] Reading spreadsheet ID: ${sheetId}, Tab: ${sheetName}...`);
-
-    // Simulate API fetch delay
-    await new Promise(r => setTimeout(r, 1200));
-
-    let updated = 0;
-    let newCount = 0;
-    let unchanged = 0;
-    const validationErrors: SyncDetailedReport['validationErrors'] = [];
-    const fieldChanges: SyncDetailedReport['fieldChanges'] = [];
-
-    // Compare each product
-    const refreshed = currentProducts.map((p, idx) => {
-      // Validate fields
-      if (p.adultNetPrice <= 0) {
-        validationErrors.push({
-          rowNumber: idx + 2,
-          field: 'adultNetPrice',
-          value: String(p.adultNetPrice),
-          error: 'Adult Net Price must be greater than zero.'
-        });
-      }
-
-      // Simulate a synced price adjustment / verification pass
-      updated++;
-      fieldChanges.push({
-        sku: p.sku,
-        productName: p.name,
-        changedFields: ['lastUpdated', 'contractNetRateValidated']
-      });
-
-      return {
-        ...p,
-        lastUpdated: new Date().toISOString().split('T')[0]
-      };
-    });
-
-    unchanged = Math.max(0, currentProducts.length - updated);
-
-    logs.push(`[${new Date().toISOString()}] Validated ${refreshed.length} product rows against schema.`);
-    logs.push(`[${new Date().toISOString()}] Synchronized master database with operational cache.`);
-    logs.push(`[${new Date().toISOString()}] Synchronization finished successfully.`);
-
-    const durationMs = Date.now() - startTime;
-    const report: SyncDetailedReport = {
-      id: `sync-rep-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      userEmail: user?.email || 'admin@theunbound.in',
-      sheetId,
-      sheetName,
-      durationMs,
-      status: validationErrors.length > 0 ? 'COMPLETED_WITH_ERRORS' : 'SUCCESS',
-      counts: {
-        totalProcessed: refreshed.length,
-        newRecords: newCount,
-        updatedRecords: updated,
-        unchangedRecords: unchanged,
-        removedRecords: 0,
-        errorsCount: validationErrors.length
-      },
-      fieldChanges,
-      validationErrors,
-      logs
-    };
-
-    // Update DB
-    this.setItem('products', refreshed);
-    const existingReports = this.getSyncReports();
-    this.setItem('sync_reports', [report, ...existingReports.slice(0, 49)]);
-
-    this.logAudit(
-      user,
-      'GOOGLE_SHEETS_SYNC',
-      'GoogleSheets',
-      sheetId,
-      `Executed Sheets sync: ${updated} updated, ${newCount} new, ${validationErrors.length} errors.`
-    );
-
-    return report;
-  }
-
-  public saveSyncedProducts(products: Product[], report: SyncDetailedReport, user: User | null): void {
-    this.setItem('products', products);
-    const existingReports = this.getSyncReports();
-    this.setItem('sync_reports', [report, ...existingReports.slice(0, 49)]);
-    this.logAudit(
-      user,
-      'GOOGLE_SHEETS_SYNC',
-      'GoogleSheets',
-      report.sheetId,
-      `Google Sheets synchronization applied: ${report.counts.updatedRecords} records updated, ${report.counts.errorsCount} errors.`
-    );
-  }
 
   // ==========================================
   // HOTEL MANAGEMENT (B2B Rates, Room Types, Blackout)
@@ -12500,19 +12416,44 @@ export class AppDatabase {
     }
     const hotels = this.getHotels();
     const index = hotels.findIndex(h => h.id === hotel.id);
+    canonicalImageService.extractAllImagesFromRecord(hotel, 'HOTEL', hotel.id);
+    const primaryDto = canonicalImageService.getCanonicalImageDto(hotel, 'HOTEL');
+    const hotelWithImages: Hotel = {
+      ...hotel,
+      heroImage: primaryDto.url,
+      images: canonicalImageService.getGalleryImages('HOTEL', hotel.id, hotel.city || 'Tokyo'),
+      primaryImageId: primaryDto.imageId,
+      primaryImage: primaryDto as any
+    };
+
     let savedHotel: Hotel;
     if (index >= 0) {
-      savedHotel = { ...hotel, hotel_id: hotel.id, updatedAt: new Date().toISOString() };
+      savedHotel = { ...hotelWithImages, hotel_id: hotel.id, updatedAt: new Date().toISOString() };
       hotels[index] = savedHotel;
       this.logAudit(user, 'PRODUCT_UPDATED', 'Hotel', hotel.id, `Updated hotel property: ${hotel.name} (${hotel.code})`);
     } else {
-      savedHotel = { ...hotel, hotel_id: hotel.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      savedHotel = { ...hotelWithImages, hotel_id: hotel.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
       hotels.unshift(savedHotel);
       this.logAudit(user, 'PRODUCT_CREATED', 'Hotel', hotel.id, `Created hotel property: ${hotel.name} (${hotel.code})`);
     }
     this.unmarkEntityDeleted('hotels', savedHotel.id);
     this.unmarkEntityDeleted('Hotel', savedHotel.id);
     this.syncFirestoreDoc('hotels', savedHotel.id, savedHotel);
+    if (primaryDto.imageId) {
+      this.syncFirestoreDoc('image_metadata', primaryDto.imageId, {
+        imageId: primaryDto.imageId,
+        entityType: 'HOTEL',
+        entityId: hotel.id,
+        role: 'PRIMARY',
+        sourceUrl: primaryDto.url,
+        storageUrl: primaryDto.url,
+        altText: primaryDto.altText || hotel.name,
+        status: 'SYNCED',
+        version: primaryDto.version,
+        updatedAt: new Date().toISOString()
+      });
+      canonicalImageService.notify();
+    }
     this.setItem('hotels', hotels);
   }
 
@@ -19029,576 +18970,7 @@ export class AppDatabase {
     this.deleteFirestoreDoc('rail_fares', fareId);
   }
 
-  // Master Google Sheet Authoritative Configuration
-  public getMasterGoogleSheetConfig(): MasterGoogleSheetConfig {
-    const defaultConfig: MasterGoogleSheetConfig = {
-      masterSpreadsheetId: '',
-      spreadsheetName: 'TheUnbound Master Inventory & Tariff Sheet',
-      connectionStatus: 'UNCHECKED',
-      authStatus: 'NOT_AUTHENTICATED',
-      syncStatus: 'IDLE',
-      autoSyncEnabled: false,
-      syncSchedule: 'MANUAL',
-      syncKey: 'unbound_master_sync_key'
-    };
-    return this.getItem<MasterGoogleSheetConfig>('master_google_sheet_config', defaultConfig);
-  }
 
-  public saveMasterGoogleSheetConfig(
-    partial: Partial<MasterGoogleSheetConfig>,
-    actor?: User | null
-  ): MasterGoogleSheetConfig {
-    const current = this.getMasterGoogleSheetConfig();
-    const updated: MasterGoogleSheetConfig = {
-      ...current,
-      ...partial,
-      updatedAt: new Date().toISOString(),
-      updatedBy: actor?.name || actor?.email || 'Admin'
-    };
-    this.setItem('master_google_sheet_config', updated, false);
-    this.syncFirestoreDoc('system_settings', 'master_google_sheet_config', updated);
-    this.logAudit(
-      actor || null,
-      'MASTER_SHEETS_CONFIG_UPDATED' as any,
-      'GoogleSheets',
-      updated.masterSpreadsheetId || 'UNSET',
-      `Updated Master Google Sheet configuration: Spreadsheet ID ${updated.masterSpreadsheetId || 'unconfigured'}`
-    );
-    return updated;
-  }
-
-  // Multi-Tab Sync Reports History
-  public getMultiTabSyncReports(): MultiTabSyncReport[] {
-    return this.getItem<MultiTabSyncReport[]>('multi_tab_sync_reports', []);
-  }
-
-  public saveMultiTabSyncReport(report: MultiTabSyncReport): void {
-    const reports = this.getMultiTabSyncReports();
-    reports.unshift(report);
-    if (reports.length > 50) {
-      reports.length = 50;
-    }
-    this.setItem('multi_tab_sync_reports', reports, false);
-    this.syncFirestoreDoc('sheets_sync_history', report.id, report);
-  }
-
-  // Bulk Atomic Save for Synced Multi-Tab Sheets
-  public saveSyncedMultiTabData(syncedData: {
-    regions?: MasterRegion[];
-    destinations?: Destination[];
-    hubs?: CityHub[];
-    products?: Product[];
-    productRates?: ProductPricingRate[];
-    productCapacities?: ProductCapacityItem[];
-    hotels?: Hotel[];
-    hotelRooms?: HotelRoomType[];
-    hotelMealPlans?: HotelMealPlanItem[];
-    hotelRates?: HotelRate[];
-    visas?: VisaProduct[];
-    visaRates?: VisaRateItem[];
-    transferRoutes?: TransferRoute[];
-    transferRates?: TransferRate[];
-    packages?: B2BPackage[];
-    packageItems?: PackageItemRef[];
-    railStations?: RailStation[];
-    railServices?: RailService[];
-    railRoutes?: RailRoute[];
-    railFares?: RailFare[];
-    railRates?: RailRate[];
-    railSeasons?: RailSeasonCalendarPeriod[];
-    travelProtectionPlans?: TravelProtectionPlan[];
-    vipGroundServices?: VipGroundService[];
-    connectivityPlans?: ConnectivityPlan[];
-    suppliers?: Supplier[];
-  }, user?: User | null): void {
-    const deletedSet = this.getDeletedEntityIds();
-
-    if (syncedData.suppliers && syncedData.suppliers.length > 0) {
-      const existing = this.getSuppliers();
-      const merged = this.mergeEntitiesById(existing, syncedData.suppliers as any, 'Supplier');
-      this.setItem('suppliers', merged, false);
-      for (const s of merged) {
-        if (!deletedSet.has(s.id) && !deletedSet.has(`Supplier_${s.id}`)) {
-          this.syncFirestoreDoc('suppliers', s.id, s);
-        }
-      }
-    }
-
-    if (syncedData.regions && syncedData.regions.length > 0) {
-      const existing = this.getMasterRegions();
-      const merged = this.mergeEntitiesById(existing, syncedData.regions, 'MasterRegion');
-      this.setItem('master_regions', merged, false);
-      for (const r of merged) {
-        if (!deletedSet.has(r.id) && !deletedSet.has(`MasterRegion_${r.id}`)) {
-          this.syncFirestoreDoc('master_regions', r.id, r);
-        }
-      }
-    }
-
-    if (syncedData.destinations && syncedData.destinations.length > 0) {
-      const existing = this.getDestinations();
-      const merged = this.mergeEntitiesById(existing, syncedData.destinations, 'Destination');
-      this.setItem('destinations', merged, false);
-      for (const d of merged) {
-        if (!deletedSet.has(d.id) && !deletedSet.has(d.slug) && !deletedSet.has(`Destination_${d.id}`)) {
-          this.syncFirestoreDoc('destinations', d.id, d);
-        }
-      }
-    }
-
-    if (syncedData.hubs && syncedData.hubs.length > 0) {
-      const existing = this.getCityHubs();
-      const merged = this.mergeEntitiesById(existing, syncedData.hubs, 'CityHub');
-      this.setItem('city_hubs', merged, false);
-      for (const h of merged) {
-        if (!deletedSet.has(h.id) && !deletedSet.has(`CityHub_${h.id}`)) {
-          this.syncFirestoreDoc('city_hubs', h.id, h);
-        }
-      }
-    }
-
-    if (syncedData.products && syncedData.products.length > 0) {
-      const existing = this.getProducts();
-      const merged = this.mergeEntitiesById(existing, syncedData.products, 'Product');
-      this.setItem('products', merged, false);
-      for (const p of merged) {
-        if (!deletedSet.has(p.id) && !deletedSet.has(`Product_${p.id}`)) {
-          this.syncFirestoreDoc('products', p.id, p);
-        }
-      }
-    }
-
-    if (syncedData.productRates && syncedData.productRates.length > 0) {
-      const existing = this.getProductRates();
-      const merged = this.mergeEntitiesById(existing, syncedData.productRates, 'ProductPricingRate');
-      this.setItem('product_pricing_rates', merged, false);
-      for (const pr of merged) {
-        if (!deletedSet.has(pr.id)) {
-          this.syncFirestoreDoc('product_pricing_rates', pr.id, pr);
-        }
-      }
-    }
-
-    if (syncedData.productCapacities && syncedData.productCapacities.length > 0) {
-      const existing = this.getProductCapacities();
-      const merged = this.mergeEntitiesById(existing, syncedData.productCapacities, 'ProductCapacityItem');
-      this.setItem('product_capacities', merged, false);
-      for (const pc of merged) {
-        if (!deletedSet.has(pc.id)) {
-          this.syncFirestoreDoc('product_capacities', pc.id, pc);
-        }
-      }
-
-      // Synchronize capacity tiers into matching Products' tieredPricing with source governance (Section 20 & 21)
-      const allProducts = this.getProducts();
-      let productsModified = false;
-      const capsByProduct = new Map<string, ProductCapacityItem[]>();
-      for (const pc of merged) {
-        if (pc.productId) {
-          const list = capsByProduct.get(pc.productId) || [];
-          list.push(pc);
-          capsByProduct.set(pc.productId, list);
-        }
-      }
-
-      for (const [prodId, capList] of capsByProduct.entries()) {
-        const prodIndex = allProducts.findIndex(p => p.id === prodId || p.sku === prodId);
-        if (prodIndex >= 0) {
-          const targetProd = allProducts[prodIndex];
-          const cat = targetProd.category as string;
-          const isCapProduct = cat === 'Private Tours' || 
-                               cat === 'Private Tour' ||
-                               cat === 'Transfers' || 
-                               cat === 'Transfer' || 
-                               cat === 'Private Yacht' || 
-                               cat === 'Yacht' ||
-                               targetProd.pricingMethod === 'capacity_based';
-          if (isCapProduct) {
-            const currentTiers = targetProd.tieredPricing || [];
-            const updatedTiers: TieredPrice[] = [...currentTiers];
-
-            for (const cap of capList) {
-              const nettVal = cap.supplierNett !== undefined ? cap.supplierNett : (cap.fixedNettCost || 0);
-              const minP = cap.minPassengers || 1;
-              const maxP = cap.maxPassengers || cap.capacity || 6;
-              const vCount = cap.vehicleCount || 1;
-              const curr = cap.currency || targetProd.currency || 'USD';
-
-              const existingTierIdx = updatedTiers.findIndex(t => 
-                t.id === cap.id || (t.minPax === minP && t.maxPax === maxP)
-              );
-
-              if (existingTierIdx >= 0) {
-                // Section 21 Governance: Never overwrite an Admin's valid configured Supplier Nett with 0 or blank
-                const prevTier = updatedTiers[existingTierIdx];
-                const finalNett = nettVal > 0 ? nettVal : (prevTier.supplierNett ?? prevTier.nettPrice ?? nettVal);
-                updatedTiers[existingTierIdx] = {
-                  ...prevTier,
-                  id: cap.id || prevTier.id,
-                  minPax: minP,
-                  maxPax: maxP,
-                  minPassengers: minP,
-                  maxPassengers: maxP,
-                  vehicleCount: vCount,
-                  fleetId: cap.fleetId || prevTier.fleetId,
-                  fleetName: cap.vehicleModel || prevTier.fleetName,
-                  currency: curr,
-                  nativeCurrency: curr,
-                  supplierNett: finalNett,
-                  nettPrice: finalNett,
-                  netCostPerPax: finalNett,
-                  marginValue: cap.margin !== undefined ? cap.margin : prevTier.marginValue,
-                  taxValue: cap.tax !== undefined ? cap.tax : prevTier.taxValue,
-                  serviceChargeValue: cap.serviceCharge !== undefined ? cap.serviceCharge : prevTier.serviceChargeValue,
-                  finalPrice: cap.finalPrice !== undefined ? cap.finalPrice : prevTier.finalPrice,
-                  status: cap.status || prevTier.status || 'ACTIVE'
-                };
-              } else {
-                updatedTiers.push({
-                  id: cap.id || `tier-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-                  capacityPricingRuleId: `CPR-${Date.now()}`,
-                  productCategory: targetProd.category,
-                  tierLabel: `${minP}–${maxP} Pax`,
-                  minPax: minP,
-                  maxPax: maxP,
-                  minPassengers: minP,
-                  maxPassengers: maxP,
-                  vehicleCount: vCount,
-                  fleetId: cap.fleetId,
-                  fleetName: cap.vehicleModel,
-                  pricingUnit: 'Per Vehicle',
-                  currency: curr,
-                  nativeCurrency: curr,
-                  supplierNett: nettVal,
-                  nettPrice: nettVal,
-                  netCostPerPax: nettVal,
-                  marginType: 'PERCENTAGE',
-                  marginValue: cap.margin !== undefined ? cap.margin : 20,
-                  taxType: 'PERCENTAGE',
-                  taxValue: cap.tax !== undefined ? cap.tax : 10,
-                  serviceChargeType: 'FIXED',
-                  serviceChargeValue: cap.serviceCharge !== undefined ? cap.serviceCharge : 0,
-                  finalPrice: cap.finalPrice,
-                  status: cap.status || 'ACTIVE'
-                });
-              }
-            }
-
-            targetProd.tieredPricing = updatedTiers;
-            if (updatedTiers.length > 0) {
-              const firstNett = updatedTiers[0].supplierNett ?? updatedTiers[0].nettPrice ?? updatedTiers[0].netCostPerPax;
-              if (firstNett !== undefined) {
-                targetProd.adultNetPrice = firstNett;
-                targetProd.adultNettCost = firstNett;
-              }
-            }
-            allProducts[prodIndex] = targetProd;
-            this.syncFirestoreDoc('products', targetProd.id, targetProd);
-            productsModified = true;
-          }
-        }
-      }
-
-      if (productsModified) {
-        this.setItem('products', allProducts);
-      }
-    }
-
-    if (syncedData.hotels && syncedData.hotels.length > 0) {
-      const existing = this.getHotels();
-      const merged = this.mergeEntitiesById(existing, syncedData.hotels, 'Hotel');
-      this.setItem('hotels', merged, false);
-      for (const h of merged) {
-        if (!deletedSet.has(h.id) && !deletedSet.has(`Hotel_${h.id}`)) {
-          this.syncFirestoreDoc('hotels', h.id, h);
-        }
-      }
-    }
-
-    if (syncedData.hotelRooms && syncedData.hotelRooms.length > 0) {
-      const existing = this.getHotelRooms();
-      const merged = this.mergeEntitiesById(existing, syncedData.hotelRooms, 'HotelRoom');
-      this.setItem('hotel_rooms', merged, false);
-      for (const hr of merged) {
-        if (!deletedSet.has(hr.id)) {
-          this.syncFirestoreDoc('hotel_rooms', hr.id, hr);
-        }
-      }
-    }
-
-    if (syncedData.hotelMealPlans && syncedData.hotelMealPlans.length > 0) {
-      const existing = this.getHotelMealPlans();
-      const merged = this.mergeEntitiesById(existing, syncedData.hotelMealPlans, 'HotelMealPlan');
-      this.setItem('hotel_meal_plans', merged, false);
-      for (const mp of merged) {
-        if (!deletedSet.has(mp.id)) {
-          this.syncFirestoreDoc('hotel_meal_plans', mp.id, mp);
-        }
-      }
-    }
-
-    if (syncedData.hotelRates && syncedData.hotelRates.length > 0) {
-      const existing = this.getHotelRates();
-      const merged = this.mergeEntitiesById(existing, syncedData.hotelRates, 'HotelRate');
-      this.setItem('hotel_rates', merged, false);
-      for (const hr of merged) {
-        if (!deletedSet.has(hr.id)) {
-          this.syncFirestoreDoc('hotel_rates', hr.id, hr);
-        }
-      }
-    }
-
-    if (syncedData.visas && syncedData.visas.length > 0) {
-      const existing = this.getVisas();
-      const merged = this.mergeEntitiesById(existing, syncedData.visas, 'VisaProduct');
-      this.setItem('visas', merged, false);
-      for (const v of merged) {
-        if (!deletedSet.has(v.id) && !deletedSet.has(`Visa_${v.id}`)) {
-          this.syncFirestoreDoc('visas', v.id, v);
-        }
-      }
-    }
-
-    if (syncedData.visaRates && syncedData.visaRates.length > 0) {
-      const existing = this.getVisaRates();
-      const merged = this.mergeEntitiesById(existing, syncedData.visaRates, 'VisaRate');
-      this.setItem('visa_rates', merged, false);
-      for (const vr of merged) {
-        if (!deletedSet.has(vr.id)) {
-          this.syncFirestoreDoc('visa_rates', vr.id, vr);
-        }
-      }
-    }
-
-    if (syncedData.transferRoutes && syncedData.transferRoutes.length > 0) {
-      const existing = this.getTransferRoutes();
-      const merged = this.mergeEntitiesById(existing, syncedData.transferRoutes, 'TransferRoute');
-      this.setItem('transfer_routes', merged, false);
-      for (const tr of merged) {
-        if (!deletedSet.has(tr.id)) {
-          this.syncFirestoreDoc('transfer_routes', tr.id, tr);
-        }
-      }
-    }
-
-    if (syncedData.transferRates && syncedData.transferRates.length > 0) {
-      const existing = this.getTransferRates();
-      const merged = this.mergeEntitiesById(existing, syncedData.transferRates, 'TransferRate');
-      this.setItem('transfer_rates', merged, false);
-      for (const tr of merged) {
-        if (!deletedSet.has(tr.id)) {
-          this.syncFirestoreDoc('transfer_rates', tr.id, tr);
-        }
-      }
-    }
-
-    if (syncedData.packages && syncedData.packages.length > 0) {
-      const existing = this.getB2BPackages();
-      const merged = this.mergeEntitiesById(existing, syncedData.packages, 'B2BPackage');
-      this.setItem('b2b_packages', merged, false);
-      for (const p of merged) {
-        if (!deletedSet.has(p.id) && !deletedSet.has(`Package_${p.id}`)) {
-          this.syncFirestoreDoc('b2b_packages', p.id, p);
-        }
-      }
-    }
-
-    if (syncedData.packageItems && syncedData.packageItems.length > 0) {
-      const existing = this.getPackageItems();
-      const merged = this.mergeEntitiesById(existing, syncedData.packageItems, 'PackageItemRef');
-      this.setItem('package_items', merged, false);
-      for (const pi of merged) {
-        if (!deletedSet.has(pi.id)) {
-          this.syncFirestoreDoc('package_items', pi.id, pi);
-        }
-      }
-    }
-
-    // --- JAPAN RAIL INVENTORY & DYNAMIC PRICING ENTITIES ---
-    if (syncedData.railStations && syncedData.railStations.length > 0) {
-      const existing = this.getRailStations();
-      const normalizedIncoming = syncedData.railStations.map(s => ({
-        ...s,
-        id: s.stationId || (s as any).id,
-        stationId: s.stationId || (s as any).id
-      }));
-      const merged = this.mergeEntitiesById(
-        existing.map(s => ({ ...s, id: s.stationId || (s as any).id })),
-        normalizedIncoming,
-        'RailStation'
-      );
-      this.setItem('rail_stations', merged, false);
-      for (const s of merged) {
-        if (!deletedSet.has(s.stationId)) {
-          this.syncFirestoreDoc('rail_stations', s.stationId, s);
-        }
-      }
-    }
-
-    if (syncedData.railServices && syncedData.railServices.length > 0) {
-      const existing = this.getRailServices();
-      const normalizedIncoming = syncedData.railServices.map(srv => ({
-        ...srv,
-        id: srv.serviceId || (srv as any).id,
-        serviceId: srv.serviceId || (srv as any).id
-      }));
-      const merged = this.mergeEntitiesById(
-        existing.map(srv => ({ ...srv, id: srv.serviceId || (srv as any).id })),
-        normalizedIncoming,
-        'RailService'
-      );
-      this.setItem('rail_services', merged, false);
-      for (const srv of merged) {
-        if (!deletedSet.has(srv.serviceId)) {
-          this.syncFirestoreDoc('rail_services', srv.serviceId, srv);
-        }
-      }
-    }
-
-    if (syncedData.railRoutes && syncedData.railRoutes.length > 0) {
-      const existing = this.getRailRoutes();
-      const normalizedIncoming = syncedData.railRoutes.map(r => ({
-        ...r,
-        id: r.routeId || (r as any).id,
-        routeId: r.routeId || (r as any).id
-      }));
-      const merged = this.mergeEntitiesById(
-        existing.map(r => ({ ...r, id: r.routeId || (r as any).id })),
-        normalizedIncoming,
-        'RailRoute'
-      );
-      this.setItem('rail_routes', merged, false);
-      for (const r of merged) {
-        if (!deletedSet.has(r.routeId)) {
-          this.syncFirestoreDoc('rail_routes', r.routeId, r);
-        }
-      }
-    }
-
-    if (syncedData.railFares && syncedData.railFares.length > 0) {
-      const existing = this.getRailFares();
-      const normalizedIncoming = syncedData.railFares.map(f => ({
-        ...f,
-        id: f.railFareId || (f as any).id,
-        railFareId: f.railFareId || (f as any).id
-      }));
-      const merged = this.mergeEntitiesById(
-        existing.map(f => ({ ...f, id: f.railFareId || (f as any).id })),
-        normalizedIncoming,
-        'RailFare'
-      );
-      this.setItem('rail_fares', merged, false);
-      for (const f of merged) {
-        if (!deletedSet.has(f.railFareId)) {
-          this.syncFirestoreDoc('rail_fares', f.railFareId, f);
-        }
-      }
-    }
-
-    if (syncedData.railRates && syncedData.railRates.length > 0) {
-      const existing = this.getRailRates();
-      const normalizedIncoming = syncedData.railRates.map(r => ({
-        ...r,
-        id: r.rateId || (r as any).id,
-        rateId: r.rateId || (r as any).id
-      }));
-      const merged = this.mergeEntitiesById(
-        existing.map(r => ({ ...r, id: r.rateId || (r as any).id })),
-        normalizedIncoming,
-        'RailRate'
-      );
-      this.setItem('rail_rates', merged, false);
-      for (const r of merged) {
-        if (!deletedSet.has(r.rateId)) {
-          this.syncFirestoreDoc('rail_rates', r.rateId, r);
-        }
-      }
-    }
-
-    if (syncedData.railSeasons && syncedData.railSeasons.length > 0) {
-      const existing = this.getRailSeasons();
-      const merged = this.mergeEntitiesById(existing, syncedData.railSeasons, 'RailSeasonCalendarPeriod');
-      this.setItem('rail_seasons', merged, false);
-      for (const s of merged) {
-        if (!deletedSet.has(s.id)) {
-          this.syncFirestoreDoc('rail_seasons', s.id, s);
-        }
-      }
-    }
-
-    // --- TRAVEL PROTECTION PLANS ---
-    if (syncedData.travelProtectionPlans && syncedData.travelProtectionPlans.length > 0) {
-      const existing = this.getTravelProtectionPlans();
-      const merged = this.mergeEntitiesById(existing, syncedData.travelProtectionPlans, 'TravelProtectionPlan');
-      this.setItem('travel_protection_plans', merged, false);
-      for (const p of merged) {
-        if (!deletedSet.has(p.id) && !deletedSet.has(`TravelProtectionPlan_${p.id}`)) {
-          this.syncFirestoreDoc('travel_protection_plans', p.id, p);
-        }
-      }
-    }
-
-    // --- VIP GROUND & CONCIERGE SERVICES ---
-    if (syncedData.vipGroundServices && syncedData.vipGroundServices.length > 0) {
-      const existing = this.getVipGroundServices();
-      const merged = this.mergeEntitiesById(existing, syncedData.vipGroundServices, 'VipGroundService');
-      this.setItem('vip_ground_services', merged, false);
-      for (const v of merged) {
-        if (!deletedSet.has(v.id) && !deletedSet.has(`VipGroundService_${v.id}`)) {
-          this.syncFirestoreDoc('vip_ground_services', v.id, v);
-        }
-      }
-    }
-
-    // --- CONNECTIVITY & eSIM PLANS ---
-    if (syncedData.connectivityPlans && syncedData.connectivityPlans.length > 0) {
-      const existing = this.getConnectivityPlans();
-      const merged = this.mergeEntitiesById(existing, syncedData.connectivityPlans, 'ConnectivityPlan');
-      this.setItem('connectivity_plans', merged, false);
-      for (const c of merged) {
-        if (!deletedSet.has(c.id) && !deletedSet.has(`ConnectivityPlan_${c.id}`)) {
-          this.syncFirestoreDoc('connectivity_plans', c.id, c);
-        }
-      }
-    }
-
-    // --- AUTHORITATIVE OPERATIONAL MASTER INVENTORY (Vehicles, Yachts, Ferries) ---
-    if ((syncedData as any).vehicles && (syncedData as any).vehicles.length > 0) {
-      const existing = this.getVehicles();
-      const merged = this.mergeEntitiesById(existing, (syncedData as any).vehicles, 'VehicleMaster');
-      this.setItem('master_vehicles', merged, false);
-      for (const v of merged) {
-        if (!deletedSet.has(v.id) && !deletedSet.has(`VehicleMaster_${v.id}`)) {
-          this.syncFirestoreDoc('master_vehicles', v.id, v);
-        }
-      }
-    }
-
-    if ((syncedData as any).yachts && (syncedData as any).yachts.length > 0) {
-      const existing = this.getYachts();
-      const merged = this.mergeEntitiesById(existing, (syncedData as any).yachts, 'YachtMaster');
-      this.setItem('master_yachts', merged, false);
-      for (const y of merged) {
-        if (!deletedSet.has(y.id) && !deletedSet.has(`YachtMaster_${y.id}`)) {
-          this.syncFirestoreDoc('master_yachts', y.id, y);
-        }
-      }
-    }
-
-    if ((syncedData as any).ferries && (syncedData as any).ferries.length > 0) {
-      const existing = this.getFerries();
-      const merged = this.mergeEntitiesById(existing, (syncedData as any).ferries, 'FerryMaster');
-      this.setItem('master_ferries', merged, false);
-      for (const f of merged) {
-        if (!deletedSet.has(f.id) && !deletedSet.has(`FerryMaster_${f.id}`)) {
-          this.syncFirestoreDoc('master_ferries', f.id, f);
-        }
-      }
-    }
-
-    // Notify all UI subscribers of state updates across all modules
-    this.notify();
-  }
 
   private mergeEntitiesById<T extends { id: string }>(existing: T[], incoming: T[], entityType?: string): T[] {
     const map = new Map<string, T>();

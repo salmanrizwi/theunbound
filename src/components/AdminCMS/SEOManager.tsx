@@ -782,9 +782,8 @@ export const SEOManager: React.FC = () => {
               <div className="md:col-span-2">
                 <button
                   type="submit"
-                  className="w-full py-2 bg-[#008972] hover:bg-[#007460] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer shadow-xs"
+                  className="w-full py-2 bg-[#008972] hover:bg-[#007460] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-xs"
                 >
-                  <Plus className="w-4 h-4" />
                   <span>Add Redirect</span>
                 </button>
               </div>

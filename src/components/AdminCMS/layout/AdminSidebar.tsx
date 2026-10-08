@@ -360,13 +360,6 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       label: 'System & Audit',
       items: [
         {
-          id: 'master_sync',
-          label: 'Master Sync',
-          section: 'INTEGRATIONS_DB',
-          subTab: 'SHEETS_SYNC',
-          icon: FileSpreadsheet
-        },
-        {
           id: 'audit_logs',
           label: 'Audit Logs',
           section: 'INTEGRATIONS_DB',
@@ -430,9 +423,6 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
     }
     if (item.id === 'blog') {
       return activeSubTab === 'BLOGS';
-    }
-    if (item.id === 'master_sync') {
-      return activeSubTab === 'SHEETS_SYNC';
     }
     if (item.id === 'audit_logs') {
       return activeSubTab === 'AUDIT_TRAIL';

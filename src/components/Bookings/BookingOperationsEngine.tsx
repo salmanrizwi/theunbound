@@ -823,9 +823,8 @@ export const BookingOperationsEngine: React.FC<BookingOperationsEngineProps> = (
                 <button
                   id="btn-add-service-item"
                   onClick={() => setIsAddItemModalOpen(true)}
-                  className="px-4 py-2 rounded-xl bg-[#008972] hover:bg-[#00705d] text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                  className="px-4 py-2 rounded-xl bg-[#008972] hover:bg-[#00705d] text-white font-bold text-xs flex items-center shadow-xs transition-all cursor-pointer"
                 >
-                  <Plus className="w-3.5 h-3.5" />
                   <span>Add Service Item</span>
                 </button>
               )}
@@ -1031,10 +1030,9 @@ export const BookingOperationsEngine: React.FC<BookingOperationsEngineProps> = (
                         const res = db.duplicateServiceItem(booking.id, item.id, currentUser);
                         if (res.success) onRefresh();
                       }}
-                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-all flex items-center cursor-pointer"
                       title="Clone service item"
                     >
-                      <Plus className="w-3.5 h-3.5 text-slate-600" />
                       Duplicate
                     </button>
                     <button

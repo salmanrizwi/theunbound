@@ -19,7 +19,6 @@ import { ImageUploadOrUrlInput } from '../ImageUploadOrUrlInput';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { AdminWorkspaceLayout } from '../common/AdminWorkspaceLayout';
-import { ModuleMasterSyncBar } from './common/ModuleMasterSyncBar';
 import { 
   createDefaultRequirementsForVisa, 
   createDefaultAssistanceServices,
@@ -1001,7 +1000,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
               className="px-4 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
             >
               <Plus className="w-4 h-4" />
-              <span>+ Add Visa Service</span>
+              <span>Add Visa Service</span>
             </button>
           )}
           {activeMainTab === 'TRAVEL_PROTECTION' && (
@@ -1010,7 +1009,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
               className="px-4 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
             >
               <Plus className="w-4 h-4" />
-              <span>+ Add Protection Plan</span>
+              <span>Add Protection Plan</span>
             </button>
           )}
           {activeMainTab === 'GROUND_CONNECTIVITY' && (
@@ -1020,30 +1019,19 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                 className="px-4 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
               >
                 <Plus className="w-4 h-4" />
-                <span>+ Add VIP Ground Service</span>
+                <span>Add VIP Ground Service</span>
               </button>
               <button
                 onClick={() => handleOpenCreateService('CONNECTIVITY')}
                 className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-black text-xs rounded-xl shadow-lg transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 border border-slate-700"
               >
                 <Plus className="w-4 h-4 text-[#00C6A6]" />
-                <span>+ Add eSIM Plan</span>
+                <span>Add eSIM Plan</span>
               </button>
             </>
           )}
         </div>
       </div>
-
-      {/* Google Sheets Master Sync Bar */}
-      <ModuleMasterSyncBar 
-        moduleType="VISA_ANCILLARY" 
-        onSyncCompleted={() => {
-          setVisas(db.getVisas());
-          setProtectionPlans(db.getTravelProtectionPlans());
-          setVipServices(db.getVipGroundServices());
-          setConnectivityPlans(db.getConnectivityPlans());
-        }}
-      />
 
       {/* ========================================================================= */}
       {/* CATEGORY WORKSPACE NAVIGATION TABS                                        */}
@@ -1234,7 +1222,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
               className="px-4 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>+ Add Visa Service</span>
+              <span>Add Visa Service</span>
             </button>
           </div>
         </div>
@@ -1257,7 +1245,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
               className="px-4 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>+ Add Protection Plan</span>
+              <span>Add Protection Plan</span>
             </button>
           </div>
         </div>
@@ -1280,14 +1268,14 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
               className="px-4 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>+ Add VIP Ground Service</span>
+              <span>Add VIP Ground Service</span>
             </button>
             <button
               onClick={() => handleOpenCreateService('CONNECTIVITY')}
               className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-4 h-4 text-[#00C6A6]" />
-              <span>+ Add eSIM Plan</span>
+              <span>Add eSIM Plan</span>
             </button>
           </div>
         </div>

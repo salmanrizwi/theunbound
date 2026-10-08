@@ -28,6 +28,7 @@ import { AppDatabase } from '../../services/db';
 import { formatCurrency, calculatePackagePrice } from '../../services/pricingEngine';
 import { hotelToProduct } from '../../utils/hotelHelpers';
 import { getInventoryDisplayName } from '../../utils/inventoryDisplayHelpers';
+import { canonicalImageService } from '../../services/imageService';
 
 interface B2BWishlistManagerViewProps {
   onNavigate: (tab: B2BTabType) => void;
@@ -181,7 +182,7 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
           name = getInventoryDisplayName(prod);
           category = prod.category || 'Product';
           destination = prod.destinationName || prod.country || 'Japan';
-          image = prod.imageUrl || prod.heroImage;
+          image = canonicalImageService.resolveProductImage(prod);
           isAvailable = prod.status !== 'INACTIVE' && prod.status !== 'ARCHIVED';
 
           // Pricing
@@ -199,7 +200,7 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
             name = getInventoryDisplayName(hot);
             category = 'Hotel & Ryokan';
             destination = hot.destinationName || 'Japan';
-            image = hot.imageUrl || hot.heroImage;
+            image = canonicalImageService.resolveHotelImage(hot);
             isAvailable = hot.status !== 'INACTIVE' && hot.status !== 'ARCHIVED';
 
             // Resolve cheapest rate
@@ -219,9 +220,9 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
               name = getInventoryDisplayName(pkg);
               category = 'Tour Package';
               destination = pkg.destinationName || 'Japan';
-              image = pkg.heroImage;
+              image = canonicalImageService.resolvePackageImage(pkg);
               isAvailable = pkg.status !== 'UNPUBLISHED' && pkg.status !== 'ARCHIVED' && pkg.status !== 'DRAFT';
-
+ 
               // Calculate package price
               try {
                 const calculated = calculatePackagePrice({ packageItem: pkg, targetCurrency: currency });
@@ -238,6 +239,7 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
                 name = (visa as any).listingName || (visa as any).name || (`${visa.visaType} Assistance (${visa.country})`);
                 category = 'Visa Service';
                 destination = visa.country || 'Japan';
+                image = canonicalImageService.resolveVisaImage(visa);
                 isAvailable = visa.status === 'ACTIVE';
 
                 const feePrice = visa.sellingPrice || (visa.embassyFee + visa.serviceFee);
@@ -254,6 +256,7 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
                   name = protection.serviceName;
                   category = 'Travel Protection';
                   destination = 'Japan Coverage';
+                  image = canonicalImageService.resolveAncillaryImage(protection, 'CUSTOM');
                   isAvailable = protection.status !== 'INACTIVE' && protection.status !== 'ARCHIVED';
                   if (protection.sellingPricePerTrip) {
                     exactPrice = protection.sellingPricePerTrip;
@@ -265,6 +268,7 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
                     name = ground.name;
                     category = 'Ground & Connectivity';
                     destination = ground.destinationId || 'Japan';
+                    image = canonicalImageService.resolveAncillaryImage(ground, 'CUSTOM');
                     isAvailable = ground.status !== 'INACTIVE' && ground.status !== 'ARCHIVED';
                     if (ground.sellingPrice) {
                       exactPrice = ground.sellingPrice;
@@ -276,6 +280,7 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
                       name = conn.name;
                       category = 'Ground & Connectivity';
                       destination = 'Japan Connectivity';
+                      image = canonicalImageService.resolveAncillaryImage(conn, 'CUSTOM');
                       isAvailable = conn.status !== 'INACTIVE' && conn.status !== 'ARCHIVED';
                       if (conn.sellingPrice) {
                         exactPrice = conn.sellingPrice;

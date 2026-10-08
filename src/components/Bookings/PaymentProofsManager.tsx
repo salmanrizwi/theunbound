@@ -169,9 +169,8 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
         <button
           id="btn-add-payment-tranche"
           onClick={openAddTrancheModal}
-          className="flex items-center gap-1.5 px-4 py-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 rounded-xl text-xs font-bold shadow-md shadow-[#00C6A6]/20 transition-all cursor-pointer"
+          className="flex items-center px-4 py-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 rounded-xl text-xs font-bold shadow-md shadow-[#00C6A6]/20 transition-all cursor-pointer"
         >
-          <Plus className="w-4 h-4" />
           <span>Add Payment Tranche / Proof</span>
         </button>
       </div>
@@ -218,9 +217,8 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
           </p>
           <button
             onClick={openAddTrancheModal}
-            className="px-4 py-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 rounded-xl text-xs font-bold shadow-md shadow-[#00C6A6]/20 inline-flex items-center gap-1.5 cursor-pointer"
+            className="px-4 py-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 rounded-xl text-xs font-bold shadow-md shadow-[#00C6A6]/20 inline-flex items-center cursor-pointer"
           >
-            <Plus className="w-4 h-4" />
             <span>Upload Advance Deposit Proof</span>
           </button>
         </div>

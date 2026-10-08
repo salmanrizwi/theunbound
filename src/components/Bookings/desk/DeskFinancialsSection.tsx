@@ -138,9 +138,8 @@ export const DeskFinancialsSection: React.FC<DeskFinancialsSectionProps> = ({
           {isInternal && (
             <button
               onClick={() => setIsAdjustmentModalOpen(true)}
-              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all flex items-center cursor-pointer"
             >
-              <Plus className="w-3.5 h-3.5" />
               <span>Record Adjustment</span>
             </button>
           )}

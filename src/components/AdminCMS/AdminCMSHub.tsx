@@ -34,7 +34,6 @@ import { PromotionManager } from './PromotionManager';
 import { EmailCampaignsManager } from './EmailCampaignsManager';
 import { NewsletterManager } from './NewsletterManager';
 import { AuditTrailViewer } from './AuditTrailViewer';
-import { GoogleSheetsSyncManager } from './GoogleSheetsSyncManager';
 import { FirestoreDiagnosticsViewer } from './FirestoreDiagnosticsViewer';
 import { VisaCMSManager } from './VisaCMSManager';
 import { PackageManager } from './PackageManager';
@@ -549,8 +548,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             { id: 'ROUTES', label: 'Route Network', icon: RouteIcon },
             { id: 'RATES', label: 'Rate Explorer', icon: DollarSign },
             { id: 'SEASONS', label: 'Season Calendar', icon: Calendar },
-            { id: 'MARKUP', label: 'Dynamic Markup', icon: Percent },
-            { id: 'SHEETS_SYNC', label: 'Google Sheets Sync', icon: FileSpreadsheet }
+            { id: 'MARKUP', label: 'Dynamic Markup', icon: Percent }
           ]
         },
         {
@@ -756,8 +754,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             { id: 'DATA_SYNC_AUDIT', label: 'Data Sync & Consistency Audit', icon: ShieldCheck },
             { id: 'INTEGRATIONS_HUB', label: 'Integrations & Database Hub', icon: Sparkles },
             { id: 'FIRESTORE_DIAGNOSTICS', label: 'Firestore Diagnostics', icon: Activity },
-            { id: 'AUDIT_TRAIL', label: 'Audit & Governance Ledger', icon: ShieldCheck },
-            { id: 'SHEETS_SYNC', label: 'Master Google Sheets Sync', icon: FileSpreadsheet }
+            { id: 'AUDIT_TRAIL', label: 'Audit & Governance Ledger', icon: ShieldCheck }
           ]
         }
       ]
@@ -1351,7 +1348,6 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
               )}
               {activeSubTab === 'FIRESTORE_DIAGNOSTICS' && <FirestoreDiagnosticsViewer />}
               {activeSubTab === 'AUDIT_TRAIL' && <AuditTrailViewer />}
-              {activeSubTab === 'SHEETS_SYNC' && <GoogleSheetsSyncManager />}
             </>
           )}
         </div>

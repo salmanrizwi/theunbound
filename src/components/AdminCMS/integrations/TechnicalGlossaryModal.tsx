@@ -83,11 +83,11 @@ export const TechnicalGlossaryModal: React.FC<TechnicalGlossaryModalProps> = ({
       example: 'When a booking is confirmed, an SLA task is dispatched to the DMC ops queue due in 12 hours.'
     },
     {
-      term: 'Tariff Two-Way Synchronization',
+      term: 'Currency & FX Conversion Engine',
       category: 'INTEGRATION',
-      businessExplanation: 'The automated pipe that updates wholesale pricing from Google Sheets into the website quotation engine.',
-      technicalExplanation: 'Batch API parsing comparing spreadsheet rows against database SKUs and applying atomic rate mutations.',
-      example: 'Updating the supplier rate for Tokyo Tours from $175 to $185 in Google Sheets automatically updates all new quotes.'
+      businessExplanation: 'The automated engine that evaluates live interbank foreign exchange rates via Google Sheets =GOOGLEFINANCE().',
+      technicalExplanation: 'Evaluates official =GOOGLEFINANCE() currency pair formulas and applies configured agent/client markup rules in real-time.',
+      example: 'Currency rates for JPY, EUR, USD, and INR are evaluated live via Google Finance for all client quotation calculations.'
     }
   ];
 

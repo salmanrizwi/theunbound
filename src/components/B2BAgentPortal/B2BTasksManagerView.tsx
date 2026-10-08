@@ -198,9 +198,8 @@ export const B2BTasksManagerView: React.FC = () => {
 
         <button
           onClick={handleOpenAdd}
-          className="inline-flex items-center space-x-2 bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white px-5 py-2.5 rounded-2xl text-xs font-bold transition-all shrink-0 cursor-pointer shadow-xs"
+          className="inline-flex items-center bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white px-5 py-2.5 rounded-2xl text-xs font-bold transition-all shrink-0 cursor-pointer shadow-xs"
         >
-          <Plus className="w-4 h-4" />
           <span>Add New Reminder</span>
         </button>
       </div>

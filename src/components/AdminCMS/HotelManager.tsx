@@ -6,7 +6,6 @@ import { ImageUploadOrUrlInput } from '../ImageUploadOrUrlInput';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { AdminWorkspaceLayout } from '../common/AdminWorkspaceLayout';
-import { ModuleMasterSyncBar } from './common/ModuleMasterSyncBar';
 import { 
   Hotel as HotelIcon, 
   Plus, 
@@ -656,19 +655,12 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
 
           <button
             onClick={handleOpenAdd}
-            className="inline-flex items-center space-x-2 bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-xs text-xs"
+            className="inline-flex items-center bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-xs text-xs"
           >
-            <Plus className="w-4 h-4 text-[#00C6A6]" />
             <span>Add Hotel Property</span>
           </button>
         </div>
       </div>
-
-      {/* Google Sheets Master Sync Bar */}
-      <ModuleMasterSyncBar 
-        moduleType="HOTELS" 
-        onSyncCompleted={() => setHotels(db.getHotels())} 
-      />
 
       {/* ========================================================================= */}
       {/* MODE 1: CALENDAR VIEW (ADD & MANAGE DAILY NIGHTLY RATES ON CALENDAR)       */}
@@ -1784,9 +1776,8 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                     <button
                       type="button"
                       onClick={handleAddRoomType}
-                      className="inline-flex items-center space-x-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold px-3 py-2 rounded-xl text-xs cursor-pointer"
+                      className="inline-flex items-center bg-slate-900 hover:bg-slate-800 text-white font-bold px-3 py-2 rounded-xl text-xs cursor-pointer"
                     >
-                      <Plus className="w-3.5 h-3.5 text-[#00C6A6]" />
                       <span>Add Room Category</span>
                     </button>
                   </div>
@@ -2069,9 +2060,8 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                                 updatedRooms[roomIdx].rates = [...currentRates, newRate];
                                 setEditingHotel({ ...editingHotel, roomTypes: updatedRooms });
                               }}
-                              className="inline-flex items-center space-x-1 bg-[#008972] hover:bg-[#007460] text-white text-[11px] font-bold px-2.5 py-1 rounded-lg cursor-pointer transition-colors shadow-2xs"
+                              className="inline-flex items-center bg-[#008972] hover:bg-[#007460] text-white text-[11px] font-bold px-2.5 py-1 rounded-lg cursor-pointer transition-colors shadow-2xs"
                             >
-                              <Plus className="w-3 h-3" />
                               <span>Add Rate Period</span>
                             </button>
                           </div>

@@ -639,7 +639,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   >
                     {availability.isAvailable ? (
                       <>
-                        <Plus className="w-4 h-4" />
                         <span>Add to Cart</span>
                       </>
                     ) : (

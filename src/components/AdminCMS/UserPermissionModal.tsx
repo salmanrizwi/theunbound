@@ -1253,16 +1253,6 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
                           <label className="flex items-center space-x-2 text-[11px] p-2 bg-white rounded-lg border border-slate-200 cursor-pointer">
                             <input
                               type="checkbox"
-                              checked={perms.cmsSystem?.googleSheetsSync !== false}
-                              onChange={() => handleToggleSystemSub('googleSheetsSync')}
-                              className="rounded text-cyan-600 w-3.5 h-3.5"
-                            />
-                            <span className="text-slate-800">Google Sheets Sync</span>
-                          </label>
-
-                          <label className="flex items-center space-x-2 text-[11px] p-2 bg-white rounded-lg border border-slate-200 cursor-pointer">
-                            <input
-                              type="checkbox"
                               checked={perms.cmsSystem?.databaseDiagnostics !== false}
                               onChange={() => handleToggleSystemSub('databaseDiagnostics')}
                               className="rounded text-cyan-600 w-3.5 h-3.5"

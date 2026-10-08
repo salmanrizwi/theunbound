@@ -247,9 +247,8 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
             <button
               onClick={handleCreateNew}
               id="btn-create-master-region"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-sm shadow-xs transition-all active:scale-95 cursor-pointer"
+              className="inline-flex items-center px-5 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-sm shadow-xs transition-all active:scale-95 cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
               Add Master Region
             </button>
           </div>
@@ -504,9 +503,8 @@ export const RegionCMSManager: React.FC<RegionCMSManagerProps> = ({
           </p>
           <button
             onClick={handleCreateNew}
-            className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs shadow hover:bg-amber-400 cursor-pointer"
+            className="mt-4 inline-flex items-center px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs shadow hover:bg-amber-400 cursor-pointer"
           >
-            <Plus className="w-4 h-4" />
             Add Master Region
           </button>
         </div>

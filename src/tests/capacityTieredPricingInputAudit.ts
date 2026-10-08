@@ -6,8 +6,6 @@
 import { AppDatabase } from '../services/db';
 import { Product, TieredPrice, CurrencyCode } from '../types';
 import { calculateProductPrice } from '../services/pricingEngine';
-import { SheetsSyncService } from '../services/sheetsSyncService';
-import { MASTER_SHEETS_TAB_DEFINITIONS } from '../data/googleSheetsTemplate';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -30,18 +28,6 @@ async function runAudit() {
   console.log('================================================================\n');
 
   const db = AppDatabase.getInstance();
-  const syncEngine = SheetsSyncService.getInstance();
-
-  const canonicalMultiTabData: Record<string, string[][]> = {};
-  for (const tabDef of MASTER_SHEETS_TAB_DEFINITIONS) {
-    if (tabDef.tabName !== 'INSTRUCTIONS') {
-      canonicalMultiTabData[tabDef.tabName] = [
-        tabDef.columns.map(c => c.key),
-        ...tabDef.sampleRows
-      ];
-    }
-  }
-  await syncEngine.commitMultiTabSync(canonicalMultiTabData, undefined, null);
 
 // 1. Audit Tier Creation Empty State (Section 8)
 console.log('--- 1. Testing Tier Creation Empty State ---');

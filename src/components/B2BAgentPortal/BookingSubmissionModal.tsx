@@ -827,7 +827,7 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
                   onClick={handleAddPassenger}
                   className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1"
                 >
-                  <span>+ Add Guest</span>
+                  <span>Add Guest</span>
                 </button>
               </div>
 

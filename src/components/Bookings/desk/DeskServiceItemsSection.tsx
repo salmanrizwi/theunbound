@@ -256,9 +256,8 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
           <button
             id="btn-add-service-item"
             onClick={() => setIsAddModalOpen(true)}
-            className="px-4 py-2.5 bg-[#008f77] hover:bg-[#00705d] text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer"
+            className="px-4 py-2.5 bg-[#008f77] hover:bg-[#00705d] text-white rounded-xl text-xs font-bold shadow-xs flex items-center shrink-0 transition-colors cursor-pointer"
           >
-            <Plus className="w-4 h-4" />
             <span>Add Service Item</span>
           </button>
         )}
@@ -434,7 +433,7 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
                                 }}
                                 className="text-[10px] text-[#008f77] hover:underline font-bold cursor-pointer block text-right"
                               >
-                                {hasPrice ? 'Update Price' : '+ Add Price'}
+                                {hasPrice ? 'Update Price' : 'Add Price'}
                               </button>
                             )}
                           </div>

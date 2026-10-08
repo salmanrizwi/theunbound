@@ -141,9 +141,8 @@ export const B2BCustomersCRMView: React.FC<B2BCustomersCRMViewProps> = ({
             });
             setIsAddModalOpen(true);
           }}
-          className="inline-flex items-center space-x-2 bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white px-5 py-2.5 rounded-2xl text-xs font-bold transition-all shrink-0 cursor-pointer"
+          className="inline-flex items-center bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white px-5 py-2.5 rounded-2xl text-xs font-bold transition-all shrink-0 cursor-pointer"
         >
-          <Plus className="w-4 h-4" />
           <span>Add New Client</span>
         </button>
       </div>
@@ -249,7 +248,7 @@ export const B2BCustomersCRMView: React.FC<B2BCustomersCRMViewProps> = ({
                 onClick={() => onCreateQuoteForCustomer(customer)}
                 className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white text-xs font-bold transition-all cursor-pointer"
               >
-                + Create Quote
+                Create Quote
               </button>
             </div>
           </div>

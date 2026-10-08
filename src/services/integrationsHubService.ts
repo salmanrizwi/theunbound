@@ -156,15 +156,9 @@ export class IntegrationsHubService {
       ? 'Google Calendar & Tasks API connected (12h SLA Sync Active)' 
       : 'Connect Google Account to enable automatic calendar event dispatches';
 
-    // 4. Google Sheets Status Check
-    const syncReports = db.getSyncReports();
-    const lastReport = syncReports.length > 0 ? syncReports[0] : null;
+    // 4. Google Sheets =GOOGLEFINANCE() FX Engine Status Check
     let sheetsStatus: IntegrationStatus = 'CONNECTED';
-    let sheetsMsg = 'Operational Google Sheets sync engine ready (API v4 & CSV Parser)';
-    if (lastReport && lastReport.status === 'FAILED') {
-      sheetsStatus = 'ACTION_REQUIRED';
-      sheetsMsg = `Last sync encountered errors: ${lastReport.counts?.errorsCount || 0} issues`;
-    }
+    let sheetsMsg = 'Live currency conversion via official Google Sheets API v4 =GOOGLEFINANCE() formulas active';
 
     return [
       {
@@ -208,16 +202,16 @@ export class IntegrationsHubService {
       },
       {
         id: 'SHEETS',
-        name: 'Google Sheets Pipeline',
-        description: 'Two-way commercial pricing tariff synchronizer and bulk supplier inventory parser.',
+        name: 'Google Sheets FX Engine',
+        description: 'Live forex exchange rates evaluated via native =GOOGLEFINANCE() formulas in Google Sheets.',
         status: sheetsStatus,
         statusMessage: sheetsMsg,
-        lastSync: lastReport?.timestamp ? new Date(lastReport.timestamp).toLocaleDateString() : 'Ready',
-        lastVerification: 'Schema Validated',
-        errorCount: lastReport?.counts?.errorsCount || 0,
+        lastSync: 'On-demand / Scheduled',
+        lastVerification: 'Official Sheets API v4',
+        errorCount: 0,
         iconName: 'FileSpreadsheet',
         isProductionReady: true,
-        activeAccount: 'Master Tariff Sheet'
+        activeAccount: 'FX_RATES Worksheet'
       }
     ];
   }
@@ -375,48 +369,6 @@ export class IntegrationsHubService {
       return {
         success: false,
         details: err?.message || 'Network error verifying Gmail API connection.'
-      };
-    }
-  }
-
-  public async verifyGoogleSheetsConnection(spreadsheetId?: string): Promise<{
-    success: boolean;
-    spreadsheetTitle?: string;
-    availableTabs?: string[];
-    details: string;
-  }> {
-    const token = typeof window !== 'undefined'
-      ? (sessionStorage.getItem('google_access_token') || localStorage.getItem('google_access_token'))
-      : null;
-
-    try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch('/api/integrations/sheets/health-check', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ spreadsheetId })
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
-        return {
-          success: true,
-          spreadsheetTitle: data.spreadsheetTitle,
-          availableTabs: data.availableTabs,
-          details: data.details || `Connected to Google Spreadsheet "${data.spreadsheetTitle}".`
-        };
-      } else {
-        return {
-          success: false,
-          details: data.details || data.error || `Sheets verification failed (${res.status}).`
-        };
-      }
-    } catch (err: any) {
-      return {
-        success: false,
-        details: err?.message || 'Network error verifying Google Sheets connection.'
       };
     }
   }
@@ -1490,59 +1442,7 @@ export class IntegrationsHubService {
     }
   }
 
-  // =========================================================================
-  // 7. GOOGLE SHEETS COLUMN MAPPING SCHEMA GENERATOR
-  // =========================================================================
-
   public getDefaultSheetsColumnMappings(): SheetsColumnMappingItem[] {
-    return [
-      // 1. Core Identifiers & Hierarchy
-      { sheetColumn: 'Product SKU', dbField: 'sku', displayName: 'Product SKU Code', isRequired: true, dataType: 'string', status: 'MAPPED', sampleValue: 'TUB-JP-TYO-001' },
-      { sheetColumn: 'Product Name', dbField: 'name', displayName: 'Product Title', isRequired: true, dataType: 'string', status: 'MAPPED', sampleValue: 'Tokyo Highlights & Asakusa Sensoji Tour' },
-      { sheetColumn: 'Destination', dbField: 'destinationName', displayName: 'Destination Name (Tier 2)', isRequired: true, dataType: 'string', status: 'MAPPED', sampleValue: 'Japan' },
-      { sheetColumn: 'City / Hub', dbField: 'city', displayName: 'City Hub (Tier 3)', isRequired: true, dataType: 'string', status: 'MAPPED', sampleValue: 'Tokyo' },
-      { sheetColumn: 'Category', dbField: 'category', displayName: 'Product Category', isRequired: true, dataType: 'string', status: 'MAPPED', sampleValue: 'Day Tours' },
-      { sheetColumn: 'Subcategory', dbField: 'subcategory', displayName: 'Subcategory Classification', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: 'Cultural & Heritage Excursions' },
-      { sheetColumn: 'Status', dbField: 'status', displayName: 'Inventory Status (ACTIVE / DRAFT / ARCHIVED)', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: 'ACTIVE' },
-
-      // 2. Narrative, Summary & Full Itinerary
-      { sheetColumn: 'Short Summary', dbField: 'shortDescription', displayName: 'Short Summary & Highlights', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: 'Immersive full-day private vehicle journey through historic Senso-ji Temple, Meiji Shrine, and Shibuya Sky.' },
-      { sheetColumn: 'Full Itinerary', dbField: 'longDescription', displayName: 'Detailed Full Day-by-Day / Hourly Itinerary', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: '09:00 Hotel pickup -> 09:45 Senso-ji Temple & Nakamise -> 12:00 Tsukiji Outer Market Lunch -> 14:00 Meiji Shrine -> 16:00 Shibuya Sky Deck -> 17:30 Return drop-off.' },
-
-      // 3. Inclusions, Exclusions & Notes
-      { sheetColumn: 'Included Services', dbField: 'inclusions', displayName: 'Included Services (Pipe | Separated)', isRequired: false, dataType: 'array', status: 'MAPPED', sampleValue: 'Licensed English Guide | Private Chartered Vehicle | All Highway Tolls & Fuel | Temple & Monument Entrance Fees' },
-      { sheetColumn: 'Exclusions', dbField: 'exclusions', displayName: 'Exclusions & Out of Scope Items (Pipe | Separated)', isRequired: false, dataType: 'array', status: 'MAPPED', sampleValue: 'Client Meals & Beverage | Personal Souvenirs | Discretionary Guide Gratuities' },
-      { sheetColumn: 'Important Information & Notes', dbField: 'importantInformation', displayName: 'Important Notes, Restrictions & Dress Code', isRequired: false, dataType: 'array', status: 'MAPPED', sampleValue: 'Comfortable walking shoes recommended | Modest attire required at religious shrines | Passport required for tax-free shopping' },
-
-      // 4. Logistics, Meeting Point & Roster Scheduling
-      { sheetColumn: 'Meeting Point', dbField: 'meetingPoint', displayName: 'Designated Meeting Point Location', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: 'Hotel Lobby (Tokyo 23 Wards) or Shinjuku Station West Exit' },
-      { sheetColumn: 'Meeting Point & Pickup Logistics', dbField: 'pickupInformation', displayName: 'Meeting Point & Pickup Logistics Protocols', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: 'Door-to-door private hotel pickup and drop-off included. Driver awaits in lobby holding name board.' },
-      { sheetColumn: 'Operating Days (Roster Sync)', dbField: 'operatingDays', displayName: 'Operating Days to Sync with Operational Roster (Pipe | or Comma Separated)', isRequired: false, dataType: 'array', status: 'MAPPED', sampleValue: 'Mon | Tue | Wed | Thu | Fri | Sat | Sun' },
-      { sheetColumn: 'Operating Hours', dbField: 'operatingHours', displayName: 'Operating Hours Window', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: '09:00 - 18:00' },
-      { sheetColumn: 'Duration', dbField: 'duration', displayName: 'Experience Duration', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: '8 Hours' },
-
-      // 5. Governance, Cancellation & Booking Protocol
-      { sheetColumn: 'Cancellation & Refund Protocol', dbField: 'cancellationPolicy', displayName: 'Cancellation & Refund Protocol & Penalties', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: '100% refund up to 48 hours prior to service date; 50% penalty 24–48 hours; 100% penalty within 24 hours.' },
-      { sheetColumn: 'Booking Cutoff Days', dbField: 'bookingRequiredDays', displayName: 'Advance Booking Cutoff Lead Time (Days)', isRequired: false, dataType: 'number', status: 'MAPPED', sampleValue: '2' },
-      { sheetColumn: 'Min Pax', dbField: 'minPax', displayName: 'Minimum Passenger Requirement', isRequired: false, dataType: 'number', status: 'MAPPED', sampleValue: '1' },
-      { sheetColumn: 'Max Pax', dbField: 'maxPax', displayName: 'Maximum Passenger Capacity', isRequired: false, dataType: 'number', status: 'MAPPED', sampleValue: '20' },
-      { sheetColumn: 'Season & Validity From', dbField: 'validityFrom', displayName: 'Tariff Validity Start Date (YYYY-MM-DD)', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: '2026-01-01' },
-      { sheetColumn: 'Season & Validity To', dbField: 'validityTo', displayName: 'Tariff Validity End Date (YYYY-MM-DD)', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: '2026-12-31' },
-
-      // 6. Supplier Contracting & Commercial Net Rates
-      { sheetColumn: 'Supplier Name', dbField: 'supplierName', displayName: 'Contracted Ground Supplier Name', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: 'Tokyo Luxury Transport & Guide Guild Ltd' },
-      { sheetColumn: 'Supplier Contact', dbField: 'supplierContactDetails', displayName: 'Supplier Contact Person / Email / Phone', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: 'dispatch@tokyoluxury.jp | +81 3 5555 0199' },
-      { sheetColumn: 'Supplier Local Currency', dbField: 'supplierLocalCurrency', displayName: 'Supplier Contract Currency', isRequired: false, dataType: 'currency', status: 'MAPPED', sampleValue: 'JPY' },
-      { sheetColumn: 'Adult Net Cost', dbField: 'adultNetPrice', displayName: 'Adult Net Cost (USD/Base Currency)', isRequired: true, dataType: 'number', status: 'MAPPED', sampleValue: '185.00' },
-      { sheetColumn: 'Child Net Cost', dbField: 'childNetPrice', displayName: 'Child Net Cost (USD/Base Currency)', isRequired: false, dataType: 'number', status: 'MAPPED', sampleValue: '120.00' },
-      { sheetColumn: 'Infant Net Cost', dbField: 'infantNetPrice', displayName: 'Infant Net Cost (USD/Base Currency)', isRequired: false, dataType: 'number', status: 'MAPPED', sampleValue: '0.00' },
-      { sheetColumn: 'Default Markup %', dbField: 'defaultMarkupPercent', displayName: 'Default Markup Percentage (%)', isRequired: false, dataType: 'number', status: 'MAPPED', sampleValue: '20' },
-      { sheetColumn: 'Tax %', dbField: 'taxPercent', displayName: 'Applicable Local VAT / Tax %', isRequired: false, dataType: 'number', status: 'MAPPED', sampleValue: '10' },
-
-      // 7. Vehicle Fleet & Capacity Configurations
-      { sheetColumn: 'Vehicle Model', dbField: 'vehicleModel', displayName: 'Vehicle Type / Model Specification', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: 'Toyota Alphard Executive Van' },
-      { sheetColumn: 'Vehicle Capacity', dbField: 'vehicleCapacity', displayName: 'Maximum Passenger Seating Capacity', isRequired: false, dataType: 'number', status: 'MAPPED', sampleValue: '6' },
-      { sheetColumn: 'Pricing Method', dbField: 'pricingMethod', displayName: 'Pricing Method (per_person / capacity_based)', isRequired: false, dataType: 'string', status: 'MAPPED', sampleValue: 'per_person' }
-    ];
+    return [];
   }
 }

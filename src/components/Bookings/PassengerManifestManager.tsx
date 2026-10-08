@@ -238,13 +238,12 @@ export const PassengerManifestManager: React.FC<PassengerManifestManagerProps> =
             id="btn-add-passenger"
             onClick={openAddModal}
             disabled={isFull}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer ${
+            className={`flex items-center px-4 py-2 rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer ${
               isFull 
                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
                 : 'bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 shadow-md shadow-[#00C6A6]/20'
             }`}
           >
-            <Plus className="w-4 h-4" />
             <span>Add Passenger Profile ({currentPassengers.length}/{maxPax})</span>
           </button>
         )}
@@ -277,9 +276,8 @@ export const PassengerManifestManager: React.FC<PassengerManifestManagerProps> =
           {canAddOrDelete && (
             <button
               onClick={openAddModal}
-              className="px-4 py-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 rounded-xl text-xs font-bold shadow-md shadow-[#00C6A6]/20 inline-flex items-center gap-1.5 cursor-pointer"
+              className="px-4 py-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 rounded-xl text-xs font-bold shadow-md shadow-[#00C6A6]/20 inline-flex items-center cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
               <span>Add First Passenger (Lead)</span>
             </button>
           )}

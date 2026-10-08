@@ -338,9 +338,8 @@ export const AddAddonModal: React.FC<AddAddonModalProps> = ({
                         </div>
                         <button
                           onClick={() => handleAddInsurance(plan)}
-                          className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black transition-colors flex items-center space-x-1 cursor-pointer shadow-xs"
+                          className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black transition-colors flex items-center cursor-pointer shadow-xs"
                         >
-                          <Plus className="w-3.5 h-3.5" />
                           <span>Add to Cart</span>
                         </button>
                       </div>
@@ -386,9 +385,8 @@ export const AddAddonModal: React.FC<AddAddonModalProps> = ({
                       </div>
                       <button
                         onClick={() => handleAddEsim(plan)}
-                        className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black transition-colors flex items-center space-x-1 cursor-pointer shadow-xs"
+                        className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black transition-colors flex items-center cursor-pointer shadow-xs"
                       >
-                        <Plus className="w-3.5 h-3.5" />
                         <span>Add eSIM</span>
                       </button>
                     </div>
@@ -423,7 +421,7 @@ export const AddAddonModal: React.FC<AddAddonModalProps> = ({
                       onClick={() => handleAddVipService('VIP_MEET_GREET')}
                       className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer"
                     >
-                      + Add
+                      Add
                     </button>
                   </div>
                 </div>
@@ -442,7 +440,7 @@ export const AddAddonModal: React.FC<AddAddonModalProps> = ({
                       onClick={() => handleAddVipService('LUGGAGE_VAN')}
                       className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer"
                     >
-                      + Add
+                      Add
                     </button>
                   </div>
                 </div>
@@ -461,7 +459,7 @@ export const AddAddonModal: React.FC<AddAddonModalProps> = ({
                       onClick={() => handleAddVipService('PORTABLE_WIFI')}
                       className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer"
                     >
-                      + Add
+                      Add
                     </button>
                   </div>
                 </div>

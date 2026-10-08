@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { MapPin, Clock, Users, Car, Ship, Anchor, Ticket, Languages, Utensils, Compass } from 'lucide-react';
 import { CurrencyCode, ProductCategory } from '../../types';
+import { canonicalImageService } from '../../services/imageService';
 
 interface ProductPreviewCardProps {
   name: string;
@@ -62,14 +63,15 @@ export const ProductPreviewCard: React.FC<ProductPreviewCardProps> = ({
     }
   };
 
+  const resolved = canonicalImageService.resolveImageUrl(imageUrl, cityName);
   const defaultImage = 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=800';
 
   return (
     <div className={`bg-white text-slate-800 rounded-2xl overflow-hidden shadow-xs border border-slate-200/90 ${className}`}>
       <div className="h-44 bg-slate-100 relative">
-        {!imgError && (imageUrl || defaultImage) ? (
+        {!imgError && (resolved || defaultImage) ? (
           <img
-            src={imageUrl || defaultImage}
+            src={resolved || defaultImage}
             alt={name || 'Product Preview'}
             onError={() => setImgError(true)}
             referrerPolicy="no-referrer"

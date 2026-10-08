@@ -561,7 +561,6 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                       </>
                     ) : (
                       <>
-                        <Plus className="w-4 h-4" />
                         <span>Add Hotel Stay to Quotation</span>
                       </>
                     )}

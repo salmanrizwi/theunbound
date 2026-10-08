@@ -963,9 +963,8 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             <button
               type="button"
               onClick={handleAddTicketTier}
-              className="text-xs font-black text-[#008972] hover:text-[#00C6A6] transition-colors flex items-center gap-1 cursor-pointer bg-teal-50 border border-teal-200 px-3 py-1.5 rounded-xl shadow-2xs"
+              className="text-xs font-black text-[#008972] hover:text-[#00C6A6] transition-colors flex items-center cursor-pointer bg-teal-50 border border-teal-200 px-3 py-1.5 rounded-xl shadow-2xs"
             >
-              <Plus className="w-3.5 h-3.5" />
               <span>Add Ticket Tier</span>
             </button>
           </div>
@@ -1598,9 +1597,8 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
           <button
             type="button"
             onClick={handleAddTier}
-            className="text-xs font-black text-[#008972] hover:text-[#00C6A6] transition-colors flex items-center gap-1 cursor-pointer bg-teal-50 border border-teal-200 px-3 py-1.5 rounded-xl self-start sm:self-center"
+            className="text-xs font-black text-[#008972] hover:text-[#00C6A6] transition-colors flex items-center cursor-pointer bg-teal-50 border border-teal-200 px-3 py-1.5 rounded-xl self-start sm:self-center"
           >
-            <Plus className="w-3.5 h-3.5 text-[#00C6A6]" />
             <span>Add Capacity Tier</span>
           </button>
         </div>

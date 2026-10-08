@@ -413,9 +413,8 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
             <button
               type="button"
               onClick={() => onCreateQuoteForLead(lead)}
-              className="px-3.5 py-1.5 rounded-xl bg-[#008f77] hover:bg-[#00705d] text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+              className="px-3.5 py-1.5 rounded-xl bg-[#008f77] hover:bg-[#00705d] text-white text-xs font-bold transition-colors cursor-pointer flex items-center shadow-2xs"
             >
-              <Plus className="w-3.5 h-3.5" />
               <span>Create Quotation</span>
             </button>
           )}
@@ -711,9 +710,8 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                         <button
                           type="button"
                           onClick={() => setIsAssigningAgent(true)}
-                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors cursor-pointer inline-flex items-center"
                         >
-                          <Plus className="w-3.5 h-3.5" />
                           <span>Assign to B2B Partner Agent</span>
                         </button>
                       ) : (

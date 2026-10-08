@@ -34,6 +34,7 @@ import {
   Info
 } from 'lucide-react';
 import { Destination, Hotel, Product, B2BPackage, CityHub, Quotation } from '../../types';
+import { canonicalImageService } from '../../services/imageService';
 import { useQuotation } from '../../context/QuotationContext';
 import { formatCurrency, calculatePackagePrice } from '../../services/pricingEngine';
 import { AppDatabase } from '../../services/db';
@@ -431,9 +432,8 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
               <button
                 id="home-new-quotation-btn"
                 onClick={() => onNavigate('create-quote')}
-                className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 px-5 py-3 rounded-2xl text-xs font-black transition-all shadow-md shadow-[#00C6A6]/20 hover:scale-[1.02] cursor-pointer"
+                className="inline-flex items-center bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 px-5 py-3 rounded-2xl text-xs font-black transition-all shadow-md shadow-[#00C6A6]/20 hover:scale-[1.02] cursor-pointer"
               >
-                <PlusCircle className="w-4 h-4" />
                 <span>Create Quote</span>
               </button>
               <button
@@ -617,11 +617,11 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                                 <div className="flex items-center space-x-1.5 pt-1">
                                   <button
                                     onClick={() => handleOpenConfigureProduct(p)}
-                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer ${
+                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center cursor-pointer ${
                                       inQuote ? 'bg-emerald-600 text-white' : 'bg-[#00C6A6] text-slate-950 hover:bg-[#00b395]'
                                     }`}
                                   >
-                                    {inQuote ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                                    {inQuote && <Check className="w-3 h-3 mr-1" />}
                                     <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Cart'}</span>
                                   </button>
                                   <button
@@ -662,11 +662,11 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                                 <div className="flex items-center space-x-1.5 pt-1">
                                   <button
                                     onClick={() => handleOpenConfigureHotel(h)}
-                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer ${
+                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center cursor-pointer ${
                                       inQuote ? 'bg-emerald-600 text-white' : 'bg-[#00C6A6] text-slate-950 hover:bg-[#00b395]'
                                     }`}
                                   >
-                                    {inQuote ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                                    {inQuote && <Check className="w-3 h-3 mr-1" />}
                                     <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Cart'}</span>
                                   </button>
                                   <button
@@ -706,11 +706,11 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                                 <div className="flex items-center space-x-1.5 pt-1">
                                   <button
                                     onClick={() => handleOpenConfigureVisa(v)}
-                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center space-x-1 cursor-pointer ${
+                                    className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center cursor-pointer ${
                                       inQuote ? 'bg-emerald-600 text-white' : 'bg-[#00C6A6] text-slate-950 hover:bg-[#00b395]'
                                     }`}
                                   >
-                                    {inQuote ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                                    {inQuote && <Check className="w-3 h-3 mr-1" />}
                                     <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Cart'}</span>
                                   </button>
                                   <button
@@ -811,10 +811,13 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                   {/* Destination Image */}
                   <div className="relative h-56 overflow-hidden bg-slate-100">
                     <img
-                      src={dest.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
+                      src={canonicalImageService.resolveDestinationImage(dest)}
                       alt={dest.name}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolveDestinationImage(dest);
+                      }}
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/25 to-transparent"></div>
 
@@ -872,9 +875,8 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                       ) : (
                         <button
                           onClick={() => onOpenCreateQuoteWithDestination ? onOpenCreateQuoteWithDestination(dest.slug || dest.id) : onNavigate('create-quote')}
-                          className="w-full py-2.5 px-3 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 font-black text-xs transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"
+                          className="w-full py-2.5 px-3 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 font-black text-xs transition-all flex items-center justify-center cursor-pointer shadow-xs"
                         >
-                          <PlusCircle className="w-3.5 h-3.5" />
                           <span>Create Quote</span>
                         </button>
                       )}
@@ -978,10 +980,13 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                   {/* Image */}
                   <div className="relative h-44 overflow-hidden bg-slate-100">
                     <img
-                      src={hotel.heroImage || 'https://images.unsplash.com/photo-1566073771259-6a8506099945?q=80&w=800&auto=format&fit=crop'}
+                      src={canonicalImageService.resolveHotelImage(hotel)}
                       alt={hotel.name}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolveHotelImage(hotel);
+                      }}
                     />
                     <div className="absolute top-3 left-3 bg-slate-900/80 backdrop-blur-xs text-white px-2 py-0.5 rounded text-[10px] font-bold">
                       {hotel.cityName || hotel.city}
@@ -1020,13 +1025,13 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                     <div className="space-y-1.5 pt-1">
                       <button
                         onClick={() => handleOpenConfigureHotel(hotel)}
-                        className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs ${
+                        className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-xs ${
                           inQuote
                             ? 'bg-emerald-600 text-white'
                             : 'bg-[#00C6A6] hover:bg-[#00b395] text-slate-950'
                         }`}
                       >
-                        {inQuote ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                        {inQuote && <Check className="w-3.5 h-3.5 mr-1.5" />}
                         <span>{inQuote ? 'In Cart (Edit Stay)' : 'Configure & Add to Cart'}</span>
                       </button>
 
@@ -1076,10 +1081,13 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                 {/* Hero Image */}
                 <div className="relative h-48 overflow-hidden bg-slate-100">
                   <img
-                    src={pkg.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
+                    src={canonicalImageService.resolvePackageImage(pkg)}
                     alt={pkg.title}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolvePackageImage(pkg);
+                    }}
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/20 to-transparent"></div>
 

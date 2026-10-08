@@ -15,7 +15,6 @@ import {
   RestaurantConfig,
   FerryConfig
 } from '../../types';
-import { ModuleMasterSyncBar } from './common/ModuleMasterSyncBar';
 import { AppDatabase } from '../../services/db';
 import { MasterDataService } from '../../services/masterDataService';
 import { useAuth } from '../../context/AuthContext';
@@ -628,17 +627,11 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
               className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#008972] text-slate-950 font-bold px-4 py-2.5 rounded-xl text-xs transition-all shadow-xs cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>+ Add Product</span>
+              <span>Add Product</span>
             </button>
           </div>
         </div>
       </div>
-
-      {/* Google Sheets Master Sync Bar */}
-      <ModuleMasterSyncBar 
-        moduleType="PRODUCTS" 
-        onSyncCompleted={refreshProducts} 
-      />
 
       {/* Search & Filters */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
@@ -2306,7 +2299,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                             <img src={item.url} alt={item.title} className="w-full h-full object-cover" />
                             <div className="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 flex items-center justify-center p-1 text-center transition-opacity">
                               <span className="text-[10px] font-bold text-white">
-                                {isAdded ? '✓ Added' : '+ Add Photo'}
+                                {isAdded ? '✓ Added' : 'Add Photo'}
                               </span>
                             </div>
                           </div>

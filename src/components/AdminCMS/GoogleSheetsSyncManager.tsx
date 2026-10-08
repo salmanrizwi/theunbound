@@ -1,16 +1,11 @@
 import React from 'react';
-import { GoogleSheetsPanel } from './integrations/GoogleSheetsPanel';
-import { useAuth } from '../../context/AuthContext';
 
 export interface GoogleSheetsSyncManagerProps {
-  initialView?: 'CONNECTION_HEALTH' | 'IMPORTER' | 'SELECTIVE_SYNC' | 'TEMPLATES' | 'HISTORY';
+  initialView?: string;
 }
 
-export const GoogleSheetsSyncManager: React.FC<GoogleSheetsSyncManagerProps> = ({ 
-  initialView = 'IMPORTER' 
-}) => {
-  const { user } = useAuth();
-  return <GoogleSheetsPanel currentUser={user} initialView={initialView} />;
+export const GoogleSheetsSyncManager: React.FC<GoogleSheetsSyncManagerProps> = () => {
+  return null;
 };
 
 export default GoogleSheetsSyncManager;

@@ -393,9 +393,8 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                   });
                   setIsCreatingMenuItem(true);
                 }}
-                className="inline-flex items-center space-x-1.5 px-3 py-2 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold text-xs rounded-xl transition-colors cursor-pointer shrink-0 shadow-xs"
+                className="inline-flex items-center px-3 py-2 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold text-xs rounded-xl transition-colors cursor-pointer shrink-0 shadow-xs"
               >
-                <Plus className="w-3.5 h-3.5" />
                 <span>Add Menu Link</span>
               </button>
             </div>
@@ -866,9 +865,8 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                   });
                   setIsCreatingPage(true);
                 }}
-                className="inline-flex items-center space-x-1.5 px-3 py-2 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold text-xs rounded-xl transition-colors cursor-pointer shrink-0 shadow-xs"
+                className="inline-flex items-center px-3 py-2 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold text-xs rounded-xl transition-colors cursor-pointer shrink-0 shadow-xs"
               >
-                <Plus className="w-3.5 h-3.5" />
                 <span>Create Custom Page</span>
               </button>
             </div>
@@ -1341,9 +1339,8 @@ export const MenuAndPagesManager: React.FC<MenuAndPagesManagerProps> = ({ defaul
                           <button
                             type="button"
                             onClick={() => setIsAddingBlock(true)}
-                            className="px-2.5 py-1 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1 cursor-pointer"
+                            className="px-2.5 py-1 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold text-xs rounded-xl flex items-center cursor-pointer"
                           >
-                            <Plus className="w-3.5 h-3.5" />
                             <span>Add Block</span>
                           </button>
                         </div>

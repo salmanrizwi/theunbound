@@ -704,9 +704,9 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
             type="button"
             id="confirm-add-hotel-to-quote-btn"
             onClick={handleConfirmAddHotel}
-            className="px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition-all flex items-center space-x-1.5 sm:space-x-2 cursor-pointer shadow-md hover:shadow-lg whitespace-nowrap min-w-0"
+            className="px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition-all flex items-center justify-center cursor-pointer shadow-md hover:shadow-lg whitespace-nowrap min-w-0"
           >
-            {existingItemId ? <Check className="w-4 h-4 shrink-0" /> : <Plus className="w-4 h-4 shrink-0" />}
+            {existingItemId && <Check className="w-4 h-4 shrink-0 mr-1.5" />}
             <span className="truncate">
               <span className="hidden sm:inline">{existingItemId ? 'Update Hotel Stay' : 'Add Hotel Stay to Cart'}</span>
               <span className="sm:hidden">{existingItemId ? 'Update Stay' : 'Add Stay'}</span> ({formatCurrency(stayCalculation?.finalTotalSellingPrice || 0, currency)})

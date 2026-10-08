@@ -73,6 +73,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
 import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
+import { canonicalImageService } from '../../services/imageService';
 import { ProposalDocumentView } from '../ProposalDocumentView';
 import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
 import { RailJourneyModal } from '../RailJourneyModal';
@@ -2729,18 +2730,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                   >
                     {/* Thumbnail & Product Details */}
                     <div className="flex items-start space-x-3 min-w-0 flex-1">
-                      {prod.images && prod.images.length > 0 ? (
-                        <img
-                          src={prod.images[0]}
-                          alt={prod.name}
-                          referrerPolicy="no-referrer"
-                          className="w-16 h-16 rounded-xl object-cover border border-slate-200 shrink-0"
-                        />
-                      ) : (
-                        <div className="w-16 h-16 rounded-xl bg-teal-50 border border-teal-200 text-[#00A88F] flex items-center justify-center shrink-0">
-                          <Compass className="w-6 h-6" />
-                        </div>
-                      )}
+                      <img
+                        src={canonicalImageService.resolveProductImage(prod)}
+                        alt={prod.name}
+                        referrerPolicy="no-referrer"
+                        className="w-16 h-16 rounded-xl object-cover border border-slate-200 shrink-0"
+                      />
 
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-1.5 mb-1">
@@ -2799,9 +2794,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                           });
                           setQuickAddModalDay(null);
                         }}
-                        className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00A88F] text-white font-bold text-xs transition-colors cursor-pointer shadow-xs flex items-center space-x-1"
+                        className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00A88F] text-white font-bold text-xs transition-colors cursor-pointer shadow-xs flex items-center"
                       >
-                        <Plus className="w-3.5 h-3.5" />
                         <span>Add to Day {quickAddModalDay.dayNum}</span>
                       </button>
                     </div>

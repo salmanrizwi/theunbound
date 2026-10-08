@@ -275,10 +275,9 @@ export const WishlistButton: React.FC<WishlistButtonProps> = ({
               <button
                 type="button"
                 onClick={() => setIsCreatingFolder(true)}
-                className="w-full mt-2 pt-2 border-t border-slate-100 text-xs font-bold text-[#008972] hover:text-[#00C6A6] flex items-center justify-center space-x-1.5 py-1.5 rounded-xl hover:bg-emerald-50/60 transition-colors cursor-pointer"
+                className="w-full mt-2 pt-2 border-t border-slate-100 text-xs font-bold text-[#008972] hover:text-[#00C6A6] flex items-center justify-center py-1.5 rounded-xl hover:bg-emerald-50/60 transition-colors cursor-pointer"
               >
-                <FolderPlus className="w-3.5 h-3.5" />
-                <span>+ Create New Custom Folder</span>
+                <span>Create New Custom Folder</span>
               </button>
             </div>
           ) : (

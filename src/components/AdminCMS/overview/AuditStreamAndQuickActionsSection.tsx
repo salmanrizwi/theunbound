@@ -286,9 +286,8 @@ export const AuditStreamAndQuickActionsSection: React.FC<AuditStreamAndQuickActi
             <button
               id="qa-new-quote-top-btn"
               onClick={() => onNavigate('LEAD_MANAGEMENT', 'BUILDER', 'new')}
-              className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs shrink-0"
+              className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center shadow-xs shrink-0"
             >
-              <Plus className="w-3.5 h-3.5" />
               <span>Create Quotation</span>
             </button>
           </div>
@@ -301,9 +300,8 @@ export const AuditStreamAndQuickActionsSection: React.FC<AuditStreamAndQuickActi
               <button
                 id="qa-empty-create-quote-btn"
                 onClick={() => onNavigate('LEAD_MANAGEMENT', 'BUILDER', 'new')}
-                className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold cursor-pointer inline-flex items-center gap-2 shadow-xs"
+                className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold cursor-pointer inline-flex items-center shadow-xs"
               >
-                <Plus className="w-4 h-4" />
                 <span>Create First Quotation</span>
               </button>
             </div>

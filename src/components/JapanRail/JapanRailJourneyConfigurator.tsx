@@ -788,9 +788,8 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
             <button
               type="button"
               onClick={handleAddSegment}
-              className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl border-2 border-dashed border-[#00C6A6]/60 hover:border-[#00C6A6] text-[#00A88F] hover:bg-[#00C6A6]/5 font-black text-xs transition-all shadow-xs cursor-pointer"
+              className="inline-flex items-center px-5 py-2.5 rounded-xl border-2 border-dashed border-[#00C6A6]/60 hover:border-[#00C6A6] text-[#00A88F] hover:bg-[#00C6A6]/5 font-black text-xs transition-all shadow-xs cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
               <span>ADD NEXT JOURNEY SECTOR</span>
             </button>
           </div>

@@ -487,9 +487,8 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) 
                       };
                       setEditingTierProduct(updated);
                     }}
-                    className="inline-flex items-center space-x-1 text-[#00C6A6] font-bold hover:underline cursor-pointer"
+                    className="inline-flex items-center text-[#00C6A6] font-bold hover:underline cursor-pointer"
                   >
-                    <Plus className="w-3.5 h-3.5" />
                     <span>Add Tier</span>
                   </button>
                 </div>

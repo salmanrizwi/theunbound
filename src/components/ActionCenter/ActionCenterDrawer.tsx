@@ -307,9 +307,8 @@ export const ActionCenterDrawer: React.FC<ActionCenterDrawerProps> = ({
                 setTaskToEdit(null);
                 setIsTaskModalOpen(true);
               }}
-              className="px-3 py-1.5 bg-[#00C6A6] hover:bg-[#00a88d] text-white rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow-2xs transition-colors cursor-pointer"
+              className="px-3 py-1.5 bg-[#00C6A6] hover:bg-[#00a88d] text-white rounded-xl text-xs font-bold flex items-center shadow-2xs transition-colors cursor-pointer"
             >
-              <Plus className="w-3.5 h-3.5" />
               <span>New Task</span>
             </button>
 
@@ -490,9 +489,8 @@ export const ActionCenterDrawer: React.FC<ActionCenterDrawerProps> = ({
                   setTaskToEdit(null);
                   setIsTaskModalOpen(true);
                 }}
-                className="mt-4 px-4 py-2 bg-[#00C6A6] hover:bg-[#00a88d] text-white rounded-xl text-xs font-bold inline-flex items-center space-x-1.5 shadow-2xs"
+                className="mt-4 px-4 py-2 bg-[#00C6A6] hover:bg-[#00a88d] text-white rounded-xl text-xs font-bold inline-flex items-center shadow-2xs"
               >
-                <Plus className="w-3.5 h-3.5" />
                 <span>Create New Task</span>
               </button>
             </div>

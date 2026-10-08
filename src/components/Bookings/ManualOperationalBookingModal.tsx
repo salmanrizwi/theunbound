@@ -960,9 +960,8 @@ export const ManualOperationalBookingModal: React.FC<ManualOperationalBookingMod
                 <button
                   type="button"
                   onClick={handleAddPassenger}
-                  className="px-3 py-1.5 rounded-xl bg-[#008972] text-white text-xs font-bold flex items-center gap-1.5 hover:bg-[#00705d] transition-colors cursor-pointer"
+                  className="px-3 py-1.5 rounded-xl bg-[#008972] text-white text-xs font-bold flex items-center hover:bg-[#00705d] transition-colors cursor-pointer"
                 >
-                  <Plus className="w-3.5 h-3.5" />
                   <span>Add Passenger</span>
                 </button>
               </div>

@@ -1017,13 +1017,12 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                               type="button"
                               disabled={!hasValidPrice}
                               onClick={() => hasValidPrice && setActiveConfiguringVisa(visa)}
-                              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 shadow-xs ${
+                              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center shadow-xs ${
                                 hasValidPrice
                                   ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer'
                                   : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                               }`}
                             >
-                              <Plus className="w-3.5 h-3.5" />
                               <span>Configure & Add</span>
                             </button>
                           )}
@@ -1125,13 +1124,12 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                               type="button"
                               disabled={!hasValidPrice}
                               onClick={() => hasValidPrice && setActiveConfiguringProtection(plan)}
-                              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 shadow-xs ${
+                              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center shadow-xs ${
                                 hasValidPrice
                                   ? 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
                                   : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                               }`}
                             >
-                              <Plus className="w-3.5 h-3.5" />
                               <span>Configure & Add</span>
                             </button>
                           )}
@@ -1229,13 +1227,12 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                               type="button"
                               disabled={!hasValidPrice}
                               onClick={() => hasValidPrice && setActiveConfiguringConnectivity(plan)}
-                              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 shadow-xs ${
+                              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center shadow-xs ${
                                 hasValidPrice
                                   ? 'bg-teal-600 hover:bg-teal-700 text-white cursor-pointer'
                                   : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                               }`}
                             >
-                              <Plus className="w-3.5 h-3.5" />
                               <span>Configure & Add</span>
                             </button>
                           )}
@@ -1310,13 +1307,12 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                               type="button"
                               disabled={!hasValidPrice}
                               onClick={() => hasValidPrice && setActiveConfiguringVip(svc)}
-                              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 shadow-xs ${
+                              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center shadow-xs ${
                                 hasValidPrice
                                   ? 'bg-slate-900 hover:bg-slate-800 text-white cursor-pointer'
                                   : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                               }`}
                             >
-                              <Plus className="w-3.5 h-3.5" />
                               <span>Configure & Add</span>
                             </button>
                           )}

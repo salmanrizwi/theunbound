@@ -1155,7 +1155,7 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
                 : 'bg-slate-300 text-slate-500 cursor-not-allowed'
             }`}
           >
-            {existingQuoteItemId || portalOrigin === 'ADMIN_CMS' ? <Check className="w-4 h-4 stroke-[3] shrink-0" /> : <Plus className="w-4 h-4 stroke-[3] shrink-0" />}
+            {(existingQuoteItemId || portalOrigin === 'ADMIN_CMS') && <Check className="w-4 h-4 stroke-[3] shrink-0" />}
             <span className="truncate">
               {portalOrigin === 'ADMIN_CMS' ? (
                 'Save Master Product Configuration'

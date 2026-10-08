@@ -465,9 +465,8 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
           {onNavigateToBuilder && (
             <button
               onClick={() => onNavigateToBuilder('new')}
-              className="px-4 py-2 bg-[#00C6A6] hover:bg-[#00b598] text-slate-950 font-bold rounded-xl text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
+              className="px-4 py-2 bg-[#00C6A6] hover:bg-[#00b598] text-slate-950 font-bold rounded-xl text-xs flex items-center transition-all cursor-pointer shadow-xs"
             >
-              <PlusCircle className="w-4 h-4" />
               <span>Create Quotation</span>
             </button>
           )}
@@ -1287,9 +1286,8 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
               </p>
               <button
                 onClick={() => handleCreateLeadFromQuote(leadLinkModalQuote)}
-                className="w-full py-2.5 bg-purple-700 hover:bg-purple-800 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"
+                className="w-full py-2.5 bg-purple-700 hover:bg-purple-800 text-white font-bold rounded-xl text-xs flex items-center justify-center cursor-pointer shadow-xs"
               >
-                <PlusCircle className="w-4 h-4" />
                 <span>Create & Link New Lead Record</span>
               </button>
             </div>

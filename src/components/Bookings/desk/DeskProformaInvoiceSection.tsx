@@ -715,9 +715,8 @@ TheUnbound Finance & Operations Desk`
             {isInternal && (
               <button
                 onClick={handleOpenUploadModal}
-                className="px-4 py-2.5 rounded-xl bg-[#008f77] hover:bg-[#00705d] text-white text-xs font-bold transition-all flex items-center gap-2 shadow-xs cursor-pointer"
+                className="px-4 py-2.5 rounded-xl bg-[#008f77] hover:bg-[#00705d] text-white text-xs font-bold transition-all flex items-center shadow-xs cursor-pointer"
               >
-                <Plus className="w-4 h-4" />
                 <span>Upload Manual Invoice</span>
               </button>
             )}
@@ -850,9 +849,8 @@ TheUnbound Finance & Operations Desk`
               {isInternal && (
                 <button
                   onClick={handleOpenUploadModal}
-                  className="px-5 py-2.5 rounded-xl bg-[#008f77] hover:bg-[#00705d] text-white text-xs font-bold transition-all inline-flex items-center gap-2 cursor-pointer shadow-xs"
+                  className="px-5 py-2.5 rounded-xl bg-[#008f77] hover:bg-[#00705d] text-white text-xs font-bold transition-all inline-flex items-center cursor-pointer shadow-xs"
                 >
-                  <Plus className="w-4 h-4" />
                   <span>Upload Manual Invoice Document</span>
                 </button>
               )}

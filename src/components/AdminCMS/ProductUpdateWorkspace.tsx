@@ -1541,7 +1541,7 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                     title="Select and link an existing live product from inventory (No duplication)"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    <span>+ Add Existing Product as Upsell</span>
+                    <span>Add Existing Product as Upsell</span>
                   </button>
                   <button
                     type="button"
@@ -1550,7 +1550,7 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                     title="Create custom standalone non-product upgrade"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>+ Standalone Custom</span>
+                    <span>Standalone Custom</span>
                   </button>
                 </div>
               </div>
@@ -1564,7 +1564,7 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                     </div>
                     <div className="text-xs font-bold text-slate-700">No experience upgrades linked yet</div>
                     <p className="text-[11px] text-slate-400 max-w-md mx-auto">
-                      Click <strong>"+ Add Existing Product as Upsell"</strong> to link live inventory (e.g. English Speaking Guide, Ropeway Ticket, Kaiseki Lunch) or add a standalone custom add-on.
+                      Click <strong>"Add Existing Product as Upsell"</strong> to link live inventory (e.g. English Speaking Guide, Ropeway Ticket, Kaiseki Lunch) or add a standalone custom add-on.
                     </p>
                   </div>
                 ) : (

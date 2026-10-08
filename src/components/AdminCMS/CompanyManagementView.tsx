@@ -368,9 +368,8 @@ export const CompanyManagementView: React.FC<CompanyManagementViewProps> = ({ on
         {/* Add Company Button */}
         <button
           onClick={handleCreateCompany}
-          className="w-full sm:w-auto px-4 py-2 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 text-xs font-bold rounded-xl flex items-center justify-center space-x-1.5 shadow-xs cursor-pointer transition-colors"
+          className="w-full sm:w-auto px-4 py-2 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 text-xs font-bold rounded-xl flex items-center justify-center shadow-xs cursor-pointer transition-colors"
         >
-          <Plus className="w-4 h-4" />
           <span>Add New Company</span>
         </button>
       </div>

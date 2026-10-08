@@ -46,6 +46,7 @@ import {
   ConnectivityConfigModal 
 } from './VisaServicesAndFacilitationSection';
 import { AppDatabase } from '../../services/db';
+import { canonicalImageService } from '../../services/imageService';
 
 export interface VisaProduct {
   id: string;
@@ -182,7 +183,7 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
         wholesaleNetUSD: service,
         embassyFeeUSD: embassy,
         suggestedSellingUSD: suggested,
-        imageUrl: v.heroImage || v.imageUrl || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=800&auto=format&fit=crop',
+        imageUrl: canonicalImageService.resolveVisaImage(v),
         requiredDocuments: v.documentsChecklist || v.requiredDocuments || [
           'Original Passport valid for at least 6 months with 2 blank pages',
           'Recent passport-sized photographs (white background)',
@@ -818,10 +819,13 @@ Support: visa-operations@theunbound.in
                     {/* Image & Tag */}
                     <div className="relative h-44 overflow-hidden bg-slate-100">
                       <img
-                        src={visa.imageUrl}
+                        src={canonicalImageService.resolveVisaImage(visa)}
                         alt={visa.country}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolveVisaImage(visa);
+                        }}
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/20 to-transparent"></div>
 
@@ -914,9 +918,8 @@ Support: visa-operations@theunbound.in
                             <button
                               type="button"
                               onClick={() => setSelectedVisaForModal(visa)}
-                              className="py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs bg-[#00C6A6] hover:bg-[#00b395] text-slate-950"
+                              className="py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-xs bg-[#00C6A6] hover:bg-[#00b395] text-slate-950"
                             >
-                              <Plus className="w-3.5 h-3.5" />
                               <span>Configure & Add</span>
                             </button>
                           )}
@@ -1043,9 +1046,8 @@ Support: visa-operations@theunbound.in
                           <button
                             type="button"
                             onClick={() => setActiveProtectionPlan(plan)}
-                            className="w-full py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"
+                            className="w-full py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-xs"
                           >
-                            <Plus className="w-3.5 h-3.5" />
                             <span>Configure & Add</span>
                           </button>
                         )}
@@ -1146,9 +1148,8 @@ Support: visa-operations@theunbound.in
                           <button
                             type="button"
                             onClick={() => setActiveVipService(svc)}
-                            className="w-full py-2 px-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"
+                            className="w-full py-2 px-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-xs"
                           >
-                            <Plus className="w-3.5 h-3.5" />
                             <span>Configure & Add</span>
                           </button>
                         )}
@@ -1236,9 +1237,8 @@ Support: visa-operations@theunbound.in
                           <button
                             type="button"
                             onClick={() => setActiveConnectivityPlan(conn)}
-                            className="w-full py-2 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"
+                            className="w-full py-2 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-xs"
                           >
-                            <Plus className="w-3.5 h-3.5" />
                             <span>Configure & Add</span>
                           </button>
                         )}
@@ -1427,9 +1427,8 @@ Support: visa-operations@theunbound.in
                     setSelectedVisaDetails(null);
                     setSelectedVisaForModal(v);
                   }}
-                  className="px-5 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 font-black text-xs transition-all shadow-xs flex items-center space-x-1.5 cursor-pointer"
+                  className="px-5 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 font-black text-xs transition-all shadow-xs flex items-center cursor-pointer"
                 >
-                  <Plus className="w-3.5 h-3.5" />
                   <span>Configure & Add to Cart</span>
                 </button>
               </div>

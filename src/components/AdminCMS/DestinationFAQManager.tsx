@@ -100,9 +100,8 @@ export const DestinationFAQManager: React.FC<DestinationFAQManagerProps> = ({ de
         </div>
         <button
           onClick={handleOpenAdd}
-          className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-md shadow-[#00C6A6]/20 text-sm"
+          className="inline-flex items-center bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-md shadow-[#00C6A6]/20 text-sm"
         >
-          <Plus className="w-4 h-4" />
           <span>Add New FAQ</span>
         </button>
       </div>

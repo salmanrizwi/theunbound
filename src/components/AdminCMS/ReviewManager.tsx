@@ -490,9 +490,8 @@ export const ReviewManager: React.FC = () => {
 
             <button
               onClick={handleOpenCreate}
-              className="inline-flex items-center space-x-2 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              className="inline-flex items-center bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer px-3.5 py-2.5"
             >
-              <Plus className="w-4 h-4 text-[#00C6A6]" />
               <span>Add Manual Review</span>
             </button>
           </div>
@@ -729,7 +728,7 @@ export const ReviewManager: React.FC = () => {
                         onClick={handleOpenCreate}
                         className="px-3 py-1.5 bg-slate-900 text-white font-bold rounded-lg text-xs hover:bg-slate-800 transition-colors cursor-pointer"
                       >
-                        + Add Verified Review
+                        Add Verified Review
                       </button>
                     </div>
                   </div>

@@ -161,9 +161,8 @@ export const LeadFinancialsTab: React.FC<LeadFinancialsTabProps> = ({
             <div className="flex items-center gap-2">
               <button
                 onClick={() => onGenerateInvoice(linkedBookings[0].id)}
-                className="px-3 py-1.5 rounded-xl bg-[#008f77] hover:bg-[#00705d] text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+                className="px-3 py-1.5 rounded-xl bg-[#008f77] hover:bg-[#00705d] text-white text-xs font-bold transition-colors cursor-pointer flex items-center shadow-xs"
               >
-                <Plus className="w-3.5 h-3.5" />
                 <span>Issue Proforma Invoice</span>
               </button>
             </div>

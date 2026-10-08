@@ -6,6 +6,7 @@ import { formatCurrency, calculateDeliveredPriceForUser } from '../services/pric
 import { canUserAccessB2BInventory } from '../services/permissionEngine';
 import { WishlistButton } from './WishlistButton';
 import { sanitizeImageUrl } from '../utils/imageUtils';
+import { canonicalImageService } from '../services/imageService';
 import { 
   Star, 
   Clock, 
@@ -102,7 +103,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         onClick={() => onViewDetails(product)}
       >
         <img
-          src={sanitizeImageUrl(product.images?.[0] || (product as any).heroImage, product.city)}
+          src={canonicalImageService.resolveProductImage(product)}
           alt={product.name}
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           loading="lazy"

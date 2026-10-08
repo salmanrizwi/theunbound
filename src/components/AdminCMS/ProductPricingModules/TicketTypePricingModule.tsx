@@ -116,9 +116,8 @@ export const TicketTypePricingModule: React.FC<TicketTypePricingModuleProps> = (
         <button
           type="button"
           onClick={addTicketTier}
-          className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold cursor-pointer transition-all shadow-xs"
+          className="inline-flex items-center px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold cursor-pointer transition-all shadow-xs"
         >
-          <Plus className="w-3.5 h-3.5" />
           <span>Add Ticket Type</span>
         </button>
       </div>

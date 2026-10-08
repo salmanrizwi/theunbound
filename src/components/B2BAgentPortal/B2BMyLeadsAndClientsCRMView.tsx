@@ -921,9 +921,8 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                 });
                 setIsAddClientModalOpen(true);
               }}
-              className="px-4 py-2.5 bg-slate-950 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-2 shadow-xs shrink-0"
+              className="px-4 py-2.5 bg-slate-950 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center shadow-xs shrink-0"
             >
-              <UserPlus className="w-4 h-4 text-[#00E5C0]" />
               <span>Add New Client Profile</span>
             </button>
           </div>
@@ -1248,9 +1247,8 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                         setSelectedLead(null);
                         onCreateQuoteFromLead(leadToQuote);
                       }}
-                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold flex items-center space-x-1 cursor-pointer"
+                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold flex items-center cursor-pointer"
                     >
-                      <Plus className="w-3.5 h-3.5 text-[#00E5C0]" />
                       <span>Create New Quote Version</span>
                     </button>
                   </div>

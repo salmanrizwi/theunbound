@@ -154,9 +154,8 @@ export const EmailCampaignsManager: React.FC = () => {
               });
               setIsEditing(true);
             }}
-            className="px-3.5 py-1.5 bg-[#008972] hover:bg-[#007460] text-white rounded-xl text-xs font-bold flex items-center space-x-1.5 cursor-pointer shadow-xs"
+            className="px-3.5 py-1.5 bg-[#008972] hover:bg-[#007460] text-white rounded-xl text-xs font-bold flex items-center cursor-pointer shadow-xs"
           >
-            <Plus className="w-3.5 h-3.5" />
             <span>Create New Trigger</span>
           </button>
         </div>

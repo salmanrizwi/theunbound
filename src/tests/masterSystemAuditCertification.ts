@@ -5,13 +5,6 @@
  */
 
 import { AppDatabase } from '../services/db';
-import { SheetsSyncService } from '../services/sheetsSyncService';
-import { 
-  EXPECTED_MASTER_TAB_COUNT, 
-  MASTER_WORKBOOK_TABS, 
-  CANONICAL_TAB_PROCESSING_ORDER,
-  MASTER_SHEETS_TAB_DEFINITIONS 
-} from '../data/googleSheetsTemplate';
 import { 
   calculateProductPrice, 
   calculateProductPriceForAgent, 
@@ -55,7 +48,6 @@ async function runComprehensiveSystemAudit() {
   console.log('================================================================\n');
 
   const db = AppDatabase.getInstance();
-  const syncEngine = SheetsSyncService.getInstance();
   const currencyEngine = CurrencyEngine.getInstance();
 
   const adminUser: User = {
@@ -104,56 +96,8 @@ async function runComprehensiveSystemAudit() {
   console.log('\n--- LAYER 2: Architecture & Single Source of Truth ---');
   const db2 = AppDatabase.getInstance();
   assert(db === db2, 'Layer 2: Exactly ONE AppDatabase singleton across application');
-  const sync2 = SheetsSyncService.getInstance();
-  assert(syncEngine === sync2, 'Layer 2: Exactly ONE Master Google Sheets Sync Engine instance');
   const curr2 = CurrencyEngine.getInstance();
   assert(currencyEngine === curr2, 'Layer 2: Exactly ONE CurrencyEngine instance');
-
-  // ----------------------------------------------------
-  // LAYER 4 — MASTER SHEETS SYNC (CANONICAL TABS)
-  // ----------------------------------------------------
-  console.log(`\n--- LAYER 4: Master Google Sheets Sync (${EXPECTED_MASTER_TAB_COUNT} Canonical Tabs) ---`);
-  assert(EXPECTED_MASTER_TAB_COUNT === 7, 'Layer 4: EXPECTED_MASTER_TAB_COUNT is strictly 7');
-  assert(MASTER_WORKBOOK_TABS.length === EXPECTED_MASTER_TAB_COUNT, `Layer 4: MASTER_WORKBOOK_TABS registry has exactly ${EXPECTED_MASTER_TAB_COUNT} tabs`);
-  assert(CANONICAL_TAB_PROCESSING_ORDER.length === EXPECTED_MASTER_TAB_COUNT, `Layer 4: CANONICAL_TAB_PROCESSING_ORDER has exactly ${EXPECTED_MASTER_TAB_COUNT} tabs`);
-
-  // Test Tab Discovery & Validation
-  const validDiscoveredTabs = [...MASTER_WORKBOOK_TABS];
-  const validReport = syncEngine.validateWorkbookStructure(validDiscoveredTabs);
-  assert(validReport.isValid === true, `Layer 4: ${EXPECTED_MASTER_TAB_COUNT} Canonical tabs pass workbook structural validation`);
-  assert(validReport.foundCount === EXPECTED_MASTER_TAB_COUNT, `Layer 4: Found tab count is exactly ${EXPECTED_MASTER_TAB_COUNT}`);
-  assert(validReport.missingTabs.length === 0, 'Layer 4: Missing tabs count is 0');
-
-  // Test Failure on Incomplete Tab Count
-  const incompleteTabs = MASTER_WORKBOOK_TABS.slice(0, EXPECTED_MASTER_TAB_COUNT - 2);
-  const incompleteReport = syncEngine.validateWorkbookStructure(incompleteTabs);
-  assert(incompleteReport.isValid === false, 'Layer 4: Incomplete tabs rejected by workbook validator');
-  assert(incompleteReport.missingTabs.length === 2, 'Layer 4: Incomplete workbook correctly identifies 2 missing tabs');
-  assert(incompleteReport.errorMessage?.includes(`Expected ${EXPECTED_MASTER_TAB_COUNT} canonical tabs`) === true, 'Layer 4: Generates authoritative schema error message');
-
-  // Test Failure on Wrongly Named Tabs
-  const wrongNamedTabs = Array.from({ length: EXPECTED_MASTER_TAB_COUNT }, (_, i) => `INVALID_TAB_${i + 1}`);
-  const wrongReport = syncEngine.validateWorkbookStructure(wrongNamedTabs);
-  assert(wrongReport.isValid === false, 'Layer 4: Incorrectly named tabs rejected by validation engine');
-
-  // Execute Real Sync with Canonical Template Data
-  const canonicalMultiTabData: Record<string, string[][]> = {};
-  for (const tabDef of MASTER_SHEETS_TAB_DEFINITIONS) {
-    if (tabDef.tabName !== 'INSTRUCTIONS') {
-      canonicalMultiTabData[tabDef.tabName] = [
-        tabDef.columns.map(c => c.key),
-        ...tabDef.sampleRows
-      ];
-    }
-  }
-
-  const syncReport = await syncEngine.commitMultiTabSync(canonicalMultiTabData, undefined, adminUser);
-  assert(syncReport.status === 'SUCCESS', `Layer 4: Canonical Master Sync executed with status: ${syncReport.status}`);
-  assert(syncReport.createdTotal > 0 || syncReport.unchangedTotal > 0, `Layer 4: Master Sync processed ${syncReport.totalRecords} records across tabs`);
-
-  // Idempotency Check: Running same sync again causes 0 duplicates
-  const secondSyncReport = await syncEngine.commitMultiTabSync(canonicalMultiTabData, undefined, adminUser);
-  assert(secondSyncReport.createdTotal === 0, 'Layer 4: Safe Idempotency verified — second sync creates 0 duplicate records');
 
   // ----------------------------------------------------
   // LAYER 3 — DATABASE INTEGRITY

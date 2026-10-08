@@ -32,6 +32,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
 import { B2BNavTab, Quotation, B2BPackage, Destination, Product, Hotel } from '../../types';
 import { AppDatabase } from '../../services/db';
+import { canonicalImageService } from '../../services/imageService';
 import { formatCurrency, calculatePackagePrice } from '../../services/pricingEngine';
 
 interface B2BDashboardViewProps {
@@ -213,7 +214,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
               onClick={() => onNavigate('CREATE_QUOTE')}
               className="inline-flex items-center space-x-2 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 px-5 py-3 rounded-2xl text-xs font-black transition-all shadow-lg shadow-[#00C6A6]/20 hover:scale-[1.02] cursor-pointer"
             >
-              <PlusCircle className="w-4 h-4" />
+              <Sparkles className="w-4 h-4" />
               <span>Create Quote</span>
             </button>
 
@@ -317,7 +318,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
           onClick={() => onNavigate('CREATE_QUOTE')}
           className="p-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl border border-slate-800 flex flex-col items-center justify-center text-center space-y-1.5 transition-all hover:scale-[1.02] cursor-pointer"
         >
-          <PlusCircle className="w-5 h-5 text-[#00E5C0]" />
+          <Sparkles className="w-5 h-5 text-[#00E5C0]" />
           <span className="text-xs font-bold">Create Quote</span>
           <span className="text-[10px] text-slate-400">8 Step Builder</span>
         </button>
@@ -405,7 +406,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                   onClick={() => onNavigate('CREATE_QUOTE')}
                   className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold cursor-pointer"
                 >
-                  <PlusCircle className="w-3.5 h-3.5 text-[#00C6A6]" />
+                  <Sparkles className="w-3.5 h-3.5 text-[#00C6A6]" />
                   <span>Launch Quotation Builder</span>
                 </button>
               </div>
@@ -511,9 +512,12 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                 >
                   <div className="h-36 relative overflow-hidden">
                     <img
-                      src={pkg.heroImage}
+                      src={canonicalImageService.resolvePackageImage(pkg)}
                       alt={pkg.title}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolvePackageImage(pkg);
+                      }}
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent"></div>
                     <div className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-full bg-slate-900/80 backdrop-blur text-[10px] font-bold text-[#00E5C0]">
@@ -661,7 +665,14 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                     <div key={item.id || idx} className="flex items-center justify-between gap-3 p-2 rounded-xl bg-slate-50/50 hover:bg-slate-50 border border-slate-100 transition-colors">
                       <div className="flex items-center space-x-2.5 min-w-0">
                         {item.image ? (
-                          <img src={item.image} alt={item.name} className="w-8 h-8 rounded-lg object-cover shrink-0" />
+                          <img 
+                            src={canonicalImageService.resolveImageUrl(item.image)} 
+                            alt={item.name} 
+                            className="w-8 h-8 rounded-lg object-cover shrink-0" 
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolveImageUrl(item.image);
+                            }}
+                          />
                         ) : (
                           <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
                             <Heart className="w-4 h-4 text-slate-400" />
@@ -725,9 +736,12 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                 >
                   <div className="flex items-center space-x-3">
                     <img
-                      src={d.heroImage}
+                      src={canonicalImageService.resolveDestinationImage(d)}
                       alt={d.name}
                       className="w-10 h-10 rounded-xl object-cover"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolveDestinationImage(d);
+                      }}
                     />
                     <div>
                       <span className="text-xs font-bold text-slate-900 group-hover:text-[#00C6A6] transition-colors block">

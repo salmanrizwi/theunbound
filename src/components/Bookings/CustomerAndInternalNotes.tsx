@@ -145,9 +145,8 @@ export const CustomerAndInternalNotes: React.FC<CustomerAndInternalNotesProps> =
                   />
                   <button
                     type="submit"
-                    className="w-full mt-2 py-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 rounded-xl text-xs font-black shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="w-full mt-2 py-2 bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 rounded-xl text-xs font-black shadow-xs transition-all flex items-center justify-center cursor-pointer"
                   >
-                    <Plus className="w-3.5 h-3.5" />
                     <span>Save Note</span>
                   </button>
                 </div>

@@ -210,9 +210,8 @@ export const RosterAdminManager: React.FC<RosterAdminManagerProps> = ({ products
           <div className="flex items-center space-x-3">
             <button
               onClick={() => setIsAddingResource(true)}
-              className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center space-x-2 cursor-pointer transition-all shadow-xs"
+              className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center cursor-pointer transition-all shadow-xs"
             >
-              <Plus className="w-4 h-4 text-[#00C6A6]" />
               <span>Add Ground Resource</span>
             </button>
           </div>
@@ -473,9 +472,8 @@ export const RosterAdminManager: React.FC<RosterAdminManagerProps> = ({ products
               </h3>
               <button
                 onClick={() => setIsAddingResource(true)}
-                className="text-[11px] font-bold text-[#008972] hover:underline cursor-pointer flex items-center space-x-1"
+                className="text-[11px] font-bold text-[#008972] hover:underline cursor-pointer flex items-center"
               >
-                <Plus className="w-3 h-3" />
                 <span>New</span>
               </button>
             </div>

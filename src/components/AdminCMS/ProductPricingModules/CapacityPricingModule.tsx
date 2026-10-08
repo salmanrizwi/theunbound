@@ -519,7 +519,7 @@ export const CapacityPricingModule: React.FC<CapacityPricingModuleProps> = ({
             className="text-xs font-bold text-[#00E5C0] hover:text-[#00C6A6] flex items-center gap-1 bg-teal-500/10 border border-teal-500/20 px-3 py-1.5 rounded-lg cursor-pointer self-start sm:self-center"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>+ Add Capacity Tier</span>
+            <span>Add Capacity Tier</span>
           </button>
         </div>
 
@@ -779,7 +779,7 @@ export const CapacityPricingModule: React.FC<CapacityPricingModuleProps> = ({
                   <td colSpan={11} className="p-6 text-center text-slate-500">
                     <Layers className="w-6 h-6 text-slate-700 mx-auto mb-1.5" />
                     <span className="font-bold text-xs block">No Capacity Tiers Configured</span>
-                    <span className="text-[11px] block mt-0.5">Click "+ Add Capacity Tier" to configure commercial passenger ranges.</span>
+                    <span className="text-[11px] block mt-0.5">Click "Add Capacity Tier" to configure commercial passenger ranges.</span>
                   </td>
                 </tr>
               )}

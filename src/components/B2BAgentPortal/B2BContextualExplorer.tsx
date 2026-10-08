@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
+import { canonicalImageService } from '../../services/imageService';
 
 interface DestinationHubsViewProps {
   destination: Destination;
@@ -150,7 +151,7 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
       <div className="relative rounded-3xl overflow-hidden bg-slate-900 shadow-xl border border-slate-800">
         <div className="relative h-64 sm:h-72 w-full">
           <img
-            src={destination.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop'}
+            src={canonicalImageService.resolveDestinationImage(destination)}
             alt={destination.name}
             className="w-full h-full object-cover opacity-60"
             referrerPolicy="no-referrer"
@@ -207,9 +208,8 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
               <div className="flex items-center space-x-2">
                 <button
                   onClick={() => onOpenCreateQuote(destination.slug || destination.id)}
-                  className="px-4 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 text-xs font-black transition-all flex items-center space-x-1.5 cursor-pointer shadow-md"
+                  className="px-4 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 text-xs font-black transition-all flex items-center cursor-pointer shadow-md"
                 >
-                  <PlusCircle className="w-3.5 h-3.5" />
                   <span>Create Quote for {destination.name}</span>
                 </button>
                 <button
@@ -317,7 +317,7 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
                 >
                   <div className="relative h-44 overflow-hidden bg-slate-100">
                     <img
-                      src={product.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
+                      src={canonicalImageService.resolveProductImage(product)}
                       alt={product.name}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       referrerPolicy="no-referrer"
@@ -359,13 +359,13 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
                     <div className="space-y-1.5 pt-1">
                       <button
                         onClick={() => handleOpenConfigureProduct(product)}
-                        className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs ${
+                        className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-xs ${
                           inQuote
                             ? 'bg-emerald-600 text-white'
                             : 'bg-[#00C6A6] hover:bg-[#00b395] text-slate-950'
                         }`}
                       >
-                        {inQuote ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                        {inQuote && <Check className="w-3.5 h-3.5 mr-1.5" />}
                         <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Cart'}</span>
                       </button>
 
@@ -412,7 +412,7 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
                 >
                   <div className="relative h-44 overflow-hidden bg-slate-100">
                     <img
-                      src={hotel.heroImage || 'https://images.unsplash.com/photo-1566073771259-6a8506099945?q=80&w=800&auto=format&fit=crop'}
+                      src={canonicalImageService.resolveHotelImage(hotel)}
                       alt={hotel.name}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       referrerPolicy="no-referrer"
@@ -452,13 +452,13 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
                     <div className="space-y-1.5 pt-1">
                       <button
                         onClick={() => handleOpenConfigureHotel(hotel)}
-                        className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs ${
+                        className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-xs ${
                           inQuote
                             ? 'bg-emerald-600 text-white'
                             : 'bg-[#00C6A6] hover:bg-[#00b395] text-slate-950'
                         }`}
                       >
-                        {inQuote ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                        {inQuote && <Check className="w-3.5 h-3.5 mr-1.5" />}
                         <span>{inQuote ? 'In Cart (Edit Stay)' : 'Configure & Add to Cart'}</span>
                       </button>
 
@@ -723,9 +723,8 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
           <button
             onClick={onOpenCreateQuote}
-            className="px-5 py-3 rounded-2xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 text-xs font-black transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-md"
+            className="px-5 py-3 rounded-2xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 text-xs font-black transition-all flex items-center justify-center cursor-pointer shadow-md"
           >
-            <PlusCircle className="w-4 h-4" />
             <span>Create Quote for {hub.name}</span>
           </button>
         </div>
@@ -835,7 +834,7 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
                   >
                     <div className="relative h-44 overflow-hidden bg-slate-100">
                       <img
-                        src={product.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
+                        src={canonicalImageService.resolveProductImage(product)}
                         alt={product.name}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         referrerPolicy="no-referrer"
@@ -877,13 +876,13 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
                       <div className="space-y-1.5 pt-1">
                         <button
                           onClick={() => handleOpenConfigureProduct(product)}
-                          className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs ${
+                          className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-xs ${
                             inQuote
                               ? 'bg-emerald-600 text-white'
                               : 'bg-[#00C6A6] hover:bg-[#00b395] text-slate-950'
                           }`}
                         >
-                          {inQuote ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                          {inQuote && <Check className="w-3.5 h-3.5 mr-1.5" />}
                           <span>{inQuote ? 'In Cart (Edit)' : 'Configure & Add to Cart'}</span>
                         </button>
 
@@ -923,7 +922,7 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
                   >
                     <div className="relative h-44 overflow-hidden bg-slate-100">
                       <img
-                        src={hotel.heroImage || 'https://images.unsplash.com/photo-1566073771259-6a8506099945?q=80&w=800&auto=format&fit=crop'}
+                        src={canonicalImageService.resolveHotelImage(hotel)}
                         alt={hotel.name}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         referrerPolicy="no-referrer"
@@ -963,13 +962,13 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
                       <div className="space-y-1.5 pt-1">
                         <button
                           onClick={() => handleOpenConfigureHotel(hotel)}
-                          className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs ${
+                          className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-xs ${
                             inQuote
                               ? 'bg-emerald-600 text-white'
                               : 'bg-[#00C6A6] hover:bg-[#00b395] text-slate-950'
                           }`}
                         >
-                          {inQuote ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                          {inQuote && <Check className="w-3.5 h-3.5 mr-1.5" />}
                           <span>{inQuote ? 'In Cart (Edit Stay)' : 'Configure & Add to Cart'}</span>
                         </button>
 

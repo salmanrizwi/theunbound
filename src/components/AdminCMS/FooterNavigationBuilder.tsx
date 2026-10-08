@@ -598,10 +598,9 @@ export const FooterNavigationBuilder: React.FC = () => {
 
           <button
             onClick={handleOpenAddColumn}
-            className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white transition-all cursor-pointer shadow-xs"
+            className="inline-flex items-center px-4 py-2 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white transition-all cursor-pointer shadow-xs"
           >
-            <Plus className="w-3.5 h-3.5 text-[#00E5C0]" />
-            <span>+ Add Column</span>
+            <span>Add Column</span>
           </button>
 
           <button
@@ -1027,10 +1026,9 @@ export const FooterNavigationBuilder: React.FC = () => {
                   <div className="p-3 bg-slate-50/70 border-t border-slate-100">
                     <button
                       onClick={() => handleOpenAddLink(col.id)}
-                      className="w-full py-2 bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-900 border border-dashed border-slate-300 hover:border-emerald-300 rounded-2xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
+                      className="w-full py-2 bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-900 border border-dashed border-slate-300 hover:border-emerald-300 rounded-2xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center shadow-2xs"
                     >
-                      <Plus className="w-3.5 h-3.5 text-emerald-700" />
-                      <span>+ Add Link</span>
+                      <span>Add Link</span>
                     </button>
                   </div>
                 </div>
@@ -1051,9 +1049,8 @@ export const FooterNavigationBuilder: React.FC = () => {
               </div>
               <button
                 onClick={handleOpenAddColumn}
-                className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-2xl text-xs font-bold bg-[#008972] text-white hover:bg-[#007360] shadow-xs cursor-pointer"
+                className="inline-flex items-center px-5 py-2.5 rounded-2xl text-xs font-bold bg-[#008972] text-white hover:bg-[#007360] shadow-xs cursor-pointer"
               >
-                <Plus className="w-4 h-4" />
                 <span>Add First Footer Column</span>
               </button>
             </div>
