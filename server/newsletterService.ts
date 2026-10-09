@@ -35,7 +35,7 @@ function isRateLimited(ip: string): boolean {
 }
 
 // Clean up stale rate limit entries every 10 minutes
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [ip, history] of ipRequestHistory.entries()) {
     const valid = history.filter(t => now - t < RATE_LIMIT_WINDOW_MS);
@@ -46,6 +46,9 @@ setInterval(() => {
     }
   }
 }, 10 * 60 * 1000);
+if (cleanupTimer && typeof cleanupTimer.unref === 'function') {
+  cleanupTimer.unref();
+}
 
 // Basic RFC 5322 compliant email validator regex
 const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;

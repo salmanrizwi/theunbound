@@ -574,6 +574,13 @@ export const INITIAL_SLA_AUTOMATION_RULES: SLAAutomationRule[] = [
 export type BookingSaveListener = (booking: Booking, user: User | null, isNew: boolean) => void;
 export type QuotationSaveListener = (quote: Quotation, user: User | null, isNew: boolean, actionType?: string) => void;
 export type UserRegisteredListener = (user: User) => void;
+export type UserStatusChangeListener = (
+  user: User,
+  actor: User | null,
+  action: 'APPROVED' | 'REJECTED' | 'PENDING',
+  notes?: string,
+  requirements?: string[] | string
+) => void;
 
 const memoryStorage = new Map<string, string>();
 
@@ -686,6 +693,7 @@ export class AppDatabase {
   private bookingSaveListeners: BookingSaveListener[] = [];
   private quotationSaveListeners: QuotationSaveListener[] = [];
   private userRegisteredListeners: UserRegisteredListener[] = [];
+  private userStatusChangeListeners: UserStatusChangeListener[] = [];
   private leadSaveListeners: ((lead: TravelLead, user: User | null, isNew: boolean) => void)[] = [];
   private isFirestoreInitialized: boolean = false;
   private notifyTimer: any = null;
@@ -821,6 +829,13 @@ export class AppDatabase {
     this.userRegisteredListeners.push(listener);
     return () => {
       this.userRegisteredListeners = this.userRegisteredListeners.filter(l => l !== listener);
+    };
+  }
+
+  public onUserStatusChanged(listener: UserStatusChangeListener): () => void {
+    this.userStatusChangeListeners.push(listener);
+    return () => {
+      this.userStatusChangeListeners = this.userStatusChangeListeners.filter(l => l !== listener);
     };
   }
 
@@ -15500,7 +15515,13 @@ export class AppDatabase {
   // AUTOMATED EMAIL CAMPAIGNS
   // ==========================================
   public getEmailCampaigns(): EmailCampaignConfig[] {
-    return this.getItem<EmailCampaignConfig[]>('campaigns', envService.allowDemoData() ? INITIAL_CAMPAIGNS : []);
+    const list = this.getItem<EmailCampaignConfig[]>('campaigns', envService.allowDemoData() ? INITIAL_CAMPAIGNS : []);
+    const seen = new Set<string>();
+    return list.filter(item => {
+      if (!item || !item.id || seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
   }
 
   public saveEmailCampaign(campaign: EmailCampaignConfig, user: User | null): void {
@@ -15515,6 +15536,17 @@ export class AppDatabase {
     }
     this.syncFirestoreDoc('campaigns', campaign.id, campaign);
     this.setItem('campaigns', campaigns);
+  }
+
+  public saveAllEmailCampaigns(campaigns: EmailCampaignConfig[]): void {
+    const seen = new Set<string>();
+    const deduplicated = campaigns.filter(c => {
+      if (!c || !c.id || seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+    this.setItem('campaigns', deduplicated);
+    deduplicated.forEach(c => this.syncFirestoreDoc('campaigns', c.id, c));
   }
 
   public dispatchEmailCampaign(campaignId: string, testRecipientEmail: string, user: User | null): boolean {
@@ -16171,6 +16203,9 @@ export class AppDatabase {
     const user = users.find(u => u.id === userId);
     if (user) {
       user.approvalStatus = 'APPROVED';
+      user.verificationStatus = 'VERIFIED';
+      user.verifiedAt = new Date().toISOString();
+      user.verifiedBy = actor?.name || 'Administrator';
       // Assign standard full role default permissions
       user.permissions = getDefaultPermissionsForRole(user.role);
       this.saveUser(
@@ -16179,10 +16214,22 @@ export class AppDatabase {
         'USER_ROLE_CHANGED', 
         `Administrator approved user account: ${user.name} (${user.email}) as ${user.role} with standard permissions.`
       );
+      this.userStatusChangeListeners.forEach(listener => {
+        try {
+          listener(user, actor, 'APPROVED');
+        } catch (e) {
+          console.error('[DB] onUserStatusChanged error:', e);
+        }
+      });
     }
   }
 
-  public rejectUser(userId: string, actor: User | null): void {
+  public rejectUser(
+    userId: string, 
+    actor: User | null, 
+    notes?: string, 
+    requirements?: string[] | string
+  ): void {
     const users = this.getUsers();
     const user = users.find(u => u.id === userId);
     if (user) {
@@ -16195,6 +16242,13 @@ export class AppDatabase {
       }
 
       user.approvalStatus = 'REJECTED';
+      user.verificationStatus = 'REJECTED';
+      user.verificationNotes = notes;
+      user.verificationRejectedAt = new Date().toISOString();
+      user.verificationRejectedBy = actor?.name || 'Administrator';
+      if (requirements) {
+        user.verificationRequirements = Array.isArray(requirements) ? requirements : [requirements];
+      }
       user.permissions = {
         b2bQuoteBuilderAccess: false,
         buyerQuoteBuilderAccess: false,
@@ -16217,8 +16271,15 @@ export class AppDatabase {
         user, 
         actor, 
         'USER_ROLE_CHANGED', 
-        `Administrator rejected/revoked user access for ${user.name} (${user.email}). All access permissions disabled.`
+        `Administrator rejected/requested additional requirements for ${user.name} (${user.email}). Notes: ${notes || 'None'}`
       );
+      this.userStatusChangeListeners.forEach(listener => {
+        try {
+          listener(user, actor, 'REJECTED', notes, requirements);
+        } catch (e) {
+          console.error('[DB] onUserStatusChanged error:', e);
+        }
+      });
     }
   }
 
@@ -16327,6 +16388,16 @@ export class AppDatabase {
         console.error('Error in userRegisteredListener:', err);
       }
     });
+
+    if (newUser.approvalStatus === 'PENDING') {
+      this.userStatusChangeListeners.forEach(listener => {
+        try {
+          listener(newUser, null, 'PENDING');
+        } catch (err) {
+          console.error('Error in userStatusChangeListener (PENDING):', err);
+        }
+      });
+    }
 
     return {
       success: true,

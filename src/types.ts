@@ -404,6 +404,12 @@ export interface User {
   lastLoginAt?: string;
   approvalStatus?: UserApprovalStatus;
   verificationStatus?: VerificationStatus;
+  verifiedAt?: string;
+  verifiedBy?: string;
+  verificationNotes?: string;
+  verificationRejectedAt?: string;
+  verificationRejectedBy?: string;
+  verificationRequirements?: string[];
   isDeactivated?: boolean;
   deactivatedAt?: string;
   notes?: string;
@@ -5354,6 +5360,9 @@ export interface JobSheet {
 // ----------------------------------------------------
 export type MarketingTriggerKey =
   | 'USER_REGISTERED'
+  | 'ACCOUNT_PENDING_VERIFICATION'
+  | 'ACCOUNT_VERIFICATION_APPROVED'
+  | 'ACCOUNT_VERIFICATION_REJECTED'
   | 'QUOTE_SAVED'
   | 'QUOTE_DOWNLOADED'
   | 'FIRST_BOOKING_COMPLETED'
@@ -5361,6 +5370,9 @@ export type MarketingTriggerKey =
 
 export type EmailCampaignType = 
   | 'USER_REGISTERED'
+  | 'ACCOUNT_PENDING_VERIFICATION'
+  | 'ACCOUNT_VERIFICATION_APPROVED'
+  | 'ACCOUNT_VERIFICATION_REJECTED'
   | 'QUOTE_SAVED'
   | 'QUOTE_DOWNLOADED'
   | 'FIRST_BOOKING_COMPLETED'

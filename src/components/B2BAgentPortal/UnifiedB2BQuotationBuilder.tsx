@@ -2198,15 +2198,15 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       className="fixed inset-0 z-30 bg-slate-100/95 text-slate-900 flex flex-col font-sans selection:bg-[#00C6A6] selection:text-slate-950 overflow-hidden"
     >
       {/* ========================================================================= */}
-      {/* TOP WORKSPACE NAVIGATION & CONTROLS — FIXED AT TOP OF VIEWPORT */}
+      {/* TOP WORKSPACE NAVIGATION & CONTROLS — COMPACT SINGLE-ROW TOOLBAR */}
       {/* ========================================================================= */}
       <header 
         id="quote-builder-fixed-header"
-        className="shrink-0 w-full z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 sm:px-6 py-2.5 shadow-xs"
+        className="shrink-0 w-full z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 px-3 sm:px-4 lg:px-5 py-1.5 sm:py-2 shadow-xs sticky top-0"
       >
-        <div className="w-full max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-3">
+        <div className="w-full max-w-[1920px] mx-auto flex items-center justify-between gap-2 xl:gap-3 flex-nowrap min-w-0">
           {/* Left: Back + Quote Info + Customer + Destination + Dates + Pax + Status */}
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center gap-1.5 xl:gap-2 min-w-0 shrink overflow-hidden flex-nowrap">
             {(onBackToDashboard || onViewMyQuotes) && (
               <button
                 type="button"
@@ -2214,142 +2214,181 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                   if (onBackToDashboard) onBackToDashboard();
                   else if (onViewMyQuotes) onViewMyQuotes();
                 }}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer border border-slate-200 text-xs font-bold flex items-center space-x-1"
+                className="h-[34px] px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer border border-slate-200 text-xs font-semibold flex items-center gap-1 shrink-0 whitespace-nowrap"
                 title="Back to Quotes"
+                aria-label="Back to Quotes"
               >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Back to Quotes</span>
+                <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
+                <span>Quotes</span>
               </button>
             )}
 
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="px-2 py-0.5 rounded-lg text-xs font-mono font-black bg-slate-900 text-[#00E5C0]">
-                {quoteNumber} (v{quoteVersion})
+            <div className="flex items-center gap-1.5 xl:gap-2 min-w-0 shrink overflow-hidden flex-nowrap text-xs">
+              {/* Quote Reference & Version */}
+              <span className="px-2 py-1 rounded-md text-[11px] font-mono font-bold bg-slate-900 text-[#00E5C0] shrink-0 whitespace-nowrap">
+                {quoteNumber} <span className="text-slate-400 font-normal">v{quoteVersion}</span>
               </span>
 
-              {!hasExplicitlySaved && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
-                  Unsaved Draft (In-Memory)
+              {/* Draft Status Badge */}
+              {!hasExplicitlySaved ? (
+                <span 
+                  className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200 shrink-0 whitespace-nowrap" 
+                  title="Unsaved Draft (In-Memory)"
+                >
+                  Draft
+                </span>
+              ) : (
+                <span 
+                  className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 shrink-0 whitespace-nowrap"
+                  title="Saved to Database"
+                >
+                  Saved
                 </span>
               )}
 
-              <span className="text-xs font-black text-slate-900">
+              {/* Client Name */}
+              <span 
+                className="text-xs font-bold text-slate-900 truncate max-w-[90px] xl:max-w-[130px] shrink" 
+                title={clientName || 'New Client'}
+              >
                 {clientName || 'New Client'}
               </span>
 
-              <span className="text-slate-300">•</span>
+              <span className="text-slate-300 shrink-0 select-none">·</span>
 
-              <span className="text-xs font-bold text-slate-700 flex items-center space-x-1">
-                <MapPin className="w-3.5 h-3.5 text-teal-600" />
-                <span>{currentDestination.name}</span>
+              {/* Destination */}
+              <span className="text-xs font-semibold text-slate-700 flex items-center gap-1 shrink-0 whitespace-nowrap">
+                <MapPin className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                <span className="truncate max-w-[80px] xl:max-w-[120px]">{currentDestination.name}</span>
               </span>
 
-              <span className="text-slate-300">•</span>
+              <span className="text-slate-300 shrink-0 select-none">·</span>
 
-              <span className="text-xs text-slate-600 font-medium">
-                {startDate ? new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''} – {endDate ? new Date(endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''} ({tripNights}N)
+              {/* Travel Dates */}
+              <span className="text-slate-600 font-medium shrink-0 whitespace-nowrap text-[11px] xl:text-xs">
+                {startDate ? new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}–{endDate ? new Date(endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''} ({tripNights}N)
               </span>
 
-              <span className="text-slate-300">•</span>
+              <span className="text-slate-300 shrink-0 select-none">·</span>
 
-              <span className="text-xs text-slate-600 font-semibold">
-                {adultsCount} Adults{childrenCount > 0 ? ` · ${childrenCount} Child${childrenCount > 1 ? 'ren' : ''}` : ''}{infantsCount > 0 ? ` · ${infantsCount} Infant${infantsCount > 1 ? 's' : ''}` : ''}
+              {/* Passenger Count */}
+              <span className="text-slate-600 font-semibold shrink-0 whitespace-nowrap text-[11px] xl:text-xs">
+                <span className="hidden xl:inline">
+                  {adultsCount} Adults{childrenCount > 0 ? ` · ${childrenCount} Child${childrenCount > 1 ? 'ren' : ''}` : ''}{infantsCount > 0 ? ` · ${infantsCount} Infant${infantsCount > 1 ? 's' : ''}` : ''}
+                </span>
+                <span className="xl:hidden">
+                  {adultsCount}A{childrenCount > 0 ? `·${childrenCount}C` : ''}{infantsCount > 0 ? `·${infantsCount}I` : ''}
+                </span>
               </span>
 
-              {/* Status Badge */}
+              {/* Status / Feasibility Alerts Badge */}
               {feasibility.warnings.length > 0 ? (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 flex items-center space-x-1">
-                  <AlertTriangle className="w-3 h-3 text-amber-700" />
-                  <span>{feasibility.warnings.length} Alerts</span>
+                <span 
+                  className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1 shrink-0 whitespace-nowrap" 
+                  title={`${feasibility.warnings.length} Alerts`}
+                >
+                  <AlertTriangle className="w-3 h-3 text-amber-700 shrink-0" />
+                  <span>{feasibility.warnings.length} Alert{feasibility.warnings.length > 1 ? 's' : ''}</span>
                 </span>
               ) : items.length > 0 ? (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center space-x-1">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-700" />
-                  <span>Ready</span>
+                <span className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-1 shrink-0 whitespace-nowrap">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-700 shrink-0" />
+                  <span className="hidden xl:inline">Ready</span>
                 </span>
-              ) : (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
-                  Draft
-                </span>
-              )}
+              ) : null}
             </div>
           </div>
 
-          {/* Right: Single Authoritative Action Group */}
-          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+          {/* Right: Single Compact Authoritative Action Group */}
+          <div className="flex items-center gap-1.5 xl:gap-2 shrink-0 flex-nowrap">
+            {/* Currency Selector (105-115px wide) */}
             <select
               value={currency}
               onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
               aria-label="Quotation Currency"
-              className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 border border-slate-200 outline-none cursor-pointer"
+              className="h-[34px] w-[108px] px-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 border border-slate-200 outline-none cursor-pointer shrink-0 transition-colors"
             >
               {SUPPORTED_CURRENCIES.map(curr => (
                 <option key={curr.code} value={curr.code}>{curr.code} ({curr.symbol})</option>
               ))}
             </select>
 
+            {/* Save Draft */}
             <button
               type="button"
               onClick={() => handleSaveDraft(true)}
-              className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-200 transition-all cursor-pointer shadow-2xs whitespace-nowrap"
+              className="h-[34px] px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold border border-slate-200 transition-colors cursor-pointer shrink-0 whitespace-nowrap"
+              title="Save current quote draft"
+              aria-label="Save Draft"
             >
               {autoSaveStatus === 'SAVING' ? 'Saving...' : 'Save Draft'}
             </button>
 
+            {/* WhatsApp */}
             <button
               type="button"
               onClick={handleShareWhatsApp}
-              className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs whitespace-nowrap"
-              title="Share complete quotation on WhatsApp"
+              className="h-[34px] px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-2xs"
+              title="Share quotation via WhatsApp"
+              aria-label="WhatsApp"
             >
               <MessageCircle className="w-3.5 h-3.5 shrink-0" />
-              <span>WhatsApp Quote</span>
+              <span>WhatsApp</span>
             </button>
 
+            {/* Email */}
             <button
               type="button"
               onClick={handleOpenEmailModal}
-              className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs whitespace-nowrap"
-              title="Send complete quotation via Email"
+              className="h-[34px] px-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-2xs"
+              title="Send quotation via Email"
+              aria-label="Email"
             >
               <Mail className="w-3.5 h-3.5 shrink-0" />
-              <span>Send Email</span>
+              <span>Email</span>
             </button>
 
+            {/* ⬇ PDF */}
             <button
               type="button"
               onClick={handleDownloadPDF}
-              className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold border border-slate-200 transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs whitespace-nowrap"
+              className="h-[34px] px-2.5 rounded-lg bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold border border-slate-200 transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-2xs"
               title="Download official PDF quotation"
+              aria-label="Download PDF"
             >
               <Download className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-              <span>Download PDF</span>
+              <span>PDF</span>
             </button>
 
+            {/* Edit Quote (Return to Editor) */}
             <button
               type="button"
               onClick={() => setActiveViewTab('BUILDER')}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs whitespace-nowrap ${
+              className={`h-[34px] px-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-2xs ${
                 activeViewTab === 'PROPOSAL_PREVIEW'
                   ? 'bg-slate-900 text-[#00E5C0] hover:bg-slate-800'
                   : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200'
               }`}
               title="Return to Quote Editor"
+              aria-label="Edit Quote"
             >
               <FileText className="w-3.5 h-3.5 text-teal-500 shrink-0" />
-              <span>Return to Editor</span>
+              <span>Edit Quote</span>
             </button>
 
+            {/* Generate Quote */}
             <button
               type="button"
               onClick={() => {
                 handleSaveDraft(true);
                 setActiveViewTab('PROPOSAL_PREVIEW');
               }}
-              className="px-3 sm:px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 shadow-xs whitespace-nowrap"
+              className="h-[34px] px-3 rounded-lg bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-xs"
+              title="Generate and preview client quotation"
+              aria-label="Generate Quote"
             >
               <Sparkles className="w-3.5 h-3.5 shrink-0" />
-              <span>Generate Quotation</span>
+              <span>Generate Quote</span>
             </button>
           </div>
         </div>

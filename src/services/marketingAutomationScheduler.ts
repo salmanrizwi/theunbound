@@ -17,15 +17,26 @@ export interface VariableDefinition {
   token: string;
   label: string;
   sampleValue: string;
-  category: 'User' | 'Quote' | 'Booking' | 'Trip' | 'Agent';
+  category: 'User' | 'Quote' | 'Booking' | 'Trip' | 'Agent' | 'Verification';
 }
 
 export const CONTEXTUAL_VARIABLE_CATALOG: VariableDefinition[] = [
   // User
   { token: '{{user.firstName}}', label: 'User First Name', sampleValue: 'Eleanor', category: 'User' },
   { token: '{{user.lastName}}', label: 'User Last Name', sampleValue: 'Vance', category: 'User' },
-  { token: '{{user.email}}', label: 'User Email', sampleValue: 'eleanor.vance@mayfairtravel.co.uk', category: 'User' },
+  { token: '{{user.fullName}}', label: 'User Full Legal Name', sampleValue: 'Eleanor Vance', category: 'User' },
+  { token: '{{user.email}}', label: 'User Email Address', sampleValue: 'eleanor.vance@mayfairtravel.co.uk', category: 'User' },
   { token: '{{user.companyName}}', label: 'Company / Agency Name', sampleValue: 'Mayfair Bespoke Travel Ltd.', category: 'User' },
+
+  // Verification & Status
+  { token: '{{company.name}}', label: 'Company Name', sampleValue: 'Mayfair Bespoke Travel Ltd.', category: 'Verification' },
+  { token: '{{verification.status}}', label: 'Account Verification Status', sampleValue: 'Pending Verification', category: 'Verification' },
+  { token: '{{verification.notes}}', label: 'Verification Reviewer Notes', sampleValue: 'Please supply your official IATA license certificate and commercial tax number.', category: 'Verification' },
+  { token: '{{verification.rejectedReason}}', label: 'Rejection Reason / Requirements Needed', sampleValue: 'Trade certificate verification required.', category: 'Verification' },
+  { token: '{{verification.requirementsList}}', label: 'Requirements Checklist', sampleValue: 'Valid IATA/ABTA registration certificate, verified business registration license, commercial billing address', category: 'Verification' },
+  { token: '{{verification.reviewedBy}}', label: 'Admin Reviewer / Onboarding Officer', sampleValue: 'TheUnbound Partner Verification Desk', category: 'Verification' },
+  { token: '{{verification.reviewedAt}}', label: 'Verification Review Date', sampleValue: '08 Oct 2026', category: 'Verification' },
+  { token: '{{verification.nextSteps}}', label: 'Next Verification Steps', sampleValue: 'Our partner desk will review your submitted trade credentials within 24 business hours.', category: 'Verification' },
 
   // Quote
   { token: '{{quote.quoteId}}', label: 'Quote ID', sampleValue: 'qt-2026-8841', category: 'Quote' },
@@ -55,6 +66,9 @@ export const CONTEXTUAL_VARIABLE_CATALOG: VariableDefinition[] = [
 
 const TRIGGER_ALLOWED_CATEGORIES: Record<MarketingTriggerKey, Array<VariableDefinition['category']>> = {
   USER_REGISTERED: ['User', 'Agent'],
+  ACCOUNT_PENDING_VERIFICATION: ['User', 'Agent', 'Verification'],
+  ACCOUNT_VERIFICATION_APPROVED: ['User', 'Agent', 'Verification'],
+  ACCOUNT_VERIFICATION_REJECTED: ['User', 'Agent', 'Verification'],
   QUOTE_SAVED: ['User', 'Quote', 'Trip', 'Agent'],
   QUOTE_DOWNLOADED: ['User', 'Quote', 'Trip', 'Agent'],
   FIRST_BOOKING_COMPLETED: ['User', 'Booking', 'Trip', 'Agent'],
@@ -84,6 +98,54 @@ const INITIAL_EXECUTION_LOGS: MarketingAutomationExecutionLog[] = [
     messageId: 'gmail-msg-99281a',
     executedAt: '2026-10-08T08:15:00Z',
     idempotencyKey: 'USER_REGISTERED:usr-b2b-mayfair'
+  },
+  {
+    id: 'exec-log-101b',
+    triggerId: 'trigger-account-pending-verification',
+    triggerKey: 'ACCOUNT_PENDING_VERIFICATION',
+    triggerName: 'New Registration — Account Under Verification',
+    entityType: 'USER',
+    entityId: 'usr-agent-apex',
+    recipientEmail: 'tariq.almansoor@apexluxurytravel.ae',
+    internalCopySentTo: ['business@theunbound.in'],
+    subject: 'Your TheUnbound Account Is Being Verified',
+    templateVersion: 'v1.0',
+    status: 'SENT',
+    messageId: 'gmail-msg-99295v',
+    executedAt: '2026-10-08T08:00:00Z',
+    idempotencyKey: 'ACCOUNT_PENDING_VERIFICATION:usr-agent-apex'
+  },
+  {
+    id: 'exec-log-101c',
+    triggerId: 'trigger-account-verification-approved',
+    triggerKey: 'ACCOUNT_VERIFICATION_APPROVED',
+    triggerName: 'Account Approved — Verification Successful',
+    entityType: 'USER',
+    entityId: 'usr-agent-mayfair',
+    recipientEmail: 'eleanor.vance@mayfairtravel.co.uk',
+    internalCopySentTo: ['business@theunbound.in'],
+    subject: 'Welcome to TheUnbound — Your Account Is Approved!',
+    templateVersion: 'v1.0',
+    status: 'SENT',
+    messageId: 'gmail-msg-99302a',
+    executedAt: '2026-10-08T07:50:00Z',
+    idempotencyKey: 'ACCOUNT_VERIFICATION_APPROVED:usr-agent-mayfair'
+  },
+  {
+    id: 'exec-log-101d',
+    triggerId: 'trigger-account-verification-rejected',
+    triggerKey: 'ACCOUNT_VERIFICATION_REJECTED',
+    triggerName: 'Account Requires Additional Requirements',
+    entityType: 'USER',
+    entityId: 'usr-agent-zenith',
+    recipientEmail: 'clara.schmidt@zenithvoyages.de',
+    internalCopySentTo: ['business@theunbound.in'],
+    subject: 'Action Required: Update Your TheUnbound Account Details',
+    templateVersion: 'v1.0',
+    status: 'SENT',
+    messageId: 'gmail-msg-99318r',
+    executedAt: '2026-10-08T07:15:00Z',
+    idempotencyKey: 'ACCOUNT_VERIFICATION_REJECTED:usr-agent-zenith:1'
   },
   {
     id: 'exec-log-102',
@@ -225,7 +287,7 @@ export class MarketingAutomationScheduler {
   }
 
   /**
-   * Ensures all 5 canonical system triggers exist and are normalized.
+   * Ensures all 8 canonical system triggers exist and are strictly normalized with no duplicate IDs.
    */
   public ensureCanonicalTriggers(): EmailCampaignConfig[] {
     const db = AppDatabase.getInstance();
@@ -233,6 +295,9 @@ export class MarketingAutomationScheduler {
 
     const canonicalKeys: MarketingTriggerKey[] = [
       'USER_REGISTERED',
+      'ACCOUNT_PENDING_VERIFICATION',
+      'ACCOUNT_VERIFICATION_APPROVED',
+      'ACCOUNT_VERIFICATION_REJECTED',
       'QUOTE_SAVED',
       'QUOTE_DOWNLOADED',
       'FIRST_BOOKING_COMPLETED',
@@ -244,6 +309,12 @@ export class MarketingAutomationScheduler {
       switch (c.campaignType) {
         case 'USER_REGISTERED':
           return 'USER_REGISTERED';
+        case 'ACCOUNT_PENDING_VERIFICATION':
+          return 'ACCOUNT_PENDING_VERIFICATION';
+        case 'ACCOUNT_VERIFICATION_APPROVED':
+          return 'ACCOUNT_VERIFICATION_APPROVED';
+        case 'ACCOUNT_VERIFICATION_REJECTED':
+          return 'ACCOUNT_VERIFICATION_REJECTED';
         case 'QUOTE_SAVED':
         case 'SAVED_QUOTE_REMINDER':
           return 'QUOTE_SAVED';
@@ -261,45 +332,79 @@ export class MarketingAutomationScheduler {
     };
 
     let modified = false;
-    const normalized: EmailCampaignConfig[] = existing.map(c => {
+
+    // Step 1: Strictly deduplicate existing campaigns by id
+    const seenIds = new Set<string>();
+    const deduplicatedExisting: EmailCampaignConfig[] = [];
+    for (const c of existing) {
+      if (!c || !c.id) continue;
+      if (!seenIds.has(c.id)) {
+        seenIds.add(c.id);
+        deduplicatedExisting.push(c);
+      } else {
+        modified = true;
+      }
+    }
+
+    // Step 2: Normalize fields and eliminate multiple system triggers with the same triggerKey
+    const seenSystemKeys = new Set<MarketingTriggerKey>();
+    const normalized: EmailCampaignConfig[] = [];
+
+    for (const c of deduplicatedExisting) {
       const resolvedKey = mapLegacyTypeToKey(c);
+      const isSys = c.isSystemTrigger !== false;
+      if (isSys && seenSystemKeys.has(resolvedKey)) {
+        // Drop duplicate system trigger for the same canonical event
+        modified = true;
+        continue;
+      }
+      if (isSys) {
+        seenSystemKeys.add(resolvedKey);
+      }
+
       const templateDefault = INITIAL_CAMPAIGNS.find(ic => ic.triggerKey === resolvedKey);
       const nextStatus = c.status || (c.isEnabled ? 'ACTIVE' : 'INACTIVE');
-      if (!c.triggerKey || !c.status || !c.primaryRecipientRule || !c.templateVersion) {
-        modified = true;
-        return {
-          ...templateDefault,
-          ...c,
-          triggerKey: resolvedKey,
-          campaignType: resolvedKey,
-          status: nextStatus,
-          isEnabled: nextStatus === 'ACTIVE',
-          isSystemTrigger: c.isSystemTrigger ?? true,
-          primaryRecipientRule: c.primaryRecipientRule || templateDefault?.primaryRecipientRule || 'User Email',
-          internalCopyRecipients: c.internalCopyRecipients || templateDefault?.internalCopyRecipients || ['business@theunbound.in'],
-          timingMode: c.timingMode || templateDefault?.timingMode || (c.delayHours > 0 ? 'DELAYED' : 'IMMEDIATE'),
-          delayValue: c.delayValue ?? c.delayHours ?? templateDefault?.delayValue ?? 0,
-          delayUnit: c.delayUnit || templateDefault?.delayUnit || 'HOURS',
-          templateVersion: c.templateVersion || templateDefault?.templateVersion || 'v1.0',
-          dynamicVariables: c.dynamicVariables?.length ? c.dynamicVariables : (templateDefault?.dynamicVariables || []),
-          updatedAt: c.updatedAt || templateDefault?.updatedAt || new Date().toISOString()
-        };
-      }
-      return c;
-    });
 
+      normalized.push({
+        ...templateDefault,
+        ...c,
+        triggerKey: resolvedKey,
+        campaignType: resolvedKey,
+        status: nextStatus,
+        isEnabled: nextStatus === 'ACTIVE',
+        isSystemTrigger: isSys,
+        primaryRecipientRule: c.primaryRecipientRule || templateDefault?.primaryRecipientRule || 'User Email',
+        internalCopyRecipients: c.internalCopyRecipients || templateDefault?.internalCopyRecipients || ['business@theunbound.in'],
+        timingMode: c.timingMode || templateDefault?.timingMode || (c.delayHours > 0 ? 'DELAYED' : 'IMMEDIATE'),
+        delayValue: c.delayValue ?? c.delayHours ?? templateDefault?.delayValue ?? 0,
+        delayUnit: c.delayUnit || templateDefault?.delayUnit || 'HOURS',
+        templateVersion: c.templateVersion || templateDefault?.templateVersion || 'v1.0',
+        dynamicVariables: c.dynamicVariables?.length ? c.dynamicVariables : (templateDefault?.dynamicVariables || []),
+        updatedAt: c.updatedAt || templateDefault?.updatedAt || new Date().toISOString()
+      });
+    }
+
+    // Step 3: Ensure all 8 canonical triggers are present
     for (const key of canonicalKeys) {
       if (!normalized.some(c => c.triggerKey === key)) {
         const seed = INITIAL_CAMPAIGNS.find(ic => ic.triggerKey === key);
         if (seed) {
-          normalized.unshift(seed);
+          if (!seenIds.has(seed.id)) {
+            normalized.push(seed);
+            seenIds.add(seed.id);
+          } else {
+            const uniqueSeed = { ...seed, id: `trigger-${key.toLowerCase().replace(/_/g, '-')}-${Date.now()}` };
+            normalized.push(uniqueSeed);
+            seenIds.add(uniqueSeed.id);
+          }
           modified = true;
         }
       }
     }
 
     if (modified) {
-      normalized.forEach(c => db.saveEmailCampaign(c, null));
+      // Persist normalized and deduplicated list
+      db.saveAllEmailCampaigns(normalized);
     }
 
     return normalized;
@@ -519,6 +624,186 @@ export class MarketingAutomationScheduler {
         contextSnapshot: context
       });
     }
+  }
+
+  // ============================================================================
+  // 1B. ACCOUNT UNDER VERIFICATION (ACCOUNT_PENDING_VERIFICATION)
+  // ============================================================================
+  public async onAccountPendingVerification(user: User): Promise<void> {
+    if (!user || !user.email || user.emailOptOut) return;
+    const trigger = this.findActiveTrigger('ACCOUNT_PENDING_VERIFICATION');
+    if (!trigger) return;
+
+    const idempotencyKey = `ACCOUNT_PENDING_VERIFICATION:${(user.id || user.email).toLowerCase()}`;
+    if (this.hasIdempotencyExecution(idempotencyKey) || this.inFlightLocks.has(idempotencyKey)) {
+      return;
+    }
+
+    const context = this.buildVerificationVariables(user, {
+      status: 'Pending Verification',
+      nextSteps: 'Our partner onboarding team is verifying your registration credentials.'
+    });
+
+    const scheduledTime = this.calculateScheduledTime(trigger);
+    if (scheduledTime.getTime() <= Date.now() + 5000) {
+      await this.dispatchTriggerEmailNow({
+        trigger,
+        recipientEmail: user.email,
+        entityType: 'USER',
+        entityId: user.id,
+        idempotencyKey,
+        context
+      });
+    } else {
+      this.enqueueJob({
+        trigger,
+        entityType: 'USER',
+        entityId: user.id,
+        recipientEmail: user.email,
+        recipientName: user.name,
+        scheduledFor: scheduledTime.toISOString(),
+        idempotencyKey,
+        contextSnapshot: context
+      });
+    }
+  }
+
+  // ============================================================================
+  // 1C. ACCOUNT VERIFICATION APPROVED (ACCOUNT_VERIFICATION_APPROVED)
+  // ============================================================================
+  public async onAccountVerificationApproved(user: User, actor?: User | null): Promise<void> {
+    if (!user || !user.email || user.emailOptOut) return;
+    const trigger = this.findActiveTrigger('ACCOUNT_VERIFICATION_APPROVED');
+    if (!trigger) return;
+
+    const idempotencyKey = `ACCOUNT_VERIFICATION_APPROVED:${(user.id || user.email).toLowerCase()}`;
+    if (this.hasIdempotencyExecution(idempotencyKey) || this.inFlightLocks.has(idempotencyKey)) {
+      return;
+    }
+
+    const context = this.buildVerificationVariables(user, {
+      status: 'Verified & Approved',
+      reviewedBy: actor?.name || 'Administrator',
+      reviewedAt: new Date().toISOString()
+    });
+
+    const scheduledTime = this.calculateScheduledTime(trigger);
+    if (scheduledTime.getTime() <= Date.now() + 5000) {
+      await this.dispatchTriggerEmailNow({
+        trigger,
+        recipientEmail: user.email,
+        entityType: 'USER',
+        entityId: user.id,
+        idempotencyKey,
+        context
+      });
+    } else {
+      this.enqueueJob({
+        trigger,
+        entityType: 'USER',
+        entityId: user.id,
+        recipientEmail: user.email,
+        recipientName: user.name,
+        scheduledFor: scheduledTime.toISOString(),
+        idempotencyKey,
+        contextSnapshot: context
+      });
+    }
+  }
+
+  // ============================================================================
+  // 1D. ACCOUNT VERIFICATION REJECTED (ACCOUNT_VERIFICATION_REJECTED)
+  // ============================================================================
+  public async onAccountVerificationRejected(
+    user: User,
+    actor?: User | null,
+    notes?: string,
+    requirements?: string[] | string
+  ): Promise<void> {
+    if (!user || !user.email || user.emailOptOut) return;
+    const trigger = this.findActiveTrigger('ACCOUNT_VERIFICATION_REJECTED');
+    if (!trigger) return;
+
+    const idempotencyKey = `ACCOUNT_VERIFICATION_REJECTED:${(user.id || user.email).toLowerCase()}:${Date.now()}`;
+    if (this.inFlightLocks.has(idempotencyKey)) return;
+
+    const context = this.buildVerificationVariables(user, {
+      status: 'Action Required / Rejected',
+      notes: notes || 'Additional trade documentation is required to verify your B2B account.',
+      rejectedReason: notes || 'Additional trade documentation required.',
+      requirements,
+      reviewedBy: actor?.name || 'Partner Onboarding Team',
+      reviewedAt: new Date().toISOString()
+    });
+
+    const scheduledTime = this.calculateScheduledTime(trigger);
+    if (scheduledTime.getTime() <= Date.now() + 5000) {
+      await this.dispatchTriggerEmailNow({
+        trigger,
+        recipientEmail: user.email,
+        entityType: 'USER',
+        entityId: user.id,
+        idempotencyKey,
+        context
+      });
+    } else {
+      this.enqueueJob({
+        trigger,
+        entityType: 'USER',
+        entityId: user.id,
+        recipientEmail: user.email,
+        recipientName: user.name,
+        scheduledFor: scheduledTime.toISOString(),
+        idempotencyKey,
+        contextSnapshot: context
+      });
+    }
+  }
+
+  public buildVerificationVariables(
+    user: User,
+    verificationData?: {
+      status?: string;
+      notes?: string;
+      rejectedReason?: string;
+      requirements?: string[] | string;
+      reviewedBy?: string;
+      reviewedAt?: string;
+      nextSteps?: string;
+    }
+  ): Record<string, string> {
+    const nameParts = (user.name || '').trim().split(/\s+/);
+    const firstName = user.firstName || nameParts[0] || 'Partner';
+    const lastName = user.lastName || nameParts.slice(1).join(' ') || '';
+    const fullName = user.name || `${firstName} ${lastName}`.trim();
+    const company = user.companyName || user.agencyName || 'Mayfair Bespoke Travel Ltd.';
+
+    const reqList = Array.isArray(verificationData?.requirements)
+      ? verificationData.requirements.join(', ')
+      : (verificationData?.requirements || 'Valid business registration license, verified trade credential (IATA/ABTA/GST), and official agency billing address.');
+
+    const reviewedAt = verificationData?.reviewedAt
+      ? new Date(verificationData.reviewedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+
+    return {
+      'user.firstName': firstName,
+      'user.lastName': lastName,
+      'user.fullName': fullName,
+      'user.email': user.email,
+      'user.companyName': company,
+      'company.name': company,
+      'agent.agencyName': company,
+      'agent.agentName': fullName,
+      'agent.agentEmail': user.email,
+      'verification.status': verificationData?.status || user.approvalStatus || 'Pending Verification',
+      'verification.notes': verificationData?.notes || user.verificationNotes || 'Please provide updated trade credentials for partner verification.',
+      'verification.rejectedReason': verificationData?.rejectedReason || verificationData?.notes || user.verificationNotes || 'Additional trade documentation required.',
+      'verification.requirementsList': reqList,
+      'verification.reviewedAt': reviewedAt,
+      'verification.reviewedBy': verificationData?.reviewedBy || user.verifiedBy || user.verificationRejectedBy || 'TheUnbound Partner Verification Desk',
+      'verification.nextSteps': verificationData?.nextSteps || 'Our verification desk will notify you once review is complete.'
+    };
   }
 
   // ============================================================================
@@ -1105,7 +1390,7 @@ export class MarketingAutomationScheduler {
     const paxCount =
       quote.totalPax ||
       (quote.adultsCount || 0) + (quote.childrenCount || 0) + (quote.infantsCount || 0) ||
-      quote.items?.reduce((acc, i) => Math.max(acc, (i.adults || 0) + (i.children || 0)), 2) ||
+      quote.items?.reduce((acc, i: any) => Math.max(acc, (i.adults || 0) + (i.children || 0)), 2) ||
       2;
 
     const createdDate = quote.createdAt ? new Date(quote.createdAt) : new Date();
@@ -1124,7 +1409,7 @@ export class MarketingAutomationScheduler {
       'quote.validUntil': validUntilDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
       'quote.total': formatCurrency(quote.finalCustomerSellingPrice || quote.totalSellingPrice || 0, quote.currency || 'USD'),
       'quote.currency': quote.currency || 'USD',
-      'trip.destination': quote.destination || quote.items?.[0]?.product?.city || 'Japan',
+      'trip.destination': quote.destination || (quote.items?.[0] as any)?.product?.city || 'Japan',
       'trip.startDate': quote.travelStartDate || 'Upcoming Season',
       'trip.endDate': quote.travelEndDate || quote.travelStartDate || 'Scheduled Return',
       'trip.passengerCount': String(paxCount),
@@ -1138,7 +1423,7 @@ export class MarketingAutomationScheduler {
     const fullName = booking.customer?.name || actor?.name || 'Valued Partner';
     const parts = fullName.trim().split(/\s+/);
     const paxCount =
-      booking.items?.reduce((acc, i) => Math.max(acc, (i.adults || 0) + (i.children || 0) + (i.infants || 0)), 2) || 2;
+      booking.items?.reduce((acc, i: any) => Math.max(acc, (i.adults || 0) + (i.children || 0) + (i.infants || 0)), 2) || 2;
 
     return {
       'user.firstName': parts[0] || 'Valued',
@@ -1153,7 +1438,7 @@ export class MarketingAutomationScheduler {
         year: 'numeric'
       }),
       'booking.status': booking.status || 'PENDING_CONFIRMATION',
-      'trip.destination': booking.destination || booking.destinationName || booking.items?.[0]?.product?.city || 'Japan',
+      'trip.destination': booking.destination || (booking as any).destinationName || (booking.items?.[0] as any)?.product?.city || 'Japan',
       'trip.startDate': booking.travelStartDate || 'Scheduled Departure',
       'trip.endDate': booking.travelEndDate || booking.travelStartDate || 'Scheduled Return',
       'trip.passengerCount': String(paxCount),

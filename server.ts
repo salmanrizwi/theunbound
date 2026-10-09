@@ -12,6 +12,7 @@ async function bootstrap() {
   const bundlePath = fs.existsSync(distBundlePath) ? distBundlePath : fs.existsSync(buildBundlePath) ? buildBundlePath : null;
   if (bundlePath && !isRunningWithTsx) {
     // Production Cloud Run container execution using compiled bundle
+    process.env.NODE_ENV = "production";
     const bundle = require(bundlePath);
     if (typeof bundle.startServer === "function") {
       await bundle.startServer();

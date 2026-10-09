@@ -393,6 +393,225 @@ export const INITIAL_CAMPAIGNS: EmailCampaignConfig[] = [
     failedCount: 1,
     updatedAt: '2026-10-05T12:00:00Z',
     lastDispatchedAt: '2026-10-07T18:40:00Z'
+  },
+  {
+    id: 'trigger-account-pending-verification',
+    campaignType: 'ACCOUNT_PENDING_VERIFICATION',
+    triggerKey: 'ACCOUNT_PENDING_VERIFICATION',
+    name: 'New Registration — Account Under Verification',
+    description: 'Triggered when a new user or B2B travel partner registers and their profile enters the verification review queue.',
+    isEnabled: true,
+    status: 'ACTIVE',
+    isSystemTrigger: true,
+    priority: 1,
+    subject: 'Your TheUnbound Account Is Being Verified',
+    preheaderText: 'We have received your registration and your account is currently being reviewed by our verification team.',
+    templateHtml: `<div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto; color: #1F2933; background-color: #FFFFFF; border: 1px solid #DDE8E6; border-radius: 16px; overflow: hidden;">
+  <div style="background-color: #0F172A; padding: 28px 24px; border-bottom: 3px solid #00C6A6;">
+    <p style="margin: 0 0 4px 0; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #00C6A6; text-transform: uppercase;">Partner Verification Desk</p>
+    <h1 style="margin: 0; font-size: 22px; font-weight: 800; color: #FFFFFF;">Account Under Verification</h1>
+  </div>
+  <div style="padding: 28px 24px;">
+    <p style="font-size: 15px; line-height: 1.6; color: #1F2933; margin-top: 0;">Hi <strong>{{user.firstName}}</strong>,</p>
+    <p style="font-size: 14px; line-height: 1.6; color: #5F6B73;">Thank you for registering with <strong>TheUnbound</strong>.</p>
+    <p style="font-size: 14px; line-height: 1.6; color: #5F6B73;">We've received your registration and your account is currently being reviewed by our verification team.</p>
+    <p style="font-size: 14px; line-height: 1.6; color: #5F6B73;">Once the verification process is complete, we'll notify you by email with the outcome and any next steps.</p>
+    <div style="background-color: #F8FAFA; border: 1px solid #DDE8E6; border-radius: 12px; padding: 16px; margin: 20px 0; font-size: 13px; color: #1F2933;">
+      <p style="margin: 4px 0;"><strong>Current Account Status:</strong> <span style="color: #D97706; font-weight: 700;">Pending Verification</span></p>
+      <p style="margin: 4px 0;"><strong>Registered Agency:</strong> {{user.companyName}}</p>
+      <p style="margin: 4px 0;"><strong>Account Email:</strong> {{user.email}}</p>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #5F6B73;">Thank you for your patience. We look forward to welcoming you to TheUnbound's B2B travel partner network.</p>
+  </div>
+  <div style="background-color: #F8FAFA; border-top: 1px solid #DDE8E6; padding: 16px 24px; font-size: 12px; color: #5F6B73;">
+    Best regards,<br/><strong>TheUnbound Verification Team</strong> · <a href="mailto:business@theunbound.in" style="color: #008972; text-decoration: none;">business@theunbound.in</a>
+  </div>
+</div>`,
+    senderName: 'TheUnbound Verification Desk',
+    senderEmail: 'verification@theunbound.in',
+    primaryRecipientRule: 'User Email',
+    internalCopyRecipients: ['business@theunbound.in'],
+    triggerCondition: 'Immediately when user registers and enters PENDING verification queue',
+    timingMode: 'IMMEDIATE',
+    delayHours: 0,
+    delayValue: 0,
+    delayUnit: 'MINUTES',
+    dynamicVariables: [
+      '{{user.firstName}}',
+      '{{user.lastName}}',
+      '{{user.fullName}}',
+      '{{user.email}}',
+      '{{user.companyName}}',
+      '{{company.name}}',
+      '{{verification.status}}',
+      '{{verification.nextSteps}}'
+    ],
+    templateVersion: 'v1.0',
+    versionHistory: [
+      {
+        version: 'v1.0',
+        subject: 'Your TheUnbound Account Is Being Verified',
+        preheaderText: 'We have received your registration and your account is currently being reviewed by our verification team.',
+        templateHtml: 'Initial pending verification acknowledgment template',
+        updatedAt: '2026-10-06T10:00:00Z',
+        updatedBy: 'business@theunbound.in'
+      }
+    ],
+    sentCount: 42,
+    skippedCount: 1,
+    failedCount: 0,
+    updatedAt: '2026-10-06T10:00:00Z',
+    lastDispatchedAt: '2026-10-08T09:15:00Z'
+  },
+  {
+    id: 'trigger-account-verification-approved',
+    campaignType: 'ACCOUNT_VERIFICATION_APPROVED',
+    triggerKey: 'ACCOUNT_VERIFICATION_APPROVED',
+    name: 'Account Approved — Verification Successful',
+    description: 'Triggered when an authorized Administrator approves a partner account and grants access to the portal.',
+    isEnabled: true,
+    status: 'ACTIVE',
+    isSystemTrigger: true,
+    priority: 1,
+    subject: 'Welcome to TheUnbound — Your Account Is Approved!',
+    preheaderText: 'Your B2B travel partner account is verified. Access wholesale rates and customized itineraries now.',
+    templateHtml: `<div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto; color: #1F2933; background-color: #FFFFFF; border: 1px solid #DDE8E6; border-radius: 16px; overflow: hidden;">
+  <div style="background-color: #0F172A; padding: 28px 24px; border-bottom: 3px solid #00C6A6;">
+    <p style="margin: 0 0 4px 0; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #00C6A6; text-transform: uppercase;">Partner Verification Desk</p>
+    <h1 style="margin: 0; font-size: 22px; font-weight: 800; color: #FFFFFF;">Account Approved — Verification Successful</h1>
+  </div>
+  <div style="padding: 28px 24px;">
+    <p style="font-size: 15px; line-height: 1.6; color: #1F2933; margin-top: 0;">Hi <strong>{{user.firstName}}</strong>,</p>
+    <p style="font-size: 14px; line-height: 1.6; color: #5F6B73;">Great news! Your <strong>TheUnbound</strong> B2B partner account has been successfully verified and approved.</p>
+    <div style="background-color: #F8FAFA; border: 1px solid #DDE8E6; border-radius: 12px; padding: 16px; margin: 20px 0; font-size: 13px; color: #1F2933;">
+      <p style="margin: 4px 0;"><strong>Account Status:</strong> <span style="color: #008972; font-weight: 700;">Verified &amp; Active</span></p>
+      <p style="margin: 4px 0;"><strong>Company:</strong> {{user.companyName}}</p>
+      <p style="margin: 4px 0;"><strong>Approved By:</strong> {{verification.reviewedBy}}</p>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #5F6B73;">You now have full access to create wholesale quotations, book contracted DMC ground services, and manage traveler itineraries.</p>
+    <div style="margin: 24px 0;">
+      <a href="https://theunbound.in" style="background-color: #00C6A6; color: #0F172A; font-weight: 700; font-size: 13px; text-decoration: none; padding: 12px 24px; border-radius: 10px; display: inline-block;">Log In to Your Partner Workspace</a>
+    </div>
+  </div>
+  <div style="background-color: #F8FAFA; border-top: 1px solid #DDE8E6; padding: 16px 24px; font-size: 12px; color: #5F6B73;">
+    Best regards,<br/><strong>TheUnbound Verification Team</strong> · <a href="mailto:business@theunbound.in" style="color: #008972; text-decoration: none;">business@theunbound.in</a>
+  </div>
+</div>`,
+    senderName: 'TheUnbound Partner Operations',
+    senderEmail: 'partnerships@theunbound.in',
+    primaryRecipientRule: 'User Email',
+    internalCopyRecipients: ['business@theunbound.in'],
+    triggerCondition: 'Immediately upon Administrator account approval',
+    timingMode: 'IMMEDIATE',
+    delayHours: 0,
+    delayValue: 0,
+    delayUnit: 'MINUTES',
+    dynamicVariables: [
+      '{{user.firstName}}',
+      '{{user.lastName}}',
+      '{{user.fullName}}',
+      '{{user.email}}',
+      '{{user.companyName}}',
+      '{{company.name}}',
+      '{{verification.status}}',
+      '{{verification.reviewedBy}}',
+      '{{verification.reviewedAt}}'
+    ],
+    templateVersion: 'v1.0',
+    versionHistory: [
+      {
+        version: 'v1.0',
+        subject: 'Welcome to TheUnbound — Your Account Is Approved!',
+        preheaderText: 'Your B2B travel partner account is verified. Access wholesale rates and customized itineraries now.',
+        templateHtml: 'Initial account approval notification template',
+        updatedAt: '2026-10-06T10:30:00Z',
+        updatedBy: 'business@theunbound.in'
+      }
+    ],
+    sentCount: 38,
+    skippedCount: 0,
+    failedCount: 0,
+    updatedAt: '2026-10-06T10:30:00Z',
+    lastDispatchedAt: '2026-10-08T09:45:00Z'
+  },
+  {
+    id: 'trigger-account-verification-rejected',
+    campaignType: 'ACCOUNT_VERIFICATION_REJECTED',
+    triggerKey: 'ACCOUNT_VERIFICATION_REJECTED',
+    name: 'Account Requires Additional Requirements',
+    description: 'Triggered when an authorized Administrator requests additional verification documents or rejects the current submission.',
+    isEnabled: true,
+    status: 'ACTIVE',
+    isSystemTrigger: true,
+    priority: 1,
+    subject: 'Action Required: Update Your TheUnbound Account Details',
+    preheaderText: 'Additional verification documents or requirements are needed to approve your TheUnbound partner account.',
+    templateHtml: `<div style="font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto; color: #1F2933; background-color: #FFFFFF; border: 1px solid #DDE8E6; border-radius: 16px; overflow: hidden;">
+  <div style="background-color: #0F172A; padding: 28px 24px; border-bottom: 3px solid #E11D48;">
+    <p style="margin: 0 0 4px 0; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #FDA4AF; text-transform: uppercase;">Partner Verification Desk</p>
+    <h1 style="margin: 0; font-size: 22px; font-weight: 800; color: #FFFFFF;">Action Required: Additional Requirements Needed</h1>
+  </div>
+  <div style="padding: 28px 24px;">
+    <p style="font-size: 15px; line-height: 1.6; color: #1F2933; margin-top: 0;">Hi <strong>{{user.firstName}}</strong>,</p>
+    <p style="font-size: 14px; line-height: 1.6; color: #5F6B73;">Thank you for registering with <strong>TheUnbound</strong>. Our partner verification team reviewed your submission, but we need additional details before your account can be approved.</p>
+    <div style="background-color: #FFF1F2; border: 1px solid #FECDD3; border-radius: 12px; padding: 16px; margin: 20px 0; font-size: 13px; color: #1F2933;">
+      <p style="margin: 4px 0;"><strong>Current Status:</strong> <span style="color: #E11D48; font-weight: 700;">Action Required / Rejected</span></p>
+      <p style="margin: 4px 0;"><strong>Review Notes / Feedback:</strong></p>
+      <div style="background-color: #FFFFFF; border: 1px solid #FECDD3; border-radius: 8px; padding: 10px 12px; margin-top: 6px; font-size: 13px; color: #9F1239;">
+        {{verification.notes}}
+      </div>
+      <p style="margin: 10px 0 4px 0;"><strong>Requirements Needed:</strong></p>
+      <div style="font-size: 12px; color: #4B5563; line-height: 1.6;">
+        {{verification.requirementsList}}
+      </div>
+    </div>
+    <p style="font-size: 13px; line-height: 1.6; color: #5F6B73;">Please reply directly to this email or update your company profile documents so we can complete your verification promptly.</p>
+    <div style="margin: 24px 0;">
+      <a href="https://theunbound.in" style="background-color: #00C6A6; color: #0F172A; font-weight: 700; font-size: 13px; text-decoration: none; padding: 12px 24px; border-radius: 10px; display: inline-block;">Update Account &amp; Verification Details</a>
+    </div>
+  </div>
+  <div style="background-color: #F8FAFA; border-top: 1px solid #DDE8E6; padding: 16px 24px; font-size: 12px; color: #5F6B73;">
+    Best regards,<br/><strong>TheUnbound Verification Desk</strong> · <a href="mailto:business@theunbound.in" style="color: #008972; text-decoration: none;">business@theunbound.in</a>
+  </div>
+</div>`,
+    senderName: 'TheUnbound Verification Desk',
+    senderEmail: 'verification@theunbound.in',
+    primaryRecipientRule: 'User Email',
+    internalCopyRecipients: ['business@theunbound.in'],
+    triggerCondition: 'Immediately when Administrator rejects or requests additional requirements',
+    timingMode: 'IMMEDIATE',
+    delayHours: 0,
+    delayValue: 0,
+    delayUnit: 'MINUTES',
+    dynamicVariables: [
+      '{{user.firstName}}',
+      '{{user.lastName}}',
+      '{{user.fullName}}',
+      '{{user.email}}',
+      '{{user.companyName}}',
+      '{{company.name}}',
+      '{{verification.status}}',
+      '{{verification.notes}}',
+      '{{verification.rejectedReason}}',
+      '{{verification.requirementsList}}',
+      '{{verification.reviewedBy}}'
+    ],
+    templateVersion: 'v1.0',
+    versionHistory: [
+      {
+        version: 'v1.0',
+        subject: 'Action Required: Update Your TheUnbound Account Details',
+        preheaderText: 'Additional verification documents or requirements are needed to approve your TheUnbound partner account.',
+        templateHtml: 'Initial account rejection / action required notification template',
+        updatedAt: '2026-10-06T11:00:00Z',
+        updatedBy: 'business@theunbound.in'
+      }
+    ],
+    sentCount: 11,
+    skippedCount: 0,
+    failedCount: 0,
+    updatedAt: '2026-10-06T11:00:00Z',
+    lastDispatchedAt: '2026-10-07T12:00:00Z'
   }
 ];
 

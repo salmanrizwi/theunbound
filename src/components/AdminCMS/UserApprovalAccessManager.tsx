@@ -46,7 +46,9 @@ import {
   AlertTriangle,
   ChevronRight,
   Settings2,
-  Trash2
+  Trash2,
+  X,
+  AlertCircle
 } from 'lucide-react';
 
 interface UserApprovalAccessManagerProps {
@@ -74,6 +76,14 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
   const [selectedUserForModal, setSelectedUserForModal] = useState<User | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; email?: string; role?: string; status?: string } | null>(null);
+  const [rejectionTargetUser, setRejectionTargetUser] = useState<User | null>(null);
+  const [rejectionNotes, setRejectionNotes] = useState<string>('Additional business documentation is required to verify your travel agency registration.');
+  const [rejectionRequirements, setRejectionRequirements] = useState<string[]>([
+    'Valid government-issued travel trade license or IATA/ABTA registration certificate',
+    'Official company tax identifier (GSTIN / VAT / Corporation Tax)',
+    'Verified commercial office billing address'
+  ]);
+  const [customRequirementInput, setCustomRequirementInput] = useState<string>('');
 
   // Bulk Operations State
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
@@ -130,16 +140,33 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
   const handleApprove = (targetUser: User) => {
     db.approveUser(targetUser.id, currentUser);
     refreshUsers();
-    setSavedSuccess(`Approved account for ${targetUser.name} with standard role permissions.`);
-    setTimeout(() => setSavedSuccess(null), 3000);
+    setSavedSuccess(`Approved account for ${targetUser.name}. Automated verification approval email with portal link dispatched.`);
+    setTimeout(() => setSavedSuccess(null), 4000);
   };
 
   const handleReject = (targetUser: User) => {
+    setRejectionTargetUser(targetUser);
+    setRejectionNotes(
+      targetUser.verificationNotes ||
+      'Additional business credentials or trade documentation are required to complete account verification.'
+    );
+  };
+
+  const handleConfirmRejectionWithRequirements = () => {
+    if (!rejectionTargetUser) return;
     try {
-      db.rejectUser(targetUser.id, currentUser);
+      db.rejectUser(
+        rejectionTargetUser.id,
+        currentUser,
+        rejectionNotes,
+        rejectionRequirements
+      );
       refreshUsers();
-      setSavedSuccess(`Access rejected/revoked for ${targetUser.name}.`);
-      setTimeout(() => setSavedSuccess(null), 3000);
+      setSavedSuccess(
+        `Account review completed for ${rejectionTargetUser.name}. Automated requirements checklist email sent to ${rejectionTargetUser.email}.`
+      );
+      setTimeout(() => setSavedSuccess(null), 4500);
+      setRejectionTargetUser(null);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to reject user.');
       setTimeout(() => setErrorMessage(null), 4000);
@@ -944,7 +971,7 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                                 onClick={() => handleReject(userItem)}
                                 className="px-3 py-1.5 text-xs text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg font-bold transition-colors cursor-pointer"
                               >
-                                Revoke
+                                {status === 'PENDING' ? 'Reject / Request Info' : 'Revoke'}
                               </button>
                             )}
 
@@ -1081,6 +1108,148 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
             status: deleteTarget.status
           }}
         />
+      )}
+
+      {/* Account Rejection & Additional Requirements Modal */}
+      {rejectionTargetUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="p-1 rounded-lg bg-rose-50 text-rose-600">
+                    <ShieldAlert className="w-4 h-4" />
+                  </span>
+                  <h3 className="font-bold text-slate-900 text-base">
+                    Verification Review: Additional Requirements Needed
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Reject submission and dispatch automated notification with requirements to partner.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRejectionTargetUser(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs space-y-1">
+              <div className="font-semibold text-slate-800">{rejectionTargetUser.name}</div>
+              <div className="text-slate-500 font-mono">{rejectionTargetUser.email}</div>
+              {rejectionTargetUser.agencyName && (
+                <div className="text-slate-600 font-medium">{rejectionTargetUser.agencyName}</div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-800">
+                Review Notes / Feedback (Sent in email) *
+              </label>
+              <textarea
+                rows={3}
+                value={rejectionNotes}
+                onChange={e => setRejectionNotes(e.target.value)}
+                placeholder="Specify reasons why additional details or verification documents are required..."
+                className="w-full p-3 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-[#00C6A6]"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-800">
+                Required Documents / Checklist Checklist
+              </label>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                {[
+                  'Valid government-issued travel trade license or IATA/ABTA registration certificate',
+                  'Official company tax identifier (GSTIN / VAT / Corporation Tax)',
+                  'Verified commercial office billing address',
+                  'Authorized signatory commercial director proof',
+                  'Commercial tour operator liability insurance'
+                ].map(item => {
+                  const isChecked = rejectionRequirements.includes(item);
+                  return (
+                    <label
+                      key={item}
+                      className="flex items-start gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200/80 hover:bg-slate-100/70 cursor-pointer text-xs text-slate-700"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {
+                          if (isChecked) {
+                            setRejectionRequirements(prev => prev.filter(r => r !== item));
+                          } else {
+                            setRejectionRequirements(prev => [...prev, item]);
+                          }
+                        }}
+                        className="mt-0.5 rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                      />
+                      <span>{item}</span>
+                    </label>
+                  );
+                })}
+              </div>
+
+              {/* Add custom requirement */}
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="text"
+                  placeholder="Add custom required item..."
+                  value={customRequirementInput}
+                  onChange={e => setCustomRequirementInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && customRequirementInput.trim()) {
+                      e.preventDefault();
+                      setRejectionRequirements(prev => [...prev, customRequirementInput.trim()]);
+                      setCustomRequirementInput('');
+                    }
+                  }}
+                  className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (customRequirementInput.trim()) {
+                      setRejectionRequirements(prev => [...prev, customRequirementInput.trim()]);
+                      setCustomRequirementInput('');
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded-xl text-xs font-bold text-slate-800 cursor-pointer"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-[11px] text-rose-800 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+              <span>
+                Trigger <strong>ACCOUNT_VERIFICATION_REJECTED</strong> will execute immediately. The partner will receive this checklist and instructions to resubmit.
+              </span>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setRejectionTargetUser(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRejectionWithRequirements}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl cursor-pointer shadow-xs"
+              >
+                Confirm &amp; Dispatch Email
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

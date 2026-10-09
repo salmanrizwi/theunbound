@@ -39,9 +39,23 @@ export class AutomaticTaskEngine {
     // 3. Listen for User Registration (USER_REGISTERED)
     this.db.onUserRegistered((user) => {
       marketingAutomationScheduler.onUserRegistered(user).catch(() => {});
+      if (user.approvalStatus === 'PENDING' || user.role === 'B2B_AGENT' || user.role === 'AGENT') {
+        marketingAutomationScheduler.onAccountPendingVerification(user).catch(() => {});
+      }
     });
 
-    // 4. Listen for Quotation Saved & Downloaded (QUOTE_SAVED & QUOTE_DOWNLOADED)
+    // 4. Listen for User Verification & Approval Status (ACCOUNT_PENDING_VERIFICATION, ACCOUNT_VERIFICATION_APPROVED, ACCOUNT_VERIFICATION_REJECTED)
+    this.db.onUserStatusChanged((user, actor, action, notes, requirements) => {
+      if (action === 'APPROVED') {
+        marketingAutomationScheduler.onAccountVerificationApproved(user, actor).catch(() => {});
+      } else if (action === 'REJECTED') {
+        marketingAutomationScheduler.onAccountVerificationRejected(user, actor, notes, requirements).catch(() => {});
+      } else if (action === 'PENDING') {
+        marketingAutomationScheduler.onAccountPendingVerification(user).catch(() => {});
+      }
+    });
+
+    // 5. Listen for Quotation Saved & Downloaded (QUOTE_SAVED & QUOTE_DOWNLOADED)
     this.db.onQuotationSaved((quote, user, _isNew, actionType) => {
       const isDownloaded =
         actionType === 'DOWNLOADED' ||

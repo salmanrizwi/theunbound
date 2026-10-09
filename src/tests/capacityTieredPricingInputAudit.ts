@@ -104,6 +104,8 @@ console.log('\n--- 4. Testing Persistence Across Three Capacity Categories ---')
 {
   // 1. Private Tour
   const activeHubId = db.getCityHubs()[0]?.id || 'hub-tokyo';
+  const activeRegionId = db.getMasterRegions()[0]?.id || 'reg-east-asia';
+  const activeDestId = db.getDestinations()[0]?.id || 'dest-japan';
 
   const tourProduct = {
     id: `prod-test-tour-${Date.now()}`,
@@ -112,8 +114,8 @@ console.log('\n--- 4. Testing Persistence Across Three Capacity Categories ---')
     category: 'Private Tours',
     pricingModel: 'CAPACITY_TIERED',
     pricingMethod: 'capacity_based',
-    regionId: 'REG-001',
-    destinationId: 'DST-JPN',
+    regionId: activeRegionId,
+    destinationId: activeDestId,
     hubId: activeHubId,
     destination: 'Japan',
     city: 'Tokyo',
@@ -179,8 +181,8 @@ console.log('\n--- 4. Testing Persistence Across Three Capacity Categories ---')
     category: 'Transfers',
     pricingModel: 'CAPACITY_TIERED',
     pricingMethod: 'capacity_based',
-    regionId: 'REG-001',
-    destinationId: 'DST-JPN',
+    regionId: activeRegionId,
+    destinationId: activeDestId,
     hubId: activeHubId,
     destination: 'Japan',
     city: 'Tokyo',
@@ -248,8 +250,8 @@ console.log('\n--- 4. Testing Persistence Across Three Capacity Categories ---')
     category: 'Private Yacht',
     pricingModel: 'CAPACITY_TIERED',
     pricingMethod: 'capacity_based',
-    regionId: 'REG-001',
-    destinationId: 'DST-JPN',
+    regionId: activeRegionId,
+    destinationId: activeDestId,
     hubId: activeHubId,
     destination: 'Japan',
     city: 'Tokyo',
@@ -455,8 +457,8 @@ console.log('\n--- 8. Testing Google Sheets Master Sync Governance ---');
     category: 'Private Tours',
     pricingMethod: 'capacity_based',
     pricingModel: 'CAPACITY_TIERED',
-    regionId: 'REG-001',
-    destinationId: 'DST-JPN',
+    regionId: db.getMasterRegions()[0]?.id || 'reg-east-asia',
+    destinationId: db.getDestinations()[0]?.id || 'dest-japan',
     hubId: db.getCityHubs()[0]?.id || 'hub-tokyo',
     currency: 'JPY',
     nativeCurrency: 'JPY',

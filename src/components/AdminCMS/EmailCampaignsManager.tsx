@@ -56,10 +56,23 @@ const DELAY_PRESETS: Array<{ label: string; value: number; unit: TriggerDelayUni
 
 const EVENT_DISPLAY_LABELS: Record<MarketingTriggerKey, string> = {
   USER_REGISTERED: 'User Registered',
+  ACCOUNT_PENDING_VERIFICATION: 'Account Under Verification',
+  ACCOUNT_VERIFICATION_APPROVED: 'Account Approved',
+  ACCOUNT_VERIFICATION_REJECTED: 'Account Requires Info',
   QUOTE_SAVED: 'Quote Saved',
   QUOTE_DOWNLOADED: 'Quote Downloaded',
   FIRST_BOOKING_COMPLETED: 'First Booking',
   BOOKING_CONFIRMATION_SLA: 'Booking SLA'
+};
+
+const getDeduplicatedCanonicalTriggers = (): EmailCampaignConfig[] => {
+  const list = marketingAutomationScheduler.ensureCanonicalTriggers();
+  const seen = new Set<string>();
+  return list.filter(t => {
+    if (!t || !t.id || seen.has(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
 };
 
 export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
@@ -70,7 +83,7 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
 
   const [activeTab, setActiveTab] = useState<'TRIGGERS' | 'QUEUE' | 'LOGS'>(initialView);
   const [triggers, setTriggers] = useState<EmailCampaignConfig[]>(() =>
-    marketingAutomationScheduler.ensureCanonicalTriggers()
+    getDeduplicatedCanonicalTriggers()
   );
   const [scheduledJobs, setScheduledJobs] = useState<ScheduledAutomationJob[]>(() =>
     marketingAutomationScheduler.getScheduledJobs()
@@ -108,7 +121,7 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
   }, [initialView]);
 
   const refreshData = () => {
-    setTriggers(marketingAutomationScheduler.ensureCanonicalTriggers());
+    setTriggers(getDeduplicatedCanonicalTriggers());
     setScheduledJobs(marketingAutomationScheduler.getScheduledJobs());
     setExecutionLogs(marketingAutomationScheduler.getExecutionLogs());
   };
@@ -1355,16 +1368,17 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#DDE8E6]">
-                {filteredTriggers.map(trigger => {
+                {filteredTriggers.map((trigger, index) => {
                   const key: MarketingTriggerKey =
                     trigger.triggerKey || 'BOOKING_CONFIRMATION_SLA';
                   const st: TriggerStatus =
                     trigger.status || (trigger.isEnabled ? 'ACTIVE' : 'INACTIVE');
                   const timingLabel = marketingAutomationScheduler.formatTimingBadge(trigger);
+                  const rowKey = trigger.id ? `${trigger.id}-${index}` : `trigger-${key}-${index}`;
 
                   return (
                     <tr
-                      key={trigger.id}
+                      key={rowKey}
                       className="hover:bg-[#F8FAFA]/80 transition-colors"
                     >
                       <td className="py-4 px-5 max-w-sm">

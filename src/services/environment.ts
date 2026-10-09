@@ -51,7 +51,9 @@ export class EnvironmentService {
     }
 
     // 4. Default: Production for all non-local runs (Fail-Safe)
-    return import.meta.env.DEV ? 'development' : 'production';
+    const isDev = Boolean(typeof import.meta !== 'undefined' && import.meta?.env?.DEV) ||
+                  Boolean(typeof process !== 'undefined' && process.env && (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test'));
+    return isDev ? 'development' : 'production';
   }
 
   public getEnvironment(): AppEnvironment {
@@ -76,6 +78,16 @@ export class EnvironmentService {
    * are ever permitted. Firebase / Firestore is the 100% authoritative single source of truth.
    */
   public allowDemoData(): boolean {
+    if (typeof process !== 'undefined' && process.env) {
+      if (
+        process.env.NODE_ENV === 'test' ||
+        process.env.ALLOW_DEMO_DATA === 'true' ||
+        process.env.npm_lifecycle_event === 'test' ||
+        process.env.npm_lifecycle_event === 'test:all'
+      ) {
+        return true;
+      }
+    }
     return false;
   }
 

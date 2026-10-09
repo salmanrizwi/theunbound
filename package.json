@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server/main.ts --bundle --platform=node --format=cjs --external:vite --minify --outfile=dist/server.cjs && ([ -d /app/applet/node_modules ] && [ -w /app ] && rm -rf /app/node_modules && mv /app/applet/node_modules /app/node_modules || true)",
+    "build": "vite build && esbuild server/main.ts --bundle --platform=node --format=cjs --external:vite --minify --outfile=dist/server.cjs",
     "start": "node server.ts",
     "preview": "vite preview",
     "lint": "tsc --noEmit",

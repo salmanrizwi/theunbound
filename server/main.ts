@@ -53,11 +53,12 @@ export async function startServer() {
       const distPath = fs.existsSync(path.resolve(process.cwd(), "dist")) ? path.resolve(process.cwd(), "dist") : path.resolve(process.cwd(), "build");
       const indexPath = path.join(distPath, "index.html");
       const hasDistBuild = fs.existsSync(indexPath);
-      const isDev = process.execArgv.some((a) => a.includes("tsx")) || 
-                    process.argv.some((a) => a.includes("tsx")) || 
-                    process.env.npm_lifecycle_event === "dev" || 
-                    process.env.NODE_ENV === "development";
-      const isProduction = process.env.NODE_ENV === "production" || (!isDev && hasDistBuild);
+      const isCompiledBundle = typeof __filename !== "undefined" && (__filename.endsWith("server.cjs") || __filename.endsWith("server.js"));
+      const isDevScript = process.env.npm_lifecycle_event === "dev";
+      const isRunningWithTsx = process.execArgv.some((a) => a.includes("tsx")) || 
+                               process.argv.some((a) => a.includes("tsx"));
+      const isDev = !isCompiledBundle && (isRunningWithTsx || isDevScript || (!hasDistBuild && process.env.NODE_ENV !== "production"));
+      const isProduction = isCompiledBundle || process.env.NODE_ENV === "production" || !isDev;
 
       if (!isProduction) {
         const { createServer: createViteServer } = await import("vite");
@@ -131,23 +132,44 @@ export async function startServer() {
         });
       }
 
-      // In AI Studio / Cloud Run container architecture:
-      // Nginx reverse proxy listens on external Cloud Run PORT (8080)
-      // and forwards all web and API traffic to Node on port 3000 (proxy_pass http://localhost:3000).
-      // Node MUST listen on port 3000 (never 8080, which is bound by Nginx).
-      const PORT = (process.env.PORT && process.env.PORT !== "8080") ? parseInt(process.env.PORT, 10) : 3000;
+      // Resilient Dual-Port Binding Architecture:
+      // 1. Cloud Run sets process.env.PORT (typically 8080) and sends container health checks to it.
+      // 2. AI Studio local development & iframe proxy uses port 3000.
+      // We bind both ports so that whether Cloud Run or an Nginx reverse proxy routes traffic, the server responds.
+      const cloudRunPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
+      const devPort = 3000;
+      const portsToTry = Array.from(new Set([cloudRunPort, devPort]));
+      let activeListeners = 0;
+      let primaryServer: any = null;
 
-      const server = app.listen(PORT, "0.0.0.0", () => {
-        console.log(`Server running on port ${PORT}`);
-        resolve(server);
-      });
+      for (const p of portsToTry) {
+        try {
+          const s = app.listen(p, "0.0.0.0", () => {
+            console.log(`[SERVER] Ready and listening on port ${p}`);
+            activeListeners++;
+            if (!primaryServer) {
+              primaryServer = s;
+              resolve(primaryServer);
+            }
+          });
 
-      server.on('error', (err: any) => {
-        console.error(`[SERVER] Failed to listen on port ${PORT}:`, err);
-        serverPromise = null;
-        reject(err);
-        process.exit(1);
-      });
+          s.on('error', (err: any) => {
+            if (err.code === 'EADDRINUSE') {
+              console.log(`[SERVER] Port ${p} is in use (reverse proxy or parallel listener active).`);
+            } else {
+              console.warn(`[SERVER] Listener error on port ${p}:`, err);
+            }
+            if (activeListeners === 0 && p === portsToTry[portsToTry.length - 1]) {
+              console.error(`[SERVER] Fatal: No port could be bound.`);
+              serverPromise = null;
+              reject(err);
+              process.exit(1);
+            }
+          });
+        } catch (e) {
+          console.warn(`[SERVER] Failed to initiate listener on port ${p}:`, e);
+        }
+      }
     } catch (err) {
       serverPromise = null;
       reject(err);

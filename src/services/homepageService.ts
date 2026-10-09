@@ -432,6 +432,12 @@ export class HomepageService {
       }
     }
 
+    // Set authoritative standalone module counts
+    categories['Hotels'] = this.getActiveHotelCount();
+    categories['Rail'] = this.getActiveRailCount();
+    categories['Visa'] = this.getActiveVisaCount();
+    categories['Packages'] = this.getActivePackageCount();
+
     return categories;
   }
 
