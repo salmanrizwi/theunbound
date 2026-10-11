@@ -10,6 +10,8 @@ import {
 } from '../types';
 import { AppDatabase } from './db';
 import { matchesDestination, matchesHub } from './destinationRelevanceService';
+import { evaluateInventoryValidity } from './pricingEngine';
+import { InventoryValidityEvaluation } from '../types';
 
 export type ComputedEntityVisibilityStatus = 'LIVE' | 'COMING_SOON' | 'HIDDEN';
 
@@ -95,10 +97,26 @@ export class InventoryVisibilityService {
   }
 
   // ==========================================
-  // ACTIVE INVENTORY EVALUATION
+  // ACTIVE INVENTORY & VALIDITY EVALUATION
   // ==========================================
 
-  public getActiveProducts(): Product[] {
+  public evaluateEligibilityForDate(
+    entity: any,
+    serviceDate?: string,
+    serviceEndDate?: string
+  ): InventoryValidityEvaluation {
+    return evaluateInventoryValidity(entity, serviceDate, serviceEndDate);
+  }
+
+  public isInventoryValidForDate(
+    entity: any,
+    serviceDate?: string,
+    serviceEndDate?: string
+  ): boolean {
+    return evaluateInventoryValidity(entity, serviceDate, serviceEndDate).isValid;
+  }
+
+  public getActiveProducts(serviceDate?: string): Product[] {
     const deletedSet = this.db.getDeletedEntityIds();
     return this.db.getProducts().filter(p => {
       if (!p || !p.id) return false;
@@ -106,18 +124,20 @@ export class InventoryVisibilityService {
       if ((p as any).isDeleted === true || (p as any).status === 'DELETED') return false;
       // Active product statuses
       const status = (p.status || 'ACTIVE').toUpperCase();
-      return status === 'ACTIVE' || status === 'PUBLISHED' || status === 'LIVE';
+      if (!(status === 'ACTIVE' || status === 'PUBLISHED' || status === 'LIVE')) return false;
+      return this.isInventoryValidForDate(p, serviceDate);
     });
   }
 
-  public getActiveHotels(): Hotel[] {
+  public getActiveHotels(serviceDate?: string): Hotel[] {
     const deletedSet = this.db.getDeletedEntityIds();
     return this.db.getHotels().filter(h => {
       if (!h || !h.id) return false;
       if (deletedSet.has(h.id) || (h.code && deletedSet.has(h.code))) return false;
       if ((h as any).isDeleted === true || (h as any).status === 'DELETED') return false;
       const status = (h.status || 'ACTIVE').toUpperCase();
-      return status === 'ACTIVE' || status === 'PUBLISHED' || status === 'LIVE';
+      if (!(status === 'ACTIVE' || status === 'PUBLISHED' || status === 'LIVE')) return false;
+      return this.isInventoryValidForDate(h, serviceDate);
     });
   }
 
@@ -143,14 +163,15 @@ export class InventoryVisibilityService {
     });
   }
 
-  public getActiveVisas(): VisaProduct[] {
+  public getActiveVisas(serviceDate?: string): VisaProduct[] {
     const deletedSet = this.db.getDeletedEntityIds();
     return this.db.getVisas().filter(v => {
       if (!v || !v.id) return false;
       if (deletedSet.has(v.id)) return false;
       if ((v as any).isDeleted === true || (v as any).status === 'DELETED') return false;
       const status = (v.status || 'ACTIVE').toUpperCase();
-      return status !== 'INACTIVE' && status !== 'ARCHIVED';
+      if (!(status !== 'INACTIVE' && status !== 'ARCHIVED')) return false;
+      return this.isInventoryValidForDate(v, serviceDate);
     });
   }
 

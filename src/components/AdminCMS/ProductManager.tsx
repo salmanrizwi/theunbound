@@ -18,7 +18,8 @@ import {
 import { AppDatabase } from '../../services/db';
 import { MasterDataService } from '../../services/masterDataService';
 import { useAuth } from '../../context/AuthContext';
-import { formatCurrency, CAPACITY_BASED_CATEGORIES, calculateB2BAgentPrice } from '../../services/pricingEngine';
+import { formatCurrency, CAPACITY_BASED_CATEGORIES, calculateB2BAgentPrice, validateInventoryValidityAndSurcharges } from '../../services/pricingEngine';
+import { InventoryValidityAndSurchargesSection } from './common/InventoryValidityAndSurchargesSection';
 import { 
   Package, 
   Plus, 
@@ -129,6 +130,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   const [inspectingProduct, setInspectingProduct] = useState<Product | null>(null);
   const [isOperationalAssetsManagerOpen, setIsOperationalAssetsManagerOpen] = useState(false);
   const [operationalAssetsManagerTab, setOperationalAssetsManagerTab] = useState<'VEHICLES' | 'YACHTS' | 'FERRIES'>('VEHICLES');
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Form State: Starts 100% clean for new products (no fabricated pricing or operational presets)
   const createCleanProductFormData = (): Partial<Product> => ({
@@ -431,6 +433,23 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       validatedHub = hierarchy.hub;
     }
 
+    const effectiveValidFrom = (formData.validity?.validFrom ?? formData.validityFrom ?? '').trim();
+    const effectiveValidTo = (formData.validity?.validTo ?? formData.validityTo ?? '').trim();
+    const isSellable = (formData.status || 'ACTIVE') === 'ACTIVE';
+    setFormError(null);
+    const validityValidation = validateInventoryValidityAndSurcharges({
+      validity: { validFrom: effectiveValidFrom, validTo: effectiveValidTo },
+      validityFrom: effectiveValidFrom,
+      validityTo: effectiveValidTo,
+      surcharges: formData.surcharges || [],
+      requireValidity: isSellable,
+      nativeCurrency: (formData.currency as CurrencyCode) || (formData.nativeCurrency as CurrencyCode) || 'USD'
+    });
+    if (!validityValidation.isValid) {
+      setFormError(validityValidation.errors.join(' '));
+      return;
+    }
+
     const productToSave: Product = {
       ...(formData as Product),
       id: editingProduct ? editingProduct.id : `prod-${Date.now()}`,
@@ -501,8 +520,13 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       sellingPriceStartingFrom: computedSelling !== null ? computedSelling : 0,
       optionalUpgradeProductIds: formData.optionalUpgradeProductIds || [],
       season: (formData.season as any) || 'All Year',
-      validityFrom: formData.validityFrom || '2026-01-01',
-      validityTo: formData.validityTo || '2026-12-31',
+      validityFrom: effectiveValidFrom || '2026-01-01',
+      validityTo: effectiveValidTo || '2026-12-31',
+      validity: {
+        validFrom: effectiveValidFrom || '2026-01-01',
+        validTo: effectiveValidTo || '2026-12-31'
+      },
+      surcharges: formData.surcharges !== undefined ? formData.surcharges : (editingProduct?.surcharges || []),
       minPax: Number(formData.minPax) || 1,
       maxPax: maxSeats > 0 ? maxSeats : (Number(formData.maxPax) || 1),
       availability: (formData.availability as any) || 'INSTANT',
@@ -514,6 +538,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       meetingPoint: formData.meetingPoint || '',
       pickupInformation: formData.pickupInformation || '',
       images: formData.images && (formData.images || []).length > 0 ? formData.images : [],
+      heroImage: formData.images?.[0] || null,
+      imageUrl: formData.images?.[0] || null,
       location: `${formData.city || ''}, ${formData.country || ''}`.replace(/^,\s*|,\s*$/g, ''),
       latitude: formData.latitude || 35.6762,
       longitude: formData.longitude || 139.6503,
@@ -557,7 +583,13 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     const matchesMasterReg = selectedMasterRegion === 'ALL' || p.regionId === selectedMasterRegion;
     const matchesDest = selectedDestination === 'ALL' || p.destinationId === selectedDestination;
     const matchesHub = selectedCityHub === 'ALL' || p.hubId === selectedCityHub || (p.city || '').toLowerCase() === (selectedCityHub || '').toLowerCase();
-    const matchesCat = selectedCategory === 'ALL' || p.category === selectedCategory;
+    const matchesCat =
+      selectedCategory === 'ALL' ||
+      p.category === selectedCategory ||
+      (selectedCategory === 'Ferries' && (p.category === 'Ferry' || p.category === 'Ferries')) ||
+      (selectedCategory === 'Ferry' && (p.category === 'Ferry' || p.category === 'Ferries')) ||
+      (selectedCategory === 'Rail / Shinkansen' && (p.category === 'Rail' || p.category === 'Rail / Shinkansen')) ||
+      (selectedCategory === 'Rail' && (p.category === 'Rail' || p.category === 'Rail / Shinkansen'));
     const matchesStat = selectedStatus === 'ALL' || p.status === selectedStatus;
     return matchesSearch && matchesMasterReg && matchesDest && matchesHub && matchesCat && matchesStat;
   }).sort((a, b) => {
@@ -589,12 +621,16 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
         masterRegions={masterRegions}
         cityHubs={cityHubs}
         suppliers={suppliers}
-        onSave={(savedProduct) => {
-          db.saveProduct(savedProduct, user);
+        onSave={async (savedProduct) => {
+          const verified = await db.saveProductAsync(savedProduct, user);
+          setEditingProduct(verified);
+          refreshProducts();
+          return verified;
+        }}
+        onCancel={() => {
           refreshProducts();
           setIsModalOpen(false);
         }}
-        onCancel={() => setIsModalOpen(false)}
       />
     );
   }
@@ -768,7 +804,19 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                             <span>{(product.upsells?.length || product.addons?.length || 0)} Upsells</span>
                           </span>
                         )}
+                        {(product.surcharges && product.surcharges.filter(s => s.status === 'ACTIVE').length > 0) && (
+                          <span className="inline-flex items-center space-x-0.5 px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[9px] font-extrabold">
+                            <Tag className="w-2.5 h-2.5" />
+                            <span>{product.surcharges.filter(s => s.status === 'ACTIVE').length} Surcharge{product.surcharges.filter(s => s.status === 'ACTIVE').length > 1 ? 's' : ''}</span>
+                          </span>
+                        )}
                       </div>
+                      {(product.validity?.validFrom || product.validityFrom) && (
+                        <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
+                          <CalendarDays className="w-2.5 h-2.5 text-slate-400" />
+                          <span>Valid: {product.validity?.validFrom || product.validityFrom} – {product.validity?.validTo || product.validityTo}</span>
+                        </div>
+                      )}
                     </div>
                   </td>
                   <td className="py-3.5 px-4">
@@ -2447,9 +2495,48 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
               </div>
               </>
               )}
+
+              {/* Authoritative Validity Period & Repeatable Surcharges Section (All Product Categories) */}
+              <div className="pt-4 border-t border-slate-200">
+                <InventoryValidityAndSurchargesSection
+                  validFrom={formData.validity?.validFrom ?? formData.validityFrom ?? ''}
+                  validTo={formData.validity?.validTo ?? formData.validityTo ?? ''}
+                  surcharges={formData.surcharges || []}
+                  nativeCurrency={(formData.currency as CurrencyCode) || (formData.nativeCurrency as CurrencyCode) || 'USD'}
+                  defaultApplicationBasis={
+                    CAPACITY_BASED_CATEGORIES.includes(formData.category as any)
+                      ? 'PER_VEHICLE'
+                      : (formData.category as string) === 'Guides'
+                        ? 'PER_HOUR'
+                        : 'PER_PERSON'
+                  }
+                  categoryLabel={formData.category || 'Product'}
+                  requireValidity={(formData.status || 'ACTIVE') === 'ACTIVE'}
+                  onChangeValidity={({ validFrom, validTo, validity }) =>
+                    setFormData(prev => ({
+                      ...prev,
+                      validityFrom: validFrom,
+                      validityTo: validTo,
+                      validity
+                    }))
+                  }
+                  onChangeSurcharges={nextSurcharges =>
+                    setFormData(prev => ({
+                      ...prev,
+                      surcharges: nextSurcharges
+                    }))
+                  }
+                />
+              </div>
               </div>
 
               {/* Actions Footer */}
+              {formError && (
+                <div className="mx-6 mb-2 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-bold text-rose-700 flex items-center justify-between">
+                  <span>{formError}</span>
+                  <button type="button" onClick={() => setFormError(null)} className="text-rose-500 hover:text-rose-800 ml-2">✕</button>
+                </div>
+              )}
               <div className="flex flex-col sm:flex-row items-center justify-between p-4 sm:px-6 py-3 border-t border-slate-100 bg-white/95 backdrop-blur-xs shrink-0 gap-3">
                 <div className="w-full sm:w-auto">
                   {editingProduct && (

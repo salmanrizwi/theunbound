@@ -43,7 +43,7 @@ import {
 import { VisaProduct as B2BVisaProduct } from '../B2BAgentPortal/B2BVisaView';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
-import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, evaluateInventoryValidity, evaluateApplicableSurcharges } from '../../services/pricingEngine';
 import { AppDatabase } from '../../services/db';
 import { 
   createDefaultRequirementsForVisa, 
@@ -107,8 +107,13 @@ export const visaProductToProduct = (visa: VisaProduct): Product => {
     serviceFeeFixed: 0,
     sellingPriceStartingFrom: suggestedSelling,
     season: 'All Year',
-    validityFrom: '2026-01-01',
-    validityTo: '2027-12-31',
+    validityFrom: v.validity?.validFrom || v.validityFrom || '2026-01-01',
+    validityTo: v.validity?.validTo || v.validityTo || '2027-12-31',
+    validity: {
+      validFrom: v.validity?.validFrom || v.validityFrom || '2026-01-01',
+      validTo: v.validity?.validTo || v.validityTo || '2027-12-31'
+    },
+    surcharges: v.surcharges,
     minPax: 1,
     maxPax: 20,
     availability: 'INSTANT',
@@ -318,7 +323,23 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
   const baseRatePerApplicantUSD = suggestedSellingUSD;
   const hasValidPrice = baseRatePerApplicantUSD > 0;
   const totalRatePerApplicantUSD = baseRatePerApplicantUSD + extraAssistancePerApplicantUSD;
-  const partyTotalSellingUSD = (baseRatePerApplicantUSD * totalApplicants) + extraAssistanceTotalUSD;
+  const basePartyTotalSellingUSD = (baseRatePerApplicantUSD * totalApplicants) + extraAssistanceTotalUSD;
+
+  const validityCheck = evaluateInventoryValidity(selectedVisa, travelDate);
+  const surchargeEval = evaluateApplicableSurcharges({
+    surcharges: (selectedVisa as any).surcharges,
+    serviceDate: travelDate,
+    baseNativeAmount: basePartyTotalSellingUSD,
+    nativeCurrency: (selectedVisa.currency || 'USD') as CurrencyCode,
+    targetCurrency: 'USD',
+    adults: Math.max(1, adultApplicants),
+    children: childApplicants,
+    infants: infantApplicants,
+    quantity: 1,
+    defaultApplicationBasis: 'PER_PERSON'
+  });
+
+  const partyTotalSellingUSD = basePartyTotalSellingUSD + surchargeEval.totalSurchargeConverted;
 
   // Commercial Net calculations for Admin & Team Member
   const assistanceNetPerApplicantUSD = selectedAssistanceObjects.reduce((sum, a) => sum + (a.netCost || 0), 0);
@@ -349,6 +370,11 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
 
     if (!hasValidPrice) {
       setErrorMsg('Price unavailable for this service. Valid consular pricing must be established in master inventory.');
+      return;
+    }
+
+    if (validityCheck && !validityCheck.isValid) {
+      setErrorMsg(validityCheck.reason || 'Selected travel date is outside the visa validity period.');
       return;
     }
 

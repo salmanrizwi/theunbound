@@ -27,6 +27,7 @@ import { Destination, Hotel, Product, B2BPackage, Quotation, B2BCustomer, CityHu
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
 import { AppDatabase } from '../../services/db';
+import { canonicalImageService } from '../../services/imageService';
 import { hotelToProduct } from '../../utils/hotelHelpers';
 import { canUserAccessQuoteBuilder } from '../../services/permissionEngine';
 import { CheckCircle2, ArrowRight, X, Lock } from 'lucide-react';
@@ -93,9 +94,20 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
     }, 3500);
   };
 
+  const [portalTick, setPortalTick] = useState(0);
+
+  useEffect(() => {
+    const unsubDb = db.subscribe(() => setPortalTick(t => t + 1));
+    const unsubImg = canonicalImageService.subscribe(() => setPortalTick(t => t + 1));
+    return () => {
+      unsubDb();
+      unsubImg();
+    };
+  }, [db]);
+
   const cityHubs: CityHub[] = useMemo(() => {
     return db.getCityHubs() || [];
-  }, [db]);
+  }, [db, portalTick]);
 
   const [targetQuoteIdForBuilder, setTargetQuoteIdForBuilder] = useState<string | null>(null);
   const [targetQuoteVersionForBuilder, setTargetQuoteVersionForBuilder] = useState<number | undefined>(undefined);

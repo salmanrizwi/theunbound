@@ -1,8 +1,10 @@
-import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, AgentPricingResponse, Product, User, UserRole, HotelRate, B2BPackage, FXRateDetails, TieredPrice } from '../types';
+import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, AgentPricingResponse, Product, User, UserRole, HotelRate, B2BPackage, FXRateDetails, TieredPrice, InventoryValidity, InventorySurcharge, AppliedSurchargeDetail, SurchargeOverlapWarning, InventoryValidityEvaluation, SurchargeApplicationBasis } from '../types';
 import { currencyEngine, convertCurrency as engineConvert, formatCurrency as engineFormat, getExchangeRateInfo, BASELINE_USD_RATES } from './currencyEngine';
 import { AppDatabase } from './db';
 import { hotelToProduct } from '../utils/hotelHelpers';
 import { sanitizePricingResultForAgent } from '../utils/customerQuoteSanitizer';
+import { RailPricingEngine } from './railPricingEngine';
+import { resolveRailRateNettPrice } from '../types/rail';
 
 // Standardized exchange rate base: 1 USD
 export const EXCHANGE_RATES: Record<CurrencyCode, number> = {
@@ -20,6 +22,433 @@ export function formatCurrency(amount?: number | null, currency: CurrencyCode | 
     ? (currency.code || 'USD') 
     : (typeof currency === 'string' ? currency : 'USD');
   return currencyEngine.format(amount, safeCurrency, options);
+}
+
+// ============================================================================
+// AUTHORITATIVE VALIDITY PERIOD & REPEATABLE SURCHARGE ENGINE
+// ============================================================================
+
+export function isValidIsoDateString(dateStr?: string | null): boolean {
+  if (!dateStr || typeof dateStr !== 'string') return false;
+  const trimmed = dateStr.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return false;
+  const [y, m, d] = trimmed.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return (
+    !isNaN(dt.getTime()) &&
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === m - 1 &&
+    dt.getUTCDate() === d
+  );
+}
+
+export function resolveInventoryValidity(entity: any): InventoryValidity {
+  if (!entity) return { validFrom: '', validTo: '' };
+  const validFrom = (
+    entity.validity?.validFrom ||
+    entity.validityFrom ||
+    entity.effectiveFrom ||
+    ''
+  ).trim();
+  const validTo = (
+    entity.validity?.validTo ||
+    entity.validityTo ||
+    entity.effectiveTo ||
+    ''
+  ).trim();
+  return { validFrom, validTo };
+}
+
+export function evaluateInventoryValidity(
+  entity: any,
+  serviceDate?: string,
+  serviceEndDate?: string
+): InventoryValidityEvaluation {
+  if (!entity) {
+    return { isValid: false, reason: 'Inventory record not found.' };
+  }
+
+  const { validFrom, validTo } = resolveInventoryValidity(entity);
+
+  if (validFrom && !isValidIsoDateString(validFrom)) {
+    return { isValid: false, validFrom, validTo, reason: `Malformed Valid From date (${validFrom}).` };
+  }
+  if (validTo && !isValidIsoDateString(validTo)) {
+    return { isValid: false, validFrom, validTo, reason: `Malformed Valid To date (${validTo}).` };
+  }
+  if (validFrom && validTo && validTo < validFrom) {
+    return {
+      isValid: false,
+      validFrom,
+      validTo,
+      reason: `Valid To (${validTo}) must be on or after Valid From (${validFrom}).`
+    };
+  }
+
+  if (serviceDate && serviceDate.trim()) {
+    const cleanDate = serviceDate.trim();
+    if (!isValidIsoDateString(cleanDate)) {
+      return { isValid: false, validFrom, validTo, reason: `Invalid service date (${cleanDate}).` };
+    }
+    if (validFrom && cleanDate < validFrom) {
+      return {
+        isValid: false,
+        validFrom,
+        validTo,
+        reason: `Service date (${cleanDate}) is prior to inventory validity start (${validFrom}).`
+      };
+    }
+    if (validTo && cleanDate > validTo) {
+      return {
+        isValid: false,
+        validFrom,
+        validTo,
+        reason: `Service date (${cleanDate}) is after inventory validity end (${validTo}).`
+      };
+    }
+
+    if (serviceEndDate && serviceEndDate.trim()) {
+      const cleanEnd = serviceEndDate.trim();
+      if (isValidIsoDateString(cleanEnd) && validTo && cleanEnd > validTo) {
+        return {
+          isValid: false,
+          validFrom,
+          validTo,
+          reason: `Service end date (${cleanEnd}) exceeds inventory validity end (${validTo}).`
+        };
+      }
+    }
+  }
+
+  return {
+    isValid: true,
+    validFrom: validFrom || undefined,
+    validTo: validTo || undefined
+  };
+}
+
+export function detectSurchargeOverlaps(surcharges?: InventorySurcharge[]): SurchargeOverlapWarning[] {
+  if (!surcharges || !Array.isArray(surcharges) || surcharges.length < 2) return [];
+  const activeValid = surcharges.filter(
+    s =>
+      s &&
+      s.status === 'ACTIVE' &&
+      isValidIsoDateString(s.validFrom) &&
+      isValidIsoDateString(s.validTo) &&
+      s.validTo >= s.validFrom
+  );
+
+  const warnings: SurchargeOverlapWarning[] = [];
+  for (let i = 0; i < activeValid.length; i++) {
+    for (let j = i + 1; j < activeValid.length; j++) {
+      const a = activeValid[i];
+      const b = activeValid[j];
+      if (a.validFrom <= b.validTo && b.validFrom <= a.validTo) {
+        const overlapStart = a.validFrom > b.validFrom ? a.validFrom : b.validFrom;
+        const overlapEnd = a.validTo < b.validTo ? a.validTo : b.validTo;
+        warnings.push({
+          firstId: a.surchargeId,
+          firstName: a.name || 'Surcharge',
+          secondId: b.surchargeId,
+          secondName: b.name || 'Surcharge',
+          overlapStart,
+          overlapEnd,
+          message: `"${a.name || 'Unnamed'}" (${a.validFrom} – ${a.validTo}) overlaps with "${b.name || 'Unnamed'}" (${b.validFrom} – ${b.validTo}).`
+        });
+      }
+    }
+  }
+  return warnings;
+}
+
+export function validateInventoryValidityAndSurcharges(params: {
+  validity?: InventoryValidity;
+  validityFrom?: string;
+  validityTo?: string;
+  surcharges?: InventorySurcharge[];
+  requireValidity?: boolean;
+  nativeCurrency?: CurrencyCode | string;
+}): {
+  isValid: boolean;
+  errors: string[];
+  warnings: string[];
+  overlaps: SurchargeOverlapWarning[];
+} {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const validFrom = (params.validity?.validFrom ?? params.validityFrom ?? '').trim();
+  const validTo = (params.validity?.validTo ?? params.validityTo ?? '').trim();
+  const requireValidity = params.requireValidity !== false;
+
+  if (requireValidity) {
+    if (!validFrom) {
+      errors.push('Valid From date is required for sellable inventory.');
+    }
+    if (!validTo) {
+      errors.push('Valid To date is required for sellable inventory.');
+    }
+  }
+
+  if (validFrom && !isValidIsoDateString(validFrom)) {
+    errors.push(`Valid From ("${validFrom}") is not a valid calendar date (YYYY-MM-DD).`);
+  }
+  if (validTo && !isValidIsoDateString(validTo)) {
+    errors.push(`Valid To ("${validTo}") is not a valid calendar date (YYYY-MM-DD).`);
+  }
+  if (validFrom && validTo && isValidIsoDateString(validFrom) && isValidIsoDateString(validTo)) {
+    if (validTo < validFrom) {
+      errors.push('Valid To must be on or after Valid From.');
+    }
+  }
+
+  const surcharges = params.surcharges || [];
+  const seenIds = new Set<string>();
+
+  surcharges.forEach((s, idx) => {
+    const label = s.name?.trim() ? `Surcharge "${s.name.trim()}"` : `Surcharge #${idx + 1}`;
+    if (!s.surchargeId || !s.surchargeId.trim()) {
+      errors.push(`${label}: Missing stable surchargeId.`);
+    } else if (seenIds.has(s.surchargeId)) {
+      errors.push(`${label}: Duplicate surcharge ID (${s.surchargeId}).`);
+    } else {
+      seenIds.add(s.surchargeId);
+    }
+
+    if (!s.name || !s.name.trim()) {
+      errors.push(`${label}: Surcharge Name must not be blank.`);
+    }
+
+    if (!s.validFrom || !isValidIsoDateString(s.validFrom)) {
+      errors.push(`${label}: Valid From must be a valid date (YYYY-MM-DD).`);
+    }
+    if (!s.validTo || !isValidIsoDateString(s.validTo)) {
+      errors.push(`${label}: Valid To must be a valid date (YYYY-MM-DD).`);
+    }
+    if (
+      s.validFrom &&
+      s.validTo &&
+      isValidIsoDateString(s.validFrom) &&
+      isValidIsoDateString(s.validTo) &&
+      s.validTo < s.validFrom
+    ) {
+      errors.push(`${label}: Surcharge Valid To must be on or after Valid From.`);
+    }
+
+    if (s.type !== 'FIXED' && s.type !== 'PERCENTAGE') {
+      errors.push(`${label}: Surcharge Type must be FIXED or PERCENTAGE.`);
+    }
+
+    if (typeof s.value !== 'number' || isNaN(s.value) || !isFinite(s.value) || s.value < 0) {
+      errors.push(`${label}: Surcharge Value must be a valid non-negative number.`);
+    } else if (s.type === 'PERCENTAGE' && s.value > 500) {
+      errors.push(`${label}: Percentage surcharge value (${s.value}%) exceeds maximum allowed limit (500%).`);
+    }
+
+    if (s.type === 'FIXED') {
+      const curr = (s.currency || params.nativeCurrency || '').toString().trim();
+      if (!curr) {
+        errors.push(`${label}: Currency is required for fixed monetary surcharges.`);
+      }
+    }
+
+    if (!s.applicationBasis || !s.applicationBasis.trim()) {
+      errors.push(`${label}: Application Basis is required.`);
+    }
+  });
+
+  const overlaps = detectSurchargeOverlaps(surcharges);
+  overlaps.forEach(o => {
+    warnings.push(o.message);
+  });
+
+  return {
+    isValid: errors.length === 0,
+    errors,
+    warnings,
+    overlaps
+  };
+}
+
+export interface SurchargeEvaluationInput {
+  surcharges?: InventorySurcharge[];
+  serviceDate?: string;
+  serviceEndDate?: string;
+  nights?: number;
+  coverageDays?: number;
+  baseNativeAmount: number;
+  nativeCurrency: CurrencyCode;
+  targetCurrency: CurrencyCode;
+  adults: number;
+  children: number;
+  infants?: number;
+  roomsCount?: number;
+  vehiclesCount?: number;
+  hoursCount?: number;
+  devicesCount?: number;
+  quantity?: number;
+  defaultApplicationBasis?: SurchargeApplicationBasis;
+}
+
+export interface SurchargeEvaluationOutput {
+  appliedSurcharges: AppliedSurchargeDetail[];
+  totalSurchargeNative: number;
+  totalSurchargeConverted: number;
+  missingServiceDate: boolean;
+  validationMessage?: string;
+}
+
+function buildServiceDateList(startDate: string, count: number): string[] {
+  const safeCount = Math.max(1, Math.min(366, Math.floor(count || 1)));
+  if (safeCount === 1) return [startDate];
+  const [y, m, d] = startDate.split('-').map(Number);
+  const dates: string[] = [];
+  for (let i = 0; i < safeCount; i++) {
+    const dt = new Date(Date.UTC(y, m - 1, d + i));
+    dates.push(dt.toISOString().split('T')[0]);
+  }
+  return dates;
+}
+
+export function evaluateApplicableSurcharges(input: SurchargeEvaluationInput): SurchargeEvaluationOutput {
+  const list = input.surcharges || [];
+  const activeSurcharges = list.filter(s => s && s.status === 'ACTIVE');
+
+  if (activeSurcharges.length === 0) {
+    return {
+      appliedSurcharges: [],
+      totalSurchargeNative: 0,
+      totalSurchargeConverted: 0,
+      missingServiceDate: false
+    };
+  }
+
+  const rawDate = input.serviceDate?.trim();
+  if (!rawDate || !isValidIsoDateString(rawDate)) {
+    return {
+      appliedSurcharges: [],
+      totalSurchargeNative: 0,
+      totalSurchargeConverted: 0,
+      missingServiceDate: true,
+      validationMessage: 'A valid service/travel date is required to evaluate date-based surcharges.'
+    };
+  }
+
+  const spanDays =
+    input.nights && input.nights > 1
+      ? input.nights
+      : input.coverageDays && input.coverageDays > 1
+        ? input.coverageDays
+        : 1;
+
+  const serviceDates = buildServiceDateList(rawDate, spanDays);
+  const appliedIds = new Set<string>();
+  const appliedSurcharges: AppliedSurchargeDetail[] = [];
+
+  const adults = Math.max(1, input.adults || 1);
+  const children = Math.max(0, input.children || 0);
+  const chargeablePax = adults + children;
+  const qty = Math.max(1, input.quantity || 1);
+  const roomsCount = Math.max(1, input.roomsCount || 1);
+  const vehiclesCount = Math.max(1, input.vehiclesCount || qty);
+  const hoursCount = Math.max(1, input.hoursCount || 1);
+  const devicesCount = Math.max(1, input.devicesCount || adults);
+  const baseNative = Math.max(0, input.baseNativeAmount || 0);
+
+  for (const s of activeSurcharges) {
+    if (!s.surchargeId || appliedIds.has(s.surchargeId)) continue;
+    if (!isValidIsoDateString(s.validFrom) || !isValidIsoDateString(s.validTo)) continue;
+    if (s.validTo < s.validFrom) continue;
+    if (typeof s.value !== 'number' || isNaN(s.value) || s.value < 0) continue;
+
+    const eligibleDaysCount = serviceDates.filter(d => d >= s.validFrom && d <= s.validTo).length;
+    if (eligibleDaysCount === 0) continue;
+
+    appliedIds.add(s.surchargeId);
+
+    const basis = (s.applicationBasis || input.defaultApplicationBasis || 'PER_PERSON').toUpperCase();
+    let appliedAmountNative = 0;
+
+    if (s.type === 'PERCENTAGE') {
+      if (spanDays > 1 && (basis === 'PER_ROOM_NIGHT' || basis === 'PER_NIGHT' || basis === 'PER_DAY')) {
+        const eligibleBasePortion = baseNative * (eligibleDaysCount / spanDays);
+        appliedAmountNative = eligibleBasePortion * (s.value / 100);
+      } else {
+        appliedAmountNative = baseNative * (s.value / 100);
+      }
+    } else {
+      const surchargeCurrency = (s.currency || input.nativeCurrency || 'USD') as CurrencyCode;
+      const unitFixedInNative =
+        surchargeCurrency !== input.nativeCurrency
+          ? convertCurrency(s.value, surchargeCurrency, input.nativeCurrency)
+          : s.value;
+
+      switch (basis) {
+        case 'PER_PERSON':
+          appliedAmountNative = unitFixedInNative * chargeablePax * qty;
+          break;
+        case 'PER_ADULT':
+          appliedAmountNative = unitFixedInNative * adults * qty;
+          break;
+        case 'PER_ROOM_NIGHT':
+          appliedAmountNative = unitFixedInNative * roomsCount * eligibleDaysCount;
+          break;
+        case 'PER_NIGHT':
+          appliedAmountNative = unitFixedInNative * eligibleDaysCount * qty;
+          break;
+        case 'PER_DAY':
+          appliedAmountNative = unitFixedInNative * eligibleDaysCount * chargeablePax;
+          break;
+        case 'PER_VEHICLE':
+          appliedAmountNative = unitFixedInNative * vehiclesCount;
+          break;
+        case 'PER_HOUR':
+          appliedAmountNative = unitFixedInNative * hoursCount * qty;
+          break;
+        case 'PER_DEVICE':
+          appliedAmountNative = unitFixedInNative * devicesCount;
+          break;
+        case 'PER_SERVICE':
+        case 'PER_BOOKING':
+        default:
+          appliedAmountNative = unitFixedInNative * qty;
+          break;
+      }
+    }
+
+    appliedAmountNative = Math.round(appliedAmountNative * 100) / 100;
+    const appliedAmountConverted =
+      input.targetCurrency !== input.nativeCurrency
+        ? convertCurrency(appliedAmountNative, input.nativeCurrency, input.targetCurrency)
+        : appliedAmountNative;
+
+    appliedSurcharges.push({
+      surchargeId: s.surchargeId,
+      name: s.name,
+      validFrom: s.validFrom,
+      validTo: s.validTo,
+      type: s.type,
+      value: s.value,
+      currency: ((s.currency as CurrencyCode) || input.nativeCurrency),
+      applicationBasis: basis,
+      appliedAmountNative,
+      appliedAmountConverted: Math.round(appliedAmountConverted * 100) / 100,
+      eligibleDaysCount
+    });
+  }
+
+  const totalSurchargeNative =
+    Math.round(appliedSurcharges.reduce((sum, item) => sum + item.appliedAmountNative, 0) * 100) / 100;
+  const totalSurchargeConverted =
+    input.targetCurrency !== input.nativeCurrency
+      ? Math.round(convertCurrency(totalSurchargeNative, input.nativeCurrency, input.targetCurrency) * 100) / 100
+      : totalSurchargeNative;
+
+  return {
+    appliedSurcharges,
+    totalSurchargeNative,
+    totalSurchargeConverted,
+    missingServiceDate: false
+  };
 }
 
 // Product categories that use capacity-based vehicle/yacht calculation by default
@@ -485,6 +914,8 @@ export function calculateSellingPrice(
 }
 
 export interface DeliveredPriceInfo {
+  isPriceAvailable?: boolean;
+  priceUnavailableReason?: string;
   deliveredPrice: number; // In targetCurrency (converted from Base Currency)
   totalSellingPrice?: number;
   rawPriceInBaseCurrency: number;
@@ -573,6 +1004,90 @@ export function calculateDeliveredPriceForUser(
   const role: UserRole = user?.role || 'B2B_AGENT';
   const isAdmin = role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF';
   const userTier: 'BUYER' | 'B2B_AGENT' | 'ADMIN' = isAdmin ? 'ADMIN' : 'B2B_AGENT';
+
+  const isRail =
+    product.category === 'Rail' ||
+    product.productType === 'Rail' ||
+    product.id?.startsWith('RAIL-JP') ||
+    product.sku?.startsWith('JP-SHINKANSEN');
+
+  if (isRail) {
+    const db = AppDatabase.getInstance();
+    const canonicalProductId = (
+      product.id === 'RAIL-JP-GREEN-RESERVED' ||
+      product.sku?.includes('GRN') ||
+      product.name?.toLowerCase().includes('green car')
+    )
+      ? 'RAIL-JP-GREEN-RESERVED'
+      : 'RAIL-JP-ORD-RESERVED';
+
+    const storedRates = db.getRailRates();
+    const preferredRate =
+      storedRates.find(r =>
+        r.productId === canonicalProductId &&
+        r.active !== false &&
+        !r.needsAdminReview &&
+        (resolveRailRateNettPrice(r) ?? 0) > 0 &&
+        (r.passengerType?.toUpperCase() === 'ADULT' || r.passengerType?.toUpperCase() === 'ADT') &&
+        ((r.originStationId === 'JP-ST-TOKYO' && r.destinationStationId === 'JP-ST-KYOTO') ||
+         (r.originStationId === 'JP-ST-KYOTO' && r.destinationStationId === 'JP-ST-TOKYO'))
+      ) ||
+      storedRates.find(r =>
+        r.productId === canonicalProductId &&
+        r.active !== false &&
+        !r.needsAdminReview &&
+        (resolveRailRateNettPrice(r) ?? 0) > 0 &&
+        (r.passengerType?.toUpperCase() === 'ADULT' || r.passengerType?.toUpperCase() === 'ADT')
+      );
+
+    const originStationId = preferredRate?.originStationId || 'JP-ST-TOKYO';
+    const destinationStationId = preferredRate?.destinationStationId || 'JP-ST-KYOTO';
+    const serviceGroup = preferredRate?.serviceGroup || 'NOZOMI_MIZUHO';
+    const travelDate = new Date().toISOString().split('T')[0];
+
+    const railRes = RailPricingEngine.getInstance().calculatePrice({
+      originStationId,
+      destinationStationId,
+      productId: canonicalProductId,
+      serviceGroup,
+      travelDate,
+      adultsCount: 1,
+      childrenCount: 0,
+      userRole: role,
+      targetCurrency
+    });
+
+    if (railRes.isPriceAvailable === false) {
+      return {
+        isPriceAvailable: false,
+        priceUnavailableReason: railRes.priceUnavailableReason || 'Price unavailable — Admin configuration required',
+        deliveredPrice: 0,
+        totalSellingPrice: 0,
+        rawPriceInBaseCurrency: 0,
+        baseAdultNet: 0,
+        baseChildNet: 0,
+        baseInfantNet: 0,
+        appliedMarkupPercent: 0,
+        userTier,
+        isCustomMargin: false,
+        currency: targetCurrency
+      };
+    }
+
+    return {
+      isPriceAvailable: true,
+      deliveredPrice: railRes.finalSellingPriceTargetCurrency,
+      totalSellingPrice: railRes.finalSellingPriceTargetCurrency,
+      rawPriceInBaseCurrency: railRes.finalSellingPriceJPY,
+      baseAdultNet: railRes.adultPerPaxSupplierJPY,
+      baseChildNet: railRes.childPerPaxSupplierJPY,
+      baseInfantNet: 0,
+      appliedMarkupPercent: railRes.appliedMarkupPercent,
+      userTier,
+      isCustomMargin: false,
+      currency: targetCurrency
+    };
+  }
 
   let appliedMarkupPercent = product.b2bAgentMarkupPercent !== undefined 
     ? product.b2bAgentMarkupPercent 
@@ -685,7 +1200,11 @@ export function calculateProductPrice(
   const infants = Math.max(0, request.infants || 0);
   const totalPax = adults + children + infants;
   const quantity = Math.max(1, request.quantity || 1);
-  const travelDate = request.travelDate || new Date().toISOString().split('T')[0];
+  const explicitServiceDate = request.travelDate && request.travelDate.trim() ? request.travelDate.trim() : undefined;
+  const travelDate = explicitServiceDate || new Date().toISOString().split('T')[0];
+
+  // Authoritative Validity Evaluation
+  const validityCheck = evaluateInventoryValidity(product, explicitServiceDate);
 
   // 1. Authoritative Rate Sheet & Database Lookup
   // Check if database contains an active, valid rate for this product / travel date
@@ -696,8 +1215,8 @@ export function calculateProductPrice(
 
   let authoritativeRateId: string | undefined = (product as any).rateId;
   let authoritativeRateVersion: string | number | undefined = (product as any).version || 1;
-  let authoritativeRateFrom: string | undefined = product.validityFrom;
-  let authoritativeRateTo: string | undefined = product.validityTo;
+  let authoritativeRateFrom: string | undefined = product.validity?.validFrom || product.validityFrom;
+  let authoritativeRateTo: string | undefined = product.validity?.validTo || product.validityTo;
   let authoritativeSourceCollection: string = 'products';
   let rateMarkupBuyer: number | undefined = undefined;
   let rateMarkupAgent: number | undefined = undefined;
@@ -765,7 +1284,10 @@ export function calculateProductPrice(
   const isCapacity = isCapacityBasedProduct(product);
   const isFixedStayHotel = product.accommodationType === 'manual' || 
                           product.isManualHotel || 
-                          product.sku?.startsWith('MAN-HTL-');
+                          product.sku?.startsWith('MAN-HTL-') ||
+                          product.pricingMethod === 'fixed_stay' ||
+                          product.productType === 'Hotel & Resort' ||
+                          product.id?.startsWith('hotel-prod-');
 
   let rawTotalNetCostInNative = 0;
   let adultNetInNative = 0;
@@ -1081,6 +1603,41 @@ export function calculateProductPrice(
   const nativeDiscountAmount = nativeFinalSellingPrice * discountRate;
   nativeFinalSellingPrice -= nativeDiscountAmount;
 
+  const baseNativeSellingPriceBeforeSurcharges = nativeFinalSellingPrice;
+  const targetCurrency = request.targetCurrency || nativeCurrency;
+  const isConverted = targetCurrency !== nativeCurrency;
+
+  // Date-Based Surcharge Evaluation in Native Currency BEFORE FX Conversion
+  // Flow: Native Price -> Applicable Surcharge Evaluation -> Updated Price -> Currency Conversion
+  const defaultBasis: SurchargeApplicationBasis = isFixedStayHotel
+    ? 'PER_ROOM_NIGHT'
+    : isCapacity
+      ? 'PER_VEHICLE'
+      : ((product.category as string) === 'Guides' || (product.category as string) === 'Guide' || product.pricingMethod === 'hourly_based')
+        ? 'PER_HOUR'
+        : 'PER_PERSON';
+
+  const surchargeEvaluation = evaluateApplicableSurcharges({
+    surcharges: product.surcharges,
+    serviceDate: explicitServiceDate,
+    nights: (product as any).nights || (request as any).nights,
+    coverageDays: (request as any).coverageDays || (product as any).coverageDays,
+    baseNativeAmount: baseNativeSellingPriceBeforeSurcharges,
+    nativeCurrency,
+    targetCurrency,
+    adults,
+    children,
+    infants,
+    roomsCount: (product as any).roomsCount || (request as any).roomsCount || 1,
+    vehiclesCount: vehicleDetails?.vehiclesAllocated || quantity,
+    hoursCount: (request as any).serviceDurationHours || (request as any).hours || (product as any).minHours || 1,
+    devicesCount: (request as any).devicesCount || adults,
+    quantity,
+    defaultApplicationBasis: defaultBasis
+  });
+
+  nativeFinalSellingPrice = Math.round((baseNativeSellingPriceBeforeSurcharges + surchargeEvaluation.totalSurchargeNative) * 100) / 100;
+
   const commissionPercent = product.commissionPercent || 0;
   const commissionRate = commissionPercent / 100;
   const nativeCommissionAmount = nativeTotalNetCost * commissionRate;
@@ -1095,10 +1652,11 @@ export function calculateProductPrice(
   const nativeAgentProfitAmount = 0;
 
   // 2. CONVERT ONLY AT THE DELIVERED LEVEL (or convert itemized values using exact authoritative FX rate)
-  const targetCurrency = request.targetCurrency || nativeCurrency;
-  const isConverted = targetCurrency !== nativeCurrency;
   const fxDetails: FXRateDetails = currencyEngine.getRateInfo(nativeCurrency, targetCurrency);
 
+  const baseSellingPriceBeforeSurcharges = isConverted
+    ? currencyEngine.convert(baseNativeSellingPriceBeforeSurcharges, nativeCurrency, targetCurrency)
+    : baseNativeSellingPriceBeforeSurcharges;
   const finalTotalSellingPrice = isConverted ? currencyEngine.convert(nativeFinalSellingPrice, nativeCurrency, targetCurrency) : nativeFinalSellingPrice;
   const totalNetCost = isConverted ? currencyEngine.convert(nativeTotalNetCost, nativeCurrency, targetCurrency) : nativeTotalNetCost;
   const markupAmount = isConverted ? currencyEngine.convert(nativeMarkupAmount, nativeCurrency, targetCurrency) : nativeMarkupAmount;
@@ -1200,12 +1758,20 @@ export function calculateProductPrice(
     // Master Pricing Source of Truth & Audit Fields
     rateId: authoritativeRateId || (product as any).rateId || 'RTE-DEF-001',
     rateVersion: authoritativeRateVersion || 1,
-    rateEffectiveFrom: authoritativeRateFrom || product.validityFrom || '2026-01-01',
-    rateEffectiveTo: authoritativeRateTo || product.validityTo || '2026-12-31',
+    rateEffectiveFrom: authoritativeRateFrom || product.validity?.validFrom || product.validityFrom || '2026-01-01',
+    rateEffectiveTo: authoritativeRateTo || product.validity?.validTo || product.validityTo || '2026-12-31',
     isAuthoritative: true,
     sourceCollection: authoritativeSourceCollection,
     pricingRequestId: `PRQ-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-    calculatedAt: new Date().toISOString()
+    calculatedAt: new Date().toISOString(),
+
+    // Validity & Surcharge Evaluation Snapshot
+    validityCheck,
+    appliedSurcharges: surchargeEvaluation.appliedSurcharges,
+    surchargeTotalNative: surchargeEvaluation.totalSurchargeNative,
+    surchargeTotal: surchargeEvaluation.totalSurchargeConverted,
+    baseSellingPriceBeforeSurcharges,
+    surchargeValidationMessage: surchargeEvaluation.validationMessage
   };
 }
 

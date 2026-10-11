@@ -476,6 +476,9 @@ export interface Destination {
   region?: DestinationRegion | string;
   regions?: DestinationRegionItem[];
   heroImage: string;
+  imageUrl?: string;
+  primaryImageId?: string;
+  primaryImage?: CanonicalImageRef;
   heroImageAlt?: string;
   heroOverlayOpacity?: number; // 0.3 to 0.85
   heroEyebrow?: string; // e.g. "DMC PREMIER PORTFOLIO • JAPAN GROUND OPERATIONS"
@@ -873,6 +876,87 @@ export interface SelectedUpsellSnapshot {
   customLabel?: string;
 }
 
+export interface InventoryValidity {
+  validFrom: string;
+  validTo: string;
+}
+
+export type SurchargeApplicationBasis =
+  | 'PER_PERSON'
+  | 'PER_ADULT'
+  | 'PER_ROOM_NIGHT'
+  | 'PER_NIGHT'
+  | 'PER_VEHICLE'
+  | 'PER_SERVICE'
+  | 'PER_BOOKING'
+  | 'PER_HOUR'
+  | 'PER_DAY'
+  | 'PER_DEVICE'
+  | string;
+
+export interface InventorySurcharge {
+  surchargeId: string;
+  name: string;
+  validFrom: string;
+  validTo: string;
+  type: 'FIXED' | 'PERCENTAGE';
+  value: number;
+  currency?: CurrencyCode | string;
+  applicationBasis?: SurchargeApplicationBasis;
+  status: 'ACTIVE' | 'INACTIVE';
+  internalNotes?: string;
+}
+
+export interface AppliedSurchargeDetail {
+  surchargeId: string;
+  name: string;
+  validFrom: string;
+  validTo: string;
+  type: 'FIXED' | 'PERCENTAGE';
+  value: number;
+  currency: CurrencyCode;
+  applicationBasis: string;
+  appliedAmountNative: number;
+  appliedAmountConverted: number;
+  eligibleDaysCount?: number;
+}
+
+export interface SurchargeOverlapWarning {
+  firstId: string;
+  firstName: string;
+  secondId: string;
+  secondName: string;
+  overlapStart: string;
+  overlapEnd: string;
+  message: string;
+}
+
+export interface InventoryValidityEvaluation {
+  isValid: boolean;
+  validFrom?: string;
+  validTo?: string;
+  reason?: string;
+}
+
+export interface QuoteItemPricingSnapshot {
+  inventoryId: string;
+  inventoryName?: string;
+  selectedServiceDate: string;
+  selectedServiceEndDate?: string;
+  basePriceNative: number;
+  basePriceConverted: number;
+  nativeCurrency: CurrencyCode;
+  currency: CurrencyCode;
+  applicableSurchargeIds: string[];
+  appliedSurcharges: AppliedSurchargeDetail[];
+  surchargeTotalNative: number;
+  surchargeTotalConverted: number;
+  finalCalculatedPrice: number;
+  pricingRuleVersion: string | number;
+  pricingRequestId?: string;
+  capturedAt: string;
+}
+
 export interface Product {
   id: string;
   product_id?: string;
@@ -938,6 +1022,8 @@ export interface Product {
   season: 'High' | 'Low' | 'Shoulder' | 'All Year';
   validityFrom: string;
   validityTo: string;
+  validity?: InventoryValidity;
+  surcharges?: InventorySurcharge[];
   minPax: number;
   maxPax: number;
   availability: 'INSTANT' | 'ON_REQUEST' | 'LIMITED' | 'SOLD_OUT';
@@ -968,10 +1054,11 @@ export interface Product {
   minHours?: number;
   
   images?: string[];
-  heroImage?: string;
+  heroImage?: string | null;
   galleryImages?: string[];
-  primaryImageId?: string;
-  primaryImage?: CanonicalImageRef;
+  primaryImageId?: string | null;
+  primaryImage?: CanonicalImageRef | string | null;
+  imageUrl?: string | null;
   videoUrl?: string;
   location?: string;
   latitude?: number;
@@ -980,6 +1067,7 @@ export interface Product {
   reviewCount?: number;
   status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
   lastUpdated?: string;
+  updatedAt?: string;
   addons?: ProductAddon[];
   upsells?: ProductUpsell[]; // Authoritative Master Upsells / Optional Experience Upgrades (Section 16-22)
   
@@ -1428,6 +1516,14 @@ export interface PricingCalculationResult {
   pricingRequestId?: string;
   calculatedAt?: string;
 
+  // Validity & Date-Based Surcharge Evaluation
+  validityCheck?: InventoryValidityEvaluation;
+  appliedSurcharges?: AppliedSurchargeDetail[];
+  surchargeTotalNative?: number;
+  surchargeTotal?: number;
+  baseSellingPriceBeforeSurcharges?: number;
+  surchargeValidationMessage?: string;
+
   // Protected Internal Commercial Fields (CMS/Admin Only)
   internalNettCost?: number;
   internalMarkup?: number;
@@ -1508,6 +1604,11 @@ export interface AgentPricingResponse {
   rateEffectiveTo?: string;
   isAuthoritative?: boolean;
   calculatedAt?: string;
+  validityCheck?: InventoryValidityEvaluation;
+  appliedSurcharges?: AppliedSurchargeDetail[];
+  surchargeTotal?: number;
+  baseSellingPriceBeforeSurcharges?: number;
+  surchargeValidationMessage?: string;
 }
 
 export type QuoteItemSource = 'AI_PLANNER' | 'USER' | 'SYSTEM';
@@ -3725,8 +3826,7 @@ export type DynamicModulePresetId =
   | 'all_canonical' 
   | 'products_catalog' 
   | 'hotels_allotments' 
-  | 'visa_ancillaries' 
-  | 'japan_rail_dynamic';
+  | 'visa_ancillaries';
 
 export interface DynamicWorkbookInspectionReport {
   presetId: DynamicModulePresetId;
@@ -4055,6 +4155,8 @@ export interface HotelRate {
   currency: CurrencyCode;
   validityFrom: string;
   validityTo: string;
+  validity?: InventoryValidity;
+  surcharges?: InventorySurcharge[];
   isWeekendPeak?: boolean;
 }
 
@@ -4085,6 +4187,10 @@ export interface HotelRoomType {
   view: string;
   cancellationPolicy: string;
   rates: HotelRate[];
+  validity?: InventoryValidity;
+  validityFrom?: string;
+  validityTo?: string;
+  surcharges?: InventorySurcharge[];
   dailyRateOverrides?: Record<string, HotelDailyPriceOverride>;
 }
 
@@ -4138,6 +4244,10 @@ export interface Hotel {
   status: HotelPublishStatus;
   startingNetPrice: number;
   currency: CurrencyCode;
+  validityFrom?: string;
+  validityTo?: string;
+  validity?: InventoryValidity;
+  surcharges?: InventorySurcharge[];
   createdAt: string;
   updatedAt: string;
   slug?: string;
@@ -4163,6 +4273,9 @@ export interface CityHub {
   tagline: string;
   description: string;
   heroImage: string;
+  imageUrl?: string;
+  primaryImageId?: string;
+  primaryImage?: CanonicalImageRef;
   images: string[];
   productCount: number;
   hotelCount: number;
@@ -5782,6 +5895,10 @@ export interface TravelProtectionPlan {
   sellingPricePerTrip: number;
   currency: CurrencyCode;
   pricing?: CommercialPricingDetails;
+  validityFrom?: string;
+  validityTo?: string;
+  validity?: InventoryValidity;
+  surcharges?: InventorySurcharge[];
   status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
   terms: string;
   customerDescription: string;
@@ -5806,6 +5923,10 @@ export interface VipGroundService {
   pricingType: 'PER_PAX' | 'PER_VEHICLE' | 'FIXED';
   currency: CurrencyCode;
   pricing?: CommercialPricingDetails;
+  validityFrom?: string;
+  validityTo?: string;
+  validity?: InventoryValidity;
+  surcharges?: InventorySurcharge[];
   inclusions: string[];
   badge?: string;
   status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
@@ -5825,6 +5946,10 @@ export interface ConnectivityPlan {
   sellingPrice: number;
   currency: CurrencyCode;
   pricing?: CommercialPricingDetails;
+  validityFrom?: string;
+  validityTo?: string;
+  validity?: InventoryValidity;
+  surcharges?: InventorySurcharge[];
   status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
   inclusions: string[];
   displayOrder?: number;
@@ -5892,6 +6017,10 @@ export interface VisaProduct {
   currency: CurrencyCode;
   sellingPrice?: number;
   pricing?: CommercialPricingDetails;
+  validityFrom?: string;
+  validityTo?: string;
+  validity?: InventoryValidity;
+  surcharges?: InventorySurcharge[];
   description: string;
   documentsChecklist: string[];
   structuredRequirements?: StructuredVisaRequirement[];
@@ -5903,6 +6032,7 @@ export interface VisaProduct {
   downloadableForms?: { id: string; name: string; url: string; fileSize?: string }[];
   faqs?: { question: string; answer: string }[];
   heroImage?: string;
+  imageUrl?: string;
   primaryImageId?: string;
   primaryImage?: CanonicalImageRef;
   status: 'ACTIVE' | 'DRAFT' | 'ARCHIVED';

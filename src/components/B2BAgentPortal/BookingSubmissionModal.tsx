@@ -11,7 +11,7 @@ import {
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
-import { formatCurrency } from '../../services/pricingEngine';
+import { formatCurrency, evaluateInventoryValidity } from '../../services/pricingEngine';
 import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { 
   X, 
@@ -258,6 +258,17 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
       return false;
     }
 
+    // Authoritative Revalidation of Inventory Validity at Booking Submission
+    for (const item of items) {
+      const itemAny = item as any;
+      const serviceDate = item.travelDate || itemAny.hotelDetails?.checkInDate || earliestDate;
+      const validityEval = evaluateInventoryValidity(item.product, serviceDate);
+      if (!validityEval.isValid) {
+        setErrorMessage(`"${item.product.name}": ${validityEval.reason || 'Service date is outside the valid period.'}`);
+        return false;
+      }
+    }
+
     if (!leadTravelerName.trim()) {
       setErrorMessage('Please enter the Lead Traveler / Guest Name.');
       setCurrentStep(2);
@@ -342,8 +353,9 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
           currency,
           supplierStatus: 'WAITING_FOR_SUPPLIER',
           accommodationType: accommodationTypeVal,
-          supplierNotes
-        };
+          supplierNotes,
+          pricingSnapshot: item.pricing_snapshot || item.calculation
+        } as any;
       });
 
       // 2. Build Destination Name Summary

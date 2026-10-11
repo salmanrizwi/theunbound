@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { CurrencyCode, Product, QuoteItem, Quotation, TravelLead, B2BPackage, TripRouteHub, QuoteBuilderHandoffPayload, QuoteItemSource } from '../types';
-import { calculateProductPrice, calculateProductPriceForAgent } from '../services/pricingEngine';
+import { calculateProductPrice, calculateProductPriceForAgent, resolveInventoryValidity, evaluateInventoryValidity } from '../services/pricingEngine';
 import { sanitizeProductForAgent } from '../utils/customerQuoteSanitizer';
 import { AppDatabase } from '../services/db';
 import { campaignAnalytics } from '../services/campaignAnalyticsService';
@@ -230,6 +230,33 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return calculateProductPrice(prod, params);
   };
 
+  const buildCommercialPricingSnapshot = (
+    prod: Product,
+    calc: any,
+    serviceDate: string,
+    curr: CurrencyCode | string,
+    customSnapshot?: any
+  ) => {
+    const applied = calc?.appliedSurcharges || [];
+    const validity = resolveInventoryValidity(prod);
+    return {
+      ...(customSnapshot || {}),
+      ...calc,
+      inventoryId: prod.id,
+      selectedServiceDate: serviceDate,
+      basePriceSnapshot: calc?.baseSellingPriceBeforeSurcharges ?? calc?.finalTotalSellingPrice ?? 0,
+      applicableSurchargeIds: applied.map((s: any) => s.surchargeId),
+      appliedSurcharges: applied,
+      surchargeTotal: calc?.surchargeTotal ?? 0,
+      currency: curr,
+      finalCalculatedPrice: calc?.finalTotalSellingPrice ?? calc?.sellingPriceFinal ?? 0,
+      pricingRuleVersion: calc?.rateVersion || 'v2.1-validity-surcharge',
+      pricingAuditReference: calc?.pricingRequestId || calc?.rateId || `AUD-${Date.now()}`,
+      validitySnapshot: (validity.validFrom || validity.validTo) ? validity : undefined,
+      capturedAt: new Date().toISOString()
+    };
+  };
+
   const [savedQuotes, setSavedQuotes] = useState<Quotation[]>(() => {
     const db = AppDatabase.getInstance();
     return db.getQuotesForUser(user);
@@ -248,10 +275,13 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [user]);
 
-  // Recalculate all items whenever currency or user pricingTier changes
+  // Recalculate all items whenever currency or user pricingTier changes (preserve locked/issued snapshots if currency unchanged)
   useEffect(() => {
     setItems(prevItems =>
       prevItems.map(item => {
+        if (isLocked && item.calculation && item.calculation.currency === currency) {
+          return item;
+        }
         const calculation = calculateItemPrice(item.product, {
           productId: item.product.id,
           pricingTier,
@@ -268,7 +298,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         };
       })
     );
-  }, [currency, pricingTier, isAgent]);
+  }, [currency, pricingTier, isAgent, isLocked]);
 
   const addProductToQuote = (
     product: Product,
@@ -332,7 +362,13 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       service_type: options?.service_type || (effectiveProduct as any).service_type,
       configuration_id: options?.configuration_id,
       configuration_snapshot: options?.configuration_snapshot,
-      pricing_snapshot: options?.pricing_snapshot || calculation,
+      pricing_snapshot: buildCommercialPricingSnapshot(
+        effectiveProduct,
+        calculation,
+        travelDate,
+        options?.currency_snapshot || currency,
+        options?.pricing_snapshot
+      ),
       currency_snapshot: options?.currency_snapshot || currency,
       visaSnapshot: options?.visaSnapshot,
       metadata: {
@@ -530,7 +566,13 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           service_type: options.service_type || item.service_type || (effectiveProduct as any).service_type,
           configuration_id: options.configuration_id || item.configuration_id,
           configuration_snapshot: options.configuration_snapshot || item.configuration_snapshot,
-          pricing_snapshot: options.pricing_snapshot || calculation,
+          pricing_snapshot: buildCommercialPricingSnapshot(
+            effectiveProduct,
+            calculation,
+            travelDate,
+            options.currency_snapshot || item.currency_snapshot || currency,
+            options.pricing_snapshot
+          ),
           currency_snapshot: options.currency_snapshot || item.currency_snapshot || currency,
           visaSnapshot: options.visaSnapshot || item.visaSnapshot,
           metadata: {

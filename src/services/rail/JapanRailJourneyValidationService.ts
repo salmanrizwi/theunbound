@@ -93,6 +93,11 @@ export class JapanRailJourneyValidationService {
       }
     }
 
+    // 8. Strict Pricing Authority Check
+    if (segment.pricing && segment.pricing.isPriceAvailable === false) {
+      errors.push(segment.pricing.priceUnavailableReason || 'Price unavailable — Admin configuration required');
+    }
+
     return {
       errors,
       warnings,

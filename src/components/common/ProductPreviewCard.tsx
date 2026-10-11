@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { MapPin, Clock, Users, Car, Ship, Anchor, Ticket, Languages, Utensils, Compass } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { MapPin, Clock, Users, Car, Ship, Anchor, Ticket, Languages, Utensils, Compass, Calendar, Tag } from 'lucide-react';
 import { CurrencyCode, ProductCategory } from '../../types';
 import { canonicalImageService } from '../../services/imageService';
 
@@ -18,6 +18,9 @@ interface ProductPreviewCardProps {
   routeText?: string;
   languageText?: string;
   mealsText?: string;
+  validFrom?: string;
+  validTo?: string;
+  activeSurchargeCount?: number;
   className?: string;
 }
 
@@ -36,9 +39,16 @@ export const ProductPreviewCard: React.FC<ProductPreviewCardProps> = ({
   routeText,
   languageText,
   mealsText,
+  validFrom,
+  validTo,
+  activeSurchargeCount = 0,
   className = ''
 }) => {
   const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [imageUrl]);
 
   const getCategoryIcon = (cat: ProductCategory) => {
     switch (cat) {
@@ -63,24 +73,36 @@ export const ProductPreviewCard: React.FC<ProductPreviewCardProps> = ({
     }
   };
 
-  const resolved = canonicalImageService.resolveImageUrl(imageUrl, cityName);
-  const defaultImage = 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=800';
+  const validation = canonicalImageService.validateUserSuppliedImageUrl(imageUrl);
+  const cleanPreviewUrl = validation.isValid && !validation.isEmpty ? validation.cleanUrl : '';
 
   return (
     <div className={`bg-white text-slate-800 rounded-2xl overflow-hidden shadow-xs border border-slate-200/90 ${className}`}>
       <div className="h-44 bg-slate-100 relative">
-        {!imgError && (resolved || defaultImage) ? (
+        {cleanPreviewUrl && !imgError ? (
           <img
-            src={resolved || defaultImage}
+            src={cleanPreviewUrl}
             alt={name || 'Product Preview'}
+            onLoad={() => setImgError(false)}
             onError={() => setImgError(true)}
             referrerPolicy="no-referrer"
             className="w-full h-full object-cover transition-opacity duration-200"
           />
+        ) : !validation.isValid ? (
+          <div className="w-full h-full bg-rose-50 flex flex-col items-center justify-center p-4 text-center border-b border-rose-200">
+            <span className="text-xs font-black text-rose-700">Invalid Image URL</span>
+            <span className="text-[10px] font-medium text-rose-600 mt-1 line-clamp-2">{validation.error}</span>
+          </div>
+        ) : imgError ? (
+          <div className="w-full h-full bg-rose-50 flex flex-col items-center justify-center p-4 text-center border-b border-rose-200">
+            <span className="text-xs font-black text-rose-700">Image Failed to Load</span>
+            <span className="text-[10px] font-medium text-rose-600 mt-1">Verify that the image URL is publicly accessible.</span>
+          </div>
         ) : (
           <div className="w-full h-full bg-slate-50 flex flex-col items-center justify-center p-4 text-center">
             {getCategoryIcon(category)}
-            <span className="text-xs font-bold text-slate-500 mt-2">{name || 'Product Image'}</span>
+            <span className="text-xs font-bold text-slate-500 mt-2">{name || 'Product Preview'}</span>
+            <span className="text-[10px] text-slate-400 mt-0.5">No custom image configured</span>
           </div>
         )}
 
@@ -116,7 +138,7 @@ export const ProductPreviewCard: React.FC<ProductPreviewCardProps> = ({
           </span>
         </div>
 
-        {/* Category-Specific Preview Badges */}
+        {/* Category-Specific & Validity/Surcharge Preview Badges */}
         <div className="space-y-1 text-[11px]">
           {routeText && (
             <div className="text-[#008972] font-semibold truncate">
@@ -131,6 +153,18 @@ export const ProductPreviewCard: React.FC<ProductPreviewCardProps> = ({
           {mealsText && (
             <div className="text-amber-700 truncate">
               Regime: <strong>{mealsText}</strong>
+            </div>
+          )}
+          {(validFrom || validTo) && (
+            <div className="flex items-center gap-1 text-slate-600 font-medium truncate">
+              <Calendar className="w-3 h-3 text-[#008972] shrink-0" />
+              <span>Valid: <strong className="font-mono">{validFrom || '—'}</strong> to <strong className="font-mono">{validTo || '—'}</strong></span>
+            </div>
+          )}
+          {activeSurchargeCount > 0 && (
+            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold mr-1">
+              <Tag className="w-2.5 h-2.5" />
+              <span>{activeSurchargeCount} Active Surcharge{activeSurchargeCount > 1 ? 's' : ''}</span>
             </div>
           )}
           {upsellCount > 0 && (

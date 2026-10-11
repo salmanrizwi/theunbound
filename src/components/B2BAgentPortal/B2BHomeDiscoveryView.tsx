@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Search, 
   MapPin, 
@@ -78,6 +78,16 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
   const { user } = useAuth();
   const { items, addProductToQuote, removeProductFromQuote, currency } = useQuotation();
   const db = AppDatabase.getInstance();
+  const [, setImageTick] = useState(0);
+
+  useEffect(() => {
+    const unsubDb = db.subscribe(() => setImageTick(t => t + 1));
+    const unsubImg = canonicalImageService.subscribe(() => setImageTick(t => t + 1));
+    return () => {
+      unsubDb();
+      unsubImg();
+    };
+  }, [db]);
 
   // Contextual Hierarchy Navigation State
   const [selectedDestinationContext, setSelectedDestinationContext] = useState<Destination | null>(null);
@@ -319,8 +329,13 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
         serviceFeeFixed: 0,
         sellingPriceStartingFrom: rateUSD * 1.2,
         season: 'All Year',
-        validityFrom: '2025-01-01',
-        validityTo: '2026-12-31',
+        validityFrom: hotel.validity?.validFrom || hotel.validityFrom || '2026-01-01',
+        validityTo: hotel.validity?.validTo || hotel.validityTo || '2026-12-31',
+        validity: hotel.validity || {
+          validFrom: hotel.validityFrom || '2026-01-01',
+          validTo: hotel.validityTo || '2026-12-31'
+        },
+        surcharges: hotel.surcharges || [],
         minPax: 1,
         maxPax: 4,
         availability: 'INSTANT',
@@ -329,8 +344,8 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
         inclusions: ['Daily Gourmet Breakfast', 'Complimentary High-Speed WiFi', 'Access to Health Club & Onsen'],
         exclusions: ['City Stay Taxes (payable on departure)', 'Personal Incidental Expenses'],
         importantInformation: ['Valid Passport Required at Check-in', 'Standard Check-in 15:00'],
-        heroImage: hotel.heroImage || 'https://images.unsplash.com/photo-1566073771259-6a8506099945?q=80&w=800&auto=format&fit=crop',
-        galleryImages: hotel.galleryImages || [hotel.heroImage || 'https://images.unsplash.com/photo-1566073771259-6a8506099945?q=80&w=800&auto=format&fit=crop']
+        heroImage: canonicalImageService.resolveHotelImage(hotel),
+        galleryImages: canonicalImageService.resolveHotelGallery(hotel)
       };
       addProductToQuote(hotelProd, { adults: 2, children: 0, infants: 0 });
       if (onItemAddedToQuote) onItemAddedToQuote(hotel.name);

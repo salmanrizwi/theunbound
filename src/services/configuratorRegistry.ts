@@ -993,23 +993,56 @@ export function buildMasterProductConfiguration(
  */
 export function ensureMasterProductConfiguration(product: Product, user?: any): Product {
   const authoritativeCat = resolveAuthoritativeCategory(product);
+  const preservedCategory =
+    product.category === 'Ferry' || product.category === 'Rail'
+      ? product.category
+      : (authoritativeCat as any);
   
+  const syncedValidity = product.validity || {
+    validFrom: product.validityFrom || '',
+    validTo: product.validityTo || ''
+  };
+  const syncedSurcharges = Array.isArray(product.surcharges) ? product.surcharges : [];
+
   if (!product.configuration || product.configuration.product_category !== authoritativeCat) {
     const masterConfig = buildMasterProductConfiguration(
       authoritativeCat,
       product,
-      product.configuration?.configuration_data || product.metadata?.configuration_payload || {},
+      {
+        ...(product.configuration?.configuration_data || product.metadata?.configuration_payload || {}),
+        validity: syncedValidity,
+        surcharges: syncedSurcharges
+      },
       user,
       product.configuration
     );
     return {
       ...product,
-      category: authoritativeCat as any,
+      category: preservedCategory,
+      validity: syncedValidity,
+      validityFrom: syncedValidity.validFrom,
+      validityTo: syncedValidity.validTo,
+      surcharges: syncedSurcharges,
       configuration: masterConfig
     };
   }
 
-  return product;
+  return {
+    ...product,
+    category: preservedCategory,
+    validity: syncedValidity,
+    validityFrom: syncedValidity.validFrom,
+    validityTo: syncedValidity.validTo,
+    surcharges: syncedSurcharges,
+    configuration: {
+      ...product.configuration,
+      configuration_data: {
+        ...(product.configuration.configuration_data || {}),
+        validity: syncedValidity,
+        surcharges: syncedSurcharges
+      }
+    }
+  };
 }
 
 /**
@@ -1283,7 +1316,7 @@ export const CATEGORY_FIELD_REGISTRY: Record<ProductCategoryEnum, CategoryFieldR
     pricingModel: 'journey_graph',
     masterFields: ['routeId', 'originStationId', 'destinationStationId', 'rates', 'carClasses', 'status'],
     configurableFields: ['travelDate', 'originStation', 'destinationStation', 'carClass', 'trainName', 'passengers'],
-    pricingFields: ['baseFare', 'superExpressFare', 'currency', 'markupPercent'],
+    pricingFields: ['nettPrice', 'currency', 'markupPercent'],
     systemFields: ['id', 'route_code'],
     prohibitedFields: ['arbitrary_non_station_stops'],
     fieldDefinitions: [
@@ -1298,7 +1331,7 @@ export const CATEGORY_FIELD_REGISTRY: Record<ProductCategoryEnum, CategoryFieldR
     pricingModel: 'journey_graph',
     masterFields: ['routeId', 'originStationId', 'destinationStationId', 'rates', 'carClasses', 'status'],
     configurableFields: ['travelDate', 'originStation', 'destinationStation', 'carClass', 'trainName', 'passengers'],
-    pricingFields: ['baseFare', 'superExpressFare', 'currency', 'markupPercent'],
+    pricingFields: ['nettPrice', 'currency', 'markupPercent'],
     systemFields: ['id', 'route_code'],
     prohibitedFields: ['arbitrary_non_station_stops'],
     fieldDefinitions: [

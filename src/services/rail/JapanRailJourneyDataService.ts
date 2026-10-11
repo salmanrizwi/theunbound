@@ -23,14 +23,23 @@ export class JapanRailJourneyDataService {
 
   public getAllStations(): RailStation[] {
     const list = AppDatabase.getInstance().getRailStations();
-    return (list.length > 0 ? list : INITIAL_RAIL_STATIONS).filter(s => s.active);
+    return list.filter(s => s.active !== false);
   }
 
   public getStation(stationId: string): RailStation | undefined {
+    if (!stationId) return undefined;
     const list = AppDatabase.getInstance().getRailStations();
-    const found = list.find(s => s.stationId === stationId);
-    if (found) return found;
-    return getStationById(stationId);
+    const clean = stationId.trim().toLowerCase();
+    const stripped = clean.replace(/^stn-/, '').replace(/^jp-st-/, '');
+    return list.find(s =>
+      s.stationId === stationId ||
+      s.stationCode === stationId ||
+      s.stationId.toLowerCase() === clean ||
+      s.stationCode.toLowerCase() === clean ||
+      s.stationId.toLowerCase() === `jp-st-${stripped}` ||
+      (stripped === 'osaka' && s.stationId === 'JP-ST-SHIN-OSAKA') ||
+      s.stationName.toLowerCase() === stripped
+    );
   }
 
   public getStationRef(stationId: string): JapanRailStationRef {
@@ -59,17 +68,16 @@ export class JapanRailJourneyDataService {
 
   public getAllRoutes(): RailRoute[] {
     const list = AppDatabase.getInstance().getRailRoutes();
-    return (list.length > 0 ? list : INITIAL_RAIL_ROUTES).filter(r => r.active);
+    return list.filter(r => r.active !== false);
   }
 
   public getRoute(originId: string, destinationId: string): RailRoute | undefined {
     const list = AppDatabase.getInstance().getRailRoutes();
-    const found = list.find(r => 
-      (r.originStationId === originId && r.destinationStationId === destinationId) ||
-      (r.originStationId === destinationId && r.destinationStationId === originId)
+    return list.find(r => 
+      ((r.originStationId === originId && r.destinationStationId === destinationId) ||
+       (r.originStationId === destinationId && r.destinationStationId === originId)) &&
+      r.active !== false
     );
-    if (found) return found;
-    return findRoute(originId, destinationId);
   }
 
   public getMasterRailProducts(): Product[] {
@@ -118,11 +126,10 @@ export class JapanRailJourneyDataService {
 
   public getRatesForRoute(originId: string, destinationId: string): RailRate[] {
     const rates = AppDatabase.getInstance().getRailRates();
-    const source = rates.length > 0 ? rates : INITIAL_RAIL_RATES;
-    return source.filter(r => 
+    return rates.filter(r => 
       ((r.originStationId === originId && r.destinationStationId === destinationId) ||
        (r.originStationId === destinationId && r.destinationStationId === originId)) &&
-      r.active
+      r.active !== false
     );
   }
 }

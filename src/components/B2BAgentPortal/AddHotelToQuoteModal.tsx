@@ -177,6 +177,10 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
       setErrorMsg('Please select a room category.');
       return;
     }
+    if (stayCalculation?.validityCheck && !stayCalculation.validityCheck.isValid) {
+      setErrorMsg(stayCalculation.validityCheck.reason || 'Selected stay dates are outside the hotel validity period.');
+      return;
+    }
 
     // Convert to standard Product representation
     const hotelProduct = hotelToProduct(

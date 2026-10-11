@@ -6,7 +6,8 @@ import {
   RailRate, 
   RailServiceGroup, 
   RailSeasonType, 
-  RailBookingItemDetails 
+  RailBookingItemDetails,
+  resolveRailRateNettPrice
 } from '../types/rail';
 import { CurrencyCode, Product } from '../types';
 import { INITIAL_RAIL_STATIONS, getStationById } from '../data/initialRailStations';
@@ -15,6 +16,7 @@ import { INITIAL_RAIL_RATES, findExactRate } from '../data/initialRailRates';
 import { RAIL_SEASON_ADJUSTMENTS, resolveRailSeasonForDate } from '../data/initialRailSeasons';
 import { INITIAL_RAIL_MARKUP_RULE } from '../data/initialRailMarkup';
 import { convertCurrency } from './currencyEngine';
+import { evaluateInventoryValidity, evaluateApplicableSurcharges } from './pricingEngine';
 import { INITIAL_PRODUCTS } from '../data/initialProducts';
 import { AppDatabase } from './db';
 
@@ -48,122 +50,194 @@ export class RailPricingEngine {
       targetCurrency = 'JPY'
     } = params;
 
-    // 1. Resolve Stations
+    // 1. Resolve Stations strictly from authoritative database
     const db = AppDatabase.getInstance();
     const storedStations = db.getRailStations();
-    const originStation = storedStations.find(s => s.stationId === originStationId) || getStationById(originStationId) || storedStations[0] || INITIAL_RAIL_STATIONS[0];
-    const destinationStation = storedStations.find(s => s.stationId === destinationStationId) || getStationById(destinationStationId) || storedStations[15] || INITIAL_RAIL_STATIONS[15];
-
-    // 2. Resolve or dynamically estimate route
-    const storedRoutes = db.getRailRoutes();
-    let route = storedRoutes.find(r => 
-      (r.originStationId === originStation.stationId && r.destinationStationId === destinationStation.stationId) ||
-      (r.originStationId === destinationStation.stationId && r.destinationStationId === originStation.stationId)
-    ) || findRoute(originStation.stationId, destinationStation.stationId);
-
-    if (!route) {
-      // Create fallback dynamic route entity
-      const estimatedDistance = this.calculateHaversineDistance(
-        originStation.latitude,
-        originStation.longitude,
-        destinationStation.latitude,
-        destinationStation.longitude
+    const resolveStation = (id: string): RailStation | undefined => {
+      if (!id) return undefined;
+      const clean = id.trim().toLowerCase();
+      const stripped = clean.replace(/^stn-/, '').replace(/^jp-st-/, '');
+      return storedStations.find(s =>
+        s.stationId === id ||
+        s.stationCode === id ||
+        s.stationId.toLowerCase() === clean ||
+        s.stationCode.toLowerCase() === clean ||
+        s.stationId.toLowerCase() === `jp-st-${stripped}` ||
+        (stripped === 'osaka' && s.stationId === 'JP-ST-SHIN-OSAKA') ||
+        s.stationName.toLowerCase() === stripped
       );
-      route = {
-        routeId: `JP-RT-${originStation.stationCode}-${destinationStation.stationCode}`,
-        originStationId: originStation.stationId,
-        destinationStationId: destinationStation.stationId,
-        originStationName: originStation.stationName,
-        destinationStationName: destinationStation.stationName,
-        country: 'Japan',
-        destinationId: 'dest-japan',
-        railOperator: 'JR Central / JR West / smartEX',
-        active: true,
-        availableProductIds: ['RAIL-JP-ORD-RESERVED', 'RAIL-JP-GREEN-RESERVED'],
-        availableServiceGroups: ['NOZOMI_MIZUHO', 'HIKARI_KODAMA_SAKURA_TSUBAME'],
-        distanceKm: Math.round(estimatedDistance * 1.25),
-        travelDurationMinutes: {
-          nozomiMizuho: Math.round(estimatedDistance * 0.35),
-          hikariKodamaSakura: Math.round(estimatedDistance * 0.45)
-        }
-      };
+    };
+    const originStation = resolveStation(originStationId);
+    const destinationStation = resolveStation(destinationStationId);
+
+    if (!originStation || !destinationStation || originStation.active === false || destinationStation.active === false) {
+      return this.buildUnavailablePriceResult({
+        originStation,
+        destinationStation,
+        serviceGroup,
+        travelDate,
+        departureTime,
+        adultsCount,
+        childrenCount,
+        seatPreference,
+        targetCurrency,
+        reason: 'Price unavailable — Admin configuration required'
+      });
     }
 
-    // 3. Resolve Product
+    // 2. Resolve route strictly from authoritative database
+    const storedRoutes = db.getRailRoutes();
+    const route = storedRoutes.find(r => 
+      ((r.originStationId === originStation.stationId && r.destinationStationId === destinationStation.stationId) ||
+       (r.originStationId === destinationStation.stationId && r.destinationStationId === originStation.stationId)) &&
+      r.active !== false
+    );
+
+    if (!route || route.active === false) {
+      return this.buildUnavailablePriceResult({
+        originStation,
+        destinationStation,
+        serviceGroup,
+        travelDate,
+        departureTime,
+        adultsCount,
+        childrenCount,
+        seatPreference,
+        targetCurrency,
+        reason: 'Price unavailable — Admin configuration required'
+      });
+    }
+
+    // 3. Resolve Product & Commercial Master Product
     const isGreenCar = productId === 'RAIL-JP-GREEN-RESERVED';
-    const product = db.getProductById(productId) || INITIAL_PRODUCTS.find(p => p.id === productId) || INITIAL_PRODUCTS[0];
+    const product = db.getProductById(productId) || INITIAL_PRODUCTS.find(p => p.id === productId);
+    const commercialPass = db.getJapanRailCommercialProductById?.(productId) ||
+      db.getJapanRailCommercialProducts?.()?.find((cp: any) => cp.id === productId || cp.sku === productId || cp.productCode === productId);
+
+    if (
+      !product ||
+      (product.status as string) === 'INACTIVE' ||
+      (product.status as string) === 'ARCHIVED' ||
+      (commercialPass && ((commercialPass.status as string) === 'INACTIVE' || (commercialPass.status as string) === 'ARCHIVED'))
+    ) {
+      return this.buildUnavailablePriceResult({
+        originStation,
+        destinationStation,
+        route,
+        serviceGroup,
+        travelDate,
+        departureTime,
+        adultsCount,
+        childrenCount,
+        seatPreference,
+        targetCurrency,
+        reason: 'Price unavailable — Admin configuration required'
+      });
+    }
 
     // 4. Resolve Season & Dynamic Adjustments from live database Season Calendar
     const storedSeasons = db.getRailSeasons();
     const seasonMatch = resolveRailSeasonForDate(travelDate, storedSeasons);
     const { seasonType, seasonLabel, seasonPeriod, adultAdjustmentJPY, childAdjustmentJPY, pricingMultiplier } = seasonMatch;
 
-    // 5. Lookup exact rate records (Adult & Child)
+    // 5. Lookup exact rate records (Adult & Child) strictly from canonical Admin-managed pricing
     const storedRates = db.getRailRates();
+    const matchesServiceGroup = (rateGroup: string, requestedGroup: string) =>
+      rateGroup === requestedGroup ||
+      (requestedGroup.startsWith('HIKARI_KODAMA_SAKURA') && rateGroup?.startsWith('HIKARI_KODAMA_SAKURA'));
+
     const findLiveRate = (paxType: 'ADULT' | 'CHILD') => {
-      return storedRates.find(r => 
+      const candidates = storedRates.filter(r =>
         ((r.originStationId === originStation.stationId && r.destinationStationId === destinationStation.stationId) ||
          (r.originStationId === destinationStation.stationId && r.destinationStationId === originStation.stationId)) &&
         r.productId === productId &&
-        r.serviceGroup === serviceGroup &&
-        r.passengerType === paxType &&
-        r.active
-      ) || findExactRate(
-        originStation.stationId,
-        destinationStation.stationId,
-        productId,
-        serviceGroup,
-        paxType
+        matchesServiceGroup(r.serviceGroup, serviceGroup) &&
+        (r.passengerType?.toUpperCase() === paxType || (paxType === 'ADULT' && r.passengerType?.toUpperCase() === 'ADT'))
       );
+
+      if (candidates.length === 0) return undefined;
+
+      // Prefer most recently updated / added rate, and exact origin->destination direction on tie
+      const sorted = [...candidates].sort((a, b) => {
+        const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        if (timeB !== timeA) return timeB - timeA;
+        const exactA = a.originStationId === originStation.stationId && a.destinationStationId === destinationStation.stationId ? 1 : 0;
+        const exactB = b.originStationId === originStation.stationId && b.destinationStationId === destinationStation.stationId ? 1 : 0;
+        return exactB - exactA;
+      });
+
+      return sorted[0];
     };
 
-    const adultRate = findLiveRate('ADULT');
-    const childRate = findLiveRate('CHILD');
+    const adultRate = adultsCount > 0 ? findLiveRate('ADULT') : undefined;
+    const childRate = childrenCount > 0 ? findLiveRate('CHILD') : undefined;
 
-    let adultBaseFare = 0;
-    let adultExpressSurcharge = 0;
-    let adultGreenSurcharge = 0;
-    let adultRegularTotal = 0;
+    const adultNettJPY = adultRate ? resolveRailRateNettPrice(adultRate) : null;
+    const childNettJPY = childRate ? resolveRailRateNettPrice(childRate) : null;
 
-    let childBaseFare = 0;
-    let childExpressSurcharge = 0;
-    let childGreenSurcharge = 0;
-    let childRegularTotal = 0;
-
-    if (adultRate) {
-      adultBaseFare = adultRate.baseFareJPY;
-      adultExpressSurcharge = adultRate.superExpressSurchargeJPY;
-      adultGreenSurcharge = adultRate.greenCarSurchargeJPY;
-      adultRegularTotal = adultRate.regularTotalFareJPY;
-    } else {
-      // Dynamic fallback estimation if route is outside direct pre-seeded matrix
-      const dist = route.distanceKm || 300;
-      adultBaseFare = Math.round(dist * 16.5 / 10) * 10;
-      adultExpressSurcharge = serviceGroup === 'NOZOMI_MIZUHO' 
-        ? Math.round(dist * 10.5 / 10) * 10 
-        : Math.round(dist * 9.8 / 10) * 10;
-      adultGreenSurcharge = isGreenCar ? Math.round(dist * 8.5 / 10) * 10 : 0;
-      adultRegularTotal = adultBaseFare + adultExpressSurcharge + adultGreenSurcharge;
+    // Strict Rule: Never invent, estimate or substitute a price.
+    // If a required price rate is missing, unpublished, flagged for Admin review, or zero, return authoritative unavailable state.
+    if (
+      adultsCount > 0 &&
+      (!adultRate || adultRate.active === false || adultRate.needsAdminReview || adultNettJPY === null || adultNettJPY <= 0)
+    ) {
+      return this.buildUnavailablePriceResult({
+        originStation,
+        destinationStation,
+        route,
+        product,
+        serviceGroup,
+        travelDate,
+        departureTime,
+        adultsCount,
+        childrenCount,
+        seatPreference,
+        targetCurrency,
+        reason: 'Price unavailable — Admin configuration required'
+      });
     }
 
-    if (childRate) {
-      childBaseFare = childRate.baseFareJPY;
-      childExpressSurcharge = childRate.superExpressSurchargeJPY;
-      childGreenSurcharge = childRate.greenCarSurchargeJPY;
-      childRegularTotal = childRate.regularTotalFareJPY;
-    } else {
-      childBaseFare = Math.floor(adultBaseFare * 0.5 / 10) * 10;
-      childExpressSurcharge = Math.floor(adultExpressSurcharge * 0.5 / 10) * 10;
-      childGreenSurcharge = isGreenCar ? adultGreenSurcharge : 0;
-      childRegularTotal = childBaseFare + childExpressSurcharge + childGreenSurcharge;
+    if (
+      childrenCount > 0 &&
+      (!childRate || childRate.active === false || childRate.needsAdminReview || childNettJPY === null || childNettJPY <= 0)
+    ) {
+      return this.buildUnavailablePriceResult({
+        originStation,
+        destinationStation,
+        route,
+        product,
+        serviceGroup,
+        travelDate,
+        departureTime,
+        adultsCount,
+        childrenCount,
+        seatPreference,
+        targetCurrency,
+        reason: 'Price unavailable — Admin configuration required'
+      });
     }
+
+    const nativeCurrency: CurrencyCode = (
+      adultRate?.nativeCurrency ||
+      adultRate?.currency ||
+      childRate?.nativeCurrency ||
+      childRate?.currency ||
+      commercialPass?.nativeCurrency ||
+      (commercialPass as any)?.currency ||
+      product?.currency ||
+      'JPY'
+    ) as CurrencyCode;
+
+    const adultAuthoritativeNett = adultNettJPY ?? 0;
+    const childAuthoritativeNett = childNettJPY ?? 0;
 
     // 6. Apply Seasonal Adjustments to Supplier Fare (including multiplier if defined)
     const adultSeasonAdj = Math.round(adultAdjustmentJPY * (pricingMultiplier || 1.0));
     const childSeasonAdj = Math.round(childAdjustmentJPY * (pricingMultiplier || 1.0));
 
-    const adultPerPaxSupplierJPY = adultRegularTotal + adultSeasonAdj;
-    const childPerPaxSupplierJPY = childRegularTotal + childSeasonAdj;
+    const adultPerPaxSupplierJPY = adultAuthoritativeNett + adultSeasonAdj;
+    const childPerPaxSupplierJPY = childAuthoritativeNett + childSeasonAdj;
 
     const totalAdultSupplierJPY = adultPerPaxSupplierJPY * adultsCount;
     const totalChildSupplierJPY = childPerPaxSupplierJPY * childrenCount;
@@ -181,11 +255,59 @@ export class RailPricingEngine {
     const calculatedMarkup = Math.round(totalSupplierCostJPY * (appliedMarkupPercent / 100));
     const totalMarkupJPY = Math.max(calculatedMarkup, minGuaranteedMargin);
 
-    const finalSellingPriceJPY = Math.round((totalSupplierCostJPY + totalMarkupJPY) / 10) * 10;
+    const baseSellingPriceJPY = nativeCurrency === 'JPY'
+      ? Math.round((totalSupplierCostJPY + totalMarkupJPY) / 10) * 10
+      : Math.round((totalSupplierCostJPY + totalMarkupJPY) * 100) / 100;
 
-    // 8. Convert to Target Currency
-    const exchangeRate = convertCurrency(1, 'JPY', targetCurrency);
-    const finalSellingPriceTargetCurrency = convertCurrency(finalSellingPriceJPY, 'JPY', targetCurrency);
+    // 7b. Evaluate Validity & Repeatable Surcharges in Native Currency before Currency Conversion
+    const validitySource = commercialPass || product;
+    const validityCheck = evaluateInventoryValidity(validitySource, travelDate);
+    const surchargeEval = evaluateApplicableSurcharges({
+      surcharges: commercialPass?.surcharges || product?.surcharges,
+      serviceDate: travelDate,
+      baseNativeAmount: baseSellingPriceJPY,
+      nativeCurrency,
+      targetCurrency,
+      adults: adultsCount,
+      children: childrenCount,
+      quantity: 1,
+      defaultApplicationBasis: 'PER_PERSON'
+    });
+
+    const finalSellingPriceJPY = nativeCurrency === 'JPY'
+      ? Math.round((baseSellingPriceJPY + surchargeEval.totalSurchargeNative) / 10) * 10
+      : Math.round((baseSellingPriceJPY + surchargeEval.totalSurchargeNative) * 100) / 100;
+
+    // 8. Convert to Target Currency (never convert twice if already in native currency)
+    const exchangeRate = nativeCurrency === targetCurrency
+      ? 1
+      : convertCurrency(1, nativeCurrency, targetCurrency);
+    const finalSellingPriceTargetCurrency = nativeCurrency === targetCurrency
+      ? finalSellingPriceJPY
+      : convertCurrency(finalSellingPriceJPY, nativeCurrency, targetCurrency);
+
+    if (
+      !exchangeRate ||
+      exchangeRate <= 0 ||
+      !Number.isFinite(exchangeRate) ||
+      !Number.isFinite(finalSellingPriceTargetCurrency) ||
+      finalSellingPriceTargetCurrency <= 0
+    ) {
+      return this.buildUnavailablePriceResult({
+        originStation,
+        destinationStation,
+        route,
+        product,
+        serviceGroup,
+        travelDate,
+        departureTime,
+        adultsCount,
+        childrenCount,
+        seatPreference,
+        targetCurrency,
+        reason: 'Price unavailable — FX exchange rate unavailable'
+      });
+    }
 
     // 9. Duration Estimation
     const durationMinutes = serviceGroup === 'NOZOMI_MIZUHO'
@@ -199,6 +321,8 @@ export class RailPricingEngine {
     const seasonAdjTotal = (adultSeasonAdj * adultsCount) + (childSeasonAdj * childrenCount);
 
     return {
+      isPriceAvailable: true,
+      priceUnavailableReason: undefined,
       route,
       originStation,
       destinationStation,
@@ -212,7 +336,7 @@ export class RailPricingEngine {
       seasonLabel,
       seasonId: seasonPeriod?.id,
       seasonName: seasonPeriod?.title || seasonLabel,
-      pricingVersion: '2.1-DYNAMIC-SEASON-CALENDAR',
+      pricingVersion: '2.2-AUTHORITATIVE-ADMIN-CMS',
       calculationTimestamp: new Date().toISOString(),
       adultPerPaxSupplierJPY,
       childPerPaxSupplierJPY,
@@ -225,13 +349,16 @@ export class RailPricingEngine {
       targetCurrency,
       finalSellingPriceTargetCurrency,
       exchangeRate,
+      validityCheck,
+      appliedSurcharges: surchargeEval.appliedSurcharges,
+      surchargeTotalJPY: surchargeEval.totalSurchargeNative,
+      surchargeTotalTargetCurrency: surchargeEval.totalSurchargeConverted,
       fareBreakdown: {
-        baseFareJPY: (adultBaseFare * adultsCount) + (childBaseFare * childrenCount),
-        superExpressSurchargeJPY: (adultExpressSurcharge * adultsCount) + (childExpressSurcharge * childrenCount),
-        greenCarSurchargeJPY: (adultGreenSurcharge * adultsCount) + (childGreenSurcharge * childrenCount),
-        seasonAdjustmentTotalJPY: seasonAdjTotal,
+        nettPriceTotalJPY: (adultAuthoritativeNett * adultsCount) + (childAuthoritativeNett * childrenCount),
+        seasonAdjustmentTotalJPY: seasonAdjTotal + surchargeEval.totalSurchargeNative,
         supplierNetTotalJPY: totalSupplierCostJPY,
         theUnboundMarkupJPY: totalMarkupJPY,
+        surchargeTotalJPY: surchargeEval.totalSurchargeNative,
         grandTotalJPY: finalSellingPriceJPY
       },
       passengers: {
@@ -242,6 +369,131 @@ export class RailPricingEngine {
       seatPreference,
       estimatedDurationMinutes: durationMinutes,
       formattedDuration
+    };
+  }
+
+  /**
+   * Authoritative fallback for unavailable or unconfigured rail prices.
+   * Strictly never invents or estimates fares when rates are not configured.
+   */
+  private buildUnavailablePriceResult(params: {
+    originStation?: RailStation;
+    destinationStation?: RailStation;
+    route?: RailRoute;
+    product?: Product;
+    serviceGroup?: RailServiceGroup;
+    travelDate: string;
+    departureTime?: string;
+    adultsCount: number;
+    childrenCount: number;
+    seatPreference?: any;
+    targetCurrency?: CurrencyCode;
+    reason: string;
+  }): RailPricingResult {
+    const isGreenCar = params.product?.id === 'RAIL-JP-GREEN-RESERVED';
+    const targetCurrency = params.targetCurrency || 'JPY';
+    const totalPax = params.adultsCount + params.childrenCount;
+    const originStation: RailStation = params.originStation || {
+      stationId: '',
+      stationCode: 'UNSET',
+      stationName: 'Unknown Station',
+      displayName: 'Unknown Station',
+      searchAliases: [],
+      country: 'Japan',
+      regionId: 'reg-east-asia',
+      destinationId: 'dest-japan',
+      city: '',
+      railOperator: '',
+      latitude: 0,
+      longitude: 0,
+      timezone: 'Asia/Tokyo',
+      active: false
+    };
+    const destinationStation: RailStation = params.destinationStation || {
+      stationId: '',
+      stationCode: 'UNSET',
+      stationName: 'Unknown Station',
+      displayName: 'Unknown Station',
+      searchAliases: [],
+      country: 'Japan',
+      regionId: 'reg-east-asia',
+      destinationId: 'dest-japan',
+      city: '',
+      railOperator: '',
+      latitude: 0,
+      longitude: 0,
+      timezone: 'Asia/Tokyo',
+      active: false
+    };
+    const route: RailRoute = params.route || {
+      routeId: 'ROUTE-UNAVAILABLE',
+      originStationId: originStation.stationId,
+      destinationStationId: destinationStation.stationId,
+      originStationName: originStation.stationName,
+      destinationStationName: destinationStation.stationName,
+      country: 'Japan',
+      destinationId: 'dest-japan',
+      railOperator: 'JR Central / JR West / smartEX',
+      active: false,
+      availableProductIds: [],
+      availableServiceGroups: []
+    };
+    const product: Product = params.product || {
+      id: isGreenCar ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED',
+      name: isGreenCar ? 'Green Car — First Class / Reserved' : 'Ordinary Car (Reserved Seat)',
+      category: 'Rail',
+      productType: 'Rail',
+      country: 'Japan',
+      destinationId: 'dest-japan',
+      destinationName: 'Japan',
+      currency: 'JPY',
+      adultNetPrice: 0,
+      sellingPriceStartingFrom: 0
+    } as Product;
+
+    return {
+      isPriceAvailable: false,
+      priceUnavailableReason: params.reason || 'Price unavailable — Admin configuration required',
+      route,
+      originStation,
+      destinationStation,
+      product,
+      carType: isGreenCar ? 'Green' : 'Ordinary',
+      seatType: 'Reserved',
+      serviceGroup: params.serviceGroup || 'NOZOMI_MIZUHO',
+      travelDate: params.travelDate,
+      departureTime: params.departureTime,
+      seasonType: 'REGULAR',
+      seasonLabel: 'Price Unavailable',
+      pricingVersion: '2.2-AUTHORITATIVE-ADMIN-CMS',
+      calculationTimestamp: new Date().toISOString(),
+      adultPerPaxSupplierJPY: 0,
+      childPerPaxSupplierJPY: 0,
+      adultSeasonAdjustmentJPY: 0,
+      childSeasonAdjustmentJPY: 0,
+      totalSupplierCostJPY: 0,
+      appliedMarkupPercent: 0,
+      totalMarkupJPY: 0,
+      finalSellingPriceJPY: 0,
+      targetCurrency,
+      finalSellingPriceTargetCurrency: 0,
+      exchangeRate: convertCurrency(1, 'JPY', targetCurrency),
+      fareBreakdown: {
+        nettPriceTotalJPY: 0,
+        seasonAdjustmentTotalJPY: 0,
+        supplierNetTotalJPY: 0,
+        theUnboundMarkupJPY: 0,
+        surchargeTotalJPY: 0,
+        grandTotalJPY: 0
+      },
+      passengers: {
+        adults: params.adultsCount,
+        children: params.childrenCount,
+        total: totalPax
+      },
+      seatPreference: params.seatPreference,
+      estimatedDurationMinutes: 120,
+      formattedDuration: '2h 00m'
     };
   }
 
@@ -278,18 +530,6 @@ export class RailPricingEngine {
       pnrReference: pnrRef,
       qrVoucherCode: `SMARTEX-QR-${pnrRef}-${Date.now().toString().slice(-6)}`
     };
-  }
-
-  private calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 6371; // km
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a = 
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return Math.round(R * c);
   }
 }
 

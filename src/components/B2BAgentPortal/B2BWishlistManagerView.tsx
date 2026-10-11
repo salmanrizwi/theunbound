@@ -136,10 +136,16 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
   const [sortBy, setSorting] = useState<string>('recent');
 
   useEffect(() => {
-    const unsub = db.subscribe(() => {
+    const unsubDb = db.subscribe(() => {
       setDbTick(tick => tick + 1);
     });
-    return () => unsub();
+    const unsubImg = canonicalImageService.subscribe(() => {
+      setDbTick(tick => tick + 1);
+    });
+    return () => {
+      unsubDb();
+      unsubImg();
+    };
   }, [db]);
 
   const rawWishlistItems = useMemo(() => {

@@ -5,6 +5,18 @@
  */
 
 export const DEFAULT_FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?q=80&w=1200&auto=format&fit=crop';
+export const DEFAULT_FALLBACK_PHOTO_ID = 'photo-1488646953014-85cb44e25828';
+
+/**
+ * Checks if a given URL is the display-only default fallback image (regardless of version or query params).
+ * The default fallback image must NEVER be persisted as a product's actual saved image.
+ */
+export function isDefaultFallbackImageUrl(url?: string | null): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  return trimmed.includes(DEFAULT_FALLBACK_PHOTO_ID) || trimmed === DEFAULT_FALLBACK_IMAGE;
+}
 
 export const DESTINATION_FALLBACKS: Record<string, string> = {
   japan: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
@@ -217,12 +229,58 @@ export function sanitizeImageUrl(url?: string | null, fallbackKey?: string): str
 }
 
 /**
- * Converts a File object to base64 Data URL for instant preview and database storage.
+ * Converts a File object to a compressed base64 Data URL for instant preview and Firestore/localStorage persistence.
+ * Automatically resizes and compresses large raster images to stay well within Firestore's 1MB document limit.
  */
 export function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
+    reader.onload = () => {
+      const rawDataUrl = reader.result as string;
+      if (
+        typeof document === 'undefined' ||
+        typeof Image === 'undefined' ||
+        !file.type.startsWith('image/') ||
+        file.type === 'image/svg+xml' ||
+        file.size <= 150 * 1024
+      ) {
+        resolve(rawDataUrl);
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 1400;
+          let width = img.naturalWidth || img.width;
+          let height = img.naturalHeight || img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width >= height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(rawDataUrl);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL('image/jpeg', 0.8);
+          resolve(compressed && compressed.length < rawDataUrl.length ? compressed : rawDataUrl);
+        } catch {
+          resolve(rawDataUrl);
+        }
+      };
+      img.onerror = () => resolve(rawDataUrl);
+      img.src = rawDataUrl;
+    };
     reader.onerror = error => reject(error);
     reader.readAsDataURL(file);
   });

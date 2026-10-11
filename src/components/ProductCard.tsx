@@ -188,16 +188,22 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                   </span>
                 )}
               </div>
-              <div className="flex items-baseline space-x-1">
-                <span className="text-base sm:text-lg font-extrabold text-slate-900 font-mono">
-                  {formatCurrency(deliveredInfo.deliveredPrice, currency)}
-                </span>
-                <span className="text-[10px] sm:text-xs text-slate-500 font-medium">/ adult</span>
-              </div>
+              {deliveredInfo.isPriceAvailable === false || deliveredInfo.deliveredPrice <= 0 ? (
+                <div className="inline-flex items-center px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[10px] sm:text-[11px] font-bold">
+                  {deliveredInfo.priceUnavailableReason || 'Price unavailable — Admin configuration required'}
+                </div>
+              ) : (
+                <div className="flex items-baseline space-x-1">
+                  <span className="text-base sm:text-lg font-extrabold text-slate-900 font-mono">
+                    {formatCurrency(deliveredInfo.deliveredPrice, currency)}
+                  </span>
+                  <span className="text-[10px] sm:text-xs text-slate-500 font-medium">/ adult</span>
+                </div>
+              )}
             </div>
 
             {/* Admin / Staff net cost */}
-            {(role === 'ADMIN' || role === 'DMC_STAFF') && (
+            {(role === 'ADMIN' || role === 'DMC_STAFF') && deliveredInfo.isPriceAvailable !== false && deliveredInfo.baseAdultNet > 0 && (
               <div className="text-right">
                 <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-[#00C6A6] block">
                   Net Cost ({product.currency})

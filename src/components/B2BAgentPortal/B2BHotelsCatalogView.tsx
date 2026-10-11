@@ -27,6 +27,7 @@ import { formatCurrency } from '../../services/pricingEngine';
 import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
 import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
 import { canonicalImageService } from '../../services/imageService';
+import { AppDatabase } from '../../services/db';
 
 interface B2BHotelsCatalogViewProps {
   hotels: Hotel[];
@@ -42,6 +43,22 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
   onViewHotelDetails
 }) => {
   const { items, removeProductFromQuote, currency, setIsQuoteDrawerOpen } = useQuotation();
+  const db = AppDatabase.getInstance();
+  const [dbTick, setDbTick] = useState(0);
+
+  React.useEffect(() => {
+    const unsubDb = db.subscribe(() => setDbTick(t => t + 1));
+    const unsubImg = canonicalImageService.subscribe(() => setDbTick(t => t + 1));
+    return () => {
+      unsubDb();
+      unsubImg();
+    };
+  }, [db]);
+
+  const canonicalHotels = useMemo(() => {
+    const fresh = db.getHotels();
+    return (fresh && fresh.length > 0) ? fresh : hotels;
+  }, [hotels, db, dbTick]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDestination, setSelectedDestination] = useState<string>('ALL');
@@ -54,7 +71,7 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
 
   const filteredHotels = useMemo(() => {
     const q = (searchQuery || '').toLowerCase().trim();
-    return hotels.filter(h => {
+    return canonicalHotels.filter(h => {
       const matchesSearch = !q ||
         (h.name || '').toLowerCase().includes(q) ||
         (h.cityName && (h.cityName || '').toLowerCase().includes(q)) ||
@@ -65,7 +82,7 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
 
       return matchesSearch && matchesDest && matchesStar;
     });
-  }, [hotels, searchQuery, selectedDestination, selectedStarRating]);
+  }, [canonicalHotels, searchQuery, selectedDestination, selectedStarRating, dbTick]);
 
   const isHotelInQuote = (hotelId: string) => {
     return items.some(it => it.product.id === hotelId || it.product.id.includes(hotelId));

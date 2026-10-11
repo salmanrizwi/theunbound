@@ -8,7 +8,8 @@ import {
   CityHub, 
   MasterRegion,
   TieredPrice,
-  ProductUpsell
+  ProductUpsell,
+  SurchargeApplicationBasis
 } from '../../types';
 import { 
   ArrowLeft, 
@@ -60,8 +61,10 @@ import { getActiveUpsellsForProduct, resolveProductUpsells } from '../../service
 import { ExistingProductUpsellSelectorModal } from './ExistingProductUpsellSelectorModal';
 import { OperationalAssetSelector, SelectedAssetPayload } from './OperationalAssetSelector';
 import { OperationalAssetsManager } from './OperationalAssetsManager';
-import { calculateUnifiedPrice, calculateB2BAgentPrice } from '../../services/pricingEngine';
+import { calculateUnifiedPrice, calculateB2BAgentPrice, validateInventoryValidityAndSurcharges } from '../../services/pricingEngine';
 import { RichTextEditor } from '../common/RichTextEditor';
+import { InventoryValidityAndSurchargesSection } from './common/InventoryValidityAndSurchargesSection';
+import { canonicalImageService } from '../../services/imageService';
 
 interface ProductUpdateWorkspaceProps {
   product: Product | null; // null means Create mode
@@ -69,7 +72,7 @@ interface ProductUpdateWorkspaceProps {
   masterRegions: MasterRegion[];
   cityHubs: CityHub[];
   suppliers: Supplier[];
-  onSave: (savedProduct: Product) => void;
+  onSave: (savedProduct: Product) => Promise<Product | void> | void;
   onCancel: () => void;
 }
 
@@ -85,6 +88,21 @@ const CATEGORIES_MAPPING: { label: string; value: ProductCategory; icon: any; de
   { label: 'Rail', value: 'Rail', icon: Train, desc: 'High-speed bullet train smartEX routes and services.' },
 ];
 
+function normalizeWorkspaceCategory(cat?: string): ProductCategory {
+  if (!cat) return 'Private Tours';
+  const clean = cat.trim();
+  if (clean === 'Private Tour' || clean === 'Private Tours') return 'Private Tours';
+  if (clean === 'Group Tour' || clean === 'Group Tours') return 'Group Tours';
+  if (clean === 'Ticket' || clean === 'Tickets') return 'Tickets';
+  if (clean === 'Transfer' || clean === 'Transfers') return 'Transfers';
+  if (clean === 'Guide' || clean === 'Guides') return 'Guides';
+  if (clean === 'Restaurant' || clean === 'Lunch / Dinner Restaurant') return 'Lunch / Dinner Restaurant';
+  if (clean === 'Yacht' || clean === 'Private Yacht') return 'Private Yacht';
+  if (clean === 'Ferry' || clean === 'Ferries' || clean === 'Ferries & Vessels') return 'Ferry';
+  if (clean === 'Rail' || clean === 'Rail / Shinkansen') return 'Rail';
+  return clean as ProductCategory;
+}
+
 export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
   product,
   destinations,
@@ -98,8 +116,9 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
 
   // Form State
   const [activeCategory, setActiveCategory] = useState<ProductCategory>(
-    product?.category || 'Private Tours'
+    normalizeWorkspaceCategory(product?.category)
   );
+  const [workspaceValidationError, setWorkspaceValidationError] = useState<string | null>(null);
 
   const [isOperationalAssetsManagerOpen, setIsOperationalAssetsManagerOpen] = useState(false);
   const [operationalAssetsManagerTab, setOperationalAssetsManagerTab] = useState<'VEHICLES' | 'YACHTS' | 'FERRIES'>('VEHICLES');
@@ -160,17 +179,44 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     ferryNameSnapshot: undefined,
     ferryTypeSnapshot: undefined,
     ferryCapacitySnapshot: undefined,
+    validityFrom: '',
+    validityTo: '',
+    validity: {
+      validFrom: '',
+      validTo: ''
+    },
+    surcharges: [],
     mealSelect: [],
     upsells: []
   });
 
   const [formData, setFormData] = useState<Partial<Product>>(() => {
-    if (product) return { 
-      ...product,
-      hubIds: product.hubIds || (product.hubId ? [product.hubId] : [])
-    };
+    if (product) {
+      const vFrom = (product.validity?.validFrom ?? product.validityFrom ?? '').trim();
+      const vTo = (product.validity?.validTo ?? product.validityTo ?? '').trim();
+      const cleanImages = canonicalImageService.extractPersistedProductImages(product);
+      const primaryUrl = cleanImages[0] || null;
+      return { 
+        ...product,
+        category: normalizeWorkspaceCategory(product.category),
+        images: cleanImages,
+        heroImage: primaryUrl,
+        imageUrl: primaryUrl,
+        validityFrom: vFrom,
+        validityTo: vTo,
+        validity: {
+          validFrom: vFrom,
+          validTo: vTo
+        },
+        surcharges: Array.isArray(product.surcharges) ? product.surcharges : [],
+        hubIds: product.hubIds || (product.hubId ? [product.hubId] : [])
+      };
+    }
     return createCleanWorkspaceFormData();
   });
+
+  const [isSaving, setIsSaving] = useState(false);
+  const [workspaceSaveSuccess, setWorkspaceSaveSuccess] = useState<string | null>(null);
 
   // Section 14: Audit existing product hierarchy on load without auto-repairing or modifying data
   const [hierarchyIntegrityIssue, setHierarchyIntegrityIssue] = useState<string | null>(() => {
@@ -202,11 +248,29 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       currentProductIdRef.current = product.id;
       const prods = allMasterProducts.length > 0 ? allMasterProducts : db.getProducts();
       const resolvedUpsells = resolveProductUpsells(product, prods);
+      const vFrom = (product.validity?.validFrom ?? product.validityFrom ?? '').trim();
+      const vTo = (product.validity?.validTo ?? product.validityTo ?? '').trim();
+      const normCat = normalizeWorkspaceCategory(product.category);
+      const cleanImages = canonicalImageService.extractPersistedProductImages(product);
+      const primaryUrl = cleanImages[0] || null;
       setFormData({ 
         ...product,
+        category: normCat,
+        images: cleanImages,
+        heroImage: primaryUrl,
+        imageUrl: primaryUrl,
+        validityFrom: vFrom,
+        validityTo: vTo,
+        validity: {
+          validFrom: vFrom,
+          validTo: vTo
+        },
+        surcharges: Array.isArray(product.surcharges) ? product.surcharges : [],
         upsells: resolvedUpsells
       });
-      setActiveCategory(product.category);
+      setActiveCategory(normCat);
+      setWorkspaceValidationError(null);
+      setWorkspaceSaveSuccess(null);
     }
   }, [product?.id]);
 
@@ -226,7 +290,7 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
   // Sync pricing method and configs when category changes
   const handleSelectCategory = (category: ProductCategory) => {
     setActiveCategory(category);
-    const isCap = category === 'Private Tours' || category === 'Transfers' || category === 'Private Yacht';
+    const isCap = category === 'Private Tours' || category === 'Transfers' || category === 'Private Yacht' || category === 'Ferry';
     const isHourly = category === 'Guides';
     
     setFormData(prev => ({
@@ -236,6 +300,13 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       productType: category.replace(/s$/, '')
     }));
   };
+
+  const defaultSurchargeBasis: SurchargeApplicationBasis =
+    activeCategory === 'Private Tours' || activeCategory === 'Transfers' || activeCategory === 'Private Yacht'
+      ? 'PER_VEHICLE'
+      : activeCategory === 'Guides'
+      ? 'PER_HOUR'
+      : 'PER_PERSON';
 
   // Live calculation helper
   const calculateSellingPrice = (net?: number, markupPercent?: number) => {
@@ -421,11 +492,66 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     }));
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
+    setWorkspaceValidationError(null);
+    setWorkspaceSaveSuccess(null);
 
     if (!formData.name?.trim()) {
-      alert('Product Name is required.');
+      setWorkspaceValidationError('Product Name is required.');
+      return;
+    }
+
+    // Validate Primary Image URL without silently substituting default fallback
+    const rawPrimaryUrl = formData.images?.[0] ?? formData.heroImage ?? formData.imageUrl ?? '';
+    const imageValidation = canonicalImageService.validateUserSuppliedImageUrl(rawPrimaryUrl);
+    if (!imageValidation.isValid) {
+      setWorkspaceValidationError(imageValidation.error || 'Invalid Primary Image URL.');
+      const mediaEl = document.getElementById('product-media-gallery-section');
+      if (mediaEl) {
+        mediaEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      return;
+    }
+
+    const additionalImages = (formData.images || [])
+      .slice(1)
+      .map(u => canonicalImageService.validateImage(u))
+      .filter(v => v.isValid)
+      .map(v => v.cleanUrl);
+
+    const cleanedImages = !imageValidation.isEmpty && imageValidation.cleanUrl
+      ? Array.from(new Set([imageValidation.cleanUrl, ...additionalImages]))
+      : additionalImages;
+
+    const chosenCurrency = (formData.nativeCurrency || formData.currency || 'USD') as CurrencyCode;
+    const effectiveValidFrom = (formData.validity?.validFrom ?? formData.validityFrom ?? '').trim();
+    const effectiveValidTo = (formData.validity?.validTo ?? formData.validityTo ?? '').trim();
+    const isSellable = (formData.status || 'ACTIVE') === 'ACTIVE';
+    const hadExistingValidity = Boolean(
+      (product?.validity?.validFrom || product?.validityFrom || '').trim() ||
+      (product?.validity?.validTo || product?.validityTo || '').trim()
+    );
+    const hasEnteredValidity = Boolean(effectiveValidFrom || effectiveValidTo);
+    const requireValidity = isSellable && (!product || hadExistingValidity || hasEnteredValidity);
+
+    const validityCheck = validateInventoryValidityAndSurcharges({
+      validity: { validFrom: effectiveValidFrom, validTo: effectiveValidTo },
+      validityFrom: effectiveValidFrom,
+      validityTo: effectiveValidTo,
+      surcharges: formData.surcharges || [],
+      requireValidity,
+      nativeCurrency: chosenCurrency
+    });
+
+    if (!validityCheck.isValid) {
+      const errMsg = validityCheck.errors.join(' ');
+      setWorkspaceValidationError(errMsg);
+      const el = document.getElementById('product-validity-and-surcharges-section');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
       return;
     }
 
@@ -562,7 +688,16 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       validatedHub = hierarchy.hub;
     }
 
-    const chosenCurrency = (formData.nativeCurrency || formData.currency) as CurrencyCode;
+    const normalizedSurcharges = (formData.surcharges || []).map(s => ({
+      ...s,
+      name: (s.name || '').trim(),
+      validFrom: (s.validFrom || '').trim(),
+      validTo: (s.validTo || '').trim(),
+      value: Number(s.value) || 0,
+      currency: s.type === 'FIXED' ? ((s.currency || chosenCurrency) as CurrencyCode) : (s.currency || chosenCurrency),
+      applicationBasis: s.applicationBasis || defaultSurchargeBasis,
+      status: s.status || 'ACTIVE'
+    }));
 
     // Direct alignment to prevent zero net cost mapping bugs
     const syncedNet = isCap && sortedTiers.length > 0 
@@ -642,9 +777,13 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       status: t.status
     }));
 
+    const effectiveId = product?.id || `prod-${Date.now()}`;
+    const canonicalPrimaryUrl = cleanedImages[0] || null;
+    const nowIso = new Date().toISOString();
+
     const finalProduct: Product = {
       ...(formData as Product),
-      id: product?.id || `prod-${Date.now()}`,
+      id: effectiveId,
       category: activeCategory,
       regionId: validatedRegion.id,
       regionName: validatedRegion.name,
@@ -674,16 +813,98 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
         unitVehicleNetCost: syncedNet,
         totalTransferCost: syncedNet,
       } : formData.vehicleConfig,
+      images: cleanedImages,
+      heroImage: canonicalPrimaryUrl,
+      imageUrl: canonicalPrimaryUrl,
+      primaryImageId: canonicalPrimaryUrl
+        ? canonicalImageService.computeImageId('PRODUCT', effectiveId, 'PRIMARY')
+        : null,
+      primaryImage: canonicalPrimaryUrl
+        ? {
+            imageId: canonicalImageService.computeImageId('PRODUCT', effectiveId, 'PRIMARY'),
+            url: canonicalPrimaryUrl,
+            version: nowIso,
+            altText: formData.name || `PRODUCT image for ${effectiveId}`,
+            lastSyncedAt: nowIso
+          }
+        : null,
+      validityFrom: effectiveValidFrom,
+      validityTo: effectiveValidTo,
+      validity: {
+        validFrom: effectiveValidFrom,
+        validTo: effectiveValidTo
+      },
+      surcharges: normalizedSurcharges,
       sellingPriceStartingFrom: currentAdultSellingPrice,
-      lastUpdated: new Date().toISOString().split('T')[0]
+      lastUpdated: nowIso.split('T')[0],
+      updatedAt: nowIso
     };
 
-    onSave(finalProduct);
+    try {
+      setIsSaving(true);
+      const savedResult = await onSave(finalProduct);
+      const verified = savedResult || finalProduct;
+      const verifiedImages = canonicalImageService.extractPersistedProductImages(verified);
+      const verifiedPrimary = verifiedImages[0] || null;
+      setFormData(prev => ({
+        ...prev,
+        ...verified,
+        images: verifiedImages,
+        heroImage: verifiedPrimary,
+        imageUrl: verifiedPrimary
+      }));
+      setWorkspaceSaveSuccess(`Product "${verified.name}" (${verified.sku || verified.id}) saved and verified in Firestore.`);
+    } catch (err: any) {
+      setWorkspaceValidationError(err?.message || 'Failed to save product to Firestore. Your previous saved data remains intact.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
+    if (isSaving) return;
+    setWorkspaceValidationError(null);
+    setWorkspaceSaveSuccess(null);
     if (!formData.currency && !formData.nativeCurrency) {
-      alert('Product Native Currency is required.');
+      setWorkspaceValidationError('Product Native Currency is required.');
+      return;
+    }
+
+    const rawPrimaryUrl = formData.images?.[0] ?? formData.heroImage ?? formData.imageUrl ?? '';
+    const imageValidation = canonicalImageService.validateUserSuppliedImageUrl(rawPrimaryUrl);
+    if (!imageValidation.isValid) {
+      setWorkspaceValidationError(imageValidation.error || 'Invalid Primary Image URL.');
+      return;
+    }
+    const additionalImages = (formData.images || [])
+      .slice(1)
+      .map(u => canonicalImageService.validateImage(u))
+      .filter(v => v.isValid)
+      .map(v => v.cleanUrl);
+    const cleanedImages = !imageValidation.isEmpty && imageValidation.cleanUrl
+      ? Array.from(new Set([imageValidation.cleanUrl, ...additionalImages]))
+      : additionalImages;
+
+    const chosenCurrency = (formData.nativeCurrency || formData.currency) as CurrencyCode;
+    const effectiveValidFrom = (formData.validity?.validFrom ?? formData.validityFrom ?? '').trim();
+    const effectiveValidTo = (formData.validity?.validTo ?? formData.validityTo ?? '').trim();
+
+    const draftValidityCheck = validateInventoryValidityAndSurcharges({
+      validity: { validFrom: effectiveValidFrom, validTo: effectiveValidTo },
+      validityFrom: effectiveValidFrom,
+      validityTo: effectiveValidTo,
+      surcharges: formData.surcharges || [],
+      requireValidity: false,
+      nativeCurrency: chosenCurrency
+    });
+
+    if (!draftValidityCheck.isValid) {
+      const errMsg = draftValidityCheck.errors.join(' ');
+      setWorkspaceValidationError(errMsg);
+      const el = document.getElementById('product-validity-and-surcharges-section');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
       return;
     }
 
@@ -723,11 +944,24 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       validatedHub = hierarchy.hub;
     }
 
-    const chosenCurrency = (formData.nativeCurrency || formData.currency) as CurrencyCode;
+    const draftNormalizedSurcharges = (formData.surcharges || []).map(s => ({
+      ...s,
+      name: (s.name || '').trim(),
+      validFrom: (s.validFrom || '').trim(),
+      validTo: (s.validTo || '').trim(),
+      value: Number(s.value) || 0,
+      currency: s.type === 'FIXED' ? ((s.currency || chosenCurrency) as CurrencyCode) : (s.currency || chosenCurrency),
+      applicationBasis: s.applicationBasis || defaultSurchargeBasis,
+      status: s.status || 'ACTIVE'
+    }));
+
+    const effectiveId = product?.id || `prod-${Date.now()}`;
+    const canonicalPrimaryUrl = cleanedImages[0] || null;
+    const nowIso = new Date().toISOString();
 
     const draftProduct: Product = {
       ...(formData as Product),
-      id: product?.id || `prod-${Date.now()}`,
+      id: effectiveId,
       category: activeCategory,
       regionId: validatedRegion ? validatedRegion.id : (formData.regionId || ''),
       regionName: validatedRegion ? validatedRegion.name : (formData.regionName || ''),
@@ -739,15 +973,58 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       hubIds: formData.hubIds || (validatedHub ? [validatedHub.id] : []),
       currency: chosenCurrency,
       nativeCurrency: chosenCurrency,
+      images: cleanedImages,
+      heroImage: canonicalPrimaryUrl,
+      imageUrl: canonicalPrimaryUrl,
+      primaryImageId: canonicalPrimaryUrl
+        ? canonicalImageService.computeImageId('PRODUCT', effectiveId, 'PRIMARY')
+        : null,
+      primaryImage: canonicalPrimaryUrl
+        ? {
+            imageId: canonicalImageService.computeImageId('PRODUCT', effectiveId, 'PRIMARY'),
+            url: canonicalPrimaryUrl,
+            version: nowIso,
+            altText: formData.name || `PRODUCT image for ${effectiveId}`,
+            lastSyncedAt: nowIso
+          }
+        : null,
+      validityFrom: effectiveValidFrom,
+      validityTo: effectiveValidTo,
+      validity: {
+        validFrom: effectiveValidFrom,
+        validTo: effectiveValidTo
+      },
+      surcharges: draftNormalizedSurcharges,
       status: 'DRAFT',
       sellingPriceStartingFrom: currentAdultSellingPrice,
-      lastUpdated: new Date().toISOString().split('T')[0]
+      lastUpdated: nowIso.split('T')[0],
+      updatedAt: nowIso
     };
-    onSave(draftProduct);
+
+    try {
+      setIsSaving(true);
+      const savedResult = await onSave(draftProduct);
+      const verified = savedResult || draftProduct;
+      const verifiedImages = canonicalImageService.extractPersistedProductImages(verified);
+      const verifiedPrimary = verifiedImages[0] || null;
+      setFormData(prev => ({
+        ...prev,
+        ...verified,
+        images: verifiedImages,
+        heroImage: verifiedPrimary,
+        imageUrl: verifiedPrimary
+      }));
+      setWorkspaceSaveSuccess(`Draft "${verified.name}" (${verified.sku || verified.id}) saved and verified in Firestore.`);
+    } catch (err: any) {
+      setWorkspaceValidationError(err?.message || 'Failed to save draft to Firestore.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  // Calculate active upsells count
+  // Calculate active upsells & active surcharges count
   const activeUpsells = (formData.upsells || []).filter(u => u.status === 'ACTIVE');
+  const activeSurcharges = (formData.surcharges || []).filter(s => s.status === 'ACTIVE');
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto px-4 pb-20">
@@ -798,6 +1075,9 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
               routeText={formData.fromHubName && formData.toHubName ? `${formData.fromHubName} ➔ ${formData.toHubName}` : undefined}
               languageText={formData.guideConfig?.languages ? formData.guideConfig.languages.join(', ') : undefined}
               mealsText={formData.mealSelect && formData.mealSelect.length > 0 ? formData.mealSelect.join(' / ') : undefined}
+              validFrom={formData.validity?.validFrom ?? formData.validityFrom}
+              validTo={formData.validity?.validTo ?? formData.validityTo}
+              activeSurchargeCount={activeSurcharges.length}
             />
           </div>
 
@@ -846,6 +1126,35 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
         {/* Complete Product Management Form */}
         <form onSubmit={handleFormSubmit} className="lg:col-span-9 space-y-6">
           
+          {workspaceValidationError && (
+            <div className="bg-rose-50 border border-rose-300 rounded-xl p-4 flex items-start space-x-3 text-rose-900 shadow-xs">
+              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+              <div className="space-y-1 text-xs">
+                <div className="font-bold text-sm text-rose-950">Validation Error — Unable to Save Product</div>
+                <p className="text-rose-800 leading-relaxed font-semibold">{workspaceValidationError}</p>
+              </div>
+            </div>
+          )}
+
+          {workspaceSaveSuccess && !workspaceValidationError && (
+            <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-4 flex items-start justify-between text-emerald-900 shadow-xs">
+              <div className="flex items-start space-x-3">
+                <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="space-y-1 text-xs">
+                  <div className="font-bold text-sm text-emerald-950">Changes Persisted to Firestore</div>
+                  <p className="text-emerald-800 leading-relaxed font-semibold">{workspaceSaveSuccess}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onCancel}
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors cursor-pointer shrink-0"
+              >
+                Done
+              </button>
+            </div>
+          )}
+
           {/* Section 14: Data Integrity Issue Warning Banner */}
           {hierarchyIntegrityIssue && (
             <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex items-start space-x-3 text-amber-900 shadow-xs">
@@ -1365,6 +1674,40 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
 
 
 
+          {/* Section: VALIDITY & SURCHARGES (Available across all Product Categories) */}
+          <div id="product-validity-and-surcharges-section">
+            <SectionCard
+              title="Validity & Surcharges"
+              description="Configure commercial sellable validity dates (Valid From / Valid To) and repeatable seasonal or peak surcharge periods for this product."
+            >
+              <InventoryValidityAndSurchargesSection
+                validFrom={formData.validity?.validFrom ?? formData.validityFrom ?? ''}
+                validTo={formData.validity?.validTo ?? formData.validityTo ?? ''}
+                surcharges={formData.surcharges || []}
+                nativeCurrency={(formData.nativeCurrency || formData.currency || 'USD') as CurrencyCode}
+                defaultApplicationBasis={defaultSurchargeBasis}
+                categoryLabel={CATEGORIES_MAPPING.find(c => c.value === activeCategory)?.label || activeCategory}
+                requireValidity={(formData.status || 'ACTIVE') === 'ACTIVE'}
+                onChangeValidity={({ validFrom, validTo, validity }) => {
+                  setWorkspaceValidationError(null);
+                  setFormData(prev => ({
+                    ...prev,
+                    validityFrom: validFrom,
+                    validityTo: validTo,
+                    validity
+                  }));
+                }}
+                onChangeSurcharges={(nextSurcharges) => {
+                  setWorkspaceValidationError(null);
+                  setFormData(prev => ({
+                    ...prev,
+                    surcharges: nextSurcharges
+                  }));
+                }}
+              />
+            </SectionCard>
+          </div>
+
           {/* Card 3: Pricing Configuration Component (Section 20) */}
           <PricingConfigurationComponent
             category={activeCategory}
@@ -1749,19 +2092,33 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
           </SectionCard>
 
           {/* Card 7: Media & Gallery */}
-          <SectionCard title="7. Media & Gallery Images" description="Add primary hero image and showcase photo gallery.">
-            <div className="space-y-3">
-              <FormField label="Primary Image URL">
-                <input
-                  type="text"
-                  value={formData.images?.[0] || ''}
-                  onChange={e => setFormData({ ...formData, images: [e.target.value] })}
-                  placeholder="Paste high-res Unsplash image URL"
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                />
-              </FormField>
-            </div>
-          </SectionCard>
+          <div id="product-media-gallery-section">
+            <SectionCard title="7. Media & Gallery Images" description="Add primary hero image and showcase photo gallery.">
+              <div className="space-y-3">
+                <FormField label="Primary Image URL">
+                  <input
+                    id="product-primary-image-url-input"
+                    type="text"
+                    value={formData.images?.[0] ?? ''}
+                    onChange={e => {
+                      const val = e.target.value;
+                      const rest = (formData.images || []).slice(1);
+                      setWorkspaceValidationError(null);
+                      setWorkspaceSaveSuccess(null);
+                      setFormData({
+                        ...formData,
+                        images: [val, ...rest],
+                        heroImage: val.trim() || null,
+                        imageUrl: val.trim() || null
+                      });
+                    }}
+                    placeholder="Paste high-res Unsplash or direct image URL (https://...)"
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono focus:bg-white focus:border-[#00C6A6] focus:outline-none"
+                  />
+                </FormField>
+              </div>
+            </SectionCard>
+          </div>
 
           {/* Bottom Sticky Action Area (Section 33) */}
           <div className="sticky bottom-0 bg-white/95 backdrop-blur-md p-4 border-t border-slate-100 rounded-t-2xl shadow-lg flex items-center justify-between gap-4 z-20">
@@ -1775,17 +2132,19 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
             <div className="flex items-center gap-3">
               <button
                 type="button"
+                disabled={isSaving}
                 onClick={handleSaveDraft}
-                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
               >
-                Save as Draft
+                {isSaving ? 'Saving...' : 'Save as Draft'}
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#008972] text-slate-950 text-xs font-black transition-colors cursor-pointer flex items-center space-x-2 shadow-xs"
+                disabled={isSaving}
+                className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#008972] disabled:opacity-50 text-slate-950 text-xs font-black transition-colors cursor-pointer flex items-center space-x-2 shadow-xs"
               >
                 <Save className="w-4 h-4" />
-                <span>Save Product</span>
+                <span>{isSaving ? 'Saving to Firestore...' : 'Save Product'}</span>
               </button>
             </div>
           </div>

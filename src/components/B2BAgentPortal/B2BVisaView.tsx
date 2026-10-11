@@ -37,7 +37,7 @@ import {
   ConnectivityPlan
 } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
-import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, evaluateApplicableSurcharges } from '../../services/pricingEngine';
 import { useAuth } from '../../context/AuthContext';
 import { AddVisaToQuoteModal } from './AddVisaToQuoteModal';
 import { 
@@ -111,9 +111,16 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
   const [dbTick, setDbTick] = useState<number>(0);
 
   useEffect(() => {
-    return db.subscribe(() => {
+    const unsubDb = db.subscribe(() => {
       setDbTick(t => t + 1);
     });
+    const unsubImg = canonicalImageService.subscribe(() => {
+      setDbTick(t => t + 1);
+    });
+    return () => {
+      unsubDb();
+      unsubImg();
+    };
   }, [db]);
 
   // 1. Authoritative Master Data Queries
@@ -310,14 +317,29 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
   // -------------------------------------------------------------------------
   // ADD HANDLERS FOR TRAVEL PROTECTION, VIP & CONNECTIVITY
   // -------------------------------------------------------------------------
-  const handleConfirmAddProtection = (plan: TravelProtectionPlan, coverageDays: number, adults: number, children: number) => {
+  const handleConfirmAddProtection = (plan: TravelProtectionPlan, coverageDays: number, adults: number, children: number, coverageStartDate?: string) => {
+    const effectiveDate = coverageStartDate || travelStartDate || new Date().toISOString().split('T')[0];
     const dailyPrice = plan.sellingPricePerDay > 0 ? plan.sellingPricePerDay : (plan.sellingPricePerTrip > 0 ? plan.sellingPricePerTrip / coverageDays : 0);
     if (dailyPrice <= 0) return;
     const childDailyPrice = Math.round(dailyPrice * 0.7);
     const totalAdultCost = dailyPrice * coverageDays;
     const totalChildCost = childDailyPrice * coverageDays;
-    const totalSellingUSD = (totalAdultCost * adults) + (totalChildCost * children);
-    const convertedSellingPrice = convertCurrency(totalSellingUSD, plan.currency || 'USD', currency);
+    const baseSellingNative = (totalAdultCost * adults) + (totalChildCost * children);
+    const nativeCurrency = (plan.currency || 'USD') as CurrencyCode;
+
+    const surchargeEval = evaluateApplicableSurcharges({
+      surcharges: plan.surcharges,
+      serviceDate: effectiveDate,
+      coverageDays,
+      baseNativeAmount: baseSellingNative,
+      nativeCurrency,
+      targetCurrency: currency,
+      adults,
+      children,
+      defaultApplicationBasis: 'PER_DAY'
+    });
+    const totalSellingUSD = baseSellingNative + surchargeEval.totalSurchargeNative;
+    const convertedSellingPrice = convertCurrency(totalSellingUSD, nativeCurrency, currency);
 
     const product: Product = {
       id: plan.id,
@@ -341,15 +363,20 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       adultNetPrice: totalAdultCost,
       childNetPrice: totalChildCost,
       infantNetPrice: 0,
-      currency: plan.currency || 'USD',
+      currency: nativeCurrency,
       defaultMarkupPercent: 0,
       taxPercent: 0,
       commissionPercent: 0,
       serviceFeeFixed: 0,
       sellingPriceStartingFrom: dailyPrice,
       season: 'All Year',
-      validityFrom: '2026-01-01',
-      validityTo: '2026-12-31',
+      validityFrom: plan.validity?.validFrom || plan.validityFrom || '2026-01-01',
+      validityTo: plan.validity?.validTo || plan.validityTo || '2026-12-31',
+      validity: {
+        validFrom: plan.validity?.validFrom || plan.validityFrom || '2026-01-01',
+        validTo: plan.validity?.validTo || plan.validityTo || '2026-12-31'
+      },
+      surcharges: plan.surcharges,
       minPax: 1,
       maxPax: 50,
       availability: 'INSTANT',
@@ -358,15 +385,16 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       inclusions: plan.inclusions,
       exclusions: ['Pre-existing non-declared illnesses', 'Unlicensed motorized racing'],
       importantInformation: [plan.terms || 'Comprehensive travel insurance coverage. Valid for stated destinations and duration.'],
-      heroImage: 'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=800&auto=format&fit=crop',
-      galleryImages: ['https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=800&auto=format&fit=crop']
+      heroImage: canonicalImageService.resolveAncillaryImage({ ...plan, image: (plan as any).imageUrl || 'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=800&auto=format&fit=crop' }),
+      galleryImages: [canonicalImageService.resolveAncillaryImage({ ...plan, image: (plan as any).imageUrl || 'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=800&auto=format&fit=crop' })]
     };
+    (product as any).coverageDays = coverageDays;
 
     addProductToQuote(product, {
       adults,
       children,
       infants: paxConfig?.infants || 0,
-      travelDate: travelStartDate || new Date().toISOString().split('T')[0],
+      travelDate: effectiveDate,
       openDrawer: true,
       master_product_id: plan.id,
       service_id: plan.id,
@@ -375,6 +403,7 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       configuration_id: `cfg-prot-${plan.id}`,
       configuration_snapshot: {
         coverageDays,
+        coverageStartDate: effectiveDate,
         adults,
         children,
         medicalCoverageAmount: plan.medicalCoverageAmount,
@@ -385,9 +414,14 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       },
       pricing_snapshot: {
         dailyPriceUSD: dailyPrice,
+        baseSellingNative,
+        appliedSurcharges: surchargeEval.appliedSurcharges,
+        surchargeTotalNative: surchargeEval.totalSurchargeNative,
+        surchargeTotalConverted: surchargeEval.totalSurchargeConverted,
         totalSellingUSD,
         convertedSellingPrice,
-        currency
+        currency,
+        pricingRuleVersion: 'v2-centralized-validity-surcharge'
       },
       currency_snapshot: currency
     });
@@ -400,13 +434,28 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
   };
 
   const handleConfirmAddVipService = (service: VipGroundService, serviceDate: string, paxCount: number) => {
+    const effectiveDate = serviceDate || travelStartDate || new Date().toISOString().split('T')[0];
     const isPerGroup = service.pricingType === 'PER_VEHICLE' || service.pricingType === 'FIXED';
     const effectiveAdults = isPerGroup ? 1 : paxCount;
     const effectiveChildren = 0;
     const sellingPrice = service.sellingPrice > 0 ? service.sellingPrice : 0;
     if (sellingPrice <= 0) return;
-    const totalSellingUSD = isPerGroup ? sellingPrice : sellingPrice * paxCount;
-    const convertedSellingPrice = convertCurrency(totalSellingUSD, service.currency || 'USD', currency);
+    const baseSellingNative = isPerGroup ? sellingPrice : sellingPrice * paxCount;
+    const nativeCurrency = (service.currency || 'USD') as CurrencyCode;
+
+    const surchargeEval = evaluateApplicableSurcharges({
+      surcharges: service.surcharges,
+      serviceDate: effectiveDate,
+      baseNativeAmount: baseSellingNative,
+      nativeCurrency,
+      targetCurrency: currency,
+      adults: effectiveAdults,
+      children: effectiveChildren,
+      vehiclesCount: 1,
+      defaultApplicationBasis: isPerGroup ? 'PER_VEHICLE' : 'PER_PERSON'
+    });
+    const totalSellingUSD = baseSellingNative + surchargeEval.totalSurchargeNative;
+    const convertedSellingPrice = convertCurrency(totalSellingUSD, nativeCurrency, currency);
 
     const product: Product = {
       id: service.id,
@@ -430,15 +479,20 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       adultNetPrice: service.netCost,
       childNetPrice: 0,
       infantNetPrice: 0,
-      currency: service.currency || 'USD',
+      currency: nativeCurrency,
       defaultMarkupPercent: 0,
       taxPercent: 0,
       commissionPercent: 0,
       serviceFeeFixed: 0,
       sellingPriceStartingFrom: service.sellingPrice,
       season: 'All Year',
-      validityFrom: '2026-01-01',
-      validityTo: '2026-12-31',
+      validityFrom: service.validity?.validFrom || service.validityFrom || '2026-01-01',
+      validityTo: service.validity?.validTo || service.validityTo || '2026-12-31',
+      validity: {
+        validFrom: service.validity?.validFrom || service.validityFrom || '2026-01-01',
+        validTo: service.validity?.validTo || service.validityTo || '2026-12-31'
+      },
+      surcharges: service.surcharges,
       minPax: 1,
       maxPax: 20,
       availability: 'INSTANT',
@@ -447,15 +501,15 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       inclusions: service.inclusions,
       exclusions: ['Excess baggage handling exceeding 3 pieces per passenger', 'Customs duty payments'],
       importantInformation: [(service as any).terms || 'Flight details must be provided at least 48 hours prior to service execution.'],
-      heroImage: 'https://images.unsplash.com/photo-1542296332-2e4473faf563?q=80&w=800&auto=format&fit=crop',
-      galleryImages: ['https://images.unsplash.com/photo-1542296332-2e4473faf563?q=80&w=800&auto=format&fit=crop']
+      heroImage: canonicalImageService.resolveAncillaryImage({ ...service, image: (service as any).imageUrl || 'https://images.unsplash.com/photo-1542296332-2e4473faf563?q=80&w=800&auto=format&fit=crop' }),
+      galleryImages: [canonicalImageService.resolveAncillaryImage({ ...service, image: (service as any).imageUrl || 'https://images.unsplash.com/photo-1542296332-2e4473faf563?q=80&w=800&auto=format&fit=crop' })]
     };
 
     addProductToQuote(product, {
       adults: effectiveAdults,
       children: effectiveChildren,
       infants: 0,
-      travelDate: serviceDate || travelStartDate || new Date().toISOString().split('T')[0],
+      travelDate: effectiveDate,
       openDrawer: true,
       master_product_id: service.id,
       service_id: service.id,
@@ -463,7 +517,7 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       service_type: 'VIP_GROUND',
       configuration_id: `cfg-vip-${service.id}`,
       configuration_snapshot: {
-        serviceDate,
+        serviceDate: effectiveDate,
         paxCount,
         isPerGroup,
         supplierName: service.supplierName,
@@ -471,9 +525,14 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       },
       pricing_snapshot: {
         unitSellingUSD: sellingPrice,
+        baseSellingNative,
+        appliedSurcharges: surchargeEval.appliedSurcharges,
+        surchargeTotalNative: surchargeEval.totalSurchargeNative,
+        surchargeTotalConverted: surchargeEval.totalSurchargeConverted,
         totalSellingUSD,
         convertedSellingPrice,
-        currency
+        currency,
+        pricingRuleVersion: 'v2-centralized-validity-surcharge'
       },
       currency_snapshot: currency
     });
@@ -485,11 +544,28 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
     });
   };
 
-  const handleConfirmAddConnectivity = (plan: ConnectivityPlan, quantity: number) => {
+  const handleConfirmAddConnectivity = (plan: ConnectivityPlan, quantity: number, activationDate?: string) => {
+    const effectiveDate = activationDate || travelStartDate || new Date().toISOString().split('T')[0];
     const sellingPrice = plan.sellingPrice > 0 ? plan.sellingPrice : 0;
     if (sellingPrice <= 0) return;
-    const totalSellingUSD = sellingPrice * quantity;
-    const convertedSellingPrice = convertCurrency(totalSellingUSD, plan.currency || 'USD', currency);
+    const baseSellingNative = sellingPrice * quantity;
+    const nativeCurrency = (plan.currency || 'USD') as CurrencyCode;
+
+    const surchargeEval = evaluateApplicableSurcharges({
+      surcharges: plan.surcharges,
+      serviceDate: effectiveDate,
+      coverageDays: plan.validityDays || 1,
+      baseNativeAmount: baseSellingNative,
+      nativeCurrency,
+      targetCurrency: currency,
+      adults: quantity,
+      children: 0,
+      devicesCount: quantity,
+      quantity,
+      defaultApplicationBasis: 'PER_DEVICE'
+    });
+    const totalSellingUSD = baseSellingNative + surchargeEval.totalSurchargeNative;
+    const convertedSellingPrice = convertCurrency(totalSellingUSD, nativeCurrency, currency);
 
     const product: Product = {
       id: plan.id,
@@ -513,15 +589,20 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       adultNetPrice: plan.netCost * quantity,
       childNetPrice: 0,
       infantNetPrice: 0,
-      currency: plan.currency || 'USD',
+      currency: nativeCurrency,
       defaultMarkupPercent: 0,
       taxPercent: 0,
       commissionPercent: 0,
       serviceFeeFixed: 0,
       sellingPriceStartingFrom: plan.sellingPrice,
       season: 'All Year',
-      validityFrom: '2026-01-01',
-      validityTo: '2026-12-31',
+      validityFrom: plan.validity?.validFrom || plan.validityFrom || '2026-01-01',
+      validityTo: plan.validity?.validTo || plan.validityTo || '2026-12-31',
+      validity: {
+        validFrom: plan.validity?.validFrom || plan.validityFrom || '2026-01-01',
+        validTo: plan.validity?.validTo || plan.validityTo || '2026-12-31'
+      },
+      surcharges: plan.surcharges,
       minPax: 1,
       maxPax: 20,
       availability: 'INSTANT',
@@ -536,15 +617,17 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       ],
       exclusions: ['Traditional voice calling & SMS (VOIP apps supported)'],
       importantInformation: ['Device must be carrier-unlocked and support eSIM technology.'],
-      heroImage: 'https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?q=80&w=800&auto=format&fit=crop',
-      galleryImages: ['https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?q=80&w=800&auto=format&fit=crop']
+      heroImage: canonicalImageService.resolveAncillaryImage({ ...plan, image: (plan as any).imageUrl || 'https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?q=80&w=800&auto=format&fit=crop' }),
+      galleryImages: [canonicalImageService.resolveAncillaryImage({ ...plan, image: (plan as any).imageUrl || 'https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?q=80&w=800&auto=format&fit=crop' })]
     };
+    (product as any).devicesCount = quantity;
+    (product as any).coverageDays = plan.validityDays || 1;
 
     addProductToQuote(product, {
       adults: quantity,
       children: 0,
       infants: 0,
-      travelDate: travelStartDate || new Date().toISOString().split('T')[0],
+      travelDate: effectiveDate,
       openDrawer: true,
       master_product_id: plan.id,
       service_id: plan.id,
@@ -553,6 +636,7 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       configuration_id: `cfg-esim-${plan.id}`,
       configuration_snapshot: {
         quantity,
+        activationDate: effectiveDate,
         dataAllowance: plan.dataAllowance,
         validityDays: plan.validityDays,
         networkSpeed: plan.networkSpeed,
@@ -560,9 +644,14 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       },
       pricing_snapshot: {
         unitSellingUSD: sellingPrice,
+        baseSellingNative,
+        appliedSurcharges: surchargeEval.appliedSurcharges,
+        surchargeTotalNative: surchargeEval.totalSurchargeNative,
+        surchargeTotalConverted: surchargeEval.totalSurchargeConverted,
         totalSellingUSD,
         convertedSellingPrice,
-        currency
+        currency,
+        pricingRuleVersion: 'v2-centralized-validity-surcharge'
       },
       currency_snapshot: currency
     });
@@ -1279,8 +1368,9 @@ Support: visa-operations@theunbound.in
           initialDays={7}
           initialAdults={Math.max(1, paxConfig?.adults || 1)}
           initialChildren={paxConfig?.children || 0}
+          initialDate={travelStartDate || new Date().toISOString().split('T')[0]}
           onClose={() => setActiveProtectionPlan(null)}
-          onConfirm={(days, adults, children) => handleConfirmAddProtection(activeProtectionPlan, days, adults, children)}
+          onConfirm={(days, adults, children, covDate) => handleConfirmAddProtection(activeProtectionPlan, days, adults, children, covDate)}
         />
       )}
 
@@ -1302,8 +1392,9 @@ Support: visa-operations@theunbound.in
           plan={activeConnectivityPlan}
           currentCurrency={currency}
           initialQuantity={Math.max(1, paxConfig?.adults || 1)}
+          initialDate={travelStartDate || new Date().toISOString().split('T')[0]}
           onClose={() => setActiveConnectivityPlan(null)}
-          onConfirm={(qty) => handleConfirmAddConnectivity(activeConnectivityPlan, qty)}
+          onConfirm={(qty, actDate) => handleConfirmAddConnectivity(activeConnectivityPlan, qty, actDate)}
         />
       )}
 

@@ -733,7 +733,16 @@ export const INITIAL_RAIL_STATIONS: RailStation[] = [
 ];
 
 export function getStationById(id: string): RailStation | undefined {
-  return INITIAL_RAIL_STATIONS.find(s => s.stationId === id || s.stationCode === id);
+  if (!id) return undefined;
+  const clean = id.trim().toLowerCase();
+  return INITIAL_RAIL_STATIONS.find(s => 
+    s.stationId === id || 
+    s.stationCode === id ||
+    s.stationId.toLowerCase() === clean ||
+    s.stationCode.toLowerCase() === clean ||
+    s.stationId.toLowerCase() === `jp-st-${clean.replace(/^stn-/, '')}` ||
+    s.stationName.toLowerCase() === clean.replace(/^stn-/, '')
+  );
 }
 
 export function searchStations(query: string): RailStation[] {

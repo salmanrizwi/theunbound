@@ -1,5 +1,31 @@
-import { Hotel, HotelRoomType, HotelRate, MealPlanCode, Product, CurrencyCode, ManualHotelDetails } from '../types';
-import { convertCurrency, formatCurrency } from '../services/pricingEngine';
+import { Hotel, HotelRoomType, HotelRate, MealPlanCode, Product, CurrencyCode, ManualHotelDetails, InventorySurcharge, AppliedSurchargeDetail, InventoryValidityEvaluation } from '../types';
+import { convertCurrency, formatCurrency, evaluateInventoryValidity, evaluateApplicableSurcharges } from '../services/pricingEngine';
+import { canonicalImageService } from '../services/imageService';
+
+export function collectHotelSurcharges(
+  hotel?: Hotel,
+  roomType?: HotelRoomType,
+  rate?: HotelRate
+): InventorySurcharge[] {
+  const nativeCurr = rate?.currency || hotel?.currency || 'USD';
+  const combined: InventorySurcharge[] = [
+    ...(hotel?.surcharges || []),
+    ...(roomType?.surcharges || []),
+    ...(rate?.surcharges || [])
+  ];
+  const seen = new Set<string>();
+  const deduplicated: InventorySurcharge[] = [];
+  for (const s of combined) {
+    if (!s || !s.surchargeId || seen.has(s.surchargeId)) continue;
+    seen.add(s.surchargeId);
+    deduplicated.push({
+      ...s,
+      currency: (s.currency || nativeCurr) as CurrencyCode,
+      applicationBasis: s.applicationBasis || 'PER_ROOM_NIGHT'
+    });
+  }
+  return deduplicated;
+}
 
 export interface HotelStayCalculationParams {
   hotel: Hotel;
@@ -57,6 +83,13 @@ export interface HotelStayCalculationResult {
   discountRate: number;
   discountAmount: number;
 
+  // Validity & Surcharges
+  validityCheck?: InventoryValidityEvaluation;
+  appliedSurcharges?: AppliedSurchargeDetail[];
+  surchargeTotalNative?: number;
+  surchargeTotal?: number;
+  baseSellingPriceBeforeSurcharges?: number;
+
   // Final Quoted Selling Price
   price: number;
   finalTotalSellingPrice: number;
@@ -109,46 +142,73 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
     baseNightlyRateInHotelCurr = rate.doubleNetRate || rate.singleNetRate || hotel.startingNetPrice;
   }
 
+  // Native Currency Calculation First -> Surcharge Evaluation -> Currency Conversion
+  const hotelCurrency: CurrencyCode = (rate.currency || hotel.currency || 'USD') as CurrencyCode;
+  const nativeRoomsNetCost = baseNightlyRateInHotelCurr * nights * roomsCount;
+  const nativeExtraBedsNetCost = (rate.extraBedRate || 0) * nights * extraBeds;
+  const nativeChildrenNetCost = (rate.childRate || 0) * nights * children;
+  const nativeTotalStayNetCost = nativeRoomsNetCost + nativeExtraBedsNetCost + nativeChildrenNetCost;
+
+  // Universal B2B Pricing Formula in Native Currency:
+  const b2bMarkupPercent = rate.markupPercent ?? 20;
+  const b2bWholesaleMarkupRate = b2bMarkupPercent / 100;
+  const nativeMarginAmount = nativeTotalStayNetCost * b2bWholesaleMarkupRate;
+
+  const taxRate = (rate.taxPercent ?? 10) / 100;
+  const nativeTaxAmount = nativeMarginAmount * taxRate;
+
+  const nativeSubtotal = nativeTotalStayNetCost + nativeMarginAmount + nativeTaxAmount;
+
+  const serviceFeeRate = (rate.feePercent ?? 0) / 100;
+  const nativeServiceFee = nativeSubtotal * serviceFeeRate;
+
+  const discountRate = (customDiscountPercent || 0) / 100;
+  const nativeGrossTotal = nativeSubtotal + nativeServiceFee;
+  const nativeDiscountAmount = nativeGrossTotal * discountRate;
+  const nativeBaseSellingBeforeSurcharges = Math.max(0, nativeGrossTotal - nativeDiscountAmount);
+
+  // Validity & Surcharge Evaluation in Native Currency
+  const effectiveValidFrom = rate.validity?.validFrom || rate.validityFrom || roomType?.validity?.validFrom || roomType?.validityFrom || hotel.validity?.validFrom || hotel.validityFrom || '';
+  const effectiveValidTo = rate.validity?.validTo || rate.validityTo || roomType?.validity?.validTo || roomType?.validityTo || hotel.validity?.validTo || hotel.validityTo || '';
+  const validityCheck = evaluateInventoryValidity(
+    { validity: { validFrom: effectiveValidFrom, validTo: effectiveValidTo } },
+    checkInDate
+  );
+
+  const combinedSurcharges = collectHotelSurcharges(hotel, roomType, rate);
+  const surchargeEval = evaluateApplicableSurcharges({
+    surcharges: combinedSurcharges,
+    serviceDate: checkInDate,
+    nights,
+    baseNativeAmount: nativeBaseSellingBeforeSurcharges,
+    nativeCurrency: hotelCurrency,
+    targetCurrency,
+    adults,
+    children,
+    roomsCount,
+    quantity: 1,
+    defaultApplicationBasis: 'PER_ROOM_NIGHT'
+  });
+
+  const nativeFinalSellingPrice = Math.max(0, nativeBaseSellingBeforeSurcharges + surchargeEval.totalSurchargeNative);
+
   // Currency conversions to targetCurrency
-  const hotelCurrency = rate.currency || hotel.currency || 'USD';
   const nightlyBaseNetRate = convertCurrency(baseNightlyRateInHotelCurr, hotelCurrency, targetCurrency);
   const nightlyExtraBedNetRate = convertCurrency(rate.extraBedRate || 0, hotelCurrency, targetCurrency);
   const nightlyChildNetRate = convertCurrency(rate.childRate || 0, hotelCurrency, targetCurrency);
 
-  // Total Stay Net Cost
-  const roomsTotalNetCost = nightlyBaseNetRate * nights * roomsCount;
-  const extraBedsTotalNetCost = nightlyExtraBedNetRate * nights * extraBeds;
-  const childrenTotalNetCost = nightlyChildNetRate * nights * children;
-  const totalStayNetCost = roomsTotalNetCost + extraBedsTotalNetCost + childrenTotalNetCost;
+  const roomsTotalNetCost = convertCurrency(nativeRoomsNetCost, hotelCurrency, targetCurrency);
+  const extraBedsTotalNetCost = convertCurrency(nativeExtraBedsNetCost, hotelCurrency, targetCurrency);
+  const childrenTotalNetCost = convertCurrency(nativeChildrenNetCost, hotelCurrency, targetCurrency);
+  const totalStayNetCost = convertCurrency(nativeTotalStayNetCost, hotelCurrency, targetCurrency);
 
-  // Universal B2B Pricing Formula (Sections 4, 11, 20, 24, 49):
-  // 1. Margin Amount = Nett Cost × B2B Margin %
-  // 2. Tax Amount = Margin Amount × Tax % (Tax strictly on Margin)
-  // 3. Subtotal = Nett Cost + Margin Amount + Tax Amount
-  // 4. Service Fee = Subtotal × Service Fee % (Service Fee on Subtotal)
-  // 5. Price = Subtotal + Service Fee
-  const b2bMarkupPercent = rate.markupPercent ?? 20;
-  const b2bWholesaleMarkupRate = b2bMarkupPercent / 100;
-  const marginAmount = totalStayNetCost * b2bWholesaleMarkupRate;
-
-  // Tax on B2B Margin (Section 4 & 24)
-  const taxRate = (rate.taxPercent ?? 10) / 100;
-  const taxAmount = marginAmount * taxRate;
-
-  // Subtotal = Nett + Margin + Tax
-  const subtotal = totalStayNetCost + marginAmount + taxAmount;
-
-  // Service Fee on Subtotal (Section 4 & 24)
-  const serviceFeeRate = (rate.feePercent ?? 0) / 100;
-  const serviceFee = subtotal * serviceFeeRate;
-
-  // Discounts
-  const discountRate = (customDiscountPercent || 0) / 100;
-  const grossTotal = subtotal + serviceFee;
-  const discountAmount = grossTotal * discountRate;
+  const taxAmount = convertCurrency(nativeTaxAmount, hotelCurrency, targetCurrency);
+  const serviceFee = convertCurrency(nativeServiceFee, hotelCurrency, targetCurrency);
+  const discountAmount = convertCurrency(nativeDiscountAmount, hotelCurrency, targetCurrency);
+  const baseSellingPriceBeforeSurcharges = convertCurrency(nativeBaseSellingBeforeSurcharges, hotelCurrency, targetCurrency);
 
   // Final Quoted Price
-  const finalTotalSellingPrice = Math.max(0, grossTotal - discountAmount);
+  const finalTotalSellingPrice = convertCurrency(nativeFinalSellingPrice, hotelCurrency, targetCurrency);
   const pricePerNightSelling = finalTotalSellingPrice / nights;
   const totalGuests = adults + children;
   const pricePerPersonSelling = totalGuests > 0 ? finalTotalSellingPrice / totalGuests : finalTotalSellingPrice;
@@ -192,6 +252,12 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
     serviceFee,
     discountRate,
     discountAmount,
+
+    validityCheck,
+    appliedSurcharges: surchargeEval.appliedSurcharges,
+    surchargeTotalNative: surchargeEval.totalSurchargeNative,
+    surchargeTotal: surchargeEval.totalSurchargeConverted,
+    baseSellingPriceBeforeSurcharges,
 
     price: finalTotalSellingPrice,
     finalTotalSellingPrice,
@@ -242,8 +308,8 @@ export function hotelToProduct(
     taxPercent: 0,
     feePercent: 0,
     currency: hotel.currency || 'USD',
-    validityFrom: '2026-01-01',
-    validityTo: '2026-12-31'
+    validityFrom: hotel.validity?.validFrom || hotel.validityFrom || '2026-01-01',
+    validityTo: hotel.validity?.validTo || hotel.validityTo || '2026-12-31'
   };
 
   const mealLabel = selectedRate.mealPlanName || getMealPlanLabel(selectedRate.mealPlan);
@@ -255,6 +321,26 @@ export function hotelToProduct(
   const totalNetPrice = basePrice * safeNights * safeRooms;
 
   const canonicalHotelName = (hotel as any).listingName || hotel.name;
+  const resolvedHeroImage = canonicalImageService.resolveHotelImage(hotel);
+  const resolvedGallery = canonicalImageService.resolveHotelGallery(hotel);
+
+  const effectiveValidFrom =
+    selectedRate.validity?.validFrom ||
+    selectedRate.validityFrom ||
+    selectedRoom?.validity?.validFrom ||
+    selectedRoom?.validityFrom ||
+    hotel.validity?.validFrom ||
+    hotel.validityFrom ||
+    '2026-01-01';
+  const effectiveValidTo =
+    selectedRate.validity?.validTo ||
+    selectedRate.validityTo ||
+    selectedRoom?.validity?.validTo ||
+    selectedRoom?.validityTo ||
+    hotel.validity?.validTo ||
+    hotel.validityTo ||
+    '2026-12-31';
+  const combinedSurcharges = collectHotelSurcharges(hotel, selectedRoom, selectedRate);
 
   return {
     id: `hotel-prod-${hotel.id}-${selectedRoom?.id || 'std'}-${safeRooms}r-${safeNights}n`,
@@ -292,8 +378,13 @@ export function hotelToProduct(
     serviceFeeFixed: 0,
     sellingPriceStartingFrom: totalNetPrice,
     season: 'All Year',
-    validityFrom: selectedRate.validityFrom || '2026-01-01',
-    validityTo: selectedRate.validityTo || '2026-12-31',
+    validityFrom: effectiveValidFrom,
+    validityTo: effectiveValidTo,
+    validity: {
+      validFrom: effectiveValidFrom,
+      validTo: effectiveValidTo
+    },
+    surcharges: combinedSurcharges,
     minPax: 1,
     maxPax: (selectedRoom?.maxOccupancy || 2) * safeRooms,
     availability: 'INSTANT',
@@ -317,7 +408,9 @@ export function hotelToProduct(
     ],
     meetingPoint: `${hotel.name} Reception Lobby (${hotel.address})`,
     pickupInformation: 'Direct hotel check-in desk.',
-    images: hotel.images && (hotel.images || []).length > 0 ? hotel.images : [hotel.heroImage],
+    heroImage: resolvedHeroImage,
+    galleryImages: resolvedGallery,
+    images: resolvedGallery.length > 0 ? resolvedGallery : [resolvedHeroImage],
     location: `${hotel.area}, ${hotel.cityName}, ${hotel.country}`,
     latitude: hotel.latitude || 0,
     longitude: hotel.longitude || 0,

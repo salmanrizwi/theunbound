@@ -32,7 +32,8 @@ import {
 } from 'lucide-react';
 import { Product, Destination, CityHub, DestinationRegionItem } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
-import { formatCurrency } from '../../services/pricingEngine';
+import { useAuth } from '../../context/AuthContext';
+import { formatCurrency, evaluateInventoryValidity, calculateDeliveredPriceForUser } from '../../services/pricingEngine';
 import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 import { isRailProduct } from '../../services/rail/JapanRailJourneyDataService';
 import { AppDatabase } from '../../services/db';
@@ -122,26 +123,40 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
   onViewProductDetails
 }) => {
   const db = AppDatabase.getInstance();
+  const { user } = useAuth();
+  const isAdminOrStaff = user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER' || user?.role === 'DMC_STAFF';
   const { items, removeProductFromQuote, currency, setIsQuoteDrawerOpen } = useQuotation();
+  const [dbTick, setDbTick] = useState(0);
+
+  useEffect(() => {
+    const unsubDb = db.subscribe(() => setDbTick(t => t + 1));
+    const unsubImg = canonicalImageService.subscribe(() => setDbTick(t => t + 1));
+    return () => {
+      unsubDb();
+      unsubImg();
+    };
+  }, [db]);
 
   // Canonical Master Data Collections
   const canonicalProducts = useMemo(() => {
-    const raw = (products && products.length > 0) ? products : db.getProducts();
+    const freshDbProducts = db.getProducts();
+    const raw = (freshDbProducts && freshDbProducts.length > 0) ? freshDbProducts : products;
     return (raw || []).filter(p => Boolean(p && typeof p === 'object' && p.id));
-  }, [products, db]);
+  }, [products, db, dbTick]);
 
   const canonicalDestinations = useMemo(() => {
-    const raw = (destinations && destinations.length > 0) ? destinations : db.getDestinations();
+    const freshDbDests = db.getDestinations();
+    const raw = (freshDbDests && freshDbDests.length > 0) ? freshDbDests : destinations;
     return (raw || []).filter(d => Boolean(d && typeof d === 'object' && d.id));
-  }, [destinations, db]);
+  }, [destinations, db, dbTick]);
 
   const regions = useMemo(() => {
     return (db.getRegions() || []).filter(r => Boolean(r && typeof r === 'object' && r.id));
-  }, [db]);
+  }, [db, dbTick]);
 
   const cityHubs = useMemo(() => {
     return (db.getCityHubs() || []).filter(h => Boolean(h && typeof h === 'object' && h.id));
-  }, [db]);
+  }, [db, dbTick]);
 
   // Primary Filter States
   const [searchQuery, setSearchQuery] = useState('');
@@ -352,6 +367,12 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
         if (pStat !== selectedStatus.toUpperCase()) return false;
       }
 
+      // 10. Authoritative Validity Period Check when Travel Date is specified
+      if (selectedDate) {
+        const validityEval = evaluateInventoryValidity(p, selectedDate);
+        if (!validityEval.isValid) return false;
+      }
+
       return true;
     });
   }, [
@@ -363,6 +384,7 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
     selectedDestination,
     selectedHub,
     selectedCategory,
+    selectedDate,
     adults,
     children,
     selectedVehicle,
@@ -795,7 +817,8 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
             const cityDisplay = prod.city || prod.destinationName || 'Japan';
             const countryDisplay = prod.country || 'Japan';
             const categoryDisplay = prod.category || 'Tour';
-            const priceVal = typeof prod.sellingPriceStartingFrom === 'number' ? prod.sellingPriceStartingFrom : (prod.adultNetPrice || 0);
+            const deliveredInfo = calculateDeliveredPriceForUser(prod, user, currency);
+            const isPriceUnavailable = deliveredInfo.isPriceAvailable === false || deliveredInfo.deliveredPrice <= 0;
 
             return (
               <div
@@ -847,12 +870,18 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
                   <div className="pt-2 border-t border-slate-100 flex items-baseline justify-between">
                     <div>
                       <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
-                      <div className="flex items-baseline space-x-1">
-                        <span className="text-sm font-extrabold text-slate-900 font-mono">
-                          {formatCurrency(priceVal, prod.currency || currency)}
-                        </span>
-                        <span className="text-[10px] text-slate-400">/ person</span>
-                      </div>
+                      {isPriceUnavailable ? (
+                        <div className="inline-flex items-center px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold mt-0.5">
+                          {deliveredInfo.priceUnavailableReason || 'Price unavailable — Admin configuration required'}
+                        </div>
+                      ) : (
+                        <div className="flex items-baseline space-x-1">
+                          <span className="text-sm font-extrabold text-slate-900 font-mono">
+                            {formatCurrency(deliveredInfo.deliveredPrice, currency)}
+                          </span>
+                          <span className="text-[10px] text-slate-400">/ person</span>
+                        </div>
+                      )}
                     </div>
                     <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-md">
                       Contracted
@@ -881,8 +910,13 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
                       </div>
                     ) : (
                       <button
+                        disabled={isPriceUnavailable && !isRailProduct(prod)}
                         onClick={() => handleOpenAddProductModal(prod)}
-                        className="w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-xs bg-[#00C6A6] hover:bg-[#00b395] text-slate-950"
+                        className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center shadow-xs ${
+                          isPriceUnavailable && !isRailProduct(prod)
+                            ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                            : 'bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 cursor-pointer'
+                        }`}
                       >
                         <span>Configure & Add to Cart</span>
                       </button>
@@ -912,15 +946,16 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
                   <th className="py-3 px-4">Location</th>
                   <th className="py-3 px-4">Category</th>
                   <th className="py-3 px-4">Duration</th>
-                  <th className="py-3 px-4">Net Wholesale</th>
-                  <th className="py-3 px-4">Starting Retail</th>
+                  {isAdminOrStaff && <th className="py-3 px-4">Net Wholesale</th>}
+                  <th className="py-3 px-4">Final Selling Price</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredProducts.map(prod => {
                   const isSelected = isProductInQuote(prod.id);
-                  const priceVal = typeof prod.sellingPriceStartingFrom === 'number' ? prod.sellingPriceStartingFrom : (prod.adultNetPrice || 0);
+                  const deliveredInfo = calculateDeliveredPriceForUser(prod, user, currency);
+                  const isPriceUnavailable = deliveredInfo.isPriceAvailable === false || deliveredInfo.deliveredPrice <= 0;
 
                   return (
                     <tr key={prod.id} className="hover:bg-slate-50/80 transition-colors">
@@ -942,11 +977,21 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
                       <td className="py-3.5 px-4 text-slate-600 font-medium font-mono">
                         {prod.duration || 'Full Day'}
                       </td>
+                      {isAdminOrStaff && (
+                        <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
+                          {isPriceUnavailable
+                            ? '—'
+                            : formatCurrency(deliveredInfo.baseAdultNet, prod.currency || currency)}
+                        </td>
+                      )}
                       <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
-                        {formatCurrency(prod.adultNetPrice || 0, prod.currency || currency)}
-                      </td>
-                      <td className="py-3.5 px-4 font-mono text-slate-500">
-                        {formatCurrency(priceVal, prod.currency || currency)}
+                        {isPriceUnavailable ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold font-sans">
+                            {deliveredInfo.priceUnavailableReason || 'Price unavailable — Admin configuration required'}
+                          </span>
+                        ) : (
+                          formatCurrency(deliveredInfo.deliveredPrice, currency)
+                        )}
                       </td>
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end space-x-2">

@@ -275,6 +275,9 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     if (sec === 'VISA_ANCILLARY_SERVICES') {
       return resolveSubTabFromRoute(initialTab, initialSubTab);
     }
+    if (sec === 'PRODUCT_MANAGEMENT' && !initialSubTab) {
+      return 'PRODUCTS';
+    }
     if (initialSubTab) {
       const subUpper = initialSubTab.toUpperCase();
       if (subUpper === 'MENU' || subUpper === 'NAVIGATION') return 'NAVIGATION_MENU';
@@ -294,6 +297,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       }
       if (resolved === 'VISA_ANCILLARY_SERVICES') {
         setActiveSubTab(resolveSubTabFromRoute(initialTab, initialSubTab));
+      } else if (resolved === 'PRODUCT_MANAGEMENT' && !initialSubTab) {
+        setActiveSubTab('PRODUCTS');
       }
     }
     if (initialSubTab) {
@@ -991,6 +996,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
               {permittedSubTabs.map((st) => {
                 const SubIcon = st.icon || Layers;
                 const isTabActive = activeSubTab === st.id || 
+                  (st.id === 'PRODUCTS' && activeSubTab === 'OVERVIEW' && currentModuleConfig.id === 'PRODUCT_MANAGEMENT') ||
                   (st.id === 'VISA_SERVICES' && (activeSubTab === 'VISAS' || activeSubTab === 'OVERVIEW')) ||
                   (st.id === 'FIELD_PARITY' && (activeSubTab === 'MASTER_SCHEMA_MATRIX' || activeSubTab === 'SCHEMA_MATRIX'));
                 return (
@@ -1078,7 +1084,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           {/* 2.1 PRODUCT MANAGEMENT */}
           {currentModuleConfig.id === 'PRODUCT_MANAGEMENT' && (
             <>
-              {activeSubTab === 'PRODUCTS' && (
+              {(activeSubTab === 'PRODUCTS' || activeSubTab === 'OVERVIEW') && (
                 <ProductManager destinations={destinations} onViewProduct={onViewProduct} />
               )}
               {activeSubTab === 'OPERATIONAL_ASSETS' && (

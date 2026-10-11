@@ -127,10 +127,10 @@ export class JapanRailJourneyService {
     // Chaining logic: new origin is previous destination
     const newOriginStationId = lastSeg ? lastSeg.destination.stationId : 'JP-ST-TOKYO';
     
-    // Choose intelligent next destination (e.g. if origin is Kyoto, default to Osaka or Hiroshima)
-    let nextDestStationId = 'JP-ST-OSAKA';
-    if (newOriginStationId === 'JP-ST-KYOTO') nextDestStationId = 'JP-ST-OSAKA';
-    else if (newOriginStationId === 'JP-ST-OSAKA') nextDestStationId = 'JP-ST-HIROSHIMA';
+    // Choose intelligent next destination (e.g. if origin is Kyoto, default to Shin-Osaka or Hiroshima)
+    let nextDestStationId = 'JP-ST-SHIN-OSAKA';
+    if (newOriginStationId === 'JP-ST-KYOTO') nextDestStationId = 'JP-ST-SHIN-OSAKA';
+    else if (newOriginStationId === 'JP-ST-SHIN-OSAKA' || newOriginStationId === 'JP-ST-OSAKA') nextDestStationId = 'JP-ST-HIROSHIMA';
     else if (newOriginStationId === 'JP-ST-HIROSHIMA') nextDestStationId = 'JP-ST-HAKATA';
     else if (newOriginStationId === 'JP-ST-TOKYO') nextDestStationId = 'JP-ST-KYOTO';
     else nextDestStationId = 'JP-ST-TOKYO';

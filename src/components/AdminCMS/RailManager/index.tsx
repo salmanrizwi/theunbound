@@ -7,7 +7,8 @@ import {
   RailSeasonCalendarPeriod,
   RailSeasonType,
   RailServiceGroup,
-  RailCarType
+  RailCarType,
+  resolveRailRateNettPrice
 } from '../../../types/rail';
 import { Product, CurrencyCode } from '../../../types';
 import { 
@@ -28,13 +29,11 @@ import {
   DollarSign, 
   Calendar, 
   Percent, 
-  FileSpreadsheet, 
   Search, 
   Plus, 
   Edit3, 
   Check, 
   Download, 
-  Upload, 
   RefreshCw, 
   CheckCircle2, 
   AlertTriangle,
@@ -178,6 +177,7 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
   // Rate/Fare Form Modal state
   const [isRateModalOpen, setIsRateModalOpen] = useState(false);
   const [rateModalMode, setRateModalMode] = useState<'CREATE' | 'EDIT' | 'DUPLICATE'>('CREATE');
+  const [rateFormError, setRateFormError] = useState<string | null>(null);
   const [rateFormData, setRateFormData] = useState<Partial<RailRate>>({
     rateId: '',
     originStationId: 'JP-ST-TOKYO',
@@ -187,12 +187,10 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
     carType: 'Ordinary',
     seatType: 'Reserved',
     serviceGroup: 'NOZOMI_MIZUHO',
-    passengerType: 'Adult',
+    passengerType: 'ADULT',
+    nettPrice: undefined,
+    nativeCurrency: 'JPY',
     currency: 'JPY',
-    baseFareJPY: 8360,
-    superExpressSurchargeJPY: 4960,
-    greenCarSurchargeJPY: 0,
-    regularTotalFareJPY: 13320,
     active: true,
     effectiveDate: new Date().toISOString().split('T')[0],
     supplierId: 'SUP-JR-CENTRAL',
@@ -286,11 +284,10 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
     const seatType = (row.seat_type || row.seatType || 'Reserved').trim() as any;
     const serviceGroup = (row.service_group || row.serviceGroup || 'NOZOMI_MIZUHO').trim() as any;
     const passengerType = (row.passenger_type || row.passengerType || 'ADULT').trim() as any;
-    
-    const baseFareJPY = Number(row.base_fare_jpy || row.baseFareJPY) || 0;
-    const superExpressSurchargeJPY = Number(row.super_express_surcharge_jpy || row.superExpressSurchargeJPY) || 0;
-    const greenCarSurchargeJPY = Number(row.green_car_surcharge_jpy || row.greenCarSurchargeJPY) || 0;
-    const regularTotalFareJPY = Number(row.regular_total_fare_jpy || row.regularTotalFareJPY) || (baseFareJPY + superExpressSurchargeJPY + greenCarSurchargeJPY);
+
+    const rawNett = row.nett_price_jpy ?? row.nettPrice ?? row.regular_total_fare_jpy ?? row.regularTotalFareJPY;
+    const parsedNett = rawNett !== undefined && rawNett !== null && String(rawNett).trim() !== '' ? Number(rawNett) : NaN;
+    const hasVerifiedNett = Number.isFinite(parsedNett) && parsedNett > 0;
 
     return {
       rateId,
@@ -302,15 +299,14 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
       seatType,
       serviceGroup,
       passengerType,
+      nettPrice: hasVerifiedNett ? parsedNett : 0,
+      nativeCurrency: 'JPY',
       currency: 'JPY',
-      baseFareJPY,
-      superExpressSurchargeJPY,
-      greenCarSurchargeJPY,
-      regularTotalFareJPY,
+      needsAdminReview: !hasVerifiedNett,
       supplierId: 'sup-jp-smartex',
       supplierName: (row.supplier_name || row.supplierName || 'smartEX / JR Central & JR West').trim(),
       effectiveDate,
-      active: true
+      active: hasVerifiedNett
     };
   };
 
@@ -323,11 +319,12 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
     if (rate.passengerType !== 'ADULT' && rate.passengerType !== 'CHILD' && rate.passengerType !== 'ADT' && rate.passengerType !== 'CNB') {
       errors.push(`Passenger Type '${rate.passengerType}' must be ADULT or CHILD.`);
     }
-    if (rate.regularTotalFareJPY <= 0) {
-      errors.push(`Regular Total Fare JPY (${rate.regularTotalFareJPY}) must be positive.`);
+    const resolvedNett = resolveRailRateNettPrice(rate);
+    if (resolvedNett === null || resolvedNett <= 0) {
+      errors.push(`Nett Price (JPY) must be a valid positive monetary amount.`);
     }
-    if (rate.regularTotalFareJPY > 100000) {
-      errors.push(`Regular Total Fare JPY (${rate.regularTotalFareJPY}) exceeds safety upper limit of 100,000 JPY.`);
+    if (resolvedNett !== null && resolvedNett > 100000) {
+      errors.push(`Nett Price (JPY) (${resolvedNett}) exceeds safety upper limit of 100,000 JPY.`);
     }
     if (!validStationIds.has(rate.originStationId)) {
       errors.push(`Origin station '${rate.originStationId}' does not exist.`);
@@ -585,8 +582,15 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
   // FARE / RATE MANAGEMENT (Section 10, 26, 27, 28)
   // =========================================================================
   const handleOpenAddRate = () => {
+    if (!canModifyInventory) {
+      return;
+    }
     setRateModalMode('CREATE');
-    const matchedRoute = routes.find(r => r.originStationId === rateOriginFilter && r.destinationStationId === rateDestFilter);
+    setRateFormError(null);
+    const matchedRoute = routes.find(r =>
+      (r.originStationId === rateOriginFilter && r.destinationStationId === rateDestFilter) ||
+      (r.originStationId === rateDestFilter && r.destinationStationId === rateOriginFilter)
+    );
     setRateFormData({
       rateId: `JP-RR-${Date.now().toString().slice(-6)}`,
       originStationId: rateOriginFilter,
@@ -596,12 +600,11 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
       carType: 'Ordinary',
       seatType: 'Reserved',
       serviceGroup: 'NOZOMI_MIZUHO',
-      passengerType: 'Adult',
+      passengerType: 'ADULT',
+      nettPrice: undefined,
+      nativeCurrency: 'JPY',
       currency: 'JPY',
-      baseFareJPY: 8000,
-      superExpressSurchargeJPY: 5000,
-      greenCarSurchargeJPY: 0,
-      regularTotalFareJPY: 13000,
+      needsAdminReview: false,
       active: true,
       effectiveDate: new Date().toISOString().split('T')[0],
       supplierId: 'SUP-JR-CENTRAL',
@@ -611,31 +614,89 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
   };
 
   const handleOpenEditRate = (r: RailRate) => {
+    if (!canModifyInventory) {
+      return;
+    }
     setRateModalMode('EDIT');
-    setRateFormData({ ...r });
-    setIsRateModalOpen(true);
-  };
-
-  const handleOpenDuplicateRate = (r: RailRate) => {
-    setRateModalMode('DUPLICATE');
+    setRateFormError(null);
+    const resolvedNett = resolveRailRateNettPrice(r);
+    const normalizedPax = r.passengerType?.toUpperCase() === 'CHILD' || r.passengerType?.toUpperCase() === 'CNB' ? 'CHILD' : 'ADULT';
+    const normalizedService: RailServiceGroup = r.serviceGroup?.startsWith('HIKARI')
+      ? 'HIKARI_KODAMA_SAKURA_TSUBAME'
+      : 'NOZOMI_MIZUHO';
     setRateFormData({
       ...r,
-      rateId: `${r.rateId}-COPY-${Date.now().toString().slice(-4)}`
+      passengerType: normalizedPax,
+      serviceGroup: normalizedService,
+      nettPrice: resolvedNett !== null ? resolvedNett : undefined,
+      nativeCurrency: 'JPY',
+      currency: 'JPY'
     });
     setIsRateModalOpen(true);
   };
 
-  const handleSaveRateForm = (e: React.FormEvent) => {
+  const handleOpenDuplicateRate = (r: RailRate) => {
+    if (!canModifyInventory) {
+      return;
+    }
+    setRateModalMode('DUPLICATE');
+    setRateFormError(null);
+    const resolvedNett = resolveRailRateNettPrice(r);
+    const normalizedPax = r.passengerType?.toUpperCase() === 'CHILD' || r.passengerType?.toUpperCase() === 'CNB' ? 'CHILD' : 'ADULT';
+    const normalizedService: RailServiceGroup = r.serviceGroup?.startsWith('HIKARI')
+      ? 'HIKARI_KODAMA_SAKURA_TSUBAME'
+      : 'NOZOMI_MIZUHO';
+    setRateFormData({
+      ...r,
+      rateId: `${r.rateId}-COPY-${Date.now().toString().slice(-4)}`,
+      passengerType: normalizedPax,
+      serviceGroup: normalizedService,
+      nettPrice: resolvedNett !== null ? resolvedNett : undefined,
+      nativeCurrency: 'JPY',
+      currency: 'JPY'
+    });
+    setIsRateModalOpen(true);
+  };
+
+  const handleSaveRateForm = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!rateFormData.originStationId || !rateFormData.destinationStationId) return;
+    setRateFormError(null);
+
+    if (!canModifyInventory) {
+      setRateFormError('Unauthorized: Only authorized administrators may edit Japan Rail Nett Price (JPY) records.');
+      return;
+    }
+
+    if (!rateFormData.originStationId || !rateFormData.destinationStationId) {
+      setRateFormError('Validation Error: Origin and Destination stations are required.');
+      return;
+    }
 
     try {
-      const baseFare = Number(rateFormData.baseFareJPY) || 0;
-      const superExpress = Number(rateFormData.superExpressSurchargeJPY) || 0;
-      const greenSurcharge = rateFormData.carType === 'Green' ? (Number(rateFormData.greenCarSurchargeJPY) || 0) : 0;
-      const total = baseFare + superExpress + greenSurcharge;
+      const rawNett = rateFormData.nettPrice;
+      const parsedNett = typeof rawNett === 'number' ? rawNett : Number(rawNett);
+      const isActiveFare = rateFormData.active !== false;
 
-      const rateId = rateFormData.rateId || `JP-RR-${rateFormData.originStationId}-${rateFormData.destinationStationId}-${rateFormData.carType}-${rateFormData.passengerType}-${Date.now().toString().slice(-4)}`;
+      if (
+        rawNett === undefined ||
+        rawNett === null ||
+        String(rawNett).trim() === '' ||
+        !Number.isFinite(parsedNett) ||
+        parsedNett < 0 ||
+        (isActiveFare && parsedNett <= 0)
+      ) {
+        setRateFormError('Validation Error: Nett Price (JPY) is required and must be a valid positive monetary amount (> 0 JPY) when saving an active, sellable fare.');
+        return;
+      }
+
+      const normalizedPax = (String(rateFormData.passengerType || 'ADULT').toUpperCase() === 'CHILD' || String(rateFormData.passengerType).toUpperCase() === 'CNB')
+        ? 'CHILD'
+        : 'ADULT';
+      const normalizedService: RailServiceGroup = String(rateFormData.serviceGroup || 'NOZOMI_MIZUHO').startsWith('HIKARI')
+        ? 'HIKARI_KODAMA_SAKURA_TSUBAME'
+        : 'NOZOMI_MIZUHO';
+
+      const rateId = rateFormData.rateId || `JP-RR-${rateFormData.originStationId}-${rateFormData.destinationStationId}-${rateFormData.carType}-${normalizedPax}-${Date.now().toString().slice(-4)}`;
 
       const rate: RailRate = {
         rateId,
@@ -645,24 +706,28 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
         productId: rateFormData.carType === 'Green' ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED',
         carType: (rateFormData.carType as RailCarType) || 'Ordinary',
         seatType: (rateFormData.seatType as any) || 'Reserved',
-        serviceGroup: (rateFormData.serviceGroup as any) || 'NOZOMI_MIZUHO',
-        passengerType: (rateFormData.passengerType as any) || 'Adult',
+        serviceGroup: normalizedService,
+        passengerType: normalizedPax,
+        nettPrice: parsedNett,
+        nativeCurrency: 'JPY',
         currency: 'JPY',
-        baseFareJPY: baseFare,
-        superExpressSurchargeJPY: superExpress,
-        greenCarSurchargeJPY: greenSurcharge,
-        regularTotalFareJPY: total,
-        active: rateFormData.active !== false,
+        needsAdminReview: parsedNett <= 0,
+        active: isActiveFare,
         effectiveDate: rateFormData.effectiveDate || new Date().toISOString().split('T')[0],
         supplierId: rateFormData.supplierId || 'SUP-JR-CENTRAL',
         supplierName: rateFormData.supplierName || 'JR Central / smartEX'
       };
 
-      db.saveRailRate(rate, user);
+      await db.saveRailRateAsync(rate, user);
+      const persisted = db.getRailRates().find(r => r.rateId === rate.rateId);
+      if (!persisted || resolveRailRateNettPrice(persisted) !== parsedNett) {
+        throw new Error('Persistence verification failed: Updated rail Nett Price (JPY) could not be confirmed.');
+      }
+      setRates(db.getRailRates());
       setIsRateModalOpen(false);
-      setSuccessToast(`Fare Rate ${rate.rateId} (¥${rate.regularTotalFareJPY.toLocaleString()}) saved successfully.`);
+      setSuccessToast(`Fare Rate ${rate.rateId} (Nett Price: ¥${rate.nettPrice.toLocaleString()} JPY) saved and verified in Firestore.`);
     } catch (err: any) {
-      alert(`Save error: ${err?.message || err}`);
+      setRateFormError(err?.message || String(err));
     }
   };
 
@@ -804,29 +869,28 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
       'Seat Type',
       'Service Group',
       'Passenger Type',
-      'Base Fare (JPY)',
-      'Super Express (JPY)',
-      'Green Surcharge (JPY)',
-      'Regular Total (JPY)',
+      'Nett Price (JPY)',
+      'Currency',
       'Supplier'
     ];
 
-    const rows = rates.map(r => [
-      r.rateId,
-      r.routeId,
-      r.originStationId,
-      r.destinationStationId,
-      r.productId,
-      r.carType,
-      r.seatType,
-      r.serviceGroup,
-      r.passengerType,
-      r.baseFareJPY,
-      r.superExpressSurchargeJPY,
-      r.greenCarSurchargeJPY,
-      r.regularTotalFareJPY,
-      r.supplierName
-    ]);
+    const rows = rates.map(r => {
+      const resolvedNett = resolveRailRateNettPrice(r);
+      return [
+        r.rateId,
+        r.routeId,
+        r.originStationId,
+        r.destinationStationId,
+        r.productId,
+        r.carType,
+        r.seatType,
+        r.serviceGroup,
+        r.passengerType,
+        resolvedNett !== null ? resolvedNett : '',
+        r.nativeCurrency || 'JPY',
+        r.supplierName
+      ];
+    });
 
     const csvContent = [headers.join(','), ...rows.map(row => row.map(v => `"${v}"`).join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -856,9 +920,12 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
       {/* Top Banner & Title */}
       <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 rounded-2xl p-6 text-white shadow-xl border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1.5">
-          <div className="flex items-center space-x-2.5">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-widest bg-[#00C6A6] text-slate-950">
-              Dynamic smartEX Inventory
+              Sole Management Authority • Admin CMS
+            </span>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-800 border border-slate-700 text-teal-300">
+              Firestore Canonical Source of Truth
             </span>
             <span className="text-xs text-slate-300 font-medium">
               JR Central • JR West • JR Kyushu
@@ -1397,6 +1464,21 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
             </div>
           </div>
 
+          {/* Unverified Nett Price Admin Review Banner */}
+          {rates.some(r => r.needsAdminReview || resolveRailRateNettPrice(r) === null) && (
+            <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 text-amber-950 flex items-start gap-3 shadow-xs">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <span className="font-bold text-sm text-amber-900 block">
+                  Admin Review Required — Unverified Rail Fare Records Detected
+                </span>
+                <p className="text-amber-800">
+                  One or more rail fare records do not have a verified authoritative Nett Price (JPY). Legacy component fields are never summed to invent a replacement price. Please review and enter an explicit Nett Price (JPY) for flagged records.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Rates Table */}
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
             <div className="p-4 border-b border-slate-100 flex items-center justify-between">
@@ -1405,20 +1487,22 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                   Normalized Fares for {stations.find(s => s.stationId === rateOriginFilter)?.stationName} ↔ {stations.find(s => s.stationId === rateDestFilter)?.stationName}
                 </span>
                 <span className="text-[11px] text-slate-400 block">
-                  Regular-season listed one-way smartEX source values in Japanese Yen (JPY)
+                  Authoritative supplier Nett Price (JPY) per rail fare record
                 </span>
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-xs font-mono font-bold text-[#00A88F]">
                   {selectedRates.length} rate permutations
                 </span>
-                <button
-                  type="button"
-                  onClick={handleOpenAddRate}
-                  className="px-3 py-1.5 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold rounded-xl text-xs flex items-center shadow-xs cursor-pointer"
-                >
-                  <span>Add Fare / Rate</span>
-                </button>
+                {canModifyInventory && (
+                  <button
+                    type="button"
+                    onClick={handleOpenAddRate}
+                    className="px-3 py-1.5 bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold rounded-xl text-xs flex items-center shadow-xs cursor-pointer"
+                  >
+                    <span>Add Fare / Rate</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1430,16 +1514,15 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                     <th className="px-3 py-3">Car Class</th>
                     <th className="px-3 py-3">Service Group</th>
                     <th className="px-3 py-3">Pax Type</th>
-                    <th className="px-3 py-3 text-right">Base Fare</th>
-                    <th className="px-3 py-3 text-right">Super Express</th>
-                    <th className="px-3 py-3 text-right">Green Surcharge</th>
-                    <th className="px-4 py-3 text-right">Regular Total (JPY)</th>
+                    <th className="px-4 py-3 text-right">Nett Price (JPY)</th>
                     <th className="px-3 py-3 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
                   {selectedRates.map(r => {
                     const isGreen = r.carType === 'Green';
+                    const resolvedNett = resolveRailRateNettPrice(r);
+                    const isFlagged = r.needsAdminReview || resolvedNett === null;
                     return (
                       <tr key={r.rateId} className="hover:bg-slate-50 transition-colors">
                         <td className="px-4 py-3 font-semibold text-slate-700 text-[11px]">
@@ -1458,24 +1541,23 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                         <td className="px-3 py-3 font-sans font-semibold text-slate-800">
                           {r.passengerType}
                         </td>
-                        <td className="px-3 py-3 text-right text-slate-600">
-                          ¥{r.baseFareJPY.toLocaleString()}
-                        </td>
-                        <td className="px-3 py-3 text-right text-slate-600">
-                          ¥{r.superExpressSurchargeJPY.toLocaleString()}
-                        </td>
-                        <td className="px-3 py-3 text-right text-slate-600">
-                          {r.greenCarSurchargeJPY > 0 ? `¥${r.greenCarSurchargeJPY.toLocaleString()}` : '—'}
-                        </td>
-                        <td className="px-4 py-3 text-right font-black text-slate-900 text-sm">
-                          ¥{r.regularTotalFareJPY.toLocaleString()}
+                        <td className="px-4 py-3 text-right font-black text-slate-900 text-sm tabular-nums">
+                          {!isFlagged && resolvedNett !== null ? (
+                            <span>¥{resolvedNett.toLocaleString()} JPY</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-sans font-bold text-[11px]">
+                              <AlertTriangle className="w-3 h-3 text-amber-700 shrink-0" />
+                              <span>Admin Review Required</span>
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-3 text-right font-sans">
                           <div className="flex items-center justify-end gap-1">
                             <button
                               type="button"
                               onClick={() => handleOpenEditRate(r)}
-                              className="p-1 text-slate-400 hover:text-teal-600 rounded hover:bg-teal-50 cursor-pointer"
+                              disabled={!canModifyInventory}
+                              className="p-1 text-slate-400 hover:text-teal-600 rounded hover:bg-teal-50 cursor-pointer disabled:opacity-40"
                               title="Edit Fare"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
@@ -1483,7 +1565,8 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                             <button
                               type="button"
                               onClick={() => handleOpenDuplicateRate(r)}
-                              className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50 cursor-pointer"
+                              disabled={!canModifyInventory}
+                              className="p-1 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50 cursor-pointer disabled:opacity-40"
                               title="Duplicate Fare"
                             >
                               <Copy className="w-3.5 h-3.5" />
@@ -1493,11 +1576,12 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                               onClick={() => handleOpenDeleteModal({
                                 type: 'RATE',
                                 id: r.rateId,
-                                title: `${r.rateId} (${r.carType} Car, ¥${r.regularTotalFareJPY})`,
+                                title: `${r.rateId} (${r.carType} Car, ${resolvedNett !== null ? `¥${resolvedNett.toLocaleString()} JPY` : 'Unverified Nett Price'})`,
                                 subtitle: `Route: ${r.originStationId} ➔ ${r.destinationStationId}`,
                                 itemTypeLabel: 'Rate'
                               })}
-                              className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 cursor-pointer"
+                              disabled={!canModifyInventory}
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 cursor-pointer disabled:opacity-40"
                               title="Delete Rate"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -2269,8 +2353,7 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                       setRateFormData({
                         ...rateFormData,
                         carType: car,
-                        productId: car === 'Green' ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED',
-                        greenCarSurchargeJPY: car === 'Green' ? (rateFormData.greenCarSurchargeJPY || 4000) : 0
+                        productId: car === 'Green' ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED'
                       });
                     }}
                     className="w-full p-2 rounded-xl border border-slate-300 bg-white font-medium focus:ring-1 focus:ring-[#00C6A6]"
@@ -2288,98 +2371,86 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                     className="w-full p-2 rounded-xl border border-slate-300 bg-white font-medium focus:ring-1 focus:ring-[#00C6A6]"
                   >
                     <option value="NOZOMI_MIZUHO">Nozomi / Mizuho</option>
-                    <option value="HIKARI_KODAMA_SAKURA">Hikari / Kodama / Sakura</option>
+                    <option value="HIKARI_KODAMA_SAKURA_TSUBAME">Hikari / Kodama / Sakura</option>
                   </select>
                 </div>
 
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Passenger Type *</label>
                   <select
-                    value={rateFormData.passengerType || 'Adult'}
+                    value={rateFormData.passengerType?.toUpperCase() === 'CHILD' ? 'CHILD' : 'ADULT'}
                     onChange={(e) => setRateFormData({ ...rateFormData, passengerType: e.target.value as any })}
                     className="w-full p-2 rounded-xl border border-slate-300 bg-white font-medium focus:ring-1 focus:ring-[#00C6A6]"
                   >
-                    <option value="Adult">Adult (12+ yrs)</option>
-                    <option value="Child">Child (6-11 yrs)</option>
+                    <option value="ADULT">Adult (12+ yrs)</option>
+                    <option value="CHILD">Child (6-11 yrs)</option>
                   </select>
                 </div>
               </div>
 
-              {/* Fare Components */}
+              {rateFormError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 flex items-start gap-2 font-medium">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{rateFormError}</span>
+                </div>
+              )}
+
+              {/* Authoritative smartEX Fare Breakdown (JPY) — Nett Price Only */}
               <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-3">
-                <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">
-                  Authoritative smartEX Fare Breakdown (JPY)
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">
+                    Authoritative smartEX Fare Breakdown (JPY)
+                  </span>
+                  <span className="text-[10px] font-mono font-bold text-slate-500">
+                    Currency: JPY
+                  </span>
+                </div>
 
-                <div className="grid grid-cols-3 gap-2.5">
-                  <div>
-                    <label className="block font-bold text-slate-600 mb-1 text-[11px]">Base Fare (¥) *</label>
+                <div>
+                  <label htmlFor="railNettPriceJPYInput" className="block font-bold text-slate-700 mb-1 text-xs">
+                    Nett Price (JPY) *
+                  </label>
+                  <div className="relative flex items-center">
+                    <span className="absolute left-3 text-slate-500 font-mono font-bold text-xs select-none">
+                      ¥
+                    </span>
                     <input
+                      id="railNettPriceJPYInput"
                       type="number"
                       min="0"
+                      step="any"
                       required
-                      value={rateFormData.baseFareJPY ?? ''}
+                      disabled={!canModifyInventory}
+                      placeholder="Enter complete supplier nett fare in JPY"
+                      value={rateFormData.nettPrice ?? ''}
                       onChange={(e) => {
-                        const base = Number(e.target.value);
-                        const exp = Number(rateFormData.superExpressSurchargeJPY) || 0;
-                        const green = Number(rateFormData.greenCarSurchargeJPY) || 0;
+                        const raw = e.target.value;
+                        setRateFormError(null);
                         setRateFormData({
                           ...rateFormData,
-                          baseFareJPY: base,
-                          regularTotalFareJPY: base + exp + green
+                          nettPrice: raw === '' ? undefined : Number(raw),
+                          nativeCurrency: 'JPY',
+                          currency: 'JPY',
+                          needsAdminReview: false
                         });
                       }}
-                      className="w-full p-2 rounded-lg border border-slate-300 font-mono font-bold focus:ring-1 focus:ring-[#00C6A6]"
+                      className="w-full pl-7 pr-14 py-2.5 rounded-lg border border-slate-300 bg-white font-mono font-bold text-sm text-slate-900 tabular-nums disabled:bg-slate-100 disabled:text-slate-400 focus:ring-1 focus:ring-[#00C6A6] focus:outline-none"
                     />
+                    <span className="absolute right-3 text-[11px] font-mono font-bold text-slate-500 select-none">
+                      JPY
+                    </span>
                   </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-600 mb-1 text-[11px]">Super Express (¥) *</label>
-                    <input
-                      type="number"
-                      min="0"
-                      required
-                      value={rateFormData.superExpressSurchargeJPY ?? ''}
-                      onChange={(e) => {
-                        const exp = Number(e.target.value);
-                        const base = Number(rateFormData.baseFareJPY) || 0;
-                        const green = Number(rateFormData.greenCarSurchargeJPY) || 0;
-                        setRateFormData({
-                          ...rateFormData,
-                          superExpressSurchargeJPY: exp,
-                          regularTotalFareJPY: base + exp + green
-                        });
-                      }}
-                      className="w-full p-2 rounded-lg border border-slate-300 font-mono font-bold focus:ring-1 focus:ring-[#00C6A6]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-600 mb-1 text-[11px]">Green Surcharge (¥)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      disabled={rateFormData.carType !== 'Green'}
-                      value={rateFormData.carType === 'Green' ? (rateFormData.greenCarSurchargeJPY ?? '') : 0}
-                      onChange={(e) => {
-                        const green = Number(e.target.value);
-                        const base = Number(rateFormData.baseFareJPY) || 0;
-                        const exp = Number(rateFormData.superExpressSurchargeJPY) || 0;
-                        setRateFormData({
-                          ...rateFormData,
-                          greenCarSurchargeJPY: green,
-                          regularTotalFareJPY: base + exp + green
-                        });
-                      }}
-                      className="w-full p-2 rounded-lg border border-slate-300 font-mono font-bold disabled:bg-slate-100 disabled:text-slate-400 focus:ring-1 focus:ring-[#00C6A6]"
-                    />
-                  </div>
+                  <span className="text-[10px] text-slate-500 mt-1 block">
+                    Enter the complete authoritative supplier nett price in JPY. Downstream markup rules remain separate.
+                  </span>
                 </div>
 
                 <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
-                  <span className="font-bold text-slate-700">Calculated Regular Total Fare:</span>
-                  <span className="font-mono font-black text-sm text-[#00A88F]">
-                    ¥{((Number(rateFormData.baseFareJPY) || 0) + (Number(rateFormData.superExpressSurchargeJPY) || 0) + (rateFormData.carType === 'Green' ? (Number(rateFormData.greenCarSurchargeJPY) || 0) : 0)).toLocaleString()} JPY
+                  <span className="font-bold text-slate-700">Authoritative Nett Price (JPY):</span>
+                  <span className="font-mono font-black text-sm text-[#00A88F] tabular-nums">
+                    {typeof rateFormData.nettPrice === 'number' && Number.isFinite(rateFormData.nettPrice) && rateFormData.nettPrice > 0
+                      ? `¥${rateFormData.nettPrice.toLocaleString()} JPY`
+                      : 'Not set (Required)'}
                   </span>
                 </div>
               </div>

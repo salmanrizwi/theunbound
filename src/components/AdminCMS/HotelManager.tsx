@@ -6,6 +6,8 @@ import { ImageUploadOrUrlInput } from '../ImageUploadOrUrlInput';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { AdminWorkspaceLayout } from '../common/AdminWorkspaceLayout';
+import { validateInventoryValidityAndSurcharges } from '../../services/pricingEngine';
+import { InventoryValidityAndSurchargesSection } from './common/InventoryValidityAndSurchargesSection';
 import { 
   Hotel as HotelIcon, 
   Plus, 
@@ -100,8 +102,9 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
   const [bulkSeasonLabel, setBulkSeasonLabel] = useState<string>('Peak Season Surcharge');
   const [bulkMealPlan, setBulkMealPlan] = useState<MealPlanCode>('BB');
 
-  // Success alert badge
+  // Success & Validation alert badges
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
+  const [hierarchyError, setHierarchyError] = useState<string | null>(null);
 
   useEffect(() => {
     return db.subscribe(() => {
@@ -326,9 +329,49 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
       status: editingHotel.status || 'PUBLISHED',
       startingNetPrice: lowestNet,
       currency: editingHotel.currency || 'USD',
+      validityFrom: editingHotel.validity?.validFrom || editingHotel.validityFrom || editingHotel.roomTypes?.[0]?.rates?.[0]?.validityFrom || '2026-01-01',
+      validityTo: editingHotel.validity?.validTo || editingHotel.validityTo || editingHotel.roomTypes?.[0]?.rates?.[0]?.validityTo || '2026-12-31',
+      validity: {
+        validFrom: editingHotel.validity?.validFrom || editingHotel.validityFrom || editingHotel.roomTypes?.[0]?.rates?.[0]?.validityFrom || '2026-01-01',
+        validTo: editingHotel.validity?.validTo || editingHotel.validityTo || editingHotel.roomTypes?.[0]?.rates?.[0]?.validityTo || '2026-12-31'
+      },
+      surcharges: editingHotel.surcharges || [],
       createdAt: editingHotel.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+
+    setHierarchyError(null);
+    // Validate Hotel Validity & Surcharges
+    const hotelValidityCheck = validateInventoryValidityAndSurcharges({
+      validity: completeHotel.validity,
+      validityFrom: completeHotel.validityFrom,
+      validityTo: completeHotel.validityTo,
+      surcharges: completeHotel.surcharges,
+      requireValidity: completeHotel.status === 'PUBLISHED' || (completeHotel.status as string) === 'ACTIVE',
+      nativeCurrency: completeHotel.currency || 'USD'
+    });
+    if (!hotelValidityCheck.isValid) {
+      setHierarchyError(hotelValidityCheck.errors.join(' '));
+      return;
+    }
+
+    // Validate each Room Rate's Validity & Surcharges
+    for (const rm of completeHotel.roomTypes || []) {
+      for (const rt of rm.rates || []) {
+        const rateCheck = validateInventoryValidityAndSurcharges({
+          validity: rt.validity,
+          validityFrom: rt.validityFrom,
+          validityTo: rt.validityTo,
+          surcharges: rt.surcharges,
+          requireValidity: true,
+          nativeCurrency: rt.currency || completeHotel.currency || 'USD'
+        });
+        if (!rateCheck.isValid) {
+          setHierarchyError(`Room "${rm.roomName}": ${rateCheck.errors.join(' ')}`);
+          return;
+        }
+      }
+    }
 
     db.saveHotel(completeHotel, user);
     showNotification(`Saved hotel property: ${completeHotel.name} with updated per-night room pricing.`);
@@ -2306,12 +2349,65 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                   onChange={(newSeo) => setEditingHotel(prev => prev ? ({ ...prev, seo: newSeo, slug: newSeo.slug || prev.slug }) : null)}
                 />
               )}
+
+              {/* Authoritative Hotel Validity Period & Repeatable Surcharges */}
+              {editingHotel && (
+                <div className="pt-4 border-t border-slate-200">
+                  <InventoryValidityAndSurchargesSection
+                    validFrom={
+                      editingHotel.validity?.validFrom ??
+                      editingHotel.validityFrom ??
+                      editingHotel.roomTypes?.[0]?.rates?.[0]?.validityFrom ??
+                      '2026-01-01'
+                    }
+                    validTo={
+                      editingHotel.validity?.validTo ??
+                      editingHotel.validityTo ??
+                      editingHotel.roomTypes?.[0]?.rates?.[0]?.validityTo ??
+                      '2026-12-31'
+                    }
+                    surcharges={editingHotel.surcharges || []}
+                    nativeCurrency={editingHotel.currency || 'USD'}
+                    defaultApplicationBasis="PER_ROOM_NIGHT"
+                    categoryLabel={`Hotel & Accommodation — ${editingHotel.name || 'Property'}`}
+                    requireValidity={editingHotel.status === 'PUBLISHED' || (editingHotel.status as string) === 'ACTIVE'}
+                    onChangeValidity={({ validFrom, validTo, validity }) =>
+                      setEditingHotel(prev =>
+                        prev
+                          ? {
+                              ...prev,
+                              validityFrom: validFrom,
+                              validityTo: validTo,
+                              validity
+                            }
+                          : null
+                      )
+                    }
+                    onChangeSurcharges={nextSurcharges =>
+                      setEditingHotel(prev =>
+                        prev
+                          ? {
+                              ...prev,
+                              surcharges: nextSurcharges
+                            }
+                          : null
+                      )
+                    }
+                  />
+                </div>
+              )}
                   </div>
                 }
               />
             </div>
 
               {/* Sticky / Fixed Footer Actions */}
+              {hierarchyError && (
+                <div className="mx-6 mb-2 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-bold text-rose-700 flex items-center justify-between">
+                  <span>{hierarchyError}</span>
+                  <button type="button" onClick={() => setHierarchyError(null)} className="text-rose-500 hover:text-rose-800 ml-2">✕</button>
+                </div>
+              )}
               <div className="p-4 sm:px-6 py-3 border-t border-slate-100 bg-white/95 backdrop-blur-xs shrink-0 flex flex-col sm:flex-row items-center justify-between gap-3">
                 <div className="w-full sm:w-auto">
                   {editingHotel?.id && (

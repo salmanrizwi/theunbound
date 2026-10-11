@@ -200,7 +200,7 @@ import { INITIAL_RAIL_MARKUP_RULE } from '../data/initialRailMarkup';
 import { INITIAL_VEHICLES } from '../data/initialVehicles';
 import { INITIAL_YACHTS } from '../data/initialYachts';
 import { INITIAL_FERRIES } from '../data/initialFerries';
-import { RailStation, RailService, RailRoute, RailFare, RailRate, RailMarkupRule, RailSeasonCalendarPeriod, JapanRailCommercialProduct } from '../types/rail';
+import { RailStation, RailService, RailRoute, RailFare, RailRate, RailMarkupRule, RailSeasonCalendarPeriod, JapanRailCommercialProduct, resolveRailRateNettPrice } from '../types/rail';
 import { INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS } from '../data/initialRailCommercialProducts';
 import { EmailNotificationService } from './emailNotificationService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
@@ -213,6 +213,7 @@ let currentAuthUser: User | null = null;
 import { 
   collection, 
   doc, 
+  getDoc,
   getDocs, 
   setDoc, 
   deleteDoc, 
@@ -899,7 +900,7 @@ export class AppDatabase {
         'hotel_rooms', 'hotel_rates', 'hotel_meal_plans', 'transfer_routes', 'transfer_rates',
         'product_pricing_rates', 'product_capacities', 'b2b_packages', 'package_items',
         'visas', 'visa_rates', 'travel_protection_plans', 'vip_ground_services', 'connectivity_plans',
-        'custom_pages', 'blog_articles', 'inventory_tombstones'
+        'custom_pages', 'blog_articles', 'inventory_tombstones', 'image_metadata'
       ];
       const isAdminCollection = cmsCollections.includes(collectionName);
       const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || data?.updatedByEmail || 'business@theunbound.in';
@@ -937,7 +938,7 @@ export class AppDatabase {
         'hotel_rooms', 'hotel_rates', 'hotel_meal_plans', 'transfer_routes', 'transfer_rates',
         'product_pricing_rates', 'product_capacities', 'b2b_packages', 'package_items',
         'visas', 'visa_rates', 'travel_protection_plans', 'vip_ground_services', 'connectivity_plans',
-        'custom_pages', 'blog_articles', 'inventory_tombstones'
+        'custom_pages', 'blog_articles', 'inventory_tombstones', 'image_metadata'
       ];
       const isAdminCollection = cmsCollections.includes(collectionName);
       const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || data?.updatedByEmail || 'business@theunbound.in';
@@ -1464,6 +1465,41 @@ export class AppDatabase {
       
       // In production mode, always commit authoritative Firestore state (including 0 items [])
       if (!snapshot.empty || !envService.allowDemoData()) {
+        const entityTypeMap: Record<string, any> = {
+          products: 'PRODUCT',
+          hotels: 'HOTEL',
+          visas: 'VISA',
+          b2b_packages: 'PACKAGE',
+          destinations: 'DESTINATION',
+          city_hubs: 'HUB',
+          travel_protection_plans: 'CUSTOM',
+          vip_ground_services: 'CUSTOM',
+          connectivity_plans: 'CUSTOM',
+          japan_rail_commercial_products: 'RAIL'
+        };
+        const imgEntityType = entityTypeMap[storageKey];
+        if (imgEntityType && list.length > 0) {
+          list.forEach((rec: any) => {
+            if (storageKey === 'products') {
+              const cleanImages = canonicalImageService.extractPersistedProductImages(rec);
+              const primaryUrl = cleanImages[0] || null;
+              rec.images = cleanImages;
+              rec.heroImage = primaryUrl;
+              rec.imageUrl = primaryUrl;
+              if (!primaryUrl) {
+                rec.primaryImage = null;
+                rec.primaryImageId = null;
+              } else if (rec.primaryImage && typeof rec.primaryImage === 'object') {
+                rec.primaryImage = { ...rec.primaryImage, url: primaryUrl };
+              }
+            }
+            const recId = rec.id || rec.sku || rec.code;
+            if (recId) {
+              canonicalImageService.extractAllImagesFromRecord(rec, imgEntityType, recId);
+            }
+          });
+          canonicalImageService.notify();
+        }
         this.setItem(storageKey, list, true);
       }
     }, (err) => {
@@ -1718,9 +1754,27 @@ export class AppDatabase {
       this.syncCollectionSafely<RailRoute>('rail_routes', 'rail_routes');
       this.syncCollectionSafely<RailRate>('rail_rates', 'rail_rates');
       this.syncCollectionSafely<RailSeasonCalendarPeriod>('rail_seasons', 'rail_seasons');
+      this.syncCollectionSafely<RailMarkupRule>('rail_markup_rules', 'rail_markup_rules');
       this.syncCollectionSafely<VehicleMaster>('master_vehicles', 'master_vehicles');
       this.syncCollectionSafely<YachtMaster>('master_yachts', 'master_yachts');
       this.syncCollectionSafely<FerryMaster>('master_ferries', 'master_ferries');
+      this.syncCollectionSafely<JapanRailCommercialProduct>('japan_rail_commercial_products', 'japan_rail_commercial_products');
+
+      // Real-time Canonical Image Metadata Listener
+      onSnapshot(collection(firestoreDb, 'image_metadata'), (snapshot) => {
+        if (!snapshot.empty) {
+          const records: any[] = [];
+          snapshot.forEach(docSnap => {
+            const data = docSnap.data();
+            if (data && (data.imageId || docSnap.id)) {
+              records.push({ ...data, imageId: data.imageId || docSnap.id });
+            }
+          });
+          if (records.length > 0) {
+            canonicalImageService.registerImagesFromSync(records);
+          }
+        }
+      }, (err) => console.debug('Firestore image_metadata sync note:', err?.message || err));
 
       // Check if user is already authenticated at init
       if (auth.currentUser) {
@@ -4577,7 +4631,45 @@ export class AppDatabase {
       }
     }
     const deletedSet = this.getDeletedEntityIds();
-    return raw.filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Product_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED');
+    return raw
+      .filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Product_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED')
+      .map(p => {
+        const configValidity = p.configuration?.configuration_data?.validity;
+        const configSurcharges = p.configuration?.configuration_data?.surcharges;
+        const validFrom = (p.validity?.validFrom ?? p.validityFrom ?? configValidity?.validFrom ?? '').trim();
+        const validTo = (p.validity?.validTo ?? p.validityTo ?? configValidity?.validTo ?? '').trim();
+        const surcharges = Array.isArray(p.surcharges)
+          ? p.surcharges
+          : Array.isArray(configSurcharges)
+          ? configSurcharges
+          : [];
+        const cleanImages = canonicalImageService.extractPersistedProductImages(p);
+        const primaryUrl = cleanImages[0] || null;
+        return {
+          ...p,
+          images: cleanImages,
+          heroImage: primaryUrl,
+          imageUrl: primaryUrl,
+          primaryImage: primaryUrl
+            ? (typeof p.primaryImage === 'object' && p.primaryImage !== null
+                ? { ...p.primaryImage, url: primaryUrl }
+                : {
+                    imageId: p.primaryImageId || canonicalImageService.computeImageId('PRODUCT', p.id || p.sku || 'item', 'PRIMARY'),
+                    url: primaryUrl,
+                    version: p.updatedAt || p.lastUpdated || '1.0',
+                    altText: p.name || `PRODUCT image for ${p.id}`,
+                    lastSyncedAt: p.updatedAt || new Date().toISOString()
+                  })
+            : null,
+          validityFrom: validFrom,
+          validityTo: validTo,
+          validity: {
+            validFrom,
+            validTo
+          },
+          surcharges
+        };
+      });
   }
 
   // ==========================================
@@ -4905,19 +4997,64 @@ export class AppDatabase {
   public getRailRates(): RailRate[] {
     const deleted = this.getDeletedEntityIds();
     const raw = this.getItem<RailRate[]>('rail_rates', INITIAL_RAIL_RATES);
-    return raw.filter(r => r && r.rateId && !deleted.has(r.rateId) && !deleted.has(`rail_rates_${r.rateId}`) && !deleted.has(`RailRate_${r.rateId}`));
+    return raw
+      .filter(r => r && r.rateId && !deleted.has(r.rateId) && !deleted.has(`rail_rates_${r.rateId}`) && !deleted.has(`RailRate_${r.rateId}`))
+      .map(r => {
+        const verifiedNett = resolveRailRateNettPrice(r);
+        if (verifiedNett !== null) {
+          return {
+            ...r,
+            nettPrice: verifiedNett,
+            nativeCurrency: 'JPY' as const,
+            currency: 'JPY' as const,
+            needsAdminReview: Boolean(r.needsAdminReview)
+          };
+        }
+        return {
+          ...r,
+          nettPrice: typeof r.nettPrice === 'number' && Number.isFinite(r.nettPrice) && r.nettPrice >= 0 ? r.nettPrice : 0,
+          nativeCurrency: 'JPY' as const,
+          currency: 'JPY' as const,
+          needsAdminReview: true
+        };
+      });
   }
 
-  public saveRailRate(rate: RailRate, user?: User | null): void {
+  public saveRailRate(rate: RailRate, user?: User | null): RailRate {
     if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER') {
       throw new Error('Unauthorized: Only administrators may modify Japan Rail rates.');
+    }
+    const isActive = rate.active !== false;
+    const rawNett = typeof rate.nettPrice === 'number' && Number.isFinite(rate.nettPrice)
+      ? rate.nettPrice
+      : resolveRailRateNettPrice(rate);
+
+    if (
+      rawNett === null ||
+      rawNett === undefined ||
+      !Number.isFinite(rawNett) ||
+      rawNett < 0 ||
+      (isActive && rawNett <= 0)
+    ) {
+      throw new Error('Validation Error: Japan Rail fare rate must have an explicit Nett Price (JPY) greater than 0 JPY. Inventing or defaulting prices is strictly prohibited.');
     }
     const list = this.getRailRates();
     const idx = list.findIndex(r => r.rateId === rate.rateId);
     const now = new Date().toISOString();
+    const {
+      baseFareJPY: _b,
+      superExpressSurchargeJPY: _s,
+      greenCarSurchargeJPY: _g,
+      regularTotalFareJPY: _r,
+      ...cleanRate
+    } = rate;
     const updated: RailRate = {
-      ...rate,
-      active: rate.active !== false,
+      ...cleanRate,
+      nettPrice: rawNett,
+      nativeCurrency: 'JPY',
+      currency: 'JPY',
+      needsAdminReview: rawNett <= 0,
+      active: isActive,
       updatedAt: now
     };
     if (idx >= 0) {
@@ -4934,9 +5071,79 @@ export class AppDatabase {
       (idx >= 0 ? 'SETTINGS_UPDATED' : 'PRODUCT_CREATED') as any,
       'Product' as any,
       rate.rateId,
-      `Saved Japan Rail rate: ${rate.rateId} (${rate.carType} Car, regular total: ¥${rate.regularTotalFareJPY})`
+      `Saved Japan Rail rate: ${rate.rateId} (${rate.carType} Car, Nett Price: ¥${updated.nettPrice} JPY)`
     );
     this.notify();
+    return updated;
+  }
+
+  public async saveRailRateAsync(rate: RailRate, user?: User | null): Promise<RailRate> {
+    if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER') {
+      throw new Error('Unauthorized: Only administrators may modify Japan Rail rates.');
+    }
+    const isActive = rate.active !== false;
+    const rawNett = typeof rate.nettPrice === 'number' && Number.isFinite(rate.nettPrice)
+      ? rate.nettPrice
+      : resolveRailRateNettPrice(rate);
+
+    if (
+      rawNett === null ||
+      rawNett === undefined ||
+      !Number.isFinite(rawNett) ||
+      rawNett < 0 ||
+      (isActive && rawNett <= 0)
+    ) {
+      throw new Error('Validation Error: Japan Rail fare rate must have an explicit Nett Price (JPY) greater than 0 JPY. Inventing or defaulting prices is strictly prohibited.');
+    }
+    const list = this.getRailRates();
+    const idx = list.findIndex(r => r.rateId === rate.rateId);
+    const now = new Date().toISOString();
+    const {
+      baseFareJPY: _b,
+      superExpressSurchargeJPY: _s,
+      greenCarSurchargeJPY: _g,
+      regularTotalFareJPY: _r,
+      ...cleanRate
+    } = rate;
+    const updated: RailRate = {
+      ...cleanRate,
+      nettPrice: rawNett,
+      nativeCurrency: 'JPY',
+      currency: 'JPY',
+      needsAdminReview: rawNett <= 0,
+      active: isActive,
+      updatedAt: now
+    };
+    if (idx >= 0) {
+      list[idx] = updated;
+    } else {
+      updated.createdAt = now;
+      list.push(updated);
+    }
+    this.unmarkEntityDeleted('rail_rates', rate.rateId);
+    this.setItem('rail_rates', list);
+
+    try {
+      const enriched = {
+        ...updated,
+        updatedByRole: 'ADMIN',
+        updatedByEmail: 'business@theunbound.in',
+        updatedBy: user?.name || user?.email || 'Admin'
+      };
+      await setDoc(doc(firestoreDb, 'rail_rates', rate.rateId), cleanForFirestore(enriched));
+    } catch (err: any) {
+      console.warn(`[DB] Firestore saveRailRateAsync warning (${rate.rateId}):`, err?.message || err);
+    }
+
+    this.logAudit(
+      user || null,
+      (idx >= 0 ? 'SETTINGS_UPDATED' : 'PRODUCT_CREATED') as any,
+      'Product' as any,
+      rate.rateId,
+      `Saved Japan Rail rate: ${rate.rateId} (${rate.carType} Car, Nett Price: ¥${updated.nettPrice} JPY)`
+    );
+    this.notify();
+    return updated;
   }
 
   public async deleteRailRateAsync(rateId: string, user?: User | null): Promise<boolean> {
@@ -4949,7 +5156,7 @@ export class AppDatabase {
 
     const filtered = list.filter(r => r.rateId !== rateId);
     this.setItem('rail_rates', filtered);
-    this.markEntityDeleted('rail_rates', rateId, { carType: target.carType, fare: target.regularTotalFareJPY });
+    this.markEntityDeleted('rail_rates', rateId, { carType: target.carType, nettPrice: target.nettPrice });
     await this.deleteFirestoreDocAsync('rail_rates', rateId);
     this.logAudit(
       user || null,
@@ -5125,11 +5332,13 @@ export class AppDatabase {
     const existingIndex = currentList.findIndex(p => p.productCode === product.productCode || p.id === product.id);
 
     const now = new Date().toISOString();
+    const resolvedCurrency = (product.nativeCurrency || (product as any).currency || 'JPY') as CurrencyCode;
     const updated: JapanRailCommercialProduct = {
+      ...(existingIndex >= 0 ? currentList[existingIndex] : {}),
       ...product,
       category: 'RAIL',
       destinationId: product.destinationId || 'dest-japan',
-      nativeCurrency: 'JPY',
+      nativeCurrency: resolvedCurrency,
       updatedAt: now,
       updatedBy: user?.name || user?.email || 'Admin',
       schemaVersion: 1
@@ -5144,16 +5353,64 @@ export class AppDatabase {
     // Persist to local storage & Firestore
     this.setItem('japan_rail_commercial_products', currentList);
     this.syncFirestoreDoc('japan_rail_commercial_products', updated.id, updated);
-    this.syncFirestoreDoc('products', updated.id, {
-      ...updated,
+
+    // Keep canonical products collection in complete synchronization
+    const productsList = this.getProducts();
+    const prodIdx = productsList.findIndex(p => p.id === updated.id);
+    const existingProd = prodIdx >= 0 ? productsList[prodIdx] : undefined;
+    const resolvedHeroImg = updated.imageUrl || (updated as any).heroImage || existingProd?.heroImage || existingProd?.imageUrl;
+    const resolvedGallery =
+      updated.images && updated.images.length > 0
+        ? updated.images
+        : (updated as any).gallery && (updated as any).gallery.length > 0
+        ? (updated as any).gallery
+        : resolvedHeroImg
+        ? [resolvedHeroImg]
+        : (existingProd?.images || []);
+
+    const syncedProd: Product = {
+      ...(existingProd || {}),
+      id: updated.id,
       name: updated.productName,
       sku: updated.productCode === 'ORDINARY_RESERVED' ? 'JP-SHINKANSEN-ORD-RES' : 'JP-SHINKANSEN-GRN-RES',
       category: 'Rail',
       productType: 'Rail',
-      currency: 'JPY',
-      adultNetPrice: updated.pricingConfiguration?.supplierNett || (updated.productCode === 'ORDINARY_RESERVED' ? 13970 : 19040),
-      status: updated.status
-    });
+      country: 'Japan',
+      destinationId: updated.destinationId || 'dest-japan',
+      destinationName: 'Japan',
+      currency: resolvedCurrency,
+      adultNetPrice: updated.pricingConfiguration?.supplierNett ?? existingProd?.adultNetPrice ?? 0,
+      sellingPriceStartingFrom: (updated.pricingConfiguration as any)?.startingFromFareJPY ?? existingProd?.sellingPriceStartingFrom ?? 0,
+      heroImage: resolvedHeroImg,
+      imageUrl: resolvedHeroImg,
+      images: resolvedGallery,
+      inclusions: updated.inclusions || existingProd?.inclusions || [],
+      exclusions: updated.exclusions || existingProd?.exclusions || [],
+      status: updated.status,
+      validity: updated.validity || existingProd?.validity,
+      validityFrom: updated.validityFrom || existingProd?.validityFrom,
+      validityTo: updated.validityTo || existingProd?.validityTo,
+      surcharges: updated.surcharges || existingProd?.surcharges || [],
+      lastUpdated: now.split('T')[0]
+    } as Product;
+
+    if (resolvedHeroImg) {
+      canonicalImageService.syncImage(
+        'PRODUCT',
+        updated.id,
+        resolvedHeroImg,
+        'PRIMARY',
+        updated.productName
+      );
+    }
+
+    if (prodIdx >= 0) {
+      productsList[prodIdx] = syncedProd;
+    } else {
+      productsList.push(syncedProd);
+    }
+    this.setItem('products', productsList);
+    this.syncFirestoreDoc('products', updated.id, syncedProd);
 
     this.logAudit(
       user || null,
@@ -5164,6 +5421,25 @@ export class AppDatabase {
     );
 
     this.notify();
+    return updated;
+  }
+
+  public async saveJapanRailCommercialProductAsync(
+    product: JapanRailCommercialProduct,
+    user: User | null
+  ): Promise<JapanRailCommercialProduct> {
+    const updated = this.saveJapanRailCommercialProduct(product, user);
+    try {
+      const enriched = {
+        ...updated,
+        updatedByRole: 'ADMIN',
+        updatedByEmail: 'business@theunbound.in',
+        updatedBy: user?.name || user?.email || 'Admin'
+      };
+      await setDoc(doc(firestoreDb, 'japan_rail_commercial_products', updated.id), cleanForFirestore(enriched), { merge: true });
+    } catch (err: any) {
+      console.warn(`[DB] Firestore saveJapanRailCommercialProductAsync warning (${updated.id}):`, err?.message || err);
+    }
     return updated;
   }
 
@@ -5228,56 +5504,166 @@ export class AppDatabase {
   }
 
   public getProductById(id: string): Product | undefined {
-    return this.getProducts().find(p => p.id === id);
+    if (!id) return undefined;
+    const products = this.getProducts();
+    return products.find(p => p.id === id) || products.find(p => p.sku === id);
   }
 
-  public saveProduct(product: Product, user: User | null): void {
+  private prepareProductForSave(product: Product, user: User | null): {
+    savedProd: Product;
+    products: Product[];
+    existingIndex: number;
+    prev: Product | null;
+    primaryImageDto: any | null;
+  } {
     if (user) {
       const auth = this.canUserWriteCMS(user, 'OPERATIONS', 'Product');
       if (!auth.allowed) {
         this.logAudit(user, 'UNAUTHORIZED_WRITE_ATTEMPT', 'Product', product.id, `Unauthorized write attempt: ${auth.reason}`);
-        return;
+        throw new Error(`Unauthorized write attempt: ${auth.reason}`);
       }
     }
-    const products = this.getProducts();
-    const existingIndex = products.findIndex(p => p.id === product.id);
-    const prev = existingIndex >= 0 ? products[existingIndex] : null;
 
-    const chosenCurrency = (product.nativeCurrency || product.currency) as CurrencyCode;
+    const products = this.getProducts();
+    let existingIndex = products.findIndex(p => p.id === product.id);
+    if (existingIndex < 0 && product.sku) {
+      existingIndex = products.findIndex(p => p.sku === product.sku);
+    }
+    const prev = existingIndex >= 0 ? products[existingIndex] : null;
+    const effectiveId = prev ? prev.id : (product.id || `prod-${Date.now()}`);
+
+    const chosenCurrency = (product.nativeCurrency || product.currency || prev?.nativeCurrency || prev?.currency) as CurrencyCode;
     if (!chosenCurrency) {
       throw new Error('Product Currency (Native Currency) is required.');
     }
 
+    // Validate any explicitly supplied primary image URL before normalizing
+    const rawPrimaryInput = Array.isArray(product.images) && product.images.length > 0
+      ? product.images[0]
+      : (product.heroImage !== undefined ? product.heroImage : product.imageUrl);
+    if (typeof rawPrimaryInput === 'string' && rawPrimaryInput.trim() !== '') {
+      const urlCheck = canonicalImageService.validateUserSuppliedImageUrl(rawPrimaryInput);
+      if (!urlCheck.isValid) {
+        throw new Error(urlCheck.error || 'Invalid product image URL.');
+      }
+    }
+
     // CANONICAL HIERARCHY VALIDATION (Sections 12, 25 & 32)
     const masterData = MasterDataService.getInstance();
-    const hierarchy = masterData.validateHierarchy(product.regionId, product.destinationId, product.hubId);
+    const effectiveHubId = product.hubId || (Array.isArray(product.hubIds) && product.hubIds.length > 0 ? product.hubIds[0] : (prev?.hubId || ''));
+    const hierarchy = masterData.validateHierarchy(
+      product.regionId || prev?.regionId,
+      product.destinationId || prev?.destinationId,
+      effectiveHubId
+    );
     if (!hierarchy.valid) {
       throw new Error(`Data Integrity Error: ${hierarchy.error}`);
     }
 
-    const productWithMasterConfig = ensureMasterProductConfiguration(product, user);
+    const resolvedValidFrom = (
+      product.validity?.validFrom !== undefined
+        ? product.validity.validFrom
+        : product.validityFrom !== undefined
+        ? product.validityFrom
+        : prev?.validity?.validFrom || prev?.validityFrom || ''
+    ).trim();
+    const resolvedValidTo = (
+      product.validity?.validTo !== undefined
+        ? product.validity.validTo
+        : product.validityTo !== undefined
+        ? product.validityTo
+        : prev?.validity?.validTo || prev?.validityTo || ''
+    ).trim();
+    const resolvedSurcharges = Array.isArray(product.surcharges)
+      ? product.surcharges
+      : Array.isArray(prev?.surcharges)
+      ? prev!.surcharges
+      : [];
 
-    canonicalImageService.extractAllImagesFromRecord(product, 'PRODUCT', product.id);
-    const primaryDto = canonicalImageService.getCanonicalImageDto(product, 'PRODUCT');
+    const persistedImages = canonicalImageService.extractPersistedProductImages(product, prev);
+    const primaryUrl = persistedImages[0] || null;
+    const nowIso = new Date().toISOString();
+    const primaryImageId = primaryUrl
+      ? canonicalImageService.computeImageId('PRODUCT', effectiveId, 'PRIMARY')
+      : null;
+    const primaryImageDto = primaryUrl && primaryImageId
+      ? {
+          imageId: primaryImageId,
+          url: primaryUrl,
+          version: nowIso,
+          altText: product.name || prev?.name || `PRODUCT image for ${effectiveId}`,
+          lastSyncedAt: nowIso
+        }
+      : null;
+
+    const productWithMasterConfig = ensureMasterProductConfiguration(
+      {
+        ...(prev || {}),
+        ...product,
+        id: effectiveId,
+        validityFrom: resolvedValidFrom,
+        validityTo: resolvedValidTo,
+        validity: {
+          validFrom: resolvedValidFrom,
+          validTo: resolvedValidTo
+        },
+        surcharges: resolvedSurcharges,
+        images: persistedImages,
+        heroImage: primaryUrl,
+        imageUrl: primaryUrl,
+        primaryImageId,
+        primaryImage: primaryImageDto as any
+      },
+      user
+    );
+
+    canonicalImageService.extractAllImagesFromRecord(
+      {
+        ...productWithMasterConfig,
+        images: persistedImages,
+        heroImage: primaryUrl,
+        imageUrl: primaryUrl,
+        primaryImage: primaryImageDto
+      },
+      'PRODUCT',
+      effectiveId,
+      prev
+    );
 
     const savedProd: Product = {
       ...productWithMasterConfig,
+      id: effectiveId,
       regionId: hierarchy.region!.id,
       regionName: hierarchy.region!.name,
       destinationId: hierarchy.destination!.id,
       destinationName: hierarchy.destination!.name,
       country: hierarchy.destination!.country || hierarchy.destination!.name,
-      hubId: hierarchy.hub ? hierarchy.hub.id : (product.hubId || ''),
+      hubId: hierarchy.hub ? hierarchy.hub.id : effectiveHubId,
       city: hierarchy.hub ? hierarchy.hub.name : (product.city || hierarchy.destination!.name),
       currency: chosenCurrency,
       nativeCurrency: chosenCurrency,
-      product_id: product.id,
-      heroImage: primaryDto.url,
-      images: canonicalImageService.getGalleryImages('PRODUCT', product.id, hierarchy.hub?.name || 'Japan'),
-      primaryImageId: primaryDto.imageId,
-      primaryImage: primaryDto as any,
-      lastUpdated: new Date().toISOString().split('T')[0]
+      validityFrom: resolvedValidFrom,
+      validityTo: resolvedValidTo,
+      validity: {
+        validFrom: resolvedValidFrom,
+        validTo: resolvedValidTo
+      },
+      surcharges: resolvedSurcharges,
+      product_id: effectiveId,
+      heroImage: primaryUrl,
+      imageUrl: primaryUrl,
+      images: persistedImages,
+      primaryImageId,
+      primaryImage: primaryImageDto as any,
+      lastUpdated: nowIso.split('T')[0],
+      updatedAt: nowIso
     };
+
+    return { savedProd, products, existingIndex, prev, primaryImageDto };
+  }
+
+  public saveProduct(product: Product, user: User | null): Product {
+    const { savedProd, products, existingIndex, prev, primaryImageDto } = this.prepareProductForSave(product, user);
 
     if (existingIndex >= 0) {
       products[existingIndex] = savedProd;
@@ -5285,10 +5671,10 @@ export class AppDatabase {
         user,
         'PRODUCT_UPDATED',
         'Product',
-        product.id,
-        `Updated product: ${product.name} (SKU: ${product.sku})`,
-        prev ? JSON.stringify({ name: prev.name, price: prev.adultNetPrice }) : undefined,
-        JSON.stringify({ name: product.name, price: product.adultNetPrice })
+        savedProd.id,
+        `Updated product: ${savedProd.name} (SKU: ${savedProd.sku})`,
+        prev ? JSON.stringify({ name: prev.name, price: prev.adultNetPrice, heroImage: prev.heroImage }) : undefined,
+        JSON.stringify({ name: savedProd.name, price: savedProd.adultNetPrice, heroImage: savedProd.heroImage })
       );
     } else {
       products.unshift(savedProd);
@@ -5296,29 +5682,127 @@ export class AppDatabase {
         user,
         'PRODUCT_CREATED',
         'Product',
-        product.id,
-        `Created new product: ${product.name} (SKU: ${product.sku})`
+        savedProd.id,
+        `Created new product: ${savedProd.name} (SKU: ${savedProd.sku})`
       );
     }
-    this.unmarkEntityDeleted('products', product.id);
-    this.unmarkEntityDeleted('Product', product.id);
-    this.syncFirestoreDoc('products', product.id, savedProd);
-    if (primaryDto.imageId) {
-      this.syncFirestoreDoc('image_metadata', primaryDto.imageId, {
-        imageId: primaryDto.imageId,
+    this.unmarkEntityDeleted('products', savedProd.id);
+    this.unmarkEntityDeleted('Product', savedProd.id);
+    this.syncFirestoreDoc('products', savedProd.id, savedProd);
+    if (primaryImageDto && primaryImageDto.imageId && primaryImageDto.url) {
+      this.syncFirestoreDoc('image_metadata', primaryImageDto.imageId, {
+        imageId: primaryImageDto.imageId,
         entityType: 'PRODUCT',
-        entityId: product.id,
+        entityId: savedProd.id,
         role: 'PRIMARY',
-        sourceUrl: primaryDto.url,
-        storageUrl: primaryDto.url,
-        altText: primaryDto.altText || product.name,
+        sourceUrl: primaryImageDto.url,
+        storageUrl: primaryImageDto.url,
+        altText: primaryImageDto.altText || savedProd.name,
         status: 'SYNCED',
-        version: primaryDto.version,
+        version: primaryImageDto.version,
         updatedAt: new Date().toISOString()
       });
-      canonicalImageService.notify();
     }
+    canonicalImageService.notify();
     this.setItem('products', products);
+    return savedProd;
+  }
+
+  /**
+   * Authoritative async product save with Firestore write confirmation and read-back verification.
+   * Ensures the exact product document is updated in Firestore and verified before updating UI state.
+   */
+  public async saveProductAsync(product: Product, user: User | null): Promise<Product> {
+    const { savedProd, products, existingIndex, prev, primaryImageDto } = this.prepareProductForSave(product, user);
+
+    this.unmarkEntityDeleted('products', savedProd.id);
+    this.unmarkEntityDeleted('Product', savedProd.id);
+
+    const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || (savedProd as any)?.updatedByEmail || 'business@theunbound.in';
+    const effectiveUid = auth.currentUser?.uid || currentAuthUser?.id || (savedProd as any)?.updatedBy || 'usr-admin-business';
+    const enrichedData = {
+      ...savedProd,
+      updatedByRole: 'ADMIN',
+      updatedByEmail: effectiveEmail,
+      updatedBy: effectiveUid,
+      isDeleted: false
+    };
+    const cleanData = cleanForFirestore(enrichedData);
+    const docRef = doc(firestoreDb, 'products', savedProd.id);
+
+    // 1. Wait for Firestore write to succeed (throws on failure)
+    await setDoc(docRef, cleanData, { merge: true });
+
+    // 2. Read back from Firestore to reliably verify the persisted value
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      throw new Error(`Firestore read-back verification failed: Document products/${savedProd.id} was not found after write.`);
+    }
+    const persistedRaw = snap.data() as Product;
+    const persistedImages = canonicalImageService.extractPersistedProductImages(persistedRaw);
+    const expectedPrimary = savedProd.heroImage || null;
+    const actualPrimary = persistedImages[0] || null;
+
+    if (expectedPrimary !== actualPrimary) {
+      throw new Error(
+        `Firestore read-back image mismatch for ${savedProd.sku || savedProd.id}: expected "${expectedPrimary}", read back "${actualPrimary}".`
+      );
+    }
+
+    const verifiedProd: Product = {
+      ...savedProd,
+      ...persistedRaw,
+      id: savedProd.id,
+      images: persistedImages,
+      heroImage: actualPrimary,
+      imageUrl: actualPrimary,
+      primaryImageId: actualPrimary ? savedProd.primaryImageId : null,
+      primaryImage: actualPrimary ? savedProd.primaryImage : null
+    };
+
+    // 3. Sync image_metadata non-blockingly
+    if (primaryImageDto && primaryImageDto.imageId && primaryImageDto.url) {
+      this.syncFirestoreDoc('image_metadata', primaryImageDto.imageId, {
+        imageId: primaryImageDto.imageId,
+        entityType: 'PRODUCT',
+        entityId: verifiedProd.id,
+        role: 'PRIMARY',
+        sourceUrl: primaryImageDto.url,
+        storageUrl: primaryImageDto.url,
+        altText: primaryImageDto.altText || verifiedProd.name,
+        status: 'SYNCED',
+        version: primaryImageDto.version,
+        updatedAt: new Date().toISOString()
+      });
+    }
+
+    // 4. Update local application state and notify listeners
+    if (existingIndex >= 0) {
+      products[existingIndex] = verifiedProd;
+      this.logAudit(
+        user,
+        'PRODUCT_UPDATED',
+        'Product',
+        verifiedProd.id,
+        `Updated product: ${verifiedProd.name} (SKU: ${verifiedProd.sku})`,
+        prev ? JSON.stringify({ name: prev.name, price: prev.adultNetPrice, heroImage: prev.heroImage }) : undefined,
+        JSON.stringify({ name: verifiedProd.name, price: verifiedProd.adultNetPrice, heroImage: verifiedProd.heroImage })
+      );
+    } else {
+      products.unshift(verifiedProd);
+      this.logAudit(
+        user,
+        'PRODUCT_CREATED',
+        'Product',
+        verifiedProd.id,
+        `Created new product: ${verifiedProd.name} (SKU: ${verifiedProd.sku})`
+      );
+    }
+
+    canonicalImageService.extractAllImagesFromRecord(verifiedProd, 'PRODUCT', verifiedProd.id);
+    canonicalImageService.notify();
+    this.setItem('products', products);
+    return verifiedProd;
   }
 
   public saveProductConfiguration(
@@ -5356,112 +5840,36 @@ export class AppDatabase {
     return product.configuration;
   }
 
-  public async saveProductAsync(product: Product, user: User | null): Promise<Product> {
-    if (user) {
-      const auth = this.canUserWriteCMS(user, 'OPERATIONS', 'Product');
-      if (!auth.allowed) {
-        throw new Error(`Unauthorized write attempt: ${auth.reason}`);
-      }
-    }
-
-    if (!product.name || !product.name.trim()) {
-      throw new Error('Product name is required.');
-    }
-    if (!product.sku || !product.sku.trim()) {
-      throw new Error('Product SKU is required.');
-    }
-
-    const chosenCurrency = (product.nativeCurrency || product.currency) as CurrencyCode;
-    if (!chosenCurrency) {
-      throw new Error('Product Currency (Native Currency) is required.');
-    }
-
-    // CANONICAL HIERARCHY VALIDATION (Sections 12, 25 & 32)
-    const masterData = MasterDataService.getInstance();
-    const hierarchy = masterData.validateHierarchy(product.regionId, product.destinationId, product.hubId);
-    if (!hierarchy.valid) {
-      throw new Error(`Data Integrity Error: ${hierarchy.error}`);
-    }
-
-    const dup = this.checkDuplicateRecord('Product', {
-      id: product.id,
-      name: product.name,
-      sku: product.sku,
-      destinationId: hierarchy.destination!.id,
-      hubId: hierarchy.hub ? hierarchy.hub.id : (product.hubId || '')
-    });
-    if (dup.isDuplicate && dup.duplicateType === 'EXACT') {
-      throw new Error(dup.message || 'An active product with this SKU or Name already exists.');
-    }
-
-    const products = this.getProducts();
-    const existingIndex = products.findIndex(p => p.id === product.id);
-    const prev = existingIndex >= 0 ? products[existingIndex] : null;
-
-    const savedProd: Product = {
-      ...product,
-      regionId: hierarchy.region!.id,
-      regionName: hierarchy.region!.name,
-      destinationId: hierarchy.destination!.id,
-      destinationName: hierarchy.destination!.name,
-      country: hierarchy.destination!.country || hierarchy.destination!.name,
-      hubId: hierarchy.hub ? hierarchy.hub.id : (product.hubId || ''),
-      city: hierarchy.hub ? hierarchy.hub.name : (product.city || hierarchy.destination!.name),
-      currency: chosenCurrency,
-      nativeCurrency: chosenCurrency,
-      product_id: product.id,
-      lastUpdated: new Date().toISOString().split('T')[0]
-    };
-
-    if (existingIndex >= 0) {
-      products[existingIndex] = savedProd;
-    } else {
-      products.unshift(savedProd);
-    }
-
-    this.setItem('products', products);
-
-    // Unmark any tombstone
-    this.unmarkEntityDeleted('products', savedProd.id);
-    this.unmarkEntityDeleted('Product', savedProd.id);
-
-    try {
-      const enrichedData = {
-        ...savedProd,
-        isDeleted: false,
-        updatedByRole: 'ADMIN',
-        updatedByEmail: 'business@theunbound.in',
-        updatedBy: 'usr-admin-business'
-      };
-      await setDoc(doc(firestoreDb, 'products', savedProd.id), cleanForFirestore(enrichedData), { merge: true });
-    } catch (err: any) {
-      console.warn(`[DB] Firestore saveProductAsync warning (${savedProd.id}):`, err?.message || err);
-    }
-
-    this.logAudit(
-      user,
-      existingIndex >= 0 ? 'PRODUCT_UPDATED' : 'PRODUCT_CREATED',
-      'Product',
-      savedProd.id,
-      `${existingIndex >= 0 ? 'Updated' : 'Created'} product: ${savedProd.name} (SKU: ${savedProd.sku})`,
-      prev ? JSON.stringify({ name: prev.name, price: prev.adultNetPrice }) : undefined,
-      JSON.stringify({ name: savedProd.name, price: savedProd.adultNetPrice })
-    );
-
-    return savedProd;
-  }
-
   public duplicateProduct(productId: string, user: User | null): Product | null {
     const product = this.getProductById(productId);
     if (!product) return null;
 
+    const newId = `prod-${Date.now()}`;
+    const cleanImages = canonicalImageService.extractPersistedProductImages(product);
+    const primaryUrl = cleanImages[0] || null;
+    const nowIso = new Date().toISOString();
+
     const duplicated: Product = {
       ...product,
-      id: `prod-${Date.now()}`,
+      id: newId,
       sku: `${product.sku}-COPY`,
       name: `${product.name} (Copy)`,
+      images: cleanImages,
+      heroImage: primaryUrl,
+      imageUrl: primaryUrl,
+      primaryImageId: primaryUrl ? canonicalImageService.computeImageId('PRODUCT', newId, 'PRIMARY') : null,
+      primaryImage: primaryUrl
+        ? {
+            imageId: canonicalImageService.computeImageId('PRODUCT', newId, 'PRIMARY'),
+            url: primaryUrl,
+            version: nowIso,
+            altText: `${product.name} (Copy)`,
+            lastSyncedAt: nowIso
+          }
+        : null,
       status: 'DRAFT',
-      lastUpdated: new Date().toISOString().split('T')[0]
+      lastUpdated: nowIso.split('T')[0],
+      updatedAt: nowIso
     };
 
     this.saveProduct(duplicated, user);
@@ -5714,16 +6122,25 @@ export class AppDatabase {
         return;
       }
     }
+    canonicalImageService.extractAllImagesFromRecord(destination, 'DESTINATION', destination.id);
+    const destPrimaryDto = canonicalImageService.getCanonicalImageDto(destination, 'DESTINATION');
+    const enrichedDestination: Destination = {
+      ...destination,
+      heroImage: destPrimaryDto.url,
+      primaryImageId: destPrimaryDto.imageId,
+      primaryImage: destPrimaryDto as any
+    };
     const destinations = this.getDestinations();
     const index = destinations.findIndex(d => d.id === destination.id);
     if (index >= 0) {
-      destinations[index] = destination;
+      destinations[index] = enrichedDestination;
       this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destination.id, `Updated destination: ${destination.name}`);
     } else {
-      destinations.push(destination);
+      destinations.push(enrichedDestination);
       this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destination.id, `Added destination: ${destination.name}`);
     }
-    this.syncFirestoreDoc('destinations', destination.id, destination);
+    this.syncFirestoreDoc('destinations', destination.id, enrichedDestination);
+    canonicalImageService.notify();
     this.setItem('destinations', destinations);
   }
 
@@ -7555,10 +7972,16 @@ export class AppDatabase {
     const status = pkg.status || (pkg.isPublished ? 'PUBLISHED' : 'DRAFT');
     const isPublished = status === 'PUBLISHED' || !!pkg.isPublished;
 
+    canonicalImageService.extractAllImagesFromRecord(pkg, 'PACKAGE', pkg.id);
+    const pkgPrimaryDto = canonicalImageService.getCanonicalImageDto(pkg, 'PACKAGE');
+
     const updatedPkg: B2BPackage = { 
       ...pkg, 
       title: pkg.title || pkg.name || 'Custom Package Itinerary',
       name: pkg.title || pkg.name || 'Custom Package Itinerary',
+      heroImage: pkgPrimaryDto.url,
+      primaryImageId: pkgPrimaryDto.imageId,
+      primaryImage: pkgPrimaryDto as any,
       status,
       isPublished,
       updatedBy: user?.name || user?.email || 'Admin CMS',
@@ -7574,6 +7997,7 @@ export class AppDatabase {
     }
 
     this.setItem('b2b_packages', pkgs);
+    canonicalImageService.notify();
     this.unmarkEntityDeleted('b2b_packages', pkg.id);
     this.unmarkEntityDeleted('Package', pkg.id);
     this.unmarkEntityDeleted('B2BPackage', pkg.id);
@@ -12506,13 +12930,22 @@ export class AppDatabase {
 
     const hotels = this.getHotels();
     const index = hotels.findIndex(h => h.id === hotel.id);
+    canonicalImageService.extractAllImagesFromRecord(hotel, 'HOTEL', hotel.id);
+    const primaryDto = canonicalImageService.getCanonicalImageDto(hotel, 'HOTEL');
+    const hotelWithImages: Hotel = {
+      ...hotel,
+      heroImage: primaryDto.url,
+      images: canonicalImageService.getGalleryImages('HOTEL', hotel.id, hotel.city || 'Tokyo'),
+      primaryImageId: primaryDto.imageId,
+      primaryImage: primaryDto as any
+    };
     let savedHotel: Hotel;
     if (index >= 0) {
-      savedHotel = { ...hotel, hotel_id: hotel.id, updatedAt: new Date().toISOString() };
+      savedHotel = { ...hotelWithImages, hotel_id: hotel.id, updatedAt: new Date().toISOString() };
       hotels[index] = savedHotel;
     } else {
       savedHotel = {
-        ...hotel,
+        ...hotelWithImages,
         hotel_id: hotel.id,
         createdAt: (hotel as any).createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -12521,6 +12954,7 @@ export class AppDatabase {
     }
 
     this.setItem('hotels', hotels);
+    canonicalImageService.notify();
 
     // Unmark any tombstone
     this.unmarkEntityDeleted('hotels', savedHotel.id);
@@ -16929,15 +17363,27 @@ export class AppDatabase {
     const visas = this.getVisas();
     const index = visas.findIndex(v => v.id === visa.id);
     const now = new Date().toISOString();
+    const visaId = visa.id || `visa-${Date.now()}`;
+    canonicalImageService.extractAllImagesFromRecord(visa, 'VISA', visaId);
+    const visaPrimaryDto = canonicalImageService.getCanonicalImageDto({ ...visa, id: visaId }, 'VISA');
     let savedVisa: VisaProduct;
     if (index >= 0) {
-      savedVisa = { ...visa, updatedAt: now };
+      savedVisa = {
+        ...visa,
+        imageUrl: visaPrimaryDto.url,
+        primaryImageId: visaPrimaryDto.imageId,
+        primaryImage: visaPrimaryDto as any,
+        updatedAt: now
+      };
       visas[index] = savedVisa;
       this.logAudit(user || null, 'PRODUCT_UPDATED', 'VisaProduct', visa.id, `Updated visa product: ${visa.country} - ${visa.visaType}`);
     } else {
       savedVisa = {
         ...visa,
-        id: visa.id || `visa-${Date.now()}`,
+        id: visaId,
+        imageUrl: visaPrimaryDto.url,
+        primaryImageId: visaPrimaryDto.imageId,
+        primaryImage: visaPrimaryDto as any,
         createdAt: now,
         updatedAt: now
       };
@@ -16945,6 +17391,7 @@ export class AppDatabase {
       this.logAudit(user || null, 'PRODUCT_CREATED', 'VisaProduct', savedVisa.id, `Created new visa product: ${visa.country} - ${visa.visaType}`);
     }
     this.syncFirestoreDoc('visas', savedVisa.id, savedVisa);
+    canonicalImageService.notify();
     this.setItem('visas', visas);
   }
 

@@ -7,6 +7,8 @@ import {
 import { AppDatabase } from '../../../services/db';
 import { useAuth } from '../../../context/AuthContext';
 import { formatCurrency } from '../../../services/currencyEngine';
+import { validateInventoryValidityAndSurcharges } from '../../../services/pricingEngine';
+import { InventoryValidityAndSurchargesSection } from '../common/InventoryValidityAndSurchargesSection';
 import { INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS } from '../../../data/initialRailCommercialProducts';
 import { 
   Train, 
@@ -106,7 +108,7 @@ export const CommercialProductsManager: React.FC<CommercialProductsManagerProps>
   }, [db, products]);
 
   // Handle Save
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       if (!formData.productName.trim()) {
@@ -119,20 +121,51 @@ export const CommercialProductsManager: React.FC<CommercialProductsManagerProps>
         return;
       }
 
-      const saved = db.saveJapanRailCommercialProduct(formData, user);
-      showToast('SUCCESS', `Successfully saved Commercial Master Product: ${saved.productName} (${saved.productCode})`);
+      const effectiveValidFrom = (formData.validity?.validFrom ?? formData.validityFrom ?? '').trim();
+      const effectiveValidTo = (formData.validity?.validTo ?? formData.validityTo ?? '').trim();
+      const validityValidation = validateInventoryValidityAndSurcharges({
+        validity: { validFrom: effectiveValidFrom, validTo: effectiveValidTo },
+        validityFrom: effectiveValidFrom,
+        validityTo: effectiveValidTo,
+        surcharges: formData.surcharges || [],
+        requireValidity: formData.status === 'ACTIVE',
+        nativeCurrency: formData.currency || 'JPY'
+      });
+      if (!validityValidation.isValid) {
+        showToast('ERROR', validityValidation.errors.join(' '));
+        return;
+      }
+
+      const payloadToSave: JapanRailCommercialProduct = {
+        ...formData,
+        validityFrom: effectiveValidFrom || '2026-01-01',
+        validityTo: effectiveValidTo || '2027-03-31',
+        validity: {
+          validFrom: effectiveValidFrom || '2026-01-01',
+          validTo: effectiveValidTo || '2027-03-31'
+        },
+        surcharges: formData.surcharges || []
+      };
+
+      const saved = await db.saveJapanRailCommercialProductAsync(payloadToSave, user);
+      const readBack = db.getJapanRailCommercialProductById(saved.productCode);
+      if (!readBack) {
+        throw new Error('Persistence verification failed: Product could not be read back from database.');
+      }
       setProducts(db.getJapanRailCommercialProducts());
+      showToast('SUCCESS', `Successfully saved & verified Commercial Master Product: ${saved.productName} (${saved.productCode})`);
     } catch (err: any) {
       showToast('ERROR', err?.message || 'Failed to save Commercial Master Product.');
     }
   };
 
   // Handle Toggle Active/Inactive
-  const handleToggleStatus = (prod: JapanRailCommercialProduct) => {
+  const handleToggleStatus = async (prod: JapanRailCommercialProduct) => {
     try {
       const nextStatus = prod.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
       const updated = { ...prod, status: nextStatus as any };
-      db.saveJapanRailCommercialProduct(updated, user);
+      await db.saveJapanRailCommercialProductAsync(updated, user);
+      setProducts(db.getJapanRailCommercialProducts());
       showToast('SUCCESS', `Product ${prod.productCode} status updated to ${nextStatus}.`);
     } catch (err: any) {
       showToast('ERROR', err?.message || 'Failed to update status.');
@@ -966,6 +999,33 @@ export const CommercialProductsManager: React.FC<CommercialProductsManagerProps>
                   <p className="text-[10px] text-slate-500 leading-relaxed italic">
                     Note: B2B Agents strictly see <strong>Price: ¥{samplePricing.finalPrice.toLocaleString()} JPY</strong>. Internal supplier nett, markup, and tax breakdowns are redacted automatically.
                   </p>
+                </div>
+
+                {/* Validity Period & Repeatable Surcharges for Rail Commercial Product */}
+                <div className="pt-2">
+                  <InventoryValidityAndSurchargesSection
+                    validFrom={formData.validity?.validFrom ?? formData.validityFrom ?? ''}
+                    validTo={formData.validity?.validTo ?? formData.validityTo ?? ''}
+                    surcharges={formData.surcharges || []}
+                    nativeCurrency={formData.currency || 'JPY'}
+                    defaultApplicationBasis="PER_PERSON"
+                    categoryLabel={`Rail — ${formData.productName || formData.productCode}`}
+                    requireValidity={formData.status === 'ACTIVE'}
+                    onChangeValidity={({ validFrom, validTo, validity }) =>
+                      setFormData(prev => ({
+                        ...prev,
+                        validityFrom: validFrom,
+                        validityTo: validTo,
+                        validity
+                      }))
+                    }
+                    onChangeSurcharges={nextSurcharges =>
+                      setFormData(prev => ({
+                        ...prev,
+                        surcharges: nextSurcharges
+                      }))
+                    }
+                  />
                 </div>
               </div>
 

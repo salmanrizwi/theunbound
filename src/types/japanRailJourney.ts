@@ -56,9 +56,7 @@ export interface JapanRailSegment {
 }
 
 export interface JapanRailJourneyFareBreakdown {
-  totalBaseFareJPY: number;
-  totalSuperExpressSurchargeJPY: number;
-  totalGreenCarSurchargeJPY: number;
+  totalNettPriceJPY: number;
   totalSeasonAdjustmentJPY: number;
   totalSupplierCostJPY: number;
   totalTheUnboundMarkupJPY: number;
@@ -66,6 +64,8 @@ export interface JapanRailJourneyFareBreakdown {
 }
 
 export interface JapanRailJourneyPricingSummary {
+  isPriceAvailable?: boolean;
+  priceUnavailableReason?: string;
   totalSupplierCostJPY: number;
   totalMarkupJPY: number;
   finalSellingPriceJPY: number;
@@ -139,6 +139,7 @@ export interface JapanRailSegmentSnapshot {
   seasonType: RailSeasonType;
   seasonId?: string;
   seasonName?: string;
+  nettPriceJPY?: number;
   baseFareJPY?: number;
   superExpressSurchargeJPY?: number;
   greenCarSurchargeJPY?: number;
@@ -148,9 +149,10 @@ export interface JapanRailSegmentSnapshot {
     seasonId?: string;
     seasonName?: string;
     seasonType: RailSeasonType;
-    baseFareJPY: number;
-    superExpressJPY: number;
-    greenSurchargeJPY: number;
+    nettPriceJPY: number;
+    baseFareJPY?: number;
+    superExpressJPY?: number;
+    greenSurchargeJPY?: number;
     seasonAdjustmentJPY: number;
     supplierCostJPY: number;
     markupPercent: number;

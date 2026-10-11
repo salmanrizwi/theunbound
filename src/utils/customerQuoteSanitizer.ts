@@ -450,7 +450,13 @@ export function sanitizePricingResultForAgent(
 
     rateEffectiveTo: calc.rateEffectiveTo,
     isAuthoritative: calc.isAuthoritative ?? true,
-    calculatedAt: calc.calculatedAt || new Date().toISOString()
+    calculatedAt: calc.calculatedAt || new Date().toISOString(),
+
+    validityCheck: (calc as PricingCalculationResult).validityCheck,
+    appliedSurcharges: (calc as PricingCalculationResult).appliedSurcharges,
+    surchargeTotal: (calc as PricingCalculationResult).surchargeTotal,
+    baseSellingPriceBeforeSurcharges: (calc as PricingCalculationResult).baseSellingPriceBeforeSurcharges,
+    surchargeValidationMessage: (calc as PricingCalculationResult).surchargeValidationMessage
   };
 }
 
@@ -479,6 +485,14 @@ export function sanitizeProductForAgent(product: Product): Product {
   delete (clone as any).supplierType;
   delete (clone as any).unitVehicleNetCost;
   delete (clone as any).internalNotes;
+
+  if (clone.surcharges && Array.isArray(clone.surcharges)) {
+    clone.surcharges = clone.surcharges.map(s => {
+      const cleanSurcharge = { ...s };
+      delete (cleanSurcharge as any).internalNotes;
+      return cleanSurcharge;
+    });
+  }
 
   // Sanitize addons if present
   if (clone.addons && Array.isArray(clone.addons)) {

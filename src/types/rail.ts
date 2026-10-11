@@ -1,4 +1,4 @@
-import { CurrencyCode, UserRole, Product } from '../types';
+import { CurrencyCode, UserRole, Product, InventoryValidity, InventorySurcharge, AppliedSurchargeDetail, InventoryValidityEvaluation } from '../types';
 
 export type RailCarType = 'Ordinary' | 'Green';
 export type RailSeatType = 'Reserved' | 'Non-Reserved';
@@ -114,17 +114,46 @@ export interface RailRate {
   seatType: RailSeatType;
   serviceGroup: RailServiceGroup;
   passengerType: RailPassengerType;
-  currency: 'JPY';
-  baseFareJPY: number;
-  superExpressSurchargeJPY: number;
-  greenCarSurchargeJPY: number;
-  regularTotalFareJPY: number; // Listed regular season fare from smartEX authoritative tariff
+  nettPrice: number; // Single authoritative supplier nett price in JPY
+  nativeCurrency: 'JPY';
+  currency: 'JPY' | CurrencyCode;
+  // Legacy optional fields preserved strictly for non-destructive read compatibility; never used to calculate nettPrice
+  baseFareJPY?: number;
+  superExpressSurchargeJPY?: number;
+  greenCarSurchargeJPY?: number;
+  regularTotalFareJPY?: number;
+  needsAdminReview?: boolean;
   supplierId: string;
   supplierName: string;
   effectiveDate: string; // ISO date string YYYY-MM-DD
+  validityFrom?: string;
+  validityTo?: string;
+  validity?: InventoryValidity;
+  surcharges?: InventorySurcharge[];
   active: boolean;
   createdAt?: string;
   updatedAt?: string;
+}
+
+/**
+ * Resolves the single authoritative Nett Price (JPY) for a RailRate record.
+ * Never sums legacy component fields (Base Fare, Super Express, Green Surcharge).
+ * Migrates an existing single fare value only when unambiguous and verified.
+ */
+export function resolveRailRateNettPrice(rate?: Partial<RailRate> | null): number | null {
+  if (!rate) return null;
+  if (typeof rate.nettPrice === 'number' && Number.isFinite(rate.nettPrice) && rate.nettPrice > 0) {
+    return rate.nettPrice;
+  }
+  if (
+    rate.nettPrice === undefined &&
+    typeof rate.regularTotalFareJPY === 'number' &&
+    Number.isFinite(rate.regularTotalFareJPY) &&
+    rate.regularTotalFareJPY > 0
+  ) {
+    return rate.regularTotalFareJPY;
+  }
+  return null;
 }
 
 export interface RailSeasonAdjustment {
@@ -184,6 +213,8 @@ export interface RailPricingParams {
 }
 
 export interface RailPricingResult {
+  isPriceAvailable?: boolean;
+  priceUnavailableReason?: string;
   route: RailRoute;
   originStation: RailStation;
   destinationStation: RailStation;
@@ -211,14 +242,17 @@ export interface RailPricingResult {
   finalSellingPriceTargetCurrency: number;
   exchangeRate: number;
   fareBreakdown: {
-    baseFareJPY: number;
-    superExpressSurchargeJPY: number;
-    greenCarSurchargeJPY: number;
+    nettPriceTotalJPY: number;
     seasonAdjustmentTotalJPY: number;
     supplierNetTotalJPY: number;
     theUnboundMarkupJPY: number;
+    surchargeTotalJPY?: number;
     grandTotalJPY: number;
   };
+  appliedSurcharges?: AppliedSurchargeDetail[];
+  surchargeTotalJPY?: number;
+  surchargeTotalTargetCurrency?: number;
+  validityCheck?: InventoryValidityEvaluation;
   passengers: {
     adults: number;
     children: number;
@@ -265,6 +299,10 @@ export interface JapanRailCommercialProduct {
   displayOrder?: number;
   nativeCurrency: CurrencyCode; // 'JPY'
   pricingConfiguration: JapanRailCommercialPricingConfig;
+  validityFrom?: string;
+  validityTo?: string;
+  validity?: InventoryValidity;
+  surcharges?: InventorySurcharge[];
   createdAt?: string;
   updatedAt?: string;
   createdBy?: string;

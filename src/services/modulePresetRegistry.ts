@@ -39,7 +39,7 @@ export class ModulePresetRegistry {
       id: 'all_canonical',
       name: 'All Canonical Modules',
       shortName: 'All Canonical',
-      description: 'Synchronizes all registered canonical modules across TheUnbound (Products, Hotels, Visa/Ancillaries, Japan Rail Dynamic, Packages, and Master Data).',
+      description: 'Synchronizes all registered canonical modules across TheUnbound (Products, Hotels, Visa/Ancillaries, Packages, and Master Data). Japan Rail is managed exclusively via Admin CMS.',
       schemaVersion: 'v1.0.0',
       moduleType: 'ALL',
       requiredSchemaIds: [
@@ -47,7 +47,6 @@ export class ModulePresetRegistry {
         'products_catalog',
         'hotels_allotments',
         'visa_ancillaries',
-        'japan_rail_dynamic',
         'packages_catalog'
       ],
       optionalSchemaIds: ['instructions'],
@@ -56,7 +55,6 @@ export class ModulePresetRegistry {
       badgeText: 'Full Suite',
       relationshipsSummary: [
         'Master Reference -> Products & Hotels',
-        'Master Reference -> Rail Stations & Routes',
         'Master Reference -> Visa & Ancillaries',
         'Products & Hotels -> Packages'
       ],
@@ -142,33 +140,6 @@ export class ModulePresetRegistry {
       relationshipsSummary: [
         'Visa -> Destination & Supplier',
         'Ancillaries -> Service Groups (VIP Ground, Travel Protection, 5G Connectivity)'
-      ],
-      syncStrategy: {
-        safeUpsert: true,
-        dependencyResolution: true,
-        recalculateCounts: true,
-        supportsIncremental: true
-      }
-    });
-
-    // ----------------------------------------------------
-    // 5. JAPAN RAIL DYNAMIC PRESET
-    // ----------------------------------------------------
-    this.registerPreset({
-      id: 'japan_rail_dynamic',
-      name: 'Japan Rail Dynamic',
-      shortName: 'Japan Rail',
-      description: 'Synchronize Shinkansen routes, origin/destination stations, services, and dynamic Commercial Master Products (ORDINARY_RESERVED & GREEN_RESERVED).',
-      schemaVersion: 'v1.0.0',
-      moduleType: 'RAIL',
-      requiredSchemaIds: ['japan_rail_dynamic'],
-      optionalSchemaIds: ['master_data', 'instructions'],
-      icon: 'Zap',
-      themeColor: '#EC4899',
-      badgeText: 'Dynamic Rail',
-      relationshipsSummary: [
-        'Rail Route -> Origin Station & Destination Station (Master Data)',
-        'Rail Journey -> Commercial Master Products (Ordinary Reserved & Green Reserved)'
       ],
       syncStrategy: {
         safeUpsert: true,

@@ -58,10 +58,11 @@ export class JapanRailJourneyPricingService {
     let finalSellingPriceJPY = 0;
     let finalSellingPriceTargetCurrency = 0;
 
-    let totalBaseFareJPY = 0;
-    let totalSuperExpressSurchargeJPY = 0;
-    let totalGreenCarSurchargeJPY = 0;
+    let totalNettPriceJPY = 0;
     let totalSeasonAdjustmentJPY = 0;
+
+    let isPriceAvailable = true;
+    let priceUnavailableReason: string | undefined = undefined;
 
     const segmentPricingMap: Record<string, RailPricingResult> = {};
 
@@ -69,16 +70,27 @@ export class JapanRailJourneyPricingService {
       const res = this.priceSegment(seg, userRole, targetCurrency);
       segmentPricingMap[seg.segmentId] = res;
 
+      if (res.isPriceAvailable === false) {
+        isPriceAvailable = false;
+        if (!priceUnavailableReason) {
+          priceUnavailableReason = res.priceUnavailableReason || 'Price unavailable — Admin configuration required';
+        }
+      }
+
       totalSupplierCostJPY += res.totalSupplierCostJPY;
       totalMarkupJPY += res.totalMarkupJPY;
       finalSellingPriceJPY += res.finalSellingPriceJPY;
       finalSellingPriceTargetCurrency += res.finalSellingPriceTargetCurrency;
 
-      totalBaseFareJPY += res.fareBreakdown.baseFareJPY;
-      totalSuperExpressSurchargeJPY += res.fareBreakdown.superExpressSurchargeJPY;
-      totalGreenCarSurchargeJPY += res.fareBreakdown.greenCarSurchargeJPY;
+      totalNettPriceJPY += res.fareBreakdown.nettPriceTotalJPY;
       totalSeasonAdjustmentJPY += res.fareBreakdown.seasonAdjustmentTotalJPY;
     });
+
+    // If any segment has an unavailable price, zero out totals to prevent displaying fabricated amounts
+    if (!isPriceAvailable) {
+      finalSellingPriceJPY = 0;
+      finalSellingPriceTargetCurrency = 0;
+    }
 
     const exchangeRate = convertCurrency(1, 'JPY', targetCurrency);
     const appliedMarkupPercent = totalSupplierCostJPY > 0 
@@ -90,21 +102,23 @@ export class JapanRailJourneyPricingService {
       ? (segments[0].passengerAllocation.adults + segments[0].passengerAllocation.children) || 1
       : 1;
 
-    const perPersonTargetCurrency = Math.round((finalSellingPriceTargetCurrency / totalPax) * 100) / 100;
+    const perPersonTargetCurrency = isPriceAvailable 
+      ? Math.round((finalSellingPriceTargetCurrency / totalPax) * 100) / 100
+      : 0;
 
     const fareBreakdown: JapanRailJourneyFareBreakdown = {
-      totalBaseFareJPY,
-      totalSuperExpressSurchargeJPY,
-      totalGreenCarSurchargeJPY,
-      totalSeasonAdjustmentJPY,
-      totalSupplierCostJPY,
-      totalTheUnboundMarkupJPY: totalMarkupJPY,
+      totalNettPriceJPY: isPriceAvailable ? totalNettPriceJPY : 0,
+      totalSeasonAdjustmentJPY: isPriceAvailable ? totalSeasonAdjustmentJPY : 0,
+      totalSupplierCostJPY: isPriceAvailable ? totalSupplierCostJPY : 0,
+      totalTheUnboundMarkupJPY: isPriceAvailable ? totalMarkupJPY : 0,
       grandTotalJPY: finalSellingPriceJPY
     };
 
     return {
-      totalSupplierCostJPY,
-      totalMarkupJPY,
+      isPriceAvailable,
+      priceUnavailableReason,
+      totalSupplierCostJPY: isPriceAvailable ? totalSupplierCostJPY : 0,
+      totalMarkupJPY: isPriceAvailable ? totalMarkupJPY : 0,
       finalSellingPriceJPY,
       targetCurrency,
       finalSellingPriceTargetCurrency: Math.round(finalSellingPriceTargetCurrency * 100) / 100,

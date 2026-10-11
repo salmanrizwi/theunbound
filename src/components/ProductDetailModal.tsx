@@ -7,6 +7,7 @@ import { formatCurrency, convertCurrency } from '../services/pricingEngine';
 import { canUserAccessB2BInventory } from '../services/permissionEngine';
 import { RosterCalendarPicker } from './RosterCalendarPicker';
 import { WishlistButton } from './WishlistButton';
+import { canonicalImageService } from '../services/imageService';
 import { 
   X, 
   MapPin, 
@@ -325,34 +326,40 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
           </div>
 
           {/* Photo Gallery & Thumbnail Selector */}
-          <div className="space-y-2 sm:space-y-3">
-            <div className="aspect-16/10 sm:aspect-16/7 w-full rounded-xl sm:rounded-2xl overflow-hidden bg-slate-900 relative shadow-inner">
-              <img
-                src={(product.images || [])[activeImageIdx] || (product.images || [])[0] || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
-                alt={product.name}
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute bottom-2 right-2 sm:bottom-3 sm:right-3 bg-slate-950/80 backdrop-blur-md text-white text-[10px] sm:text-xs px-2 sm:px-3 py-0.5 sm:py-1 rounded-md sm:rounded-lg">
-                Photo {activeImageIdx + 1} of {(product.images || []).length || 1}
-              </div>
-            </div>
+          {(() => {
+            const resolvedGallery = canonicalImageService.resolveProductGallery(product);
+            const primaryDisplayUrl = resolvedGallery[activeImageIdx] || resolvedGallery[0] || canonicalImageService.resolveProductImage(product);
+            return (
+              <div className="space-y-2 sm:space-y-3">
+                <div className="aspect-16/10 sm:aspect-16/7 w-full rounded-xl sm:rounded-2xl overflow-hidden bg-slate-900 relative shadow-inner">
+                  <img
+                    src={primaryDisplayUrl}
+                    alt={product.name}
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute bottom-2 right-2 sm:bottom-3 sm:right-3 bg-slate-950/80 backdrop-blur-md text-white text-[10px] sm:text-xs px-2 sm:px-3 py-0.5 sm:py-1 rounded-md sm:rounded-lg">
+                    Photo {activeImageIdx + 1} of {resolvedGallery.length || 1}
+                  </div>
+                </div>
 
-            {(product.images || []).length > 1 && (
-              <div className="flex items-center space-x-2 sm:space-x-3 overflow-x-auto pb-1 no-scrollbar">
-                {product.images.map((img, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setActiveImageIdx(idx)}
-                    className={`relative w-16 h-12 sm:w-24 sm:h-16 rounded-lg sm:rounded-xl overflow-hidden shrink-0 border-2 transition-all cursor-pointer ${
-                      activeImageIdx === idx ? 'border-[#00C6A6] ring-2 ring-[#00C6A6]/30' : 'border-transparent opacity-70 hover:opacity-100'
-                    }`}
-                  >
-                    <img src={img} alt="thumbnail" className="w-full h-full object-cover" />
-                  </button>
-                ))}
+                {resolvedGallery.length > 1 && (
+                  <div className="flex items-center space-x-2 sm:space-x-3 overflow-x-auto pb-1 no-scrollbar">
+                    {resolvedGallery.map((img, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setActiveImageIdx(idx)}
+                        className={`relative w-16 h-12 sm:w-24 sm:h-16 rounded-lg sm:rounded-xl overflow-hidden shrink-0 border-2 transition-all cursor-pointer ${
+                          activeImageIdx === idx ? 'border-[#00C6A6] ring-2 ring-[#00C6A6]/30' : 'border-transparent opacity-70 hover:opacity-100'
+                        }`}
+                      >
+                        <img src={img} alt="thumbnail" className="w-full h-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            );
+          })()}
 
           {/* Overview & Detailed Content */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">

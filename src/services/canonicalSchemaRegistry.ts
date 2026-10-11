@@ -293,58 +293,7 @@ export class CanonicalSchemaRegistry {
     });
 
     // ----------------------------------------------------
-    // 5. JAPAN RAIL DYNAMIC SCHEMA
-    // ----------------------------------------------------
-    this.registerSchema({
-      schemaId: 'japan_rail_dynamic',
-      schemaVersion: 'v1.0.0',
-      module: 'rail',
-      entity: 'RailJourney',
-      canonicalTabName: 'RAIL',
-      supportedAliases: ['RAIL', 'JAPAN_RAIL_DYNAMIC', 'JAPAN_RAIL', 'SHINKANSEN', 'RAILS', 'RAIL_JOURNEYS'],
-      displayName: '5. Japan Rail Dynamic',
-      description: 'Single-row Shinkansen routes, services, and commercial product fares (Ordinary Reserved & Green Reserved).',
-      hierarchyLevel: 2,
-      primaryKey: 'rail_id',
-      firestoreCollection: 'rail_rates',
-      columns: [
-        { name: 'rail_id', key: 'rail_id', type: 'string', required: true, sampleValue: 'RAIL-TYO-KIX-01', description: 'Unique permanent Rail ID', entityField: 'id' },
-        { name: 'route_code', key: 'route_code', type: 'string', required: true, sampleValue: 'TKA-TYO-OSA', description: 'Route code', entityField: 'routeCode' },
-        { name: 'route_name', key: 'route_name', type: 'string', required: true, sampleValue: 'Tokaido Shinkansen (Tokyo to Shin-Osaka)', description: 'Route display title', entityField: 'routeName' },
-        { name: 'origin_station_id', key: 'origin_station_id', type: 'string', required: true, sampleValue: 'STN-TOKYO', description: 'Origin Station ID', foreignKeyTab: 'MASTER_DATA', foreignKeyColumn: 'entity_id', entityField: 'originStationId' },
-        { name: 'origin_station_name', key: 'origin_station_name', type: 'string', required: true, sampleValue: 'Tokyo Station', description: 'Origin Station display name', entityField: 'originStationName' },
-        { name: 'destination_station_id', key: 'destination_station_id', type: 'string', required: true, sampleValue: 'STN-OSAKA', description: 'Destination Station ID', foreignKeyTab: 'MASTER_DATA', foreignKeyColumn: 'entity_id', entityField: 'destinationStationId' },
-        { name: 'destination_station_name', key: 'destination_station_name', type: 'string', required: true, sampleValue: 'Shin-Osaka Station', description: 'Destination Station display name', entityField: 'destinationStationName' },
-        { name: 'commercial_product', key: 'commercial_product', type: 'enum', required: true, sampleValue: 'GREEN_RESERVED', description: 'Authoritative commercial master product type', allowedValues: ['ORDINARY_RESERVED', 'GREEN_RESERVED'], entityField: 'commercialProduct' },
-        { name: 'service_name', key: 'service_name', type: 'string', required: false, sampleValue: 'Nozomi Shinkansen Express', description: 'Express train service name', entityField: 'serviceName' },
-        { name: 'travel_class', key: 'travel_class', type: 'string', required: false, sampleValue: 'Green Car Reserved', description: 'Class description', entityField: 'travelClass' },
-        { name: 'duration_minutes', key: 'duration_minutes', type: 'number', required: false, sampleValue: '150', description: 'Journey duration in minutes', entityField: 'durationMinutes' },
-        { name: 'passenger_type', key: 'passenger_type', type: 'string', required: false, sampleValue: 'Adult', description: 'Passenger tier (Adult / Child)', entityField: 'passengerType' },
-        { name: 'native_currency', key: 'native_currency', type: 'enum', required: true, sampleValue: 'JPY', description: 'Native currency code', allowedValues: ['USD', 'EUR', 'GBP', 'JPY', 'AED', 'THB', 'SGD', 'CHF', 'INR', 'AUD', 'CAD'], entityField: 'currency' },
-        { name: 'supplier_nett', key: 'supplier_nett', type: 'number', required: true, sampleValue: '14720', description: 'Confidential net supplier cost in JPY', entityField: 'supplierNett' },
-        { name: 'margin_type', key: 'margin_type', type: 'enum', required: true, sampleValue: 'PERCENTAGE', description: 'Margin calculation type', allowedValues: ['PERCENTAGE', 'FIXED'], entityField: 'marginType' },
-        { name: 'b2b_margin_value', key: 'b2b_margin_value', type: 'number', required: true, sampleValue: '10', description: 'B2B margin percentage or fixed value', entityField: 'margin' },
-        { name: 'tax_type', key: 'tax_type', type: 'enum', required: false, sampleValue: 'PERCENTAGE', description: 'Tax calculation type', allowedValues: ['PERCENTAGE', 'FIXED'], entityField: 'taxType' },
-        { name: 'tax_value', key: 'tax_value', type: 'number', required: false, sampleValue: '10', description: 'Tax percentage', entityField: 'tax' },
-        { name: 'service_fee_type', key: 'service_fee_type', type: 'enum', required: false, sampleValue: 'FIXED', description: 'Service fee calculation type', allowedValues: ['PERCENTAGE', 'FIXED'], entityField: 'serviceFeeType' },
-        { name: 'service_fee_value', key: 'service_fee_value', type: 'number', required: false, sampleValue: '0', description: 'Service fee amount', entityField: 'serviceFee' },
-        { name: 'status', key: 'status', type: 'enum', required: true, sampleValue: 'ACTIVE', description: 'Status: ACTIVE or INACTIVE', allowedValues: ['ACTIVE', 'INACTIVE', 'Active', 'Inactive'], entityField: 'status' }
-      ],
-      relationships: [
-        { sourceField: 'origin_station_id', targetSchemaId: 'master_data', targetField: 'entity_id', label: 'Origin Station Reference', required: true },
-        { sourceField: 'destination_station_id', targetSchemaId: 'master_data', targetField: 'entity_id', label: 'Destination Station Reference', required: true }
-      ],
-      sampleRows: [
-        ['RAIL-TYO-KIX-01', 'TKA-TYO-OSA', 'Tokaido Shinkansen (Tokyo to Shin-Osaka)', 'STN-TOKYO', 'Tokyo Station', 'STN-OSAKA', 'Shin-Osaka Station', 'GREEN_RESERVED', 'Nozomi Express', 'Green Car Reserved', '150', 'Adult', 'JPY', '19270', 'PERCENTAGE', '10', 'PERCENTAGE', '10', 'FIXED', '0', 'ACTIVE'],
-        ['RAIL-TYO-KIX-02', 'TKA-TYO-OSA', 'Tokaido Shinkansen (Tokyo to Shin-Osaka)', 'STN-TOKYO', 'Tokyo Station', 'STN-OSAKA', 'Shin-Osaka Station', 'ORDINARY_RESERVED', 'Nozomi Express', 'Ordinary Reserved', '150', 'Adult', 'JPY', '14720', 'PERCENTAGE', '10', 'PERCENTAGE', '10', 'FIXED', '0', 'ACTIVE']
-      ],
-      demoRows: [
-        ['DEMO-RAIL-01', 'DEMO-ROUT-01', 'DEMO ONLY - Sample Rail Route', 'STN-TOKYO', 'Tokyo Station', 'STN-OSAKA', 'Shin-Osaka Station', 'ORDINARY_RESERVED', 'Demo Express', 'Ordinary Reserved', '120', 'Adult', 'JPY', '12000', 'PERCENTAGE', '10', 'PERCENTAGE', '10', 'FIXED', '0', 'ACTIVE']
-      ]
-    });
-
-    // ----------------------------------------------------
-    // 6. PACKAGES SCHEMA (Curated Wholesale Itineraries)
+    // 5. PACKAGES SCHEMA (Curated Wholesale Itineraries)
     // ----------------------------------------------------
     this.registerSchema({
       schemaId: 'packages_catalog',

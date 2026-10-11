@@ -25,7 +25,8 @@ import {
   filterApplicableRequirements,
   generateCustomerVisaChecklist
 } from '../../services/visaRequirementService';
-import { formatCurrency, calculateUnifiedPrice } from '../../services/pricingEngine';
+import { formatCurrency, calculateUnifiedPrice, validateInventoryValidityAndSurcharges } from '../../services/pricingEngine';
+import { InventoryValidityAndSurchargesSection } from './common/InventoryValidityAndSurchargesSection';
 import { 
   FileText, 
   Plus, 
@@ -713,6 +714,31 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
   const handleSaveCurrentService = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 
+    const activeEntity: any =
+      serviceDrawerCategory === 'VISA'
+        ? editingVisa
+        : serviceDrawerCategory === 'PROTECTION'
+          ? editingProtection
+          : serviceDrawerCategory === 'VIP'
+            ? editingVip
+            : editingConnectivity;
+
+    if (activeEntity) {
+      const effectiveValidFrom = (activeEntity.validity?.validFrom ?? activeEntity.validityFrom ?? '2026-01-01').trim();
+      const effectiveValidTo = (activeEntity.validity?.validTo ?? activeEntity.validityTo ?? '2027-12-31').trim();
+      const validityCheck = validateInventoryValidityAndSurcharges({
+        validity: { validFrom: effectiveValidFrom, validTo: effectiveValidTo },
+        validityFrom: effectiveValidFrom,
+        validityTo: effectiveValidTo,
+        surcharges: activeEntity.surcharges || [],
+        requireValidity: (activeEntity.status || 'ACTIVE') === 'ACTIVE',
+        nativeCurrency: pricingForm.currency || activeEntity.currency || 'USD'
+      });
+      if (!validityCheck.isValid) {
+        return;
+      }
+    }
+
     const calc = livePricingCalculation;
     const finalPriceToSave = calc ? calc.finalPrice : 0;
 
@@ -749,6 +775,13 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
         sellingPrice: finalPriceToSave,
         currency: pricingForm.currency,
         pricing: pricingSnapshot,
+        validityFrom: editingVisa.validity?.validFrom || editingVisa.validityFrom || '2026-01-01',
+        validityTo: editingVisa.validity?.validTo || editingVisa.validityTo || '2027-12-31',
+        validity: {
+          validFrom: editingVisa.validity?.validFrom || editingVisa.validityFrom || '2026-01-01',
+          validTo: editingVisa.validity?.validTo || editingVisa.validityTo || '2027-12-31'
+        },
+        surcharges: editingVisa.surcharges || [],
         updatedAt: new Date().toISOString()
       };
 
@@ -762,6 +795,13 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
         netCostPerTrip: calc ? calc.nettPrice : (parseFloat(pricingForm.nettPrice) || 30),
         sellingPricePerTrip: finalPriceToSave,
         pricing: pricingSnapshot,
+        validityFrom: editingProtection.validity?.validFrom || editingProtection.validityFrom || '2026-01-01',
+        validityTo: editingProtection.validity?.validTo || editingProtection.validityTo || '2027-12-31',
+        validity: {
+          validFrom: editingProtection.validity?.validFrom || editingProtection.validityFrom || '2026-01-01',
+          validTo: editingProtection.validity?.validTo || editingProtection.validityTo || '2027-12-31'
+        },
+        surcharges: editingProtection.surcharges || [],
         updatedAt: new Date().toISOString()
       };
 
@@ -775,6 +815,13 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
         netCost: calc ? calc.nettPrice : (parseFloat(pricingForm.nettPrice) || 100),
         sellingPrice: finalPriceToSave,
         pricing: pricingSnapshot,
+        validityFrom: editingVip.validity?.validFrom || editingVip.validityFrom || '2026-01-01',
+        validityTo: editingVip.validity?.validTo || editingVip.validityTo || '2027-12-31',
+        validity: {
+          validFrom: editingVip.validity?.validFrom || editingVip.validityFrom || '2026-01-01',
+          validTo: editingVip.validity?.validTo || editingVip.validityTo || '2027-12-31'
+        },
+        surcharges: editingVip.surcharges || [],
         updatedAt: new Date().toISOString()
       };
 
@@ -788,6 +835,13 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
         netCost: calc ? calc.nettPrice : (parseFloat(pricingForm.nettPrice) || 10),
         sellingPrice: finalPriceToSave,
         pricing: pricingSnapshot,
+        validityFrom: editingConnectivity.validity?.validFrom || editingConnectivity.validityFrom || '2026-01-01',
+        validityTo: editingConnectivity.validity?.validTo || editingConnectivity.validityTo || '2027-12-31',
+        validity: {
+          validFrom: editingConnectivity.validity?.validFrom || editingConnectivity.validityFrom || '2026-01-01',
+          validTo: editingConnectivity.validity?.validTo || editingConnectivity.validityTo || '2027-12-31'
+        },
+        surcharges: editingConnectivity.surcharges || [],
         updatedAt: new Date().toISOString()
       };
 
@@ -2304,6 +2358,77 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* ================================================================= */}
+              {/* VALIDITY PERIOD & REPEATABLE SURCHARGES (VISA & ANCILLARY)        */}
+              {/* ================================================================= */}
+              {(() => {
+                const currentEntity: any =
+                  serviceDrawerCategory === 'VISA'
+                    ? editingVisa
+                    : serviceDrawerCategory === 'PROTECTION'
+                      ? editingProtection
+                      : serviceDrawerCategory === 'VIP'
+                        ? editingVip
+                        : editingConnectivity;
+                if (!currentEntity) return null;
+
+                const defaultBasis =
+                  serviceDrawerCategory === 'PROTECTION'
+                    ? 'PER_DAY'
+                    : serviceDrawerCategory === 'CONNECTIVITY'
+                      ? 'PER_DEVICE'
+                      : serviceDrawerCategory === 'VIP' && (currentEntity.pricingType === 'PER_VEHICLE' || currentEntity.pricingType === 'FIXED')
+                        ? 'PER_SERVICE'
+                        : 'PER_PERSON';
+
+                const categoryLabel =
+                  serviceDrawerCategory === 'VISA'
+                    ? 'Visa Service'
+                    : serviceDrawerCategory === 'PROTECTION'
+                      ? 'Travel Protection'
+                      : serviceDrawerCategory === 'VIP'
+                        ? 'VIP Ground Service'
+                        : '5G Connectivity';
+
+                const updateCurrentEntity = (patch: any) => {
+                  if (serviceDrawerCategory === 'VISA' && editingVisa) {
+                    setEditingVisa({ ...editingVisa, ...patch });
+                  } else if (serviceDrawerCategory === 'PROTECTION' && editingProtection) {
+                    setEditingProtection({ ...editingProtection, ...patch });
+                  } else if (serviceDrawerCategory === 'VIP' && editingVip) {
+                    setEditingVip({ ...editingVip, ...patch });
+                  } else if (serviceDrawerCategory === 'CONNECTIVITY' && editingConnectivity) {
+                    setEditingConnectivity({ ...editingConnectivity, ...patch });
+                  }
+                };
+
+                return (
+                  <div className="pt-4 border-t border-slate-200">
+                    <InventoryValidityAndSurchargesSection
+                      validFrom={currentEntity.validity?.validFrom ?? currentEntity.validityFrom ?? '2026-01-01'}
+                      validTo={currentEntity.validity?.validTo ?? currentEntity.validityTo ?? '2027-12-31'}
+                      surcharges={currentEntity.surcharges || []}
+                      nativeCurrency={pricingForm.currency || currentEntity.currency || 'USD'}
+                      defaultApplicationBasis={defaultBasis}
+                      categoryLabel={categoryLabel}
+                      requireValidity={(currentEntity.status || 'ACTIVE') === 'ACTIVE'}
+                      onChangeValidity={({ validFrom, validTo, validity }) =>
+                        updateCurrentEntity({
+                          validityFrom: validFrom,
+                          validityTo: validTo,
+                          validity
+                        })
+                      }
+                      onChangeSurcharges={nextSurcharges =>
+                        updateCurrentEntity({
+                          surcharges: nextSurcharges
+                        })
+                      }
+                    />
+                  </div>
+                );
+              })()}
                   </div>
                 }
               />

@@ -37,9 +37,10 @@ import {
   VipGroundService,
   ConnectivityPlan
 } from '../../types';
-import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, evaluateInventoryValidity, evaluateApplicableSurcharges } from '../../services/pricingEngine';
 import { AppDatabase } from '../../services/db';
 import { VisaServiceAndFacilitationConfigurator } from '../Configurators/VisaServiceAndFacilitationConfigurator';
+import { canonicalImageService } from '../../services/imageService';
 
 export interface VisaServicesAndFacilitationSectionProps {
   currentDestination: Destination;
@@ -352,15 +353,29 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
   // -------------------------------------------------------------------------
   // 4. ADD TRAVEL PROTECTION PLAN (REAL PRODUCT FLOW)
   // -------------------------------------------------------------------------
-  const handleConfirmAddProtection = (plan: TravelProtectionPlan, coverageDays: number, adults: number, children: number) => {
+  const handleConfirmAddProtection = (plan: TravelProtectionPlan, coverageDays: number, adults: number, children: number, coverageStartDate?: string) => {
+    const effectiveDate = coverageStartDate || startDate;
     const dailyPrice = plan.sellingPricePerDay > 0 ? plan.sellingPricePerDay : (plan.sellingPricePerTrip > 0 ? plan.sellingPricePerTrip / coverageDays : 0);
     if (dailyPrice <= 0) return;
     const childDailyPrice = Math.round(dailyPrice * 0.7);
     const totalAdultCost = dailyPrice * coverageDays;
     const totalChildCost = childDailyPrice * coverageDays;
-    const totalSellingUSD = (totalAdultCost * adults) + (totalChildCost * children);
+    const baseSellingNative = (totalAdultCost * adults) + (totalChildCost * children);
+    const nativeCurrency = (plan.currency || 'USD') as CurrencyCode;
 
-    const convertedSellingPrice = convertCurrency(totalSellingUSD, plan.currency || 'USD', currency);
+    const surchargeEval = evaluateApplicableSurcharges({
+      surcharges: plan.surcharges,
+      serviceDate: effectiveDate,
+      coverageDays,
+      baseNativeAmount: baseSellingNative,
+      nativeCurrency,
+      targetCurrency: currency,
+      adults,
+      children,
+      defaultApplicationBasis: 'PER_DAY'
+    });
+    const totalSellingUSD = baseSellingNative + surchargeEval.totalSurchargeNative;
+    const convertedSellingPrice = convertCurrency(totalSellingUSD, nativeCurrency, currency);
 
     const product: Product = {
       id: plan.id,
@@ -384,15 +399,20 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       adultNetPrice: totalAdultCost,
       childNetPrice: totalChildCost,
       infantNetPrice: 0,
-      currency: plan.currency || 'USD',
+      currency: nativeCurrency,
       defaultMarkupPercent: 0,
       taxPercent: 0,
       commissionPercent: 0,
       serviceFeeFixed: 0,
       sellingPriceStartingFrom: dailyPrice,
       season: 'All Year',
-      validityFrom: '2026-01-01',
-      validityTo: '2026-12-31',
+      validityFrom: plan.validity?.validFrom || plan.validityFrom || '2026-01-01',
+      validityTo: plan.validity?.validTo || plan.validityTo || '2026-12-31',
+      validity: {
+        validFrom: plan.validity?.validFrom || plan.validityFrom || '2026-01-01',
+        validTo: plan.validity?.validTo || plan.validityTo || '2026-12-31'
+      },
+      surcharges: plan.surcharges,
       minPax: 1,
       maxPax: 50,
       availability: 'INSTANT',
@@ -401,15 +421,16 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       inclusions: plan.inclusions,
       exclusions: ['Pre-existing non-declared illnesses', 'Unlicensed motorized racing'],
       importantInformation: [plan.terms || 'Comprehensive travel insurance coverage. Valid for stated destinations and duration.'],
-      heroImage: 'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=800&auto=format&fit=crop',
-      galleryImages: ['https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=800&auto=format&fit=crop']
+      heroImage: canonicalImageService.resolveAncillaryImage({ ...plan, image: (plan as any).imageUrl || 'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=800&auto=format&fit=crop' }),
+      galleryImages: [canonicalImageService.resolveAncillaryImage({ ...plan, image: (plan as any).imageUrl || 'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=800&auto=format&fit=crop' })]
     };
+    (product as any).coverageDays = coverageDays;
 
     onAddProduct(product, {
       adults,
       children,
       infants: infantsCount,
-      travelDate: startDate,
+      travelDate: effectiveDate,
       openDrawer: false,
       master_product_id: plan.id,
       service_id: plan.id,
@@ -418,6 +439,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       configuration_id: `cfg-prot-${plan.id}`,
       configuration_snapshot: {
         coverageDays,
+        coverageStartDate: effectiveDate,
         adults,
         children,
         medicalCoverageAmount: plan.medicalCoverageAmount,
@@ -428,9 +450,14 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       },
       pricing_snapshot: {
         dailyPriceUSD: dailyPrice,
+        baseSellingNative,
+        appliedSurcharges: surchargeEval.appliedSurcharges,
+        surchargeTotalNative: surchargeEval.totalSurchargeNative,
+        surchargeTotalConverted: surchargeEval.totalSurchargeConverted,
         totalSellingUSD,
         convertedSellingPrice,
-        currency
+        currency,
+        pricingRuleVersion: 'v2-centralized-validity-surcharge'
       },
       currency_snapshot: currency
     });
@@ -442,13 +469,28 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
   // 5. ADD VIP GROUND SERVICE (REAL PRODUCT FLOW)
   // -------------------------------------------------------------------------
   const handleConfirmAddVipService = (service: VipGroundService, serviceDate: string, paxCount: number) => {
+    const effectiveDate = serviceDate || startDate;
     const isPerGroup = service.pricingType === 'PER_VEHICLE' || service.pricingType === 'FIXED';
     const effectiveAdults = isPerGroup ? 1 : paxCount;
     const effectiveChildren = 0;
     const sellingPrice = service.sellingPrice > 0 ? service.sellingPrice : 0;
     if (sellingPrice <= 0) return;
-    const totalSellingUSD = isPerGroup ? sellingPrice : sellingPrice * paxCount;
-    const convertedSellingPrice = convertCurrency(totalSellingUSD, service.currency || 'USD', currency);
+    const baseSellingNative = isPerGroup ? sellingPrice : sellingPrice * paxCount;
+    const nativeCurrency = (service.currency || 'USD') as CurrencyCode;
+
+    const surchargeEval = evaluateApplicableSurcharges({
+      surcharges: service.surcharges,
+      serviceDate: effectiveDate,
+      baseNativeAmount: baseSellingNative,
+      nativeCurrency,
+      targetCurrency: currency,
+      adults: effectiveAdults,
+      children: effectiveChildren,
+      vehiclesCount: 1,
+      defaultApplicationBasis: isPerGroup ? 'PER_VEHICLE' : 'PER_PERSON'
+    });
+    const totalSellingUSD = baseSellingNative + surchargeEval.totalSurchargeNative;
+    const convertedSellingPrice = convertCurrency(totalSellingUSD, nativeCurrency, currency);
 
     const product: Product = {
       id: service.id,
@@ -472,15 +514,20 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       adultNetPrice: isPerGroup ? sellingPrice : service.netCost,
       childNetPrice: isPerGroup ? 0 : Math.round(service.netCost * 0.7),
       infantNetPrice: 0,
-      currency: service.currency || 'USD',
+      currency: nativeCurrency,
       defaultMarkupPercent: 0,
       taxPercent: 0,
       commissionPercent: 0,
       serviceFeeFixed: 0,
       sellingPriceStartingFrom: sellingPrice,
       season: 'All Year',
-      validityFrom: '2026-01-01',
-      validityTo: '2026-12-31',
+      validityFrom: service.validity?.validFrom || service.validityFrom || '2026-01-01',
+      validityTo: service.validity?.validTo || service.validityTo || '2026-12-31',
+      validity: {
+        validFrom: service.validity?.validFrom || service.validityFrom || '2026-01-01',
+        validTo: service.validity?.validTo || service.validityTo || '2026-12-31'
+      },
+      surcharges: service.surcharges,
       minPax: 1,
       maxPax: 50,
       availability: 'INSTANT',
@@ -489,15 +536,15 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       inclusions: service.inclusions || [],
       exclusions: ['Personal gratuities and extra baggage handling outside contract'],
       importantInformation: ['Please arrive at meeting point 15 minutes prior to confirmed service time.'],
-      heroImage: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?q=80&w=800&auto=format&fit=crop',
-      galleryImages: ['https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?q=80&w=800&auto=format&fit=crop']
+      heroImage: canonicalImageService.resolveAncillaryImage({ ...service, image: (service as any).imageUrl || 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?q=80&w=800&auto=format&fit=crop' }),
+      galleryImages: [canonicalImageService.resolveAncillaryImage({ ...service, image: (service as any).imageUrl || 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?q=80&w=800&auto=format&fit=crop' })]
     };
 
     onAddProduct(product, {
       adults: effectiveAdults,
       children: effectiveChildren,
       infants: infantsCount,
-      travelDate: serviceDate || startDate,
+      travelDate: effectiveDate,
       openDrawer: false,
       master_product_id: service.id,
       service_id: service.id,
@@ -505,7 +552,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       service_type: 'VIP_GROUND',
       configuration_id: `cfg-vip-${service.id}`,
       configuration_snapshot: {
-        serviceDate: serviceDate || startDate,
+        serviceDate: effectiveDate,
         paxCount,
         pricingType: service.pricingType,
         serviceType: service.serviceType,
@@ -513,9 +560,14 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       },
       pricing_snapshot: {
         unitSellingUSD: sellingPrice,
+        baseSellingNative,
+        appliedSurcharges: surchargeEval.appliedSurcharges,
+        surchargeTotalNative: surchargeEval.totalSurchargeNative,
+        surchargeTotalConverted: surchargeEval.totalSurchargeConverted,
         totalSellingUSD,
         convertedSellingPrice,
-        currency
+        currency,
+        pricingRuleVersion: 'v2-centralized-validity-surcharge'
       },
       currency_snapshot: currency
     });
@@ -526,11 +578,28 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
   // -------------------------------------------------------------------------
   // 6. ADD 5G CONNECTIVITY PLAN (REAL PRODUCT FLOW)
   // -------------------------------------------------------------------------
-  const handleConfirmAddConnectivity = (plan: ConnectivityPlan, devicesCount: number) => {
+  const handleConfirmAddConnectivity = (plan: ConnectivityPlan, devicesCount: number, activationDate?: string) => {
+    const effectiveDate = activationDate || startDate;
     const unitSellingUSD = plan.sellingPrice > 0 ? plan.sellingPrice : 0;
     if (unitSellingUSD <= 0) return;
-    const totalSellingUSD = unitSellingUSD * devicesCount;
-    const convertedSellingPrice = convertCurrency(totalSellingUSD, plan.currency || 'USD', currency);
+    const baseSellingNative = unitSellingUSD * devicesCount;
+    const nativeCurrency = (plan.currency || 'USD') as CurrencyCode;
+
+    const surchargeEval = evaluateApplicableSurcharges({
+      surcharges: plan.surcharges,
+      serviceDate: effectiveDate,
+      coverageDays: plan.validityDays || 1,
+      baseNativeAmount: baseSellingNative,
+      nativeCurrency,
+      targetCurrency: currency,
+      adults: devicesCount,
+      children: 0,
+      devicesCount,
+      quantity: devicesCount,
+      defaultApplicationBasis: 'PER_DEVICE'
+    });
+    const totalSellingUSD = baseSellingNative + surchargeEval.totalSurchargeNative;
+    const convertedSellingPrice = convertCurrency(totalSellingUSD, nativeCurrency, currency);
 
     const product: Product = {
       id: plan.id,
@@ -554,15 +623,20 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       adultNetPrice: unitSellingUSD * devicesCount,
       childNetPrice: 0,
       infantNetPrice: 0,
-      currency: plan.currency || 'USD',
+      currency: nativeCurrency,
       defaultMarkupPercent: 0,
       taxPercent: 0,
       commissionPercent: 0,
       serviceFeeFixed: 0,
       sellingPriceStartingFrom: unitSellingUSD,
       season: 'All Year',
-      validityFrom: '2026-01-01',
-      validityTo: '2026-12-31',
+      validityFrom: plan.validity?.validFrom || plan.validityFrom || '2026-01-01',
+      validityTo: plan.validity?.validTo || plan.validityTo || '2026-12-31',
+      validity: {
+        validFrom: plan.validity?.validFrom || plan.validityFrom || '2026-01-01',
+        validTo: plan.validity?.validTo || plan.validityTo || '2026-12-31'
+      },
+      surcharges: plan.surcharges,
       minPax: 1,
       maxPax: 50,
       availability: 'INSTANT',
@@ -576,15 +650,17 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       ],
       exclusions: ['Voice calls and traditional SMS (High-Speed Data Only)'],
       importantInformation: ['Compatible with unlocked eSIM enabled smartphones.'],
-      heroImage: 'https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?q=80&w=800&auto=format&fit=crop',
-      galleryImages: ['https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?q=80&w=800&auto=format&fit=crop']
+      heroImage: canonicalImageService.resolveAncillaryImage({ ...plan, image: (plan as any).imageUrl || 'https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?q=80&w=800&auto=format&fit=crop' }),
+      galleryImages: [canonicalImageService.resolveAncillaryImage({ ...plan, image: (plan as any).imageUrl || 'https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?q=80&w=800&auto=format&fit=crop' })]
     };
+    (product as any).devicesCount = devicesCount;
+    (product as any).coverageDays = plan.validityDays || 1;
 
     onAddProduct(product, {
       adults: devicesCount,
       children: 0,
       infants: 0,
-      travelDate: startDate,
+      travelDate: effectiveDate,
       openDrawer: false,
       master_product_id: plan.id,
       service_id: plan.id,
@@ -593,6 +669,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       configuration_id: `cfg-esim-${plan.id}`,
       configuration_snapshot: {
         devicesCount,
+        activationDate: effectiveDate,
         dataAllowance: plan.dataAllowance,
         validityDays: plan.validityDays,
         networkSpeed: plan.networkSpeed,
@@ -600,9 +677,14 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       },
       pricing_snapshot: {
         unitSellingUSD,
+        baseSellingNative,
+        appliedSurcharges: surchargeEval.appliedSurcharges,
+        surchargeTotalNative: surchargeEval.totalSurchargeNative,
+        surchargeTotalConverted: surchargeEval.totalSurchargeConverted,
         totalSellingUSD,
         convertedSellingPrice,
-        currency
+        currency,
+        pricingRuleVersion: 'v2-centralized-validity-surcharge'
       },
       currency_snapshot: currency
     });
@@ -1356,8 +1438,9 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
           initialDays={totalTripDays}
           initialAdults={adultsCount}
           initialChildren={childrenCount}
+          initialDate={startDate}
           onClose={() => setActiveConfiguringProtection(null)}
-          onConfirm={(days, adults, children) => handleConfirmAddProtection(activeConfiguringProtection, days, adults, children)}
+          onConfirm={(days, adults, children, covDate) => handleConfirmAddProtection(activeConfiguringProtection, days, adults, children, covDate)}
         />
       )}
 
@@ -1383,8 +1466,9 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
           plan={activeConfiguringConnectivity}
           currentCurrency={currency}
           initialQuantity={Math.max(1, adultsCount)}
+          initialDate={startDate}
           onClose={() => setActiveConfiguringConnectivity(null)}
-          onConfirm={(qty) => handleConfirmAddConnectivity(activeConfiguringConnectivity, qty)}
+          onConfirm={(qty, actDate) => handleConfirmAddConnectivity(activeConfiguringConnectivity, qty, actDate)}
         />
       )}
     </section>
@@ -1400,8 +1484,9 @@ interface TravelProtectionConfigModalProps {
   initialDays: number;
   initialAdults: number;
   initialChildren: number;
+  initialDate?: string;
   onClose: () => void;
-  onConfirm: (days: number, adults: number, children: number) => void;
+  onConfirm: (days: number, adults: number, children: number, coverageStartDate?: string) => void;
 }
 
 const TravelProtectionConfigModal: React.FC<TravelProtectionConfigModalProps> = ({
@@ -1410,17 +1495,35 @@ const TravelProtectionConfigModal: React.FC<TravelProtectionConfigModalProps> = 
   initialDays,
   initialAdults,
   initialChildren,
+  initialDate,
   onClose,
   onConfirm
 }) => {
   const [coverageDays, setCoverageDays] = useState<number>(Math.max(1, initialDays));
   const [adults, setAdults] = useState<number>(Math.max(1, initialAdults));
   const [children, setChildren] = useState<number>(Math.max(0, initialChildren));
+  const [coverageDate, setCoverageDate] = useState<string>(initialDate || new Date().toISOString().split('T')[0]);
 
   const dailyPriceUSD = plan.sellingPricePerDay > 0 ? plan.sellingPricePerDay : (plan.sellingPricePerTrip > 0 ? plan.sellingPricePerTrip / coverageDays : 0);
-  const hasValidPrice = dailyPriceUSD > 0;
-  const totalSellingUSD = ((dailyPriceUSD * adults) + (dailyPriceUSD * 0.7 * children)) * coverageDays;
-  const totalSellingQuote = convertCurrency(totalSellingUSD, plan.currency || 'USD', currentCurrency);
+  const baseSellingNative = ((dailyPriceUSD * adults) + (dailyPriceUSD * 0.7 * children)) * coverageDays;
+  const nativeCurrency = (plan.currency || 'USD') as CurrencyCode;
+
+  const validityCheck = evaluateInventoryValidity(plan, coverageDate);
+  const surchargeEval = evaluateApplicableSurcharges({
+    surcharges: plan.surcharges,
+    serviceDate: coverageDate,
+    coverageDays,
+    baseNativeAmount: baseSellingNative,
+    nativeCurrency,
+    targetCurrency: currentCurrency,
+    adults,
+    children,
+    defaultApplicationBasis: 'PER_DAY'
+  });
+
+  const totalSellingUSD = baseSellingNative + surchargeEval.totalSurchargeNative;
+  const totalSellingQuote = convertCurrency(totalSellingUSD, nativeCurrency, currentCurrency);
+  const hasValidPrice = dailyPriceUSD > 0 && validityCheck.isValid && !surchargeEval.missingServiceDate;
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
@@ -1462,16 +1565,27 @@ const TravelProtectionConfigModal: React.FC<TravelProtectionConfigModalProps> = 
 
           {/* Configuration inputs */}
           <div className="space-y-3 pt-1">
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">Coverage Duration (Days)</label>
-              <input
-                type="number"
-                min={1}
-                max={plan.validityDaysMax || 90}
-                value={coverageDays}
-                onChange={(e) => setCoverageDays(Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 outline-none focus:border-blue-500"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">Coverage Start Date</label>
+                <input
+                  type="date"
+                  value={coverageDate}
+                  onChange={(e) => setCoverageDate(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">Coverage Duration (Days)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={plan.validityDaysMax || 90}
+                  value={coverageDays}
+                  onChange={(e) => setCoverageDays(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 outline-none focus:border-blue-500"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -1500,6 +1614,30 @@ const TravelProtectionConfigModal: React.FC<TravelProtectionConfigModalProps> = 
             </div>
           </div>
 
+          {!validityCheck.isValid && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-semibold">
+              {validityCheck.reason}
+            </div>
+          )}
+
+          {surchargeEval.missingServiceDate && (
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 font-semibold">
+              {surchargeEval.validationMessage}
+            </div>
+          )}
+
+          {surchargeEval.appliedSurcharges.length > 0 && (
+            <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 space-y-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 block">Applicable Date Surcharges</span>
+              {surchargeEval.appliedSurcharges.map((sc) => (
+                <div key={sc.surchargeId} className="flex items-center justify-between text-xs text-amber-900">
+                  <span>{sc.name} ({sc.validFrom} – {sc.validTo})</span>
+                  <span className="font-mono font-bold">+{formatCurrency(sc.appliedAmountConverted, currentCurrency)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Inclusions */}
           <div className="space-y-1.5 pt-2">
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Master Inclusions</span>
@@ -1523,7 +1661,7 @@ const TravelProtectionConfigModal: React.FC<TravelProtectionConfigModalProps> = 
                 {formatCurrency(totalSellingQuote, currentCurrency)}
               </span>
             ) : (
-              <span className="text-xs font-bold text-amber-700">Price unavailable for this service.</span>
+              <span className="text-xs font-bold text-amber-700">{!validityCheck.isValid ? 'Outside Validity Period' : 'Price unavailable for this service.'}</span>
             )}
           </div>
           <div className="flex items-center space-x-2">
@@ -1537,7 +1675,7 @@ const TravelProtectionConfigModal: React.FC<TravelProtectionConfigModalProps> = 
             <button
               type="button"
               disabled={!hasValidPrice}
-              onClick={() => hasValidPrice && onConfirm(coverageDays, adults, children)}
+              onClick={() => hasValidPrice && onConfirm(coverageDays, adults, children, coverageDate)}
               className={`px-4 py-2 rounded-xl text-xs font-bold shadow-xs transition-colors ${
                 hasValidPrice
                   ? 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
@@ -1573,14 +1711,30 @@ const VipGroundConfigModal: React.FC<VipGroundConfigModalProps> = ({
   onClose,
   onConfirm
 }) => {
-  const [date, setDate] = useState<string>(initialDate || '');
+  const [date, setDate] = useState<string>(initialDate || new Date().toISOString().split('T')[0]);
   const [pax, setPax] = useState<number>(Math.max(1, initialPax));
 
   const isPerGroup = service.pricingType === 'PER_VEHICLE' || service.pricingType === 'FIXED';
   const unitSellingUSD = service.sellingPrice > 0 ? service.sellingPrice : 0;
-  const hasValidPrice = unitSellingUSD > 0;
-  const totalSellingUSD = isPerGroup ? unitSellingUSD : unitSellingUSD * pax;
-  const totalSellingQuote = convertCurrency(totalSellingUSD, service.currency || 'USD', currentCurrency);
+  const baseSellingNative = isPerGroup ? unitSellingUSD : unitSellingUSD * pax;
+  const nativeCurrency = (service.currency || 'USD') as CurrencyCode;
+
+  const validityCheck = evaluateInventoryValidity(service, date);
+  const surchargeEval = evaluateApplicableSurcharges({
+    surcharges: service.surcharges,
+    serviceDate: date,
+    baseNativeAmount: baseSellingNative,
+    nativeCurrency,
+    targetCurrency: currentCurrency,
+    adults: isPerGroup ? 1 : pax,
+    children: 0,
+    vehiclesCount: 1,
+    defaultApplicationBasis: isPerGroup ? 'PER_VEHICLE' : 'PER_PERSON'
+  });
+
+  const totalSellingUSD = baseSellingNative + surchargeEval.totalSurchargeNative;
+  const totalSellingQuote = convertCurrency(totalSellingUSD, nativeCurrency, currentCurrency);
+  const hasValidPrice = unitSellingUSD > 0 && validityCheck.isValid && !surchargeEval.missingServiceDate;
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
@@ -1633,6 +1787,30 @@ const VipGroundConfigModal: React.FC<VipGroundConfigModalProps> = ({
             )}
           </div>
 
+          {!validityCheck.isValid && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-semibold">
+              {validityCheck.reason}
+            </div>
+          )}
+
+          {surchargeEval.missingServiceDate && (
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 font-semibold">
+              {surchargeEval.validationMessage}
+            </div>
+          )}
+
+          {surchargeEval.appliedSurcharges.length > 0 && (
+            <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 space-y-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 block">Applicable Date Surcharges</span>
+              {surchargeEval.appliedSurcharges.map((sc) => (
+                <div key={sc.surchargeId} className="flex items-center justify-between text-xs text-amber-900">
+                  <span>{sc.name} ({sc.validFrom} – {sc.validTo})</span>
+                  <span className="font-mono font-bold">+{formatCurrency(sc.appliedAmountConverted, currentCurrency)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="space-y-1.5 pt-2">
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Master Inclusions</span>
             <div className="space-y-1">
@@ -1654,7 +1832,7 @@ const VipGroundConfigModal: React.FC<VipGroundConfigModalProps> = ({
                 {formatCurrency(totalSellingQuote, currentCurrency)}
               </span>
             ) : (
-              <span className="text-xs font-bold text-amber-700">Price unavailable for this service.</span>
+              <span className="text-xs font-bold text-amber-700">{!validityCheck.isValid ? 'Outside Validity Period' : 'Price unavailable for this service.'}</span>
             )}
           </div>
           <div className="flex items-center space-x-2">
@@ -1691,23 +1869,44 @@ interface ConnectivityConfigModalProps {
   plan: ConnectivityPlan;
   currentCurrency: CurrencyCode;
   initialQuantity: number;
+  initialDate?: string;
   onClose: () => void;
-  onConfirm: (quantity: number) => void;
+  onConfirm: (quantity: number, activationDate?: string) => void;
 }
 
 const ConnectivityConfigModal: React.FC<ConnectivityConfigModalProps> = ({
   plan,
   currentCurrency,
   initialQuantity,
+  initialDate,
   onClose,
   onConfirm
 }) => {
   const [quantity, setQuantity] = useState<number>(Math.max(1, initialQuantity));
+  const [activationDate, setActivationDate] = useState<string>(initialDate || new Date().toISOString().split('T')[0]);
 
   const unitSellingUSD = plan.sellingPrice > 0 ? plan.sellingPrice : 0;
-  const hasValidPrice = unitSellingUSD > 0;
-  const totalSellingUSD = unitSellingUSD * quantity;
-  const totalSellingQuote = convertCurrency(totalSellingUSD, plan.currency || 'USD', currentCurrency);
+  const baseSellingNative = unitSellingUSD * quantity;
+  const nativeCurrency = (plan.currency || 'USD') as CurrencyCode;
+
+  const validityCheck = evaluateInventoryValidity(plan, activationDate);
+  const surchargeEval = evaluateApplicableSurcharges({
+    surcharges: plan.surcharges,
+    serviceDate: activationDate,
+    coverageDays: plan.validityDays || 1,
+    baseNativeAmount: baseSellingNative,
+    nativeCurrency,
+    targetCurrency: currentCurrency,
+    adults: quantity,
+    children: 0,
+    devicesCount: quantity,
+    quantity,
+    defaultApplicationBasis: 'PER_DEVICE'
+  });
+
+  const totalSellingUSD = baseSellingNative + surchargeEval.totalSurchargeNative;
+  const totalSellingQuote = convertCurrency(totalSellingUSD, nativeCurrency, currentCurrency);
+  const hasValidPrice = unitSellingUSD > 0 && validityCheck.isValid && !surchargeEval.missingServiceDate;
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
@@ -1742,17 +1941,52 @@ const ConnectivityConfigModal: React.FC<ConnectivityConfigModalProps> = ({
             </div>
           </div>
 
-          <div>
-            <label className="text-xs font-bold text-slate-700 block mb-1">Number of eSIM Devices / Profiles</label>
-            <input
-              type="number"
-              min={1}
-              max={50}
-              value={quantity}
-              onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 outline-none focus:border-teal-500"
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-bold text-slate-700 block mb-1">Activation / Service Date</label>
+              <input
+                type="date"
+                value={activationDate}
+                onChange={(e) => setActivationDate(e.target.value)}
+                className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 outline-none focus:border-teal-500"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-slate-700 block mb-1">eSIM Devices / Profiles</label>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={quantity}
+                onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 outline-none focus:border-teal-500"
+              />
+            </div>
           </div>
+
+          {!validityCheck.isValid && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-semibold">
+              {validityCheck.reason}
+            </div>
+          )}
+
+          {surchargeEval.missingServiceDate && (
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 font-semibold">
+              {surchargeEval.validationMessage}
+            </div>
+          )}
+
+          {surchargeEval.appliedSurcharges.length > 0 && (
+            <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 space-y-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 block">Applicable Date Surcharges</span>
+              {surchargeEval.appliedSurcharges.map((sc) => (
+                <div key={sc.surchargeId} className="flex items-center justify-between text-xs text-amber-900">
+                  <span>{sc.name} ({sc.validFrom} – {sc.validTo})</span>
+                  <span className="font-mono font-bold">+{formatCurrency(sc.appliedAmountConverted, currentCurrency)}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="space-y-1.5 pt-2">
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Master Inclusions</span>
@@ -1780,7 +2014,7 @@ const ConnectivityConfigModal: React.FC<ConnectivityConfigModalProps> = ({
                 {formatCurrency(totalSellingQuote, currentCurrency)}
               </span>
             ) : (
-              <span className="text-xs font-bold text-amber-700">Price unavailable for this service.</span>
+              <span className="text-xs font-bold text-amber-700">{!validityCheck.isValid ? 'Outside Validity Period' : 'Price unavailable for this service.'}</span>
             )}
           </div>
           <div className="flex items-center space-x-2">
@@ -1794,7 +2028,7 @@ const ConnectivityConfigModal: React.FC<ConnectivityConfigModalProps> = ({
             <button
               type="button"
               disabled={!hasValidPrice}
-              onClick={() => hasValidPrice && onConfirm(quantity)}
+              onClick={() => hasValidPrice && onConfirm(quantity, activationDate)}
               className={`px-4 py-2 rounded-xl text-xs font-bold shadow-xs transition-colors ${
                 hasValidPrice
                   ? 'bg-teal-600 hover:bg-teal-700 text-white cursor-pointer'

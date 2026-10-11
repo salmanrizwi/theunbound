@@ -710,15 +710,26 @@ export const DataSyncAuditViewer: React.FC<{ currentUser?: User | null }> = ({ c
       notes: 'Hierarchy: Master Region → Destination → City Hub strictly enforced.'
     },
     {
+      interfaceName: 'Japan Rail Inventory & Pricing',
+      scope: 'Shinkansen Bullet Train Dynamic Inventory, Routes, Fares & Seasons',
+      sourceOfTruth: 'rail_stations, rail_routes, rail_rates, rail_seasons, rail_markup_rules, japan_rail_commercial_products in Firestore',
+      syncMechanism: 'TheUnbound Admin CMS (Sole Management Authority)',
+      pricingDisplayed: 'Authoritative Admin-Saved Rates + Authorized Season Surcharges & Markups',
+      wholesaleGated: true,
+      status: 'PASS',
+      lastVerified: 'Live Real-Time',
+      notes: 'Exclusively managed via Admin CMS. Zero Google Sheets dependency. Never invents or estimates fares.'
+    },
+    {
       interfaceName: 'Google Sheets Integration',
-      scope: 'Bulk Tariff Upload & Live Inventory Sync',
-      sourceOfTruth: 'Google Sheets API → Firestore staging queue',
+      scope: 'GoogleFinance FX Engine & Non-Rail Bulk Tariff Sync',
+      sourceOfTruth: 'Google Sheets API (=GOOGLEFINANCE() FX_RATES)',
       syncMechanism: 'Differential Row Updater with Conflict Resolution',
       pricingDisplayed: 'Supplier Cost + Net Margin Formula Mapping',
       wholesaleGated: true,
       status: 'PASS',
       lastVerified: 'Live Real-Time',
-      notes: 'Validates mandatory SKUs and rejects $0 net rates before commit.'
+      notes: 'Validates mandatory SKUs and rejects $0 net rates before commit. Japan Rail inventory and pricing are excluded and exclusively managed via Admin CMS.'
     }
   ];
 

@@ -60,10 +60,16 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
   const [dbTick, setDbTick] = useState(0);
 
   useEffect(() => {
-    const unsub = db.subscribe(() => {
+    const unsubDb = db.subscribe(() => {
       setDbTick(t => t + 1);
     });
-    return () => unsub();
+    const unsubImg = canonicalImageService.subscribe(() => {
+      setDbTick(t => t + 1);
+    });
+    return () => {
+      unsubDb();
+      unsubImg();
+    };
   }, [db]);
 
   const packages = useMemo(() => db.getPackages(), [db, dbTick]);
@@ -137,7 +143,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
           name: p.name,
           category: p.category || 'Product',
           destination: p.destinationName,
-          image: p.imageUrl || p.heroImage,
+          image: canonicalImageService.resolveProductImage(p),
           status: p.status === 'INACTIVE' || p.status === 'ARCHIVED' ? 'UNAVAILABLE' : 'AVAILABLE'
         };
       }
@@ -148,7 +154,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
           name: h.name,
           category: 'Hotel',
           destination: h.destinationName,
-          image: h.imageUrl || h.heroImage,
+          image: canonicalImageService.resolveHotelImage(h),
           status: h.status === 'INACTIVE' || h.status === 'ARCHIVED' ? 'UNAVAILABLE' : 'AVAILABLE'
         };
       }
@@ -159,7 +165,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
           name: pkg.title,
           category: 'Package',
           destination: pkg.destinationName,
-          image: pkg.heroImage,
+          image: canonicalImageService.resolvePackageImage(pkg),
           status: pkg.status === 'UNPUBLISHED' || pkg.status === 'ARCHIVED' ? 'UNAVAILABLE' : 'AVAILABLE'
         };
       }
@@ -170,7 +176,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
           name: visa.visaType + ' for ' + visa.country,
           category: 'Visa Service',
           destination: visa.country || 'Japan',
-          image: '',
+          image: canonicalImageService.resolveVisaImage(visa),
           status: visa.status !== 'ACTIVE' ? 'UNAVAILABLE' : 'AVAILABLE'
         };
       }

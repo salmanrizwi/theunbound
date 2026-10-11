@@ -31,7 +31,6 @@ import {
   HelpCircle,
   Briefcase,
   Layers,
-  FileSpreadsheet,
   AlertCircle,
   Plus,
   Trash2,
@@ -760,12 +759,21 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                       </span>
                       <div className="text-right">
                         <span className="text-[10px] uppercase font-bold text-slate-400 mr-1.5">Sector Final Price:</span>
-                        <span className="font-black text-slate-900 font-sans text-sm">
-                          {formatCurrency(seg.pricing.finalSellingPriceTargetCurrency, journey.currency)}
-                        </span>
-                        <span className="text-[10px] text-slate-400 ml-1 font-mono">
-                          (¥{seg.pricing.finalSellingPriceJPY.toLocaleString()})
-                        </span>
+                        {seg.pricing.isPriceAvailable !== false ? (
+                          <>
+                            <span className="font-black text-slate-900 font-sans text-sm">
+                              {formatCurrency(seg.pricing.finalSellingPriceTargetCurrency, journey.currency)}
+                            </span>
+                            <span className="text-[10px] text-slate-400 ml-1 font-mono">
+                              (¥{seg.pricing.finalSellingPriceJPY.toLocaleString()})
+                            </span>
+                          </>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-bold">
+                            <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            {seg.pricing.priceUnavailableReason || 'Price unavailable — Admin configuration required'}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -838,17 +846,26 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                 <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
                   Total Final Price ({journey.segments.length} {journey.segments.length === 1 ? 'Sector' : 'Sectors'})
                 </span>
-                <div className="flex items-baseline md:justify-end gap-1 sm:gap-1.5">
-                  <span className="text-lg sm:text-2xl font-black text-[#00E5C0] font-sans">
-                    {formatCurrency(journey.pricing.finalSellingPriceTargetCurrency, journey.currency)}
-                  </span>
-                  <span className="text-[10px] sm:text-xs font-mono text-slate-400">
-                    (¥{journey.pricing.finalSellingPriceJPY.toLocaleString()})
-                  </span>
-                </div>
-                <span className="text-[9px] sm:text-[10px] text-slate-400 block">
-                  Avg. {formatCurrency(journey.pricing.perPersonTargetCurrency, journey.currency)} / pax
-                </span>
+                {journey.pricing.isPriceAvailable !== false ? (
+                  <>
+                    <div className="flex items-baseline md:justify-end gap-1 sm:gap-1.5">
+                      <span className="text-lg sm:text-2xl font-black text-[#00E5C0] font-sans">
+                        {formatCurrency(journey.pricing.finalSellingPriceTargetCurrency, journey.currency)}
+                      </span>
+                      <span className="text-[10px] sm:text-xs font-mono text-slate-400">
+                        (¥{journey.pricing.finalSellingPriceJPY.toLocaleString()})
+                      </span>
+                    </div>
+                    <span className="text-[9px] sm:text-[10px] text-slate-400 block">
+                      Avg. {formatCurrency(journey.pricing.perPersonTargetCurrency, journey.currency)} / pax
+                    </span>
+                  </>
+                ) : (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-950/80 border border-amber-500/50 text-amber-300 text-xs font-bold mt-1">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>{journey.pricing.priceUnavailableReason || 'Price unavailable — Admin configuration required'}</span>
+                  </div>
+                )}
               </div>
 
               {/* Action Buttons */}
@@ -865,10 +882,10 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                   <button
                     type="button"
                     id="btn-buyer-add-rail-journey"
-                    disabled={!journey.validation.isValid}
+                    disabled={!journey.validation.isValid || journey.pricing.isPriceAvailable === false}
                     onClick={handleInstantBook}
                     className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all flex items-center space-x-1 sm:space-x-1.5 shadow-lg cursor-pointer whitespace-nowrap shrink-0 ${
-                      journey.validation.isValid
+                      journey.validation.isValid && journey.pricing.isPriceAvailable !== false
                         ? 'bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 shadow-[#00C6A6]/20'
                         : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                     }`}
@@ -889,10 +906,10 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                   <button
                     type="button"
                     id="btn-b2b-add-rail-quote"
-                    disabled={!journey.validation.isValid}
+                    disabled={!journey.validation.isValid || journey.pricing.isPriceAvailable === false}
                     onClick={handleAddToQuote}
                     className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs font-black transition-all flex items-center space-x-1 sm:space-x-1.5 shadow-lg cursor-pointer whitespace-nowrap shrink-0 ${
-                      journey.validation.isValid
+                      journey.validation.isValid && journey.pricing.isPriceAvailable !== false
                         ? 'bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 shadow-[#00C6A6]/20'
                         : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                     }`}
@@ -904,7 +921,7 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                       </>
                     ) : (
                       <>
-                        <FileSpreadsheet className="w-4 h-4 shrink-0" />
+                        <Train className="w-4 h-4 shrink-0 text-slate-950" />
                         <span className="hidden sm:inline">
                           {portalOrigin === 'ADMIN_CMS' || portalOrigin === 'PRODUCT_MANAGEMENT'
                             ? 'SAVE MASTER RAIL CONFIGURATION'
