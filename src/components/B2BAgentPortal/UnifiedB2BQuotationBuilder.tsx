@@ -72,7 +72,7 @@ import {
 } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
-import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, calculateQuoteInternalBreakdown } from '../../services/pricingEngine';
 import { canonicalImageService } from '../../services/imageService';
 import { ProposalDocumentView } from '../ProposalDocumentView';
 import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
@@ -92,7 +92,7 @@ import { VisaProduct } from '../../types';
 import { AddVisaToQuoteModal, visaProductToProduct } from './AddVisaToQuoteModal';
 import { AddAddonModal } from './AddAddonModal';
 import { ShareWhatsAppModal } from './ShareWhatsAppModal';
-import { canUserShareQuoteWhatsApp } from '../../services/permissionEngine';
+import { canUserShareQuoteWhatsApp, canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
 import { 
   classifyPassengers, 
   STANDARD_OPERATIONAL_REMARKS, 
@@ -101,13 +101,12 @@ import {
   TransferSuggestion
 } from '../../utils/b2bQuotationHelpers';
 import { AppDatabase } from '../../services/db';
-import { hotelToProduct, manualHotelToProduct, calculateHotelStayPrice, validateRoomOccupancy, OccupancyValidationResult } from '../../utils/hotelHelpers';
+import { hotelToProduct, manualHotelToProduct, isManualHotelPricingComplete, calculateHotelStayPrice, validateRoomOccupancy, OccupancyValidationResult } from '../../utils/hotelHelpers';
 import { downloadQuotationPDF } from '../../services/pdfGenerator';
 import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { EmailNotificationService } from '../../services/emailNotificationService';
 import { DestinationRelevanceService, matchesDestination } from '../../services/destinationRelevanceService';
-
-export type QuotationScope = 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY';
+import { QuotationScope } from '../../types';
 
 // Helper to check if a product is tagged with or matches a specific city / hub
 export const isProductMatchingCity = (product: Product, targetCityName?: string, targetHubId?: string): boolean => {
@@ -250,6 +249,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [agentMarginValue, setAgentMarginValue] = useState<number>(10);
   const [agentMarkupPercent, setAgentMarkupPercent] = useState<number>(10);
 
+  // Admin Manual Margin on Total Nett Cost (Step 7)
+  const [adminManualMarginType, setAdminManualMarginType] = useState<'PERCENTAGE' | 'FIXED'>('PERCENTAGE');
+  const [adminManualMarginValue, setAdminManualMarginValue] = useState<number>(0);
+  const [adminMarginMode, setAdminMarginMode] = useState<'REPLACE' | 'ADD'>('REPLACE');
+
   // Top-Level View State (Itinerary Builder vs Official Proposal Preview)
   const [activeViewTab, setActiveViewTab] = useState<'BUILDER' | 'PROPOSAL_PREVIEW'>('BUILDER');
   const [activeStepId, setActiveStepId] = useState<number>(1);
@@ -358,6 +362,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     title: string;
     badge: string;
     hotelTier: string;
+    scope?: QuotationScope;
     items: QuoteItem[];
     routeHubs: TripRouteHub[];
     dayThemes: Record<number, string>;
@@ -371,6 +376,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       title: 'Option 1: Standard 4-Star Premium',
       badge: 'POPULAR CHOICE',
       hotelTier: '4-Star Premium',
+      scope: 'HOTEL_LAND',
       items: [],
       routeHubs: [],
       dayThemes: {},
@@ -382,6 +388,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       title: 'Option 2: 5-Star Luxury Upgrade',
       badge: 'UPGRADED',
       hotelTier: '5-Star Luxury',
+      scope: 'HOTEL_LAND',
       items: [],
       routeHubs: [],
       dayThemes: {},
@@ -393,6 +400,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       title: 'Option 3: Signature / Private Villa',
       badge: 'ULTRA-LUXE',
       hotelTier: 'Signature / Private Villa',
+      scope: 'HOTEL_LAND',
       items: [],
       routeHubs: [],
       dayThemes: {},
@@ -510,11 +518,98 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       if (q.childAges) setChildAges(q.childAges);
       if (q.agentMarginType) setAgentMarginType(q.agentMarginType);
       if (q.agentMarginValue !== undefined) setAgentMarginValue(q.agentMarginValue);
+      if (q.adminManualMarginType) setAdminManualMarginType(q.adminManualMarginType);
+      if (q.adminManualMarginValue !== undefined) setAdminManualMarginValue(q.adminManualMarginValue);
+      if (q.adminMarginMode) setAdminMarginMode(q.adminMarginMode);
       if (q.overallDiscountPercent !== undefined) setOverallDiscountPercent(q.overallDiscountPercent);
-      if (q.items && q.items.length > 0) setItems(q.items);
+      const loadedScope: QuotationScope = (q.scope as QuotationScope) || 'HOTEL_LAND';
+      setQuotationScope(loadedScope);
+
+      const normalizeLoadedHubs = (hubsList: TripRouteHub[], scopeVal: QuotationScope): TripRouteHub[] => {
+        return (hubsList || []).map(h => {
+          if (scopeVal === 'LAND_ONLY') {
+            const snapshot = (h.hotelId || h.manualHotel || h.isManualHotel)
+              ? {
+                  accommodationType: (h.isManualHotel || h.manualHotel ? 'manual' : 'hotel') as any,
+                  hotelId: h.hotelId,
+                  roomTypeId: h.roomTypeId,
+                  roomsCount: h.roomsCount,
+                  isManualHotel: h.isManualHotel,
+                  manualHotel: h.manualHotel
+                }
+              : h.savedAccommodationSnapshot;
+            return {
+              ...h,
+              accommodationType: 'NO_ACCOMMODATION',
+              overriddenByLandOnly: true,
+              savedAccommodationSnapshot: snapshot,
+              hotelId: undefined,
+              roomTypeId: undefined,
+              isManualHotel: false,
+              manualHotel: undefined
+            };
+          }
+          if (h.accommodationType === 'none' || h.accommodationType === 'NO_ACCOMMODATION') {
+            return {
+              ...h,
+              accommodationType: 'NO_ACCOMMODATION',
+              hotelId: undefined,
+              roomTypeId: undefined,
+              isManualHotel: false,
+              manualHotel: undefined
+            };
+          }
+          return h;
+        });
+      };
+
+      if (q.items) {
+        const cleanedLoadedItems = loadedScope === 'LAND_ONLY'
+          ? q.items.filter(it => !(
+              it.product.productType === 'Hotel' ||
+              it.product.productType === 'Hotel & Resort' ||
+              it.isManualHotel === true ||
+              it.product.accommodationType === 'manual' ||
+              (it.product as any).category === 'Hotels'
+            ))
+          : q.items;
+        setItems(cleanedLoadedItems);
+      }
       if (q.routeHubs && q.routeHubs.length > 0) {
-        setRouteHubs(q.routeHubs);
-        setContextRouteHubs(q.routeHubs);
+        const normalizedHubs = normalizeLoadedHubs(q.routeHubs, loadedScope);
+        setRouteHubs(normalizedHubs);
+        setContextRouteHubs(normalizedHubs);
+      }
+      if (q.options && q.options.length > 0) {
+        setOptionsData(prev => {
+          const next = { ...prev };
+          q.options!.forEach((opt, idx) => {
+            const optNum = opt.optionNumber || (idx + 1);
+            const optScope = (opt.scope as QuotationScope) || (optNum === 1 ? loadedScope : (next[optNum]?.scope || loadedScope));
+            const optRawItems = opt.items || [];
+            const optCleanedItems = optScope === 'LAND_ONLY'
+              ? optRawItems.filter(it => !(
+                  it.product.productType === 'Hotel' ||
+                  it.product.productType === 'Hotel & Resort' ||
+                  it.isManualHotel === true ||
+                  it.product.accommodationType === 'manual' ||
+                  (it.product as any).category === 'Hotels'
+                ))
+              : optRawItems;
+            next[optNum] = {
+              ...next[optNum],
+              optionNumber: optNum,
+              title: opt.title || next[optNum]?.title || `Option ${optNum}`,
+              badge: opt.badge || next[optNum]?.badge || '',
+              hotelTier: opt.hotelTier || next[optNum]?.hotelTier || '',
+              scope: optScope,
+              items: optCleanedItems,
+              routeHubs: normalizeLoadedHubs(opt.routeHubs || [], optScope),
+              dayThemes: q.dayThemes || {}
+            };
+          });
+          return next;
+        });
       }
       if (q.dayThemes) {
         setDayThemes(q.dayThemes);
@@ -561,14 +656,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         if (prefillLead.travelEndDate) setEndDate(prefillLead.travelEndDate);
       } else {
         clearQuote();
-        setClientName('');
-        setClientEmail('');
-        setClientPhone('');
-        setClientCompany('');
         setSelectedLeadId('');
-        setItems([]);
         setRouteHubs([]);
-        setContextRouteHubs([]);
       }
     }
   }, [targetQuoteId, isNewQuoteMode, prefillLead]);
@@ -578,6 +667,26 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     return DestinationRelevanceService.getInstance().getRelevantHubs(currentDestination.id);
   }, [currentDestination]);
 
+  // Structural equality helper to avoid spurious render loops
+  const areRouteHubsEqual = (a?: TripRouteHub[], b?: TripRouteHub[]): boolean => {
+    if (a === b) return true;
+    if (!a || !b) return !a && !b;
+    if (a.length !== b.length) return false;
+    return a.every((hub, idx) => {
+      const other = b[idx];
+      return Boolean(
+        other &&
+        hub.id === other.id &&
+        hub.hubId === other.hubId &&
+        hub.nights === other.nights &&
+        hub.accommodationType === other.accommodationType &&
+        hub.hotelId === other.hotelId &&
+        hub.roomTypeId === other.roomTypeId &&
+        hub.order === other.order
+      );
+    });
+  };
+
   // Route Hubs Sequence (dynamic - starts empty unless provided by context or AI Planner)
   const [routeHubs, setRouteHubs] = useState<TripRouteHub[]>(() => {
     if (contextRouteHubs && contextRouteHubs.length > 0) {
@@ -586,16 +695,124 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     return [];
   });
 
-  // Sync route hubs with context when AI Planner loads or context updates
+  // Sync route hubs with context when AI Planner loads or external context updates
   useEffect(() => {
-    if (contextRouteHubs && contextRouteHubs.length > 0) {
+    if (contextRouteHubs && contextRouteHubs.length > 0 && !areRouteHubsEqual(contextRouteHubs, routeHubs)) {
       setRouteHubs(contextRouteHubs);
     }
   }, [contextRouteHubs]);
 
-  const handleUpdateRouteHubs = (newHubs: TripRouteHub[]) => {
-    setRouteHubs(newHubs);
-    setContextRouteHubs(newHubs);
+  // Keep QuotationContext synchronized with routeHubs changes safely after render
+  useEffect(() => {
+    if (!areRouteHubsEqual(contextRouteHubs, routeHubs)) {
+      setContextRouteHubs(routeHubs);
+    }
+  }, [routeHubs, contextRouteHubs, setContextRouteHubs]);
+
+  // Keep active option data synchronized with routeHubs changes safely
+  useEffect(() => {
+    setOptionsData(prevOpts => {
+      if (areRouteHubsEqual(prevOpts[activeOptionTab]?.routeHubs, routeHubs)) return prevOpts;
+      return {
+        ...prevOpts,
+        [activeOptionTab]: {
+          ...prevOpts[activeOptionTab],
+          routeHubs
+        }
+      };
+    });
+  }, [routeHubs, activeOptionTab]);
+
+  const handleUpdateRouteHubs: React.Dispatch<React.SetStateAction<TripRouteHub[]>> = (updaterOrValue) => {
+    setRouteHubs(prev => {
+      const next = typeof updaterOrValue === 'function'
+        ? (updaterOrValue as (p: TripRouteHub[]) => TripRouteHub[])(prev)
+        : updaterOrValue;
+      return next;
+    });
+  };
+
+  // Predictable state transition when switching Land-Only Mode ON or OFF
+  const handleChangeQuotationScope = (nextScope: QuotationScope) => {
+    setQuotationScope(nextScope);
+    if (nextScope === 'LAND_ONLY') {
+      // Remove all active hotel charges from current quote items while preserving non-accommodation items
+      const hotelItemsToRemove = items.filter(it =>
+        it.product.productType === 'Hotel' ||
+        it.product.productType === 'Hotel & Resort' ||
+        it.isManualHotel === true ||
+        it.product.accommodationType === 'manual' ||
+        (it.product as any).category === 'Hotels'
+      );
+      hotelItemsToRemove.forEach(it => removeProductFromQuote(it.id));
+
+      // Preserve existing hotel / manual hotel configuration in savedAccommodationSnapshot and set every hub to NO_ACCOMMODATION
+      const updated = routeHubs.map(h => {
+        const hasConfiguredHotel = Boolean(
+          (h.hotelId || h.manualHotel || h.isManualHotel) &&
+          h.accommodationType !== 'none' &&
+          h.accommodationType !== 'NO_ACCOMMODATION'
+        );
+        const snapshot = hasConfiguredHotel
+          ? {
+              accommodationType: (h.isManualHotel || h.manualHotel ? 'manual' : 'hotel') as any,
+              hotelId: h.hotelId,
+              roomTypeId: h.roomTypeId,
+              roomsCount: h.roomsCount,
+              isManualHotel: h.isManualHotel,
+              manualHotel: h.manualHotel
+            }
+          : h.savedAccommodationSnapshot;
+        return {
+          ...h,
+          accommodationType: 'NO_ACCOMMODATION' as const,
+          overriddenByLandOnly: true,
+          savedAccommodationSnapshot: snapshot,
+          hotelId: undefined,
+          roomTypeId: undefined,
+          isManualHotel: false,
+          manualHotel: undefined
+        };
+      });
+      setRouteHubs(updated);
+      setContextRouteHubs(updated);
+      setOptionsData(prevOpts => ({
+        ...prevOpts,
+        [activeOptionTab]: {
+          ...prevOpts[activeOptionTab],
+          scope: 'LAND_ONLY',
+          routeHubs: updated,
+          items: items.filter(it => !hotelItemsToRemove.some(rem => rem.id === it.id))
+        }
+      }));
+    } else {
+      // Switching Land-Only Mode OFF:
+      // Keep NO_ACCOMMODATION selected initially for sections that were overridden by Land-Only Mode,
+      // and retain savedAccommodationSnapshot so the user can restore with confirmation or choose any of the 3 options.
+      const updated = routeHubs.map(h => {
+        if (h.overriddenByLandOnly || h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none') {
+          return {
+            ...h,
+            accommodationType: 'NO_ACCOMMODATION' as const,
+            hotelId: undefined,
+            roomTypeId: undefined,
+            isManualHotel: false,
+            manualHotel: undefined
+          };
+        }
+        return h;
+      });
+      setRouteHubs(updated);
+      setContextRouteHubs(updated);
+      setOptionsData(prevOpts => ({
+        ...prevOpts,
+        [activeOptionTab]: {
+          ...prevOpts[activeOptionTab],
+          scope: nextScope,
+          routeHubs: updated
+        }
+      }));
+    }
   };
 
   // Route Validation
@@ -817,11 +1034,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const handleSwitchOptionTab = (targetOptNum: number) => {
     if (targetOptNum === activeOptionTab) return;
 
-    // 1. Save current option state
+    // 1. Save current option state including its independent scope and routeHubs
     setOptionsData(prev => ({
       ...prev,
       [activeOptionTab]: {
         ...prev[activeOptionTab],
+        scope: quotationScope,
         items: [...items],
         routeHubs: [...routeHubs],
         dayThemes: { ...dayThemes },
@@ -832,13 +1050,14 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
     // 2. Target option data
     const targetOpt = optionsData[targetOptNum];
+    const targetScope: QuotationScope = targetOpt?.scope || 'HOTEL_LAND';
     let targetItems = targetOpt?.items || [];
     let targetHubs = targetOpt?.routeHubs || [];
     let targetThemes = targetOpt?.dayThemes || {};
     let targetMarkup = targetOpt?.agentMarkupPercent ?? agentMarkupPercent;
     let targetDiscount = targetOpt?.overallDiscountPercent ?? 0;
 
-    // If target has no hubs, inherit routeHubs structure without hotels
+    // If target has no hubs yet, inherit routeHubs city/nights structure without hotels
     if (targetHubs.length === 0 && routeHubs.length > 0) {
       targetHubs = routeHubs.map(h => ({
         ...h,
@@ -846,12 +1065,17 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         hotelId: undefined,
         roomTypeId: undefined,
         manualHotel: undefined,
-        isManualHotel: false
+        isManualHotel: false,
+        savedAccommodationSnapshot: undefined,
+        overriddenByLandOnly: targetScope === 'LAND_ONLY',
+        accommodationType: targetScope === 'LAND_ONLY' ? 'NO_ACCOMMODATION' : undefined
       }));
     }
 
+    setQuotationScope(targetScope);
     setItems(targetItems);
     setRouteHubs(targetHubs);
+    setContextRouteHubs(targetHubs);
     setDayThemes(targetThemes);
     setAgentMarkupPercent(targetMarkup);
     setOverallDiscountPercent(targetDiscount);
@@ -864,6 +1088,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const handleDuplicateOption = (fromOptNum: number, toOptNum: number) => {
     const sourceOpt = fromOptNum === activeOptionTab
       ? {
+          scope: quotationScope,
           items: [...items],
           routeHubs: [...routeHubs],
           dayThemes: { ...dayThemes },
@@ -872,22 +1097,46 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         }
       : optionsData[fromOptNum];
 
-    const clonedItems: QuoteItem[] = (sourceOpt?.items || []).map(it => ({
-      ...it,
-      id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`
-    }));
+    const hubIdMap = new Map<string, string>();
+    const clonedHubs: TripRouteHub[] = (sourceOpt?.routeHubs || []).map(h => {
+      const newHubId = `rhub-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+      hubIdMap.set(h.id, newHubId);
+      return {
+        ...h,
+        id: newHubId,
+        manualHotel: h.manualHotel ? { ...h.manualHotel, hubId: newHubId } : undefined,
+        savedAccommodationSnapshot: h.savedAccommodationSnapshot
+          ? {
+              ...h.savedAccommodationSnapshot,
+              manualHotel: h.savedAccommodationSnapshot.manualHotel
+                ? { ...h.savedAccommodationSnapshot.manualHotel, hubId: newHubId }
+                : undefined
+            }
+          : undefined
+      };
+    });
 
-    const clonedHubs: TripRouteHub[] = (sourceOpt?.routeHubs || []).map(h => ({
-      ...h,
-      id: `rhub-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`
-    }));
+    const clonedItems: QuoteItem[] = (sourceOpt?.items || []).map(it => {
+      const oldHubId = it.hubId || it.manualHotelDetails?.hubId;
+      const mappedHubId = (oldHubId && hubIdMap.get(oldHubId)) || oldHubId;
+      return {
+        ...it,
+        id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        hubId: mappedHubId,
+        manualHotelDetails: it.manualHotelDetails
+          ? { ...it.manualHotelDetails, hubId: mappedHubId }
+          : undefined
+      };
+    });
 
     const clonedThemes: Record<number, string> = { ...(sourceOpt?.dayThemes || {}) };
+    const clonedScope: QuotationScope = sourceOpt?.scope || quotationScope;
 
     setOptionsData(prev => ({
       ...prev,
       [toOptNum]: {
         ...prev[toOptNum],
+        scope: clonedScope,
         items: clonedItems,
         routeHubs: clonedHubs,
         dayThemes: clonedThemes,
@@ -897,8 +1146,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }));
 
     // Switch to target option
+    setQuotationScope(clonedScope);
     setItems(clonedItems);
     setRouteHubs(clonedHubs);
+    setContextRouteHubs(clonedHubs);
     setDayThemes(clonedThemes);
     setAgentMarkupPercent(sourceOpt?.agentMarkupPercent ?? 15);
     setOverallDiscountPercent(sourceOpt?.overallDiscountPercent ?? 0);
@@ -1054,10 +1305,40 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     return items.some(it => it.product.id === visaId || it.product.sku?.includes(visaId));
   };
 
-  // Grouped items
-  const hotelItems = useMemo(() => items.filter(isHotelQuoteItem), [items]);
+  // Grouped items (excluding hotel charges when Land-Only Mode is active or for NO_ACCOMMODATION hubs)
+  const hotelItems = useMemo(() => {
+    if (quotationScope === 'LAND_ONLY') return [];
+    const noAccHubIds = new Set(
+      routeHubs
+        .filter(h => h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none')
+        .map(h => h.id)
+    );
+    return items.filter(it => {
+      if (!isHotelQuoteItem(it)) return false;
+      const itemHubId = it.hubId || it.manualHotelDetails?.hubId;
+      if (itemHubId && noAccHubIds.has(itemHubId)) return false;
+      return true;
+    });
+  }, [items, quotationScope, routeHubs]);
   const visaItems = useMemo(() => items.filter(isVisaQuoteItem), [items]);
   const experienceItems = useMemo(() => items.filter(it => !isHotelQuoteItem(it) && !isVisaQuoteItem(it)), [items]);
+
+  const effectivePricedItems = useMemo(() => {
+    if (quotationScope === 'LAND_ONLY') {
+      return items.filter(it => !isHotelQuoteItem(it));
+    }
+    const noAccHubIds = new Set(
+      routeHubs
+        .filter(h => h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none')
+        .map(h => h.id)
+    );
+    if (noAccHubIds.size === 0) return items;
+    return items.filter(it => {
+      if (!isHotelQuoteItem(it)) return true;
+      const itemHubId = it.hubId || it.manualHotelDetails?.hubId;
+      return !(itemHubId && noAccHubIds.has(itemHubId));
+    });
+  }, [items, quotationScope, routeHubs]);
 
   const hasInsurance = useMemo(() => {
     return items.some(it => 
@@ -1171,9 +1452,25 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const visaTotalSelling = useMemo(() => visaItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [visaItems]);
   const experienceTotalSelling = useMemo(() => experienceItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [experienceItems]);
 
+  // Dynamic Internal Cost Access check
+  const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
+
   const baseFinalSellingPrice = useMemo(() => {
-    return totalSellingPrice;
-  }, [totalSellingPrice]);
+    const rawSellingPrice = quotationScope === 'LAND_ONLY'
+      ? effectivePricedItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0)
+      : totalSellingPrice;
+
+    if (adminManualMarginValue > 0 && canViewInternalCosts) {
+      const adminMarginAmount = adminManualMarginType === 'PERCENTAGE'
+        ? Math.round(totalNetCost * (adminManualMarginValue / 100))
+        : Math.round(adminManualMarginValue);
+      return adminMarginMode === 'REPLACE'
+        ? (totalNetCost + adminMarginAmount)
+        : (rawSellingPrice + adminMarginAmount);
+    }
+
+    return rawSellingPrice;
+  }, [totalSellingPrice, quotationScope, effectivePricedItems, adminManualMarginValue, adminManualMarginType, adminMarginMode, totalNetCost, canViewInternalCosts]);
 
   const additionalMarginAmount = useMemo(() => {
     if (agentMarginType === 'PERCENTAGE') {
@@ -1193,7 +1490,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     return [1, 2, 3].map(optNum => {
       const optState = optNum === activeOptionTab
         ? {
-            items,
+            scope: quotationScope,
+            items: effectivePricedItems,
             routeHubs,
             agentMarkupPercent,
             overallDiscountPercent,
@@ -1202,7 +1500,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             hotelTier: optionsData[optNum]?.hotelTier || ''
           }
         : {
-            items: optionsData[optNum]?.items || [],
+            scope: optionsData[optNum]?.scope || 'HOTEL_LAND',
+            items: (optionsData[optNum]?.scope === 'LAND_ONLY')
+              ? (optionsData[optNum]?.items || []).filter(it => !isHotelQuoteItem(it))
+              : (optionsData[optNum]?.items || []),
             routeHubs: optionsData[optNum]?.routeHubs || [],
             agentMarkupPercent: optionsData[optNum]?.agentMarkupPercent ?? 12,
             overallDiscountPercent: optionsData[optNum]?.overallDiscountPercent ?? 0,
@@ -1212,9 +1513,22 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           };
 
       const optItems = optState.items;
-      const selling = optItems.reduce((acc, it) => acc + (it.calculation?.finalTotalSellingPrice || it.product.priceSelling * (it.pax.adults + it.pax.children)), 0);
+      const selling = optItems.reduce((acc, it) => acc + (it.calculation?.finalTotalSellingPrice || it.product.priceSelling * ((it.pax?.adults || 2) + (it.pax?.children || 0))), 0);
       const optMarkupAmount = Math.round(selling * ((optState.agentMarkupPercent || 12) / 100));
       const optFinalClientPrice = Math.round((selling + optMarkupAmount) * (1 - (optState.overallDiscountPercent || 0) / 100));
+
+      const optBreakdown = canViewInternalCosts
+        ? calculateQuoteInternalBreakdown({
+            items: optItems,
+            targetCurrency: currency,
+            agentMarginType: 'PERCENTAGE',
+            agentMarginValue: optState.agentMarkupPercent ?? 12,
+            overallDiscountPercent: optState.overallDiscountPercent ?? 0,
+            userRole: user?.role,
+            scope: optState.scope,
+            routeHubs: optState.routeHubs
+          })
+        : null;
 
       return {
         id: `opt-${optNum}`,
@@ -1222,15 +1536,16 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         title: optState.title,
         badge: optState.badge,
         hotelTier: optState.hotelTier,
+        scope: optState.scope,
         items: optItems,
         routeHubs: optState.routeHubs,
-        totalNetCost: 0,
-        totalSellingPrice: optFinalClientPrice,
-        totalMargin: optMarkupAmount,
-        totalTaxes: 0
+        totalNetCost: canViewInternalCosts && optBreakdown && optBreakdown.isComplete ? optBreakdown.totalNettCost : 0,
+        totalSellingPrice: canViewInternalCosts && optBreakdown ? optBreakdown.finalPackagePrice : optFinalClientPrice,
+        totalMargin: canViewInternalCosts && optBreakdown ? optBreakdown.totalMargin : optMarkupAmount,
+        totalTaxes: canViewInternalCosts && optBreakdown ? optBreakdown.taxAmount : 0
       };
     });
-  }, [items, routeHubs, agentMarkupPercent, overallDiscountPercent, optionsData, activeOptionTab]);
+  }, [effectivePricedItems, routeHubs, quotationScope, agentMarkupPercent, overallDiscountPercent, optionsData, activeOptionTab, canViewInternalCosts, currency, user?.role]);
 
   // Sync / Auto-Save Quote to AppDatabase
   // Default explicit = true so all user action buttons (PDF, WhatsApp, Email, Convert Booking) always save & return the quote
@@ -1261,24 +1576,45 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       });
       const totalGroundPrice = groundItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
 
+      const activeBreakdown = canViewInternalCosts
+        ? calculateQuoteInternalBreakdown({
+            items: effectivePricedItems,
+            targetCurrency: currency,
+            agentMarginType,
+            agentMarginValue,
+            overallDiscountPercent,
+            userRole: user?.role,
+            scope: quotationScope,
+            routeHubs
+          })
+        : null;
+
       const activeQuote: Quotation = {
         id: activeQuoteId,
         quoteNumber,
         version: quoteVersion,
         title: `${currentDestination.name} Bespoke Journey (${tripNights} Nights)`,
         destination: currentDestination.name,
-        items,
+        items: effectivePricedItems,
         currency,
         overallMarkupPercent: agentMarginType === 'PERCENTAGE' ? agentMarginValue : 0,
         overallDiscountPercent: overallDiscountPercent || 0,
-        totalNetCost: 0,
+        totalNetCost: canViewInternalCosts && activeBreakdown?.isComplete ? activeBreakdown.totalNettCost : 0,
         totalSellingPrice: finalCustomerSellingPrice,
-        totalTaxes: 0,
-        totalMargin: additionalMarginAmount,
+        totalTaxes: canViewInternalCosts && activeBreakdown ? activeBreakdown.taxAmount : 0,
+        totalMargin: canViewInternalCosts && activeBreakdown ? activeBreakdown.totalMargin : additionalMarginAmount,
         baseFinalSellingPrice,
         base_final_selling_price: baseFinalSellingPrice,
         baseFinalSellingPriceCurrency: currency,
         base_final_selling_price_currency: currency,
+        adminManualMarginType,
+        admin_manual_margin_type: adminManualMarginType,
+        adminManualMarginValue,
+        admin_manual_margin_value: adminManualMarginValue,
+        adminMarginMode,
+        admin_margin_mode: adminMarginMode,
+        revisedSellingPrice: baseFinalSellingPrice,
+        revised_selling_price: baseFinalSellingPrice,
         agentMarginType,
         agent_margin_type: agentMarginType,
         agentMarginValue,
@@ -1304,7 +1640,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           calculatedAt: new Date().toISOString(),
           pricingVersion: quoteVersion || 1,
           itemsCount: items.length,
-          totalPax: (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0)
+          totalPax: (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0),
+          adminManualMarginType,
+          adminManualMarginValue,
+          adminMarginMode,
+          revisedSellingPrice: baseFinalSellingPrice
         },
         pricing_snapshot: {
           baseFinalSellingPrice,
@@ -1316,7 +1656,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           calculatedAt: new Date().toISOString(),
           pricingVersion: quoteVersion || 1,
           itemsCount: items.length,
-          totalPax: (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0)
+          totalPax: (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0),
+          adminManualMarginType,
+          adminManualMarginValue,
+          adminMarginMode,
+          revisedSellingPrice: baseFinalSellingPrice
         },
         clientName: clientName || 'Client Name Pending',
         clientEmail: clientEmail || 'client@example.com',
@@ -1460,7 +1804,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     };
   };
 
-  // Helper to remove hotel stay for a specific hub
+  // Helper to remove hotel stay for a specific hub (sets hub to NO_ACCOMMODATION)
   const handleRemoveHotelForHub = (hubId: string) => {
     const targetHub = routeHubs.find(h => h.id === hubId);
     if (!targetHub) return;
@@ -1468,13 +1812,25 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     // Find and remove matching hotel items
     const matchingItems = items.filter(it => 
       isHotelQuoteItem(it) &&
-      (it.notes?.includes(targetHub.hubName) || (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
+      (it.hubId === targetHub.id ||
+       it.manualHotelDetails?.hubId === targetHub.id ||
+       it.notes?.includes(targetHub.hubName) ||
+       (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
     );
 
     matchingItems.forEach(it => removeProductFromQuote(it.id));
 
-    setRouteHubs(prev =>
-      prev.map(h => (h.id === hubId ? { ...h, hotelId: undefined, roomTypeId: undefined, roomsCount: undefined } : h))
+    handleUpdateRouteHubs(prev =>
+      prev.map(h => (h.id === hubId ? {
+        ...h,
+        hotelId: undefined,
+        roomTypeId: undefined,
+        roomsCount: undefined,
+        isManualHotel: false,
+        manualHotel: undefined,
+        accommodationType: 'NO_ACCOMMODATION',
+        overriddenByLandOnly: false
+      } : h))
     );
   };
 
@@ -1506,7 +1862,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     // Remove existing hotel items for this hub
     const existingHotelItems = items.filter(it => 
       isHotelQuoteItem(it) &&
-      (it.notes?.includes(targetHub.hubName) || (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
+      (it.hubId === targetHub.id ||
+       it.manualHotelDetails?.hubId === targetHub.id ||
+       it.notes?.includes(targetHub.hubName) ||
+       (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
     );
     existingHotelItems.forEach(it => removeProductFromQuote(it.id));
 
@@ -1523,29 +1882,47 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         children: childrenCount,
         infants: infantsCount,
         travelDate: checkInIso,
+        hubId: targetHub.id,
+        hotelId: hotel.id,
+        roomTypeId: selectedRoom?.id,
+        roomsCount: safeRooms,
+        nights,
+        checkInDate: checkInIso,
+        checkOutDate: checkOutIso,
+        isManualHotel: false,
+        accommodationType: 'hotel',
         notes: `${hotel.name} • ${selectedRoom?.roomName || 'Luxury Room'} • ${safeRooms} ${safeRooms > 1 ? 'Rooms' : 'Room'} • ${nights} Nights in ${targetHub.hubName} [Check-in: ${checkInIso}, Check-out: ${checkOutIso}]`,
         openDrawer: false
       });
     }
 
     // Update hub state
-    setRouteHubs(prev =>
+    handleUpdateRouteHubs(prev =>
       prev.map(h => (h.id === targetHub.id ? { 
         ...h, 
         hotelId: hotel.id, 
         roomTypeId: selectedRoom?.id,
         roomsCount: safeRooms,
         isManualHotel: false,
-        accommodationType: 'master',
-        manualHotel: undefined
+        accommodationType: 'hotel',
+        overriddenByLandOnly: false,
+        manualHotel: undefined,
+        savedAccommodationSnapshot: {
+          accommodationType: 'hotel',
+          hotelId: hotel.id,
+          roomTypeId: selectedRoom?.id,
+          roomsCount: safeRooms,
+          isManualHotel: false
+        }
       } : h))
     );
   };
 
   // Open Add Manual Hotel Modal
   const handleOpenAddManualHotel = (hubId?: string) => {
-    setManualHotelModalHubId(hubId || routeHubs[0]?.id);
-    setManualHotelModalInitialData(null);
+    const targetHub = routeHubs.find(h => h.id === hubId) || routeHubs[0];
+    setManualHotelModalHubId(targetHub?.id);
+    setManualHotelModalInitialData(targetHub?.manualHotel || targetHub?.savedAccommodationSnapshot?.manualHotel || null);
     setIsManualHotelModalOpen(true);
   };
 
@@ -1554,7 +1931,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     const targetHub = routeHubs.find(h => h.id === hubId);
     if (!targetHub) return;
     setManualHotelModalHubId(hubId);
-    setManualHotelModalInitialData(targetHub.manualHotel || null);
+    setManualHotelModalInitialData(targetHub.manualHotel || targetHub.savedAccommodationSnapshot?.manualHotel || null);
     setIsManualHotelModalOpen(true);
   };
 
@@ -1563,10 +1940,16 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     const targetHub = routeHubs.find(h => h.id === manualData.hubId || h.hubName.toLowerCase() === manualData.city.toLowerCase()) || routeHubs[0];
     if (!targetHub) return;
 
+    const normalizedManualData: ManualHotelDetails = {
+      ...manualData,
+      hubId: targetHub.id
+    };
+
     // 1. Remove any previous hotel items for this hub
     const existingHotelItems = items.filter(it => 
       isHotelQuoteItem(it) &&
-      (it.notes?.includes(targetHub.hubName) || 
+      (it.hubId === targetHub.id ||
+       it.notes?.includes(targetHub.hubName) || 
        (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)) || 
        (it.manualHotelDetails?.hubId === targetHub.id) ||
        (it.product.name || '').toLowerCase().includes((targetHub.hubName || '').toLowerCase()))
@@ -1574,34 +1957,53 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     existingHotelItems.forEach(it => removeProductFromQuote(it.id));
 
     // 2. Convert manual details into a standardized Product object
-    const hotelProduct = manualHotelToProduct(manualData, currentDestination);
+    const hotelProduct = manualHotelToProduct(normalizedManualData, currentDestination);
 
     // 3. Add to quotation items
-    const mealDesc = manualData.mealPlanName || manualData.mealPlan;
-    const stayNote = `${manualData.hotelName} [Manual Accommodation] • ${manualData.roomType} • ${manualData.numberOfRooms} ${manualData.numberOfRooms > 1 ? 'Rooms' : 'Room'} • ${manualData.numberOfNights} Nights in ${targetHub.hubName} (${mealDesc}) [Check-in: ${manualData.checkInDate}, Check-out: ${manualData.checkOutDate}]`;
+    const mealDesc = normalizedManualData.mealPlanName || normalizedManualData.mealPlan;
+    const stayNote = `${normalizedManualData.hotelName} [Manual Accommodation] • ${normalizedManualData.roomType} • ${normalizedManualData.numberOfRooms} ${normalizedManualData.numberOfRooms > 1 ? 'Rooms' : 'Room'} • ${normalizedManualData.numberOfNights} Nights in ${targetHub.hubName} (${mealDesc}) [Check-in: ${normalizedManualData.checkInDate}, Check-out: ${normalizedManualData.checkOutDate}]`;
 
     addProductToQuote(hotelProduct, {
       adults: adultsCount,
       children: childrenCount,
       infants: infantsCount,
-      travelDate: manualData.checkInDate,
+      travelDate: normalizedManualData.checkInDate,
+      hubId: targetHub.id,
+      hotelId: hotelProduct.id,
+      roomTypeId: 'manual-room',
+      roomsCount: normalizedManualData.numberOfRooms,
+      nights: normalizedManualData.numberOfNights,
+      checkInDate: normalizedManualData.checkInDate,
+      checkOutDate: normalizedManualData.checkOutDate,
+      isManualHotel: true,
+      manualHotelDetails: normalizedManualData,
+      accommodationType: 'manual',
       notes: stayNote,
       openDrawer: false
     });
 
     // 4. Update routeHubs state
-    setRouteHubs(prev =>
+    handleUpdateRouteHubs(prev =>
       prev.map(h => {
         if (h.id === targetHub.id) {
           return {
             ...h,
             hotelId: hotelProduct.id,
             roomTypeId: 'manual-room',
-            roomsCount: manualData.numberOfRooms,
-            nights: manualData.numberOfNights,
+            roomsCount: normalizedManualData.numberOfRooms,
+            nights: normalizedManualData.numberOfNights,
             isManualHotel: true,
             accommodationType: 'manual',
-            manualHotel: manualData
+            overriddenByLandOnly: false,
+            manualHotel: normalizedManualData,
+            savedAccommodationSnapshot: {
+              accommodationType: 'manual',
+              hotelId: hotelProduct.id,
+              roomTypeId: 'manual-room',
+              roomsCount: normalizedManualData.numberOfRooms,
+              isManualHotel: true,
+              manualHotel: normalizedManualData
+            }
           };
         }
         return h;
@@ -1644,21 +2046,23 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     // Remove matching items
     const matchingItems = items.filter(it => 
       isHotelQuoteItem(it) &&
-      (it.notes?.includes(targetHub.hubName) || 
+      (it.hubId === targetHub.id ||
+       it.notes?.includes(targetHub.hubName) || 
        (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)) || 
        (it.manualHotelDetails?.hubId === targetHub.id))
     );
     matchingItems.forEach(it => removeProductFromQuote(it.id));
 
     // Reset hub
-    setRouteHubs(prev =>
+    handleUpdateRouteHubs(prev =>
       prev.map(h => (h.id === hubId ? { 
         ...h, 
         hotelId: undefined, 
         roomTypeId: undefined, 
         roomsCount: undefined,
         isManualHotel: undefined,
-        accommodationType: undefined,
+        accommodationType: 'NO_ACCOMMODATION',
+        overriddenByLandOnly: false,
         manualHotel: undefined
       } : h))
     );
@@ -2424,7 +2828,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               version: quoteVersion,
               title: `${currentDestination.name} Bespoke Travel Proposal`,
               destination: currentDestination.name,
-              items,
+              scope: quotationScope,
+              items: effectivePricedItems,
               currency,
               overallMarkupPercent: agentMarkupPercent,
               overallDiscountPercent: overallDiscountPercent || 0,
@@ -2493,7 +2898,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               tripType={tripType}
               setTripType={setTripType}
               quotationScope={quotationScope}
-              setQuotationScope={setQuotationScope}
+              setQuotationScope={handleChangeQuotationScope}
               startDate={startDate}
               setStartDate={setStartDate}
               endDate={endDate}
@@ -2531,6 +2936,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               updateItemServiceTime={updateItemServiceTime}
               updateItemNotes={updateItemNotes}
               baseFinalSellingPrice={baseFinalSellingPrice}
+              adminManualMarginType={adminManualMarginType}
+              setAdminManualMarginType={setAdminManualMarginType}
+              adminManualMarginValue={adminManualMarginValue}
+              setAdminManualMarginValue={setAdminManualMarginValue}
+              adminMarginMode={adminMarginMode}
+              setAdminMarginMode={setAdminMarginMode}
               agentMarginType={agentMarginType}
               setAgentMarginType={(t) => {
                 setAgentMarginType(t);
@@ -2562,9 +2973,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               onAddSuggestedTransfer={handleAddSuggestedTransfer}
               feasibility={feasibility}
               onOpenManualHotelModal={(hubId) => {
-                setManualHotelModalHubId(hubId);
-                setManualHotelModalInitialData(null);
-                setIsManualHotelModalOpen(true);
+                handleOpenAddManualHotel(hubId);
               }}
               onOpenVisaPickerModal={() => setShowVisaPickerModal(true)}
               onOpenAddonModal={(cat) => {
@@ -2594,6 +3003,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               canAddManualHotel={canAddManualHotel}
               autoSaveStatus={autoSaveStatus}
               lastSavedTimestamp={lastSavedTimestamp}
+              quoteNumber={quoteNumber}
+              quoteVersion={quoteVersion}
               onSelectHotelForHub={handleSelectHotelForHub}
               onRemoveHotelForHub={handleRemoveHotelForHub}
               onOpenEditManualHotel={handleOpenEditManualHotel}

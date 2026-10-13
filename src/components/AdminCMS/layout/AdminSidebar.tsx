@@ -169,8 +169,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
           children: [
             { id: 'visa_services', label: 'Visa Services', section: 'VISA_ANCILLARY_SERVICES', subTab: 'VISA_SERVICES', icon: FileText },
             { id: 'travel_protection', label: 'Travel Protection', section: 'VISA_ANCILLARY_SERVICES', subTab: 'TRAVEL_PROTECTION', icon: ShieldCheck },
-            { id: 'ground_connectivity', label: 'Ground & Connectivity', section: 'VISA_ANCILLARY_SERVICES', subTab: 'GROUND_CONNECTIVITY', icon: Sparkles },
-            { id: 'field_parity', label: 'Master Schema Matrix', section: 'VISA_ANCILLARY_SERVICES', subTab: 'FIELD_PARITY', icon: FileSpreadsheet }
+            { id: 'ground_connectivity', label: 'Ground & Connectivity', section: 'VISA_ANCILLARY_SERVICES', subTab: 'GROUND_CONNECTIVITY', icon: Sparkles }
           ]
         },
         {
@@ -438,7 +437,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       return activeSubTab === 'CITIES';
     }
     if (item.id === 'visa') {
-      return activeSection === 'VISA_ANCILLARY_SERVICES' || activeSubTab === 'VISAS' || activeSubTab === 'VISA_SERVICES' || activeSubTab === 'TRAVEL_PROTECTION' || activeSubTab === 'GROUND_CONNECTIVITY' || activeSubTab === 'FIELD_PARITY';
+      return activeSection === 'VISA_ANCILLARY_SERVICES' || activeSubTab === 'VISAS' || activeSubTab === 'VISA_SERVICES' || activeSubTab === 'TRAVEL_PROTECTION' || activeSubTab === 'GROUND_CONNECTIVITY';
     }
     if (item.id === 'promotions') {
       return activeSubTab === 'PROMOTIONS';
@@ -682,8 +681,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
                                 activeSubTab === child.subTab || 
                                 (child.subTab === 'VISA_SERVICES' && (activeSubTab === 'VISAS' || activeSubTab === 'OVERVIEW' || activeSubTab === 'VISA_SERVICES')) ||
                                 (child.subTab === 'TRAVEL_PROTECTION' && (activeSubTab === 'TRAVEL_PROTECTION' || activeSubTab === 'PROTECTION')) ||
-                                (child.subTab === 'GROUND_CONNECTIVITY' && (activeSubTab === 'GROUND_CONNECTIVITY' || activeSubTab === 'GROUND' || activeSubTab === 'VIP')) ||
-                                (child.subTab === 'FIELD_PARITY' && (activeSubTab === 'FIELD_PARITY' || activeSubTab === 'MASTER_SCHEMA_MATRIX' || activeSubTab === 'SCHEMA_MATRIX'))
+                                (child.subTab === 'GROUND_CONNECTIVITY' && (activeSubTab === 'GROUND_CONNECTIVITY' || activeSubTab === 'GROUND' || activeSubTab === 'VIP'))
                               );
 
                               return (

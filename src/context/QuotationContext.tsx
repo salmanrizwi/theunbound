@@ -7,6 +7,7 @@ import { campaignAnalytics } from '../services/campaignAnalyticsService';
 import { useAuth } from './AuthContext';
 import { createQuoteItemContentSnapshot } from '../utils/b2bQuotationHelpers';
 import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
+import { canUserViewInternalCostBreakdown } from '../services/permissionEngine';
 
 interface QuotationContextType {
   items: QuoteItem[];
@@ -41,6 +42,21 @@ interface QuotationContextType {
       currency_snapshot?: CurrencyCode | string;
       visaSnapshot?: any;
       metadata?: Record<string, any>;
+      hubId?: string;
+      hotelId?: string;
+      roomTypeId?: string;
+      mealPlanCode?: any;
+      roomsCount?: number;
+      nights?: number;
+      checkInDate?: string;
+      checkOutDate?: string;
+      isManualHotel?: boolean;
+      manualHotelDetails?: any;
+      accommodationType?: any;
+      vehicleId?: string;
+      vehicleNameSnapshot?: string;
+      vehicleTypeSnapshot?: string;
+      vehicleCapacitySnapshot?: number;
     }
   ) => void;
   removeProductFromQuote: (itemId: string) => void;
@@ -80,6 +96,10 @@ interface QuotationContextType {
       pricing_snapshot?: any;
       currency_snapshot?: CurrencyCode | string;
       visaSnapshot?: any;
+      vehicleId?: string;
+      vehicleNameSnapshot?: string;
+      vehicleTypeSnapshot?: string;
+      vehicleCapacitySnapshot?: number;
       metadata?: Record<string, any>;
     }
   ) => void;
@@ -220,11 +240,12 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (company) setClientCompany(company);
   };
 
-  const isAgent = user?.role === 'B2B_AGENT';
+  const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
+  const isAgent = user?.role === 'B2B_AGENT' || !canViewInternalCosts;
   const pricingTier = user && user.role !== 'PUBLIC' ? 'B2B' : 'B2C';
 
   const calculateItemPrice = (prod: Product, params: any) => {
-    if (isAgent) {
+    if (!canViewInternalCosts) {
       return calculateProductPriceForAgent(prod, params) as any;
     }
     return calculateProductPrice(prod, params);
@@ -323,6 +344,21 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       currency_snapshot?: CurrencyCode | string;
       visaSnapshot?: any;
       metadata?: Record<string, any>;
+      hubId?: string;
+      hotelId?: string;
+      roomTypeId?: string;
+      mealPlanCode?: any;
+      roomsCount?: number;
+      nights?: number;
+      checkInDate?: string;
+      checkOutDate?: string;
+      isManualHotel?: boolean;
+      manualHotelDetails?: any;
+      accommodationType?: any;
+      vehicleId?: string;
+      vehicleNameSnapshot?: string;
+      vehicleTypeSnapshot?: string;
+      vehicleCapacitySnapshot?: number;
     }
   ) => {
     const adults = options?.adults ?? Math.max(1, product.minPax);
@@ -333,9 +369,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const serviceTime = options?.serviceTime;
     const notes = options?.notes;
 
-    const effectiveProduct = isAgent ? sanitizeProductForAgent(product) : product;
-    const calculation = calculateItemPrice(effectiveProduct, {
-      productId: effectiveProduct.id,
+    const calculation = calculateItemPrice(product, {
+      productId: product.id,
       pricingTier,
       adults,
       children,
@@ -344,6 +379,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       targetCurrency: currency,
       selectedAddonIds
     });
+    const effectiveProduct = isAgent ? sanitizeProductForAgent(product) : product;
 
     const newItem: QuoteItem = {
       id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
@@ -354,6 +390,17 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       notes,
       selectedAddonIds,
       calculation,
+      hubId: options?.hubId || options?.manualHotelDetails?.hubId || (effectiveProduct as any).manualHotelDetails?.hubId,
+      hotelId: options?.hotelId || (effectiveProduct.productType === 'HOTEL' && !options?.isManualHotel && effectiveProduct.accommodationType !== 'manual' ? effectiveProduct.id : undefined),
+      roomTypeId: options?.roomTypeId,
+      mealPlanCode: options?.mealPlanCode,
+      roomsCount: options?.roomsCount || options?.manualHotelDetails?.numberOfRooms || (effectiveProduct as any).manualHotelDetails?.numberOfRooms,
+      nights: options?.nights || options?.manualHotelDetails?.numberOfNights || (effectiveProduct as any).manualHotelDetails?.numberOfNights,
+      checkInDate: options?.checkInDate || options?.manualHotelDetails?.checkInDate || (effectiveProduct as any).manualHotelDetails?.checkInDate,
+      checkOutDate: options?.checkOutDate || options?.manualHotelDetails?.checkOutDate || (effectiveProduct as any).manualHotelDetails?.checkOutDate,
+      isManualHotel: options?.isManualHotel ?? (effectiveProduct.accommodationType === 'manual' || Boolean((effectiveProduct as any).manualHotelDetails)),
+      manualHotelDetails: options?.manualHotelDetails || (effectiveProduct as any).manualHotelDetails,
+      accommodationType: options?.accommodationType || effectiveProduct.accommodationType,
       source: options?.source || 'USER',
       aiSuggested: options?.aiSuggested ?? false,
       master_product_id: options?.master_product_id || (effectiveProduct as any).master_product_id || effectiveProduct.id,
@@ -371,10 +418,16 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       ),
       currency_snapshot: options?.currency_snapshot || currency,
       visaSnapshot: options?.visaSnapshot,
+      vehicleId: options?.vehicleId || options?.configuration_snapshot?.vehicleId || options?.metadata?.vehicleId || (effectiveProduct as any).vehicleId,
+      vehicleNameSnapshot: options?.vehicleNameSnapshot || options?.configuration_snapshot?.vehicleName || options?.metadata?.vehicleName || (effectiveProduct as any).vehicleNameSnapshot,
+      vehicleTypeSnapshot: options?.vehicleTypeSnapshot || options?.configuration_snapshot?.vehicleType || options?.metadata?.vehicleType || (effectiveProduct as any).vehicleTypeSnapshot,
+      vehicleCapacitySnapshot: options?.vehicleCapacitySnapshot || options?.configuration_snapshot?.masterCapacity || options?.configuration_snapshot?.maxCapacity || (effectiveProduct as any).vehicleCapacitySnapshot,
       metadata: {
         ...(options?.metadata || {}),
         master_product_id: options?.master_product_id || (effectiveProduct as any).master_product_id || effectiveProduct.id,
-        service_id: options?.service_id || (effectiveProduct as any).service_id || effectiveProduct.id
+        service_id: options?.service_id || (effectiveProduct as any).service_id || effectiveProduct.id,
+        vehicleId: options?.vehicleId || options?.configuration_snapshot?.vehicleId || options?.metadata?.vehicleId,
+        vehicleName: options?.vehicleNameSnapshot || options?.configuration_snapshot?.vehicleName || options?.metadata?.vehicleName
       }
     };
 
@@ -523,6 +576,10 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       pricing_snapshot?: any;
       currency_snapshot?: CurrencyCode | string;
       visaSnapshot?: any;
+      vehicleId?: string;
+      vehicleNameSnapshot?: string;
+      vehicleTypeSnapshot?: string;
+      vehicleCapacitySnapshot?: number;
       metadata?: Record<string, any>;
     }
   ) => {
@@ -575,11 +632,17 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           ),
           currency_snapshot: options.currency_snapshot || item.currency_snapshot || currency,
           visaSnapshot: options.visaSnapshot || item.visaSnapshot,
+          vehicleId: options.vehicleId || options.configuration_snapshot?.vehicleId || options.metadata?.vehicleId || item.vehicleId,
+          vehicleNameSnapshot: options.vehicleNameSnapshot || options.configuration_snapshot?.vehicleName || options.metadata?.vehicleName || item.vehicleNameSnapshot,
+          vehicleTypeSnapshot: options.vehicleTypeSnapshot || options.configuration_snapshot?.vehicleType || options.metadata?.vehicleType || item.vehicleTypeSnapshot,
+          vehicleCapacitySnapshot: options.vehicleCapacitySnapshot || options.configuration_snapshot?.masterCapacity || options.configuration_snapshot?.maxCapacity || item.vehicleCapacitySnapshot,
           metadata: {
             ...(item.metadata || {}),
             ...(options.metadata || {}),
             master_product_id: options.master_product_id || item.master_product_id || effectiveProduct.id,
-            service_id: options.service_id || item.service_id || effectiveProduct.id
+            service_id: options.service_id || item.service_id || effectiveProduct.id,
+            vehicleId: options.vehicleId || options.configuration_snapshot?.vehicleId || options.metadata?.vehicleId || item.vehicleId,
+            vehicleName: options.vehicleNameSnapshot || options.configuration_snapshot?.vehicleName || options.metadata?.vehicleName || item.vehicleNameSnapshot
           }
         };
         updated.contentSnapshot = createQuoteItemContentSnapshot(effectiveProduct, updated);
@@ -765,35 +828,35 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     let totalPax = 0;
 
     for (const item of items) {
-      if (!isAgent) {
+      if (canViewInternalCosts) {
         net += (item.calculation as any).totalNetCost || 0;
         gross += (item.calculation as any).grossBeforeTax || 0;
         margin += (item.calculation as any).dmcMarginAmount || 0;
       }
-      taxes += item.calculation.taxAmount || 0;
-      fees += item.calculation.serviceFee || 0;
-      selling += item.calculation.finalTotalSellingPrice || 0;
-      totalPax += item.pax.adults + item.pax.children;
+      taxes += item.calculation?.taxAmount || 0;
+      fees += item.calculation?.serviceFee || 0;
+      selling += item.calculation?.finalTotalSellingPrice || 0;
+      totalPax += (item.pax?.adults || 0) + (item.pax?.children || 0);
     }
 
     if (overallDiscountPercent > 0) {
       const discountVal = selling * (overallDiscountPercent / 100);
       selling -= discountVal;
-      if (!isAgent) {
+      if (canViewInternalCosts) {
         margin -= discountVal;
       }
     }
 
     return {
-      totalNetCost: isAgent ? 0 : net,
-      totalGrossBeforeTax: isAgent ? selling : gross,
+      totalNetCost: canViewInternalCosts ? net : 0,
+      totalGrossBeforeTax: canViewInternalCosts ? gross : selling,
       totalTaxes: taxes,
       totalServiceFees: fees,
       totalSellingPrice: selling,
-      totalMarginAmount: isAgent ? 0 : margin,
+      totalMarginAmount: canViewInternalCosts ? margin : 0,
       totalPaxAcrossItems: totalPax
     };
-  }, [items, overallDiscountPercent, isAgent]);
+  }, [items, overallDiscountPercent, canViewInternalCosts]);
 
   const saveCurrentQuote = (): Quotation | null => {
     if (items.length === 0) return null;

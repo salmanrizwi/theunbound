@@ -203,6 +203,12 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
   };
 
   const handleUpdatePassenger = (index: number, field: keyof BookingPassenger, value: any) => {
+    if (index === 0 && (field === 'firstName' || field === 'lastName')) {
+      const current = passengers[0] || {} as BookingPassenger;
+      const fn = field === 'firstName' ? value : current.firstName || '';
+      const ln = field === 'lastName' ? value : current.lastName || '';
+      setLeadTravelerName(`${fn} ${ln}`.trim());
+    }
     setPassengers(prev => {
       const updated = [...prev];
       updated[index] = {
@@ -213,9 +219,6 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
         const fn = field === 'firstName' ? value : updated[index].firstName;
         const ln = field === 'lastName' ? value : updated[index].lastName;
         updated[index].fullName = `${fn} ${ln}`.trim();
-        if (index === 0) {
-          setLeadTravelerName(updated[index].fullName);
-        }
       }
       return updated;
     });

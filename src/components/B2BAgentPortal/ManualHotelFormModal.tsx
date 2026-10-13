@@ -15,7 +15,7 @@ import {
   ArrowRight,
   AlertCircle
 } from 'lucide-react';
-import { CurrencyCode, ManualHotelDetails, MealPlanCode, SUPPORTED_CURRENCIES, TripRouteHub } from '../../types';
+import { CurrencyCode, ManualHotelDetails, ManualHotelRateBasis, MealPlanCode, SUPPORTED_CURRENCIES, TripRouteHub } from '../../types';
 import { convertCurrency, formatCurrency } from '../../services/pricingEngine';
 import { getMealPlanLabel } from '../../utils/hotelHelpers';
 
@@ -97,7 +97,7 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
   // Rate & Commercials
   const [ratePerNight, setRatePerNight] = useState<number | ''>(45000);
   const [rateCurrency, setRateCurrency] = useState<CurrencyCode>('JPY');
-  const [rateType, setRateType] = useState<'PER_ROOM_PER_NIGHT' | 'PER_PERSON_PER_NIGHT' | 'TOTAL_STAY'>('PER_ROOM_PER_NIGHT');
+  const [rateType, setRateType] = useState<ManualHotelRateBasis>('PER_ROOM_PER_NIGHT');
   
   // Supplements & Internal
   const [childRate, setChildRate] = useState<number | ''>('');
@@ -119,15 +119,18 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
       setStarRating(initialData.starRating || '5-Star Luxury Hotel');
       setAddress(initialData.address || '');
       setRoomType(initialData.roomType || 'Deluxe Room');
-      setNumberOfRooms(initialData.numberOfRooms || 1);
-      setNumberOfNights(initialData.numberOfNights || currentHub?.nights || 2);
+      setNumberOfRooms(initialData.numberOfRooms ?? initialData.rooms ?? 1);
+      setNumberOfNights(initialData.numberOfNights ?? initialData.nights ?? currentHub?.nights ?? 2);
       setCheckInDate(initialData.checkInDate || '');
       setCheckOutDate(initialData.checkOutDate || '');
       setMealPlan((initialData.mealPlan as MealPlanCode) || 'BB');
       setMealPlanName(initialData.mealPlanName || '');
-      setRatePerNight(initialData.ratePerNight !== undefined ? initialData.ratePerNight : 45000);
-      setRateCurrency(initialData.rateCurrency || quoteCurrency || 'JPY');
-      setRateType(initialData.rateType || 'PER_ROOM_PER_NIGHT');
+      const initRate = initialData.ratePerNight !== undefined
+        ? initialData.ratePerNight
+        : (initialData.customRate !== undefined ? initialData.customRate : 45000);
+      setRatePerNight(initRate);
+      setRateCurrency(initialData.rateCurrency || initialData.nativeCurrency || quoteCurrency || 'JPY');
+      setRateType((initialData.rateType || initialData.rateBasis || 'PER_ROOM_PER_NIGHT') as ManualHotelRateBasis);
       setChildRate(initialData.childRate || '');
       setExtraBedRate(initialData.extraBedRate || '');
       setInternalNotes(initialData.internalNotes || '');
@@ -204,10 +207,16 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
     let baseNetTotalInRateCurrency = 0;
     if (rateType === 'TOTAL_STAY') {
       baseNetTotalInRateCurrency = rawRate;
+    } else if (rateType === 'PER_NIGHT') {
+      baseNetTotalInRateCurrency = rawRate * safeNights;
     } else if (rateType === 'PER_PERSON_PER_NIGHT') {
       const perPax = rawRate;
       const extraChild = typeof childRate === 'number' ? childRate : 0;
       baseNetTotalInRateCurrency = (perPax * adultsCount + extraChild * childrenCount) * safeNights;
+    } else if (rateType === 'PER_PERSON') {
+      const perPax = rawRate;
+      const extraChild = typeof childRate === 'number' ? childRate : 0;
+      baseNetTotalInRateCurrency = (perPax * adultsCount + extraChild * childrenCount);
     } else {
       // Standard PER_ROOM_PER_NIGHT
       baseNetTotalInRateCurrency = rawRate * safeRooms * safeNights;
@@ -277,6 +286,10 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
       return;
     }
 
+    const safeRoomsVal = Math.max(1, numberOfRooms || 1);
+    const safeNightsVal = Math.max(1, numberOfNights || 1);
+    const numericRate = typeof ratePerNight === 'number' ? ratePerNight : 0;
+
     const payload: ManualHotelDetails = {
       id: initialData?.id || `manual-hotel-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       hotelName: hotelName.trim(),
@@ -286,15 +299,20 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
       starRating,
       address: address.trim() || undefined,
       roomType: roomType.trim(),
-      numberOfRooms: Math.max(1, numberOfRooms || 1),
-      numberOfNights: Math.max(1, numberOfNights || 1),
+      numberOfRooms: safeRoomsVal,
+      rooms: safeRoomsVal,
+      numberOfNights: safeNightsVal,
+      nights: safeNightsVal,
       checkInDate,
       checkOutDate,
       mealPlan,
       mealPlanName: mealPlanName.trim() || getMealPlanLabel(mealPlan),
-      ratePerNight: typeof ratePerNight === 'number' ? ratePerNight : 0,
+      ratePerNight: numericRate,
+      customRate: numericRate,
       rateCurrency,
+      nativeCurrency: rateCurrency,
       rateType,
+      rateBasis: rateType,
       childRate: typeof childRate === 'number' ? childRate : undefined,
       extraBedRate: typeof extraBedRate === 'number' ? extraBedRate : undefined,
       internalNotes: internalNotes.trim() || undefined,
@@ -618,7 +636,9 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-medium text-slate-900 outline-none cursor-pointer focus:bg-white focus:border-[#00C6A6]"
                 >
                   <option value="PER_ROOM_PER_NIGHT">Per Room Per Night</option>
+                  <option value="PER_NIGHT">Per Night (All Rooms)</option>
                   <option value="PER_PERSON_PER_NIGHT">Per Person Per Night</option>
+                  <option value="PER_PERSON">Per Person (Entire Stay)</option>
                   <option value="TOTAL_STAY">Fixed Total Stay Cost</option>
                 </select>
               </div>

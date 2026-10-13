@@ -329,7 +329,8 @@ export function buildDayWiseItinerary(
   hubs: TripRouteHub[],
   startDateStr?: string,
   endDateStr?: string,
-  dayThemes?: Record<number, string>
+  dayThemes?: Record<number, string>,
+  isLandOnly?: boolean
 ): CommunicationDayWisePlanItem[] {
   const sortedHubs = [...hubs].sort((a, b) => a.order - b.order);
 
@@ -438,7 +439,8 @@ export function buildDayWiseItinerary(
 
     // Hotel accommodation in this hub
     let hotelStay: CommunicationDayWisePlanItem['hotelStay'] | undefined = undefined;
-    if (activeHub && (activeHub.hotelId || activeHub.manualHotel?.hotelName)) {
+    const isHubNoAcc = Boolean(isLandOnly || activeHub?.accommodationType === 'NO_ACCOMMODATION' || activeHub?.accommodationType === 'none');
+    if (activeHub && !isHubNoAcc && (activeHub.hotelId || activeHub.manualHotel?.hotelName)) {
       const hotelName = activeHub.manualHotel?.hotelName || activeHub.hotelId || 'Selected Luxury Hotel';
       const roomType = activeHub.manualHotel?.roomType || undefined;
       const mealPlan = activeHub.manualHotel?.mealPlan || 'Breakfast Included';
@@ -592,6 +594,8 @@ export function buildQuoteCommunicationPayload(
 
   const effectiveItems = activeOption?.items || quote.items || [];
   const effectiveHubs = activeOption?.routeHubs || quote.routeHubs || [];
+  const effectiveScope = activeOption?.scope || quote.scope || 'FULL_PACKAGE';
+  const isLandOnly = effectiveScope === 'LAND_ONLY';
   const effectiveSellingPrice = activeOption?.totalSellingPrice !== undefined
     ? activeOption.totalSellingPrice
     : (quote.finalCustomerSellingPrice || quote.final_customer_selling_price || quote.totalSellingPrice || 0);
@@ -636,15 +640,17 @@ export function buildQuoteCommunicationPayload(
     effectiveHubs,
     quote.travelStartDate,
     quote.travelEndDate,
-    quote.dayThemes
+    quote.dayThemes,
+    isLandOnly
   );
 
   // 5. Itemized Accommodation
   const hotels: CommunicationHotelDetail[] = [];
-  if (effectiveHubs.length > 0) {
+  if (effectiveHubs.length > 0 && !isLandOnly) {
     let checkInCounter = 0;
     effectiveHubs.forEach(h => {
-      if (h.hotelId || h.manualHotel?.hotelName) {
+      const isHubNoAcc = h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none';
+      if (!isHubNoAcc && (h.hotelId || h.manualHotel?.hotelName)) {
         const city = h.hubName || h.destinationName || 'City Hub';
         const hotelName = h.manualHotel?.hotelName || h.hotelId || 'Premium Curated Hotel';
         const nights = h.nights || 1;
@@ -789,21 +795,25 @@ export function buildQuoteCommunicationPayload(
   if (quote.options && quote.options.length > 0) {
     optionsList = quote.options.map((opt, idx) => {
       const optHotels: CommunicationHotelDetail[] = [];
-      (opt.routeHubs || []).forEach(h => {
-        if (h.hotelId || h.manualHotel?.hotelName) {
-          optHotels.push({
-            hotelName: h.manualHotel?.hotelName || h.hotelId || 'Premium Hotel',
-            cityHub: h.hubName || h.destinationName || 'Hub',
-            checkInDate: quote.travelStartDate || 'TBD',
-            checkOutDate: quote.travelEndDate || 'TBD',
-            nightsCount: h.nights || 1,
-            roomType: h.manualHotel?.roomType || 'Standard Room',
-            roomsCount: 1,
-            occupancy: `${adultsCount} Adults`,
-            mealPlan: h.manualHotel?.mealPlan || 'Breakfast'
-          });
-        }
-      });
+      const optIsLandOnly = (opt.scope || quote.scope) === 'LAND_ONLY';
+      if (!optIsLandOnly) {
+        (opt.routeHubs || []).forEach(h => {
+          const isHubNoAcc = h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none';
+          if (!isHubNoAcc && (h.hotelId || h.manualHotel?.hotelName)) {
+            optHotels.push({
+              hotelName: h.manualHotel?.hotelName || h.hotelId || 'Premium Hotel',
+              cityHub: h.hubName || h.destinationName || 'Hub',
+              checkInDate: quote.travelStartDate || 'TBD',
+              checkOutDate: quote.travelEndDate || 'TBD',
+              nightsCount: h.nights || 1,
+              roomType: h.manualHotel?.roomType || 'Standard Room',
+              roomsCount: 1,
+              occupancy: `${adultsCount} Adults`,
+              mealPlan: h.manualHotel?.mealPlan || 'Breakfast'
+            });
+          }
+        });
+      }
 
       return {
         optionId: opt.id,

@@ -259,7 +259,10 @@ export function getInventoryConfigurationSummary(item: any): string {
     item.product?.vehicleType;
 
   if (vehicleName) {
-    parts.push(`Vehicle: ${vehicleName}`);
+    const vCap = configSnap.masterCapacity || configSnap.vehicleCapacity || item.vehicleCapacitySnapshot;
+    const hasSeatsInName = /\d+\s*[- ]*(seat|seater)/i.test(vehicleName);
+    const capInfo = (!hasSeatsInName && vCap && typeof vCap === 'number') ? ` (${vCap} Seats)` : '';
+    parts.push(`Vehicle: ${vehicleName}${capInfo}`);
   }
 
   const yachtName =

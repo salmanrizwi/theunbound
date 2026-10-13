@@ -290,35 +290,65 @@ export function getMealPlanLabel(code: MealPlanCode): string {
 export function hotelToProduct(
   hotel: Hotel,
   roomType?: HotelRoomType,
-  rate?: HotelRate,
-  nights: number = 1,
-  roomsCount: number = 1
+  rateOrRoomsCount?: HotelRate | number,
+  nightsOrRooms?: number,
+  roomsCountArg?: number
 ): Product {
-  const selectedRoom = roomType || hotel.roomTypes[0];
-  const selectedRate = rate || selectedRoom?.rates[0] || {
-    id: 'default-rate',
-    mealPlan: 'BB' as MealPlanCode,
-    mealPlanName: 'Bed & Breakfast Included',
-    singleNetRate: hotel.startingNetPrice,
-    doubleNetRate: hotel.startingNetPrice,
-    tripleNetRate: hotel.startingNetPrice,
-    extraBedRate: 0,
-    childRate: 0,
-    markupPercent: 0,
-    taxPercent: 0,
-    feePercent: 0,
-    currency: hotel.currency || 'USD',
-    validityFrom: hotel.validity?.validFrom || hotel.validityFrom || '2026-01-01',
-    validityTo: hotel.validity?.validTo || hotel.validityTo || '2026-12-31'
-  };
+  const selectedRoom = roomType || hotel.roomTypes?.[0];
+  let selectedRate: HotelRate;
+  let safeRooms = 1;
+  let safeNights = 1;
 
-  const mealLabel = selectedRate.mealPlanName || getMealPlanLabel(selectedRate.mealPlan);
+  if (typeof rateOrRoomsCount === 'number') {
+    safeRooms = Math.max(1, rateOrRoomsCount);
+    safeNights = Math.max(1, nightsOrRooms || 1);
+    const roomFallbackRate = (selectedRoom as any)?.baseRatePerNight || (selectedRoom as any)?.ratePerNight || (selectedRoom as any)?.startingNetPrice || hotel.startingNetPrice || 0;
+    selectedRate = (selectedRoom?.rates && selectedRoom.rates[0]) || {
+      id: 'default-rate',
+      mealPlan: (selectedRoom?.mealPlan as MealPlanCode) || 'BB',
+      mealPlanName: 'Bed & Breakfast Included',
+      singleNetRate: roomFallbackRate,
+      doubleNetRate: roomFallbackRate,
+      tripleNetRate: roomFallbackRate,
+      extraBedRate: (selectedRoom as any)?.extraAdultRate || 0,
+      childRate: (selectedRoom as any)?.childWithBedRate || 0,
+      markupPercent: 0,
+      taxPercent: 0,
+      feePercent: 0,
+      currency: (selectedRoom as any)?.currency || hotel.currency || 'USD',
+      validityFrom: '2026-01-01',
+      validityTo: '2026-12-31'
+    };
+  } else {
+    safeNights = Math.max(1, nightsOrRooms || 1);
+    safeRooms = Math.max(1, roomsCountArg || 1);
+    const roomFallbackRate = (selectedRoom as any)?.baseRatePerNight || (selectedRoom as any)?.ratePerNight || (selectedRoom as any)?.startingNetPrice || hotel.startingNetPrice || 0;
+    selectedRate = rateOrRoomsCount || (selectedRoom?.rates && selectedRoom.rates[0]) || {
+      id: 'default-rate',
+      mealPlan: (selectedRoom?.mealPlan as MealPlanCode) || 'BB',
+      mealPlanName: 'Bed & Breakfast Included',
+      singleNetRate: roomFallbackRate,
+      doubleNetRate: roomFallbackRate,
+      tripleNetRate: roomFallbackRate,
+      extraBedRate: (selectedRoom as any)?.extraAdultRate || 0,
+      childRate: (selectedRoom as any)?.childWithBedRate || 0,
+      markupPercent: 0,
+      taxPercent: 0,
+      feePercent: 0,
+      currency: (selectedRoom as any)?.currency || hotel.currency || 'USD',
+      validityFrom: '2026-01-01',
+      validityTo: '2026-12-31'
+    };
+  }
+
+  const mealLabel = selectedRate.mealPlanName || (selectedRoom?.mealPlan ? String(selectedRoom.mealPlan) : getMealPlanLabel(selectedRate.mealPlan));
   const roomTitle = selectedRoom ? selectedRoom.roomName : 'Luxury Room';
 
-  const basePrice = selectedRate.doubleNetRate || selectedRate.singleNetRate || hotel.startingNetPrice;
-  const safeNights = Math.max(1, nights || 1);
-  const safeRooms = Math.max(1, roomsCount || 1);
-  const totalNetPrice = basePrice * safeNights * safeRooms;
+  const basePrice = selectedRate.doubleNetRate || selectedRate.singleNetRate || (selectedRoom as any)?.baseRatePerNight || (selectedRoom as any)?.ratePerNight || hotel.startingNetPrice || 0;
+  const safeEffectiveNights = safeNights;
+  const safeEffectiveRooms = safeRooms;
+  const totalNetPrice = basePrice * safeEffectiveNights * safeEffectiveRooms;
+  const hotelCurr = (selectedRoom as any)?.currency || selectedRate.currency || hotel.currency || 'USD';
 
   const canonicalHotelName = (hotel as any).listingName || hotel.name;
   const resolvedHeroImage = canonicalImageService.resolveHotelImage(hotel);
@@ -343,33 +373,35 @@ export function hotelToProduct(
   const combinedSurcharges = collectHotelSurcharges(hotel, selectedRoom, selectedRate);
 
   return {
-    id: `hotel-prod-${hotel.id}-${selectedRoom?.id || 'std'}-${safeRooms}r-${safeNights}n`,
-    sku: `${hotel.code}-${selectedRoom?.id?.substring(0, 4)?.toUpperCase() || 'STD'}`,
+    id: `hotel-prod-${hotel.id}-${selectedRoom?.id || 'std'}-${safeEffectiveRooms}r-${safeEffectiveNights}n`,
+    sku: `${hotel.code || 'HTL'}-${selectedRoom?.id?.substring(0, 4)?.toUpperCase() || 'STD'}`,
     destinationId: hotel.destinationId,
     destinationName: hotel.destinationName,
     country: hotel.country,
-    city: hotel.cityName,
+    city: hotel.cityName || hotel.city,
     productType: 'Hotel & Resort',
     listingName: canonicalHotelName,
     name: canonicalHotelName,
     roomType: roomTitle,
     mealPlan: mealLabel,
-    roomsCount: safeRooms,
-    nights: safeNights,
-    shortDescription: `${roomTitle} • ${mealLabel} • ${safeRooms} ${safeRooms > 1 ? 'Rooms' : 'Room'}, ${safeNights} ${safeNights > 1 ? 'Nights' : 'Night'}`,
+    roomsCount: safeEffectiveRooms,
+    nights: safeEffectiveNights,
+    shortDescription: `${roomTitle} • ${mealLabel} • ${safeEffectiveRooms} ${safeEffectiveRooms > 1 ? 'Rooms' : 'Room'}, ${safeEffectiveNights} ${safeEffectiveNights > 1 ? 'Nights' : 'Night'}`,
     longDescription: `${hotel.description}\n\nRoom Details: ${selectedRoom?.description || ''}\nAmenities: ${(hotel.amenities || []).join(', ')}`,
-    supplierId: `sup-${hotel.code}`,
+    supplierId: `sup-${hotel.code || hotel.id}`,
     supplierName: `${hotel.name} Corporate Reservations`,
-    supplierProductCode: hotel.code,
-    category: 'Travel Services',
-    subcategory: `${hotel.starRating}-Star Luxury Accommodation`,
-    duration: `${safeNights} Night${safeNights > 1 ? 's' : ''} Stay (${safeRooms} Room${safeRooms > 1 ? 's' : ''})`,
+    supplierProductCode: hotel.code || hotel.id,
+    category: 'Hotels & Accommodation',
+    subcategory: `${hotel.starRating || 5}-Star Luxury Accommodation`,
+    duration: `${safeEffectiveNights} Night${safeEffectiveNights > 1 ? 's' : ''} Stay (${safeEffectiveRooms} Room${safeEffectiveRooms > 1 ? 's' : ''})`,
     operatingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
     operatingHours: 'Check-in: 15:00 | Check-out: 12:00',
     adultNetPrice: totalNetPrice,
+    adultNettCost: totalNetPrice,
+    basePrice: totalNetPrice,
     childNetPrice: 0,
     infantNetPrice: 0,
-    currency: selectedRate.currency || hotel.currency || 'USD',
+    currency: hotelCurr,
     defaultMarkupPercent: 0,
     b2bAgentMarkupPercent: 0,
     buyerMarkupPercent: 0,
@@ -506,6 +538,21 @@ export function validateRoomOccupancy(
   };
 }
 
+export function isManualHotelPricingComplete(manual?: ManualHotelDetails | null): boolean {
+  if (!manual) return false;
+  if (!manual.hotelName || !manual.hotelName.trim()) return false;
+  const nights = Number(manual.numberOfNights ?? manual.nights ?? 0);
+  const rooms = Number(manual.numberOfRooms ?? manual.roomsCount ?? 0);
+  if (isNaN(nights) || nights < 1 || isNaN(rooms) || rooms < 1) return false;
+  const rateBasis = manual.rateBasis || manual.rateType || 'PER_ROOM_PER_NIGHT';
+  if (rateBasis === 'PER_PERSON_PER_NIGHT' || rateBasis === 'PER_PERSON') {
+    const adultRate = Number(manual.adultRate ?? manual.ratePerNight ?? 0);
+    return !isNaN(adultRate) && adultRate > 0;
+  }
+  const rate = Number(manual.ratePerNight ?? manual.sellingPrice ?? manual.netCost ?? manual.totalSellingPrice ?? 0);
+  return !isNaN(rate) && rate > 0;
+}
+
 /**
  * Converts a quotation-level Manual Accommodation into a standardized Product object
  * STRICTLY for quotation calculation, itinerary rendering, proposal view, and PDF export.
@@ -515,21 +562,40 @@ export function validateRoomOccupancy(
  */
 export function manualHotelToProduct(
   manual: ManualHotelDetails,
-  destination?: { id?: string; name?: string }
+  destination?: { id?: string; name?: string },
+  pax?: { adults?: number; children?: number; infants?: number }
 ): Product {
-  const nights = Math.max(1, manual.numberOfNights || 1);
-  const rooms = Math.max(1, manual.numberOfRooms || 1);
-  const rate = Math.max(0, manual.ratePerNight || 0);
+  const nights = Math.max(1, Number(manual.numberOfNights ?? manual.nights ?? 1));
+  const rooms = Math.max(1, Number(manual.numberOfRooms ?? manual.roomsCount ?? 1));
+  const rateBasis = manual.rateBasis || manual.rateType || 'PER_ROOM_PER_NIGHT';
+  const rawRate = Number(manual.ratePerNight ?? manual.sellingPrice ?? manual.netCost ?? 0);
+  const rate = isNaN(rawRate) ? 0 : Math.max(0, rawRate);
 
-  // Total Stay Net calculation based on rateType
-  let totalNetCost = rate * rooms * nights;
-  if (manual.rateType === 'TOTAL_STAY') {
-    totalNetCost = rate;
-  } else if (manual.rateType === 'PER_PERSON_PER_NIGHT') {
-    const adultRate = manual.adultRate || rate;
-    const childRate = manual.childRate || 0;
-    totalNetCost = (adultRate * (manual.numberOfRooms * 2) + childRate) * nights;
+  // Total Stay Net calculation based on rateType / rateBasis
+  let totalNetCost = 0;
+  if (isManualHotelPricingComplete(manual)) {
+    if (rateBasis === 'TOTAL_STAY' || (rateBasis as string) === 'TOTAL' || (rateBasis as string) === 'TOTAL_PACKAGE') {
+      totalNetCost = rate;
+    } else if (rateBasis === 'PER_ROOM_TOTAL_STAY') {
+      totalNetCost = rate * rooms;
+    } else if (rateBasis === 'PER_NIGHT' || rateBasis === 'PER_ROOM_PER_NIGHT') {
+      totalNetCost = rate * rooms * nights;
+    } else if ((rateBasis as string) === 'PER_PERSON_TOTAL_STAY') {
+      const adultsCount = pax?.adults ?? (manual as any).adultsCount ?? (rooms * 2);
+      totalNetCost = rate * adultsCount;
+    } else if (rateBasis === 'PER_PERSON_PER_NIGHT' || rateBasis === 'PER_PERSON') {
+      const adultRate = Number(manual.adultRate ?? rate) || 0;
+      const childRate = Number(manual.childRate ?? 0) || 0;
+      const adultsCount = pax?.adults ?? (manual as any).adultsCount ?? (rooms * 2);
+      const childrenCount = pax?.children ?? (manual as any).childrenCount ?? 0;
+      totalNetCost = (adultRate * adultsCount + childRate * childrenCount) * nights;
+    } else {
+      // PER_ROOM_PER_NIGHT
+      totalNetCost = rate * rooms * nights;
+    }
   }
+
+  const nativeCurrency = (manual.rateCurrency || manual.currency || 'USD') as CurrencyCode;
 
   const mealLabel = manual.mealPlanName || (typeof manual.mealPlan === 'string' && manual.mealPlan.length > 2 ? manual.mealPlan : getMealPlanLabel(manual.mealPlan as MealPlanCode));
   const starLabel = manual.starRating || 'Bespoke Accommodation';
@@ -563,7 +629,9 @@ export function manualHotelToProduct(
     adultNetPrice: totalNetCost,
     childNetPrice: 0,
     infantNetPrice: 0,
-    currency: manual.rateCurrency || 'USD',
+    basePrice: totalNetCost,
+    priceType: 'PER_GROUP',
+    currency: nativeCurrency,
     defaultMarkupPercent: 0,
     b2bAgentMarkupPercent: 0,
     buyerMarkupPercent: 0,

@@ -109,6 +109,12 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
                 B2B Circuit
               </span>
             )}
+
+            {packageItem.isLandOnly && (
+              <span className="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-purple-500 text-white text-[9px] sm:text-[10px] font-black uppercase tracking-wider shadow-xs">
+                Land-Only Circuit
+              </span>
+            )}
           </div>
 
           {/* Hero Bottom Overlay */}
@@ -393,36 +399,61 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
           {activeTab === 'HOTELS' && (
             <div className="space-y-4">
               <div>
-                <h3 className="text-sm font-black text-slate-900">Featured 5-Star Luxury Accommodations</h3>
+                <h3 className="text-sm font-black text-slate-900">
+                  {packageItem.isLandOnly ? 'Accommodation Arrangements' : 'Featured 5-Star Luxury Accommodations'}
+                </h3>
                 <p className="text-[11px] text-slate-500">
-                  Pre-contracted hotel allotments with guaranteed room categories and daily breakfast.
+                  {packageItem.isLandOnly 
+                    ? 'Land-Only Circuit: All ground transportation, sightseeing, tours, and experiences are bundled; hotels are arranged by client.'
+                    : 'Pre-contracted hotel allotments with guaranteed room categories and daily breakfast.'}
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {(packageItem.hotelsSummary && packageItem.hotelsSummary.length > 0 
-                  ? packageItem.hotelsSummary 
-                  : [
-                      { name: 'The Capitol Hotel Tokyu', cityName: 'Tokyo', nights: 3, roomType: 'Club Deluxe King Room', mealPlan: 'Bed & Breakfast' },
-                      { name: 'The Ritz-Carlton Kyoto', cityName: 'Kyoto', nights: 2, roomType: 'Kamogawa River View Deluxe', mealPlan: 'Bed & Breakfast' }
-                    ]
-                ).map((hotel, idx) => (
-                  <div key={idx} className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded-md text-[10px] font-bold uppercase">
-                        {hotel.cityName} • {hotel.nights} Nights
-                      </span>
-                      <span className="text-[11px] font-bold text-amber-600">5★ Luxury</span>
-                    </div>
-
-                    <h4 className="font-black text-slate-900 text-sm">{hotel.name}</h4>
-                    <div className="text-[11px] text-slate-600 space-y-0.5">
-                      <p>Room: <strong>{hotel.roomType}</strong></p>
-                      <p>Meal Plan: <strong>{hotel.mealPlan || 'Bed & Breakfast'}</strong></p>
-                    </div>
+              {packageItem.isLandOnly ? (
+                <div className="p-6 bg-purple-50 rounded-3xl border border-purple-200 text-purple-950 space-y-3">
+                  <div className="flex items-center space-x-2">
+                    <span className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center font-bold text-xs">
+                      ✓
+                    </span>
+                    <h4 className="font-black text-sm">Accommodation Arranged by Client</h4>
                   </div>
-                ))}
-              </div>
+                  <p className="text-xs text-purple-800 leading-relaxed">
+                    This signature itinerary is provided on a <strong>Land-Only basis</strong>. Private chauffeur transfers, luxury touring vehicles, bullet train Green Car passes, English-speaking licensed guides, and all attraction entrance passes are fully included in the package rate. Hotel accommodations across all circuit destinations are organized independently by the traveler.
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    {(packageItem.routeSummary || []).map((stop, i) => (
+                      <span key={i} className="px-3 py-1 bg-white text-purple-900 border border-purple-200 rounded-xl text-xs font-bold">
+                        {stop} (Client Stay)
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {(packageItem.hotelsSummary && packageItem.hotelsSummary.length > 0 
+                    ? packageItem.hotelsSummary 
+                    : [
+                        { name: 'The Capitol Hotel Tokyu', cityName: 'Tokyo', nights: 3, roomType: 'Club Deluxe King Room', mealPlan: 'Bed & Breakfast' },
+                        { name: 'The Ritz-Carlton Kyoto', cityName: 'Kyoto', nights: 2, roomType: 'Kamogawa River View Deluxe', mealPlan: 'Bed & Breakfast' }
+                      ]
+                  ).map((hotel, idx) => (
+                    <div key={idx} className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded-md text-[10px] font-bold uppercase">
+                          {hotel.cityName} • {hotel.nights} Nights
+                        </span>
+                        <span className="text-[11px] font-bold text-amber-600">5★ Luxury</span>
+                      </div>
+
+                      <h4 className="font-black text-slate-900 text-sm">{hotel.name}</h4>
+                      <div className="text-[11px] text-slate-600 space-y-0.5">
+                        <p>Room: <strong>{hotel.roomType}</strong></p>
+                        <p>Meal Plan: <strong>{hotel.mealPlan || 'Bed & Breakfast'}</strong></p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

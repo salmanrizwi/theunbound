@@ -2,10 +2,12 @@ import React, { useState, useMemo } from 'react';
 import { Product, QuoteItem, CurrencyCode, VehicleMaster } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
-import { formatCurrency, calculateProductPrice } from '../../services/pricingEngine';
+import { formatCurrency, calculateProductPrice, calculateB2BAgentPrice } from '../../services/pricingEngine';
 import { generateConfigurationIdentity, getActiveUpsellsForProduct, createUpsellSnapshot } from '../../services/configuratorRegistry';
 import { operationalMasterInventory } from '../../services/operationalMasterInventoryService';
 import { operationalAssetEligibility } from '../../services/operationalAssetEligibilityService';
+import { canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
+import { getInventoryDisplayName } from '../../utils/inventoryDisplayHelpers';
 import { 
   X, 
   Crown, 
@@ -20,7 +22,10 @@ import {
   Plus, 
   Minus, 
   AlertTriangle,
-  Info
+  Info,
+  Briefcase,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
 
 export interface PrivateTourConfiguratorProps {
@@ -42,14 +47,18 @@ export interface PrivateTourConfiguratorProps {
  * ============================================================================
  * THEUNBOUND — PRIVATE TOUR CONFIGURATOR (Section 7)
  * Database-Driven Private Chauffeured Tour Configuration Engine
+ * With Reusable Shared Vehicle Master Selection
  * ============================================================================
  * 
  * Rules:
  * - Product Management defines the Tour, Vehicle and base commercial pricing.
- * - Layer 1: Read-only master information (Vehicle snapshot, inclusions, overview).
- * - Layer 2: Genuine selectable options (Product-linked vehicle options, Upsells).
+ * - Reuses existing Transfer Vehicle Master Inventory and Eligibility Rules.
+ * - Layer 1: Read-only master information (Tour specifications, inclusions).
+ * - Layer 2: Vehicle Selection & Capacity Validation (Master Fleet Inventory).
  * - Layer 3: Transaction details (Date, Start Time, Passenger Composition, Pickup).
+ * - Layer 4: Genuine selectable options (Addons & Upsells).
  * - Price is calculated strictly via the central Pricing Engine.
+ * - External B2B Agents never receive internal nett cost or margin leakage.
  */
 export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = ({
   isOpen,
@@ -74,7 +83,7 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
   const existingConfig = (itemOrProduct as any)?.configuration_payload ||
     (itemOrProduct as any)?.metadata?.configuration_payload || {};
 
-  // Form State (Layer 3: Transaction Context)
+  // Form State: Travel & Transaction Context
   const [travelDate, setTravelDate] = useState<string>(
     existingConfig.travelDate || initialTravelDate || (itemOrProduct as QuoteItem)?.travelDate || new Date().toISOString().split('T')[0]
   );
@@ -102,23 +111,136 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
     existingConfig.selectedAddons || (itemOrProduct as QuoteItem)?.selectedAddonIds || []
   );
 
-  // Authoritative Master Operational Vehicle Details (Layer 1: Resolved from Master Inventory)
-  const masterVehicle = useMemo(() => {
-    const vId = product?.vehicleId || product?.vehicleConfig?.vehicleId;
-    if (vId) {
-      const found = operationalMasterInventory.getVehicleById(vId);
-      if (found && found.status === 'ACTIVE') return found;
+  const totalPax = adults + children;
+
+  // Step 3 pricing tiers if product defines tiered vehicle pricing
+  const step3Tiers = useMemo(() => {
+    return (product?.tieredPricing || []).filter(t => t.status !== 'INACTIVE');
+  }, [product]);
+
+  // Load eligible active vehicles dynamically from Firestore-backed Master Inventory
+  const availableVehicles = useMemo(() => {
+    // 1. Get eligible active vehicles from central Master Inventory for this product / destination
+    const res = operationalAssetEligibility.getEligibleAssets({
+      product,
+      productType: 'Private Tours',
+      destinationId: product?.destinationId,
+      hubId: product?.hubId
+    });
+    const eligibleMasterVehicles = res.vehicles;
+
+    // 2. Identify referenced vehicle IDs in product's Step 3 tiers or product config
+    const tierVehicleIds = new Set<string>();
+    for (const t of step3Tiers) {
+      if (t.fleetId) tierVehicleIds.add(t.fleetId);
+      if (t.vehicleId) tierVehicleIds.add(t.vehicleId);
     }
-    const eligible = operationalAssetEligibility.getEligibleVehiclesForPrivateTour(product, adults + children);
-    return eligible[0] || null;
-  }, [product, adults, children]);
+    if (product?.vehicleId) tierVehicleIds.add(product.vehicleId);
+    if (product?.vehicleConfig?.vehicleId) tierVehicleIds.add(product.vehicleConfig.vehicleId);
 
-  const vehicleName = masterVehicle?.name || product?.vehicleNameSnapshot || product?.vehicleConfig?.vehicleModel || product?.name || 'Chauffeured Executive Vehicle';
-  const vehicleType = masterVehicle?.classification || masterVehicle?.type || product?.vehicleTypeSnapshot || product?.vehicleConfig?.vehicleType || 'Executive MPV';
-  const masterCapacity = Number(masterVehicle?.seatingCapacity) || Number(product?.capacitySnapshot) || Number(product?.vehicleConfig?.maxSeats) || Number(product?.maxPax) || 7;
-  const luggageCapacity = Number(masterVehicle?.luggageCapacity) || Number(product?.vehicleConfig?.maxLuggage) || 4;
+    let list = eligibleMasterVehicles.map(v => ({
+      id: v.id,
+      name: v.name,
+      model: v.model,
+      type: v.classification || v.type,
+      maxCapacity: v.seatingCapacity,
+      luggageCapacity: v.luggageCapacity || 4,
+      manufacturer: v.manufacturer,
+      supplierId: v.supplierId,
+      supplierName: v.supplierName,
+      isReferencedInProduct: tierVehicleIds.has(v.id),
+      status: v.status,
+      masterRecord: v
+    }));
 
-  // Authoritative Product Upsells (Layer 2)
+    if (list.length === 0) {
+      // Fallback to all active vehicles in operational inventory
+      list = operationalMasterInventory.getActiveVehicles().map(v => ({
+        id: v.id,
+        name: v.name,
+        model: v.model,
+        type: v.classification || v.type,
+        maxCapacity: v.seatingCapacity,
+        luggageCapacity: v.luggageCapacity || 4,
+        manufacturer: v.manufacturer,
+        supplierId: v.supplierId,
+        supplierName: v.supplierName,
+        isReferencedInProduct: tierVehicleIds.has(v.id),
+        status: v.status,
+        masterRecord: v
+      }));
+    }
+
+    // Sort: referenced in product first, then by ascending capacity
+    list.sort((a, b) => {
+      if (a.isReferencedInProduct && !b.isReferencedInProduct) return -1;
+      if (!a.isReferencedInProduct && b.isReferencedInProduct) return 1;
+      return a.maxCapacity - b.maxCapacity;
+    });
+
+    return list;
+  }, [step3Tiers, product]);
+
+  // State for selected vehicle (restores from draft or finds best fit)
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>(() => {
+    // 1. Existing configuration when editing or reopening a saved quote
+    if (existingConfig.vehicleId) return existingConfig.vehicleId;
+    if (existingConfig.assetId) return existingConfig.assetId;
+    if ((itemOrProduct as QuoteItem)?.vehicleId) return (itemOrProduct as QuoteItem).vehicleId!;
+    // 2. Product configured vehicle
+    if (product?.vehicleId) return product.vehicleId;
+    if (product?.vehicleConfig?.vehicleId) return product.vehicleConfig.vehicleId;
+    // 3. Match by tier if tier exists for initial pax
+    const initPax = (existingConfig.adults ?? initialAdults ?? (itemOrProduct as QuoteItem)?.pax?.adults ?? 2) +
+                    (existingConfig.children ?? initialChildren ?? (itemOrProduct as QuoteItem)?.pax?.children ?? 0);
+    const tierMatch = step3Tiers.find(t => initPax >= t.minPax && initPax <= t.maxPax && (t.fleetId || t.vehicleId));
+    if (tierMatch) return tierMatch.fleetId || tierMatch.vehicleId!;
+    // 4. Best-fit vehicle from available vehicles
+    const fit = availableVehicles.find(v => v.maxCapacity >= initPax);
+    return fit?.id || availableVehicles[0]?.id || '';
+  });
+
+  // Check if restored vehicle is inactive or archived
+  const isSelectedVehicleInactive = useMemo(() => {
+    if (!selectedVehicleId) return false;
+    const v = operationalMasterInventory.getVehicleById(selectedVehicleId);
+    return v ? v.status !== 'ACTIVE' : false;
+  }, [selectedVehicleId]);
+
+  const selectedVehicle = useMemo(() => {
+    return availableVehicles.find(v => v.id === selectedVehicleId) || availableVehicles[0];
+  }, [availableVehicles, selectedVehicleId]);
+
+  const vehicleName = selectedVehicle?.name || product?.vehicleNameSnapshot || product?.vehicleConfig?.vehicleModel || 'Executive Vehicle';
+  const vehicleType = selectedVehicle?.type || product?.vehicleTypeSnapshot || product?.vehicleConfig?.vehicleType || 'Executive MPV';
+  const masterCapacity = Number(selectedVehicle?.maxCapacity) || Number(product?.capacitySnapshot) || Number(product?.vehicleConfig?.maxSeats) || Number(product?.maxPax) || 7;
+  const luggageCapacity = Number(selectedVehicle?.luggageCapacity) || Number(product?.vehicleConfig?.maxLuggage) || 4;
+
+  // Passenger capacity validation against authoritative vehicle master
+  const isCapacityExceeded = totalPax > masterCapacity;
+
+  // Check if any vehicle in fleet can accommodate the group
+  const maxFleetCapacity = useMemo(() => {
+    return availableVehicles.reduce((max, v) => Math.max(max, v.maxCapacity), 0);
+  }, [availableVehicles]);
+  const isExceedingAllFleetCapacity = totalPax > maxFleetCapacity && maxFleetCapacity > 0;
+
+  // Suggest higher capacity vehicles if current is undersized
+  const higherCapacityVehicles = useMemo(() => {
+    if (!isCapacityExceeded) return [];
+    return availableVehicles.filter(v => v.maxCapacity >= totalPax && v.id !== selectedVehicleId);
+  }, [isCapacityExceeded, availableVehicles, totalPax, selectedVehicleId]);
+
+  // Match exact step 3 pricing tier if product defines tiered pricing
+  const matchedTier = useMemo(() => {
+    return step3Tiers.find(t => {
+      const vId = t.fleetId || t.vehicleId;
+      const idMatches = !vId || vId === selectedVehicleId || (selectedVehicle && vId === selectedVehicle.id);
+      return idMatches && totalPax >= t.minPax && totalPax <= t.maxPax;
+    }) || step3Tiers.find(t => totalPax >= t.minPax && totalPax <= t.maxPax);
+  }, [step3Tiers, selectedVehicleId, selectedVehicle, totalPax]);
+
+  // Authoritative Product Upsells (Layer 4)
   const availableUpsells = useMemo(() => {
     return getActiveUpsellsForProduct(product);
   }, [product]);
@@ -129,39 +251,82 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
     );
   };
 
-  // Capacity Validation
-  const totalPax = adults + children;
-  const isCapacityExceeded = totalPax > masterCapacity;
-
   // Centralized Authoritative Pricing Calculation
   const pricing = useMemo(() => {
-    if (!product) return { grossSellingPrice: 0, finalPrice: 0, baseSelling: 0, addonsCost: 0, currency };
-    const calc = calculateProductPrice(product, {
-      productId: product.id,
-      adults,
-      children,
-      infants,
-      travelDate,
-      targetCurrency: currency,
-      user,
-      selectedAddonIds: selectedAddons,
-      selectedUpsellIds: selectedAddons
-    });
+    if (!product) return { grossSellingPrice: 0, finalPrice: 0, baseSelling: 0, addonsCost: 0, currency, netCost: 0 };
+
+    let baseSelling = 0;
+    let netCost = 0;
+    const currencyToUse = product.currency || currency || 'USD';
+
+    if (step3Tiers.length > 0 && matchedTier) {
+      const tierNett = matchedTier.supplierNett !== undefined 
+        ? matchedTier.supplierNett 
+        : (matchedTier.nettPrice !== undefined 
+          ? matchedTier.nettPrice 
+          : (matchedTier.netCostPerPax || 0));
+      const marginPct = matchedTier.marginValue !== undefined 
+        ? matchedTier.marginValue 
+        : (product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 20);
+      const taxPct = matchedTier.taxValue !== undefined 
+        ? matchedTier.taxValue 
+        : (product.taxPercent ?? 10);
+      const feePct = matchedTier.serviceChargeValue !== undefined 
+        ? matchedTier.serviceChargeValue 
+        : (product.serviceFeeFixed ?? 0);
+
+      const b2bCalc = calculateB2BAgentPrice({
+        nettCost: tierNett,
+        marginPercent: marginPct,
+        taxPercent: taxPct,
+        serviceFeePercent: feePct,
+        currency: currencyToUse
+      });
+      baseSelling = b2bCalc.price;
+      netCost = tierNett;
+    } else {
+      const calc = calculateProductPrice(product, {
+        productId: product.id,
+        adults,
+        children,
+        infants,
+        travelDate,
+        targetCurrency: currency,
+        user,
+        selectedAddonIds: selectedAddons,
+        selectedUpsellIds: selectedAddons,
+        vehicleId: selectedVehicleId
+      } as any);
+
+      baseSelling = calc.finalTotalSellingPrice;
+      netCost = calc.totalNetCost || 0;
+    }
+
+    const addonsCost = selectedAddons.reduce((sum, id) => {
+      const u = availableUpsells.find(x => x.id === id);
+      if (!u) return sum;
+      return sum + (u.priceType === 'PER_BOOKING' ? u.price : u.price * totalPax);
+    }, 0);
+
+    const grossSellingPrice = baseSelling + (matchedTier ? addonsCost : 0);
 
     return {
-      grossSellingPrice: calc.finalTotalSellingPrice,
-      finalPrice: calc.finalTotalSellingPrice,
-      baseSelling: calc.adultsSubtotalSelling,
-      addonsCost: calc.addonsSubtotalSelling || 0,
-      currency: calc.currency,
-      calcResult: calc
+      grossSellingPrice,
+      finalPrice: grossSellingPrice,
+      baseSelling,
+      addonsCost,
+      netCost,
+      currency: currencyToUse,
+      matchedTier
     };
-  }, [product, adults, children, infants, travelDate, selectedAddons, currency, user]);
+  }, [product, adults, children, infants, travelDate, selectedAddons, selectedVehicleId, step3Tiers, matchedTier, currency, user, totalPax, availableUpsells]);
+
+  const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
 
   if (!isOpen || !product) return null;
 
   const handleSave = () => {
-    if (isCapacityExceeded) return;
+    if (isCapacityExceeded || isSelectedVehicleInactive) return;
 
     const configIdentity = generateConfigurationIdentity(
       'Private Tours',
@@ -178,13 +343,13 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
     const configurationPayload = {
       ...configIdentity,
       assetType: 'VEHICLE',
-      assetId: masterVehicle?.id || product.vehicleId || null,
+      assetId: selectedVehicle?.id || product.vehicleId || null,
       assetName: vehicleName,
-      assetModel: masterVehicle?.model || vehicleName,
+      assetModel: selectedVehicle?.model || vehicleName,
       assetClassification: vehicleType,
-      supplierId: masterVehicle?.supplierId || product.supplierId,
-      supplierName: masterVehicle?.supplierName || product.supplierName,
-      vehicleId: masterVehicle?.id || product.vehicleId,
+      supplierId: selectedVehicle?.supplierId || product.supplierId,
+      supplierName: selectedVehicle?.supplierName || product.supplierName,
+      vehicleId: selectedVehicle?.id || product.vehicleId,
       vehicleName,
       vehicleType,
       masterCapacity,
@@ -202,6 +367,8 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
       pricingSummary: pricing
     };
 
+    const notesSummary = `${product.name} (${vehicleName} • ${masterCapacity} Seats) ${pickupLocation ? `| Pickup: ${pickupLocation}` : ''}. ${specialRequirements}`.trim();
+
     if (isEditing && existingQuoteItemId) {
       updateQuoteItem(existingQuoteItemId, product, {
         adults,
@@ -209,10 +376,21 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
         infants,
         travelDate,
         serviceTime,
-        notes: `${product.name} (${vehicleName}) ${pickupLocation ? `| Pickup: ${pickupLocation}` : ''}. ${specialRequirements}`,
+        notes: notesSummary,
         selectedAddonIds: selectedAddons,
         selectedUpsellIds: selectedAddons,
-        selectedUpsellSnapshots: selectedUpsellSnapshots as any
+        selectedUpsellSnapshots: selectedUpsellSnapshots as any,
+        configuration_snapshot: configurationPayload,
+        vehicleId: selectedVehicle?.id,
+        vehicleNameSnapshot: vehicleName,
+        vehicleTypeSnapshot: vehicleType,
+        vehicleCapacitySnapshot: masterCapacity,
+        metadata: {
+          configuration_payload: configurationPayload,
+          configurator_type: 'PRIVATE_TOUR_CONFIGURATOR',
+          vehicleId: selectedVehicle?.id,
+          vehicleName
+        }
       });
     } else {
       addProductToQuote(product, {
@@ -221,7 +399,7 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
         infants,
         travelDate,
         serviceTime,
-        notes: `${product.name} (${vehicleName}) ${pickupLocation ? `| Pickup: ${pickupLocation}` : ''}. ${specialRequirements}`,
+        notes: notesSummary,
         selectedAddonIds: selectedAddons,
         selectedUpsellIds: selectedAddons,
         selectedUpsellSnapshots: selectedUpsellSnapshots as any,
@@ -230,9 +408,15 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
         pricing_snapshot: pricing,
         category: 'Private Tours',
         service_type: 'PRIVATE_TOUR_CONFIGURATOR',
+        vehicleId: selectedVehicle?.id,
+        vehicleNameSnapshot: vehicleName,
+        vehicleTypeSnapshot: vehicleType,
+        vehicleCapacitySnapshot: masterCapacity,
         metadata: {
           configuration_payload: configurationPayload,
-          configurator_type: 'PRIVATE_TOUR_CONFIGURATOR'
+          configurator_type: 'PRIVATE_TOUR_CONFIGURATOR',
+          vehicleId: selectedVehicle?.id,
+          vehicleName
         }
       });
     }
@@ -297,29 +481,9 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
               </p>
             )}
 
-            {/* Configured Fleet Asset Snapshot */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
-              <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                <span className="text-[10px] text-slate-400 block uppercase font-bold">Assigned Vehicle</span>
-                <span className="text-slate-900 font-bold truncate block mt-0.5">{vehicleName}</span>
-              </div>
-              <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                <span className="text-[10px] text-slate-400 block uppercase font-bold">Classification</span>
-                <span className="text-slate-700 font-semibold truncate block mt-0.5">{vehicleType}</span>
-              </div>
-              <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                <span className="text-[10px] text-slate-400 block uppercase font-bold">Master Capacity</span>
-                <span className="text-emerald-700 font-bold block mt-0.5">{masterCapacity} Seats</span>
-              </div>
-              <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                <span className="text-[10px] text-slate-400 block uppercase font-bold">Duration</span>
-                <span className="text-slate-700 font-semibold block mt-0.5">{product.duration || '8 Hours'}</span>
-              </div>
-            </div>
-
             {/* Inclusions Tag Cloud */}
             {product.inclusions && product.inclusions.length > 0 && (
-              <div className="pt-1">
+              <div>
                 <span className="text-[10px] text-slate-400 uppercase font-bold block mb-1.5">Included in Service</span>
                 <div className="flex flex-wrap gap-1.5">
                   {product.inclusions.map((inc, i) => (
@@ -333,10 +497,213 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
             )}
           </div>
 
+          {/* ========================================================================= */}
+          {/* LAYER 2: VEHICLE SELECTION (REUSES TRANSFER MASTER INVENTORY) */}
+          {/* ========================================================================= */}
+          <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-3.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <Car className="w-3.5 h-3.5 text-amber-500" />
+                <span>2. Vehicle Selection</span>
+              </span>
+              <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 font-bold uppercase">
+                Master Fleet Inventory
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-600">
+              Select an authorized fleet vehicle for this Private Tour. Supported passenger capacities and luggage allowances are validated against the authoritative vehicle master inventory.
+            </p>
+
+            {/* Vehicle Selection Dropdown */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Select Fleet Vehicle *
+                </label>
+                <select
+                  value={selectedVehicleId}
+                  onChange={e => setSelectedVehicleId(e.target.value)}
+                  className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:border-amber-500 cursor-pointer"
+                >
+                  {availableVehicles.map(v => (
+                    <option key={v.id} value={v.id}>
+                      {v.name} ({v.maxCapacity} Seats) {v.isReferencedInProduct ? '• Product Preferred' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Capacity & Luggage Badges */}
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className={`p-2.5 rounded-xl border ${
+                  isCapacityExceeded 
+                    ? 'bg-rose-50 border-rose-300 text-rose-800' 
+                    : 'bg-white border-slate-200 text-slate-800'
+                }`}>
+                  <span className="text-[10px] text-slate-400 block uppercase font-bold">Max Passenger Seats</span>
+                  <span className={`font-bold block mt-0.5 ${isCapacityExceeded ? 'text-rose-600' : 'text-emerald-700'}`}>
+                    {masterCapacity} Seats
+                  </span>
+                </div>
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200 text-slate-800">
+                  <span className="text-[10px] text-slate-400 block uppercase font-bold">Luggage Allowance</span>
+                  <span className="text-slate-700 font-semibold block mt-0.5 flex items-center gap-1">
+                    <Briefcase className="w-3 h-3 text-slate-400" />
+                    <span>{luggageCapacity} Large Bags</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Detailed Selected Vehicle Information Card */}
+            {selectedVehicle && (
+              <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs font-bold text-slate-900">{selectedVehicle.name}</span>
+                      <span className="text-[10px] px-2 py-0.2 rounded-full font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                        {selectedVehicle.type}
+                      </span>
+                    </div>
+                    {selectedVehicle.model && selectedVehicle.model !== selectedVehicle.name && (
+                      <span className="text-[11px] text-slate-500 block">{selectedVehicle.model}</span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <CheckCircle2 className="w-3 h-3" />
+                      <span>Active Master Fleet</span>
+                    </span>
+                    {matchedTier && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                        Tiered Rate Applied
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Role-Based Vehicle Pricing Visibility */}
+                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between text-xs text-slate-500 gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-400 font-semibold">Pricing Model:</span>
+                    <span className="font-medium text-slate-700">
+                      {matchedTier 
+                        ? `Configured Capacity Tier (${matchedTier.minPax}–${matchedTier.maxPax} Pax)` 
+                        : 'Private Tour Chauffeured Package Included'}
+                    </span>
+                  </div>
+
+                  {canViewInternalCosts && pricing.netCost > 0 && (
+                    <div className="text-[11px] font-mono text-slate-500 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
+                      Internal Cost Snapshot: <strong className="text-slate-700">{formatCurrency(pricing.netCost, pricing.currency)}</strong>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Alternate Quick-Select Vehicle Chips */}
+            {availableVehicles.length > 1 && (
+              <div className="pt-1">
+                <span className="text-[10px] text-slate-400 uppercase font-bold block mb-1.5">
+                  Available Fleet Options ({availableVehicles.length} Registered)
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {availableVehicles.map(v => {
+                    const isSelected = v.id === selectedVehicleId;
+                    const accommodates = v.maxCapacity >= totalPax;
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() => setSelectedVehicleId(v.id)}
+                        className={`text-[11px] px-2.5 py-1 rounded-lg border font-medium flex items-center space-x-1.5 transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-amber-400 border-amber-500 text-slate-950 font-bold shadow-xs'
+                            : accommodates
+                            ? 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+                            : 'bg-slate-100 border-slate-200 text-slate-400 hover:border-rose-200'
+                        }`}
+                      >
+                        <span>{v.name.split('(')[0].trim()}</span>
+                        <span className={`text-[10px] px-1 py-0.2 rounded ${
+                          isSelected 
+                            ? 'bg-slate-900 text-white' 
+                            : accommodates 
+                            ? 'bg-emerald-50 text-emerald-700 font-semibold' 
+                            : 'bg-rose-50 text-rose-600'
+                        }`}>
+                          {v.maxCapacity} Pax
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Inactive Vehicle Warning Banner */}
+            {isSelectedVehicleInactive && (
+              <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 flex items-start space-x-2.5 text-xs text-amber-900 animate-in fade-in">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold block">Vehicle Inactive in Master Inventory</span>
+                  <span>
+                    The selected vehicle ({vehicleName}) is currently marked as inactive or under maintenance. Please select an active fleet vehicle before continuing.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Real-Time Capacity Validation Banners */}
+            {isCapacityExceeded ? (
+              <div className="bg-rose-50 border border-rose-300 rounded-xl p-3 flex items-start space-x-2.5 text-xs text-rose-900 animate-in fade-in">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <span className="font-bold block">Vehicle Capacity Exceeded</span>
+                  <p>
+                    Configured passenger count (<strong>{totalPax} Pax</strong>) exceeds the maximum capacity of <strong>{vehicleName}</strong> (<strong>{masterCapacity} Seats</strong>).
+                  </p>
+                  {higherCapacityVehicles.length > 0 ? (
+                    <div className="pt-1 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-rose-700">Recommended upgrade:</span>
+                      {higherCapacityVehicles.slice(0, 2).map(hv => (
+                        <button
+                          key={hv.id}
+                          type="button"
+                          onClick={() => setSelectedVehicleId(hv.id)}
+                          className="px-2 py-0.5 bg-white border border-rose-300 rounded-md text-[11px] font-bold text-rose-800 hover:bg-rose-100 cursor-pointer"
+                        >
+                          Switch to {hv.name} ({hv.maxCapacity} Seats)
+                        </button>
+                      ))}
+                    </div>
+                  ) : isExceedingAllFleetCapacity ? (
+                    <p className="text-[11px] text-rose-700">
+                      Total group size exceeds single-vehicle inventory limit ({maxFleetCapacity} Seats). Please adjust passenger count or contact operations for multi-coach charter.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-2.5 flex items-center space-x-2 text-xs text-emerald-800">
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  <strong>Capacity Validated:</strong> {vehicleName} accommodates {totalPax} passenger{totalPax > 1 ? 's' : ''} (up to {masterCapacity} seats).
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* ========================================================================= */}
           {/* LAYER 3: TRAVEL / BOOKING DETAILS */}
+          {/* ========================================================================= */}
           <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-4">
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
-              2. Booking & Travel Details
+              3. Booking & Travel Details
             </span>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -349,7 +716,7 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
                   type="date"
                   value={travelDate}
                   onChange={e => setTravelDate(e.target.value)}
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900"
+                  className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 cursor-pointer"
                   required
                 />
               </div>
@@ -363,7 +730,7 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
                   type="time"
                   value={serviceTime}
                   onChange={e => setServiceTime(e.target.value)}
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900"
+                  className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 cursor-pointer"
                   required
                 />
               </div>
@@ -391,7 +758,7 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
                   <button
                     type="button"
                     onClick={() => setAdults(Math.max(1, adults - 1))}
-                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-600"
+                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"
                   >
                     <Minus className="w-3.5 h-3.5" />
                   </button>
@@ -399,7 +766,7 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
                   <button
                     type="button"
                     onClick={() => setAdults(adults + 1)}
-                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-600"
+                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
                   </button>
@@ -412,7 +779,7 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
                   <button
                     type="button"
                     onClick={() => setChildren(Math.max(0, children - 1))}
-                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-600"
+                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"
                   >
                     <Minus className="w-3.5 h-3.5" />
                   </button>
@@ -420,7 +787,7 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
                   <button
                     type="button"
                     onClick={() => setChildren(children + 1)}
-                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-600"
+                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
                   </button>
@@ -433,7 +800,7 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
                   <button
                     type="button"
                     onClick={() => setInfants(Math.max(0, infants - 1))}
-                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-600"
+                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"
                   >
                     <Minus className="w-3.5 h-3.5" />
                   </button>
@@ -441,35 +808,24 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
                   <button
                     type="button"
                     onClick={() => setInfants(infants + 1)}
-                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-600"
+                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-600 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
             </div>
-
-            {/* Capacity Warning Banner */}
-            {isCapacityExceeded && (
-              <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-start space-x-2.5 text-xs text-rose-800 animate-in fade-in">
-                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold block">Vehicle Capacity Exceeded</span>
-                  <span>
-                    Total passenger count ({totalPax} Pax) exceeds maximum capacity ({masterCapacity} Seats) for {vehicleName}. Please adjust passengers or select an appropriate Private Tour product.
-                  </span>
-                </div>
-              </div>
-            )}
           </div>
 
-          {/* LAYER 2: OPTIONAL EXPERIENCE UPGRADES / UPSELLS */}
+          {/* ========================================================================= */}
+          {/* LAYER 4: OPTIONAL EXPERIENCE UPGRADES / UPSELLS */}
+          {/* ========================================================================= */}
           {availableUpsells.length > 0 && (
             <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                  <span>3. Optional Experience Upgrades</span>
+                  <span>4. Optional Experience Upgrades</span>
                 </span>
                 <span className="text-[10px] text-slate-500 font-medium">
                   {selectedAddons.length} selected
@@ -527,14 +883,19 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
         <div className="bg-slate-900 text-white p-4 sm:p-5 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
           <div>
             <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-semibold">
-              Final Price
+              Final Wholesale Price
             </span>
             <div className="text-xl sm:text-2xl font-black text-amber-400">
-              {formatCurrency(pricing.grossSellingPrice, currency)}
+              {formatCurrency(pricing.grossSellingPrice, pricing.currency)}
             </div>
             {selectedAddons.length > 0 && (
               <span className="text-[10px] text-slate-400">
                 Includes {selectedAddons.length} selected upgrade{selectedAddons.length > 1 ? 's' : ''}
+              </span>
+            )}
+            {canViewInternalCosts && pricing.netCost > 0 && (
+              <span className="text-[10px] text-slate-400 block mt-0.5 font-mono">
+                DMC Net: {formatCurrency(pricing.netCost, pricing.currency)}
               </span>
             )}
           </div>
@@ -550,11 +911,11 @@ export const PrivateTourConfigurator: React.FC<PrivateTourConfiguratorProps> = (
             <button
               type="button"
               onClick={handleSave}
-              disabled={isCapacityExceeded}
-              className={`px-6 py-2.5 rounded-xl text-xs font-black shadow-lg transition-all cursor-pointer flex items-center space-x-1.5 ${
-                isCapacityExceeded
+              disabled={isCapacityExceeded || isSelectedVehicleInactive}
+              className={`px-6 py-2.5 rounded-xl text-xs font-black shadow-lg transition-all flex items-center space-x-1.5 ${
+                isCapacityExceeded || isSelectedVehicleInactive
                   ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                  : 'bg-amber-400 text-slate-950 hover:bg-amber-300'
+                  : 'bg-amber-400 text-slate-950 hover:bg-amber-300 cursor-pointer'
               }`}
             >
               <Check className="w-4 h-4" />

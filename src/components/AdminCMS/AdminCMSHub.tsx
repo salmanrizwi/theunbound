@@ -237,7 +237,7 @@ function resolveSubTabFromRoute(tab?: string, subTab?: string): string {
     return 'GROUND_CONNECTIVITY';
   }
   if (clean === 'MASTERSCHEMAMATRIX' || clean === 'FIELDPARITY' || clean === 'SCHEMAMATRIX' || clean === 'MATRIX' || clean === 'SCHEMA' || clean === 'PARITY') {
-    return 'FIELD_PARITY';
+    return 'VISA_SERVICES';
   }
   if (clean === 'VISASERVICES' || clean === 'VISASERVICE' || clean === 'VISAS' || clean === 'VISA' || clean === 'VISASANCILLARY' || clean === 'ANCILLARY' || clean === 'ANCILLARIES') {
     return 'VISA_SERVICES';
@@ -535,8 +535,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           subTabs: [
             { id: 'VISA_SERVICES', label: 'Visa Services & Assistance', icon: FileText },
             { id: 'TRAVEL_PROTECTION', label: 'Travel Protection & Medical', icon: ShieldCheck },
-            { id: 'GROUND_CONNECTIVITY', label: 'Ground & Connectivity', icon: Sparkles },
-            { id: 'FIELD_PARITY', label: 'Master Schema Matrix', icon: FileSpreadsheet }
+            { id: 'GROUND_CONNECTIVITY', label: 'Ground & Connectivity', icon: Sparkles }
           ]
         },
         {
@@ -874,7 +873,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       let subSlug = '';
       if (targetModule.id === 'VISA_ANCILLARY_SERVICES') {
         const cleanSub = (chosenSubTab || 'VISA_SERVICES').toLowerCase().replace(/_/g, '-');
-        subSlug = `/${cleanSub === 'field-parity' ? 'master-schema-matrix' : cleanSub}`;
+        subSlug = `/${cleanSub === 'field-parity' ? 'visa-services' : cleanSub}`;
       } else if (chosenSubTab && chosenSubTab !== 'OVERVIEW') {
         subSlug = `/${chosenSubTab.toLowerCase()}`;
       }
@@ -997,8 +996,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                 const SubIcon = st.icon || Layers;
                 const isTabActive = activeSubTab === st.id || 
                   (st.id === 'PRODUCTS' && activeSubTab === 'OVERVIEW' && currentModuleConfig.id === 'PRODUCT_MANAGEMENT') ||
-                  (st.id === 'VISA_SERVICES' && (activeSubTab === 'VISAS' || activeSubTab === 'OVERVIEW')) ||
-                  (st.id === 'FIELD_PARITY' && (activeSubTab === 'MASTER_SCHEMA_MATRIX' || activeSubTab === 'SCHEMA_MATRIX'));
+                  (st.id === 'VISA_SERVICES' && (activeSubTab === 'VISAS' || activeSubTab === 'OVERVIEW'));
                 return (
                   <button
                     key={st.id}
@@ -1007,8 +1005,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                       setActiveSubTab(st.id);
                       if (currentModuleConfig.id === 'VISA_ANCILLARY_SERVICES') {
                         const cleanSub = st.id.toLowerCase().replace(/_/g, '-');
-                        const subSlug = cleanSub === 'field-parity' ? 'master-schema-matrix' : cleanSub;
-                        const targetUrl = `/admin/visas-ancillary/${subSlug}`;
+                        const targetUrl = `/admin/visas-ancillary/${cleanSub}`;
                         if (typeof window !== 'undefined' && window.location.pathname !== targetUrl) {
                           window.history.replaceState(null, '', targetUrl);
                         }
@@ -1122,7 +1119,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
               onSubTabChange={(tab) => {
                 setActiveSubTab(tab);
                 const cleanSub = tab.toLowerCase().replace(/_/g, '-');
-                const subSlug = cleanSub === 'field-parity' ? 'master-schema-matrix' : cleanSub;
+                const subSlug = cleanSub === 'field-parity' ? 'visa-services' : cleanSub;
                 const targetUrl = `/admin/visas-ancillary/${subSlug}`;
                 if (typeof window !== 'undefined' && window.location.pathname !== targetUrl) {
                   window.history.replaceState(null, '', targetUrl);

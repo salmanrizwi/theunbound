@@ -299,7 +299,9 @@ export interface UserPermissionAccess {
   canDeleteQuotes?: boolean;
 }
 
-export type AccommodationType = 'master' | 'manual';
+export type AccommodationType = 'master' | 'manual' | 'hotel' | 'none' | 'NO_ACCOMMODATION' | 'HOTEL' | 'MANUAL' | 'MANUAL_HOTEL';
+
+export type ManualHotelRateBasis = 'PER_ROOM_PER_NIGHT' | 'PER_NIGHT' | 'TOTAL_STAY' | 'PER_PERSON' | 'PER_PERSON_PER_NIGHT' | 'PER_ROOM_TOTAL_STAY' | 'PER_PERSON_TOTAL_STAY';
 
 export interface ManualHotelDetails {
   id?: string;
@@ -308,25 +310,43 @@ export interface ManualHotelDetails {
   hubId?: string;
   hubName?: string;
   starRating?: string; // e.g. '5-Star Luxury', '4-Star Superior', '3-Star Standard', 'Ryokan', 'Boutique'
+  starCategory?: string;
   address?: string;
   roomType: string;
-  numberOfRooms: number;
-  numberOfNights: number;
+  numberOfRooms?: number;
+  rooms?: number;
+  roomsCount?: number;
+  numberOfNights?: number;
+  nights?: number;
   checkInDate: string;
   checkOutDate: string;
   mealPlan: MealPlanCode | string;
   mealPlanName?: string;
   ratePerNight: number;
-  rateCurrency: CurrencyCode;
-  rateType?: 'PER_ROOM_PER_NIGHT' | 'PER_PERSON_PER_NIGHT' | 'TOTAL_STAY';
+  customRate?: number;
+  rateCurrency?: CurrencyCode;
+  nativeCurrency?: CurrencyCode;
+  currency?: CurrencyCode;
+  rateBasis?: ManualHotelRateBasis;
+  rateType?: 'PER_ROOM_PER_NIGHT' | 'PER_PERSON_PER_NIGHT' | 'TOTAL_STAY' | ManualHotelRateBasis;
+  netCost?: number;
+  sellingPrice?: number;
+  totalNetCost?: number;
+  totalSellingPrice?: number;
   adultRate?: number;
   childRate?: number;
   infantRate?: number;
   extraBedRate?: number;
+  isComplimentary?: boolean;
+  isFreeStay?: boolean;
   internalNotes?: string;
+  notes?: string;
+  inclusions?: string | string[];
   supplierContact?: string;
   calculatedPrice?: number;
 }
+
+export type ManualHotelStay = ManualHotelDetails;
 
 export type VerificationStatus = 'VERIFIED' | 'PENDING_VERIFICATION' | 'UNVERIFIED' | 'REJECTED';
 
@@ -1000,6 +1020,7 @@ export interface Product {
   adultNettCost?: number; // Alias for adultNetPrice in Base Currency
   childNettCost?: number; // Alias for childNetPrice in Base Currency
   infantNettCost?: number; // Alias for infantNetPrice in Base Currency
+  basePrice?: number; // Base selling / group price
   currency: CurrencyCode;
   nativeCurrency?: CurrencyCode;
   
@@ -1407,6 +1428,9 @@ export interface PricingCalculationRequest {
   b2bAgentMarkupPercent?: number;
   customDiscountPercent?: number;
   agentClientMarkupPercent?: number; // Custom markup the B2B agent applies for their client
+  vehicleId?: string;
+  fleetId?: string;
+  assetId?: string;
 }
 
 export interface PricingCalculationResult {
@@ -1639,12 +1663,21 @@ export interface QuoteItem {
   travelDate: string;
   serviceTime?: string;
   notes?: string;
-  selectedAddonIds: string[];
+  selectedAddonIds?: string[];
   selectedUpsellIds?: string[]; // Selected Master Upsell IDs
   selectedUpsellSnapshots?: SelectedUpsellSnapshot[]; // Frozen historical upsells snapshot (Section 22, 34)
   selected_options?: Record<string, any>; // Compact configuration options selected by agent (Section 31)
   calculation: PricingCalculationResult | AgentPricingResponse;
+  hubId?: string;
+  hotelId?: string;
+  roomTypeId?: string;
+  mealPlanCode?: MealPlanCode;
+  roomsCount?: number;
+  nights?: number;
+  checkInDate?: string;
+  checkOutDate?: string;
   accommodationType?: AccommodationType;
+  isNoAccommodation?: boolean;
   isManualHotel?: boolean;
   manualHotelDetails?: ManualHotelDetails;
   source?: QuoteItemSource;
@@ -1666,6 +1699,10 @@ export interface QuoteItem {
   upsell_type?: 'EXISTING_PRODUCT' | 'STANDALONE';
   visaSnapshot?: QuoteVisaSnapshot;
   contentSnapshot?: QuoteItemContentSnapshot;
+  vehicleId?: string;
+  vehicleNameSnapshot?: string;
+  vehicleTypeSnapshot?: string;
+  vehicleCapacitySnapshot?: number;
   metadata?: Record<string, any>;
 }
 
@@ -1753,6 +1790,11 @@ export interface PricingSnapshot {
     visas: number;
     others: number;
   };
+  adminManualMarginType?: 'PERCENTAGE' | 'FIXED';
+  adminManualMarginValue?: number;
+  adminManualMarginAmount?: number;
+  adminMarginMode?: 'REPLACE' | 'ADD';
+  revisedSellingPrice?: number;
 }
 
 export interface QuoteActivityRecord {
@@ -1900,7 +1942,8 @@ export interface Quotation {
   options?: QuotationOption[];
   activeOptionId?: string;
   visaAssistanceChoice?: 'YES' | 'NO' | 'NOT_REQUIRED' | 'LATER';
-  scope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY';
+  scope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY' | 'FULL_PACKAGE';
+  quotationScope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY' | 'FULL_PACKAGE';
   routeHubs?: TripRouteHub[];
   dayThemes?: Record<number, string>;
   createdAt: string;
@@ -1912,11 +1955,15 @@ export interface Quotation {
   
   // Aggregated totals
   totalNetCost: number;
+  baseTotalPrice?: number;
   totalSellingPrice: number;
   totalTaxes: number;
   totalMargin: number;
 
   // Authoritative Commercial & Agent Margin Architecture (Section 8 Compliance)
+  marginType?: AgentMarginType;
+  marginValue?: number;
+  marginAmount?: number;
   baseFinalSellingPrice?: number;
   base_final_selling_price?: number;
   baseFinalSellingPriceCurrency?: CurrencyCode;
@@ -1940,6 +1987,18 @@ export interface Quotation {
   pricingVersionSnapshot?: number | string;
   updatedBy?: string;
   updated_by?: string;
+
+  // Admin Manual Margin on Nett Total
+  adminManualMarginType?: 'PERCENTAGE' | 'FIXED';
+  admin_manual_margin_type?: 'PERCENTAGE' | 'FIXED';
+  adminManualMarginValue?: number;
+  admin_manual_margin_value?: number;
+  adminManualMarginAmount?: number;
+  admin_manual_margin_amount?: number;
+  adminMarginMode?: 'REPLACE' | 'ADD';
+  admin_margin_mode?: 'REPLACE' | 'ADD';
+  revisedSellingPrice?: number;
+  revised_selling_price?: number;
 
   // Protected Internal Commercial Fields (CMS/Admin Only)
   internalNettCost?: number;
@@ -1996,6 +2055,8 @@ export interface AgentQuotationResponse {
   infantsCount?: number;
   options?: QuotationOption[];
   activeOptionId?: string;
+  scope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY' | 'FULL_PACKAGE';
+  quotationScope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY' | 'FULL_PACKAGE';
   routeHubs?: TripRouteHub[];
   dayThemes?: Record<number, string>;
   createdAt: string;
@@ -4100,7 +4161,7 @@ export interface PackageItemRef {
 // ----------------------------------------------------
 // HOTEL MANAGEMENT SYSTEM
 // ----------------------------------------------------
-export type HotelPublishStatus = 'DRAFT' | 'PREVIEW' | 'PUBLISHED' | 'UNPUBLISHED' | 'ARCHIVED';
+export type HotelPublishStatus = 'DRAFT' | 'PREVIEW' | 'PUBLISHED' | 'UNPUBLISHED' | 'ARCHIVED' | 'Active' | 'ACTIVE';
 export type MealPlanCode = 'RO' | 'BB' | 'HB' | 'FB' | 'AI';
 
 export type HotelRateType = 'STANDARD' | 'DAY_OF_WEEK' | 'SEASONAL' | 'FESTIVE' | 'EVENT' | 'SPECIFIC_DATE';
@@ -4163,30 +4224,37 @@ export interface HotelRate {
 export interface HotelRoomType {
   id: string;
   roomName: string;
-  roomCategory: string; // e.g. 'Deluxe Suite', 'Ocean View King', 'Traditional Tatami'
-  description: string;
-  images: string[];
-  bedType: string;
-  numberOfBeds: number;
-  roomSizeSqMeters: number;
+  roomCategory?: string; // e.g. 'Deluxe Suite', 'Ocean View King', 'Traditional Tatami'
+  description?: string;
+  images?: string[];
+  bedType?: string;
+  numberOfBeds?: number;
+  roomSizeSqMeters?: number;
   minPax?: number; // Minimum total passengers required (default 1)
   maxPax?: number; // Maximum total passengers allowed
   minAdults?: number; // Minimum adults (default 1)
-  maxAdults: number; // Maximum adults (e.g. 2, 3, 4)
+  maxAdults?: number; // Maximum adults (e.g. 2, 3, 4)
   minChildren?: number; // Minimum children (default 0)
-  maxChildren: number; // Maximum children allowed (e.g. 1, 2, 3)
+  maxChildren?: number; // Maximum children allowed (e.g. 1, 2, 3)
   minChildAge?: number; // e.g. 0 or 2
   maxChildAge?: number; // e.g. 11 or 12 years
   infantMaxAge?: number; // e.g. 2 years
   maxInfants?: number; // e.g. 1
   childPricingPolicy?: 'FREE_BELOW_AGE' | 'HALF_PRICE' | 'FULL_ADULT_RATE';
-  maxOccupancy: number; // Overall maximum occupancy ceiling
-  extraBedAvailable: boolean;
-  childPolicy: string;
-  amenities: string[];
-  view: string;
-  cancellationPolicy: string;
-  rates: HotelRate[];
+  maxOccupancy?: number; // Overall maximum occupancy ceiling
+  extraBedAvailable?: boolean;
+  childPolicy?: string;
+  amenities?: string[];
+  view?: string;
+  cancellationPolicy?: string;
+  rates?: HotelRate[];
+  mealPlan?: MealPlanCode | string;
+  baseRatePerNight?: number;
+  currency?: CurrencyCode | string;
+  extraAdultRate?: number;
+  childWithBedRate?: number;
+  childNoBedRate?: number;
+  inclusions?: string[];
   validity?: InventoryValidity;
   validityFrom?: string;
   validityTo?: string;
@@ -4223,8 +4291,9 @@ export interface Hotel {
   country: string;
   area: string;
   starRating: number; // 3, 4, 5
-  propertyType: 'LUXURY_HOTEL' | 'BOUTIQUE_RESORT' | 'RYOKAN' | 'BUSINESS_HOTEL' | 'VILLA_CHALET';
-  shortDescription: string;
+  propertyType?: 'LUXURY_HOTEL' | 'BOUTIQUE_RESORT' | 'RYOKAN' | 'BUSINESS_HOTEL' | 'VILLA_CHALET' | string;
+  category?: string;
+  shortDescription?: string;
   description: string;
   heroImage: string;
   images: string[];
@@ -4234,9 +4303,11 @@ export interface Hotel {
   website?: string;
   googleMapsUrl?: string;
   address: string;
+  checkInTime?: string;
+  checkOutTime?: string;
   latitude: number;
   longitude: number;
-  locationDetails: HotelLocationDistances;
+  locationDetails?: HotelLocationDistances;
   roomTypes: HotelRoomType[];
   amenities: string[];
   blackoutDates: string[];
@@ -6387,6 +6458,20 @@ export interface SLAAutomationAuditLog {
 // B2B TRAVEL AGENT PORTAL WORKSPACE & CRM TYPES
 // ----------------------------------------------------
 
+export interface SavedHubAccommodationSnapshot {
+  accommodationType: AccommodationType;
+  hotelId?: string;
+  roomTypeId?: string;
+  mealPlan?: string;
+  mealPlanId?: string;
+  mealPlanCode?: MealPlanCode;
+  roomsCount?: number;
+  isManualHotel?: boolean;
+  manualHotel?: ManualHotelDetails;
+  manualHotelDetails?: ManualHotelDetails;
+  savedHotelItem?: any;
+}
+
 export interface TripRouteHub {
   id: string;
   hubId: string;
@@ -6399,10 +6484,15 @@ export interface TripRouteHub {
   roomTypeId?: string;
   mealPlan?: string;
   mealPlanId?: string;
+  mealPlanCode?: MealPlanCode;
   roomsCount?: number;
   accommodationType?: AccommodationType;
   isManualHotel?: boolean;
   manualHotel?: ManualHotelDetails;
+  landOnlyOverride?: boolean;
+  previousAccommodationConfig?: SavedHubAccommodationSnapshot;
+  savedAccommodationSnapshot?: SavedHubAccommodationSnapshot;
+  savedAccommodationConfig?: SavedHubAccommodationSnapshot;
   notes?: string;
   source?: QuoteItemSource;
   aiSuggested?: boolean;
@@ -6530,6 +6620,8 @@ export interface B2BPackage {
   tagline: string;
   description: string;
   detailedDescription?: string;
+  isLandOnly?: boolean;
+  manualHotels?: ManualHotelDetails[];
   routeSummary: string[]; // e.g. ['Tokyo (3N)', 'Kyoto (2N)', 'Osaka (2N)']
   routeHubs?: TripRouteHub[];
   hotelsSummary: {
@@ -6662,17 +6754,25 @@ export interface PassengerClassification {
 
 export interface QuotationOption {
   id: string;
-  optionNumber: number;
-  title: string; // e.g., "Option 1: 4-Star Premium", "Option 2: 5-Star Luxury", "Option 3: Ultra Luxury / Villa"
+  optionNumber?: number;
+  title?: string; // e.g., "Option 1: 4-Star Premium", "Option 2: 5-Star Luxury", "Option 3: Ultra Luxury / Villa"
+  name?: string;
+  tier?: string;
   badge?: string;
   hotelTier?: string;
   hotelSummary?: string;
+  scope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY' | 'FULL_PACKAGE';
+  quotationScope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY' | 'FULL_PACKAGE';
   items: QuoteItem[];
   routeHubs: TripRouteHub[];
-  totalNetCost: number;
+  totalNetCost?: number;
+  baseTotalPrice?: number;
+  marginType?: AgentMarginType | string;
+  marginValue?: number;
+  marginAmount?: number;
   totalSellingPrice: number;
-  totalMargin: number;
-  totalTaxes: number;
+  totalMargin?: number;
+  totalTaxes?: number;
 }
 
 export interface FeasibilityWarning {

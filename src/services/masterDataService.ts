@@ -34,22 +34,50 @@ export const CANONICAL_LEGACY_MAPPINGS: Record<string, LegacyMasterMapping> = {
   'reg-003': { legacyIdOrCode: 'reg-003', canonicalId: 'REG-003', type: 'REGION', description: 'Lowercase REG-003' },
   'reg-southeast-asia': { legacyIdOrCode: 'reg-southeast-asia', canonicalId: 'REG-004', type: 'REGION', description: 'Legacy Southeast Asia to Canonical REG-004' },
   'reg-004': { legacyIdOrCode: 'reg-004', canonicalId: 'REG-004', type: 'REGION', description: 'Lowercase REG-004' },
+  'reg-southern-europe': { legacyIdOrCode: 'reg-southern-europe', canonicalId: 'REG-005', type: 'REGION', description: 'Southern Europe to REG-005' },
+  'reg-005': { legacyIdOrCode: 'reg-005', canonicalId: 'REG-005', type: 'REGION', description: 'Lowercase REG-005' },
+  'reg-scandinavia': { legacyIdOrCode: 'reg-scandinavia', canonicalId: 'REG-006', type: 'REGION', description: 'Scandinavia to REG-006' },
+  'reg-006': { legacyIdOrCode: 'reg-006', canonicalId: 'REG-006', type: 'REGION', description: 'Lowercase REG-006' },
+  'reg-north-america': { legacyIdOrCode: 'reg-north-america', canonicalId: 'REG-007', type: 'REGION', description: 'North America to REG-007' },
+  'reg-007': { legacyIdOrCode: 'reg-007', canonicalId: 'REG-007', type: 'REGION', description: 'Lowercase REG-007' },
+  'reg-south-asia': { legacyIdOrCode: 'reg-south-asia', canonicalId: 'REG-008', type: 'REGION', description: 'South Asia to REG-008' },
+  'reg-008': { legacyIdOrCode: 'reg-008', canonicalId: 'REG-008', type: 'REGION', description: 'Lowercase REG-008' },
 
   // Destination Legacy Codes
   'dest-japan': { legacyIdOrCode: 'dest-japan', canonicalId: 'DST-JPN', type: 'DESTINATION', description: 'Legacy dest-japan to Canonical DST-JPN' },
   'japan': { legacyIdOrCode: 'japan', canonicalId: 'DST-JPN', type: 'DESTINATION', description: 'Slug japan to Canonical DST-JPN' },
+  'dst-jpn': { legacyIdOrCode: 'dst-jpn', canonicalId: 'DST-JPN', type: 'DESTINATION', description: 'Lowercase DST-JPN' },
   'dest-uk': { legacyIdOrCode: 'dest-uk', canonicalId: 'DST-UK', type: 'DESTINATION', description: 'Legacy dest-uk to Canonical DST-UK' },
   'united-kingdom': { legacyIdOrCode: 'united-kingdom', canonicalId: 'DST-UK', type: 'DESTINATION', description: 'Slug united-kingdom to Canonical DST-UK' },
   'uk': { legacyIdOrCode: 'uk', canonicalId: 'DST-UK', type: 'DESTINATION', description: 'Code uk to Canonical DST-UK' },
+  'dst-uk': { legacyIdOrCode: 'dst-uk', canonicalId: 'DST-UK', type: 'DESTINATION', description: 'Lowercase DST-UK' },
   'dest-france': { legacyIdOrCode: 'dest-france', canonicalId: 'DST-FRA', type: 'DESTINATION', description: 'Legacy dest-france to Canonical DST-FRA' },
   'dest-fra': { legacyIdOrCode: 'dest-fra', canonicalId: 'DST-FRA', type: 'DESTINATION', description: 'Legacy dest-fra to Canonical DST-FRA' },
   'france': { legacyIdOrCode: 'france', canonicalId: 'DST-FRA', type: 'DESTINATION', description: 'Slug france to Canonical DST-FRA' },
+  'dest-europe': { legacyIdOrCode: 'dest-europe', canonicalId: 'DST-FRA', type: 'DESTINATION', description: 'Europe to Canonical DST-FRA' },
+  'europe': { legacyIdOrCode: 'europe', canonicalId: 'DST-FRA', type: 'DESTINATION', description: 'Europe slug' },
+  'dst-fra': { legacyIdOrCode: 'dst-fra', canonicalId: 'DST-FRA', type: 'DESTINATION', description: 'Lowercase DST-FRA' },
   'dest-uae': { legacyIdOrCode: 'dest-uae', canonicalId: 'DST-UAE', type: 'DESTINATION', description: 'Legacy dest-uae to Canonical DST-UAE' },
   'dest-dubai': { legacyIdOrCode: 'dest-dubai', canonicalId: 'DST-UAE', type: 'DESTINATION', description: 'Legacy dest-dubai to Canonical DST-UAE' },
   'dubai': { legacyIdOrCode: 'dubai', canonicalId: 'DST-UAE', type: 'DESTINATION', description: 'Slug dubai to Canonical DST-UAE' },
+  'dst-uae': { legacyIdOrCode: 'dst-uae', canonicalId: 'DST-UAE', type: 'DESTINATION', description: 'Lowercase DST-UAE' },
   'dest-thailand': { legacyIdOrCode: 'dest-thailand', canonicalId: 'DST-THA', type: 'DESTINATION', description: 'Legacy dest-thailand to Canonical DST-THA' },
   'dest-tha': { legacyIdOrCode: 'dest-tha', canonicalId: 'DST-THA', type: 'DESTINATION', description: 'Legacy dest-tha to Canonical DST-THA' },
   'thailand': { legacyIdOrCode: 'thailand', canonicalId: 'DST-THA', type: 'DESTINATION', description: 'Slug thailand to Canonical DST-THA' },
+  'dst-tha': { legacyIdOrCode: 'dst-tha', canonicalId: 'DST-THA', type: 'DESTINATION', description: 'Lowercase DST-THA' },
+  'dest-malaysia': { legacyIdOrCode: 'dest-malaysia', canonicalId: 'DST-MYS', type: 'DESTINATION', description: 'Malaysia to Canonical DST-MYS' },
+  'malaysia': { legacyIdOrCode: 'malaysia', canonicalId: 'DST-MYS', type: 'DESTINATION', description: 'Slug malaysia to Canonical DST-MYS' },
+  'dst-mys': { legacyIdOrCode: 'dst-mys', canonicalId: 'DST-MYS', type: 'DESTINATION', description: 'Lowercase DST-MYS' },
+  'dest-singapore': { legacyIdOrCode: 'dest-singapore', canonicalId: 'DST-SGP', type: 'DESTINATION', description: 'Singapore to Canonical DST-SGP' },
+  'singapore': { legacyIdOrCode: 'singapore', canonicalId: 'DST-SGP', type: 'DESTINATION', description: 'Slug singapore to Canonical DST-SGP' },
+  'dst-sgp': { legacyIdOrCode: 'dst-sgp', canonicalId: 'DST-SGP', type: 'DESTINATION', description: 'Lowercase DST-SGP' },
+  'dest-indonesia': { legacyIdOrCode: 'dest-indonesia', canonicalId: 'DST-IDN', type: 'DESTINATION', description: 'Indonesia to Canonical DST-IDN' },
+  'bali': { legacyIdOrCode: 'bali', canonicalId: 'DST-IDN', type: 'DESTINATION', description: 'Slug bali to Canonical DST-IDN' },
+  'bali-indonesia': { legacyIdOrCode: 'bali-indonesia', canonicalId: 'DST-IDN', type: 'DESTINATION', description: 'Slug bali-indonesia' },
+  'dst-idn': { legacyIdOrCode: 'dst-idn', canonicalId: 'DST-IDN', type: 'DESTINATION', description: 'Lowercase DST-IDN' },
+  'dest-vietnam': { legacyIdOrCode: 'dest-vietnam', canonicalId: 'DST-VNM', type: 'DESTINATION', description: 'Vietnam to Canonical DST-VNM' },
+  'vietnam': { legacyIdOrCode: 'vietnam', canonicalId: 'DST-VNM', type: 'DESTINATION', description: 'Slug vietnam to Canonical DST-VNM' },
+  'dst-vnm': { legacyIdOrCode: 'dst-vnm', canonicalId: 'DST-VNM', type: 'DESTINATION', description: 'Lowercase DST-VNM' },
 
   // Hub Legacy Codes
   'hub-tokyo': { legacyIdOrCode: 'hub-tokyo', canonicalId: 'HUB-TYO', type: 'HUB', description: 'Legacy hub-tokyo to Canonical HUB-TYO' },
@@ -62,20 +90,86 @@ export const CANONICAL_LEGACY_MAPPINGS: Record<string, LegacyMasterMapping> = {
   'osaka': { legacyIdOrCode: 'osaka', canonicalId: 'HUB-OSA', type: 'HUB', description: 'City name to Canonical HUB-OSA' },
   'hub-osa': { legacyIdOrCode: 'hub-osa', canonicalId: 'HUB-OSA', type: 'HUB', description: 'Lowercase HUB-OSA' },
   'hub-hakone': { legacyIdOrCode: 'hub-hakone', canonicalId: 'HUB-HAK', type: 'HUB', description: 'Legacy hub-hakone to Canonical HUB-HAK' },
+  'hakone': { legacyIdOrCode: 'hakone', canonicalId: 'HUB-HAK', type: 'HUB', description: 'City name to Canonical HUB-HAK' },
   'hub-hak': { legacyIdOrCode: 'hub-hak', canonicalId: 'HUB-HAK', type: 'HUB', description: 'Lowercase HUB-HAK' },
+  'hub-hiroshima': { legacyIdOrCode: 'hub-hiroshima', canonicalId: 'HUB-HIRO', type: 'HUB', description: 'Legacy hub-hiroshima to Canonical HUB-HIRO' },
+  'hiroshima': { legacyIdOrCode: 'hiroshima', canonicalId: 'HUB-HIRO', type: 'HUB', description: 'City name to Canonical HUB-HIRO' },
+  'hub-hiro': { legacyIdOrCode: 'hub-hiro', canonicalId: 'HUB-HIRO', type: 'HUB', description: 'Lowercase HUB-HIRO' },
   'hub-london': { legacyIdOrCode: 'hub-london', canonicalId: 'HUB-LON', type: 'HUB', description: 'Legacy hub-london to Canonical HUB-LON' },
+  'london': { legacyIdOrCode: 'london', canonicalId: 'HUB-LON', type: 'HUB', description: 'City name to Canonical HUB-LON' },
   'hub-lon': { legacyIdOrCode: 'hub-lon', canonicalId: 'HUB-LON', type: 'HUB', description: 'Lowercase HUB-LON' },
   'hub-edinburgh': { legacyIdOrCode: 'hub-edinburgh', canonicalId: 'HUB-EDI', type: 'HUB', description: 'Legacy hub-edinburgh to Canonical HUB-EDI' },
+  'edinburgh': { legacyIdOrCode: 'edinburgh', canonicalId: 'HUB-EDI', type: 'HUB', description: 'City name to Canonical HUB-EDI' },
   'hub-edi': { legacyIdOrCode: 'hub-edi', canonicalId: 'HUB-EDI', type: 'HUB', description: 'Lowercase HUB-EDI' },
   'hub-paris': { legacyIdOrCode: 'hub-paris', canonicalId: 'HUB-PAR', type: 'HUB', description: 'Legacy hub-paris to Canonical HUB-PAR' },
+  'paris': { legacyIdOrCode: 'paris', canonicalId: 'HUB-PAR', type: 'HUB', description: 'City name to Canonical HUB-PAR' },
   'hub-par': { legacyIdOrCode: 'hub-par', canonicalId: 'HUB-PAR', type: 'HUB', description: 'Lowercase HUB-PAR' },
   'hub-dubai': { legacyIdOrCode: 'hub-dubai', canonicalId: 'HUB-DXB', type: 'HUB', description: 'Legacy hub-dubai to Canonical HUB-DXB' },
+  'dubai-city': { legacyIdOrCode: 'dubai-city', canonicalId: 'HUB-DXB', type: 'HUB', description: 'City name to Canonical HUB-DXB' },
   'hub-dxb': { legacyIdOrCode: 'hub-dxb', canonicalId: 'HUB-DXB', type: 'HUB', description: 'Lowercase HUB-DXB' },
   'hub-phuket': { legacyIdOrCode: 'hub-phuket', canonicalId: 'HUB-HKT', type: 'HUB', description: 'Legacy hub-phuket to Canonical HUB-HKT' },
+  'phuket': { legacyIdOrCode: 'phuket', canonicalId: 'HUB-HKT', type: 'HUB', description: 'City name to Canonical HUB-HKT' },
   'hub-hkt': { legacyIdOrCode: 'hub-hkt', canonicalId: 'HUB-HKT', type: 'HUB', description: 'Lowercase HUB-HKT' },
   'hub-bangkok': { legacyIdOrCode: 'hub-bangkok', canonicalId: 'HUB-BKK', type: 'HUB', description: 'Legacy hub-bangkok to Canonical HUB-BKK' },
+  'bangkok': { legacyIdOrCode: 'bangkok', canonicalId: 'HUB-BKK', type: 'HUB', description: 'City name to Canonical HUB-BKK' },
   'hub-bkk': { legacyIdOrCode: 'hub-bkk', canonicalId: 'HUB-BKK', type: 'HUB', description: 'Lowercase HUB-BKK' }
 };
+
+function toCanonicalRegion(r: MasterRegion): MasterRegion {
+  const cleanId = (r.id || '').trim().toLowerCase();
+  const cleanSlug = (r.slug || '').trim().toLowerCase();
+  const mapped = CANONICAL_LEGACY_MAPPINGS[cleanId] || CANONICAL_LEGACY_MAPPINGS[cleanSlug];
+  const canonicalId = mapped?.canonicalId || r.id;
+  return {
+    ...r,
+    id: canonicalId,
+    legacyId: r.id
+  } as MasterRegion;
+}
+
+function toCanonicalDestination(d: Destination): Destination {
+  const cleanId = (d.id || '').trim().toLowerCase();
+  const cleanSlug = (d.slug || '').trim().toLowerCase();
+  const mapped = CANONICAL_LEGACY_MAPPINGS[cleanId] || CANONICAL_LEGACY_MAPPINGS[cleanSlug];
+  const canonicalId = mapped?.canonicalId || d.id;
+
+  const cleanRegId = (d.regionId || '').trim().toLowerCase();
+  const regMapped = CANONICAL_LEGACY_MAPPINGS[cleanRegId];
+  const canonicalRegionId = regMapped?.canonicalId || d.regionId;
+
+  return {
+    ...d,
+    id: canonicalId,
+    regionId: canonicalRegionId,
+    legacyId: d.id,
+    legacyRegionId: d.regionId
+  } as Destination;
+}
+
+function toCanonicalHub(h: CityHub): CityHub {
+  const cleanId = (h.id || '').trim().toLowerCase();
+  const cleanSlug = (h.slug || '').trim().toLowerCase();
+  const cleanName = (h.name || '').trim().toLowerCase();
+  const mapped = CANONICAL_LEGACY_MAPPINGS[cleanId] || CANONICAL_LEGACY_MAPPINGS[cleanSlug] || CANONICAL_LEGACY_MAPPINGS[cleanName];
+  const canonicalId = mapped?.canonicalId || h.id;
+
+  const cleanDestId = (h.destinationId || '').trim().toLowerCase();
+  const destMapped = CANONICAL_LEGACY_MAPPINGS[cleanDestId];
+  const canonicalDestId = destMapped?.canonicalId || h.destinationId;
+
+  const cleanRegId = (h.regionId || '').trim().toLowerCase();
+  const regMapped = CANONICAL_LEGACY_MAPPINGS[cleanRegId];
+  const canonicalRegId = regMapped?.canonicalId || h.regionId;
+
+  return {
+    ...h,
+    id: canonicalId,
+    destinationId: canonicalDestId,
+    regionId: canonicalRegId,
+    legacyId: h.id,
+    legacyDestinationId: h.destinationId
+  } as CityHub;
+}
 
 /**
  * SINGLE AUTHORITATIVE MASTER DATA SERVICE
@@ -104,7 +198,9 @@ export class MasterDataService {
   public getActiveRegions(): MasterRegion[] {
     const db = AppDatabase.getInstance();
     const raw = db.getMasterRegions();
-    return raw.filter(r => r && r.id && r.status !== 'INACTIVE' && (r as any).status !== 'DELETED');
+    return raw
+      .filter(r => r && r.id && r.status !== 'INACTIVE' && (r as any).status !== 'DELETED')
+      .map(toCanonicalRegion);
   }
 
   /**
@@ -113,19 +209,18 @@ export class MasterDataService {
   public getRegionById(regionId?: string): MasterRegion | undefined {
     if (!regionId) return undefined;
     const cleanId = regionId.trim();
+    const cleanLower = cleanId.toLowerCase();
+    const mapped = CANONICAL_LEGACY_MAPPINGS[cleanLower];
+    const targetId = mapped?.canonicalId || cleanId;
     const regions = this.getActiveRegions();
-    // Direct match
-    const direct = regions.find(r => r.id === cleanId);
-    if (direct) return direct;
-    // Check case-insensitive
-    const caseMatch = regions.find(r => r.id.toLowerCase() === cleanId.toLowerCase());
-    if (caseMatch) return caseMatch;
-    // Check explicit legacy mapping
-    const mapped = CANONICAL_LEGACY_MAPPINGS[cleanId.toLowerCase()];
-    if (mapped && mapped.type === 'REGION') {
-      return regions.find(r => r.id === mapped.canonicalId);
-    }
-    return undefined;
+    return regions.find(r => 
+      r.id === targetId || 
+      r.id.toLowerCase() === cleanLower || 
+      (r as any).legacyId === cleanId || 
+      ((r as any).legacyId && (r as any).legacyId.toLowerCase() === cleanLower) ||
+      (r.code && r.code.toLowerCase() === cleanLower) ||
+      (r.slug && r.slug.toLowerCase() === cleanLower)
+    );
   }
 
   /**
@@ -148,7 +243,9 @@ export class MasterDataService {
   public getActiveDestinations(): Destination[] {
     const db = AppDatabase.getInstance();
     const raw = db.getDestinations();
-    return raw.filter(d => d && d.id && d.status !== 'INACTIVE' && (d as any).status !== 'DELETED');
+    return raw
+      .filter(d => d && d.id && d.status !== 'INACTIVE' && (d as any).status !== 'DELETED')
+      .map(toCanonicalDestination);
   }
 
   /**
@@ -159,10 +256,16 @@ export class MasterDataService {
     if (!regionId || !regionId.trim()) return [];
     const cleanRegionId = regionId.trim();
     const resolvedRegion = this.getRegionById(cleanRegionId);
-    const targetRegionId = resolvedRegion ? resolvedRegion.id : cleanRegionId;
+    if (!resolvedRegion) return [];
+    const targetRegionId = resolvedRegion.id;
+    const legacyRegionId = (resolvedRegion as any).legacyId;
 
     const destinations = this.getActiveDestinations();
-    return destinations.filter(d => d.regionId === targetRegionId);
+    return destinations.filter(d => 
+      d.regionId === targetRegionId || 
+      (legacyRegionId && d.regionId === legacyRegionId) ||
+      (legacyRegionId && (d as any).legacyRegionId === legacyRegionId)
+    );
   }
 
   /**
@@ -171,19 +274,19 @@ export class MasterDataService {
   public getDestinationById(destinationId?: string): Destination | undefined {
     if (!destinationId) return undefined;
     const cleanId = destinationId.trim();
+    const cleanLower = cleanId.toLowerCase();
+    const mapped = CANONICAL_LEGACY_MAPPINGS[cleanLower];
+    const targetId = mapped?.canonicalId || cleanId;
     const destinations = this.getActiveDestinations();
-    // Direct match
-    const direct = destinations.find(d => d.id === cleanId);
-    if (direct) return direct;
-    // Case-insensitive match
-    const caseMatch = destinations.find(d => d.id.toLowerCase() === cleanId.toLowerCase());
-    if (caseMatch) return caseMatch;
-    // Explicit legacy mapping
-    const mapped = CANONICAL_LEGACY_MAPPINGS[cleanId.toLowerCase()];
-    if (mapped && mapped.type === 'DESTINATION') {
-      return destinations.find(d => d.id === mapped.canonicalId);
-    }
-    return undefined;
+    return destinations.find(d => 
+      d.id === targetId || 
+      d.id.toLowerCase() === cleanLower || 
+      (d as any).legacyId === cleanId || 
+      ((d as any).legacyId && (d as any).legacyId.toLowerCase() === cleanLower) ||
+      (d.slug && d.slug.toLowerCase() === cleanLower) ||
+      (d.country && d.country.toLowerCase() === cleanLower) ||
+      (d.name && d.name.toLowerCase() === cleanLower)
+    );
   }
 
   /**
@@ -206,7 +309,9 @@ export class MasterDataService {
   public getActiveHubs(): CityHub[] {
     const db = AppDatabase.getInstance();
     const raw = db.getCityHubs();
-    return raw.filter(h => h && h.id && h.status !== 'ARCHIVED' && (h as any).status !== 'DELETED');
+    return raw
+      .filter(h => h && h.id && h.status !== 'ARCHIVED' && (h as any).status !== 'DELETED')
+      .map(toCanonicalHub);
   }
 
   /**
@@ -217,10 +322,16 @@ export class MasterDataService {
     if (!destinationId || !destinationId.trim()) return [];
     const cleanDestId = destinationId.trim();
     const resolvedDest = this.getDestinationById(cleanDestId);
-    const targetDestId = resolvedDest ? resolvedDest.id : cleanDestId;
+    if (!resolvedDest) return [];
+    const targetDestId = resolvedDest.id;
+    const legacyDestId = (resolvedDest as any).legacyId;
 
     const hubs = this.getActiveHubs();
-    return hubs.filter(h => h.destinationId === targetDestId);
+    return hubs.filter(h => 
+      h.destinationId === targetDestId || 
+      (legacyDestId && h.destinationId === legacyDestId) ||
+      (legacyDestId && (h as any).legacyDestinationId === legacyDestId)
+    );
   }
 
   /**
@@ -240,19 +351,18 @@ export class MasterDataService {
   public getHubById(hubId?: string): CityHub | undefined {
     if (!hubId) return undefined;
     const cleanId = hubId.trim();
+    const cleanLower = cleanId.toLowerCase();
+    const mapped = CANONICAL_LEGACY_MAPPINGS[cleanLower];
+    const targetId = mapped?.canonicalId || cleanId;
     const hubs = this.getActiveHubs();
-    // Direct match
-    const direct = hubs.find(h => h.id === cleanId);
-    if (direct) return direct;
-    // Case-insensitive match
-    const caseMatch = hubs.find(h => h.id.toLowerCase() === cleanId.toLowerCase());
-    if (caseMatch) return caseMatch;
-    // Explicit legacy mapping
-    const mapped = CANONICAL_LEGACY_MAPPINGS[cleanId.toLowerCase()];
-    if (mapped && mapped.type === 'HUB') {
-      return hubs.find(h => h.id === mapped.canonicalId);
-    }
-    return undefined;
+    return hubs.find(h => 
+      h.id === targetId || 
+      h.id.toLowerCase() === cleanLower || 
+      (h as any).legacyId === cleanId || 
+      ((h as any).legacyId && (h as any).legacyId.toLowerCase() === cleanLower) ||
+      (h.slug && h.slug.toLowerCase() === cleanLower) ||
+      (h.name && h.name.toLowerCase() === cleanLower)
+    );
   }
 
   // ----------------------------------------------------

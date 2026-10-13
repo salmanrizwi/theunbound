@@ -178,10 +178,16 @@ export function sanitizeQuoteForCustomer(
     : 'Valued Guest';
 
   // Accommodation Summary
+  const effectiveScope = activeOption?.scope || quote.scope || 'FULL_PACKAGE';
+  const isLandOnly = effectiveScope === 'LAND_ONLY';
+  const effectiveHubs = activeOption?.routeHubs || quote.routeHubs || [];
+  const effectiveItems = activeOption?.items || quote.items || [];
+
   const hotelsSummary: string[] = [];
-  if (quote.routeHubs && quote.routeHubs.length > 0) {
-    quote.routeHubs.forEach(h => {
-      if (h.hotelId || h.manualHotel?.hotelName) {
+  if (!isLandOnly && effectiveHubs.length > 0) {
+    effectiveHubs.forEach(h => {
+      const isHubNoAcc = h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none';
+      if (!isHubNoAcc && (h.hotelId || h.manualHotel?.hotelName)) {
         const city = h.hubName || h.destinationName || 'City';
         const hotelName = h.manualHotel?.hotelName || h.hotelId || 'Premium Selected Hotel';
         const nights = h.nights || 1;
@@ -198,8 +204,9 @@ export function sanitizeQuoteForCustomer(
   }
 
   // If no routeHubs accommodation, inspect items
-  if (hotelsSummary.length === 0) {
-    (quote.items || []).forEach(it => {
+  if (!isLandOnly && hotelsSummary.length === 0) {
+    effectiveItems.forEach(it => {
+      if (it.isNoAccommodation || (it as any).accommodationType === 'NO_ACCOMMODATION' || (it as any).accommodationType === 'none') return;
       const p = it.product;
       if (p?.productType === 'HOTEL' || it.isManualHotel) {
         const city = p?.city || p?.destinationName || 'Destination';
@@ -584,9 +591,34 @@ export function sanitizeQuoteForAgent(quote: Quotation): Quotation {
   delete (clone as any).rateSnapshot;
   delete (clone as any).commercialNotes;
   delete (clone as any).operationalRemarks;
-  delete (clone as any).customOperationalRemarks;
   delete (clone as any).pricingFormulas;
   delete (clone as any).supplierRates;
+  delete (clone as any).adminManualMarginType;
+  delete (clone as any).admin_manual_margin_type;
+  delete (clone as any).adminManualMarginValue;
+  delete (clone as any).admin_manual_margin_value;
+  delete (clone as any).adminManualMarginAmount;
+  delete (clone as any).admin_manual_margin_amount;
+  delete (clone as any).adminMarginMode;
+  delete (clone as any).admin_margin_mode;
+  delete (clone as any).revisedSellingPrice;
+  delete (clone as any).revised_selling_price;
+  if (clone.pricingSnapshot) {
+    delete (clone.pricingSnapshot as any).adminManualMarginType;
+    delete (clone.pricingSnapshot as any).adminManualMarginValue;
+    delete (clone.pricingSnapshot as any).adminManualMarginAmount;
+    delete (clone.pricingSnapshot as any).adminMarginMode;
+    delete (clone.pricingSnapshot as any).revisedSellingPrice;
+    delete (clone.pricingSnapshot as any).totalNettCost;
+  }
+  if ((clone as any).pricing_snapshot) {
+    delete ((clone as any).pricing_snapshot as any).adminManualMarginType;
+    delete ((clone as any).pricing_snapshot as any).adminManualMarginValue;
+    delete ((clone as any).pricing_snapshot as any).adminManualMarginAmount;
+    delete ((clone as any).pricing_snapshot as any).adminMarginMode;
+    delete ((clone as any).pricing_snapshot as any).revisedSellingPrice;
+    delete ((clone as any).pricing_snapshot as any).totalNettCost;
+  }
 
   // Sanitize items
   if (clone.items && Array.isArray(clone.items)) {

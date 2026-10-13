@@ -70,9 +70,11 @@ import {
   FeasibilityCheckResult,
   AgentMarginType
 } from '../../types';
-import { formatCurrency, convertCurrency, resolveCapacityPricingTier } from '../../services/pricingEngine';
-import { TransferSuggestion, B2B_INSURANCE_PLANS, B2B_ESIM_PLANS } from '../../utils/b2bQuotationHelpers';
-import { validateRoomOccupancy, hotelToProduct, manualHotelToProduct } from '../../utils/hotelHelpers';
+import { formatCurrency, convertCurrency, resolveCapacityPricingTier, calculateQuoteInternalBreakdown } from '../../services/pricingEngine';
+import { useAuth } from '../../context/AuthContext';
+import { canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
+import { TransferSuggestion } from '../../utils/b2bQuotationHelpers';
+import { validateRoomOccupancy, hotelToProduct, manualHotelToProduct, isManualHotelPricingComplete } from '../../utils/hotelHelpers';
 import { VisaServicesAndFacilitationSection } from './VisaServicesAndFacilitationSection';
 import { DestinationRelevanceService, matchesDestination } from '../../services/destinationRelevanceService';
 import { AppDatabase } from '../../services/db';
@@ -169,6 +171,7 @@ export interface StepByStepQuotationWorkspaceProps {
 
   // Hotel Actions
   onSelectHotelForHub?: (hubOrder: number, hotel: Hotel, roomTypeId?: string, roomsCount?: number) => void;
+  onSelectNoAccommodationForHub?: (hubId: string) => void;
   onRemoveHotelForHub?: (hubId: string) => void;
   onOpenEditManualHotel?: (hubId: string) => void;
   onRemoveManualHotel?: (hubId: string) => void;
@@ -180,6 +183,12 @@ export interface StepByStepQuotationWorkspaceProps {
 
   // Pricing & Margins
   baseFinalSellingPrice?: number;
+  adminManualMarginType?: 'PERCENTAGE' | 'FIXED';
+  setAdminManualMarginType?: (type: 'PERCENTAGE' | 'FIXED') => void;
+  adminManualMarginValue?: number;
+  setAdminManualMarginValue?: (val: number) => void;
+  adminMarginMode?: 'REPLACE' | 'ADD';
+  setAdminMarginMode?: (mode: 'REPLACE' | 'ADD') => void;
   agentMarginType?: AgentMarginType;
   setAgentMarginType?: (type: AgentMarginType) => void;
   agentMarginValue?: number;
@@ -225,6 +234,8 @@ export interface StepByStepQuotationWorkspaceProps {
   canAddManualHotel?: boolean;
   autoSaveStatus: 'SAVED' | 'SAVING' | 'IDLE';
   lastSavedTimestamp: string;
+  quoteNumber?: string;
+  quoteVersion?: number;
 }
 
 export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspaceProps> = ({
@@ -292,6 +303,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   updateItemServiceTime,
   updateItemNotes,
   onSelectHotelForHub,
+  onSelectNoAccommodationForHub,
   onRemoveHotelForHub,
   onOpenEditManualHotel,
   onRemoveManualHotel,
@@ -299,6 +311,12 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   dayThemes = {},
   setDayThemes,
   baseFinalSellingPrice,
+  adminManualMarginType: propAdminManualMarginType,
+  setAdminManualMarginType: propSetAdminManualMarginType,
+  adminManualMarginValue: propAdminManualMarginValue,
+  setAdminManualMarginValue: propSetAdminManualMarginValue,
+  adminMarginMode: propAdminMarginMode,
+  setAdminMarginMode: propSetAdminMarginMode,
   agentMarginType: propAgentMarginType,
   setAgentMarginType: propSetAgentMarginType,
   agentMarginValue: propAgentMarginValue,
@@ -335,9 +353,55 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   canSaveAsPackage,
   canAddManualHotel,
   autoSaveStatus,
-  lastSavedTimestamp
+  lastSavedTimestamp,
+  quoteNumber = 'QTE-LIVE',
+  quoteVersion = 1
 }) => {
-  // Local fallback margin state if not provided externally
+  const { user } = useAuth();
+  const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
+  const [showInternalItemized, setShowInternalItemized] = useState<boolean>(false);
+
+  // User Type Segregation checks (Section 3)
+  const isMasterAdminUser = Boolean(user && (user.role === 'ADMIN' || (user as any).email === 'business@theunbound.in' || (user as any).email === 'admin@theunbound.com'));
+  const isAuthorizedInternalUser = canViewInternalCosts;
+  const isAgentUser = user?.role === 'B2B_AGENT';
+  const isTeamMember = user?.role === 'TEAM_MEMBER' || user?.role === 'DMC_STAFF';
+
+  // 1. Admin: Can configure manual margin on Total Nett Cost
+  // 2. Team Member: Authorized only if explicit permissions allow (canViewInternalCosts) - hidden unless authorized
+  // 3. B2B Agent: Can configure additional agent margin on Existing Final Price
+  // 4. Buyer: Hidden by default
+  const canConfigureAdminManualMargin = isMasterAdminUser || (isTeamMember && isAuthorizedInternalUser);
+  const canConfigureAgentManualMargin = isAgentUser || isMasterAdminUser;
+
+  // Local fallback admin manual margin state (Section 1)
+  const [internalAdminManualMarginType, setInternalAdminManualMarginType] = useState<'PERCENTAGE' | 'FIXED'>(propAdminManualMarginType || 'PERCENTAGE');
+  const [internalAdminManualMarginValue, setInternalAdminManualMarginValue] = useState<number>(
+    propAdminManualMarginValue !== undefined ? propAdminManualMarginValue : 0
+  );
+  const [internalAdminMarginMode, setInternalAdminMarginMode] = useState<'REPLACE' | 'ADD'>(propAdminMarginMode || 'REPLACE');
+
+  const effectiveAdminMarginType = propAdminManualMarginType || internalAdminManualMarginType;
+  const effectiveAdminMarginValue = propAdminManualMarginValue !== undefined ? propAdminManualMarginValue : internalAdminManualMarginValue;
+  const effectiveAdminMarginMode = propAdminMarginMode || internalAdminMarginMode;
+
+  const handleUpdateAdminMarginType = (newType: 'PERCENTAGE' | 'FIXED') => {
+    setInternalAdminManualMarginType(newType);
+    if (propSetAdminManualMarginType) propSetAdminManualMarginType(newType);
+  };
+
+  const handleUpdateAdminMarginValue = (val: number) => {
+    const num = Math.max(0, isNaN(val) ? 0 : val);
+    setInternalAdminManualMarginValue(num);
+    if (propSetAdminManualMarginValue) propSetAdminManualMarginValue(num);
+  };
+
+  const handleUpdateAdminMarginMode = (mode: 'REPLACE' | 'ADD') => {
+    setInternalAdminMarginMode(mode);
+    if (propSetAdminMarginMode) propSetAdminMarginMode(mode);
+  };
+
+  // Local fallback agent margin state (Section 2)
   const [internalMarginType, setInternalMarginType] = useState<AgentMarginType>(propAgentMarginType || 'PERCENTAGE');
   const [internalMarginValue, setInternalMarginValue] = useState<number>(
     propAgentMarginValue !== undefined ? propAgentMarginValue : (agentMarkupPercent || 10)
@@ -354,33 +418,102 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   };
 
   const handleUpdateMarginValue = (val: number) => {
-    setInternalMarginValue(val);
+    const num = Math.max(0, isNaN(val) ? 0 : val);
+    setInternalMarginValue(num);
     if (propSetAgentMarginValue) {
-      propSetAgentMarginValue(val);
+      propSetAgentMarginValue(num);
     }
     if (effectiveMarginType === 'PERCENTAGE') {
-      setAgentMarkupPercent(val);
+      setAgentMarkupPercent(num);
     }
   };
 
-  const effectiveBasePrice = baseFinalSellingPrice !== undefined ? baseFinalSellingPrice : totalSellingPrice;
-  const effectiveMarginAmount = propAgentMarginAmount !== undefined
+  // Step 7 Internal pricing calculation with Admin manual margin on Total Nett Cost
+  const step7BreakdownPricing = isAuthorizedInternalUser ? calculateQuoteInternalBreakdown({
+    items: quotationScope === 'LAND_ONLY'
+      ? items.filter(it => !(
+          (it.product.category || '').toLowerCase().includes('hotel') ||
+          (it.product.category || '').toLowerCase().includes('accommodation') ||
+          it.product.productType === 'Hotel' ||
+          it.product.productType === 'Hotel & Resort' ||
+          it.isManualHotel
+        ))
+      : items,
+    targetCurrency: currency,
+    agentMarginType: effectiveMarginType,
+    agentMarginValue: effectiveMarginValue,
+    overallDiscountPercent: overallDiscountPercent || 0,
+    userRole: user?.role,
+    scope: quotationScope,
+    routeHubs,
+    adminManualMarginType: effectiveAdminMarginType,
+    adminManualMarginValue: effectiveAdminMarginValue,
+    adminMarginMode: effectiveAdminMarginMode
+  }) : null;
+
+  // Authoritative admin commercial variables
+  const adminTotalNettCost = step7BreakdownPricing?.totalNettCost ?? totalNetCost ?? 0;
+  const existingCalculatedMargin = step7BreakdownPricing?.existingMarginAmount ?? 0;
+  const adminManualMarginAmount = effectiveAdminMarginType === 'PERCENTAGE'
+    ? Math.round(adminTotalNettCost * ((effectiveAdminMarginValue || 0) / 100))
+    : Math.round(effectiveAdminMarginValue || 0);
+
+  const adminRevisedSellingPrice = effectiveAdminMarginMode === 'REPLACE'
+    ? (adminTotalNettCost + adminManualMarginAmount + (step7BreakdownPricing?.serviceFee || 0))
+    : (adminTotalNettCost + existingCalculatedMargin + adminManualMarginAmount + (step7BreakdownPricing?.serviceFee || 0));
+
+  const adminFinalTotal = step7BreakdownPricing?.finalPackagePrice ?? (
+    adminRevisedSellingPrice + (step7BreakdownPricing?.taxAmount || 0) - (step7BreakdownPricing?.discountAmount || 0)
+  );
+
+  // Authoritative existing final price for agent margin
+  const effectiveBasePrice = (canConfigureAdminManualMargin && effectiveAdminMarginValue > 0 && adminRevisedSellingPrice > 0)
+    ? adminRevisedSellingPrice
+    : (baseFinalSellingPrice !== undefined ? baseFinalSellingPrice : totalSellingPrice);
+
+  const existingFinalPrice = (canConfigureAdminManualMargin && effectiveAdminMarginValue > 0 && adminFinalTotal > 0)
+    ? adminFinalTotal
+    : effectiveBasePrice;
+
+  const additionalAgentMarginAmount = propAgentMarginAmount !== undefined && !(canConfigureAdminManualMargin && effectiveAdminMarginValue > 0)
     ? propAgentMarginAmount
     : effectiveMarginType === 'PERCENTAGE'
-      ? Math.round(effectiveBasePrice * ((effectiveMarginValue || 0) / 100))
+      ? Math.round(existingFinalPrice * ((effectiveMarginValue || 0) / 100))
       : Math.round(effectiveMarginValue || 0);
 
-  const effectiveFinalPrice = propFinalCustomerSellingPrice !== undefined
-    ? propFinalCustomerSellingPrice
-    : (effectiveBasePrice + effectiveMarginAmount);
+  const effectiveMarginAmount = additionalAgentMarginAmount;
+  const revisedFinalPrice = existingFinalPrice + additionalAgentMarginAmount;
 
-  // Filter items by category
-  const hotelItems = useMemo(() => items.filter(it => 
-    (it.product.category || '').toLowerCase().includes('hotel') ||
-    (it.product.category || '').toLowerCase().includes('accommodation') ||
-    it.isManualHotel ||
-    (it as any).hotelDetails !== undefined
-  ), [items]);
+  const effectiveFinalPrice = (canConfigureAdminManualMargin && effectiveAdminMarginValue > 0)
+    ? revisedFinalPrice
+    : (propFinalCustomerSellingPrice !== undefined
+        ? propFinalCustomerSellingPrice
+        : revisedFinalPrice);
+
+  // Filter items by category (excluding hotel charges when Land-Only Mode or hub No Accommodation is active)
+  const hotelItems = useMemo(() => {
+    if (quotationScope === 'LAND_ONLY') return [];
+    return items.filter(it => {
+      const isHotel =
+        (it.product.category || '').toLowerCase().includes('hotel') ||
+        (it.product.category || '').toLowerCase().includes('accommodation') ||
+        it.product.productType === 'Hotel' ||
+        it.product.productType === 'Hotel & Resort' ||
+        it.isManualHotel ||
+        (it as any).hotelDetails !== undefined;
+      if (!isHotel) return false;
+
+      const matchingHub = routeHubs.find(h =>
+        (it.hubId && it.hubId === h.id) ||
+        (it.manualHotelDetails?.hubId && it.manualHotelDetails.hubId === h.id) ||
+        (it.notes && it.notes.includes(h.hubName))
+      );
+      if (matchingHub && (matchingHub.accommodationType === 'none' || matchingHub.accommodationType === 'NO_ACCOMMODATION')) {
+        return false;
+      }
+      return true;
+    });
+  }, [items, quotationScope, routeHubs]);
 
   const transferItems = useMemo(() => items.filter(it => 
     Boolean((it.product as any).isTransfer) ||
@@ -989,15 +1122,18 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       it.service_type === 'TRAVEL_PROTECTION' ||
       it.service_type === 'CONNECTIVITY' ||
       it.service_type === 'VIP_GROUND' ||
+      it.service_type === 'ANCILLARY' ||
       cat.includes('insurance') ||
       cat.includes('esim') ||
       cat.includes('service') ||
       cat.includes('addon') ||
       cat.includes('optional') ||
+      cat.includes('ancillary') ||
       sub.includes('insurance') ||
       sub.includes('esim') ||
       sub.includes('concierge') ||
-      sub.includes('optional')
+      sub.includes('optional') ||
+      sub.includes('ancillary')
     );
   }), [items]);
 
@@ -1015,184 +1151,6 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   const addonTotalSelling = useMemo(() => {
     return addonItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
   }, [addonItems]);
-
-  const handleQuickAddOptionalInsurance = (plan: typeof B2B_INSURANCE_PLANS[0]) => {
-    const totalDays = Math.max(1, tripNights + 1);
-    const totalAdultCost = plan.costPerDayAdultUSD * totalDays * adultsCount;
-    const totalChildCost = plan.costPerDayChildUSD * totalDays * childrenCount;
-    const totalNetCost = totalAdultCost + totalChildCost;
-    const totalAdultSelling = plan.sellingPricePerDayAdultUSD * totalDays * adultsCount;
-    const totalChildSelling = plan.sellingPricePerDayChildUSD * totalDays * childrenCount;
-    const totalSelling = totalAdultSelling + totalChildSelling;
-    const markupPercent = Math.round(((totalSelling - totalNetCost) / Math.max(1, totalNetCost)) * 100);
-
-    const product = {
-      id: `addon-${plan.id}-${Date.now()}`,
-      sku: `INS-${plan.id.toUpperCase()}`,
-      destinationId: currentDestination.id || 'dest-global',
-      destinationName: currentDestination.name || 'Worldwide',
-      country: currentDestination.name || 'International',
-      city: 'Global Protection Desk',
-      productType: 'Travel Insurance',
-      isOptionalService: true,
-      name: `${plan.name} (${totalDays} Days)`,
-      shortDescription: `${plan.coverageSummary} Total Coverage: $${plan.coverageAmountUSD.toLocaleString()} USD. Provider: ${plan.provider}.`,
-      longDescription: `Full comprehensive travel insurance for ${adultsCount} Adults and ${childrenCount} Children covering ${totalDays} days of travel in ${currentDestination.name}. Includes: ${plan.medicalEmergencyCoverage}, ${plan.tripCancellationCoverage}, ${plan.baggageLossCoverage}.`,
-      supplierId: 'sup-insurance-global',
-      supplierName: plan.provider,
-      category: 'Optional Services',
-      subcategory: 'Travel Insurance',
-      adultNetPrice: plan.costPerDayAdultUSD * totalDays,
-      childNetPrice: plan.costPerDayChildUSD * totalDays,
-      infantNetPrice: 0,
-      currency: 'USD' as CurrencyCode,
-      defaultMarkupPercent: markupPercent,
-      taxPercent: 0,
-      commissionPercent: 15,
-      serviceFeeFixed: 0,
-      season: 'All Year',
-      validityFrom: '2026-01-01',
-      validityTo: '2026-12-31',
-      minPax: 1,
-      maxPax: 50,
-      availability: 'INSTANT',
-      inclusions: [
-        plan.medicalEmergencyCoverage,
-        plan.tripCancellationCoverage,
-        plan.baggageLossCoverage,
-        '24/7 International Medical Assistance Helpline'
-      ],
-      exclusions: ['Pre-existing medical conditions unless declared'],
-      status: 'ACTIVE'
-    } as unknown as Product;
-
-    addProductToQuote(product, {
-      adults: adultsCount,
-      children: childrenCount,
-      infants: 0,
-      travelDate: startDate,
-      openDrawer: false
-    });
-  };
-
-  const handleQuickAddOptionalEsim = (plan: typeof B2B_ESIM_PLANS[0]) => {
-    const markupPercent = Math.round(((plan.sellingPriceUSD - plan.netCostUSD) / Math.max(1, plan.netCostUSD)) * 100);
-    const product = {
-      id: `addon-${plan.id}-${Date.now()}`,
-      sku: `ESIM-${plan.id.toUpperCase()}`,
-      destinationId: currentDestination.id,
-      destinationName: currentDestination.name,
-      country: currentDestination.name,
-      city: 'Instant Digital eSIM Portal',
-      productType: 'Digital Connectivity',
-      isOptionalService: true,
-      name: `${currentDestination.name} 5G eSIM (${plan.dataAllowance}, ${plan.validityDays} Days)`,
-      shortDescription: `Instant high-speed 5G/4G connectivity for ${currentDestination.name}. QR-code email delivery.`,
-      longDescription: `Digital eSIM data plan with ${plan.dataAllowance} valid for ${plan.validityDays} days.`,
-      supplierId: 'sup-esim-global',
-      supplierName: plan.carrier,
-      category: 'Optional Services',
-      subcategory: 'eSIM Connectivity',
-      adultNetPrice: plan.netCostUSD,
-      childNetPrice: 0,
-      infantNetPrice: 0,
-      currency: 'USD' as CurrencyCode,
-      defaultMarkupPercent: markupPercent,
-      taxPercent: 0,
-      commissionPercent: 20,
-      serviceFeeFixed: 0,
-      season: 'All Year',
-      validityFrom: '2026-01-01',
-      validityTo: '2026-12-31',
-      minPax: 1,
-      maxPax: 20,
-      availability: 'INSTANT',
-      inclusions: [
-        `${plan.dataAllowance} High-Speed 5G Data`,
-        `${plan.validityDays} Days Continuous Validity`,
-        'Instant QR Code Email Delivery',
-        'Hotspot / Mobile Tethering Allowed'
-      ],
-      exclusions: ['Traditional voice calls / SMS (Data-only)'],
-      status: 'ACTIVE'
-    } as unknown as Product;
-
-    addProductToQuote(product, {
-      adults: Math.max(1, adultsCount),
-      children: 0,
-      infants: 0,
-      travelDate: startDate,
-      openDrawer: false
-    });
-  };
-
-  const handleQuickAddOptionalVipService = (serviceType: 'VIP_MEET_GREET' | 'LUGGAGE_VAN' | 'PORTABLE_WIFI') => {
-    const totalDays = Math.max(1, tripNights + 1);
-    let name = '';
-    let desc = '';
-    let netCost = 45;
-    let selling = 65;
-
-    if (serviceType === 'VIP_MEET_GREET') {
-      name = 'VIP Airport Tarmac / Aerobridge Fast-Track Meet & Greet';
-      desc = 'Dedicated airport escort directly from aerobridge, fast-track immigration clearance, luggage assistance & escort to chauffeur vehicle.';
-      netCost = 75;
-      selling = 110;
-    } else if (serviceType === 'LUGGAGE_VAN') {
-      name = 'Dedicated Chauffeur Luggage Support Van';
-      desc = 'Separate dedicated luggage support van for excess golf bags, family luggage, and VIP shopping boxes.';
-      netCost = 90;
-      selling = 135;
-    } else {
-      name = `Unlimited Pocket Wi-Fi Router (${totalDays} Days Airport Pickup & Drop)`;
-      desc = 'Portable 5G Pocket Wi-Fi connecting up to 8 devices simultaneously with all-day battery life.';
-      netCost = 6 * totalDays;
-      selling = 10 * totalDays;
-    }
-
-    const product = {
-      id: `addon-service-${serviceType.toLowerCase()}-${Date.now()}`,
-      sku: `SVC-${serviceType}`,
-      destinationId: currentDestination.id,
-      destinationName: currentDestination.name,
-      country: currentDestination.name,
-      city: 'Airport VIP Ground Services',
-      productType: 'VIP Concierge Service',
-      isOptionalService: true,
-      name,
-      shortDescription: desc,
-      longDescription: desc,
-      supplierId: 'sup-ground-vip',
-      supplierName: `${currentDestination.name} VIP Concierge Operations`,
-      category: 'Optional Services',
-      subcategory: 'Ground Concierge',
-      adultNetPrice: netCost,
-      childNetPrice: 0,
-      infantNetPrice: 0,
-      currency: 'USD' as CurrencyCode,
-      defaultMarkupPercent: Math.round(((selling - netCost) / Math.max(1, netCost)) * 100),
-      taxPercent: 0,
-      commissionPercent: 10,
-      serviceFeeFixed: 0,
-      season: 'All Year',
-      validityFrom: '2026-01-01',
-      validityTo: '2026-12-31',
-      minPax: 1,
-      maxPax: 20,
-      availability: 'INSTANT',
-      inclusions: [desc, '24/7 Operations Duty Manager Coordination'],
-      exclusions: ['Personal gratuities'],
-      status: 'ACTIVE'
-    } as unknown as Product;
-
-    addProductToQuote(product, {
-      adults: 1,
-      children: 0,
-      infants: 0,
-      travelDate: startDate,
-      openDrawer: false
-    });
-  };
 
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
 
@@ -1247,7 +1205,14 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                Boolean(it.product.name?.toLowerCase().includes('visa') && it.product.name?.toLowerCase().includes('entry'));
       };
 
-      const dayItems = items.filter(it => it.travelDate === calDay.dateString);
+      const dayItems = items.filter(it => {
+        if (it.travelDate !== calDay.dateString) return false;
+        if (quotationScope === 'LAND_ONLY' && isHotelQuoteItem(it)) return false;
+        if (isHotelQuoteItem(it) && activeHub && (activeHub.accommodationType === 'none' || activeHub.accommodationType === 'NO_ACCOMMODATION')) {
+          return false;
+        }
+        return true;
+      });
       const dayHotelItems = dayItems.filter(isHotelQuoteItem);
       const dayProductItems = dayItems.filter(it => !isHotelQuoteItem(it) && !isVisaQuoteItem(it));
 
@@ -1289,8 +1254,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     const safeRooms = Math.max(1, roomsCount || 1);
 
     const existingHotelItems = items.filter(it => 
-      (it.product.category || '').toLowerCase().includes('hotel') &&
-      (it.notes?.includes(targetHub.hubName) || (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
+      ((it.product.category || '').toLowerCase().includes('hotel') || it.isManualHotel) &&
+      (it.hubId === targetHub.id || it.manualHotelDetails?.hubId === targetHub.id || it.notes?.includes(targetHub.hubName) || (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
     );
     existingHotelItems.forEach(it => removeProductFromQuote(it.id));
 
@@ -1302,6 +1267,13 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
         children: childrenCount,
         infants: infantsCount,
         travelDate: checkInIso,
+        hubId: targetHub.id,
+        hotelId: hotel.id,
+        roomTypeId: selectedRoom?.id,
+        roomsCount: safeRooms,
+        nights,
+        checkInDate: checkInIso,
+        checkOutDate: checkOutIso,
         notes: `${hotel.name} • ${selectedRoom?.roomName || 'Luxury Room'} • ${safeRooms} ${safeRooms > 1 ? 'Rooms' : 'Room'} • ${nights} Nights in ${targetHub.hubName} [Check-in: ${checkInIso}, Check-out: ${checkOutIso}]`,
         openDrawer: false
       });
@@ -1320,6 +1292,46 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     );
   };
 
+  const handleSelectNoAccommodation = (hubId: string) => {
+    if (onSelectNoAccommodationForHub) {
+      onSelectNoAccommodationForHub(hubId);
+      return;
+    }
+    const targetHub = routeHubs.find(h => h.id === hubId);
+    if (!targetHub) return;
+    const existingHotelItems = items.filter(it =>
+      ((it.product.category || '').toLowerCase().includes('hotel') || it.isManualHotel) &&
+      (it.hubId === hubId || it.manualHotelDetails?.hubId === hubId || it.notes?.includes(targetHub.hubName) || (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
+    );
+    existingHotelItems.forEach(it => removeProductFromQuote(it.id));
+    setRouteHubs(prev =>
+      prev.map(h => {
+        if (h.id !== hubId) return h;
+        const hasActiveConfig = Boolean(h.hotelId || h.isManualHotel || h.manualHotel);
+        const snapshot = hasActiveConfig
+          ? {
+              accommodationType: (h.isManualHotel || h.manualHotel ? 'manual' : 'master') as 'master' | 'manual',
+              hotelId: h.hotelId,
+              roomTypeId: h.roomTypeId,
+              mealPlanCode: h.mealPlanCode,
+              roomsCount: h.roomsCount,
+              isManualHotel: h.isManualHotel,
+              manualHotel: h.manualHotel
+            }
+          : h.savedAccommodationSnapshot;
+        return {
+          ...h,
+          hotelId: undefined,
+          roomTypeId: undefined,
+          isManualHotel: false,
+          accommodationType: 'NO_ACCOMMODATION',
+          manualHotel: undefined,
+          savedAccommodationSnapshot: snapshot
+        };
+      })
+    );
+  };
+
   const handleRemoveHotel = (hubId: string) => {
     if (onRemoveHotelForHub) {
       onRemoveHotelForHub(hubId);
@@ -1328,8 +1340,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     const targetHub = routeHubs.find(h => h.id === hubId);
     if (!targetHub) return;
     const existingHotelItems = items.filter(it => 
-      (it.product.category || '').toLowerCase().includes('hotel') &&
-      (it.notes?.includes(targetHub.hubName) || (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
+      ((it.product.category || '').toLowerCase().includes('hotel') || it.isManualHotel) &&
+      (it.hubId === hubId || it.manualHotelDetails?.hubId === hubId || it.notes?.includes(targetHub.hubName) || (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
     );
     existingHotelItems.forEach(it => removeProductFromQuote(it.id));
     setRouteHubs(prev =>
@@ -1339,7 +1351,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
         roomTypeId: undefined, 
         roomsCount: 1,
         isManualHotel: false,
-        accommodationType: 'master',
+        accommodationType: undefined,
         manualHotel: undefined
       } : h))
     );
@@ -1353,8 +1365,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     const targetHub = routeHubs.find(h => h.id === hubId);
     if (!targetHub) return;
     const existingItems = items.filter(it => 
-      it.isManualHotel && 
-      (it.notes?.includes(targetHub.hubName) || (it.manualHotelDetails?.hubId === hubId))
+      (it.isManualHotel || (it.product.category || '').toLowerCase().includes('hotel')) && 
+      (it.hubId === hubId || it.notes?.includes(targetHub.hubName) || (it.manualHotelDetails?.hubId === hubId))
     );
     existingItems.forEach(it => removeProductFromQuote(it.id));
     setRouteHubs(prev =>
@@ -1363,6 +1375,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
         hotelId: undefined,
         roomTypeId: undefined,
         isManualHotel: false,
+        accommodationType: undefined,
         manualHotel: undefined
       } : h))
     );
@@ -1392,10 +1405,43 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     let s3Status: 'COMPLETED' | 'IN_PROGRESS' | 'WARNING' | 'NOT_STARTED' = 'NOT_STARTED';
     if (quotationScope === 'LAND_ONLY') {
       s3Status = 'COMPLETED';
+    } else if (routeHubs.length === 0) {
+      s3Status = 'NOT_STARTED';
     } else {
-      if (hotelItems.length >= routeHubs.length && hotelItems.length > 0) {
+      let satisfiedHubs = 0;
+      let startedHubs = 0;
+      let hasInvalidHub = false;
+
+      for (const hub of routeHubs) {
+        const assignedItem = hotelItems.find(it =>
+          it.hubId === hub.id ||
+          it.manualHotelDetails?.hubId === hub.id ||
+          (hub.hotelId && it.product.id.includes(hub.hotelId)) ||
+          it.notes?.includes(hub.hubName)
+        );
+        const isNoAcc = hub.accommodationType === 'NO_ACCOMMODATION';
+        const isMan = !isNoAcc && Boolean(hub.accommodationType === 'MANUAL_HOTEL' || hub.isManualHotel || assignedItem?.isManualHotel);
+        const manDetails = hub.manualHotel || assignedItem?.manualHotelDetails;
+
+        if (isNoAcc) {
+          satisfiedHubs++;
+          startedHubs++;
+        } else if (isMan) {
+          startedHubs++;
+          if (isManualHotelPricingComplete(manDetails)) {
+            satisfiedHubs++;
+          } else {
+            hasInvalidHub = true;
+          }
+        } else if (hub.hotelId || assignedItem) {
+          startedHubs++;
+          satisfiedHubs++;
+        }
+      }
+
+      if (satisfiedHubs === routeHubs.length && !hasInvalidHub) {
         s3Status = 'COMPLETED';
-      } else if (hotelItems.length > 0) {
+      } else if (startedHubs > 0 || hasInvalidHub) {
         s3Status = 'WARNING';
       } else {
         s3Status = 'NOT_STARTED';
@@ -1412,38 +1458,34 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       s4Status = 'NOT_STARTED';
     }
 
-    // 5. Visa & Ancillary Services
+    // 5. Visa & Ancillary Services (Consolidated single source of truth)
     let s5Status: 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED' = 'NOT_STARTED';
-    if (visaItems.length > 0) {
+    if ((visaItems.length + addonItems.length) > 0) {
       s5Status = 'COMPLETED';
     } else {
       s5Status = 'NOT_STARTED';
     }
 
-    // 6. Optional Services
-    let s6Status: 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED' = 'NOT_STARTED';
-    if (addonItems.length > 0) {
+    // 6. Review & Pricing
+    let s6Status: 'COMPLETED' | 'IN_PROGRESS' | 'WARNING' | 'NOT_STARTED' = 'NOT_STARTED';
+    if (feasibility.score < 7.0 && feasibility.warnings.length > 0) {
+      s6Status = 'WARNING';
+    } else if (items.length > 0 && effectiveFinalPrice > 0) {
       s6Status = 'COMPLETED';
+    } else if (items.length > 0) {
+      s6Status = 'IN_PROGRESS';
     } else {
       s6Status = 'NOT_STARTED';
     }
 
-    // 7. Review & Feasibility
-    let s7Status: 'COMPLETED' | 'WARNING' | 'NOT_STARTED' = 'NOT_STARTED';
-    if (feasibility.score >= 8.5) {
+    // 7. Finalise & Generate Quote
+    let s7Status: 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED' = 'NOT_STARTED';
+    if (autoSaveStatus === 'SAVED') {
       s7Status = 'COMPLETED';
-    } else if (feasibility.warnings.length > 0) {
-      s7Status = 'WARNING';
+    } else if (items.length > 0 && effectiveFinalPrice > 0) {
+      s7Status = 'IN_PROGRESS';
     } else {
-      s7Status = 'COMPLETED';
-    }
-
-    // 8. Pricing & Margin
-    let s8Status: 'COMPLETED' | 'IN_PROGRESS' | 'NOT_STARTED' = 'NOT_STARTED';
-    if (items.length > 0 && effectiveFinalPrice > 0) {
-      s8Status = 'COMPLETED';
-    } else {
-      s8Status = 'NOT_STARTED';
+      s7Status = 'NOT_STARTED';
     }
 
     return {
@@ -1453,8 +1495,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       step4: s4Status,
       step5: s5Status,
       step6: s6Status,
-      step7: s7Status,
-      step8: s8Status
+      step7: s7Status
     };
   }, [
     clientName, 
@@ -1472,10 +1513,11 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     calendarDays.length,
     feasibility, 
     items.length, 
-    effectiveFinalPrice
+    effectiveFinalPrice,
+    autoSaveStatus
   ]);
 
-  // Overall Quote Completeness Calculation (8 Steps)
+  // Overall Quote Completeness Calculation (Exactly 7 Steps)
   const quoteCompleteness = useMemo(() => {
     let completedSteps = 0;
     if (stepStatuses.step1 === 'COMPLETED') completedSteps++;
@@ -1485,17 +1527,16 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     if (stepStatuses.step5 === 'COMPLETED') completedSteps++;
     if (stepStatuses.step6 === 'COMPLETED') completedSteps++;
     if (stepStatuses.step7 === 'COMPLETED') completedSteps++;
-    if (stepStatuses.step8 === 'COMPLETED') completedSteps++;
 
-    const percent = Math.round((completedSteps / 8) * 100);
+    const percent = Math.round((completedSteps / 7) * 100);
     return { completedSteps, percent };
   }, [stepStatuses]);
 
-  // Step definitions array (1 to 8)
+  // Step definitions array (Exactly 7 Steps)
   const stepsList = [
     {
       id: 1,
-      name: 'Trip Details',
+      name: 'Trip Overview',
       shortDesc: 'Customer, Destination & Dates',
       status: stepStatuses.step1,
       summary: `${tripNights} Nights • ${passengerClassification.classificationSummary}`,
@@ -1503,7 +1544,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     },
     {
       id: 2,
-      name: 'Destinations & Route',
+      name: 'Itinerary Builder',
       shortDesc: 'Multi-City Route Sequence',
       status: stepStatuses.step2,
       summary: `${routeHubs.length} Cities • ${routeTotalNights} Nights`,
@@ -1511,51 +1552,54 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     },
     {
       id: 3,
-      name: 'Hotels & Accommodation Stays',
+      name: 'Hotels & Accommodation',
       shortDesc: 'Contracted Properties & Stays',
       status: stepStatuses.step3,
-      summary: quotationScope === 'LAND_ONLY' ? 'Skipped (Land Only)' : `${hotelItems.length} Hotels Booked`,
+      summary: quotationScope === 'LAND_ONLY'
+        ? 'No Accommodation (Land-Only)'
+        : (() => {
+            const noAccCount = routeHubs.filter(h => h.accommodationType === 'NO_ACCOMMODATION').length;
+            if (noAccCount === routeHubs.length && routeHubs.length > 0) {
+              return 'No Accommodation (Client Arranged)';
+            }
+            if (noAccCount > 0) {
+              return `${hotelItems.length} Booked • ${noAccCount} Client Arranged`;
+            }
+            return `${hotelItems.length} Hotels Booked`;
+          })(),
       icon: Building2
     },
     {
       id: 4,
-      name: 'Activities & Experiences',
-      shortDesc: 'Curated Tours, Rail & Experiences',
+      name: 'Tours, Activities & Ground Transport',
+      shortDesc: 'Curated Tours, Rail & Transfers',
       status: stepStatuses.step4,
-      summary: `${activityItems.length} Products Added`,
+      summary: `${activityItems.length + transferItems.length + railItems.length} Products Added`,
       icon: Compass
     },
     {
       id: 5,
       name: 'Visa & Ancillary Services',
-      shortDesc: 'Official Visas, Travel Protection & VIP Services',
+      shortDesc: 'Official Visas, Travel Protection, VIP Ground & Connectivity',
       status: stepStatuses.step5,
-      summary: `${visaItems.length} Services Configured`,
+      summary: `${visaItems.length + addonItems.length} Services Configured`,
       icon: ShieldCheck
     },
     {
       id: 6,
-      name: 'Optional Services',
-      shortDesc: 'Upgrades & Add-ons',
+      name: 'Review & Pricing',
+      shortDesc: 'Quote Validation & Final Price',
       status: stepStatuses.step6,
-      summary: `${addonItems.length} Options Selected`,
-      icon: Sparkles
+      summary: `${currency} ${effectiveFinalPrice.toLocaleString()} • Score ${feasibility.score}/10`,
+      icon: DollarSign
     },
     {
       id: 7,
-      name: 'Review & Feasibility',
-      shortDesc: 'Operational Diagnostics & Check',
+      name: 'Finalise & Generate Quote',
+      shortDesc: 'Save, PDF, Email & WhatsApp',
       status: stepStatuses.step7,
-      summary: `Score ${feasibility.score}/10 (${feasibility.status})`,
+      summary: autoSaveStatus === 'SAVED' ? 'Quote Saved' : 'Ready to Finalise',
       icon: CheckCircle2
-    },
-    {
-      id: 8,
-      name: 'Pricing & Margin',
-      shortDesc: 'Commercial Calculations & Export',
-      status: stepStatuses.step8,
-      summary: `${currency} ${effectiveFinalPrice.toLocaleString()}`,
-      icon: DollarSign
     }
   ];
 
@@ -1620,7 +1664,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
               Quote Completeness:
             </span>
             <span className="text-xs font-black text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-200">
-              {quoteCompleteness.percent}% Complete ({quoteCompleteness.completedSteps} of 8 Steps)
+              {quoteCompleteness.percent}% Complete ({quoteCompleteness.completedSteps} of 7 Steps)
             </span>
             <span className="text-[11px] text-slate-400 font-medium">
               • Auto-Saved {lastSavedTimestamp}
@@ -1669,7 +1713,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 Quotation Workflow
               </span>
               <span className="text-[11px] font-bold text-slate-400">
-                Step {activeStepId} of 8
+                Step {activeStepId} of 7
               </span>
             </div>
 
@@ -1769,12 +1813,12 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <Users className="w-5 h-5" />
                   </div>
                   <div>
-                    <h2 className="text-base font-black text-slate-900">Step 1: Trip Details</h2>
-                    <p className="text-xs text-slate-500">Configure traveler profile, travel dates, passenger ages, and rooming.</p>
+                    <h2 className="text-base font-black text-slate-900">Step 1: Trip Overview</h2>
+                    <p className="text-xs text-slate-500">Destination, travel dates, duration, travellers and core trip details.</p>
                   </div>
                 </div>
                 <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                  Step 1 of 8
+                  Step 1 of 7
                 </span>
               </div>
 
@@ -2093,12 +2137,12 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <MapPin className="w-5 h-5" />
                   </div>
                   <div>
-                    <h2 className="text-base font-black text-slate-900">Step 2: Destinations & Route</h2>
-                    <p className="text-xs text-slate-500">Configure city hubs, night allocations, and sequence.</p>
+                    <h2 className="text-base font-black text-slate-900">Step 2: Itinerary Builder</h2>
+                    <p className="text-xs text-slate-500">Day-wise itinerary and destination/hub arrangements.</p>
                   </div>
                 </div>
                 <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                  Step 2 of 8
+                  Step 2 of 7
                 </span>
               </div>
 
@@ -2285,7 +2329,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
-                  {canAddManualHotel && (
+                  {canAddManualHotel && quotationScope !== 'LAND_ONLY' && (
                     <button
                       type="button"
                       onClick={() => onOpenManualHotelModal()}
@@ -2303,13 +2347,38 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                         : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
                     }`}
                   >
-                    {quotationScope === 'LAND_ONLY' ? '✓ Land-Only Package' : 'Land-Only Mode'}
+                    {quotationScope === 'LAND_ONLY' ? '✓ Land-Only Mode Active' : 'Enable Land-Only Mode'}
                   </button>
                   <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                    Step 3 of 8
+                    Step 3 of 7
                   </span>
                 </div>
               </div>
+
+              {quotationScope === 'LAND_ONLY' && (
+                <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center font-bold text-xs shrink-0">
+                      ✓
+                    </div>
+                    <div>
+                      <span className="text-xs font-black text-purple-950 block">
+                        Land-Only Mode Enabled — No Accommodation (Arranged by Client)
+                      </span>
+                      <span className="text-[11px] text-purple-800">
+                        All accommodation sections are automatically set to No Accommodation (Arranged by Client). Hotel charges are excluded from the package total.
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setQuotationScope('FULL_PACKAGE')}
+                    className="px-3 py-1.5 rounded-xl bg-white hover:bg-purple-100 text-purple-900 border border-purple-300 text-xs font-bold transition-colors cursor-pointer shrink-0"
+                  >
+                    Disable Land-Only Mode
+                  </button>
+                </div>
+              )}
 
               {/* Total Hotel Summary Bar */}
               <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-3">
@@ -2319,7 +2388,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   </div>
                   <div>
                     <span className="text-xs font-bold text-slate-900 block">
-                      {routeHubs.length} Route Hubs • {routeTotalNights} Total Nights Accommodation
+                      {routeHubs.length} Route Hubs • {quotationScope === 'LAND_ONLY' ? 'No Accommodation (Arranged by Client)' : `${routeTotalNights} Total Nights Accommodation`}
                     </span>
                     <span className="text-[11px] text-slate-500">
                       Party Size: {adultsCount} Adults{childrenCount > 0 ? `, ${childrenCount} Children` : ''}{infantsCount > 0 ? `, ${infantsCount} Infants` : ''}
@@ -2329,7 +2398,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 <div className="flex items-center space-x-2">
                   <span className="text-xs text-slate-500">Accommodation Total:</span>
                   <span className="text-sm font-black font-mono text-emerald-600 bg-white px-3 py-1 rounded-xl border border-slate-200 shadow-2xs">
-                    {formatCurrency(hotelTotalSelling, currency)}
+                    {formatCurrency(quotationScope === 'LAND_ONLY' ? 0 : hotelTotalSelling, currency)}
                   </span>
                 </div>
               </div>
@@ -2337,12 +2406,16 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
               {/* Hub Accommodations Grid */}
               <div className="space-y-5">
                 {routeHubs.map(hub => {
-                  const assignedItem = hotelItems.find(it => 
+                  const isLandOnlyMode = quotationScope === 'LAND_ONLY';
+                  const isNoAccommodation = isLandOnlyMode || hub.accommodationType === 'none' || hub.accommodationType === 'NO_ACCOMMODATION';
+
+                  const assignedItem = !isNoAccommodation ? hotelItems.find(it => 
+                    it.hubId === hub.id ||
+                    (it.manualHotelDetails?.hubId === hub.id) ||
                     it.notes?.includes(hub.hubName) || 
                     (hub.hotelId && it.product.id.includes(hub.hotelId)) ||
-                    (it.manualHotelDetails?.hubId === hub.id) ||
                     it.product.name.toLowerCase().includes(hub.hubName.toLowerCase())
-                  );
+                  ) : undefined;
 
                   const { checkInFormatted, checkOutFormatted } = getHubDates(hub.order, hub.nights || 1);
 
@@ -2351,16 +2424,18 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     hub.hubId || hub.hubName
                   );
 
-                  const isManualStay = Boolean(
+                  const isManualStay = !isNoAccommodation && Boolean(
+                    hub.accommodationType === 'manual' ||
                     hub.isManualHotel || 
                     hub.manualHotel || 
                     assignedItem?.isManualHotel || 
                     assignedItem?.product?.accommodationType === 'manual' || 
                     (assignedItem as any)?.accommodationType === 'manual'
                   );
-                  const manualDetails: ManualHotelDetails | undefined = hub.manualHotel || assignedItem?.manualHotelDetails;
+                  const manualDetails: ManualHotelDetails | undefined = !isNoAccommodation ? (hub.manualHotel || assignedItem?.manualHotelDetails) : undefined;
+                  const isManualComplete = isManualStay && isManualHotelPricingComplete(manualDetails);
 
-                  const selectedHotel = !isManualStay ? (
+                  const selectedHotel = (!isNoAccommodation && !isManualStay) ? (
                     availableHotels.find(h => h.id === hub.hotelId) || 
                     (assignedItem ? availableHotels.find(h => assignedItem.product.id.includes(h.id)) : undefined)
                   ) : undefined;
@@ -2383,7 +2458,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
                   const occupancy = validateRoomOccupancy(selectedRoom, currentRoomsCount, adultsCount, childrenCount, infantsCount);
 
-                  const manualSellingPrice = assignedItem?.calculation?.finalTotalSellingPrice || 
+                  const manualSellingPrice = isManualComplete ? (
+                    assignedItem?.calculation?.finalTotalSellingPrice || 
                     assignedItem?.calculation?.totalSellingPrice || 
                     (manualDetails ? convertCurrency(
                       (manualDetails.rateType === 'TOTAL_STAY' 
@@ -2393,17 +2469,26 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                           : manualDetails.ratePerNight * (manualDetails.numberOfRooms || hub.roomsCount || 1) * (manualDetails.numberOfNights || hub.nights || 1)),
                       manualDetails.rateCurrency, 
                       currency
-                    ) * (1 + (agentMarkupPercent || 0) / 100) : 0);
+                    ) * (1 + (agentMarkupPercent || 0) / 100) : 0)
+                  ) : 0;
+
+                  const dropdownSelectValue = isNoAccommodation
+                    ? 'NO_ACCOMMODATION'
+                    : isManualStay
+                      ? 'MANUAL_HOTEL_SELECTED'
+                      : (selectedHotel?.id || '');
 
                   return (
                     <div 
                       key={hub.id} 
                       className={`p-5 rounded-2xl border transition-all space-y-4 ${
-                        isManualStay
-                          ? 'bg-amber-50/40 border-amber-200'
-                          : selectedHotel
-                            ? occupancy.isValid ? 'bg-slate-50/90 border-slate-200' : 'bg-rose-50/40 border-rose-200'
-                            : 'bg-slate-50/50 border-slate-200'
+                        isNoAccommodation
+                          ? 'bg-slate-50/80 border-slate-200'
+                          : isManualStay
+                            ? isManualComplete ? 'bg-amber-50/40 border-amber-200' : 'bg-rose-50/40 border-rose-200'
+                            : selectedHotel
+                              ? occupancy.isValid ? 'bg-slate-50/90 border-slate-200' : 'bg-rose-50/40 border-rose-200'
+                              : 'bg-slate-50/50 border-slate-200'
                       }`}
                     >
                       {/* Hub Header with Status */}
@@ -2423,10 +2508,21 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                         </div>
 
                         <div>
-                          {isManualStay ? (
-                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shrink-0 flex items-center space-x-1">
-                              <span>✨ Manual Stay</span>
+                          {isNoAccommodation ? (
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-300 shrink-0">
+                              No Accommodation (Arranged by Client)
                             </span>
+                          ) : isManualStay ? (
+                            isManualComplete ? (
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shrink-0 flex items-center space-x-1">
+                                <span>✨ Manual Stay</span>
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300 shrink-0 flex items-center space-x-1">
+                                <AlertTriangle className="w-2.5 h-2.5" />
+                                <span>Incomplete Manual Rate</span>
+                              </span>
+                            )
                           ) : selectedHotel ? (
                             occupancy.isValid ? (
                               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200 shrink-0">
@@ -2446,8 +2542,89 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                         </div>
                       </div>
 
-                      {/* CASE 1: MANUALLY ADDED HOTEL STAY */}
-                      {isManualStay && manualDetails ? (
+                      {/* ACCOMMODATION DROPDOWN (ALWAYS SHOWN FOR EVERY HUB; AUTO-SELECTS NO ACCOMMODATION IN LAND-ONLY MODE) */}
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
+                          <span>Accommodation Selection ({hub.hubName})</span>
+                          {canAddManualHotel && !isLandOnlyMode && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenManualHotelModal(hub.id)}
+                              className="text-[10px] text-amber-800 hover:text-amber-900 font-bold hover:underline cursor-pointer"
+                            >
+                              + Add Manual Hotel / Custom Rate
+                            </button>
+                          )}
+                        </label>
+                        <select
+                          value={dropdownSelectValue}
+                          disabled={isLandOnlyMode}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === 'ADD_MANUAL_HOTEL_ACTION') {
+                              onOpenManualHotelModal(hub.id);
+                            } else if (val === 'NO_ACCOMMODATION' || val === 'LAND_ONLY_HUB') {
+                              handleSelectNoAccommodation(hub.id);
+                            } else if (val === 'MANUAL_HOTEL_SELECTED') {
+                              if (onOpenEditManualHotel) {
+                                onOpenEditManualHotel(hub.id);
+                              } else {
+                                onOpenManualHotelModal(hub.id);
+                              }
+                            } else if (val) {
+                              const h = availableHotels.find(x => x.id === val);
+                              if (h) {
+                                handleSelectHotel(hub.order, h, h.roomTypes?.[0]?.id, currentRoomsCount);
+                              }
+                            } else {
+                              handleRemoveHotel(hub.id);
+                            }
+                          }}
+                          className={`w-full px-3 py-2 rounded-xl border text-xs outline-none shadow-2xs ${
+                            isLandOnlyMode
+                              ? 'bg-purple-50/60 border-purple-200 text-purple-950 font-bold cursor-not-allowed'
+                              : 'bg-white border-slate-300 text-slate-900 cursor-pointer focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20'
+                          }`}
+                        >
+                          <option value="">-- Choose Accommodation for {hub.hubName} --</option>
+                          <option value="NO_ACCOMMODATION">No Accommodation (Arranged by Client)</option>
+                          {canAddManualHotel && !isLandOnlyMode && (
+                            <option value="ADD_MANUAL_HOTEL_ACTION">
+                              Add Manual Hotel / Custom Rate
+                            </option>
+                          )}
+                          {isManualStay && manualDetails && (
+                            <option value="MANUAL_HOTEL_SELECTED">
+                              ✨ Manual Hotel: {manualDetails.hotelName} ({manualDetails.roomType || 'Custom Rate'})
+                            </option>
+                          )}
+                          {!isLandOnlyMode && hotelsToDisplay.map(h => (
+                            <option key={h.id} value={h.id}>
+                              {h.name} ({h.starRating || 5}★) {h.city ? `• ${h.city}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* CASE 0: NO ACCOMMODATION (ARRANGED BY CLIENT) */}
+                      {isNoAccommodation ? (
+                        <div className="bg-white rounded-xl p-3.5 border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+                          <div className="space-y-0.5">
+                            <span className="font-bold text-slate-800 block">
+                              No Accommodation (Arranged by Client)
+                            </span>
+                            <p className="text-[11px] text-slate-500">
+                              {isLandOnlyMode
+                                ? `Land-Only Mode is active. Hotel charges for ${hub.hubName} are excluded from the quote total.`
+                                : `Client is arranging their own accommodation in ${hub.hubName}. No hotel charges are added for this stay.`}
+                            </p>
+                          </div>
+                          <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
+                            {formatCurrency(0, currency)} (Excluded)
+                          </span>
+                        </div>
+                      ) : isManualStay && manualDetails ? (
+                        /* CASE 1: MANUALLY ADDED HOTEL STAY */
                         <div className="bg-amber-50/70 rounded-xl p-4 border border-amber-300 space-y-3 shadow-xs animate-fadeIn">
                           <div className="flex items-start justify-between gap-2">
                             <div>
@@ -2500,18 +2677,31 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             </div>
                           </div>
 
-                          {/* Price Display */}
-                          <div className="bg-white p-2.5 rounded-lg border border-slate-200 space-y-1">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-slate-900">Final Selling Price:</span>
-                              <span className="text-sm font-extrabold font-mono text-emerald-600">
-                                {formatCurrency(manualSellingPrice, currency)}
-                              </span>
+                          {/* Price Display or Incomplete Warning */}
+                          {isManualComplete ? (
+                            <div className="bg-white p-2.5 rounded-lg border border-slate-200 space-y-1">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-slate-900">Final Selling Price:</span>
+                                <span className="text-sm font-extrabold font-mono text-emerald-600">
+                                  {formatCurrency(manualSellingPrice, currency)}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-emerald-700 font-medium">
+                                ✓ Clean fixed-stay price • Includes all taxes & fees
+                              </p>
                             </div>
-                            <p className="text-[10px] text-emerald-700 font-medium">
-                              ✓ Clean fixed-stay price • Includes all taxes & fees
-                            </p>
-                          </div>
+                          ) : (
+                            <div className="bg-rose-50 p-2.5 rounded-lg border border-rose-200 text-rose-800 text-[11px] flex items-center justify-between">
+                              <span>⚠️ Required pricing information is incomplete for this manual hotel.</span>
+                              <button
+                                type="button"
+                                onClick={() => onOpenEditManualHotel ? onOpenEditManualHotel(hub.id) : onOpenManualHotelModal(hub.id)}
+                                className="font-bold underline cursor-pointer ml-2"
+                              >
+                                Complete Rate
+                              </button>
+                            </div>
+                          )}
 
                           <div className="flex items-center justify-between pt-1 border-t border-amber-200/80 text-[10px]">
                             <button
@@ -2531,54 +2721,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                           </div>
                         </div>
                       ) : (
-                        /* CASE 2: MASTER HOTEL SELECTOR & OPTION TO ADD MANUAL */
+                        /* CASE 2: MASTER HOTEL DETAILS OR UNASSIGNED PROMPT */
                         <div className="space-y-3">
-                          {/* Hotel Selector */}
-                          <div className="space-y-1">
-                            <label className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
-                              <span>Select Contracted Hotel</span>
-                              {canAddManualHotel && (
-                                <button
-                                  type="button"
-                                  onClick={() => onOpenManualHotelModal(hub.id)}
-                                  className="text-[10px] text-amber-800 hover:text-amber-900 font-bold hover:underline cursor-pointer"
-                                >
-                                  Custom Rate
-                                </button>
-                              )}
-                            </label>
-                            <select
-                              value={selectedHotel?.id || ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                if (val === 'ADD_MANUAL_HOTEL_ACTION') {
-                                  onOpenManualHotelModal(hub.id);
-                                } else if (val && val !== 'LAND_ONLY_HUB') {
-                                  const h = availableHotels.find(x => x.id === val);
-                                  if (h) {
-                                    handleSelectHotel(hub.order, h, h.roomTypes?.[0]?.id, currentRoomsCount);
-                                  }
-                                } else {
-                                  handleRemoveHotel(hub.id);
-                                }
-                              }}
-                              className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-xs text-slate-900 outline-none cursor-pointer focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20 shadow-2xs"
-                            >
-                              <option value="">-- Choose Hotel for {hub.hubName} --</option>
-                              <option value="LAND_ONLY_HUB">No Accommodation (Arranged by Client)</option>
-                              {canAddManualHotel && (
-                                <option value="ADD_MANUAL_HOTEL_ACTION">
-                                  ✨ Add Manual Hotel / Custom Rate...
-                                </option>
-                              )}
-                              {hotelsToDisplay.map(h => (
-                                <option key={h.id} value={h.id}>
-                                  {h.name} ({h.starRating || 5}★) {h.city ? `• ${h.city}` : ''}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
                           {/* If Master Hotel Selected */}
                           {selectedHotel ? (
                             <div className="bg-white rounded-xl p-3.5 border border-slate-200 space-y-3 shadow-xs">
@@ -2753,18 +2897,27 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             </div>
                           ) : (
                             <div className="space-y-2">
-                              <p className="text-[10px] text-slate-400 italic">
-                                Leave unassigned if accommodation is booked separately by client.
+                              <p className="text-[10px] text-slate-500 italic">
+                                Choose a contracted hotel, select "No Accommodation (Arranged by Client)", or add a manual hotel rate for {hub.hubName}.
                               </p>
-                              {canAddManualHotel && (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                 <button
                                   type="button"
-                                  onClick={() => onOpenManualHotelModal(hub.id)}
-                                  className="w-full py-2 px-3 rounded-xl border border-dashed border-amber-300 hover:border-amber-400 bg-amber-50/40 hover:bg-amber-50 text-amber-900 text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-2xs"
+                                  onClick={() => handleSelectNoAccommodation(hub.id)}
+                                  className="w-full py-2 px-3 rounded-xl border border-slate-300 hover:border-purple-400 bg-white hover:bg-purple-50 text-slate-800 hover:text-purple-900 text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-2xs"
                                 >
-                                  <span>Add Manual Hotel / Custom Rate</span>
+                                  <span>No Accommodation (Arranged by Client)</span>
                                 </button>
-                              )}
+                                {canAddManualHotel && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenManualHotelModal(hub.id)}
+                                    className="w-full py-2 px-3 rounded-xl border border-dashed border-amber-300 hover:border-amber-400 bg-amber-50/40 hover:bg-amber-50 text-amber-900 text-xs font-bold transition-all flex items-center justify-center cursor-pointer shadow-2xs"
+                                  >
+                                    <span>Add Manual Hotel / Custom Rate</span>
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -2801,7 +2954,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     </button>
                   )}
                   <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                    Step 4 of 8
+                    Step 4 of 7
                   </span>
                 </div>
               </div>
@@ -3061,6 +3214,37 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                         </div>
                                       )}
 
+                                      {/* Vehicle Specification Badge for Private Tours and Transfers */}
+                                      {Boolean(
+                                        item.vehicleNameSnapshot || 
+                                        item.configuration_snapshot?.vehicleName || 
+                                        item.metadata?.vehicleName ||
+                                        (item.product.category === 'Private Tours' && (item.vehicleId || item.product.vehicleId))
+                                      ) && (
+                                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-700 bg-amber-50/80 border border-amber-200/80 px-2 py-0.5 rounded-lg">
+                                          <Car className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                          <span className="font-bold text-amber-950">
+                                            {item.vehicleNameSnapshot || item.configuration_snapshot?.vehicleName || item.metadata?.vehicleName || 'Private Vehicle'}
+                                          </span>
+                                          {Boolean(item.vehicleCapacitySnapshot || item.configuration_snapshot?.masterCapacity) && (
+                                            <>
+                                              <span className="text-amber-300">•</span>
+                                              <span className="text-amber-800 font-medium">
+                                                {item.vehicleCapacitySnapshot || item.configuration_snapshot?.masterCapacity} Passenger Seats
+                                              </span>
+                                            </>
+                                          )}
+                                          {Boolean(item.vehicleTypeSnapshot || item.configuration_snapshot?.vehicleType) && (
+                                            <>
+                                              <span className="text-amber-300">•</span>
+                                              <span className="text-slate-600">
+                                                {item.vehicleTypeSnapshot || item.configuration_snapshot?.vehicleType}
+                                              </span>
+                                            </>
+                                          )}
+                                        </div>
+                                      )}
+
                                       <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 mt-1">
                                         <span>Pax: {item.pax.adults} Adults{item.pax.children > 0 ? `, ${item.pax.children} Ch` : ''}</span>
                                         {!isRailQuoteItem(item) && item.product.duration && (
@@ -3230,7 +3414,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   </div>
                 </div>
                 <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                  Step 5 of 8
+                  Step 5 of 7
                 </span>
               </div>
 
@@ -3246,340 +3430,76 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 onAddProduct={addProductToQuote}
                 onRemoveProduct={removeProductFromQuote}
                 onOpenVisaPickerModal={onOpenVisaPickerModal}
+                onOpenAddonModal={onOpenAddonModal}
                 onOpenEditItem={onOpenEditItem}
                 activeOptionNumber={activeOptionTab}
               />
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveStepId(6)}
+                  className="px-5 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 shadow-md"
+                >
+                  <span>Continue to Step 6: Review & Pricing</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           )}
 
-          {/* STEP 6: OPTIONAL SERVICES */}
-          {activeStepId === 6 && (
-            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
-              <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
-                    <Sparkles className="w-5 h-5" />
+
+          {/* STEP 6: REVIEW & PRICING */}
+          {activeStepId === 6 && (() => {
+            const hotelsTotalSelling = hotelItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+            const activitiesTotalSelling = activityItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+            const transfersTotalSelling = groundLogisticsItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+            const visaTotalSelling = visaItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+            const optionalTotalSelling = addonItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+
+            const totalPax = Math.max(1, adultsCount + childrenCount + infantsCount);
+            const marginPercentageValue = effectiveMarginType === 'PERCENTAGE' 
+              ? effectiveMarginValue 
+              : effectiveBasePrice > 0 
+                ? Number(((effectiveMarginAmount / effectiveBasePrice) * 100).toFixed(1)) 
+                : 0;
+
+            const isNegativeMargin = (effectiveMarginValue || 0) < 0;
+            const isHighMargin = effectiveMarginType === 'PERCENTAGE' && (effectiveMarginValue || 0) > 100;
+
+            const internalPricing = canViewInternalCosts ? calculateQuoteInternalBreakdown({
+              items: quotationScope === 'LAND_ONLY'
+                ? items.filter(it => !(
+                    (it.product.category || '').toLowerCase().includes('hotel') ||
+                    (it.product.category || '').toLowerCase().includes('accommodation') ||
+                    it.product.productType === 'Hotel' ||
+                    it.product.productType === 'Hotel & Resort' ||
+                    it.isManualHotel
+                  ))
+                : items,
+              targetCurrency: currency,
+              agentMarginType: effectiveMarginType,
+              agentMarginValue: effectiveMarginValue,
+              overallDiscountPercent: overallDiscountPercent || 0,
+              userRole: user?.role
+            }) : null;
+
+            return (
+              <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
+                <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
+                      <DollarSign className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h2 className="text-base font-black text-slate-900">Step 6: Review & Pricing</h2>
+                      <p className="text-xs text-slate-500">Live feasibility diagnostics, route coherence, day-by-day validation, and transparent pricing & margin controls.</p>
+                    </div>
                   </div>
-                  <div>
-                    <h2 className="text-base font-black text-slate-900">Step 6: Optional Services</h2>
-                    <p className="text-xs text-slate-500">Optional upgrades, international travel protection, 5G eSIM connectivity, and VIP airport & ground add-ons.</p>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <button
-                    type="button"
-                    onClick={() => onOpenAddonModal('ALL')}
-                    className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-bold transition-all cursor-pointer flex items-center shadow-2xs"
-                  >
-                    <span>Browse Full Add-ons Catalog</span>
-                  </button>
                   <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                    Step 6 of 8
+                    Step 6 of 7
                   </span>
                 </div>
-              </div>
-
-              {/* Optional Services Summary Banner */}
-              <div className="bg-slate-900 text-white p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase text-[#00E5C0] tracking-wider block">
-                    Optional Services & Upgrades Summary
-                  </span>
-                  <div className="flex items-baseline space-x-2">
-                    <span className="text-2xl font-black font-mono text-white">
-                      {formatCurrency(addonTotalSelling, currency)}
-                    </span>
-                    <span className="text-xs text-slate-400 font-medium">
-                      • {addonItems.length} {addonItems.length === 1 ? 'Option' : 'Options'} Selected
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onOpenAddonModal('INSURANCE')}
-                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5"
-                  >
-                    <Shield className="w-3.5 h-3.5" />
-                    <span>Travel Protection</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onOpenAddonModal('ESIM')}
-                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-blue-300 border border-slate-700 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5"
-                  >
-                    <Smartphone className="w-3.5 h-3.5" />
-                    <span>5G eSIM Data</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onOpenAddonModal('SERVICES')}
-                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-[#00E5C0] border border-slate-700 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5"
-                  >
-                    <Plane className="w-3.5 h-3.5" />
-                    <span>VIP Concierge</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Active Optional Services in Quote */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-black text-slate-700 uppercase tracking-wider">
-                    Selected Optional Services in Quotation ({addonItems.length})
-                  </h3>
-                  {addonItems.length > 0 && (
-                    <span className="text-xs font-mono font-bold text-emerald-700">
-                      Subtotal: {formatCurrency(addonTotalSelling, currency)}
-                    </span>
-                  )}
-                </div>
-
-                {addonItems.length === 0 ? (
-                  <div className="p-6 rounded-2xl bg-slate-50 border border-dashed border-slate-300 text-center space-y-2">
-                    <Sparkles className="w-7 h-7 text-slate-400 mx-auto" />
-                    <h4 className="text-xs font-bold text-slate-800">No Optional Services Added Yet</h4>
-                    <p className="text-[11px] text-slate-500 max-w-md mx-auto">
-                      Select from the optional travel insurance plans, high-speed 5G eSIMs, or VIP airport & ground concierge upgrades below to enhance your client proposal.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {addonItems.map(item => (
-                      <div
-                        key={item.id}
-                        className="p-4 rounded-2xl bg-slate-50 border border-slate-200 hover:border-slate-300 transition-all flex flex-col justify-between space-y-3 shadow-2xs"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="space-y-1 min-w-0">
-                            <span className="inline-block px-2 py-0.5 rounded text-[10px] font-black uppercase bg-teal-100 text-teal-900 border border-teal-200">
-                              {item.product.subcategory || item.product.category || 'Optional Service'}
-                            </span>
-                            <h4 className="text-xs sm:text-sm font-black text-slate-900 truncate">
-                              {getInventoryDisplayName(item)}
-                            </h4>
-                            <p className="text-[11px] text-slate-500 line-clamp-2">
-                              {item.product.shortDescription || item.notes}
-                            </p>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <span className="text-[10px] text-slate-400 block">Selling Price</span>
-                            <span className="text-sm font-black font-mono text-emerald-600">
-                              {formatCurrency(item.calculation?.finalTotalSellingPrice || 0, currency)}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between text-xs">
-                          <span className="text-[11px] text-slate-500 font-medium">
-                            Pax: <strong className="text-slate-800">{item.pax.adults} Adults{item.pax.children > 0 ? `, ${item.pax.children} Ch` : ''}</strong>
-                          </span>
-                          <div className="flex items-center space-x-2">
-                            {onOpenEditItem && (
-                              <button
-                                type="button"
-                                onClick={() => onOpenEditItem(item)}
-                                className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold cursor-pointer"
-                              >
-                                Configure
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => removeProductFromQuote(item.id)}
-                              className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-bold cursor-pointer flex items-center space-x-1"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                              <span>Remove</span>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* 1. Optional VIP Airport & Concierge Upgrades */}
-              <div className="space-y-3 pt-2 border-t border-slate-100">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <Plane className="w-4 h-4 text-emerald-600" />
-                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                      VIP Airport Fast-Track, Luggage & Concierge Upgrades
-                    </h3>
-                  </div>
-                  <span className="text-[11px] text-slate-400 font-medium">Instant Confirmation</span>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="p-4 rounded-2xl border border-slate-200 bg-emerald-50/30 hover:border-emerald-300 transition-all flex flex-col justify-between space-y-3">
-                    <div className="space-y-1">
-                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-900">VIP Fast-Track</span>
-                      <h4 className="text-xs font-bold text-slate-900">Airport Aerobridge Meet & Greet</h4>
-                      <p className="text-[11px] text-slate-600">Personal escort from aircraft door through express immigration & luggage hall.</p>
-                    </div>
-                    <div className="pt-2 border-t border-emerald-200/80 flex items-center justify-between">
-                      <span className="text-sm font-black font-mono text-slate-900">
-                        {formatCurrency(convertCurrency(110, 'USD', currency), currency)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleQuickAddOptionalVipService('VIP_MEET_GREET')}
-                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer flex items-center"
-                      >
-                        <span>Add Option</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-2xl border border-slate-200 bg-emerald-50/30 hover:border-emerald-300 transition-all flex flex-col justify-between space-y-3">
-                    <div className="space-y-1">
-                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-900">Ground Luggage</span>
-                      <h4 className="text-xs font-bold text-slate-900">Dedicated Luggage Support Van</h4>
-                      <p className="text-[11px] text-slate-600">Separate dedicated luggage van for excess baggage, golf bags, and shopping boxes.</p>
-                    </div>
-                    <div className="pt-2 border-t border-emerald-200/80 flex items-center justify-between">
-                      <span className="text-sm font-black font-mono text-slate-900">
-                        {formatCurrency(convertCurrency(135, 'USD', currency), currency)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleQuickAddOptionalVipService('LUGGAGE_VAN')}
-                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer flex items-center"
-                      >
-                        <span>Add Option</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-2xl border border-slate-200 bg-emerald-50/30 hover:border-emerald-300 transition-all flex flex-col justify-between space-y-3">
-                    <div className="space-y-1">
-                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-900">5G Device</span>
-                      <h4 className="text-xs font-bold text-slate-900">Pocket Wi-Fi Hotspot ({tripNights + 1} Days)</h4>
-                      <p className="text-[11px] text-slate-600">Unlimited portable 5G hotspot for up to 8 devices with airport pickup & return.</p>
-                    </div>
-                    <div className="pt-2 border-t border-emerald-200/80 flex items-center justify-between">
-                      <span className="text-sm font-black font-mono text-slate-900">
-                        {formatCurrency(convertCurrency(10 * Math.max(1, tripNights + 1), 'USD', currency), currency)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleQuickAddOptionalVipService('PORTABLE_WIFI')}
-                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer flex items-center"
-                      >
-                        <span>Add Option</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* 2. Optional International Travel Protection Plans */}
-              <div className="space-y-3 pt-2 border-t border-slate-100">
-                <div className="flex items-center space-x-2">
-                  <ShieldCheck className="w-4 h-4 text-amber-600" />
-                  <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                    Optional International Travel Insurance Plans ({tripNights + 1} Days)
-                  </h3>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {B2B_INSURANCE_PLANS.map(plan => {
-                    const totalDays = Math.max(1, tripNights + 1);
-                    const estSellingUSD = (plan.sellingPricePerDayAdultUSD * totalDays * adultsCount) +
-                                          (plan.sellingPricePerDayChildUSD * totalDays * childrenCount);
-                    return (
-                      <div key={plan.id} className="p-4 rounded-2xl border border-slate-200 bg-amber-50/30 hover:border-amber-300 transition-all flex flex-col justify-between space-y-3">
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-amber-100 text-amber-900">
-                              ${(plan.coverageAmountUSD / 1000).toFixed(0)}k Medical Cover
-                            </span>
-                            <span className="text-xs font-bold text-slate-500">{plan.provider.split('/')[0]}</span>
-                          </div>
-                          <h4 className="text-xs sm:text-sm font-black text-slate-900">{plan.name}</h4>
-                          <p className="text-[11px] text-slate-600">{plan.coverageSummary}</p>
-                        </div>
-
-                        <div className="pt-2 border-t border-amber-200/80 flex items-center justify-between">
-                          <div>
-                            <span className="text-[10px] text-slate-400 block">Total for {adultsCount + childrenCount} Pax ({totalDays} Days)</span>
-                            <span className="text-sm font-black font-mono text-slate-900">
-                              {formatCurrency(convertCurrency(estSellingUSD, 'USD', currency), currency)}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleQuickAddOptionalInsurance(plan)}
-                            className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold cursor-pointer flex items-center shadow-2xs"
-                          >
-                            <span>Add Insurance</span>
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 3. Optional 5G eSIM Data Packs */}
-              <div className="space-y-3 pt-2 border-t border-slate-100">
-                <div className="flex items-center space-x-2">
-                  <Smartphone className="w-4 h-4 text-blue-600" />
-                  <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                    Instant International 5G eSIM Connectivity
-                  </h3>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {B2B_ESIM_PLANS.map(plan => (
-                    <div key={plan.id} className="p-4 rounded-2xl border border-slate-200 bg-blue-50/30 hover:border-blue-300 transition-all flex flex-col justify-between space-y-3">
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-900">
-                          {plan.dataAllowance}
-                        </span>
-                        <h4 className="text-xs font-black text-slate-900 mt-1">{plan.destination}</h4>
-                        <p className="text-[11px] text-slate-600">{plan.validityDays} Days Validity • {plan.carrier}</p>
-                      </div>
-
-                      <div className="pt-2 border-t border-blue-200/80 flex items-center justify-between">
-                        <span className="text-sm font-black font-mono text-slate-900">
-                          {formatCurrency(convertCurrency(plan.sellingPriceUSD, 'USD', currency), currency)}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleQuickAddOptionalEsim(plan)}
-                          className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer flex items-center shadow-2xs"
-                        >
-                          <span>Add eSIM</span>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* STEP 7: REVIEW & FEASIBILITY */}
-          {activeStepId === 7 && (
-            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
-              <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
-                    <CheckCircle2 className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h2 className="text-base font-black text-slate-900">Step 7: Review & Feasibility</h2>
-                    <p className="text-xs text-slate-500">Live feasibility diagnostics, route coherence, and chronological day-by-day itinerary validation.</p>
-                  </div>
-                </div>
-                <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                  Step 7 of 8
-                </span>
-              </div>
 
               {/* Feasibility Score Card */}
               <div className="p-5 rounded-2xl bg-slate-900 text-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -3827,44 +3747,24 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     })}
                 </div>
               </div>
-            </div>
-          )}
 
-          {/* STEP 8: PRICING & MARGIN */}
-          {activeStepId === 8 && (() => {
-            const hotelsTotalSelling = hotelItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
-            const activitiesTotalSelling = activityItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
-            const transfersTotalSelling = groundLogisticsItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
-            const visaTotalSelling = visaItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
-            const optionalTotalSelling = addonItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
-
-            const totalPax = Math.max(1, adultsCount + childrenCount + infantsCount);
-            const marginPercentageValue = effectiveMarginType === 'PERCENTAGE' 
-              ? effectiveMarginValue 
-              : effectiveBasePrice > 0 
-                ? Number(((effectiveMarginAmount / effectiveBasePrice) * 100).toFixed(1)) 
-                : 0;
-
-            const isNegativeMargin = (effectiveMarginValue || 0) < 0;
-            const isHighMargin = effectiveMarginType === 'PERCENTAGE' && (effectiveMarginValue || 0) > 100;
-
-            return (
-              <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
-                {/* Step Header */}
-                <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
-                      <DollarSign className="w-5 h-5" />
+              {/* COMMERCIAL PRICING & MARGIN ARCHITECTURE */}
+              <div className="pt-6 border-t border-slate-200 space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center space-x-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
+                      <DollarSign className="w-4 h-4" />
                     </div>
                     <div>
-                      <h2 className="text-base font-black text-slate-900">Step 8: Pricing & Margin</h2>
-                      <p className="text-xs text-slate-500">Authoritative system base pricing, partner agent margin controls, and quotation dispatch actions.</p>
+                      <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
+                        Commercial Pricing & Partner Margin Controls
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        Authoritative wholesale supplier base, customizable agency margin, and customer-facing selling prices.
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                      Step 8 of 8
-                    </span>
                     {lastSavedTimestamp && (
                       <span className="text-[11px] font-medium text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
                         Auto-saved {lastSavedTimestamp}
@@ -3872,6 +3772,243 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     )}
                   </div>
                 </div>
+
+                {/* INTERNAL ONLY SECTION: INTERNAL PRICING BREAKDOWN (ADMIN & AUTHORIZED INTERNAL TEAM) */}
+                {canViewInternalCosts && internalPricing && (
+                  <div className="bg-slate-950 text-white rounded-3xl border-2 border-indigo-500/50 p-6 shadow-md space-y-5 animate-fadeIn">
+                    {/* Section Title & Authorization Metadata */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                          <ShieldCheck className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <h3 className="text-sm font-black uppercase tracking-wider text-slate-100">
+                              Internal Pricing Breakdown
+                            </h3>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                              Internal Only • Confidential
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400">
+                            Authoritative underlying supplier nett costs, margins, and taxes for Option {activeOptionTab}. Strictly hidden from external B2B agents.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[11px] font-mono text-slate-300 bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-lg">
+                          Active Option: {activeOptionTab} of 3 • Currency: <strong className="text-[#00E5C0]">{currency}</strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Incomplete Pricing Warning Alert */}
+                    {!internalPricing.isComplete && (
+                      <div className="p-4 rounded-2xl bg-amber-950/70 border border-amber-600/50 text-amber-200 space-y-2">
+                        <div className="flex items-center space-x-2 text-xs font-bold text-amber-300">
+                          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                          <span>Pricing Incomplete: One or more quote items lack an authoritative nett rate or exchange rate.</span>
+                        </div>
+                        <p className="text-[11px] text-amber-300/80">
+                          Total Nett Cost cannot be verified accurately until all items have authorized supplier tariffs. Affected items:
+                        </p>
+                        <div className="space-y-1 pt-1">
+                          {internalPricing.incompleteWarnings.map((warn, wIdx) => (
+                            <div key={wIdx} className="text-[11px] flex items-center space-x-2 bg-amber-900/40 px-2.5 py-1 rounded-lg border border-amber-800/50">
+                              <span className="font-bold text-amber-100">• {warn.productName} ({warn.category || 'Service'}):</span>
+                              <span className="text-amber-300">{warn.reason}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 1. TOTAL NETT COST — PROMINENTLY DISPLAYED BEFORE MARGIN & TAX BREAKDOWN */}
+                    <div className="bg-gradient-to-br from-slate-900 to-slate-900/90 rounded-2xl border border-slate-800 p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-[11px] font-black uppercase tracking-wider text-emerald-400">
+                            1. Total Nett Cost
+                          </span>
+                          <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-mono">
+                            Before Margin, Taxes & Service Fees
+                          </span>
+                        </div>
+
+                        {internalPricing.isComplete ? (
+                          <div>
+                            <div className="text-3xl sm:text-4xl font-black font-mono text-emerald-400 tracking-tight">
+                              {formatCurrency(internalPricing.totalNettCost, currency)}
+                            </div>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              Combined underlying nett cost of all applicable priced items in {currency} before margin, taxes, and service fees.
+                            </p>
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="text-2xl font-black font-mono text-amber-400 flex items-center space-x-2">
+                              <AlertCircle className="w-6 h-6 text-amber-400 shrink-0" />
+                              <span>Calculation Incomplete (Pending Tariffs)</span>
+                            </div>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              Total Nett Cost cannot be accurately determined because 1 or more items lack verified nett rates.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center space-x-3 shrink-0">
+                        <div className="text-right">
+                          <span className="text-[10px] text-slate-400 uppercase tracking-wider font-bold block">
+                            Pricing Basis
+                          </span>
+                          <span className="text-xs font-black text-slate-200">
+                            Option {activeOptionTab} Active
+                          </span>
+                        </div>
+                        <div className="px-3.5 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-right">
+                          <span className="text-[10px] text-slate-400 uppercase tracking-wider font-bold block">
+                            Quote Currency
+                          </span>
+                          <span className="text-xs font-mono font-bold text-teal-400">
+                            {currency}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* FIELDS 2 TO 5: TOTAL MARGIN, TAX AMOUNT, SERVICE FEE, FINAL PACKAGE PRICE */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                      {/* 2. Total Margin */}
+                      <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 space-y-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                          2. Total Margin
+                        </span>
+                        <span className="text-xl font-black font-mono text-[#00E5C0] block">
+                          + {formatCurrency(internalPricing.totalMargin, currency)}
+                        </span>
+                        <p className="text-[10px] text-slate-400 leading-snug">
+                          Authorized DMC margin + partner margin ({effectiveMarginType === 'PERCENTAGE' ? `${effectiveMarginValue}%` : formatCurrency(effectiveMarginValue, currency)}) net of discounts.
+                        </p>
+                      </div>
+
+                      {/* 3. Tax Amount */}
+                      <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 space-y-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                          3. Tax Amount
+                        </span>
+                        <span className="text-xl font-black font-mono text-indigo-300 block">
+                          + {formatCurrency(internalPricing.taxAmount, currency)}
+                        </span>
+                        <p className="text-[10px] text-slate-400 leading-snug">
+                          Applicable statutory taxes calculated according to existing pricing rules.
+                        </p>
+                      </div>
+
+                      {/* 4. Service Fee */}
+                      <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 space-y-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                          4. Service Fee
+                        </span>
+                        <span className="text-xl font-black font-mono text-cyan-300 block">
+                          + {formatCurrency(internalPricing.serviceFee, currency)}
+                        </span>
+                        <p className="text-[10px] text-slate-400 leading-snug">
+                          Applicable platform service fee according to existing pricing rules.
+                        </p>
+                      </div>
+
+                      {/* 5. Final Package Price */}
+                      <div className="bg-slate-900/90 rounded-2xl border-2 border-teal-500/40 p-4 space-y-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-teal-400 block">
+                          5. Final Package Price
+                        </span>
+                        <span className="text-xl font-black font-mono text-teal-300 block">
+                          {formatCurrency(internalPricing.finalPackagePrice, currency)}
+                        </span>
+                        <p className="text-[10px] text-slate-400 leading-snug">
+                          Customer-facing total produced by existing Pricing Engine.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Collapsible Itemized Cost Breakdown Audit Table */}
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowInternalItemized(!showInternalItemized)}
+                        className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-300 transition-colors cursor-pointer"
+                      >
+                        <span className="flex items-center space-x-2">
+                          <Layers className="w-4 h-4 text-teal-400" />
+                          <span>Itemized Underlying Nett Cost Audit ({internalPricing.itemizedBreakdown.length} Services)</span>
+                        </span>
+                        <span className="text-slate-400 flex items-center space-x-1">
+                          <span>{showInternalItemized ? 'Hide Itemized Audit' : 'View Itemized Breakdown'}</span>
+                          {showInternalItemized ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </span>
+                      </button>
+
+                      {showInternalItemized && (
+                        <div className="mt-3 overflow-x-auto rounded-xl border border-slate-800">
+                          <table className="w-full text-left text-xs">
+                            <thead className="bg-slate-900 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800">
+                              <tr>
+                                <th className="px-3.5 py-2.5">Service / Product</th>
+                                <th className="px-3.5 py-2.5">Category</th>
+                                <th className="px-3.5 py-2.5 text-right">Native Cost</th>
+                                <th className="px-3.5 py-2.5 text-right">Nett Cost ({currency})</th>
+                                <th className="px-3.5 py-2.5 text-right">Markup ({currency})</th>
+                                <th className="px-3.5 py-2.5 text-right">Selling Price ({currency})</th>
+                                <th className="px-3.5 py-2.5 text-center">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/60 bg-slate-950 font-mono text-[11px]">
+                              {internalPricing.itemizedBreakdown.map((row, rIdx) => (
+                                <tr key={row.itemId || rIdx} className="hover:bg-slate-900/50 transition-colors">
+                                  <td className="px-3.5 py-2 font-sans font-bold text-slate-200">
+                                    {row.productName}
+                                  </td>
+                                  <td className="px-3.5 py-2 font-sans text-slate-400">
+                                    {row.category}
+                                  </td>
+                                  <td className="px-3.5 py-2 text-right text-slate-400">
+                                    {row.isExcludedNoAccommodation ? '—' : `${formatCurrency(row.nativeNetCost, row.nativeCurrency)}`}
+                                  </td>
+                                  <td className="px-3.5 py-2 text-right font-bold text-emerald-400">
+                                    {row.isExcludedNoAccommodation ? '0.00 (Excluded)' : (!row.hasValidRate ? 'Pending' : formatCurrency(row.convertedNetCost, currency))}
+                                  </td>
+                                  <td className="px-3.5 py-2 text-right text-slate-300">
+                                    {row.isExcludedNoAccommodation ? '—' : `+${formatCurrency(row.markupAmount, currency)}`}
+                                  </td>
+                                  <td className="px-3.5 py-2 text-right font-bold text-slate-100">
+                                    {row.isExcludedNoAccommodation ? '0.00' : formatCurrency(row.finalSellingPrice, currency)}
+                                  </td>
+                                  <td className="px-3.5 py-2 text-center font-sans">
+                                    {row.isExcludedNoAccommodation ? (
+                                      <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400">
+                                        Client Arranged
+                                      </span>
+                                    ) : row.hasValidRate ? (
+                                      <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800/60">
+                                        Priced
+                                      </span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800/60">
+                                        Incomplete
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* 3 Core Commercial Architecture Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -4101,30 +4238,964 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     </div>
                   </div>
                 </div>
+              </div>
 
-                {/* COMMERCIAL SUMMARY & BOOKING CONVERSION */}
+                {/* COMMERCIAL SUMMARY & NEXT STEP TRANSITION */}
                 <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-4">
                   <div>
                     <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                      Commercial Pricing Ready
+                      Commercial Pricing Complete
                     </h3>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      Use the top header action bar to save draft, share via WhatsApp, send email, download PDF, or generate the quotation preview.
+                      Itinerary feasibility, chronological scheduling, and partner pricing have been calculated. Proceed to Step 7 to generate and dispatch the final quotation.
                     </p>
                   </div>
                   <div className="flex items-center space-x-3">
-                    {lastSavedTimestamp && (
-                      <span className="text-[11px] text-slate-400 font-medium">
-                        Last saved: {lastSavedTimestamp}
-                      </span>
-                    )}
                     <button
                       type="button"
-                      onClick={onConvertBooking}
-                      className="px-4 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
+                      onClick={() => setActiveStepId(7)}
+                      className="px-5 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 shadow-md"
                     >
-                      <BookmarkCheck className="w-4 h-4" />
-                      <span>Convert to Booking</span>
+                      <span>Continue to Step 7: Finalise & Generate Quote</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* STEP 7: FINALISE & GENERATE QUOTE */}
+          {activeStepId === 7 && (() => {
+            const totalPax = Math.max(1, adultsCount + childrenCount + infantsCount);
+            const hasClientName = Boolean(clientName && clientName.trim().length > 0);
+            const hasRouteHubs = routeHubs.length > 0;
+            const hasItems = items.length > 0;
+            const hasValidPricing = effectiveFinalPrice > 0 && !((effectiveMarginValue || 0) < 0);
+            const allChecklistPassed = hasClientName && hasRouteHubs && hasItems && hasValidPricing;
+
+            const marginPercentageValue = effectiveMarginType === 'PERCENTAGE' 
+              ? effectiveMarginValue 
+              : effectiveBasePrice > 0 
+                ? Number(((effectiveMarginAmount / effectiveBasePrice) * 100).toFixed(1)) 
+                : 0;
+
+            return (
+              <div className="space-y-6 animate-fadeIn">
+                {/* Step Header */}
+                <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
+                      <CheckCircle2 className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h2 className="text-base font-black text-slate-900">Step 7: Finalise & Generate Quote</h2>
+                      <p className="text-xs text-slate-500">
+                        Pre-dispatch quality checklist, proposal overview snapshot, client export generation, and multi-channel dispatch.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                      Step 7 of 7
+                    </span>
+                    {lastSavedTimestamp && (
+                      <span className="text-[11px] font-medium text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
+                        Auto-saved {lastSavedTimestamp}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* 1. Pre-Dispatch Quality & Compliance Validation Checklist */}
+                <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                    <div className="flex items-center space-x-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
+                        <FileCheck className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
+                          Pre-Dispatch Quality & Compliance Checklist
+                        </h3>
+                        <p className="text-[11px] text-slate-500">
+                          Automatic verification of client identity, itinerary coherence, inventory allocations, and commercial clearance.
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center space-x-1.5 ${
+                      allChecklistPassed
+                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                        : 'bg-amber-50 text-amber-800 border border-amber-200'
+                    }`}>
+                      {allChecklistPassed ? (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>4 / 4 Checks Passed • Certified</span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Action Recommended Before Dispatch</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                    {/* Check 1: Client Information */}
+                    <div className={`p-4 rounded-2xl border transition-all ${
+                      hasClientName ? 'bg-emerald-50/50 border-emerald-200' : 'bg-amber-50/60 border-amber-300'
+                    }`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">1. Client Details</span>
+                        {hasClientName ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-amber-600" />
+                        )}
+                      </div>
+                      <div className="font-bold text-xs text-slate-900 truncate">
+                        {hasClientName ? clientName : 'No Client Name'}
+                      </div>
+                      <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                        {clientEmail || clientPhone || 'No contact info provided'}
+                      </p>
+                      {!hasClientName && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveStepId(1)}
+                          className="mt-2 text-[10px] font-bold text-amber-700 hover:text-amber-900 underline cursor-pointer"
+                        >
+                          Add Client Name (Step 1) →
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Check 2: Route & Itinerary */}
+                    <div className={`p-4 rounded-2xl border transition-all ${
+                      hasRouteHubs ? 'bg-emerald-50/50 border-emerald-200' : 'bg-amber-50/60 border-amber-300'
+                    }`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">2. Route & Hubs</span>
+                        {hasRouteHubs ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-amber-600" />
+                        )}
+                      </div>
+                      <div className="font-bold text-xs text-slate-900">
+                        {routeHubs.length} City Hubs Defined
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        {routeTotalNights} of {tripNights} nights allocated
+                      </p>
+                    </div>
+
+                    {/* Check 3: Services & Inclusions */}
+                    <div className={`p-4 rounded-2xl border transition-all ${
+                      hasItems ? 'bg-emerald-50/50 border-emerald-200' : 'bg-amber-50/60 border-amber-300'
+                    }`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">3. Services & Products</span>
+                        {hasItems ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-amber-600" />
+                        )}
+                      </div>
+                      <div className="font-bold text-xs text-slate-900">
+                        {items.length} Included Items
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        {hotelItems.length} hotels • {activityItems.length + groundLogisticsItems.length} tours • {visaItems.length + addonItems.length} ancillary
+                      </p>
+                    </div>
+
+                    {/* Check 4: Commercial Clearance */}
+                    <div className={`p-4 rounded-2xl border transition-all ${
+                      hasValidPricing ? 'bg-emerald-50/50 border-emerald-200' : 'bg-amber-50/60 border-amber-300'
+                    }`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">4. Commercial Pricing</span>
+                        {hasValidPricing ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-amber-600" />
+                        )}
+                      </div>
+                      <div className="font-bold text-xs text-slate-900 font-mono">
+                        {formatCurrency(effectiveFinalPrice, currency)}
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Margin: +{formatCurrency(effectiveMarginAmount, currency)} ({marginPercentageValue}%)
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Certification Banner */}
+                  <div className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
+                    allChecklistPassed 
+                      ? 'bg-gradient-to-r from-emerald-900 to-slate-900 text-white border-emerald-700/50' 
+                      : 'bg-amber-50 border-amber-200 text-amber-900'
+                  }`}>
+                    <div className="flex items-center space-x-3">
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                        allChecklistPassed ? 'bg-emerald-500/20 text-[#00E5C0]' : 'bg-amber-200 text-amber-800'
+                      }`}>
+                        <ShieldCheck className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-black uppercase tracking-wide">
+                          {allChecklistPassed ? 'Proposal Certified for Client Dispatch' : 'Attention: Recommended Information Missing'}
+                        </div>
+                        <p className={`text-[11px] mt-0.5 ${allChecklistPassed ? 'text-slate-300' : 'text-amber-800'}`}>
+                          {allChecklistPassed 
+                            ? 'All quote parameters and pricing baselines are validated. Single source of truth is active for all output formats.'
+                            : 'You may proceed with generating drafts, but adding client details will enhance the generated proposal.'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Proposal Summary & Commercial Snapshot Card */}
+                <div className="bg-slate-900 text-white rounded-3xl border border-slate-800 p-6 shadow-lg space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-800">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 rounded-2xl bg-[#00E5C0]/20 border border-[#00E5C0]/30 text-[#00E5C0] flex items-center justify-center">
+                        <DollarSign className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-black uppercase tracking-wider text-[#00E5C0] block">
+                          Executive Proposal Briefing
+                        </span>
+                        <h3 className="text-lg font-black text-white">
+                          {currentDestination?.name || 'Custom Multidestination Journey'} • {tripNights} Nights
+                        </h3>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <span className="px-3 py-1 rounded-xl bg-slate-800 text-slate-300 text-xs font-mono font-bold border border-slate-700">
+                        Option {activeOptionTab} Active
+                      </span>
+                      <span className="px-3 py-1 rounded-xl bg-slate-800 text-[#00E5C0] text-xs font-mono font-bold border border-slate-700">
+                        {quoteNumber} v{quoteVersion}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* High-Level Itinerary & Party Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 rounded-2xl bg-slate-800/60 border border-slate-700/60 text-xs">
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-bold">Client / Recipient</span>
+                      <span className="font-bold text-white block mt-0.5 truncate">{clientName || 'Valued Client'}</span>
+                      {clientCompany && <span className="text-[10px] text-slate-400 block truncate">{clientCompany}</span>}
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-bold">Travel Dates</span>
+                      <span className="font-bold text-white block mt-0.5">{startDate} → {endDate}</span>
+                      <span className="text-[10px] text-slate-400 block">{tripNights} Nights ({calendarDays.length} Days)</span>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-bold">Travel Party</span>
+                      <span className="font-bold text-white block mt-0.5">{adultsCount} Adults{childrenCount > 0 ? `, ${childrenCount} Ch.` : ''}</span>
+                      <span className="text-[10px] text-slate-400 block">{totalPax} Guests Total</span>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-bold">Route Plan</span>
+                      <span className="font-bold text-white block mt-0.5 truncate">
+                        {routeHubs.length > 0 ? routeHubs.map(h => h.hubName).join(' → ') : currentDestination?.name || 'Open'}
+                      </span>
+                      <span className="text-[10px] text-slate-400 block">{items.length} Configured Services</span>
+                    </div>
+                  </div>
+
+                  {/* Commercial Totals */}
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
+                    <div>
+                      <span className="text-[11px] font-bold text-slate-400 block">Total Client Proposal Price</span>
+                      <div className="flex items-baseline space-x-3">
+                        <span className="text-3xl sm:text-4xl font-black font-mono text-[#00E5C0]">
+                          {formatCurrency(effectiveFinalPrice, currency)}
+                        </span>
+                        <span className="text-xs font-mono text-slate-400">
+                          ({formatCurrency(Math.round(effectiveFinalPrice / totalPax), currency)} / Traveler)
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2 text-xs font-mono text-slate-400">
+                      {canViewInternalCosts && (
+                        <>
+                          <span>Base Wholesale: {formatCurrency(effectiveBasePrice, currency)}</span>
+                          <span>•</span>
+                        </>
+                      )}
+                      <span className="text-emerald-400 font-bold">
+                        {canViewInternalCosts ? 'Agency Margin: ' : 'Your Margin: '}+
+                        {formatCurrency(effectiveMarginAmount, currency)} ({effectiveMarginType === 'PERCENTAGE' ? `${effectiveMarginValue}%` : 'Fixed'})
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ========================================================================= */}
+                {/* SECTION 1: ADMIN — MANUAL MARGIN ADJUSTMENT (ON TOTAL NETT COST) */}
+                {/* ========================================================================= */}
+                {canConfigureAdminManualMargin && (
+                  <div className="bg-white rounded-3xl border-2 border-indigo-200 p-6 shadow-xs space-y-5 animate-fadeIn">
+                    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-indigo-100">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center">
+                          <Sliders className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
+                              Manual Margin Adjustment
+                            </h3>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              Admin Commercial Controls
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500">
+                            Configure an authoritative manual margin calculated directly on top of <strong>Total Nett Cost</strong> before client generation.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[11px] font-bold text-slate-500">Mode:</span>
+                        <div className="inline-flex rounded-xl p-0.5 bg-slate-100 border border-slate-200 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateAdminMarginMode('REPLACE')}
+                            className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                              effectiveAdminMarginMode === 'REPLACE'
+                                ? 'bg-indigo-600 text-white shadow-2xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Replace Base Margin (Default)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateAdminMarginMode('ADD')}
+                            className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                              effectiveAdminMarginMode === 'ADD'
+                                ? 'bg-indigo-600 text-white shadow-2xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Add to Existing Margin
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Display Fields Grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+                      {/* Field 1: Total Nett Cost */}
+                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+                          Total Nett Cost
+                        </span>
+                        <span className="text-sm font-black font-mono text-slate-900 block mt-1">
+                          {formatCurrency(adminTotalNettCost, currency)}
+                        </span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">Authoritative wholesale basis</span>
+                      </div>
+
+                      {/* Field 2: Existing Calculated Margin */}
+                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+                          Existing Calculated Margin
+                        </span>
+                        <span className="text-sm font-black font-mono text-slate-700 block mt-1">
+                          +{formatCurrency(existingCalculatedMargin, currency)}
+                        </span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">
+                          {effectiveAdminMarginMode === 'REPLACE' && effectiveAdminMarginValue > 0 ? 'Replaced by manual' : 'Underlying supplier markup'}
+                        </span>
+                      </div>
+
+                      {/* Field 3: Manual Margin Amount */}
+                      <div className="p-3.5 rounded-2xl bg-indigo-50/60 border border-indigo-200">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 block">
+                          Manual Margin Amount
+                        </span>
+                        <span className="text-sm font-black font-mono text-indigo-900 block mt-1">
+                          +{formatCurrency(adminManualMarginAmount, currency)}
+                        </span>
+                        <span className="text-[10px] text-indigo-600 block mt-0.5">
+                          {effectiveAdminMarginType === 'PERCENTAGE' ? `${effectiveAdminMarginValue}% on Nett Cost` : 'Fixed base amount'}
+                        </span>
+                      </div>
+
+                      {/* Field 4: Revised Selling Price */}
+                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+                          Revised Selling Price
+                        </span>
+                        <span className="text-sm font-black font-mono text-slate-900 block mt-1">
+                          {formatCurrency(adminRevisedSellingPrice, currency)}
+                        </span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">Nett + Margin + Service Fee</span>
+                      </div>
+
+                      {/* Field 5: Final Total */}
+                      <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 block">
+                          Final Total
+                        </span>
+                        <span className="text-sm font-black font-mono text-emerald-700 block mt-1">
+                          {formatCurrency(adminFinalTotal, currency)}
+                        </span>
+                        <span className="text-[10px] text-emerald-600 block mt-0.5">With engine tax & discounts</span>
+                      </div>
+                    </div>
+
+                    {/* Controls Row */}
+                    <div className="p-4 rounded-2xl bg-indigo-50/40 border border-indigo-100 flex flex-wrap items-center justify-between gap-4">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="text-xs font-bold text-slate-700">Manual Margin Type:</span>
+                        <div className="inline-flex rounded-xl p-0.5 bg-white border border-slate-200 shadow-2xs">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateAdminMarginType('PERCENTAGE')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                              effectiveAdminMarginType === 'PERCENTAGE'
+                                ? 'bg-indigo-600 text-white shadow-2xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            <Percent className="w-3.5 h-3.5" />
+                            <span>Percentage (%)</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateAdminMarginType('FIXED')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                              effectiveAdminMarginType === 'FIXED'
+                                ? 'bg-indigo-600 text-white shadow-2xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            <DollarSign className="w-3.5 h-3.5" />
+                            <span>Fixed Amount ({currency})</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-3">
+                        <span className="text-xs font-bold text-slate-700">Margin Value:</span>
+                        <div className="relative w-36">
+                          <input
+                            type="number"
+                            min="0"
+                            max={effectiveAdminMarginType === 'PERCENTAGE' ? 200 : undefined}
+                            step={effectiveAdminMarginType === 'PERCENTAGE' ? 0.5 : 100}
+                            value={effectiveAdminMarginValue}
+                            onChange={(e) => handleUpdateAdminMarginValue(parseFloat(e.target.value) || 0)}
+                            className="w-full pl-3 pr-8 py-1.5 rounded-xl border border-slate-300 font-mono text-xs font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 shadow-2xs"
+                          />
+                          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                            {effectiveAdminMarginType === 'PERCENTAGE' ? '%' : currency}
+                          </span>
+                        </div>
+
+                        {/* Quick Presets */}
+                        <div className="hidden sm:flex items-center space-x-1">
+                          {effectiveAdminMarginType === 'PERCENTAGE' ? (
+                            [0, 10, 15, 20].map(pct => (
+                              <button
+                                key={pct}
+                                type="button"
+                                onClick={() => handleUpdateAdminMarginValue(pct)}
+                                className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                                  effectiveAdminMarginValue === pct
+                                    ? 'bg-indigo-600 text-white border-indigo-600'
+                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                }`}
+                              >
+                                {pct === 0 ? 'Nett' : `${pct}%`}
+                              </button>
+                            ))
+                          ) : (
+                            [0, 5000, 10000, 25000].map(amt => (
+                              <button
+                                key={amt}
+                                type="button"
+                                onClick={() => handleUpdateAdminMarginValue(amt)}
+                                className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                                  effectiveAdminMarginValue === amt
+                                    ? 'bg-indigo-600 text-white border-indigo-600'
+                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                }`}
+                              >
+                                {amt === 0 ? '0' : `+${amt >= 1000 ? `${amt / 1000}k` : amt}`}
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Central Pricing Engine Preservation Note */}
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs text-slate-600">
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                        <span>
+                          Calculation Base: <strong>Total Nett Cost ({formatCurrency(adminTotalNettCost, currency)})</strong>. Preserves configured taxes ({formatCurrency(step7BreakdownPricing?.taxAmount || 0, currency)}), service fees ({formatCurrency(step7BreakdownPricing?.serviceFee || 0, currency)}), and discounts ({formatCurrency(step7BreakdownPricing?.discountAmount || 0, currency)}).
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono font-bold text-slate-400 shrink-0 ml-2">
+                        Single Source of Truth
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* ========================================================================= */}
+                {/* SECTION 2: B2B AGENT — ADDITIONAL AGENT MARGIN (ON FINAL PRICE) */}
+                {/* ========================================================================= */}
+                {canConfigureAgentManualMargin && (
+                  <div className="bg-white rounded-3xl border-2 border-teal-200 p-6 shadow-xs space-y-5 animate-fadeIn">
+                    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-teal-100">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
+                          <Percent className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
+                              Additional Agent Margin
+                            </h3>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                              {isMasterAdminUser ? 'Agency Client Markup Simulation' : 'Agency Client Markup'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500">
+                            Calculated directly on top of the <strong>Existing Final Price</strong> produced by the central pricing engine.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xs font-bold text-slate-600">Markup Basis:</span>
+                        <span className="px-2.5 py-1 rounded-xl bg-slate-100 border border-slate-200 text-xs font-mono font-bold text-slate-800">
+                          Existing Final Price
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Display Fields Grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+                      {/* Field 1: Existing Final Price */}
+                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+                          Existing Final Price
+                        </span>
+                        <span className="text-sm font-black font-mono text-slate-900 block mt-1">
+                          {formatCurrency(existingFinalPrice, currency)}
+                        </span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">Authoritative base before agent markup</span>
+                      </div>
+
+                      {/* Field 2: Additional Margin Amount */}
+                      <div className="p-3.5 rounded-2xl bg-teal-50/60 border border-teal-200">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-teal-700 block">
+                          Additional Margin Amount
+                        </span>
+                        <span className="text-sm font-black font-mono text-teal-900 block mt-1">
+                          +{formatCurrency(additionalAgentMarginAmount, currency)}
+                        </span>
+                        <span className="text-[10px] text-teal-600 block mt-0.5">
+                          {effectiveMarginType === 'PERCENTAGE' ? `${effectiveMarginValue}% markup` : 'Fixed additional amount'}
+                        </span>
+                      </div>
+
+                      {/* Field 3: Revised Final Price */}
+                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+                          Revised Final Price
+                        </span>
+                        <span className="text-sm font-black font-mono text-slate-900 block mt-1">
+                          {formatCurrency(revisedFinalPrice, currency)}
+                        </span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">Existing Final Price + Additional Margin</span>
+                      </div>
+
+                      {/* Field 4: Final Quote Total */}
+                      <div className="p-3.5 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800 text-white border border-slate-700 shadow-sm">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-[#00E5C0] block">
+                          Final Quote Total
+                        </span>
+                        <span className="text-base font-black font-mono text-white block mt-1">
+                          {formatCurrency(revisedFinalPrice, currency)}
+                        </span>
+                        <span className="text-[10px] text-slate-300 block mt-0.5">
+                          {formatCurrency(Math.round(revisedFinalPrice / totalPax), currency)} / traveler
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Controls Row */}
+                    <div className="p-4 rounded-2xl bg-teal-50/40 border border-teal-100 flex flex-wrap items-center justify-between gap-4">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="text-xs font-bold text-slate-700">Manual Margin Type:</span>
+                        <div className="inline-flex rounded-xl p-0.5 bg-white border border-slate-200 shadow-2xs">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateMarginType('PERCENTAGE')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                              effectiveMarginType === 'PERCENTAGE'
+                                ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            <Percent className="w-3.5 h-3.5" />
+                            <span>Percentage (%)</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateMarginType('FIXED')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                              effectiveMarginType === 'FIXED'
+                                ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            <DollarSign className="w-3.5 h-3.5" />
+                            <span>Fixed Amount ({currency})</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-3">
+                        <span className="text-xs font-bold text-slate-700">Margin Value:</span>
+                        <div className="relative w-36">
+                          <input
+                            type="number"
+                            min="0"
+                            max={effectiveMarginType === 'PERCENTAGE' ? 100 : undefined}
+                            step={effectiveMarginType === 'PERCENTAGE' ? 0.5 : 100}
+                            value={effectiveMarginValue}
+                            onChange={(e) => handleUpdateMarginValue(parseFloat(e.target.value) || 0)}
+                            className="w-full pl-3 pr-8 py-1.5 rounded-xl border border-slate-300 font-mono text-xs font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 shadow-2xs"
+                          />
+                          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                            {effectiveMarginType === 'PERCENTAGE' ? '%' : currency}
+                          </span>
+                        </div>
+
+                        {/* Quick Presets */}
+                        <div className="hidden sm:flex items-center space-x-1">
+                          {effectiveMarginType === 'PERCENTAGE' ? (
+                            [0, 5, 10, 15, 20].map(pct => (
+                              <button
+                                key={pct}
+                                type="button"
+                                onClick={() => handleUpdateMarginValue(pct)}
+                                className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                                  effectiveMarginValue === pct
+                                    ? 'bg-slate-900 text-[#00E5C0] border-slate-900'
+                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                }`}
+                              >
+                                {pct}%
+                              </button>
+                            ))
+                          ) : (
+                            [0, 5000, 10000, 20000].map(amt => (
+                              <button
+                                key={amt}
+                                type="button"
+                                onClick={() => handleUpdateMarginValue(amt)}
+                                className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                                  effectiveMarginValue === amt
+                                    ? 'bg-slate-900 text-[#00E5C0] border-slate-900'
+                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                }`}
+                              >
+                                {amt === 0 ? '0' : `+${amt >= 1000 ? `${amt / 1000}k` : amt}`}
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs text-slate-600">
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="w-4 h-4 text-teal-600 shrink-0" />
+                        <span>
+                          Calculation Formula: <strong>{formatCurrency(existingFinalPrice, currency)} (Existing Final Price) + {formatCurrency(additionalAgentMarginAmount, currency)} (Additional Margin) = {formatCurrency(revisedFinalPrice, currency)} Revised Final Price</strong>. Does not trigger recalculation of underlying costs.
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono font-bold text-slate-400 shrink-0 ml-2">
+                        Client Dispatch Total
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. Dispatch & Generation Action Hub */}
+                <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
+                      Dispatch & Generation Action Hub
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Choose an output format or dispatch channel. All actions compile authoritatively from this quotation snapshot.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {/* Action 1: Save Draft */}
+                    <div className="p-4 rounded-2xl border border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-white transition-all space-y-3 flex flex-col justify-between">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <div className="w-8 h-8 rounded-xl bg-slate-900 text-white flex items-center justify-center">
+                            <Save className="w-4 h-4" />
+                          </div>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            autoSaveStatus === 'SAVED'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : autoSaveStatus === 'SAVING'
+                                ? 'bg-teal-50 text-teal-700 border border-teal-200'
+                                : 'bg-slate-100 text-slate-600'
+                          }`}>
+                            {autoSaveStatus === 'SAVED' ? 'Saved' : autoSaveStatus === 'SAVING' ? 'Saving...' : 'Draft'}
+                          </span>
+                        </div>
+                        <h4 className="text-xs font-black text-slate-900">Save Quotation Draft</h4>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">
+                          Persist current quotation changes and client configuration to the cloud store.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={onSaveDraft}
+                        className="w-full py-2 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>Save Draft</span>
+                      </button>
+                    </div>
+
+                    {/* Action 2: Preview Proposal */}
+                    <div className="p-4 rounded-2xl border border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-white transition-all space-y-3 flex flex-col justify-between">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <div className="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
+                            <Eye className="w-4 h-4" />
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                            Client-Facing
+                          </span>
+                        </div>
+                        <h4 className="text-xs font-black text-slate-900">Preview Client Proposal</h4>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">
+                          Open high-converting customer proposal with destination hero banners and day-by-day highlights.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={onPreviewQuotation}
+                        className="w-full py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Open Proposal Preview</span>
+                      </button>
+                    </div>
+
+                    {/* Action 3: Download PDF */}
+                    <div className="p-4 rounded-2xl border border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-white transition-all space-y-3 flex flex-col justify-between">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center">
+                            <Download className="w-4 h-4" />
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            PDF Document
+                          </span>
+                        </div>
+                        <h4 className="text-xs font-black text-slate-900">Download PDF Itinerary</h4>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">
+                          Generate high-resolution, print-ready branded client PDF with rooming, flight, and tour schedules.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={onDownloadPDF}
+                        className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Export PDF Proposal</span>
+                      </button>
+                    </div>
+
+                    {/* Action 4: Send Email */}
+                    <div className="p-4 rounded-2xl border border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-white transition-all space-y-3 flex flex-col justify-between">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <div className="w-8 h-8 rounded-xl bg-cyan-50 border border-cyan-200 text-cyan-700 flex items-center justify-center">
+                            <Mail className="w-4 h-4" />
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-50 text-cyan-700 border border-cyan-200">
+                            Direct Dispatch
+                          </span>
+                        </div>
+                        <h4 className="text-xs font-black text-slate-900">Send Proposal via Email</h4>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">
+                          Dispatch proposal details and quotation link directly to {clientEmail ? clientEmail : 'the client'}.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={onOpenEmailModal}
+                        className="w-full py-2 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
+                      >
+                        <Mail className="w-3.5 h-3.5" />
+                        <span>Dispatch Email</span>
+                      </button>
+                    </div>
+
+                    {/* Action 5: Share via WhatsApp */}
+                    <div className="p-4 rounded-2xl border border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-white transition-all space-y-3 flex flex-col justify-between">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <div className="w-8 h-8 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center">
+                            <MessageCircle className="w-4 h-4" />
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Mobile Instant
+                          </span>
+                        </div>
+                        <h4 className="text-xs font-black text-slate-900">Share via WhatsApp</h4>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">
+                          Generate formatted mobile itinerary text and dispatch directly to client WhatsApp.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={onShareWhatsApp}
+                        className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>Share on WhatsApp</span>
+                      </button>
+                    </div>
+
+                    {/* Action 6: Save as Package Template */}
+                    {canSaveAsPackage && onOpenSavePackageModal && (
+                      <div className="p-4 rounded-2xl border border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-white transition-all space-y-3 flex flex-col justify-between">
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <div className="w-8 h-8 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center">
+                              <Layers className="w-4 h-4" />
+                            </div>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                              Template Store
+                            </span>
+                          </div>
+                          <h4 className="text-xs font-black text-slate-900">Save as Master Package</h4>
+                          <p className="text-[11px] text-slate-500 leading-relaxed">
+                            Publish this itinerary structure to the B2B master package catalog for reusable agency quoting.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={onOpenSavePackageModal}
+                          className="w-full py-2 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
+                        >
+                          <Layers className="w-3.5 h-3.5" />
+                          <span>Save as Template</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Action 7: Convert to Booking */}
+                    <div className="p-4 rounded-2xl border-2 border-teal-500/40 bg-teal-50/30 hover:bg-teal-50/60 transition-all space-y-3 flex flex-col justify-between sm:col-span-2 lg:col-span-1">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <div className="w-8 h-8 rounded-xl bg-teal-600 text-white flex items-center justify-center shadow-xs">
+                            <BookmarkCheck className="w-4 h-4" />
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-[#00C6A6] text-slate-950">
+                            Commercial Conversion
+                          </span>
+                        </div>
+                        <h4 className="text-xs font-black text-slate-900">Convert to Confirmed Booking</h4>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Transition quote to an active confirmed booking, lock supplier allotments, and notify operations.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={onConvertBooking}
+                        className="w-full py-2.5 px-3 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-sm"
+                      >
+                        <BookmarkCheck className="w-4 h-4" />
+                        <span>Convert to Booking</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. Canonical Snapshot & Audit Record Card */}
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center space-x-2.5">
+                    <ShieldCheck className="w-5 h-5 text-teal-600 shrink-0" />
+                    <div>
+                      <span className="font-bold text-slate-900 block">
+                        Canonical Snapshot & Audit Trail (Ref: {quoteNumber} • v{quoteVersion})
+                      </span>
+                      <p className="text-[11px] text-slate-500">
+                        Single Source of Truth Certified. In-app preview, PDF export, email dispatch, and WhatsApp share are synchronized from this data model.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2 font-mono text-[11px] text-slate-500 shrink-0">
+                    <span className="px-2 py-0.5 rounded bg-white border border-slate-200">{currency}</span>
+                    <span className="px-2 py-0.5 rounded bg-white border border-slate-200">{quotationScope}</span>
+                    <span className="px-2 py-0.5 rounded bg-white border border-slate-200">Option {activeOptionTab}</span>
+                  </div>
+                </div>
+
+                {/* Step 7 Bottom Navigation */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-6 border-t border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setActiveStepId(6)}
+                    className="px-4 py-2.5 rounded-2xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>← Back to Step 6: Review & Pricing</span>
+                  </button>
+
+                  <div className="flex items-center space-x-3">
+                    <button
+                      type="button"
+                      onClick={onDownloadPDF}
+                      className="px-4 py-2.5 rounded-2xl bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs"
+                    >
+                      <Download className="w-4 h-4 text-slate-600" />
+                      <span>Download PDF</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onPreviewQuotation}
+                      className="px-5 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 shadow-md"
+                    >
+                      <Eye className="w-4 h-4" />
+                      <span>Open Proposal Preview</span>
                     </button>
                   </div>
                 </div>
@@ -4145,10 +5216,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             </button>
 
             <span className="text-xs font-bold text-slate-400 hidden sm:inline">
-              Step {activeStepId} of 8: {stepsList.find(s => s.id === activeStepId)?.name}
+              Step {activeStepId} of 7: {stepsList.find(s => s.id === activeStepId)?.name}
             </span>
 
-            {activeStepId < 8 ? (
+            {activeStepId < 7 ? (
               <button
                 type="button"
                 onClick={() => setActiveStepId(activeStepId + 1)}
@@ -4160,7 +5231,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             ) : (
               <span className="px-4 py-2 rounded-2xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold flex items-center space-x-1.5">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                <span>All 8 Steps Configured</span>
+                <span>All 7 Steps Configured</span>
               </span>
             )}
           </div>

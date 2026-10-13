@@ -1,4 +1,4 @@
-import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, AgentPricingResponse, Product, User, UserRole, HotelRate, B2BPackage, FXRateDetails, TieredPrice, InventoryValidity, InventorySurcharge, AppliedSurchargeDetail, SurchargeOverlapWarning, InventoryValidityEvaluation, SurchargeApplicationBasis } from '../types';
+import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, AgentPricingResponse, Product, User, UserRole, HotelRate, B2BPackage, FXRateDetails, TieredPrice, InventoryValidity, InventorySurcharge, AppliedSurchargeDetail, SurchargeOverlapWarning, InventoryValidityEvaluation, SurchargeApplicationBasis, TripRouteHub, Quotation, QuoteItem } from '../types';
 import { currencyEngine, convertCurrency as engineConvert, formatCurrency as engineFormat, getExchangeRateInfo, BASELINE_USD_RATES } from './currencyEngine';
 import { AppDatabase } from './db';
 import { hotelToProduct } from '../utils/hotelHelpers';
@@ -1187,9 +1187,58 @@ export function calculateDeliveredPriceForUser(
 }
 
 export function calculateProductPrice(
-  product: Product,
-  request: PricingCalculationRequest
+  productOrParams: Product | {
+    product: Product;
+    productId?: string;
+    pax?: { adults?: number; children?: number; infants?: number };
+    adults?: number;
+    children?: number;
+    infants?: number;
+    targetCurrency?: string;
+    currency?: string;
+    travelDate?: string;
+    agentMarginType?: string;
+    agentMarginValue?: number;
+    pricingTier?: 'B2C' | 'B2B';
+    userRole?: UserRole;
+    user?: User | null;
+    selectedAddonIds?: string[];
+    selectedUpsellIds?: string[];
+    quantity?: number;
+    customMarkupPercent?: number;
+    customDiscountPercent?: number;
+  },
+  requestArg?: PricingCalculationRequest
 ): PricingCalculationResult {
+  let product: Product;
+  let request: PricingCalculationRequest;
+
+  if (requestArg) {
+    product = productOrParams as Product;
+    request = requestArg;
+  } else if (productOrParams && (productOrParams as any).product) {
+    product = (productOrParams as any).product;
+    const params = productOrParams as any;
+    request = {
+      productId: product.id,
+      pricingTier: params.pricingTier || 'B2B',
+      userRole: params.userRole || 'B2B_AGENT',
+      adults: params.pax?.adults ?? params.adults ?? 2,
+      children: params.pax?.children ?? params.children ?? 0,
+      infants: params.pax?.infants ?? params.infants ?? 0,
+      quantity: params.quantity ?? 1,
+      targetCurrency: params.targetCurrency || params.currency || product.currency || 'USD',
+      travelDate: params.travelDate || params.checkInDate,
+      selectedAddonIds: params.selectedAddonIds || [],
+      customMarkupPercent: params.agentMarginType === 'PERCENTAGE' ? params.agentMarginValue : undefined,
+      customDiscountPercent: params.discountPercent,
+      vehicleId: params.vehicleId || params.fleetId || params.assetId
+    } as any;
+  } else {
+    product = productOrParams as Product;
+    request = {} as PricingCalculationRequest;
+  }
+
   const user = request.user || null;
   const userRole = request.userRole || user?.role || 'BUYER';
   const isAgent = userRole === 'B2B_AGENT' || userRole === 'AGENT' || request.pricingTier === 'B2B';
@@ -1208,7 +1257,7 @@ export function calculateProductPrice(
 
   // 1. Authoritative Rate Sheet & Database Lookup
   // Check if database contains an active, valid rate for this product / travel date
-  let baseAdultNet = product.adultNetPrice ?? product.adultNettCost ?? 0;
+  let baseAdultNet = product.adultNetPrice ?? product.adultNettCost ?? (product as any).basePrice ?? 0;
   let baseChildNet = product.childNetPrice !== undefined ? product.childNetPrice : (product.childNettCost !== undefined ? product.childNettCost : baseAdultNet * 0.5);
   let baseInfantNet = product.infantNetPrice !== undefined ? product.infantNetPrice : (product.infantNettCost !== undefined ? product.infantNettCost : 0);
   let nativeCurrency = product.nativeCurrency || product.currency || 'USD';
@@ -1333,8 +1382,17 @@ export function calculateProductPrice(
     const sortedTiers = [...activeTiers].sort((a, b) => a.minPax - b.minPax);
 
     if (sortedTiers.length > 0) {
-      // Find matching passenger tier in product-specific capacity rules
-      matchingTierFound = sortedTiers.find(t => totalOccupiedSeats >= t.minPax && totalOccupiedSeats <= t.maxPax);
+      // Find matching passenger tier in product-specific capacity rules (prefer vehicleId match if provided)
+      const targetVehicleId = (request as any).vehicleId || (request as any).fleetId;
+      if (targetVehicleId) {
+        matchingTierFound = sortedTiers.find(t => 
+          (t.fleetId === targetVehicleId || (t as any).vehicleId === targetVehicleId) && 
+          totalOccupiedSeats >= t.minPax && totalOccupiedSeats <= t.maxPax
+        );
+      }
+      if (!matchingTierFound) {
+        matchingTierFound = sortedTiers.find(t => totalOccupiedSeats >= t.minPax && totalOccupiedSeats <= t.maxPax);
+      }
 
       if (matchingTierFound) {
         // Required vehicle count comes strictly from the product's configured capacity rule
@@ -1409,11 +1467,37 @@ export function calculateProductPrice(
     } as any;
   } else if (isFixedStayHotel) {
     // Fixed Total Stay Net Cost for Manual Hotel / Room Configuration
-    rawTotalNetCostInNative = baseAdultNet * quantity;
+    let fixedStayBase = baseAdultNet;
+    if (!fixedStayBase && (product as any).manualHotelDetails) {
+      const m = (product as any).manualHotelDetails;
+      const mNights = Math.max(1, Number(m.numberOfNights ?? m.nights ?? 1));
+      const mRooms = Math.max(1, Number(m.numberOfRooms ?? m.rooms ?? 1));
+      const mRate = Number(m.ratePerNight ?? m.customRate ?? 0);
+      const mBasis = m.rateBasis || m.rateType || 'PER_ROOM_PER_NIGHT';
+      if (mBasis === 'TOTAL_STAY') {
+        fixedStayBase = mRate;
+      } else if (mBasis === 'PER_NIGHT') {
+        fixedStayBase = mRate * mNights;
+      } else if (mBasis === 'PER_PERSON_PER_NIGHT') {
+        const cRate = typeof m.childRate === 'number' ? m.childRate : 0;
+        fixedStayBase = (mRate * adults + cRate * children) * mNights;
+      } else if (mBasis === 'PER_PERSON') {
+        const cRate = typeof m.childRate === 'number' ? m.childRate : 0;
+        fixedStayBase = (mRate * adults + cRate * children);
+      } else {
+        fixedStayBase = mRate * mRooms * mNights;
+      }
+      if (typeof m.extraBedRate === 'number' && m.extraBedRate > 0) {
+        fixedStayBase += m.extraBedRate * mNights;
+      }
+    }
+    if (!fixedStayBase) {
+      fixedStayBase = Number((product as any).basePrice ?? (product as any).sellingPriceStartingFrom ?? 0);
+    }
+    rawTotalNetCostInNative = fixedStayBase * quantity;
     adultNetInNative = rawTotalNetCostInNative;
-    childNetInNative = (baseChildNet || 0) * children * quantity;
-    infantNetInNative = (baseInfantNet || 0) * infants * quantity;
-    rawTotalNetCostInNative = adultNetInNative + childNetInNative + infantNetInNative;
+    childNetInNative = 0;
+    infantNetInNative = 0;
   } else if ((product.category as string) === 'Guides' || (product.category as string) === 'Guide' || (product as any).hourlyNetPrice || product.pricingMethod === 'hourly_based') {
     // Hourly Guide Service Pricing Engine (Section 17)
     const minHours = (product as any).minHours || product.guideConfig?.minHours || 4;
@@ -1506,7 +1590,9 @@ export function calculateProductPrice(
 
   // Configurable Commercial Rates with User-Type Hierarchy & Rate Sheet Overrides:
   let configuredMarkupPercent = 20;
-  if (request.customMarkupPercent !== undefined) {
+  if (isFixedStayHotel && request.customMarkupPercent === undefined) {
+    configuredMarkupPercent = product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 0;
+  } else if (request.customMarkupPercent !== undefined) {
     configuredMarkupPercent = request.customMarkupPercent;
   } else if (pricingTier === 'B2B') {
     // SECTION 5: BUYER MARGIN MUST NOT BE USED for B2B. Use B2B Agent Margin only.
@@ -2518,4 +2604,625 @@ export class MasterPricingService {
   public static getPricingSourceOfTruthMap(): PricingSourceOfTruthEntry[] {
     return getPricingSourceOfTruthMap();
   }
+
+  public static calculateQuoteInternalBreakdown(params: QuoteInternalBreakdownParams): QuoteInternalBreakdownResult {
+    return calculateQuoteInternalBreakdown(params);
+  }
+}
+
+// ============================================================================
+// AUTHORITATIVE INTERNAL PRICING BREAKDOWN ENGINE (B2B QUOTE BUILDER STEP 8)
+// ============================================================================
+
+export interface QuoteItemForBreakdown {
+  id: string;
+  product: Product;
+  pax?: { adults: number; children: number; infants: number };
+  travelDate?: string;
+  selectedAddonIds?: string[];
+  hubId?: string;
+  hotelId?: string;
+  isManualHotel?: boolean;
+  manualHotelDetails?: any;
+  isNoAccommodation?: boolean;
+  notes?: string;
+  calculation?: any;
+}
+
+export interface InternalBreakdownItemResult {
+  itemId: string;
+  productName: string;
+  category: string;
+  nativeNetCost: number;
+  nativeCurrency: CurrencyCode;
+  convertedNetCost: number;
+  currency: CurrencyCode;
+  markupAmount: number;
+  taxAmount: number;
+  serviceFee: number;
+  finalSellingPrice: number;
+  isExcludedNoAccommodation: boolean;
+  hasValidRate: boolean;
+  incompleteReason?: string;
+}
+
+export interface QuoteInternalBreakdownParams {
+  items: QuoteItemForBreakdown[];
+  targetCurrency: CurrencyCode;
+  agentMarginType?: 'PERCENTAGE' | 'FIXED';
+  agentMarginValue?: number;
+  overallDiscountPercent?: number;
+  userRole?: string;
+  scope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY';
+  routeHubs?: TripRouteHub[];
+  adminManualMarginType?: 'PERCENTAGE' | 'FIXED';
+  adminManualMarginValue?: number;
+  adminMarginMode?: 'REPLACE' | 'ADD';
+}
+
+export interface QuoteInternalBreakdownResult {
+  isComplete: boolean;
+  incompleteWarnings: Array<{
+    itemId: string;
+    productName: string;
+    category?: string;
+    reason: string;
+  }>;
+  totalNettCost: number;          // Combined underlying nett cost before margin, taxes, service fees
+  totalMargin: number;            // Applicable authorized margin amount (underlying markups + partner margin - discounts)
+  underlyingMarginAmount: number; // Underlying inventory markup
+  partnerMarginAmount: number;    // Additional partner margin
+  taxAmount: number;              // Applicable tax calculated according to existing pricing rules
+  serviceFee: number;             // Applicable service fee calculated according to existing pricing rules
+  baseSellingPrice: number;       // Base selling price before partner margin
+  discountAmount: number;         // Overall package discount amount
+  finalPackagePrice: number;      // Customer-facing total produced by existing Pricing Engine
+  currency: CurrencyCode;
+  itemizedBreakdown: InternalBreakdownItemResult[];
+  adminManualMarginAmount?: number;
+  existingMarginAmount?: number;
+  revisedSellingPrice?: number;
+}
+
+/**
+ * Calculates authoritative Total Nett Cost and internal commercial breakdown for the active quote option.
+ * 
+ * Rules:
+ * 1. Sum of applicable underlying nett costs for all priced quote items before margin, taxes, and service fees.
+ * 2. Exactly one calculation per item, no double-counting.
+ * 3. Excludes items marked "No Accommodation (Arranged By Client)".
+ * 4. Includes manual hotel rates using actual saved nett rate, quantity, rate basis, and stay duration.
+ * 5. Handles private tours without duplicating vehicle costs already in the tour price.
+ * 6. Converts each amount once using centralized CurrencyEngine.
+ * 7. Flags incomplete if any item lacks a required nett cost or exchange rate without inventing defaults or showing misleading partial sums.
+ * 8. Preserves existing Pricing Engine customer-facing final price.
+ */
+export function calculateQuoteInternalBreakdown(
+  params: QuoteInternalBreakdownParams
+): QuoteInternalBreakdownResult {
+  const {
+    items = [],
+    targetCurrency = 'USD',
+    agentMarginType = 'PERCENTAGE',
+    agentMarginValue = 10,
+    overallDiscountPercent = 0,
+    scope,
+    routeHubs = []
+  } = params;
+
+  const isLandOnlyQuote = scope === 'LAND_ONLY';
+  const noAccommodationHubIds = new Set(
+    routeHubs
+      .filter(h => isLandOnlyQuote || h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none')
+      .map(h => h.id)
+  );
+  const noAccommodationHubNames = new Set(
+    routeHubs
+      .filter(h => isLandOnlyQuote || h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none')
+      .map(h => (h.hubName || '').toLowerCase())
+      .filter(Boolean)
+  );
+
+  const incompleteWarnings: QuoteInternalBreakdownResult['incompleteWarnings'] = [];
+  const itemizedBreakdown: InternalBreakdownItemResult[] = [];
+  const processedItemIds = new Set<string>();
+
+  let accumulatedNetCost = 0;
+  let accumulatedUnderlyingMarkup = 0;
+  let accumulatedTax = 0;
+  let accumulatedServiceFee = 0;
+  let accumulatedSellingPrice = 0;
+  let isComplete = true;
+
+  for (const item of items) {
+    if (!item || !item.id || processedItemIds.has(item.id)) continue;
+    processedItemIds.add(item.id);
+
+    const productName = item.product?.name || (item.product as any)?.title || 'Service Item';
+    const category = item.product?.category || 'General';
+    const catLower = (category || (item.product as any)?.productType || '').toLowerCase();
+    const isHotelItem = Boolean(
+      catLower.includes('hotel') ||
+      catLower.includes('accommodation') ||
+      catLower.includes('resort') ||
+      catLower.includes('ryokan') ||
+      (item.product as any)?.productType === 'HOTEL' ||
+      item.isManualHotel ||
+      item.manualHotelDetails ||
+      item.hotelId
+    );
+    const itemHubId = item.hubId || item.manualHotelDetails?.hubId || (item as any).metadata?.hubId;
+    const itemCity = (item.manualHotelDetails?.city || item.product?.city || '').toLowerCase();
+    const isExcludedByHubScope = isHotelItem && (
+      isLandOnlyQuote ||
+      (itemHubId ? noAccommodationHubIds.has(itemHubId) : (itemCity ? noAccommodationHubNames.has(itemCity) : false))
+    );
+
+    // 1. Exclude items marked "No Accommodation (Arranged By Client)" or excluded by Land-Only / hub No Accommodation
+    const isNoAccommodation = Boolean(
+      isExcludedByHubScope ||
+      item.isNoAccommodation ||
+      (item as any).accommodationType === 'NO_ACCOMMODATION' ||
+      (item as any).accommodationType === 'none' ||
+      item.product?.accommodationType === 'NO_ACCOMMODATION' ||
+      item.product?.accommodationType === 'none' ||
+      item.product?.id === 'LAND_ONLY_HUB' ||
+      item.product?.sku === 'LAND_ONLY_HUB' ||
+      item.product?.sku === 'NO_ACCOMMODATION' ||
+      (productName || '').toLowerCase().includes('no accommodation') ||
+      (productName || '').toLowerCase().includes('arranged by client') ||
+      (item.notes || '').toLowerCase().includes('arranged by client')
+    );
+
+    if (isNoAccommodation) {
+      itemizedBreakdown.push({
+        itemId: item.id,
+        productName,
+        category: 'Hotels & Accommodation',
+        nativeNetCost: 0,
+        nativeCurrency: targetCurrency,
+        convertedNetCost: 0,
+        currency: targetCurrency,
+        markupAmount: 0,
+        taxAmount: 0,
+        serviceFee: 0,
+        finalSellingPrice: 0,
+        isExcludedNoAccommodation: true,
+        hasValidRate: true
+      });
+      continue;
+    }
+
+    // 2. Manual Hotel Accommodation
+    const isManualHotel = Boolean(
+      item.isManualHotel ||
+      item.product?.isManualHotel ||
+      item.product?.sku?.startsWith('MAN-HTL-') ||
+      item.product?.accommodationType === 'manual' ||
+      (item as any).accommodationType === 'manual' ||
+      (item as any).accommodationType === 'MANUAL'
+    );
+
+    if (isManualHotel) {
+      const manual = item.manualHotelDetails || item.product?.manualHotelDetails || (item.product as any)?.manualHotelDetails;
+      const nights = Math.max(1, Number(manual?.numberOfNights ?? manual?.nights ?? (item.product as any)?.nights ?? 1));
+      const rooms = Math.max(1, Number(manual?.numberOfRooms ?? manual?.roomsCount ?? (item.product as any)?.roomsCount ?? 1));
+      const rateBasis = manual?.rateBasis || manual?.rateType || 'PER_ROOM_PER_NIGHT';
+      const nativeCurrency: CurrencyCode = (manual?.rateCurrency || manual?.currency || item.product?.currency || 'USD') as CurrencyCode;
+
+      const rawRate = manual?.ratePerNight !== undefined
+        ? Number(manual.ratePerNight)
+        : (manual?.sellingPrice !== undefined
+          ? Number(manual.sellingPrice)
+          : (manual?.netCost !== undefined
+            ? Number(manual.netCost)
+            : (item.product?.adultNetPrice !== undefined ? Number(item.product.adultNetPrice) : undefined)));
+
+      const effectiveValidationRate = (rateBasis === 'PER_PERSON_PER_NIGHT' || rateBasis === 'PER_PERSON')
+        ? Number(manual?.adultRate ?? rawRate ?? 0)
+        : Number(rawRate ?? 0);
+
+      if (rawRate === undefined || isNaN(effectiveValidationRate) || (effectiveValidationRate <= 0 && !manual?.isComplimentary && !manual?.isFreeStay)) {
+        isComplete = false;
+        incompleteWarnings.push({
+          itemId: item.id,
+          productName: manual?.hotelName || productName,
+          category: 'Hotels & Accommodation',
+          reason: `Manual hotel rate missing or invalid (${rawRate ?? 'unspecified'})`
+        });
+
+        itemizedBreakdown.push({
+          itemId: item.id,
+          productName: manual?.hotelName || productName,
+          category: 'Hotels & Accommodation',
+          nativeNetCost: 0,
+          nativeCurrency,
+          convertedNetCost: 0,
+          currency: targetCurrency,
+          markupAmount: 0,
+          taxAmount: 0,
+          serviceFee: 0,
+          finalSellingPrice: item.calculation?.finalTotalSellingPrice || 0,
+          isExcludedNoAccommodation: false,
+          hasValidRate: false,
+          incompleteReason: 'Missing authoritative manual nett rate'
+        });
+        continue;
+      }
+
+      // Calculate authoritative native nett cost based on rate basis
+      let nativeNett = 0;
+      if (rateBasis === 'TOTAL_STAY') {
+        nativeNett = rawRate;
+      } else if (rateBasis === 'PER_ROOM_TOTAL_STAY') {
+        nativeNett = rawRate * rooms;
+      } else if (rateBasis === 'PER_NIGHT' || rateBasis === 'PER_ROOM_PER_NIGHT') {
+        nativeNett = rawRate * rooms * nights;
+      } else if (rateBasis === 'PER_PERSON_PER_NIGHT' || rateBasis === 'PER_PERSON') {
+        const adultRate = manual?.adultRate !== undefined ? Number(manual.adultRate) : rawRate;
+        const childRate = manual?.childRate !== undefined ? Number(manual.childRate) : 0;
+        const adultsCount = item.pax?.adults ?? (rooms * 2);
+        const childrenCount = item.pax?.children ?? 0;
+        nativeNett = (adultRate * adultsCount + childRate * childrenCount) * nights;
+      } else {
+        // PER_ROOM_PER_NIGHT
+        nativeNett = rawRate * rooms * nights;
+      }
+
+      let convertedNetCost = 0;
+      try {
+        convertedNetCost = currencyEngine.convert(nativeNett, nativeCurrency, targetCurrency);
+        if (isNaN(convertedNetCost)) throw new Error('Conversion returned NaN');
+      } catch {
+        isComplete = false;
+        incompleteWarnings.push({
+          itemId: item.id,
+          productName: manual?.hotelName || productName,
+          category: 'Hotels & Accommodation',
+          reason: `Exchange rate unavailable for currency ${nativeCurrency} to ${targetCurrency}`
+        });
+
+        itemizedBreakdown.push({
+          itemId: item.id,
+          productName: manual?.hotelName || productName,
+          category: 'Hotels & Accommodation',
+          nativeNetCost: nativeNett,
+          nativeCurrency,
+          convertedNetCost: 0,
+          currency: targetCurrency,
+          markupAmount: 0,
+          taxAmount: 0,
+          serviceFee: 0,
+          finalSellingPrice: item.calculation?.finalTotalSellingPrice || 0,
+          isExcludedNoAccommodation: false,
+          hasValidRate: false,
+          incompleteReason: `Missing exchange rate ${nativeCurrency} -> ${targetCurrency}`
+        });
+        continue;
+      }
+
+      const markupAmount = item.calculation?.markupAmount || 0;
+      const taxAmount = item.calculation?.taxAmount || 0;
+      const serviceFee = item.calculation?.serviceFee || 0;
+      const finalSellingPrice = item.calculation?.finalTotalSellingPrice || convertedNetCost;
+
+      accumulatedNetCost += convertedNetCost;
+      accumulatedUnderlyingMarkup += markupAmount;
+      accumulatedTax += taxAmount;
+      accumulatedServiceFee += serviceFee;
+      accumulatedSellingPrice += finalSellingPrice;
+
+      itemizedBreakdown.push({
+        itemId: item.id,
+        productName: manual?.hotelName || productName,
+        category: 'Hotels & Accommodation',
+        nativeNetCost: nativeNett,
+        nativeCurrency,
+        convertedNetCost,
+        currency: targetCurrency,
+        markupAmount,
+        taxAmount,
+        serviceFee,
+        finalSellingPrice,
+        isExcludedNoAccommodation: false,
+        hasValidRate: true
+      });
+      continue;
+    }
+
+    // 3. Authoritative Pricing Engine for Standard Inventory Products
+    // (Tours, Tickets, Transfers, Guides, Rail, Ferries, Restaurants, Yachts, Visas, Ancillaries)
+    try {
+      const calc = calculateProductPrice(item.product, {
+        productId: item.product.id,
+        pricingTier: 'B2B',
+        userRole: 'ADMIN',
+        adults: item.pax?.adults || 2,
+        children: item.pax?.children || 0,
+        infants: item.pax?.infants || 0,
+        travelDate: item.travelDate,
+        targetCurrency,
+        selectedAddonIds: item.selectedAddonIds || []
+      });
+
+      const totalPax = (item.pax?.adults || 2) + (item.pax?.children || 0);
+      const isComplimentary = Boolean((item.product as any).isComplimentary || (item.product as any).isFree);
+
+      // Check for valid nett cost
+      if (calc.totalNetCost <= 0 && !isComplimentary && totalPax > 0) {
+        // Missing rate
+        isComplete = false;
+        incompleteWarnings.push({
+          itemId: item.id,
+          productName,
+          category,
+          reason: `Authoritative supplier nett rate unavailable in ${calc.nativeCurrency || targetCurrency}`
+        });
+
+        itemizedBreakdown.push({
+          itemId: item.id,
+          productName,
+          category,
+          nativeNetCost: calc.nativeTotalNetCost || 0,
+          nativeCurrency: calc.nativeCurrency || targetCurrency,
+          convertedNetCost: 0,
+          currency: targetCurrency,
+          markupAmount: calc.markupAmount || 0,
+          taxAmount: calc.taxAmount || 0,
+          serviceFee: calc.serviceFee || 0,
+          finalSellingPrice: calc.finalTotalSellingPrice || 0,
+          isExcludedNoAccommodation: false,
+          hasValidRate: false,
+          incompleteReason: 'Missing authoritative supplier nett rate'
+        });
+        continue;
+      }
+
+      accumulatedNetCost += calc.totalNetCost;
+      accumulatedUnderlyingMarkup += calc.markupAmount || 0;
+      accumulatedTax += calc.taxAmount || 0;
+      accumulatedServiceFee += calc.serviceFee || 0;
+      accumulatedSellingPrice += calc.finalTotalSellingPrice || 0;
+
+      itemizedBreakdown.push({
+        itemId: item.id,
+        productName,
+        category,
+        nativeNetCost: calc.nativeTotalNetCost,
+        nativeCurrency: calc.nativeCurrency || targetCurrency,
+        convertedNetCost: calc.totalNetCost,
+        currency: targetCurrency,
+        markupAmount: calc.markupAmount || 0,
+        taxAmount: calc.taxAmount || 0,
+        serviceFee: calc.serviceFee || 0,
+        finalSellingPrice: calc.finalTotalSellingPrice,
+        isExcludedNoAccommodation: false,
+        hasValidRate: true
+      });
+    } catch (err: any) {
+      isComplete = false;
+      incompleteWarnings.push({
+        itemId: item.id,
+        productName,
+        category,
+        reason: `Pricing engine error: ${err?.message || 'Calculation failed'}`
+      });
+
+      itemizedBreakdown.push({
+        itemId: item.id,
+        productName,
+        category,
+        nativeNetCost: 0,
+        nativeCurrency: targetCurrency,
+        convertedNetCost: 0,
+        currency: targetCurrency,
+        markupAmount: 0,
+        taxAmount: 0,
+        serviceFee: 0,
+        finalSellingPrice: 0,
+        isExcludedNoAccommodation: false,
+        hasValidRate: false,
+        incompleteReason: err?.message || 'Calculation failed'
+      });
+    }
+  }
+
+  // 4. Commercial Package Pricing Aggregations
+  const totalNettCost = isComplete ? accumulatedNetCost : 0;
+  const hasAdminManualMargin = params.adminManualMarginValue !== undefined && params.adminManualMarginValue > 0;
+  const adminMarginMode = params.adminMarginMode || 'REPLACE';
+
+  const adminManualMarginAmount = hasAdminManualMargin
+    ? (params.adminManualMarginType === 'FIXED'
+        ? Math.round(params.adminManualMarginValue || 0)
+        : Math.round(totalNettCost * ((params.adminManualMarginValue || 0) / 100)))
+    : 0;
+
+  // Margin calculation on Total Nett Cost:
+  // In REPLACE mode (default): manual margin replaces accumulatedUnderlyingMarkup to avoid duplicate margin
+  // In ADD mode: manual margin is added on top of existing calculated margin
+  const effectiveUnderlyingMargin = hasAdminManualMargin
+    ? (adminMarginMode === 'REPLACE'
+        ? adminManualMarginAmount
+        : (accumulatedUnderlyingMarkup + adminManualMarginAmount))
+    : accumulatedUnderlyingMarkup;
+
+  const revisedSellingPrice = totalNettCost + effectiveUnderlyingMargin + accumulatedServiceFee;
+
+  const baseSellingPrice = hasAdminManualMargin
+    ? revisedSellingPrice
+    : accumulatedSellingPrice;
+
+  const partnerMarginAmount = agentMarginType === 'PERCENTAGE'
+    ? Math.round(baseSellingPrice * ((agentMarginValue || 0) / 100))
+    : Math.round(agentMarginValue || 0);
+
+  const discountAmount = overallDiscountPercent > 0
+    ? Math.round((baseSellingPrice + partnerMarginAmount) * (overallDiscountPercent / 100))
+    : 0;
+
+  const finalPackagePrice = Math.max(0, baseSellingPrice + partnerMarginAmount - discountAmount);
+  const totalMargin = effectiveUnderlyingMargin + partnerMarginAmount - discountAmount;
+
+  return {
+    isComplete,
+    incompleteWarnings,
+    totalNettCost,
+    totalMargin,
+    underlyingMarginAmount: accumulatedUnderlyingMarkup,
+    partnerMarginAmount,
+    taxAmount: accumulatedTax,
+    serviceFee: accumulatedServiceFee,
+    baseSellingPrice,
+    discountAmount,
+    finalPackagePrice,
+    currency: targetCurrency,
+    itemizedBreakdown,
+    adminManualMarginAmount,
+    existingMarginAmount: accumulatedUnderlyingMarkup,
+    revisedSellingPrice
+  };
+}
+
+/**
+ * Authoritative Quote Total Calculator
+ * Evaluates the active option (or root quote or item array), excludes any hotel items when Land-Only Mode
+ * is active or when a hub is set to NO_ACCOMMODATION, and returns the exact customer-facing
+ * and internal totals.
+ */
+export function calculateQuoteTotal(
+  quoteOrItems: (Partial<Quotation> & { items?: QuoteItem[]; routeHubs?: TripRouteHub[]; scope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY' | 'FULL_PACKAGE'; quotationScope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY' | 'FULL_PACKAGE' }) | QuoteItem[],
+  activeOptionIdOrMarginType?: string,
+  marginValueArg?: number,
+  currencyArg?: string
+): {
+  baseSellingPrice: number;
+  baseTotalPrice: number;
+  markupAmount: number;
+  marginAmount: number;
+  discountAmount: number;
+  finalCustomerSellingPrice: number;
+  finalTotalSellingPrice: number;
+  totalSellingPrice: number;
+  totalNetCost: number;
+  itemsIncludedCount: number;
+  hotelItemsIncludedCount: number;
+} {
+  const isHotelItem = (it: QuoteItem): boolean => {
+    const cat = (it.product?.category || it.category || it.product?.productType || '').toLowerCase();
+    return cat.includes('hotel') || cat.includes('accommodation') || cat.includes('resort') || cat.includes('ryokan') ||
+           it.product?.productType === 'HOTEL' || Boolean(it.isManualHotel || it.manualHotelDetails || it.hotelId);
+  };
+
+  let activeItems: QuoteItem[] = [];
+  let marginType = 'PERCENTAGE';
+  let marginValue = 0;
+  let discountPercent = 0;
+
+  if (Array.isArray(quoteOrItems)) {
+    activeItems = quoteOrItems;
+    marginType = activeOptionIdOrMarginType || 'PERCENTAGE';
+    marginValue = marginValueArg ?? 0;
+  } else {
+    const quote = quoteOrItems;
+    const activeOption = quote.options && quote.options.length > 0
+      ? (quote.options.find(o => o.id === (activeOptionIdOrMarginType || quote.activeOptionId)) || quote.options[0])
+      : undefined;
+
+    const rawItems: QuoteItem[] = (activeOption?.items && activeOption.items.length > 0)
+      ? activeOption.items
+      : (quote.items || []);
+    const hubs: TripRouteHub[] = (activeOption?.routeHubs && activeOption.routeHubs.length > 0)
+      ? activeOption.routeHubs
+      : (quote.routeHubs || []);
+
+    const effectiveScope = activeOption?.scope || activeOption?.quotationScope || quote.scope || quote.quotationScope || 'HOTEL_LAND';
+    const isLandOnly = effectiveScope === 'LAND_ONLY';
+
+    const noAccHubIds = new Set(
+      hubs
+        .filter(h => isLandOnly || h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none')
+        .map(h => h.id)
+    );
+    const noAccHubNames = new Set(
+      hubs
+        .filter(h => isLandOnly || h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none')
+        .map(h => (h.hubName || '').toLowerCase())
+        .filter(Boolean)
+    );
+
+    activeItems = rawItems.filter(it => {
+      if (it.isNoAccommodation || (it as any).accommodationType === 'NO_ACCOMMODATION' || (it as any).accommodationType === 'none') {
+        return false;
+      }
+      if (isHotelItem(it)) {
+        if (isLandOnly) return false;
+        const itemHubId = it.hubId || it.manualHotelDetails?.hubId || (it.metadata as any)?.hubId;
+        if (itemHubId && noAccHubIds.has(itemHubId)) return false;
+        if (!itemHubId) {
+          const itemCity = (it.manualHotelDetails?.city || it.product?.city || '').toLowerCase();
+          if (itemCity && noAccHubNames.has(itemCity)) return false;
+        }
+      }
+      return true;
+    });
+
+    marginType = quote.agentMarginType || 'PERCENTAGE';
+    marginValue = quote.agentMarginValue !== undefined ? quote.agentMarginValue : (quote.overallMarkupPercent || 0);
+    discountPercent = quote.overallDiscountPercent || 0;
+  }
+
+  const baseSellingPrice = activeItems.reduce(
+    (sum, it) => sum + (it.calculation?.finalTotalSellingPrice || (it.calculation as any)?.totalSellingPrice || 0),
+    0
+  );
+  const totalNetCost = activeItems.reduce(
+    (sum, it) => sum + ((it.calculation as any)?.totalNetCost || 0),
+    0
+  );
+
+  const adminMarginValue = !Array.isArray(quoteOrItems)
+    ? ((quoteOrItems as any).adminManualMarginValue ?? (quoteOrItems as any).admin_manual_margin_value)
+    : undefined;
+  const adminMarginType = !Array.isArray(quoteOrItems)
+    ? ((quoteOrItems as any).adminManualMarginType ?? (quoteOrItems as any).admin_manual_margin_type ?? 'PERCENTAGE')
+    : 'PERCENTAGE';
+  const adminMarginMode = !Array.isArray(quoteOrItems)
+    ? ((quoteOrItems as any).adminMarginMode ?? (quoteOrItems as any).admin_margin_mode ?? 'REPLACE')
+    : 'REPLACE';
+
+  let effectiveBaseSellingPrice = baseSellingPrice;
+  if (adminMarginValue !== undefined && adminMarginValue > 0) {
+    const adminMarginAmount = adminMarginType === 'PERCENTAGE'
+      ? Math.round(totalNetCost * (adminMarginValue / 100))
+      : Math.round(adminMarginValue);
+    effectiveBaseSellingPrice = adminMarginMode === 'REPLACE'
+      ? (totalNetCost + adminMarginAmount)
+      : (baseSellingPrice + adminMarginAmount);
+  }
+
+  const markupAmount = marginType === 'PERCENTAGE'
+    ? Math.round(effectiveBaseSellingPrice * (marginValue / 100))
+    : Math.round(marginValue);
+
+  const discountAmount = discountPercent > 0
+    ? Math.round((effectiveBaseSellingPrice + markupAmount) * (discountPercent / 100))
+    : 0;
+
+  const finalCustomerSellingPrice = Math.max(0, effectiveBaseSellingPrice + markupAmount - discountAmount);
+  const hotelItemsIncludedCount = activeItems.filter(isHotelItem).length;
+
+  return {
+    baseSellingPrice: effectiveBaseSellingPrice,
+    baseTotalPrice: effectiveBaseSellingPrice,
+    markupAmount,
+    marginAmount: markupAmount,
+    discountAmount,
+    finalCustomerSellingPrice,
+    finalTotalSellingPrice: finalCustomerSellingPrice,
+    totalSellingPrice: finalCustomerSellingPrice,
+    totalNetCost,
+    itemsIncludedCount: activeItems.length,
+    hotelItemsIncludedCount
+  };
 }

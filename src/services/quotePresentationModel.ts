@@ -78,6 +78,18 @@ export interface HotelPresentationItem {
   notes?: string;
 }
 
+export interface AccommodationStaySummaryItem {
+  hubId?: string;
+  city: string;
+  nights: number;
+  hotelName: string;
+  roomSummary?: string;
+  checkInDate?: string;
+  checkOutDate?: string;
+  mealPlan?: string;
+  isNoAccommodation?: boolean;
+}
+
 export interface QuotePresentationModel {
   quoteId: string;
   quoteNumber: string;
@@ -127,6 +139,9 @@ export interface QuotePresentationModel {
   
   // Curated Hotels Summary
   hotels: HotelPresentationItem[];
+
+  // Accommodations Summary (All Route Hubs, including NO_ACCOMMODATION)
+  accommodations: AccommodationStaySummaryItem[];
 
   // Visa & Ancillary Services
   visaServices: ServicePresentationItem[];
@@ -347,13 +362,50 @@ export function buildQuotePresentationModel(
     }
   }
 
-  const items: QuoteItem[] = (activeOption?.items && activeOption.items.length > 0)
+  const rawItems: QuoteItem[] = (activeOption?.items && activeOption.items.length > 0)
     ? activeOption.items
     : (quote.items || []);
   const hubs: TripRouteHub[] = (activeOption?.routeHubs && activeOption.routeHubs.length > 0)
     ? activeOption.routeHubs
     : (quote.routeHubs || []);
   const sortedHubs = [...hubs].sort((a, b) => a.order - b.order);
+
+  const effectiveScope = activeOption?.quotationScope || activeOption?.scope || quote.quotationScope || quote.scope || 'FULL_PACKAGE';
+  const isLandOnlyQuote = effectiveScope === 'LAND_ONLY';
+
+  const isHubNoAccommodation = (h?: TripRouteHub | null): boolean => {
+    if (!h) return isLandOnlyQuote;
+    return isLandOnlyQuote || h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none';
+  };
+
+  const noAccommodationHubIds = new Set(
+    sortedHubs.filter(h => isHubNoAccommodation(h)).map(h => h.id)
+  );
+  const noAccommodationHubNames = new Set(
+    sortedHubs.filter(h => isHubNoAccommodation(h)).map(h => (h.hubName || '').toLowerCase()).filter(Boolean)
+  );
+
+  const isHotelQuoteItem = (it: QuoteItem): boolean => {
+    const cat = (it.product?.category || it.category || it.product?.productType || '').toLowerCase();
+    return cat.includes('hotel') || cat.includes('accommodation') || cat.includes('resort') || cat.includes('ryokan') ||
+           it.product?.productType === 'HOTEL' || Boolean(it.isManualHotel || it.manualHotelDetails || it.hotelId);
+  };
+
+  const items: QuoteItem[] = rawItems.filter(it => {
+    if (it.isNoAccommodation || (it as any).accommodationType === 'NO_ACCOMMODATION' || (it as any).accommodationType === 'none') {
+      return false;
+    }
+    if (isHotelQuoteItem(it)) {
+      if (isLandOnlyQuote) return false;
+      const itemHubId = it.hubId || it.manualHotelDetails?.hubId || (it.metadata as any)?.hubId;
+      if (itemHubId && noAccommodationHubIds.has(itemHubId)) return false;
+      if (!itemHubId) {
+        const itemCity = (it.manualHotelDetails?.city || it.product?.city || '').toLowerCase();
+        if (itemCity && noAccommodationHubNames.has(itemCity)) return false;
+      }
+    }
+    return true;
+  });
 
   const effectiveCurrency = quote.currency || 'USD';
   const effectiveAgency = agentOverride?.agencyName || quote.agentAgency || quote.agentCompany;
@@ -455,7 +507,7 @@ export function buildQuotePresentationModel(
       }
       checkInOffset += nights;
 
-      if (h.hotelId || h.manualHotel?.hotelName) {
+      if (!isHubNoAccommodation(h) && (h.hotelId || h.manualHotel?.hotelName)) {
         const matchedHotelItem = nonVisaItems.find(it => {
           const cat = (it.product?.category || it.category || '').toLowerCase();
           const isHtl = cat.includes('hotel') || cat.includes('accommodation') || cat.includes('resort') || cat.includes('ryokan') || Boolean(it.isManualHotel);
@@ -531,6 +583,83 @@ export function buildQuotePresentationModel(
     });
   });
 
+  // Build accommodations summary list for all route hubs (including NO_ACCOMMODATION)
+  const accommodations: AccommodationStaySummaryItem[] = [];
+  if (sortedHubs.length > 0) {
+    let checkInOffset = 0;
+    sortedHubs.forEach((h, hIdx) => {
+      const city = h.hubName || h.destinationName || quote.destination || `Hub ${hIdx + 1}`;
+      const nights = h.nights || 1;
+      let checkInDate = quote.travelStartDate || `Day ${checkInOffset + 1}`;
+      let checkOutDate = quote.travelEndDate || `Day ${checkInOffset + nights + 1}`;
+
+      if (quote.travelStartDate) {
+        const s = new Date(quote.travelStartDate);
+        if (!isNaN(s.getTime())) {
+          s.setDate(s.getDate() + checkInOffset);
+          checkInDate = s.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+          s.setDate(s.getDate() + nights);
+          checkOutDate = s.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+        }
+      }
+      checkInOffset += nights;
+
+      const isNoAcc = isHubNoAccommodation(h);
+      if (isNoAcc) {
+        accommodations.push({
+          hubId: h.id,
+          city,
+          nights,
+          hotelName: 'No Accommodation (Arranged by Client)',
+          roomSummary: 'Arranged directly by traveler / Client self-booked',
+          checkInDate,
+          checkOutDate,
+          isNoAccommodation: true
+        });
+      } else {
+        const matchedHotelItem = nonVisaItems.find(it => {
+          const cat = (it.product?.category || it.category || '').toLowerCase();
+          const isHtl = cat.includes('hotel') || cat.includes('accommodation') || cat.includes('resort') || cat.includes('ryokan') || Boolean(it.isManualHotel);
+          if (!isHtl) return false;
+          return (h.hotelId && it.product?.id?.includes(h.hotelId)) ||
+                 (h.manualHotel?.hotelName && it.product?.name?.toLowerCase().includes(h.manualHotel.hotelName.toLowerCase())) ||
+                 (it.notes && it.notes.toLowerCase().includes(city.toLowerCase()));
+        });
+
+        const hotelName = h.manualHotel?.hotelName || (matchedHotelItem ? getInventoryDisplayName(matchedHotelItem) : h.hotelId) || 'Selected Luxury Hotel';
+        const roomType = h.manualHotel?.roomType || matchedHotelItem?.selected_options?.roomType || 'Standard Room';
+        const mealPlan = h.manualHotel?.mealPlanName || h.manualHotel?.mealPlan || 'Daily Breakfast Included';
+        const roomsCount = h.roomsCount || h.manualHotel?.numberOfRooms || quote.roomingConfig?.roomsCount || 1;
+
+        accommodations.push({
+          hubId: h.id,
+          city,
+          nights,
+          hotelName,
+          roomSummary: `${roomsCount} Room(s) • ${roomType} (${mealPlan})`,
+          checkInDate,
+          checkOutDate,
+          mealPlan,
+          isNoAccommodation: false
+        });
+      }
+    });
+  } else if (hotels.length > 0) {
+    hotels.forEach(h => {
+      accommodations.push({
+        hubId: h.id,
+        city: h.cityHub,
+        nights: h.nightsCount,
+        hotelName: h.hotelName,
+        roomSummary: `${h.roomsCount} Room(s) • ${h.roomType} (${h.mealPlan})`,
+        checkInDate: h.checkInDate,
+        checkOutDate: h.checkOutDate,
+        mealPlan: h.mealPlan,
+        isNoAccommodation: false
+      });
+    });
+  }
+
   const days: DayPresentationData[] = calDays.map((calDay) => {
     let activeHub: TripRouteHub | null = null;
     let isTransitionDay = false;
@@ -574,7 +703,7 @@ export function buildQuotePresentationModel(
     const dayServices = dayItems.map(it => transformQuoteItemToPresentation(it, effectiveCurrency));
 
     // If this day is a hub check-in and the hub has a manualHotel/hotelId that wasn't already in dayItems, synthesize a hotel service card so all channels show it
-    if (isHubCheckIn && activeHub && (activeHub.manualHotel?.hotelName || activeHub.hotelId)) {
+    if (isHubCheckIn && activeHub && !isHubNoAccommodation(activeHub) && (activeHub.manualHotel?.hotelName || activeHub.hotelId)) {
       const targetHotelName = (activeHub.manualHotel?.hotelName || activeHub.hotelId || '').toLowerCase();
       const alreadyHasHotelInDay = dayServices.some(s =>
         s.categoryLabel === 'Luxury Accommodation' ||
@@ -786,6 +915,7 @@ export function buildQuotePresentationModel(
     pricePerPersonFormatted: formatCurrency(pricePerPerson, effectiveCurrency),
     routeHubs: sortedHubs.map(h => ({ hubName: h.hubName || h.destinationName || quote.destination || 'Hub', nights: h.nights || 1 })),
     hotels,
+    accommodations,
     visaServices: visaItems.map(it => transformQuoteItemToPresentation(it, effectiveCurrency)),
     days,
     additionalServices: generalInclusions,
@@ -873,7 +1003,20 @@ export function renderQuoteEmailFromPresentationModel(
     model.agentNotes ? `  Agent Notes   : ${model.agentNotes}` : ''
   ].filter(Boolean).join('\n'));
 
-  if (model.hotels.length > 0) {
+  if (model.accommodations && model.accommodations.length > 0) {
+    const accommodationLines = [
+      `3. ACCOMMODATION & HOTEL STAYS (${model.accommodations.length} ${model.accommodations.length === 1 ? 'STAY' : 'STAYS'})`,
+      LINE_DIVIDER
+    ];
+    model.accommodations.forEach((acc, idx) => {
+      accommodationLines.push(
+        `[${idx + 1}] ${acc.hotelName} (${acc.city})`,
+        `    Stay Dates  : ${acc.checkInDate || 'TBD'} → ${acc.checkOutDate || 'TBD'} (${acc.nights} ${acc.nights === 1 ? 'Night' : 'Nights'})`,
+        acc.roomSummary ? `    Room Config : ${acc.roomSummary}` : ''
+      );
+    });
+    textSections.push(accommodationLines.filter(Boolean).join('\n'));
+  } else if (model.hotels.length > 0) {
     const hotelLines = [
       `3. CURATED ACCOMMODATION SUMMARY (${model.hotels.length} ${model.hotels.length === 1 ? 'STAY' : 'STAYS'})`,
       LINE_DIVIDER
@@ -1190,8 +1333,42 @@ export function renderQuoteEmailFromPresentationModel(
           </tr>
         </table>
 
-        <!-- 3.5. Curated Accommodation Summary Table (if hotels present) -->
-        ${model.hotels.length > 0 ? `
+        <!-- 3.5. Curated Accommodation Summary Table -->
+        ${model.accommodations && model.accommodations.length > 0 ? `
+          <div style="margin-bottom: 24px;">
+            <div style="border-bottom: 2px solid #0f766e; padding-bottom: 6px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+              <h2 style="font-size: 14px; font-weight: 900; color: #020617; text-transform: uppercase; margin: 0;">🏨 Accommodation & Destination Stays (${model.accommodations.length})</h2>
+            </div>
+            <div style="border: 1px solid #cbd5e1; border-radius: 12px; overflow: hidden;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
+                <thead style="background: #f1f5f9; color: #334155;">
+                  <tr>
+                    <th style="padding: 10px 12px; font-weight: 800;">City Hub & Hotel</th>
+                    <th style="padding: 10px 12px; font-weight: 800;">Dates & Duration</th>
+                    <th style="padding: 10px 12px; font-weight: 800;">Arrangement & Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${model.accommodations.map((acc, i) => `
+                    <tr style="border-top: ${i === 0 ? 'none' : '1px solid #e2e8f0'}; background: ${acc.hotelName.includes('No Accommodation') ? '#f8fafc' : '#ffffff'};">
+                      <td style="padding: 10px 12px; vertical-align: top;">
+                        <strong style="color: #0f172a; font-size: 13px;">${acc.hotelName}</strong>
+                        <div style="font-size: 11px; color: #0d9488; font-weight: 600;">📍 ${acc.city}</div>
+                      </td>
+                      <td style="padding: 10px 12px; vertical-align: top; color: #475569;">
+                        <div><strong>${acc.nights} ${acc.nights === 1 ? 'Night' : 'Nights'}</strong></div>
+                        ${acc.checkInDate && acc.checkOutDate ? `<div style="font-size: 11px; color: #64748b; font-family: monospace;">${acc.checkInDate} → ${acc.checkOutDate}</div>` : ''}
+                      </td>
+                      <td style="padding: 10px 12px; vertical-align: top; color: #334155;">
+                        <div>${acc.roomSummary || 'Standard Stay'}</div>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ` : (model.hotels.length > 0 ? `
           <div style="margin-bottom: 24px;">
             <div style="border-bottom: 2px solid #92400e; padding-bottom: 6px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
               <h2 style="font-size: 14px; font-weight: 900; color: #020617; text-transform: uppercase; margin: 0;">🏨 Curated Accommodation & Hotel Stays (${model.hotels.length})</h2>
@@ -1228,7 +1405,7 @@ export function renderQuoteEmailFromPresentationModel(
               </table>
             </div>
           </div>
-        ` : ''}
+        ` : '')}
 
         <!-- 4. Visa & Ancillary Services -->
         ${model.visaServices.length > 0 ? `
@@ -1469,7 +1646,24 @@ export function renderQuoteWhatsAppFromPresentationModel(
   sections.push(headerLines.filter(l => l !== '').join('\n').replace(/\n\n+/g, '\n\n'));
 
   // 2. Curated Accommodation & Luxury Stays
-  if (model.hotels.length > 0) {
+  if (model.accommodations && model.accommodations.length > 0) {
+    const accLines: string[] = [
+      useEmojis ? `🏨 *ACCOMMODATION & STAYS (${model.accommodations.length})*` : `*ACCOMMODATION & STAYS (${model.accommodations.length})*`
+    ];
+    model.accommodations.forEach(acc => {
+      const isNoAcc = acc.hotelName.includes('No Accommodation') || acc.isNoAccommodation;
+      if (useEmojis) {
+        accLines.push(
+          `• 🏙️ *${acc.city.toUpperCase()}* — *${acc.nights}* ${acc.nights === 1 ? 'Night' : 'Nights'}\n  ${isNoAcc ? '🚫' : '⭐'} *${acc.hotelName}*${acc.roomSummary ? ` | ${acc.roomSummary}` : ''}${acc.checkInDate && acc.checkOutDate ? `\n  📅 ${acc.checkInDate} ➔ ${acc.checkOutDate}` : ''}`
+        );
+      } else {
+        accLines.push(
+          `• *${acc.city.toUpperCase()}* — ${acc.nights} ${acc.nights === 1 ? 'Night' : 'Nights'}\n  ${acc.hotelName}${acc.roomSummary ? ` | ${acc.roomSummary}` : ''}${acc.checkInDate && acc.checkOutDate ? `\n  Stay Dates: ${acc.checkInDate} to ${acc.checkOutDate}` : ''}`
+        );
+      }
+    });
+    sections.push(accLines.join('\n'));
+  } else if (model.hotels.length > 0) {
     const hotelLines: string[] = [
       useEmojis ? `🏨 *CURATED ACCOMMODATION & LUXURY STAYS (${model.hotels.length})*` : `*ACCOMMODATION & STAYS (${model.hotels.length})*`
     ];
@@ -1801,5 +1995,24 @@ export function validateQuotePresentationCompleteness(
     checkedElementsCount: requiredTokens.length
   };
 }
+
+export function generateWhatsAppSummaryText(
+  model: QuotePresentationModel,
+  options?: {
+    customNote?: string;
+    useEmojis?: boolean;
+    formatStyle?: 'DETAILED' | 'SUMMARY';
+  }
+): string {
+  return renderQuoteWhatsAppFromPresentationModel(model, options);
+}
+
+export function generateEmailPlainTextSummary(
+  model: QuotePresentationModel,
+  customNote?: string
+): string {
+  return renderQuoteEmailFromPresentationModel(model, customNote).textBody;
+}
+
 
 

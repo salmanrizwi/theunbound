@@ -79,7 +79,7 @@ interface VisaCMSManagerProps {
   onSubTabChange?: (tab: string) => void;
 }
 
-export type AncillaryServiceCategory = 'VISA_SERVICES' | 'TRAVEL_PROTECTION' | 'GROUND_CONNECTIVITY' | 'FIELD_PARITY';
+export type AncillaryServiceCategory = 'VISA_SERVICES' | 'TRAVEL_PROTECTION' | 'GROUND_CONNECTIVITY';
 
 export interface VisaCMSErrorBoundaryProps {
   children: React.ReactNode;
@@ -147,7 +147,6 @@ export const resolveAncillaryTab = (tab?: string): AncillaryServiceCategory => {
   const clean = tab.toUpperCase().replace(/[-_]/g, '');
   if (clean === 'TRAVELPROTECTION' || clean === 'PROTECTION' || clean === 'INSURANCE') return 'TRAVEL_PROTECTION';
   if (clean === 'GROUNDCONNECTIVITY' || clean === 'GROUND' || clean === 'CONNECTIVITY' || clean === 'VIP' || clean === 'VIPCONNECTIVITY' || clean === 'VIPGROUND' || clean === 'ESIM') return 'GROUND_CONNECTIVITY';
-  if (clean === 'MASTERSCHEMAMATRIX' || clean === 'FIELDPARITY' || clean === 'SCHEMAMATRIX' || clean === 'MATRIX' || clean === 'SCHEMA' || clean === 'PARITY') return 'FIELD_PARITY';
   return 'VISA_SERVICES';
 };
 
@@ -228,6 +227,9 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
   const [isServiceDrawerOpen, setIsServiceDrawerOpen] = useState(false);
   const [serviceDrawerCategory, setServiceDrawerCategory] = useState<'VISA' | 'PROTECTION' | 'VIP' | 'CONNECTIVITY'>('VISA');
   const [workspaceTab, setWorkspaceTab] = useState<'BASIC' | 'COVERAGE' | 'CONFIG' | 'REQUIREMENTS' | 'PRICING' | 'ASSISTANCE' | 'UPSELLS' | 'CUSTOMER_PREVIEW' | 'SEO'>('PRICING');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
   // Commercial Pricing Form State for the currently edited item
   const [pricingForm, setPricingForm] = useState<{
@@ -445,6 +447,9 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
   // --------------------------------------------------------------------------
   const handleOpenCreateService = (category: 'VISA' | 'PROTECTION' | 'VIP' | 'CONNECTIVITY') => {
     const defaultDest = destinations[0] || { id: 'dest-japan', name: 'Japan' };
+    setSaveError(null);
+    setSaveSuccess(null);
+    setIsSaving(false);
     setServiceDrawerCategory(category);
     setWorkspaceTab('BASIC');
 
@@ -624,6 +629,9 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
   };
 
   const handleEditServiceItem = (item: any) => {
+    setSaveError(null);
+    setSaveSuccess(null);
+    setIsSaving(false);
     setServiceDrawerCategory(item.rawCategory);
     setWorkspaceTab('PRICING');
 
@@ -711,19 +719,85 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
   // --------------------------------------------------------------------------
   // SAVE SERVICE WITH AUTHORITATIVE PRICING SNAPSHOT
   // --------------------------------------------------------------------------
-  const handleSaveCurrentService = (e?: React.FormEvent) => {
+  const handleSaveCurrentService = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    setSaveError(null);
+    setSaveSuccess(null);
+    setIsSaving(true);
 
-    const activeEntity: any =
-      serviceDrawerCategory === 'VISA'
-        ? editingVisa
-        : serviceDrawerCategory === 'PROTECTION'
-          ? editingProtection
-          : serviceDrawerCategory === 'VIP'
-            ? editingVip
-            : editingConnectivity;
+    try {
+      const activeEntity: any =
+        serviceDrawerCategory === 'VISA'
+          ? editingVisa
+          : serviceDrawerCategory === 'PROTECTION'
+            ? editingProtection
+            : serviceDrawerCategory === 'VIP'
+              ? editingVip
+              : editingConnectivity;
 
-    if (activeEntity) {
+      if (!activeEntity) {
+        setSaveError('No active service record found to save.');
+        setIsSaving(false);
+        return;
+      }
+
+      // 1. Mandatory Category Field Validations
+      if (serviceDrawerCategory === 'VISA') {
+        if (!editingVisa?.country?.trim()) {
+          setSaveError('Please select or specify a Destination Country for the Visa service.');
+          setIsSaving(false);
+          return;
+        }
+        if (!editingVisa?.visaType?.trim()) {
+          setSaveError('Please specify the Visa Type / Classification name.');
+          setIsSaving(false);
+          return;
+        }
+      } else if (serviceDrawerCategory === 'PROTECTION') {
+        if (!editingProtection?.serviceName?.trim()) {
+          setSaveError('Please provide a Service Title / Name for this Travel Protection plan.');
+          setIsSaving(false);
+          return;
+        }
+        if (!editingProtection?.provider?.trim()) {
+          setSaveError('Please specify the Insurance Underwriter / Provider name.');
+          setIsSaving(false);
+          return;
+        }
+      } else if (serviceDrawerCategory === 'VIP') {
+        if (!editingVip?.name?.trim()) {
+          setSaveError('Please provide a Service Title for this VIP Ground service.');
+          setIsSaving(false);
+          return;
+        }
+        if (!editingVip?.supplierName?.trim()) {
+          setSaveError('Please specify the Executive Ground Partner / Supplier name.');
+          setIsSaving(false);
+          return;
+        }
+      } else if (serviceDrawerCategory === 'CONNECTIVITY') {
+        if (!editingConnectivity?.name?.trim()) {
+          setSaveError('Please provide a Package Name for this 5G eSIM / Connectivity plan.');
+          setIsSaving(false);
+          return;
+        }
+        if (!editingConnectivity?.dataAllowance?.trim()) {
+          setSaveError('Please specify the Data Allowance (e.g. 10GB High-Speed 5G).');
+          setIsSaving(false);
+          return;
+        }
+      }
+
+      // Check commercial nett price
+      const rawNettInput = pricingForm.nettPrice.trim();
+      const parsedNett = parseFloat(rawNettInput);
+      if (rawNettInput === '' || isNaN(parsedNett) || parsedNett < 0) {
+        setSaveError('Please specify a valid Nett Base Cost (≥ 0) in the Commercial Pricing tab.');
+        setIsSaving(false);
+        return;
+      }
+
+      // 2. Validity period check
       const effectiveValidFrom = (activeEntity.validity?.validFrom ?? activeEntity.validityFrom ?? '2026-01-01').trim();
       const effectiveValidTo = (activeEntity.validity?.validTo ?? activeEntity.validityTo ?? '2027-12-31').trim();
       const validityCheck = validateInventoryValidityAndSurcharges({
@@ -735,121 +809,174 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
         nativeCurrency: pricingForm.currency || activeEntity.currency || 'USD'
       });
       if (!validityCheck.isValid) {
+        setSaveError(validityCheck.errors.join(' ') || 'Inventory validity date range is invalid.');
+        setIsSaving(false);
         return;
       }
+
+      const calc = livePricingCalculation;
+      const finalPriceToSave = calc ? calc.finalPrice : 0;
+
+      const pricingSnapshot: CommercialPricingDetails = {
+        currency: pricingForm.currency,
+        pricingUnit: pricingForm.pricingUnit,
+        nettPrice: calc ? calc.nettPrice : (parsedNett || 0),
+        marginType: pricingForm.marginType,
+        marginValue: parseFloat(pricingForm.marginValue) || 0,
+        marginAmount: calc ? calc.marginAmount : 0,
+        serviceChargeType: pricingForm.serviceChargeType,
+        serviceChargeValue: parseFloat(pricingForm.serviceChargeValue) || 0,
+        serviceChargeAmount: calc ? calc.serviceChargeAmount : 0,
+        taxType: pricingForm.taxType,
+        taxValue: parseFloat(pricingForm.taxValue) || 0,
+        taxAmount: calc ? calc.taxAmount : 0,
+        finalPrice: finalPriceToSave,
+        pricingVersion: 1,
+        lastUpdatedAt: new Date().toISOString()
+      };
+
+      if (serviceDrawerCategory === 'VISA' && editingVisa) {
+        const syncedChecklist = editingVisa.structuredRequirements && editingVisa.structuredRequirements.length > 0
+          ? editingVisa.structuredRequirements.map(r => r.name)
+          : editingVisa.documentsChecklist || [];
+
+        const updatedVisa: VisaProduct = {
+          ...editingVisa,
+          documentsChecklist: syncedChecklist,
+          requirementVersion: (editingVisa.requirementVersion || 1) + 1,
+          embassyFee: calc ? calc.nettPrice : (parsedNett || editingVisa.embassyFee || 0),
+          serviceFee: calc ? (calc.marginAmount + calc.serviceChargeAmount) : (editingVisa.serviceFee || 0),
+          sellingPrice: finalPriceToSave,
+          currency: pricingForm.currency,
+          pricing: pricingSnapshot,
+          status: editingVisa.status || 'ACTIVE',
+          validityFrom: effectiveValidFrom,
+          validityTo: effectiveValidTo,
+          validity: {
+            validFrom: effectiveValidFrom,
+            validTo: effectiveValidTo
+          },
+          surcharges: editingVisa.surcharges || [],
+          updatedAt: new Date().toISOString()
+        };
+
+        await db.saveVisaAsync(updatedVisa, user);
+        setVisas(db.getVisas());
+        setEditingVisa(updatedVisa);
+      } else if (serviceDrawerCategory === 'PROTECTION' && editingProtection) {
+        const updatedProtection: TravelProtectionPlan = {
+          ...(editingProtection as TravelProtectionPlan),
+          currency: pricingForm.currency,
+          netCostPerTrip: calc ? calc.nettPrice : (parsedNett || 30),
+          sellingPricePerTrip: finalPriceToSave,
+          pricing: pricingSnapshot,
+          status: editingProtection.status || 'ACTIVE',
+          provider: editingProtection.provider || 'Approved Underwriter',
+          serviceName: editingProtection.serviceName || 'International Travel Protection',
+          coverageArea: editingProtection.coverageArea || 'Worldwide excl. US/Canada',
+          destinationId: editingProtection.destinationId || undefined,
+          medicalCoverageAmount: Number(editingProtection.medicalCoverageAmount) || 250000,
+          emergencyAssistanceIncluded: editingProtection.emergencyAssistanceIncluded ?? true,
+          evacuationCoverageAmount: Number(editingProtection.evacuationCoverageAmount) || 100000,
+          tripCancellationAmount: Number(editingProtection.tripCancellationAmount) || 5000,
+          baggageLossAmount: Number(editingProtection.baggageLossAmount) || 1500,
+          validityDaysMax: Number(editingProtection.validityDaysMax) || 30,
+          eligibilityAgeMin: Number(editingProtection.eligibilityAgeMin) ?? 0,
+          eligibilityAgeMax: Number(editingProtection.eligibilityAgeMax) || 85,
+          terms: editingProtection.terms || 'Complies with European Schengen Regulation (EC) 810/2009. 24/7 cashless medical assistance network.',
+          customerDescription: editingProtection.customerDescription || '',
+          inclusions: editingProtection.inclusions || [
+            'Cashless In-Patient Hospitalization',
+            'Emergency Medical Evacuation',
+            'Trip Interruption & Cancellation',
+            'Baggage Loss & Delay Compensation'
+          ],
+          validityFrom: effectiveValidFrom,
+          validityTo: effectiveValidTo,
+          validity: {
+            validFrom: effectiveValidFrom,
+            validTo: effectiveValidTo
+          },
+          surcharges: editingProtection.surcharges || [],
+          updatedAt: new Date().toISOString()
+        };
+
+        await db.saveTravelProtectionPlanAsync(updatedProtection, user);
+        setProtectionPlans(db.getTravelProtectionPlans());
+        setEditingProtection(updatedProtection);
+      } else if (serviceDrawerCategory === 'VIP' && editingVip) {
+        const updatedVip: VipGroundService = {
+          ...(editingVip as VipGroundService),
+          currency: pricingForm.currency,
+          name: editingVip.name || 'VIP Airport Meet & Assist',
+          supplierName: editingVip.supplierName || 'Executive Ground Logistics Partner',
+          destinationId: editingVip.destinationId || destinations[0]?.id || 'dest-japan',
+          hubId: editingVip.hubId || '',
+          serviceType: editingVip.serviceType || 'MEET_AND_GREET',
+          pricingType: editingVip.pricingType || 'PER_PAX',
+          netCost: calc ? calc.nettPrice : (parsedNett || 100),
+          sellingPrice: finalPriceToSave,
+          defaultMarkupPercent: calc ? calc.marginValue : (editingVip.defaultMarkupPercent || 25),
+          pricing: pricingSnapshot,
+          status: editingVip.status || 'ACTIVE',
+          badge: editingVip.badge || '',
+          shortDesc: editingVip.shortDesc || editingVip.longDesc || '',
+          longDesc: editingVip.longDesc || editingVip.shortDesc || '',
+          inclusions: editingVip.inclusions || ['Airside Gate Greeting', 'Fast-Track Escort', 'Luggage Porterage'],
+          validityFrom: effectiveValidFrom,
+          validityTo: effectiveValidTo,
+          validity: {
+            validFrom: effectiveValidFrom,
+            validTo: effectiveValidTo
+          },
+          surcharges: editingVip.surcharges || [],
+          updatedAt: new Date().toISOString()
+        };
+
+        await db.saveVipGroundServiceAsync(updatedVip, user);
+        setVipServices(db.getVipGroundServices());
+        setEditingVip(updatedVip);
+      } else if (serviceDrawerCategory === 'CONNECTIVITY' && editingConnectivity) {
+        const updatedConn: ConnectivityPlan = {
+          ...(editingConnectivity as ConnectivityPlan),
+          currency: pricingForm.currency,
+          name: editingConnectivity.name || '5G Regional eSIM',
+          type: editingConnectivity.type || 'ESIM',
+          coverageZone: editingConnectivity.coverageZone || 'Regional',
+          dataAllowance: editingConnectivity.dataAllowance || '10GB High-Speed 5G',
+          validityDays: Number(editingConnectivity.validityDays) || 15,
+          networkSpeed: editingConnectivity.networkSpeed || '5G / 4G LTE High-Speed',
+          netCost: calc ? calc.nettPrice : (parsedNett || 10),
+          sellingPrice: finalPriceToSave,
+          pricing: pricingSnapshot,
+          status: editingConnectivity.status || 'ACTIVE',
+          inclusions: editingConnectivity.inclusions || ['Instant QR Activation', 'Hotspot / Tethering Enabled'],
+          validityFrom: effectiveValidFrom,
+          validityTo: effectiveValidTo,
+          validity: {
+            validFrom: effectiveValidFrom,
+            validTo: effectiveValidTo
+          },
+          surcharges: editingConnectivity.surcharges || [],
+          updatedAt: new Date().toISOString()
+        };
+
+        await db.saveConnectivityPlanAsync(updatedConn, user);
+        setConnectivityPlans(db.getConnectivityPlans());
+        setEditingConnectivity(updatedConn);
+      }
+
+      setSaveSuccess('Service record successfully saved and synchronized to Firestore database.');
+      setTimeout(() => {
+        setIsServiceDrawerOpen(false);
+        setSaveSuccess(null);
+      }, 700);
+    } catch (err: any) {
+      console.error('[VisaCMSManager] Failed to persist service record:', err);
+      setSaveError(err?.message || 'Failed to persist service record to Firestore database.');
+    } finally {
+      setIsSaving(false);
     }
-
-    const calc = livePricingCalculation;
-    const finalPriceToSave = calc ? calc.finalPrice : 0;
-
-    const pricingSnapshot: CommercialPricingDetails = {
-      currency: pricingForm.currency,
-      pricingUnit: pricingForm.pricingUnit,
-      nettPrice: calc ? calc.nettPrice : (parseFloat(pricingForm.nettPrice) || 0),
-      marginType: pricingForm.marginType,
-      marginValue: parseFloat(pricingForm.marginValue) || 0,
-      marginAmount: calc ? calc.marginAmount : 0,
-      serviceChargeType: pricingForm.serviceChargeType,
-      serviceChargeValue: parseFloat(pricingForm.serviceChargeValue) || 0,
-      serviceChargeAmount: calc ? calc.serviceChargeAmount : 0,
-      taxType: pricingForm.taxType,
-      taxValue: parseFloat(pricingForm.taxValue) || 0,
-      taxAmount: calc ? calc.taxAmount : 0,
-      finalPrice: finalPriceToSave,
-      pricingVersion: 1,
-      lastUpdatedAt: new Date().toISOString()
-    };
-
-    if (serviceDrawerCategory === 'VISA' && editingVisa) {
-      if (!editingVisa.country || !editingVisa.visaType) return;
-      const syncedChecklist = editingVisa.structuredRequirements && editingVisa.structuredRequirements.length > 0
-        ? editingVisa.structuredRequirements.map(r => r.name)
-        : editingVisa.documentsChecklist || [];
-
-      const updatedVisa: VisaProduct = {
-        ...editingVisa,
-        documentsChecklist: syncedChecklist,
-        requirementVersion: (editingVisa.requirementVersion || 1) + 1,
-        embassyFee: calc ? calc.nettPrice : (parseFloat(pricingForm.nettPrice) || editingVisa.embassyFee || 0),
-        serviceFee: calc ? (calc.marginAmount + calc.serviceChargeAmount) : (editingVisa.serviceFee || 0),
-        sellingPrice: finalPriceToSave,
-        currency: pricingForm.currency,
-        pricing: pricingSnapshot,
-        validityFrom: editingVisa.validity?.validFrom || editingVisa.validityFrom || '2026-01-01',
-        validityTo: editingVisa.validity?.validTo || editingVisa.validityTo || '2027-12-31',
-        validity: {
-          validFrom: editingVisa.validity?.validFrom || editingVisa.validityFrom || '2026-01-01',
-          validTo: editingVisa.validity?.validTo || editingVisa.validityTo || '2027-12-31'
-        },
-        surcharges: editingVisa.surcharges || [],
-        updatedAt: new Date().toISOString()
-      };
-
-      db.saveVisa(updatedVisa, user);
-      setEditingVisa(updatedVisa);
-    } else if (serviceDrawerCategory === 'PROTECTION' && editingProtection) {
-      if (!editingProtection.serviceName || !editingProtection.provider) return;
-      const updatedProtection: TravelProtectionPlan = {
-        ...(editingProtection as TravelProtectionPlan),
-        currency: pricingForm.currency,
-        netCostPerTrip: calc ? calc.nettPrice : (parseFloat(pricingForm.nettPrice) || 30),
-        sellingPricePerTrip: finalPriceToSave,
-        pricing: pricingSnapshot,
-        validityFrom: editingProtection.validity?.validFrom || editingProtection.validityFrom || '2026-01-01',
-        validityTo: editingProtection.validity?.validTo || editingProtection.validityTo || '2027-12-31',
-        validity: {
-          validFrom: editingProtection.validity?.validFrom || editingProtection.validityFrom || '2026-01-01',
-          validTo: editingProtection.validity?.validTo || editingProtection.validityTo || '2027-12-31'
-        },
-        surcharges: editingProtection.surcharges || [],
-        updatedAt: new Date().toISOString()
-      };
-
-      db.saveTravelProtectionPlan(updatedProtection, user);
-      setEditingProtection(updatedProtection);
-    } else if (serviceDrawerCategory === 'VIP' && editingVip) {
-      if (!editingVip.name || !editingVip.supplierName) return;
-      const updatedVip: VipGroundService = {
-        ...(editingVip as VipGroundService),
-        currency: pricingForm.currency,
-        netCost: calc ? calc.nettPrice : (parseFloat(pricingForm.nettPrice) || 100),
-        sellingPrice: finalPriceToSave,
-        pricing: pricingSnapshot,
-        validityFrom: editingVip.validity?.validFrom || editingVip.validityFrom || '2026-01-01',
-        validityTo: editingVip.validity?.validTo || editingVip.validityTo || '2027-12-31',
-        validity: {
-          validFrom: editingVip.validity?.validFrom || editingVip.validityFrom || '2026-01-01',
-          validTo: editingVip.validity?.validTo || editingVip.validityTo || '2027-12-31'
-        },
-        surcharges: editingVip.surcharges || [],
-        updatedAt: new Date().toISOString()
-      };
-
-      db.saveVipGroundService(updatedVip, user);
-      setEditingVip(updatedVip);
-    } else if (serviceDrawerCategory === 'CONNECTIVITY' && editingConnectivity) {
-      if (!editingConnectivity.name || !editingConnectivity.dataAllowance) return;
-      const updatedConn: ConnectivityPlan = {
-        ...(editingConnectivity as ConnectivityPlan),
-        currency: pricingForm.currency,
-        netCost: calc ? calc.nettPrice : (parseFloat(pricingForm.nettPrice) || 10),
-        sellingPrice: finalPriceToSave,
-        pricing: pricingSnapshot,
-        validityFrom: editingConnectivity.validity?.validFrom || editingConnectivity.validityFrom || '2026-01-01',
-        validityTo: editingConnectivity.validity?.validTo || editingConnectivity.validityTo || '2027-12-31',
-        validity: {
-          validFrom: editingConnectivity.validity?.validFrom || editingConnectivity.validityFrom || '2026-01-01',
-          validTo: editingConnectivity.validity?.validTo || editingConnectivity.validityTo || '2027-12-31'
-        },
-        surcharges: editingConnectivity.surcharges || [],
-        updatedAt: new Date().toISOString()
-      };
-
-      db.saveConnectivityPlan(updatedConn, user);
-      setEditingConnectivity(updatedConn);
-    }
-
-    setIsServiceDrawerOpen(false);
   };
 
   // --------------------------------------------------------------------------
@@ -1006,23 +1133,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
     db.saveVisa(updatedVisa, user);
   };
 
-  // Field Parity Table Definition
-  const fieldParityRows = [
-    { category: 'Visa Product', cmsField: 'Visa ID', sheetTab: 'VISA', sheetColumn: 'visa_id', firestoreField: 'id', dataType: 'String', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Visa Product', cmsField: 'Destination ID', sheetTab: 'VISA', sheetColumn: 'destination_id', firestoreField: 'destinationId', dataType: 'String', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Visa Product', cmsField: 'Country / Jurisdiction', sheetTab: 'VISA', sheetColumn: 'country', firestoreField: 'country', dataType: 'String', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Visa Product', cmsField: 'Visa Classification', sheetTab: 'VISA', sheetColumn: 'visa_type', firestoreField: 'visaType', dataType: 'String', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: 'Commercial Pricing', cmsField: 'Nett Price', sheetTab: 'VISA_RATES', sheetColumn: 'adult_nett', firestoreField: 'pricing.nettPrice / embassyFee', dataType: 'Number (Cost)', required: 'Yes', syncStatus: 'CENTRALIZED' },
-    { category: 'Commercial Pricing', cmsField: 'Margin (Type & Value)', sheetTab: 'VISA_RATES', sheetColumn: 'markup_agent', firestoreField: 'pricing.marginValue / marginType', dataType: 'Percent / Fixed', required: 'Yes', syncStatus: 'CENTRALIZED' },
-    { category: 'Commercial Pricing', cmsField: 'Service Charge', sheetTab: 'VISA_RATES', sheetColumn: 'service_fee', firestoreField: 'pricing.serviceChargeValue', dataType: 'Number / Percent', required: 'Yes', syncStatus: 'CENTRALIZED' },
-    { category: 'Commercial Pricing', cmsField: 'Final Selling Price', sheetTab: 'VISA_RATES', sheetColumn: 'selling_price', firestoreField: 'pricing.finalPrice', dataType: 'Calculated Engine Output', required: 'Yes', syncStatus: 'AUTHORITATIVE' },
-    { category: 'Operational Fleet', cmsField: 'Vehicles (Transfer / Private Tour)', sheetTab: 'MASTER_VEHICLES', sheetColumn: 'id / name / seatingCapacity', firestoreField: 'master_vehicles', dataType: 'VehicleMaster', required: 'Yes', syncStatus: 'AUTHORITATIVE' },
-    { category: 'Operational Fleet', cmsField: 'Yachts (Private Yacht Charters)', sheetTab: 'MASTER_YACHTS', sheetColumn: 'id / name / capacity / length', firestoreField: 'master_yachts', dataType: 'YachtMaster', required: 'Yes', syncStatus: 'AUTHORITATIVE' },
-    { category: 'Operational Fleet', cmsField: 'Ferries & Vessels (Marine Transits)', sheetTab: 'MASTER_FERRIES', sheetColumn: 'id / name / capacity / route', firestoreField: 'master_ferries', dataType: 'FerryMaster', required: 'Yes', syncStatus: 'AUTHORITATIVE' },
-    { category: 'Travel Protection', cmsField: 'Medical Cover Amount', sheetTab: 'PROTECTION', sheetColumn: 'coverage_amount', firestoreField: 'medicalCoverageAmount', dataType: 'Number', required: 'Yes', syncStatus: 'DATABASE_BACKED' },
-    { category: 'VIP Ground', cmsField: 'VIP Service Type', sheetTab: 'TRANSFER_ROUTES', sheetColumn: 'service_type', firestoreField: 'serviceType', dataType: 'Enum', required: 'Yes', syncStatus: 'VERIFIED' },
-    { category: '5G Connectivity', cmsField: 'Data Allowance', sheetTab: 'PRODUCTS', sheetColumn: 'description', firestoreField: 'dataAllowance', dataType: 'String (e.g. 10GB)', required: 'Yes', syncStatus: 'DATABASE_BACKED' }
-  ];
+
 
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
@@ -1126,25 +1237,12 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
           <Sparkles className="w-4 h-4 text-amber-400" />
           <span>Ground & Connectivity ({vipServices.length + connectivityPlans.length})</span>
         </button>
-
-        <button
-          onClick={() => handleTabSwitch('FIELD_PARITY')}
-          className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 shrink-0 cursor-pointer ${
-            activeMainTab === 'FIELD_PARITY'
-              ? 'bg-slate-900 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-          }`}
-        >
-          <FileSpreadsheet className="w-4 h-4 text-indigo-400" />
-          <span>Master Schema Matrix</span>
-        </button>
       </div>
 
       {/* ========================================================================= */}
       {/* SEARCH & FILTERS TOOLBAR                                                  */}
       {/* ========================================================================= */}
-      {activeMainTab !== 'FIELD_PARITY' && (
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex-1 relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
             <input
@@ -1208,7 +1306,6 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
             </select>
           </div>
         </div>
-      )}
 
       {/* ========================================================================= */}
       {/* 4 EXPLICIT STATES LIFECYCLE: LOADING | ERROR | EMPTY | SUCCESS            */}
@@ -1225,7 +1322,6 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
               {activeMainTab === 'VISA_SERVICES' && 'Loading Visa Services...'}
               {activeMainTab === 'TRAVEL_PROTECTION' && 'Loading Travel Protection...'}
               {activeMainTab === 'GROUND_CONNECTIVITY' && 'Loading Ground & Connectivity Services...'}
-              {activeMainTab === 'FIELD_PARITY' && 'Loading Master Schema Matrix...'}
             </h3>
             <p className="text-xs text-slate-400 mt-1">Retrieving verified inventory from Firestore and master sync ledger.</p>
           </div>
@@ -1243,7 +1339,6 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
               {activeMainTab === 'VISA_SERVICES' && 'Visa Services could not be loaded.'}
               {activeMainTab === 'TRAVEL_PROTECTION' && 'Travel Protection could not be loaded.'}
               {activeMainTab === 'GROUND_CONNECTIVITY' && 'Ground & Connectivity could not be loaded.'}
-              {activeMainTab === 'FIELD_PARITY' && 'Master Schema Matrix could not be loaded.'}
             </h3>
             <p className="text-xs text-rose-600 mt-1 font-mono">{loadError}</p>
           </div>
@@ -1336,7 +1431,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
       )}
 
       {/* 4. SUCCESS STATE: MAIN LISTING TABLE (when category has records) */}
-      {!isLoading && !loadError && activeMainTab !== 'FIELD_PARITY' && !(
+      {!isLoading && !loadError && !(
         (activeMainTab === 'VISA_SERVICES' && isVisaEmpty) ||
         (activeMainTab === 'TRAVEL_PROTECTION' && isProtectionEmpty) ||
         (activeMainTab === 'GROUND_CONNECTIVITY' && isGroundEmpty)
@@ -1501,55 +1596,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* TAB: GOOGLE SHEETS & FIREBASE MASTER PARITY MATRIX                         */}
-      {/* ========================================================================= */}
-      {activeMainTab === 'FIELD_PARITY' && (
-        <div className="space-y-4">
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-            <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-              <FileSpreadsheet className="w-5 h-5 text-indigo-600" />
-              <span>Canonical Schema & Field Parity Architecture</span>
-            </h3>
-            <p className="text-xs text-slate-500 mt-1">
-              Guarantees strict bidirectional synchronization between Master Google Sheets (VISA, VISA_RATES, PROTECTION), Firebase Firestore, and the Admin Commercial Pricing Engine.
-            </p>
-          </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase text-[10px] tracking-wider font-bold">
-                <tr>
-                  <th className="py-3 px-4">Entity</th>
-                  <th className="py-3 px-4">CMS Field Label</th>
-                  <th className="py-3 px-4">Google Sheet Tab</th>
-                  <th className="py-3 px-4">Sheet Column</th>
-                  <th className="py-3 px-4">Firestore Field Path</th>
-                  <th className="py-3 px-4">Data Type</th>
-                  <th className="py-3 px-4">Parity Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                {fieldParityRows.map((row, idx) => (
-                  <tr key={idx} className="hover:bg-slate-50/50">
-                    <td className="py-3 px-4 font-sans font-bold text-slate-800">{row.category}</td>
-                    <td className="py-3 px-4 font-sans text-slate-700">{row.cmsField}</td>
-                    <td className="py-3 px-4 text-indigo-700 bg-indigo-50/40">{row.sheetTab}</td>
-                    <td className="py-3 px-4 text-slate-600">{row.sheetColumn}</td>
-                    <td className="py-3 px-4 text-emerald-700">{row.firestoreField}</td>
-                    <td className="py-3 px-4 text-slate-500 font-sans">{row.dataType}</td>
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
-                        {row.syncStatus}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {/* ========================================================================= */}
       {/* WORKSPACE DRAWER / MODAL FOR ADDING & EDITING SERVICES                    */}
@@ -1593,6 +1640,27 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {/* Alert Notifications inside Service Drawer */}
+            {saveError && (
+              <div className="mx-5 sm:mx-6 mt-4 p-3.5 bg-rose-50 border border-rose-200 rounded-2xl flex items-center gap-3 text-xs text-rose-700 animate-in fade-in">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span className="font-medium flex-1">{saveError}</span>
+                <button
+                  type="button"
+                  onClick={() => setSaveError(null)}
+                  className="p-1 hover:bg-rose-100 rounded-lg text-rose-500 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+            {saveSuccess && (
+              <div className="mx-5 sm:mx-6 mt-4 p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-3 text-xs text-emerald-800 animate-in fade-in">
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                <span className="font-medium flex-1">{saveSuccess}</span>
+              </div>
+            )}
 
             {/* DRAWER BODY & DUAL COLUMN WORKSPACE */}
             <div className="p-5 sm:p-6 overflow-y-auto flex-1">
@@ -1735,7 +1803,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                         type="text"
                         required
                         value={
-                          serviceDrawerCategory === 'VISA' ? (editingVisa?.country ? `${editingVisa.country} - ${editingVisa.visaType}` : '') :
+                          serviceDrawerCategory === 'VISA' ? (editingVisa?.visaType || '') :
                           serviceDrawerCategory === 'PROTECTION' ? (editingProtection?.serviceName || '') :
                           serviceDrawerCategory === 'VIP' ? (editingVip?.name || '') :
                           (editingConnectivity?.name || '')
@@ -1772,8 +1840,56 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                     </div>
                   </div>
 
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">Operational Status</label>
+                      <select
+                        value={
+                          serviceDrawerCategory === 'VISA' ? (editingVisa?.status || 'ACTIVE') :
+                          serviceDrawerCategory === 'PROTECTION' ? (editingProtection?.status || 'ACTIVE') :
+                          serviceDrawerCategory === 'VIP' ? (editingVip?.status || 'ACTIVE') :
+                          (editingConnectivity?.status || 'ACTIVE')
+                        }
+                        onChange={e => {
+                          const val = e.target.value as 'ACTIVE' | 'DRAFT' | 'ARCHIVED';
+                          if (serviceDrawerCategory === 'VISA' && editingVisa) {
+                            setEditingVisa({ ...editingVisa, status: val });
+                          } else if (serviceDrawerCategory === 'PROTECTION' && editingProtection) {
+                            setEditingProtection({ ...editingProtection, status: val });
+                          } else if (serviceDrawerCategory === 'VIP' && editingVip) {
+                            setEditingVip({ ...editingVip, status: val });
+                          } else if (serviceDrawerCategory === 'CONNECTIVITY' && editingConnectivity) {
+                            setEditingConnectivity({ ...editingConnectivity, status: val });
+                          }
+                        }}
+                        className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6] cursor-pointer"
+                      >
+                        <option value="ACTIVE">ACTIVE (Published & Sellable)</option>
+                        <option value="DRAFT">DRAFT (Internal Review)</option>
+                        <option value="ARCHIVED">ARCHIVED (Discontinued)</option>
+                      </select>
+                    </div>
+
+                    {serviceDrawerCategory === 'VIP' && (
+                      <div>
+                        <label className="font-bold text-slate-700 block mb-1">Service Badge / Highlight Tag</label>
+                        <input
+                          type="text"
+                          value={editingVip?.badge || ''}
+                          onChange={e => {
+                            if (editingVip) setEditingVip({ ...editingVip, badge: e.target.value });
+                          }}
+                          placeholder="e.g. Airside VIP, Fast-Track, Executive Choice"
+                          className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
+                        />
+                      </div>
+                    )}
+                  </div>
+
                   <div>
-                    <label className="font-bold text-slate-700 block mb-1">Description</label>
+                    <label className="font-bold text-slate-700 block mb-1">
+                      {serviceDrawerCategory === 'CONNECTIVITY' ? 'Package Inclusions (One per line)' : 'Customer-Facing Description'}
+                    </label>
                     <textarea
                       rows={3}
                       value={
@@ -1790,22 +1906,32 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                           setEditingProtection({ ...editingProtection, customerDescription: val });
                         } else if (serviceDrawerCategory === 'VIP' && editingVip) {
                           setEditingVip({ ...editingVip, longDesc: val, shortDesc: val });
+                        } else if (serviceDrawerCategory === 'CONNECTIVITY' && editingConnectivity) {
+                          const lines = val.split('\n');
+                          setEditingConnectivity({ ...editingConnectivity, inclusions: lines });
                         }
                       }}
+                      placeholder={
+                        serviceDrawerCategory === 'CONNECTIVITY'
+                          ? 'Instant QR Code Activation\nMulti-Carrier Auto Roaming\nHotspot & Tethering Enabled'
+                          : 'Provide clear, customer-friendly details about this service and its operational delivery.'
+                      }
                       className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
                     />
                   </div>
 
-                  <div>
-                    <label className="font-bold text-slate-700 block mb-1">Hero Image URL</label>
-                    <ImageUploadOrUrlInput
-                      value={editingVisa?.heroImage || ''}
-                      onChange={url => {
-                        if (editingVisa) setEditingVisa({ ...editingVisa, heroImage: url });
-                      }}
-                      label="Service Visual Banner"
-                    />
-                  </div>
+                  {serviceDrawerCategory === 'VISA' && (
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">Hero Image URL</label>
+                      <ImageUploadOrUrlInput
+                        value={editingVisa?.heroImage || ''}
+                        onChange={url => {
+                          if (editingVisa) setEditingVisa({ ...editingVisa, heroImage: url });
+                        }}
+                        label="Service Visual Banner"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1820,6 +1946,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                       <select
                         value={
                           serviceDrawerCategory === 'VISA' ? (editingVisa?.destinationId || '') :
+                          serviceDrawerCategory === 'PROTECTION' ? (editingProtection?.destinationId || '') :
                           serviceDrawerCategory === 'VIP' ? (editingVip?.destinationId || '') :
                           (destinations[0]?.id || '')
                         }
@@ -1832,12 +1959,18 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                               destinationId: dId,
                               country: found?.name || editingVisa.country
                             });
+                          } else if (serviceDrawerCategory === 'PROTECTION' && editingProtection) {
+                            setEditingProtection({
+                              ...editingProtection,
+                              destinationId: dId || undefined
+                            });
                           } else if (serviceDrawerCategory === 'VIP' && editingVip) {
                             setEditingVip({ ...editingVip, destinationId: dId });
                           }
                         }}
                         className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6] cursor-pointer"
                       >
+                        <option value="">Global / International Jurisdiction</option>
                         {destinations.map(d => (
                           <option key={d.id} value={d.id}>{d.name} ({d.country || 'International'})</option>
                         ))}
@@ -1845,11 +1978,14 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                     </div>
 
                     <div>
-                      <label className="font-bold text-slate-700 block mb-1">Coverage Area Description</label>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        {serviceDrawerCategory === 'VIP' ? 'Hub / Airport Terminal Code' : 'Coverage Area Description'}
+                      </label>
                       <input
                         type="text"
                         value={
                           serviceDrawerCategory === 'PROTECTION' ? (editingProtection?.coverageArea || '') :
+                          serviceDrawerCategory === 'VIP' ? (editingVip?.hubId || '') :
                           serviceDrawerCategory === 'CONNECTIVITY' ? (editingConnectivity?.coverageZone || '') :
                           (editingVisa?.country || 'Jurisdiction Specific')
                         }
@@ -1857,11 +1993,17 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                           const val = e.target.value;
                           if (serviceDrawerCategory === 'PROTECTION' && editingProtection) {
                             setEditingProtection({ ...editingProtection, coverageArea: val });
+                          } else if (serviceDrawerCategory === 'VIP' && editingVip) {
+                            setEditingVip({ ...editingVip, hubId: val });
                           } else if (serviceDrawerCategory === 'CONNECTIVITY' && editingConnectivity) {
                             setEditingConnectivity({ ...editingConnectivity, coverageZone: val });
                           }
                         }}
-                        placeholder="e.g. Worldwide excl. US/Canada, Schengen, Tokyo Haneda Airport"
+                        placeholder={
+                          serviceDrawerCategory === 'VIP'
+                            ? 'e.g. HND / NRT - Tokyo International, DXB Terminal 3'
+                            : 'e.g. Worldwide excl. US/Canada, Schengen Area, Japan Nationwide'
+                        }
                         className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
                       />
                     </div>
@@ -1874,6 +2016,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
               {/* ================================================================= */}
               {workspaceTab === 'CONFIG' && (
                 <div className="space-y-4 text-xs">
+                  {/* VISA SERVICES CONFIGURATION */}
                   {serviceDrawerCategory === 'VISA' && editingVisa && (
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div>
@@ -1881,7 +2024,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                         <select
                           value={editingVisa.entryType}
                           onChange={e => setEditingVisa({ ...editingVisa, entryType: e.target.value as any })}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none cursor-pointer"
                         >
                           <option value="SINGLE_ENTRY">Single Entry</option>
                           <option value="DOUBLE_ENTRY">Double Entry</option>
@@ -1911,79 +2054,261 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                     </div>
                   )}
 
+                  {/* TRAVEL PROTECTION CONFIGURATION */}
                   {serviceDrawerCategory === 'PROTECTION' && editingProtection && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Underwriter / Provider *</label>
+                          <input
+                            type="text"
+                            required
+                            value={editingProtection.provider || ''}
+                            onChange={e => setEditingProtection({ ...editingProtection, provider: e.target.value })}
+                            placeholder="e.g. Allianz Global Assistance, AXA XL"
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Medical Coverage Limit ($)</label>
+                          <input
+                            type="number"
+                            value={editingProtection.medicalCoverageAmount !== undefined ? editingProtection.medicalCoverageAmount : 250000}
+                            onChange={e => setEditingProtection({ ...editingProtection, medicalCoverageAmount: Number(e.target.value) || 0 })}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Evacuation Coverage Limit ($)</label>
+                          <input
+                            type="number"
+                            value={editingProtection.evacuationCoverageAmount !== undefined ? editingProtection.evacuationCoverageAmount : 100000}
+                            onChange={e => setEditingProtection({ ...editingProtection, evacuationCoverageAmount: Number(e.target.value) || 0 })}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Trip Cancellation Limit ($)</label>
+                          <input
+                            type="number"
+                            value={editingProtection.tripCancellationAmount !== undefined ? editingProtection.tripCancellationAmount : 5000}
+                            onChange={e => setEditingProtection({ ...editingProtection, tripCancellationAmount: Number(e.target.value) || 0 })}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Baggage Loss / Delay Limit ($)</label>
+                          <input
+                            type="number"
+                            value={editingProtection.baggageLossAmount !== undefined ? editingProtection.baggageLossAmount : 1500}
+                            onChange={e => setEditingProtection({ ...editingProtection, baggageLossAmount: Number(e.target.value) || 0 })}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Max Coverage Duration (Days)</label>
+                          <input
+                            type="number"
+                            value={editingProtection.validityDaysMax !== undefined ? editingProtection.validityDaysMax : 30}
+                            onChange={e => setEditingProtection({ ...editingProtection, validityDaysMax: Number(e.target.value) || 0 })}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Min Eligibility Age (Years)</label>
+                          <input
+                            type="number"
+                            value={editingProtection.eligibilityAgeMin !== undefined ? editingProtection.eligibilityAgeMin : 0}
+                            onChange={e => setEditingProtection({ ...editingProtection, eligibilityAgeMin: Number(e.target.value) || 0 })}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Max Eligibility Age (Years)</label>
+                          <input
+                            type="number"
+                            value={editingProtection.eligibilityAgeMax !== undefined ? editingProtection.eligibilityAgeMax : 85}
+                            onChange={e => setEditingProtection({ ...editingProtection, eligibilityAgeMax: Number(e.target.value) || 0 })}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+
+                        <div className="pt-4">
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={editingProtection.emergencyAssistanceIncluded ?? true}
+                              onChange={e => setEditingProtection({ ...editingProtection, emergencyAssistanceIncluded: e.target.checked })}
+                              className="w-4 h-4 rounded text-[#00C6A6] focus:ring-[#00C6A6] border-slate-300"
+                            />
+                            <span className="font-bold text-slate-800">24/7 Cashless Emergency Assistance Included</span>
+                          </label>
+                        </div>
+                      </div>
+
                       <div>
-                        <label className="font-bold text-slate-700 block mb-1">Underwriter / Provider</label>
-                        <input
-                          type="text"
-                          value={editingProtection.provider || ''}
-                          onChange={e => setEditingProtection({ ...editingProtection, provider: e.target.value })}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                        <label className="font-bold text-slate-700 block mb-1">Policy Terms & Regulation EC 810/2009 Compliance</label>
+                        <textarea
+                          rows={2}
+                          value={editingProtection.terms || ''}
+                          onChange={e => setEditingProtection({ ...editingProtection, terms: e.target.value })}
+                          placeholder="e.g. Complies with European Schengen Regulation (EC) 810/2009. Minimum EUR 30,000 repatriation guarantee."
+                          className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
                         />
                       </div>
 
                       <div>
-                        <label className="font-bold text-slate-700 block mb-1">Medical Coverage Limit ($)</label>
-                        <input
-                          type="number"
-                          value={editingProtection.medicalCoverageAmount || 250000}
-                          onChange={e => setEditingProtection({ ...editingProtection, medicalCoverageAmount: Number(e.target.value) })}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                        <label className="font-bold text-slate-700 block mb-1">Plan Inclusions (One benefit per line)</label>
+                        <textarea
+                          rows={3}
+                          value={editingProtection.inclusions?.join('\n') || ''}
+                          onChange={e => {
+                            const lines = e.target.value.split('\n');
+                            setEditingProtection({ ...editingProtection, inclusions: lines });
+                          }}
+                          placeholder="Cashless In-Patient Hospitalization&#10;Emergency Medical Evacuation&#10;Trip Cancellation & Interruption&#10;Baggage Loss & Delay Compensation"
+                          className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
                         />
                       </div>
                     </div>
                   )}
 
+                  {/* VIP GROUND SERVICES CONFIGURATION */}
                   {serviceDrawerCategory === 'VIP' && editingVip && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <label className="font-bold text-slate-700 block mb-1">VIP Service Subcategory</label>
-                        <select
-                          value={editingVip.serviceType || 'MEET_AND_GREET'}
-                          onChange={e => setEditingVip({ ...editingVip, serviceType: e.target.value as any })}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                        >
-                          <option value="MEET_AND_GREET">Meet & Greet Concierge</option>
-                          <option value="FAST_TRACK">Fast Track Immigration</option>
-                          <option value="VIP_TRANSFER">Airside Transfer</option>
-                          <option value="LOUNGE_ACCESS">Executive Lounge Access</option>
-                          <option value="PORTERAGE">Baggage Porterage</option>
-                        </select>
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">VIP Service Subcategory</label>
+                          <select
+                            value={editingVip.serviceType || 'MEET_AND_GREET'}
+                            onChange={e => setEditingVip({ ...editingVip, serviceType: e.target.value as any })}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none cursor-pointer"
+                          >
+                            <option value="MEET_AND_GREET">Meet & Greet Concierge</option>
+                            <option value="FAST_TRACK">Fast Track Immigration</option>
+                            <option value="VIP_TRANSFER">Airside Transfer</option>
+                            <option value="LOUNGE_ACCESS">Executive Lounge Access</option>
+                            <option value="PORTERAGE">Baggage Porterage</option>
+                            <option value="CHAUFFEUR">Private Chauffeur & Limousine</option>
+                            <option value="CONCIERGE">Personal Ground Concierge</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Executive Ground Partner *</label>
+                          <input
+                            type="text"
+                            required
+                            value={editingVip.supplierName || ''}
+                            onChange={e => setEditingVip({ ...editingVip, supplierName: e.target.value })}
+                            placeholder="e.g. Executive Ground Logistics Partner"
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Pricing Model</label>
+                          <select
+                            value={editingVip.pricingType || 'PER_PAX'}
+                            onChange={e => setEditingVip({ ...editingVip, pricingType: e.target.value as any })}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none cursor-pointer"
+                          >
+                            <option value="PER_PAX">Per Passenger / Traveller</option>
+                            <option value="PER_VEHICLE">Per Vehicle / Transfer</option>
+                            <option value="FIXED">Fixed Service Package</option>
+                          </select>
+                        </div>
                       </div>
 
                       <div>
-                        <label className="font-bold text-slate-700 block mb-1">Executive Ground Partner</label>
-                        <input
-                          type="text"
-                          value={editingVip.supplierName || ''}
-                          onChange={e => setEditingVip({ ...editingVip, supplierName: e.target.value })}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                        <label className="font-bold text-slate-700 block mb-1">Service Inclusions (One feature per line)</label>
+                        <textarea
+                          rows={3}
+                          value={editingVip.inclusions?.join('\n') || ''}
+                          onChange={e => {
+                            const lines = e.target.value.split('\n');
+                            setEditingVip({ ...editingVip, inclusions: lines });
+                          }}
+                          placeholder="Airside Gate Greeting&#10;Electric Buggy Escort&#10;Fast-Track Customs Clearance&#10;Luggage Porterage"
+                          className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
                         />
                       </div>
                     </div>
                   )}
 
+                  {/* 5G CONNECTIVITY CONFIGURATION */}
                   {serviceDrawerCategory === 'CONNECTIVITY' && editingConnectivity && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <label className="font-bold text-slate-700 block mb-1">Data Allowance</label>
-                        <input
-                          type="text"
-                          value={editingConnectivity.dataAllowance || ''}
-                          onChange={e => setEditingConnectivity({ ...editingConnectivity, dataAllowance: e.target.value })}
-                          placeholder="e.g. 10GB High-Speed, Unlimited"
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
-                        />
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Package Technology</label>
+                          <select
+                            value={editingConnectivity.type || 'ESIM'}
+                            onChange={e => setEditingConnectivity({ ...editingConnectivity, type: e.target.value as any })}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none cursor-pointer"
+                          >
+                            <option value="ESIM">Digital eSIM (QR Delivery)</option>
+                            <option value="PHYSICAL_SIM">Physical SIM Card</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Data Allowance *</label>
+                          <input
+                            type="text"
+                            required
+                            value={editingConnectivity.dataAllowance || ''}
+                            onChange={e => setEditingConnectivity({ ...editingConnectivity, dataAllowance: e.target.value })}
+                            placeholder="e.g. 10GB High-Speed, Unlimited 5G"
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Validity (Days) *</label>
+                          <input
+                            type="number"
+                            required
+                            value={editingConnectivity.validityDays !== undefined && !Number.isNaN(editingConnectivity.validityDays) ? editingConnectivity.validityDays : 15}
+                            onChange={e => setEditingConnectivity({ ...editingConnectivity, validityDays: Number(e.target.value) || 0 })}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="font-bold text-slate-700 block mb-1">Network Speed & Tier</label>
+                          <input
+                            type="text"
+                            value={editingConnectivity.networkSpeed || ''}
+                            onChange={e => setEditingConnectivity({ ...editingConnectivity, networkSpeed: e.target.value })}
+                            placeholder="e.g. 5G Ultra Wideband / 4G LTE"
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                          />
+                        </div>
                       </div>
 
                       <div>
-                        <label className="font-bold text-slate-700 block mb-1">Validity (Days)</label>
-                        <input
-                          type="number"
-                          value={editingConnectivity.validityDays !== undefined && !Number.isNaN(editingConnectivity.validityDays) ? editingConnectivity.validityDays : 15}
-                          onChange={e => setEditingConnectivity({ ...editingConnectivity, validityDays: Number(e.target.value) })}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                        <label className="font-bold text-slate-700 block mb-1">Package Inclusions (One feature per line)</label>
+                        <textarea
+                          rows={3}
+                          value={editingConnectivity.inclusions?.join('\n') || ''}
+                          onChange={e => {
+                            const lines = e.target.value.split('\n');
+                            setEditingConnectivity({ ...editingConnectivity, inclusions: lines });
+                          }}
+                          placeholder="Instant QR Code Email Delivery&#10;Zero Physical SIM Swapping&#10;Hotspot / Tethering Enabled&#10;Multi-Network Auto-Roaming"
+                          className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
                         />
                       </div>
                     </div>
@@ -2456,11 +2781,21 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
 
                 <button
                   type="button"
+                  disabled={isSaving}
                   onClick={handleSaveCurrentService}
-                  className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs shadow-lg transition-all cursor-pointer flex items-center space-x-1.5"
+                  className="px-6 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black text-xs shadow-lg transition-all cursor-pointer flex items-center space-x-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Save className="w-4 h-4" />
-                  <span>Save Service & Pricing</span>
+                  {isSaving ? (
+                    <>
+                      <Clock className="w-4 h-4 animate-spin text-slate-950" />
+                      <span>Saving to Firestore...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      <span>Save Service & Pricing</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>

@@ -1002,15 +1002,49 @@ export function hasBookingOperationsPermission(
 /**
  * Evaluates whether a user is authorized to view wholesale contracted net rates and internal DMC margins.
  * STRICT GLOBAL RULE: No Buyer or B2B Agent may EVER view wholesale nett rates or internal calculations.
- * Internal pricing details are reserved strictly for Admin and internal DMC Staff.
+ * Internal pricing details are reserved strictly for Admin and internal DMC Staff / Team Members.
  */
 export function canUserViewWholesaleRates(user: User | null | undefined): boolean {
   if (!user) return false;
   if ((user.approvalStatus || 'APPROVED') !== 'APPROVED') return false;
   if (isMasterAdmin(user)) return true;
-  if (user.role === 'ADMIN' || user.role === 'DMC_STAFF') return true;
+  if (user.role === 'ADMIN') return true;
+  if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+    if (user.permissions?.canViewWholesaleNetRates !== undefined) {
+      return Boolean(user.permissions.canViewWholesaleNetRates);
+    }
+    return true;
+  }
 
   // STRICT GLOBAL RULE: Neither B2B Agent nor Buyer may ever see wholesale net rates or margins
+  return false;
+}
+
+/**
+ * Evaluates whether an internal user is authorized to view the Total Nett Cost and internal pricing breakdown on Quote Builder.
+ * - Internal Admin: Always authorized.
+ * - Internal Team Member: Authorized only if their role or granular permissions authorize internal cost visibility.
+ * - External B2B Agent / Buyer / Viewer: Strictly prohibited.
+ */
+export function canUserViewInternalCostBreakdown(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if ((user.approvalStatus || 'APPROVED') !== 'APPROVED') return false;
+  if (isMasterAdmin(user)) return true;
+  if (user.role === 'ADMIN') return true;
+  if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+    // Check granular permission overrides
+    if (user.permissions?.canViewWholesaleNetRates === false) return false;
+    if (user.permissions?.bookingOperations?.view_supplier_prices === false) return false;
+    if (user.permissions?.canViewWholesaleNetRates === true) return true;
+    if (user.permissions?.bookingOperations?.view_internal_financials === true) return true;
+    if (user.permissions?.canAccessFinancials === true) return true;
+
+    // Check default role permissions
+    const defaults = getDefaultPermissionsForRole(user.role);
+    return Boolean(defaults.canViewWholesaleNetRates);
+  }
+
+  // External agents, buyers, viewers never have access to internal nett costs or margins
   return false;
 }
 

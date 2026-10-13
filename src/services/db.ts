@@ -235,7 +235,8 @@ import {
   canEditSubmittedBooking,
   canEditPassengerDetails,
   canUploadPassengerDocuments,
-  toB2BAgentBookingDTO
+  toB2BAgentBookingDTO,
+  canUserViewInternalCostBreakdown
 } from './permissionEngine';
 import { 
   sanitizeQuoteForAgent, 
@@ -1990,13 +1991,16 @@ export class AppDatabase {
     if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'visas')) {
       this.setItem('visas', INITIAL_VISAS);
     }
-    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'travel_protection_plans')) {
+    const currentProtection = this.getItem<TravelProtectionPlan[]>('travel_protection_plans', []);
+    if (!currentProtection || currentProtection.length === 0) {
       this.setItem('travel_protection_plans', INITIAL_TRAVEL_PROTECTION_PLANS);
     }
-    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'vip_ground_services')) {
+    const currentVip = this.getItem<VipGroundService[]>('vip_ground_services', []);
+    if (!currentVip || currentVip.length === 0) {
       this.setItem('vip_ground_services', INITIAL_VIP_GROUND_SERVICES);
     }
-    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'connectivity_plans')) {
+    const currentConn = this.getItem<ConnectivityPlan[]>('connectivity_plans', []);
+    if (!currentConn || currentConn.length === 0) {
       this.setItem('connectivity_plans', INITIAL_CONNECTIVITY_PLANS);
     }
     if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'footer_config')) {
@@ -6904,9 +6908,15 @@ export class AppDatabase {
     const all = this.getAllSavedQuotes();
     if (!user) return [];
 
-    // 1. Admin & Internal Staff see ALL quotes with internal pricing
-    if (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+    // 1. Admin & Internal Staff with authorized pricing visibility
+    if (user.role === 'ADMIN') {
       return all;
+    }
+    if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+      if (canUserViewInternalCostBreakdown(user)) {
+        return all;
+      }
+      return all.map(q => sanitizeQuoteForAgent(q));
     }
 
     // 2. B2B Agents see their own created quotes or assigned quotes (STRICTLY SANITIZED)
@@ -6941,8 +6951,14 @@ export class AppDatabase {
     if (!user) return null;
 
     // 1. Admin & Internal Staff
-    if (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+    if (user.role === 'ADMIN') {
       return found;
+    }
+    if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+      if (canUserViewInternalCostBreakdown(user)) {
+        return found;
+      }
+      return sanitizeQuoteForAgent(found);
     }
 
     // 2. B2B Agent (STRICT SANITIZATION)
@@ -7138,6 +7154,20 @@ export class AppDatabase {
     const agentMarkup = agentMarginAmount;
     const internalProfit = Math.max(0, finalCustomerSellingPrice - authoritativeNetCost);
 
+    const adminManualMarginType = quote.adminManualMarginType ?? quote.admin_manual_margin_type ?? existingQuote?.adminManualMarginType;
+    const adminManualMarginValue = quote.adminManualMarginValue ?? quote.admin_manual_margin_value ?? existingQuote?.adminManualMarginValue;
+    const adminMarginMode = quote.adminMarginMode ?? quote.admin_margin_mode ?? existingQuote?.adminMarginMode ?? 'REPLACE';
+    const adminManualMarginAmount = quote.adminManualMarginAmount ?? quote.admin_manual_margin_amount ?? (
+      adminManualMarginValue !== undefined
+        ? (adminManualMarginType === 'FIXED' ? Math.round(adminManualMarginValue) : Math.round(authoritativeNetCost * (adminManualMarginValue / 100)))
+        : existingQuote?.adminManualMarginAmount
+    );
+    const revisedSellingPrice = quote.revisedSellingPrice ?? quote.revised_selling_price ?? (
+      adminManualMarginAmount !== undefined
+        ? (authoritativeNetCost + adminManualMarginAmount)
+        : existingQuote?.revisedSellingPrice
+    );
+
     const pricingSnapshot: PricingSnapshot = {
       baseFinalSellingPrice,
       currency: quote.currency,
@@ -7148,7 +7178,12 @@ export class AppDatabase {
       calculatedAt: timestamp,
       pricingVersion: currentVersion,
       itemsCount: (quote.items || []).length,
-      totalPax: quote.totalPax || ((quote.adultsCount || 2) + (quote.childrenCount || 0) + (quote.infantsCount || 0))
+      totalPax: quote.totalPax || ((quote.adultsCount || 2) + (quote.childrenCount || 0) + (quote.infantsCount || 0)),
+      adminManualMarginType,
+      adminManualMarginValue,
+      adminManualMarginAmount,
+      adminMarginMode,
+      revisedSellingPrice
     };
 
     const updatedQuote: Quotation = {
@@ -7158,6 +7193,16 @@ export class AppDatabase {
       base_final_selling_price: baseFinalSellingPrice,
       baseFinalSellingPriceCurrency: quote.currency,
       base_final_selling_price_currency: quote.currency,
+      adminManualMarginType,
+      admin_manual_margin_type: adminManualMarginType,
+      adminManualMarginValue,
+      admin_manual_margin_value: adminManualMarginValue,
+      adminManualMarginAmount,
+      admin_manual_margin_amount: adminManualMarginAmount,
+      adminMarginMode,
+      admin_margin_mode: adminMarginMode,
+      revisedSellingPrice,
+      revised_selling_price: revisedSellingPrice,
       agentMarginType,
       agent_margin_type: agentMarginType,
       agentMarginValue: validatedMarginValue,
@@ -7434,7 +7479,7 @@ export class AppDatabase {
       // Non-blocking
     }
 
-    return (user?.role === 'B2B_AGENT' || user?.role === 'BUYER')
+    return (!canUserViewInternalCostBreakdown(user))
       ? sanitizeQuoteForAgent(updatedQuote)
       : updatedQuote;
   }
@@ -17352,7 +17397,12 @@ export class AppDatabase {
   // VISA PRODUCTS & CHECKLIST MANAGEMENT
   // ==========================================
   public getVisas(): VisaProduct[] {
-    return this.getItem<VisaProduct[]>('visas', envService.allowDemoData() ? INITIAL_VISAS : []);
+    const list = this.getItem<VisaProduct[]>('visas', INITIAL_VISAS);
+    if (!list || list.length === 0) {
+      this.setItem('visas', INITIAL_VISAS);
+      return INITIAL_VISAS;
+    }
+    return list;
   }
 
   public getVisaById(id: string): VisaProduct | undefined {
@@ -17395,6 +17445,43 @@ export class AppDatabase {
     this.setItem('visas', visas);
   }
 
+  public async saveVisaAsync(visa: VisaProduct, user?: User | null): Promise<VisaProduct> {
+    const visas = this.getVisas();
+    const index = visas.findIndex(v => v.id === visa.id);
+    const now = new Date().toISOString();
+    const visaId = visa.id || `visa-${Date.now()}`;
+    canonicalImageService.extractAllImagesFromRecord(visa, 'VISA', visaId);
+    const visaPrimaryDto = canonicalImageService.getCanonicalImageDto({ ...visa, id: visaId }, 'VISA');
+    let savedVisa: VisaProduct;
+    if (index >= 0) {
+      savedVisa = {
+        ...visa,
+        imageUrl: visaPrimaryDto.url,
+        primaryImageId: visaPrimaryDto.imageId,
+        primaryImage: visaPrimaryDto as any,
+        updatedAt: now
+      };
+      visas[index] = savedVisa;
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'VisaProduct', visa.id, `Updated visa product: ${visa.country} - ${visa.visaType}`);
+    } else {
+      savedVisa = {
+        ...visa,
+        id: visaId,
+        imageUrl: visaPrimaryDto.url,
+        primaryImageId: visaPrimaryDto.imageId,
+        primaryImage: visaPrimaryDto as any,
+        createdAt: now,
+        updatedAt: now
+      };
+      visas.unshift(savedVisa);
+      this.logAudit(user || null, 'PRODUCT_CREATED', 'VisaProduct', savedVisa.id, `Created new visa product: ${visa.country} - ${visa.visaType}`);
+    }
+    await this.syncFirestoreDocAsync('visas', savedVisa.id, savedVisa);
+    canonicalImageService.notify();
+    this.setItem('visas', visas);
+    return savedVisa;
+  }
+
   public deleteVisa(visaId: string, user?: User | null): void {
     const visas = this.getVisas();
     const target = visas.find(v => v.id === visaId);
@@ -17409,7 +17496,12 @@ export class AppDatabase {
   // TRAVEL PROTECTION & INTERNATIONAL MEDICAL
   // ==========================================
   public getTravelProtectionPlans(): TravelProtectionPlan[] {
-    return this.getItem<TravelProtectionPlan[]>('travel_protection_plans', INITIAL_TRAVEL_PROTECTION_PLANS);
+    const list = this.getItem<TravelProtectionPlan[]>('travel_protection_plans', INITIAL_TRAVEL_PROTECTION_PLANS);
+    if (!list || list.length === 0) {
+      this.setItem('travel_protection_plans', INITIAL_TRAVEL_PROTECTION_PLANS);
+      return INITIAL_TRAVEL_PROTECTION_PLANS;
+    }
+    return list;
   }
 
   public getTravelProtectionPlanById(id: string): TravelProtectionPlan | undefined {
@@ -17434,6 +17526,25 @@ export class AppDatabase {
     this.setItem('travel_protection_plans', plans);
   }
 
+  public async saveTravelProtectionPlanAsync(plan: TravelProtectionPlan, user?: User | null): Promise<TravelProtectionPlan> {
+    const plans = this.getTravelProtectionPlans();
+    const index = plans.findIndex(p => p.id === plan.id);
+    const now = new Date().toISOString();
+    let saved: TravelProtectionPlan;
+    if (index >= 0) {
+      saved = { ...plan, updatedAt: now };
+      plans[index] = saved;
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', plan.id, `Updated travel protection: ${plan.serviceName}`);
+    } else {
+      saved = { ...plan, id: plan.id || `PROT-${Date.now()}`, updatedAt: now };
+      plans.unshift(saved);
+      this.logAudit(user || null, 'PRODUCT_CREATED', 'Product', saved.id, `Created travel protection: ${plan.serviceName}`);
+    }
+    await this.syncFirestoreDocAsync('travel_protection_plans', saved.id, saved);
+    this.setItem('travel_protection_plans', plans);
+    return saved;
+  }
+
   public deleteTravelProtectionPlan(id: string, user?: User | null): void {
     const plans = this.getTravelProtectionPlans();
     const target = plans.find(p => p.id === id);
@@ -17448,7 +17559,12 @@ export class AppDatabase {
   // VIP GROUND SERVICES
   // ==========================================
   public getVipGroundServices(): VipGroundService[] {
-    return this.getItem<VipGroundService[]>('vip_ground_services', INITIAL_VIP_GROUND_SERVICES);
+    const list = this.getItem<VipGroundService[]>('vip_ground_services', INITIAL_VIP_GROUND_SERVICES);
+    if (!list || list.length === 0) {
+      this.setItem('vip_ground_services', INITIAL_VIP_GROUND_SERVICES);
+      return INITIAL_VIP_GROUND_SERVICES;
+    }
+    return list;
   }
 
   public getVipGroundServiceById(id: string): VipGroundService | undefined {
@@ -17473,6 +17589,25 @@ export class AppDatabase {
     this.setItem('vip_ground_services', services);
   }
 
+  public async saveVipGroundServiceAsync(service: VipGroundService, user?: User | null): Promise<VipGroundService> {
+    const services = this.getVipGroundServices();
+    const index = services.findIndex(s => s.id === service.id);
+    const now = new Date().toISOString();
+    let saved: VipGroundService;
+    if (index >= 0) {
+      saved = { ...service, updatedAt: now };
+      services[index] = saved;
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', service.id, `Updated VIP ground service: ${service.name}`);
+    } else {
+      saved = { ...service, id: service.id || `VIP-${Date.now()}`, updatedAt: now };
+      services.unshift(saved);
+      this.logAudit(user || null, 'PRODUCT_CREATED', 'Product', saved.id, `Created VIP ground service: ${service.name}`);
+    }
+    await this.syncFirestoreDocAsync('vip_ground_services', saved.id, saved);
+    this.setItem('vip_ground_services', services);
+    return saved;
+  }
+
   public deleteVipGroundService(id: string, user?: User | null): void {
     const services = this.getVipGroundServices();
     const target = services.find(s => s.id === id);
@@ -17487,7 +17622,12 @@ export class AppDatabase {
   // 5G CONNECTIVITY & eSIM PACKAGES
   // ==========================================
   public getConnectivityPlans(): ConnectivityPlan[] {
-    return this.getItem<ConnectivityPlan[]>('connectivity_plans', INITIAL_CONNECTIVITY_PLANS);
+    const list = this.getItem<ConnectivityPlan[]>('connectivity_plans', INITIAL_CONNECTIVITY_PLANS);
+    if (!list || list.length === 0) {
+      this.setItem('connectivity_plans', INITIAL_CONNECTIVITY_PLANS);
+      return INITIAL_CONNECTIVITY_PLANS;
+    }
+    return list;
   }
 
   public getConnectivityPlanById(id: string): ConnectivityPlan | undefined {
@@ -17510,6 +17650,25 @@ export class AppDatabase {
     }
     this.syncFirestoreDoc('connectivity_plans', saved.id, saved);
     this.setItem('connectivity_plans', plans);
+  }
+
+  public async saveConnectivityPlanAsync(plan: ConnectivityPlan, user?: User | null): Promise<ConnectivityPlan> {
+    const plans = this.getConnectivityPlans();
+    const index = plans.findIndex(c => c.id === plan.id);
+    const now = new Date().toISOString();
+    let saved: ConnectivityPlan;
+    if (index >= 0) {
+      saved = { ...plan, updatedAt: now };
+      plans[index] = saved;
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', plan.id, `Updated 5G connectivity: ${plan.name}`);
+    } else {
+      saved = { ...plan, id: plan.id || `ESIM-${Date.now()}`, updatedAt: now };
+      plans.unshift(saved);
+      this.logAudit(user || null, 'PRODUCT_CREATED', 'Product', saved.id, `Created 5G connectivity: ${plan.name}`);
+    }
+    await this.syncFirestoreDocAsync('connectivity_plans', saved.id, saved);
+    this.setItem('connectivity_plans', plans);
+    return saved;
   }
 
   public deleteConnectivityPlan(id: string, user?: User | null): void {

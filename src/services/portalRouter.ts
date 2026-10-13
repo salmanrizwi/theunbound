@@ -65,7 +65,7 @@ export function parseRoute(pathString?: string): ParsedRoute {
         param = 'ground_connectivity';
       } else if (second === 'masterschemamatrix' || second === 'fieldparity' || second === 'schemamatrix' || second === 'matrix') {
         subTab = 'visas-ancillary';
-        param = 'field_parity';
+        param = 'visa_services';
       } else if (second === 'visaservices' || second === 'visaservice') {
         subTab = 'visas-ancillary';
         param = 'visa_services';
@@ -82,7 +82,7 @@ export function parseRoute(pathString?: string): ParsedRoute {
       param = 'ground_connectivity';
     } else if (firstClean === 'masterschemamatrix' || firstClean === 'fieldparity' || firstClean === 'schemamatrix' || firstClean === 'matrix') {
       subTab = 'visas-ancillary';
-      param = 'field_parity';
+      param = 'visa_services';
     } else if (firstClean === 'visasancillary' || firstClean === 'visaancillary' || firstClean === 'visasancillaries' || firstClean === 'visaancillaries' || firstClean === 'visaancillaryservices' || firstClean === 'visasancillaryservices' || firstClean === 'visaservices' || firstClean === 'visaservice' || firstClean === 'visa' || firstClean === 'visas' || firstClean === 'ancillary' || firstClean === 'ancillaries') {
       subTab = 'visas-ancillary';
       if (!param) param = 'visa_services';
@@ -96,7 +96,7 @@ export function parseRoute(pathString?: string): ParsedRoute {
       } else if (pClean === 'groundconnectivity' || pClean === 'ground' || pClean === 'connectivity' || pClean === 'vip' || pClean === 'vipground' || pClean === 'esim') {
         param = 'ground_connectivity';
       } else if (pClean === 'masterschemamatrix' || pClean === 'fieldparity' || pClean === 'schemamatrix' || pClean === 'matrix') {
-        param = 'field_parity';
+        param = 'visa_services';
       } else if (pClean === 'visaservices' || pClean === 'visaservice' || pClean === 'visas' || pClean === 'visa') {
         param = 'visa_services';
       }

@@ -56,6 +56,7 @@ export interface VisaServicesAndFacilitationSectionProps {
   onOpenVisaPickerModal: () => void;
   onOpenEditItem?: (item: QuoteItem) => void;
   activeOptionNumber?: number;
+  onOpenAddonModal?: (category?: 'ALL' | 'INSURANCE' | 'ESIM' | 'SERVICES') => void;
 }
 
 export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilitationSectionProps> = ({
@@ -71,10 +72,11 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
   onRemoveProduct,
   onOpenVisaPickerModal,
   onOpenEditItem,
-  activeOptionNumber = 1
+  activeOptionNumber = 1,
+  onOpenAddonModal
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'ALL' | 'VISA' | 'PROTECTION' | 'GROUND'>('ALL');
+  const [activeTab, setActiveTab] = useState<'ALL' | 'VISA' | 'PROTECTION' | 'GROUND' | 'CONNECTIVITY' | 'OTHER'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedDestinationFilter, setSelectedDestinationFilter] = useState<string>('ALL');
   const [selectedVisaTypeFilter, setSelectedVisaTypeFilter] = useState<string>('ALL');
@@ -129,30 +131,72 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
   const groundServicesInQuote = useMemo(() => {
     return items.filter(it => {
       const pNameLower = (it.product.name || '').toLowerCase();
-      return it.service_type === 'VIP_GROUND' ||
-        it.service_type === 'CONNECTIVITY' ||
+      return (
+        it.service_type === 'VIP_GROUND' ||
         it.product.subcategory === 'Ground VIP Services' ||
-        it.product.subcategory === 'eSIM Connectivity' ||
-        it.product.productType === '5G Connectivity' ||
         it.product.sku?.startsWith('VIP-') ||
-        it.product.sku?.startsWith('ESIM-') ||
         pNameLower.includes('meet & assist') ||
         pNameLower.includes('fast track') ||
         pNameLower.includes('lounge') ||
         pNameLower.includes('porter') ||
         pNameLower.includes('concierge') ||
-        pNameLower.includes('esim');
+        pNameLower.includes('luggage van')
+      );
     });
   }, [items]);
+
+  const connectivityItemsInQuote = useMemo(() => {
+    return items.filter(it => {
+      const pNameLower = (it.product.name || '').toLowerCase();
+      return (
+        it.service_type === 'CONNECTIVITY' ||
+        it.product.subcategory === 'eSIM Connectivity' ||
+        it.product.productType === '5G Connectivity' ||
+        it.product.sku?.startsWith('ESIM-') ||
+        pNameLower.includes('esim') ||
+        pNameLower.includes('wifi') ||
+        pNameLower.includes('wi-fi') ||
+        pNameLower.includes('hotspot')
+      );
+    });
+  }, [items]);
+
+  const otherAncillaryItemsInQuote = useMemo(() => {
+    return items.filter(it => {
+      const cat = (it.product.category || '').toLowerCase();
+      const sub = (it.product.subcategory || '').toLowerCase();
+      const isAlreadyCovered = 
+        visaItemsInQuote.some(v => v.id === it.id) ||
+        protectionItemsInQuote.some(p => p.id === it.id) ||
+        groundServicesInQuote.some(g => g.id === it.id) ||
+        connectivityItemsInQuote.some(c => c.id === it.id) ||
+        (it.product.category || '').toLowerCase().includes('hotel') ||
+        (it.product.category || '').toLowerCase().includes('accommodation') ||
+        it.isManualHotel;
+      if (isAlreadyCovered) return false;
+
+      return (
+        Boolean((it as any).isOptionalService) ||
+        Boolean((it.product as any).isOptionalService) ||
+        it.product.id?.startsWith('addon-') ||
+        it.service_type === 'ANCILLARY' ||
+        cat.includes('optional') ||
+        cat.includes('ancillary') ||
+        cat.includes('addon') ||
+        sub.includes('optional') ||
+        sub.includes('ancillary')
+      );
+    });
+  }, [items, visaItemsInQuote, protectionItemsInQuote, groundServicesInQuote, connectivityItemsInQuote]);
 
   const allSectionItemsInQuote = useMemo(() => {
     // Unique by item id
     const map = new Map<string, QuoteItem>();
-    [...visaItemsInQuote, ...protectionItemsInQuote, ...groundServicesInQuote].forEach(it => {
+    [...visaItemsInQuote, ...protectionItemsInQuote, ...groundServicesInQuote, ...connectivityItemsInQuote, ...otherAncillaryItemsInQuote].forEach(it => {
       map.set(it.id, it);
     });
     return Array.from(map.values());
-  }, [visaItemsInQuote, protectionItemsInQuote, groundServicesInQuote]);
+  }, [visaItemsInQuote, protectionItemsInQuote, groundServicesInQuote, connectivityItemsInQuote, otherAncillaryItemsInQuote]);
 
   const sectionTotalSelling = useMemo(() => {
     return allSectionItemsInQuote.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
@@ -288,7 +332,41 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
     });
   }, [realConnectivityPlans, searchLower, selectedDestinationFilter]);
 
-  const totalActiveProductsCount = filteredVisas.length + filteredProtectionPlans.length + filteredVipServices.length + filteredConnectivityPlans.length;
+  const realOtherAncillaries = useMemo(() => {
+    try {
+      const all = db.getProducts() || [];
+      return all.filter(p => {
+        if (p.status !== 'ACTIVE' && p.status !== undefined) return false;
+        const cat = (p.category || '').toLowerCase();
+        const sub = (p.subcategory || '').toLowerCase();
+        const type = (p.productType || '').toLowerCase();
+        return (
+          Boolean((p as any).isOptionalService) ||
+          cat.includes('optional') ||
+          cat.includes('ancillary') ||
+          cat.includes('addon') ||
+          sub.includes('optional') ||
+          sub.includes('ancillary') ||
+          type.includes('optional') ||
+          type.includes('ancillary')
+        );
+      });
+    } catch {
+      return [];
+    }
+  }, [db, dbTick]);
+
+  const filteredOtherAncillaries = useMemo(() => {
+    return realOtherAncillaries.filter(item => {
+      const matchesSearch = !searchLower ||
+        item.name.toLowerCase().includes(searchLower) ||
+        (item.shortDescription || '').toLowerCase().includes(searchLower) ||
+        item.id.toLowerCase().includes(searchLower);
+      return matchesSearch;
+    });
+  }, [realOtherAncillaries, searchLower]);
+
+  const totalActiveProductsCount = filteredVisas.length + filteredProtectionPlans.length + filteredVipServices.length + filteredConnectivityPlans.length + filteredOtherAncillaries.length;
 
   // -------------------------------------------------------------------------
   // 3. EDIT ITEM HANDLER WITH HISTORICAL DEACTIVATION CHECK
@@ -788,7 +866,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                 }`}
               >
                 <Globe className="w-3.5 h-3.5" />
-                <span>1. Visa Services & Application Assistance ({filteredVisas.length})</span>
+                <span>A. Visa Services ({filteredVisas.length})</span>
               </button>
               <button
                 type="button"
@@ -800,7 +878,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                 }`}
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
-                <span>2. Travel Protection & Medical ({filteredProtectionPlans.length})</span>
+                <span>B. Travel Protection ({filteredProtectionPlans.length})</span>
               </button>
               <button
                 type="button"
@@ -811,8 +889,32 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                     : 'bg-teal-50 text-teal-800 hover:bg-teal-100 border border-teal-200'
                 }`}
               >
+                <Plane className="w-3.5 h-3.5" />
+                <span>C. Ground & VIP ({filteredVipServices.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('CONNECTIVITY')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                  activeTab === 'CONNECTIVITY'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border border-indigo-200'
+                }`}
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>D. 5G Connectivity ({filteredConnectivityPlans.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('OTHER')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                  activeTab === 'OTHER'
+                    ? 'bg-purple-600 text-white shadow-xs'
+                    : 'bg-purple-50 text-purple-800 hover:bg-purple-100 border border-purple-200'
+                }`}
+              >
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>3. VIP Ground & 5G Connectivity ({filteredVipServices.length + filteredConnectivityPlans.length})</span>
+                <span>E. Other Ancillaries ({filteredOtherAncillaries.length})</span>
               </button>
             </div>
 
@@ -1224,106 +1326,24 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
             </div>
           )}
 
-          {/* 3. VIP GROUND SERVICES & 5G CONNECTIVITY */}
+          {/* C. GROUND & VIP SERVICES */}
           {(activeTab === 'ALL' || activeTab === 'GROUND') && (
             <div className="space-y-4 pt-2">
               <div>
                 <h3 className="text-sm font-black text-slate-900 flex items-center space-x-2">
                   <span className="w-2 h-2 rounded-full bg-teal-500 inline-block"></span>
-                  <span>3. VIP GROUND SERVICES & 5G CONNECTIVITY</span>
+                  <span>C. GROUND & VIP SERVICES</span>
                 </h3>
-                <p className="text-xs text-slate-500">Airport meet & assist, fast track lines, station porterage, and regional 5G eSIM connectivity from Master Inventory.</p>
+                <p className="text-xs text-slate-500">Airport meet & assist, tarmac escort, fast track immigration, chauffeur assistance, and dedicated luggage support.</p>
               </div>
 
-              {filteredVipServices.length === 0 && filteredConnectivityPlans.length === 0 ? (
+              {filteredVipServices.length === 0 ? (
                 <div className="p-6 rounded-2xl bg-slate-50 border border-slate-200 text-center space-y-2">
-                  <p className="text-xs font-bold text-slate-600">No active services available.</p>
-                  <p className="text-[11px] text-slate-400">Products created or enabled in Operations & Inventory → Visa & Ancillary Services will appear here dynamically.</p>
+                  <p className="text-xs font-bold text-slate-600">No active VIP ground services found.</p>
+                  <p className="text-[11px] text-slate-400">Products created or enabled in Operations & Inventory → Ground & VIP Services will appear here dynamically.</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Connectivity Plans */}
-                  {filteredConnectivityPlans.map((plan) => {
-                    const isInQuote = items.some(it => it.master_product_id === plan.id || it.product.id === plan.id);
-                    const unitPriceUSD = plan.sellingPrice > 0 ? plan.sellingPrice : 0;
-                    const hasValidPrice = unitPriceUSD > 0;
-                    const unitPriceQuote = convertCurrency(unitPriceUSD, plan.currency || 'USD', currency);
-
-                    return (
-                      <div
-                        key={plan.id}
-                        className="bg-slate-50 hover:bg-white rounded-2xl p-4.5 border border-slate-200 transition-all flex flex-col justify-between space-y-3.5"
-                      >
-                        <div>
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-teal-100 text-teal-900 border border-teal-300">
-                              Instant 5G eSIM
-                            </span>
-                            <span className="text-[11px] font-bold text-slate-500">
-                              {plan.validityDays} Days Validity
-                            </span>
-                          </div>
-
-                          <h4 className="text-sm font-black text-slate-900 mt-2">
-                            {plan.name}
-                          </h4>
-                          <p className="text-xs text-slate-600 mt-1">
-                            Covers {plan.coverageZone}. {plan.dataAllowance} high-speed data. Instant QR code delivery.
-                          </p>
-
-                          <div className="mt-3 space-y-1 text-xs text-slate-600">
-                            <div className="flex items-center space-x-1.5">
-                              <Check className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                              <span>Network: <strong>{plan.networkSpeed}</strong></span>
-                            </div>
-                            <div className="flex items-center space-x-1.5">
-                              <Check className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                              <span>Data Allowance: <strong>{plan.dataAllowance}</strong></span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between pt-3 border-t border-slate-200">
-                          <div>
-                            <span className="text-[10px] text-slate-400 uppercase font-bold block">Selling Price</span>
-                            {hasValidPrice ? (
-                              <span className="text-sm font-black text-slate-900 font-mono">
-                                {formatCurrency(unitPriceQuote, currency)} <span className="text-xs font-normal text-slate-500">/ device</span>
-                              </span>
-                            ) : (
-                              <span className="text-xs font-bold text-amber-700">Price unavailable for this service.</span>
-                            )}
-                          </div>
-
-                          {isInQuote ? (
-                            <button
-                              type="button"
-                              onClick={() => setActiveConfiguringConnectivity(plan)}
-                              className="px-3 py-1.5 rounded-xl bg-teal-100 hover:bg-teal-200 text-teal-900 text-xs font-bold flex items-center space-x-1 border border-teal-300 transition-colors cursor-pointer"
-                            >
-                              <Check className="w-3.5 h-3.5 text-teal-700" />
-                              <span>Configured</span>
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              disabled={!hasValidPrice}
-                              onClick={() => hasValidPrice && setActiveConfiguringConnectivity(plan)}
-                              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center shadow-xs ${
-                                hasValidPrice
-                                  ? 'bg-teal-600 hover:bg-teal-700 text-white cursor-pointer'
-                                  : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                              }`}
-                            >
-                              <span>Configure & Add</span>
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {/* VIP Ground Services */}
                   {filteredVipServices.map((svc) => {
                     const isInQuote = items.some(it => it.master_product_id === svc.id || it.product.id === svc.id);
                     const isPerGroup = svc.pricingType === 'PER_VEHICLE' || svc.pricingType === 'FIXED';
@@ -1338,7 +1358,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                       >
                         <div>
                           <div className="flex items-start justify-between gap-2">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-slate-200 text-slate-800">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-teal-100 text-teal-900 border border-teal-300">
                               {svc.badge || 'VIP Ground'}
                             </span>
                             <span className="text-[11px] font-bold text-slate-500">
@@ -1396,6 +1416,213 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                               }`}
                             >
                               <span>Configure & Add</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* D. CONNECTIVITY & 5G ESIM */}
+          {(activeTab === 'ALL' || activeTab === 'CONNECTIVITY') && (
+            <div className="space-y-4 pt-2">
+              <div>
+                <h3 className="text-sm font-black text-slate-900 flex items-center space-x-2">
+                  <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block"></span>
+                  <span>D. CONNECTIVITY & 5G ESIM PLANS</span>
+                </h3>
+                <p className="text-xs text-slate-500">Instant digital 5G eSIM cards, international data bundles, and mobile tethering solutions.</p>
+              </div>
+
+              {filteredConnectivityPlans.length === 0 ? (
+                <div className="p-6 rounded-2xl bg-slate-50 border border-slate-200 text-center space-y-2">
+                  <p className="text-xs font-bold text-slate-600">No active connectivity plans found.</p>
+                  <p className="text-[11px] text-slate-400">Products created or enabled in Operations & Inventory → Connectivity Plans will appear here dynamically.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredConnectivityPlans.map((plan) => {
+                    const isInQuote = items.some(it => it.master_product_id === plan.id || it.product.id === plan.id);
+                    const unitPriceUSD = plan.sellingPrice > 0 ? plan.sellingPrice : 0;
+                    const hasValidPrice = unitPriceUSD > 0;
+                    const unitPriceQuote = convertCurrency(unitPriceUSD, plan.currency || 'USD', currency);
+
+                    return (
+                      <div
+                        key={plan.id}
+                        className="bg-indigo-50/30 hover:bg-indigo-50/60 rounded-2xl p-4.5 border border-indigo-200 transition-all flex flex-col justify-between space-y-3.5"
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-indigo-100 text-indigo-900 border border-indigo-300">
+                              Instant 5G eSIM
+                            </span>
+                            <span className="text-[11px] font-bold text-slate-500">
+                              {plan.validityDays} Days Validity
+                            </span>
+                          </div>
+
+                          <h4 className="text-sm font-black text-slate-900 mt-2">
+                            {plan.name}
+                          </h4>
+                          <p className="text-xs text-slate-600 mt-1">
+                            Covers {plan.coverageZone}. {plan.dataAllowance} high-speed data. Instant QR code delivery.
+                          </p>
+
+                          <div className="mt-3 space-y-1 text-xs text-slate-600">
+                            <div className="flex items-center space-x-1.5">
+                              <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                              <span>Network: <strong>{plan.networkSpeed}</strong></span>
+                            </div>
+                            <div className="flex items-center space-x-1.5">
+                              <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                              <span>Data Allowance: <strong>{plan.dataAllowance}</strong></span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-3 border-t border-indigo-200">
+                          <div>
+                            <span className="text-[10px] text-slate-400 uppercase font-bold block">Selling Price</span>
+                            {hasValidPrice ? (
+                              <span className="text-sm font-black text-slate-900 font-mono">
+                                {formatCurrency(unitPriceQuote, currency)} <span className="text-xs font-normal text-slate-500">/ device</span>
+                              </span>
+                            ) : (
+                              <span className="text-xs font-bold text-amber-700">Price unavailable for this service.</span>
+                            )}
+                          </div>
+
+                          {isInQuote ? (
+                            <button
+                              type="button"
+                              onClick={() => setActiveConfiguringConnectivity(plan)}
+                              className="px-3 py-1.5 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-900 text-xs font-bold flex items-center space-x-1 border border-indigo-300 transition-colors cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5 text-indigo-700" />
+                              <span>Configured</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={!hasValidPrice}
+                              onClick={() => hasValidPrice && setActiveConfiguringConnectivity(plan)}
+                              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center shadow-xs ${
+                                hasValidPrice
+                                  ? 'bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer'
+                                  : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                              }`}
+                            >
+                              <span>Configure & Add</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* E. OTHER CONFIGURED ANCILLARY SERVICES */}
+          {(activeTab === 'ALL' || activeTab === 'OTHER') && (
+            <div className="space-y-4 pt-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 flex items-center space-x-2">
+                    <span className="w-2 h-2 rounded-full bg-purple-500 inline-block"></span>
+                    <span>E. OTHER CONFIGURED ANCILLARY SERVICES</span>
+                  </h3>
+                  <p className="text-xs text-slate-500">Specialist destination upgrades, customized additions, and inventory add-ons.</p>
+                </div>
+                {onOpenAddonModal && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenAddonModal('ALL')}
+                    className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Browse Full Add-ons Catalog</span>
+                  </button>
+                )}
+              </div>
+
+              {filteredOtherAncillaries.length === 0 ? (
+                <div className="p-6 rounded-2xl bg-slate-50 border border-slate-200 text-center space-y-2">
+                  <p className="text-xs font-bold text-slate-600">No standalone custom ancillary items configured.</p>
+                  <p className="text-[11px] text-slate-400">Any additional products categorized as Ancillary or Optional Services in Master Inventory will appear here.</p>
+                  {onOpenAddonModal && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenAddonModal('ALL')}
+                      className="mt-2 inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-900 text-[#00E5C0] text-xs font-bold cursor-pointer"
+                    >
+                      <span>Open Add-ons Catalog</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredOtherAncillaries.map((prod) => {
+                    const isInQuote = items.some(it => it.master_product_id === prod.id || it.product.id === prod.id);
+                    const sellingVal = prod.sellingPriceStartingFrom || prod.adultNetPrice || 0;
+                    const unitPriceQuote = convertCurrency(sellingVal, prod.currency || 'USD', currency);
+
+                    return (
+                      <div
+                        key={prod.id}
+                        className="bg-purple-50/30 hover:bg-purple-50/60 rounded-2xl p-4.5 border border-purple-200 transition-all flex flex-col justify-between space-y-3.5"
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-purple-100 text-purple-900 border border-purple-300">
+                              {prod.subcategory || prod.category || 'Ancillary'}
+                            </span>
+                            <span className="text-[11px] font-mono text-slate-400">{prod.sku || prod.id}</span>
+                          </div>
+
+                          <h4 className="text-sm font-black text-slate-900 mt-2">{prod.name}</h4>
+                          <p className="text-xs text-slate-600 mt-1 line-clamp-2">{prod.shortDescription || prod.longDescription}</p>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-3 border-t border-purple-200">
+                          <div>
+                            <span className="text-[10px] text-slate-400 uppercase font-bold block">Selling Price</span>
+                            <span className="text-sm font-black text-slate-900 font-mono">
+                              {formatCurrency(unitPriceQuote, currency)}
+                            </span>
+                          </div>
+
+                          {isInQuote ? (
+                            <span className="px-3 py-1.5 rounded-xl bg-purple-100 text-purple-900 text-xs font-bold flex items-center space-x-1 border border-purple-300">
+                              <Check className="w-3.5 h-3.5 text-purple-700" />
+                              <span>In Quotation</span>
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onAddProduct(prod, {
+                                  adults: adultsCount,
+                                  children: childrenCount,
+                                  infants: infantsCount,
+                                  travelDate: startDate,
+                                  openDrawer: false,
+                                  master_product_id: prod.id,
+                                  service_id: prod.id,
+                                  category: 'Visa & Ancillary Services',
+                                  service_type: 'ANCILLARY'
+                                });
+                              }}
+                              className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all flex items-center shadow-xs cursor-pointer"
+                            >
+                              <Plus className="w-3.5 h-3.5 mr-1" />
+                              <span>Add to Quote</span>
                             </button>
                           )}
                         </div>

@@ -112,12 +112,33 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
     return (quote.items || []).filter(isVisaQuoteItem);
   }, [quote.items]);
 
+  // Helper predicate for Hotel quotation items
+  const isHotelQuoteItem = (it: QuoteItem): boolean => {
+    return (it.product.category || '').toLowerCase().includes('hotel') ||
+           (it.product.category || '').toLowerCase().includes('accommodation') ||
+           it.product.productType === 'Hotel & Resort' ||
+           Boolean(it.isManualHotel);
+  };
+
   // ----------------------------------------------------
   // DAY-WISE CHRONOLOGICAL ITINERARY COMPUTATION
   // ----------------------------------------------------
   const itineraryDays = useMemo(() => {
-    const items = (quote.items || []).filter(it => !isVisaQuoteItem(it));
     const hubs = quote.routeHubs || [];
+    const items = (quote.items || []).filter(it => {
+      if (isVisaQuoteItem(it)) return false;
+      if (isHotelQuoteItem(it)) {
+        if (quote.quotationScope === 'LAND_ONLY') return false;
+        const matchedHub = hubs.find(h =>
+          h.id === it.hubId ||
+          h.id === it.manualHotelDetails?.hubId ||
+          (h.hotelId && it.product.id.includes(h.hotelId)) ||
+          it.notes?.includes(h.hubName)
+        );
+        if (matchedHub && matchedHub.accommodationType === 'NO_ACCOMMODATION') return false;
+      }
+      return true;
+    });
     const sortedHubs = [...hubs].sort((a, b) => a.order - b.order);
 
     const startDateStr = quote.travelStartDate;
@@ -231,13 +252,24 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
   const generalInclusionItems = useMemo(() => {
     const dayDates = new Set(itineraryDays.map(d => d.dateString));
     const dayNumbers = new Set(itineraryDays.map(d => d.dayNumber));
+    const hubs = quote.routeHubs || [];
     return (quote.items || []).filter(it => {
       if (isVisaQuoteItem(it)) return false;
+      if (isHotelQuoteItem(it)) {
+        if (quote.quotationScope === 'LAND_ONLY') return false;
+        const matchedHub = hubs.find(h =>
+          h.id === it.hubId ||
+          h.id === it.manualHotelDetails?.hubId ||
+          (h.hotelId && it.product.id.includes(h.hotelId)) ||
+          it.notes?.includes(h.hubName)
+        );
+        if (matchedHub && matchedHub.accommodationType === 'NO_ACCOMMODATION') return false;
+      }
       if (it.travelDate) return !dayDates.has(it.travelDate);
       if ((it as any).dayNumber !== undefined) return !dayNumbers.has(Number((it as any).dayNumber));
       return true;
     });
-  }, [quote.items, itineraryDays]);
+  }, [quote.items, quote.quotationScope, quote.routeHubs, itineraryDays]);
 
   const totalNights = useMemo(() => {
     if (quote.routeHubs && quote.routeHubs.length > 0) {
@@ -427,6 +459,60 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* ---------------------------------------------------- */}
+      {/* 3.2. ACCOMMODATION & STAYS SUMMARY */}
+      {/* ---------------------------------------------------- */}
+      {model.accommodations && model.accommodations.length > 0 && (
+        <div className="space-y-3 pt-1">
+          <div className="flex items-center justify-between border-b-2 border-slate-900 pb-2.5">
+            <div className="flex items-center space-x-2">
+              <Building2 className="w-4 h-4 text-[#00A88F]" />
+              <h2 className="text-sm font-black text-slate-950 uppercase tracking-wide">
+                Accommodation & Hotel Stays
+              </h2>
+            </div>
+            <span className="text-[11px] font-mono font-bold text-slate-600">
+              {quote.quotationScope === 'LAND_ONLY'
+                ? 'Land-Only Mode (No Accommodation Included)'
+                : `${model.accommodations.length} ${model.accommodations.length === 1 ? 'Destination Stay' : 'Destination Stays'}`}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {model.accommodations.map((acc, idx) => {
+              const isNoAcc = acc.hotelName.includes('No Accommodation');
+              return (
+                <div
+                  key={idx}
+                  className={`p-3.5 rounded-2xl border flex items-start justify-between gap-3 ${
+                    isNoAcc
+                      ? 'bg-slate-50 border-slate-200 text-slate-700'
+                      : 'bg-amber-50/40 border-amber-200/80 text-slate-900'
+                  }`}
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-900 text-[#00E5C0]">
+                        {acc.city}
+                      </span>
+                      <span className="text-[11px] font-mono font-semibold text-slate-500">
+                        {acc.nights} {acc.nights === 1 ? 'Night' : 'Nights'}
+                      </span>
+                    </div>
+                    <div className="text-xs font-bold text-slate-900">{acc.hotelName}</div>
+                    <div className="text-[11px] text-slate-600">{acc.roomSummary}</div>
+                    {acc.checkInDate && acc.checkOutDate && (
+                      <div className="text-[10px] font-mono text-slate-500">
+                        {acc.checkInDate} → {acc.checkOutDate}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ---------------------------------------------------- */}
       {/* 3.5. VISA & ANCILLARY SERVICES */}

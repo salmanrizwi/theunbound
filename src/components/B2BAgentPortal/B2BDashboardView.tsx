@@ -326,7 +326,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
         >
           <Sparkles className="w-5 h-5 text-[#00E5C0]" />
           <span className="text-xs font-bold">Create Quote</span>
-          <span className="text-[10px] text-slate-400">8 Step Builder</span>
+          <span className="text-[10px] text-slate-400">7 Step Builder</span>
         </button>
 
         <button
