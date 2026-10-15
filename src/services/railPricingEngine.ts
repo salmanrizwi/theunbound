@@ -16,6 +16,7 @@ import { INITIAL_RAIL_RATES, findExactRate } from '../data/initialRailRates';
 import { RAIL_SEASON_ADJUSTMENTS, resolveRailSeasonForDate } from '../data/initialRailSeasons';
 import { INITIAL_RAIL_MARKUP_RULE } from '../data/initialRailMarkup';
 import { convertCurrency } from './currencyEngine';
+import { currencyConversionService } from './currencyConversionService';
 import { evaluateInventoryValidity, evaluateApplicableSurcharges } from './pricingEngine';
 import { INITIAL_PRODUCTS } from '../data/initialProducts';
 import { AppDatabase } from './db';
@@ -69,6 +70,7 @@ export class RailPricingEngine {
     };
     const originStation = resolveStation(originStationId);
     const destinationStation = resolveStation(destinationStationId);
+    const normalizedTarget = currencyConversionService.normalizeCurrency(targetCurrency, 'USD');
 
     if (!originStation || !destinationStation || originStation.active === false || destinationStation.active === false) {
       return this.buildUnavailablePriceResult({
@@ -80,7 +82,7 @@ export class RailPricingEngine {
         adultsCount,
         childrenCount,
         seatPreference,
-        targetCurrency,
+        targetCurrency: normalizedTarget,
         reason: 'Price unavailable — Admin configuration required'
       });
     }
@@ -103,7 +105,7 @@ export class RailPricingEngine {
         adultsCount,
         childrenCount,
         seatPreference,
-        targetCurrency,
+        targetCurrency: normalizedTarget,
         reason: 'Price unavailable — Admin configuration required'
       });
     }
@@ -130,7 +132,7 @@ export class RailPricingEngine {
         adultsCount,
         childrenCount,
         seatPreference,
-        targetCurrency,
+        targetCurrency: normalizedTarget,
         reason: 'Price unavailable — Admin configuration required'
       });
     }
@@ -193,7 +195,7 @@ export class RailPricingEngine {
         adultsCount,
         childrenCount,
         seatPreference,
-        targetCurrency,
+        targetCurrency: normalizedTarget,
         reason: 'Price unavailable — Admin configuration required'
       });
     }
@@ -213,7 +215,7 @@ export class RailPricingEngine {
         adultsCount,
         childrenCount,
         seatPreference,
-        targetCurrency,
+        targetCurrency: normalizedTarget,
         reason: 'Price unavailable — Admin configuration required'
       });
     }
@@ -267,7 +269,7 @@ export class RailPricingEngine {
       serviceDate: travelDate,
       baseNativeAmount: baseSellingPriceJPY,
       nativeCurrency,
-      targetCurrency,
+      targetCurrency: normalizedTarget,
       adults: adultsCount,
       children: childrenCount,
       quantity: 1,
@@ -278,21 +280,31 @@ export class RailPricingEngine {
       ? Math.round((baseSellingPriceJPY + surchargeEval.totalSurchargeNative) / 10) * 10
       : Math.round((baseSellingPriceJPY + surchargeEval.totalSurchargeNative) * 100) / 100;
 
-    // 8. Convert to Target Currency (never convert twice if already in native currency)
-    const exchangeRate = nativeCurrency === targetCurrency
-      ? 1
-      : convertCurrency(1, nativeCurrency, targetCurrency);
-    const finalSellingPriceTargetCurrency = nativeCurrency === targetCurrency
-      ? finalSellingPriceJPY
-      : convertCurrency(finalSellingPriceJPY, nativeCurrency, targetCurrency);
+    // 8. Convert to Target Currency using Authoritative CurrencyConversionService
+    // "Base-currency calculation must happen before display-currency conversion."
+    const normalizedNative = currencyConversionService.normalizeCurrency(nativeCurrency, 'JPY');
+
+    const conversionResult = currencyConversionService.convertPrice(
+      finalSellingPriceJPY,
+      normalizedNative,
+      normalizedTarget,
+      {
+        moduleName: 'SHINKANSEN_DYNAMIC_JOURNEY',
+        productId: product?.id || 'RAIL-JP-ORD-RESERVED',
+        fareId: adultRate?.rateId
+      }
+    );
 
     if (
-      !exchangeRate ||
-      exchangeRate <= 0 ||
-      !Number.isFinite(exchangeRate) ||
-      !Number.isFinite(finalSellingPriceTargetCurrency) ||
-      finalSellingPriceTargetCurrency <= 0
+      !conversionResult.success ||
+      !currencyConversionService.isValidRate(conversionResult.rate) ||
+      !Number.isFinite(conversionResult.convertedAmount) ||
+      conversionResult.convertedAmount <= 0
     ) {
+      const reason = conversionResult.isLoading 
+        ? 'Price loading — Exchange rate pending' 
+        : (conversionResult.error || 'Price unavailable — FX exchange rate unavailable');
+
       return this.buildUnavailablePriceResult({
         originStation,
         destinationStation,
@@ -304,10 +316,13 @@ export class RailPricingEngine {
         adultsCount,
         childrenCount,
         seatPreference,
-        targetCurrency,
-        reason: 'Price unavailable — FX exchange rate unavailable'
+        targetCurrency: normalizedTarget,
+        reason
       });
     }
+
+    const exchangeRate = conversionResult.rate;
+    const finalSellingPriceTargetCurrency = conversionResult.convertedAmount;
 
     // 9. Duration Estimation
     const durationMinutes = serviceGroup === 'NOZOMI_MIZUHO'
@@ -346,7 +361,7 @@ export class RailPricingEngine {
       appliedMarkupPercent,
       totalMarkupJPY,
       finalSellingPriceJPY,
-      targetCurrency,
+      targetCurrency: normalizedTarget,
       finalSellingPriceTargetCurrency,
       exchangeRate,
       validityCheck,
@@ -475,9 +490,9 @@ export class RailPricingEngine {
       appliedMarkupPercent: 0,
       totalMarkupJPY: 0,
       finalSellingPriceJPY: 0,
-      targetCurrency,
+      targetCurrency: currencyConversionService.normalizeCurrency(targetCurrency, 'USD'),
       finalSellingPriceTargetCurrency: 0,
-      exchangeRate: convertCurrency(1, 'JPY', targetCurrency),
+      exchangeRate: currencyConversionService.getRate('JPY', targetCurrency).rate || 0,
       fareBreakdown: {
         nettPriceTotalJPY: 0,
         seasonAdjustmentTotalJPY: 0,

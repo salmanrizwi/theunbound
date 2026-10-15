@@ -5,11 +5,12 @@ import {
   JourneyPortalOrigin, 
   JapanRailJourneyPassengerConfig 
 } from '../../types/japanRailJourney';
-import { Product, CurrencyCode, UserRole, QuoteItem } from '../../types';
+import { Product, CurrencyCode, UserRole, QuoteItem, SUPPORTED_CURRENCIES } from '../../types';
 import { RailCarType, RailServiceGroup, RailPricingResult } from '../../types/rail';
 import { japanRailJourneyService } from '../../services/rail/JapanRailJourneyService';
 import { japanRailJourneyDataService } from '../../services/rail/JapanRailJourneyDataService';
 import { formatCurrency } from '../../services/currencyEngine';
+import { currencyConversionService } from '../../services/currencyConversionService';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
 import { AppDatabase } from '../../services/db';
@@ -99,6 +100,27 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
   const [activeDayNumber, setActiveDayNumber] = useState<number>(1);
   const [isSuccessFeedback, setIsSuccessFeedback] = useState<boolean>(false);
   const [isValidationDetailsOpen, setIsValidationDetailsOpen] = useState<boolean>(false);
+  const [isRetryingFx, setIsRetryingFx] = useState<boolean>(false);
+
+  // Auto-recalculate journey price when exchange rates arrive asynchronously from Google Finance feed
+  useEffect(() => {
+    const unsub = currencyConversionService.subscribe(() => {
+      setJourney(prev => {
+        return japanRailJourneyService.validateAndRecalculate(prev, user?.role);
+      });
+    });
+    return unsub;
+  }, [user?.role]);
+
+  // Synchronize journey currency with QuotationContext currency
+  useEffect(() => {
+    if (currency) {
+      const normalizedCurr = currencyConversionService.normalizeCurrency(currency, 'USD');
+      if (normalizedCurr && normalizedCurr !== journey.currency) {
+        setJourney(prev => japanRailJourneyService.setCurrency(prev, normalizedCurr, user?.role));
+      }
+    }
+  }, [currency, user?.role]);
 
   // Search state for stations (keyed by segmentId + type)
   const [activeStationDropdown, setActiveStationDropdown] = useState<{
@@ -179,10 +201,24 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
   };
 
   // Handler: Change Currency
-  const handleCurrencyChange = (newCurr: CurrencyCode) => {
-    setCurrency(newCurr);
-    const updated = japanRailJourneyService.setCurrency(journey, newCurr, user?.role);
+  const handleCurrencyChange = (newCurr: any) => {
+    const normalized = currencyConversionService.normalizeCurrency(newCurr, 'USD');
+    setCurrency(normalized);
+    const updated = japanRailJourneyService.setCurrency(journey, normalized, user?.role);
     setJourney(updated);
+  };
+
+  // Handler: Retry FX Rate Lookup
+  const handleRetryFx = async () => {
+    setIsRetryingFx(true);
+    try {
+      await currencyConversionService.fetchLiveRates(true);
+      setJourney(prev => japanRailJourneyService.validateAndRecalculate(prev, user?.role));
+    } catch (err) {
+      console.warn('[JapanRailJourneyConfigurator] FX retry error:', err);
+    } finally {
+      setIsRetryingFx(false);
+    }
   };
 
   // Handler: Apply Preset Route
@@ -285,15 +321,18 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
 
           <div className="flex items-center space-x-3">
             {/* Currency Switcher */}
-            <div className="hidden sm:flex items-center bg-slate-800/90 border border-slate-700 rounded-lg px-2.5 py-1 text-xs">
-              <span className="text-slate-400 font-bold mr-1.5">Currency:</span>
+            <div className="flex items-center bg-slate-800/90 border border-slate-700 rounded-lg px-2 sm:px-2.5 py-1 text-xs">
+              <span className="hidden sm:inline text-slate-400 font-bold mr-1.5">Currency:</span>
               <select
                 value={journey.currency}
-                onChange={(e) => handleCurrencyChange(e.target.value as CurrencyCode)}
+                onChange={(e) => handleCurrencyChange(e.target.value)}
                 className="bg-transparent text-[#00E5C0] font-black outline-none cursor-pointer"
+                title="Display Currency"
               >
-                {(['USD', 'EUR', 'GBP', 'AUD', 'SGD', 'INR', 'JPY'] as CurrencyCode[]).map(c => (
-                  <option key={c} value={c} className="bg-slate-900 text-white font-bold">{c}</option>
+                {SUPPORTED_CURRENCIES.map(c => (
+                  <option key={c.code} value={c.code} className="bg-slate-900 text-white font-bold">
+                    {c.code} ({c.symbol})
+                  </option>
                 ))}
               </select>
             </div>
@@ -768,9 +807,19 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                               (¥{seg.pricing.finalSellingPriceJPY.toLocaleString()})
                             </span>
                           </>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-bold">
+                        ) : (seg.pricing.priceUnavailableReason?.includes('loading') || seg.pricing.priceUnavailableReason?.includes('pending')) ? (
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 text-[11px] font-bold animate-pulse">
+                            <RotateCcw className="w-3 h-3 text-blue-600 animate-spin shrink-0" />
+                            Loading price...
+                          </span>
+                        ) : seg.pricing.priceUnavailableReason?.includes('FX exchange rate unavailable') ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-bold" title="Exchange rate for selected currency is currently unavailable">
                             <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            FX rate unavailable
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-bold">
+                            <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
                             {seg.pricing.priceUnavailableReason || 'Price unavailable — Admin configuration required'}
                           </span>
                         )}
@@ -860,6 +909,28 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                       Avg. {formatCurrency(journey.pricing.perPersonTargetCurrency, journey.currency)} / pax
                     </span>
                   </>
+                ) : (journey.pricing.priceUnavailableReason?.includes('loading') || journey.pricing.priceUnavailableReason?.includes('pending')) ? (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-950/80 border border-blue-500/50 text-blue-300 text-xs font-bold mt-1 animate-pulse">
+                    <RotateCcw className="w-4 h-4 text-blue-400 animate-spin shrink-0" />
+                    <span>Loading price — Retrieving exchange rate...</span>
+                  </div>
+                ) : journey.pricing.priceUnavailableReason?.includes('FX exchange rate unavailable') ? (
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 mt-1">
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-950/80 border border-amber-500/50 text-amber-300 text-xs font-bold">
+                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>Price unavailable — FX exchange rate unavailable</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRetryFx}
+                      disabled={isRetryingFx}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                      title="Retry fetching exchange rate from Google Finance"
+                    >
+                      <RotateCcw className={`w-3.5 h-3.5 ${isRetryingFx ? 'animate-spin' : ''}`} />
+                      <span>{isRetryingFx ? 'Retrying...' : 'Retry FX'}</span>
+                    </button>
+                  </div>
                 ) : (
                   <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-950/80 border border-amber-500/50 text-amber-300 text-xs font-bold mt-1">
                     <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />

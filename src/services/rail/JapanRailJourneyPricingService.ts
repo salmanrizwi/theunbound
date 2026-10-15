@@ -7,6 +7,7 @@ import {
 import { CurrencyCode, UserRole } from '../../types';
 import { railPricingEngine } from '../railPricingEngine';
 import { convertCurrency } from '../currencyEngine';
+import { currencyConversionService } from '../currencyConversionService';
 import { RailPricingResult } from '../../types/rail';
 
 export class JapanRailJourneyPricingService {
@@ -92,7 +93,12 @@ export class JapanRailJourneyPricingService {
       finalSellingPriceTargetCurrency = 0;
     }
 
-    const exchangeRate = convertCurrency(1, 'JPY', targetCurrency);
+    const normalizedTarget = currencyConversionService.normalizeCurrency(targetCurrency, 'USD');
+    const rateLookup = currencyConversionService.getRate('JPY', normalizedTarget);
+    const exchangeRate = isPriceAvailable 
+      ? (rateLookup.isAvailable ? rateLookup.rate : (normalizedTarget === 'JPY' ? 1 : 0))
+      : 0;
+
     const appliedMarkupPercent = totalSupplierCostJPY > 0 
       ? Math.round((totalMarkupJPY / totalSupplierCostJPY) * 1000) / 10 
       : 18;
@@ -102,8 +108,16 @@ export class JapanRailJourneyPricingService {
       ? (segments[0].passengerAllocation.adults + segments[0].passengerAllocation.children) || 1
       : 1;
 
+    const roundedFinalTarget = isPriceAvailable
+      ? (normalizedTarget === 'JPY' || normalizedTarget === 'THB'
+          ? Math.round(finalSellingPriceTargetCurrency)
+          : Math.round(finalSellingPriceTargetCurrency * 100) / 100)
+      : 0;
+
     const perPersonTargetCurrency = isPriceAvailable 
-      ? Math.round((finalSellingPriceTargetCurrency / totalPax) * 100) / 100
+      ? (normalizedTarget === 'JPY' || normalizedTarget === 'THB'
+          ? Math.round(roundedFinalTarget / totalPax)
+          : Math.round((roundedFinalTarget / totalPax) * 100) / 100)
       : 0;
 
     const fareBreakdown: JapanRailJourneyFareBreakdown = {
@@ -120,8 +134,8 @@ export class JapanRailJourneyPricingService {
       totalSupplierCostJPY: isPriceAvailable ? totalSupplierCostJPY : 0,
       totalMarkupJPY: isPriceAvailable ? totalMarkupJPY : 0,
       finalSellingPriceJPY,
-      targetCurrency,
-      finalSellingPriceTargetCurrency: Math.round(finalSellingPriceTargetCurrency * 100) / 100,
+      targetCurrency: normalizedTarget,
+      finalSellingPriceTargetCurrency: roundedFinalTarget,
       exchangeRate,
       appliedMarkupPercent,
       perPersonTargetCurrency,

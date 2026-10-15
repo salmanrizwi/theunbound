@@ -374,6 +374,7 @@ export function createIntegrationsRouter(): Router {
     const to = bodyData.to;
     const subject = bodyData.subject;
     const htmlBody = bodyData.htmlBody || bodyData.html || bodyData.bodyHtml || bodyData.body;
+    const textBody = bodyData.textBody;
     const meta = bodyData.meta;
     const authHeader = req.headers.authorization;
     const clientToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
@@ -489,16 +490,43 @@ export function createIntegrationsRouter(): Router {
     if (/the\s*unbound/i.test(sender)) {
       sender = sender.replace(/the\s*unbound\s*(dmc)?/gi, 'Travel Operations').trim();
     }
-    const emailHeaders = [
-      `To: ${to}`,
-      `From: ${sender}`,
-      `Subject: =?utf-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`,
-      'MIME-Version: 1.0',
-      'Content-Type: text/html; charset=utf-8',
-      'Content-Transfer-Encoding: base64',
-      '',
-      Buffer.from(htmlBody, 'utf-8').toString('base64')
-    ];
+    let emailHeaders: string[];
+
+    if (textBody && typeof textBody === 'string' && textBody.trim()) {
+      const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      emailHeaders = [
+        `To: ${to}`,
+        `From: ${sender}`,
+        `Subject: =?utf-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`,
+        'MIME-Version: 1.0',
+        `Content-Type: multipart/alternative; boundary="${boundary}"`,
+        '',
+        `--${boundary}`,
+        'Content-Type: text/plain; charset=utf-8',
+        'Content-Transfer-Encoding: base64',
+        '',
+        Buffer.from(textBody, 'utf-8').toString('base64'),
+        '',
+        `--${boundary}`,
+        'Content-Type: text/html; charset=utf-8',
+        'Content-Transfer-Encoding: base64',
+        '',
+        Buffer.from(htmlBody, 'utf-8').toString('base64'),
+        '',
+        `--${boundary}--`
+      ];
+    } else {
+      emailHeaders = [
+        `To: ${to}`,
+        `From: ${sender}`,
+        `Subject: =?utf-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`,
+        'MIME-Version: 1.0',
+        'Content-Type: text/html; charset=utf-8',
+        'Content-Transfer-Encoding: base64',
+        '',
+        Buffer.from(htmlBody, 'utf-8').toString('base64')
+      ];
+    }
 
     const rawMessage = base64UrlEncode(emailHeaders.join('\r\n'));
 

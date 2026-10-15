@@ -186,8 +186,6 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
   // Handler: Create New Blank Package
   const handleCreateNew = () => {
     const defaultDest = destinations[0] || { id: 'dest-japan', name: 'Japan', slug: 'japan' };
-    const destHubs = cityHubs.filter(h => h.destinationId === defaultDest.id);
-    const initialHub = destHubs[0];
 
     const newPkg: B2BPackage = {
       id: `pkg-${Date.now()}`,
@@ -197,8 +195,8 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
       destinationName: defaultDest.name,
       regionId: defaultDest.region,
       regionName: defaultDest.region,
-      hubIds: initialHub ? [initialHub.id] : [],
-      hubNames: initialHub ? [initialHub.name] : [],
+      hubIds: [], // Explicitly empty array! No hub selected by default
+      hubNames: [], // Explicitly empty array!
       durationDays: 7,
       durationNights: 6,
       heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
@@ -206,7 +204,8 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
       tagline: 'Multi-City Signature Circuit with 5★ Stays & Private VIP Chauffeur',
       description: 'Comprehensive wholesale circuit itinerary designed for discerning private travelers with premium accommodation, skip-the-line entrance passes, and dedicated ground support.',
       detailedDescription: '',
-      routeSummary: initialHub ? [`${initialHub.name} (6 Nights)`] : ['Tokyo (6 Nights)'],
+      routeSummary: [], // Explicitly empty array
+      routeHubs: [], // Explicitly empty array
       hotelsSummary: [],
       productIds: [],
       productReferences: [],
@@ -214,9 +213,9 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
       itinerary: Array.from({ length: 7 }, (_, i) => ({
         dayNumber: i + 1,
         title: i === 0 ? 'Arrival & Private Chauffeur Transfer' : i === 6 ? 'Departure Chauffeur & Farewell' : `Day ${i + 1} Sightseeing & Discovery`,
-        hubId: initialHub?.id,
-        hubName: initialHub?.name,
-        description: `Scheduled private excursions, cultural immersion, and leisure time in ${initialHub?.name || 'the destination'}.`,
+        hubId: undefined,
+        hubName: undefined,
+        description: `Scheduled private excursions, cultural immersion, and leisure time in ${defaultDest.name}.`,
         productIds: [],
         mealsIncluded: { breakfast: true, lunch: false, dinner: false },
         guideIncluded: true,
@@ -289,8 +288,12 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
   // Handler: Edit Existing Package
   const handleEdit = (pkg: B2BPackage) => {
     // Ensure all nested arrays exist to prevent undefined errors in form
+    // Load the package's actual saved hub IDs and preserve empty selections
     const safePkg: B2BPackage = {
       ...pkg,
+      hubIds: Array.isArray(pkg.hubIds) ? [...pkg.hubIds] : [],
+      hubNames: Array.isArray(pkg.hubNames) ? [...pkg.hubNames] : [],
+      routeHubs: Array.isArray(pkg.routeHubs) ? [...pkg.routeHubs] : [],
       highlights: pkg.highlights || [],
       inclusions: pkg.inclusions || [],
       exclusions: pkg.exclusions || [],
@@ -378,16 +381,23 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
   };
 
   // Handler: Save Package from Dedicated Package Builder
-  const handleSaveReadyMadePackage = (savedPkg: B2BPackage, publishImmediately: boolean = false) => {
+  const handleSaveReadyMadePackage = async (savedPkg: B2BPackage, publishImmediately: boolean = false) => {
     const isPublished = publishImmediately || savedPkg.status === 'PUBLISHED';
     const finalPkg: B2BPackage = {
       ...savedPkg,
+      hubIds: Array.from(new Set(savedPkg.hubIds || [])),
+      hubNames: Array.from(new Set(savedPkg.hubNames || [])),
+      routeHubs: savedPkg.routeHubs || [],
       status: isPublished ? 'PUBLISHED' : (savedPkg.status || 'DRAFT'),
       isPublished,
       updatedAt: new Date().toISOString()
     };
 
-    db.savePackage(finalPkg, user);
+    try {
+      await db.savePackageAsync(finalPkg, user);
+    } catch {
+      db.savePackage(finalPkg, user);
+    }
     refreshPackages();
     setIsEditorOpen(false);
     setEditingPackage(null);

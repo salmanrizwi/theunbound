@@ -296,43 +296,87 @@ export function richTextToPlainText(htmlOrText: string): string {
 }
 
 /**
- * Converts rich text / HTML into WhatsApp compatible formatted message.
+ * Converts rich text / HTML or plain-text into clean WhatsApp-compatible formatted message
+ * using native WhatsApp Markdown (*bold*, _italic_, ~strike~, ```monospace```, bullet lists)
+ * and guaranteed zero literal HTML tags.
  */
 export function richTextToWhatsApp(htmlOrText: string): string {
   if (!htmlOrText || typeof htmlOrText !== 'string') return '';
-  const trimmed = htmlOrText.trim();
-  if (!trimmed) return '';
+  let text = htmlOrText.trim();
+  if (!text) return '';
 
-  if (!isHtmlContent(trimmed)) {
-    return trimmed;
-  }
+  // 0. Pre-normalize: unescape any encoded HTML tags (&lt;p&gt; -> <p>, &lt;br/&gt; -> <br/>) and normalize malformed tags
+  text = text.replace(/&lt;(\/?(?:p|br|div|h[1-6]|strong|b|em|i|u|s|del|strike|ul|ol|li|table|tr|td|th|tbody|thead|span|a|hr|pre|code)(?:\s+[^&>]*)?\/?)\s*&gt;/gi, '<$1>');
+  text = text.replace(/<\s*\/\s*br\s*>/gi, '<br/>');
+  text = text.replace(/<br\s*\/?>/gi, '<br/>');
+  text = text.replace(/&nbsp;/gi, ' ');
 
-  let text = trimmed
-    // Headings to uppercase bold
-    .replace(/<h2[^>]*>(.*?)<\/h2>/gi, '*$1*\n\n')
-    .replace(/<h3[^>]*>(.*?)<\/h3>/gi, '*$1*\n\n')
-    .replace(/<h4[^>]*>(.*?)<\/h4>/gi, '*$1*\n\n')
-    // Bold
-    .replace(/<strong[^>]*>(.*?)<\/strong>/gi, '*$1*')
-    .replace(/<b[^>]*>(.*?)<\/b>/gi, '*$1*')
-    // Italic
-    .replace(/<em[^>]*>(.*?)<\/em>/gi, '_$1_')
-    .replace(/<i[^>]*>(.*?)<\/i>/gi, '_$1_')
-    // Lists
-    .replace(/<li[^>]*>(.*?)<\/li>/gi, '• $1\n')
-    .replace(/<\/ul>/gi, '\n')
-    .replace(/<\/ol>/gi, '\n')
-    .replace(/<p[^>]*>(.*?)<\/p>/gi, '$1\n\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    // Strip remaining tags
-    .replace(/<[^>]+>/g, '')
-    // Entity decoding
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+  // 1. Monospace preformatted code
+  text = text.replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, '```$1```\n\n');
+  text = text.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '```$1```');
+
+  // 2. Headings to bold lines with spacing
+  text = text.replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, (_m, content) => {
+    const clean = content.replace(/<[^>]+>/g, '').trim();
+    return clean ? `*${clean}*\n\n` : '\n\n';
+  });
+
+  // 3. Bold: <strong>, <b>
+  text = text.replace(/<(?:strong|b)[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, (_m, content) => {
+    const clean = content.trim();
+    return clean ? `*${clean}*` : '';
+  });
+
+  // 4. Italic: <em>, <i>
+  text = text.replace(/<(?:em|i)[^>]*>([\s\S]*?)<\/(?:em|i)>/gi, (_m, content) => {
+    const clean = content.trim();
+    return clean ? `_${clean}_` : '';
+  });
+
+  // 5. Strikethrough: <del>, <s>, <strike>
+  text = text.replace(/<(?:del|s|strike)[^>]*>([\s\S]*?)<\/(?:del|s|strike)>/gi, (_m, content) => {
+    const clean = content.trim();
+    return clean ? `~${clean}~` : '';
+  });
+
+  // 6. Lists: <li>
+  text = text.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_m, content) => {
+    const clean = content.trim();
+    return clean ? `• ${clean}\n` : '';
+  });
+  text = text.replace(/<\/(?:ul|ol)>/gi, '\n');
+  text = text.replace(/<(?:ul|ol)[^>]*>/gi, '');
+
+  // 7. Paragraphs and line breaks
+  text = text.replace(/<\/p>/gi, '\n\n');
+  text = text.replace(/<p[^>]*>/gi, '');
+  text = text.replace(/<\/div>/gi, '\n');
+  text = text.replace(/<div[^>]*>/gi, '');
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<\/br>/gi, '\n');
+  text = text.replace(/<hr\s*\/?>/gi, '\n━━━━━━━━━━━━━━━━━━━━\n');
+
+  // 8. Strip all remaining HTML tags
+  text = text.replace(/<[^>]+>/g, '');
+
+  // 9. Entity decoding
+  text = text
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+
+  // 10. Post-decoding sanity sweep to guarantee zero literal HTML tags (e.g. from nested/double-escaped entities)
+  text = text.replace(/<[^>]+>/g, '');
+
+  // 11. Clean excessive whitespace and newlines
+  text = text
+    .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 

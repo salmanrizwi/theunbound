@@ -194,12 +194,16 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     if (product) {
       const vFrom = (product.validity?.validFrom ?? product.validityFrom ?? '').trim();
       const vTo = (product.validity?.validTo ?? product.validityTo ?? '').trim();
+      const isRail = product.id === 'RAIL-JP-ORD-RESERVED' || product.id === 'RAIL-JP-GREEN-RESERVED' || product.category === 'Rail' || product.category === 'Rail / Shinkansen';
       const cleanImages = canonicalImageService.extractPersistedProductImages(product);
-      const primaryUrl = cleanImages[0] || null;
+      const primaryUrl = isRail ? (product.imageUrl || product.heroImage || cleanImages[0] || null) : (cleanImages[0] || product.imageUrl || product.heroImage || null);
+      const resolvedImages = primaryUrl
+        ? [primaryUrl, ...cleanImages.filter(u => u !== primaryUrl)]
+        : cleanImages;
       return { 
         ...product,
         category: normalizeWorkspaceCategory(product.category),
-        images: cleanImages,
+        images: resolvedImages,
         heroImage: primaryUrl,
         imageUrl: primaryUrl,
         validityFrom: vFrom,
@@ -251,12 +255,16 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       const vFrom = (product.validity?.validFrom ?? product.validityFrom ?? '').trim();
       const vTo = (product.validity?.validTo ?? product.validityTo ?? '').trim();
       const normCat = normalizeWorkspaceCategory(product.category);
+      const isRail = product.id === 'RAIL-JP-ORD-RESERVED' || product.id === 'RAIL-JP-GREEN-RESERVED' || product.category === 'Rail' || product.category === 'Rail / Shinkansen';
       const cleanImages = canonicalImageService.extractPersistedProductImages(product);
-      const primaryUrl = cleanImages[0] || null;
+      const primaryUrl = isRail ? (product.imageUrl || product.heroImage || cleanImages[0] || null) : (cleanImages[0] || product.imageUrl || product.heroImage || null);
+      const resolvedImages = primaryUrl
+        ? [primaryUrl, ...cleanImages.filter(u => u !== primaryUrl)]
+        : cleanImages;
       setFormData({ 
         ...product,
         category: normCat,
-        images: cleanImages,
+        images: resolvedImages,
         heroImage: primaryUrl,
         imageUrl: primaryUrl,
         validityFrom: vFrom,
@@ -777,7 +785,8 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       status: t.status
     }));
 
-    const effectiveId = product?.id || `prod-${Date.now()}`;
+    const matchedPrev = product?.id ? db.getProductById(product.id) : (product?.sku ? db.getProductById(product.sku) : undefined);
+    const effectiveId = matchedPrev?.id || product?.id || `prod-${Date.now()}`;
     const canonicalPrimaryUrl = cleanedImages[0] || null;
     const nowIso = new Date().toISOString();
 

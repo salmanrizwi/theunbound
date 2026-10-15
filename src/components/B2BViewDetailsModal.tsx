@@ -198,8 +198,14 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
 
   const images = useMemo(() => {
     if (product) {
-      const primary = canonicalImageService.resolveProductImage(product);
-      const rest = (product.images || []).map(img => canonicalImageService.resolveImageUrl(img, product.category || product.city));
+      const isRail = product.id === 'RAIL-JP-ORD-RESERVED' || product.id === 'RAIL-JP-GREEN-RESERVED' || product.category === 'Rail' || product.category === 'Rail / Shinkansen';
+      const cleanImages = canonicalImageService.extractPersistedProductImages(product);
+      const primaryUrl = isRail ? (product.imageUrl || product.heroImage || cleanImages[0] || null) : (cleanImages[0] || product.imageUrl || product.heroImage || null);
+      const primary = primaryUrl || canonicalImageService.resolveProductImage(product);
+      const rawGallery = Array.isArray(product.images) && product.images.length > 0 
+        ? product.images 
+        : (primaryUrl ? [primaryUrl] : cleanImages);
+      const rest = rawGallery.map(img => canonicalImageService.resolveImageUrl(img, product.category || product.city));
       const all = Array.from(new Set([primary, ...rest])).filter(Boolean);
       return all.length > 0 ? all : [primary];
     }

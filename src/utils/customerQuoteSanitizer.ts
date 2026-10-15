@@ -353,7 +353,14 @@ const BANNED_COMMERCIAL_TERMS = [
   'wholesale tariff',
   'client rate',
   'cost before markup',
-  'internal pricing'
+  'internal pricing',
+  'rate per person',
+  'rate per traveler',
+  'price per person',
+  'price per traveler',
+  'unit price',
+  'unit cost',
+  'itemized price'
 ];
 
 export function verifyNoCommercialLeak(message: string): { isSafe: boolean; detectedTerms: string[] } {
@@ -751,3 +758,64 @@ export function sanitizeBookingForAgent(b: Booking): Booking {
 
   return clone;
 }
+
+/**
+ * Sanitizes a Quotation object into a pure customer-facing Quotation document.
+ * MANDATE (Price Confidentiality):
+ * - Authoritative Final Total Selling Price ONLY.
+ * - Strips all item-level, service-level, and product-level pricing calculations.
+ * - Items retain full names, descriptions, dates, and inclusions.
+ * - Strips all internal nett costs, supplier rates, markups, and margins.
+ */
+export function sanitizeQuoteDocumentForCustomer(quote: Quotation): Quotation {
+  if (!quote) return quote;
+  const clone: Quotation = sanitizeQuoteForAgent(quote);
+
+  // Authoritative single final price
+  const finalPrice = clone.finalCustomerSellingPrice ?? (clone as any).final_customer_selling_price ?? clone.totalSellingPrice;
+  clone.totalSellingPrice = finalPrice;
+  clone.finalCustomerSellingPrice = finalPrice;
+  (clone as any).final_customer_selling_price = finalPrice;
+
+  // Sanitize items so no item-level pricing or calculations leak
+  if (clone.items && Array.isArray(clone.items)) {
+    clone.items = clone.items.map(it => {
+      const itClone: QuoteItem = JSON.parse(JSON.stringify(it));
+      delete (itClone as any).calculation;
+      delete (itClone as any).price;
+      delete (itClone as any).totalSellingPrice;
+      delete (itClone as any).finalTotalSellingPrice;
+      delete (itClone as any).sellingPriceFinal;
+      delete (itClone as any).unitSellingPrice;
+      if (itClone.manualHotelDetails) {
+        delete (itClone.manualHotelDetails as any).costPerNight;
+        delete (itClone.manualHotelDetails as any).sellingPrice;
+        delete (itClone.manualHotelDetails as any).totalSellingPrice;
+      }
+      return itClone;
+    });
+  }
+
+  // Sanitize options if present
+  if (clone.options && Array.isArray(clone.options)) {
+    clone.options = clone.options.map(option => {
+      const optClone: QuotationOption = JSON.parse(JSON.stringify(option));
+      if (optClone.items && Array.isArray(optClone.items)) {
+        optClone.items = optClone.items.map(it => {
+          const itClone: QuoteItem = JSON.parse(JSON.stringify(it));
+          delete (itClone as any).calculation;
+          delete (itClone as any).price;
+          delete (itClone as any).totalSellingPrice;
+          delete (itClone as any).finalTotalSellingPrice;
+          delete (itClone as any).sellingPriceFinal;
+          delete (itClone as any).unitSellingPrice;
+          return itClone;
+        });
+      }
+      return optClone;
+    });
+  }
+
+  return clone;
+}
+

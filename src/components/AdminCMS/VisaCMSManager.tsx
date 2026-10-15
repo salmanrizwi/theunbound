@@ -2771,6 +2771,31 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
               </div>
 
               <div className="flex items-center space-x-2.5 justify-end">
+                {((serviceDrawerCategory === 'VISA' && editingVisa?.id) ||
+                  (serviceDrawerCategory === 'PROTECTION' && editingProtection?.id) ||
+                  (serviceDrawerCategory === 'VIP' && editingVip?.id) ||
+                  (serviceDrawerCategory === 'CONNECTIVITY' && editingConnectivity?.id)) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (serviceDrawerCategory === 'VISA' && editingVisa) {
+                        setDeleteTarget({ id: editingVisa.id, name: `${editingVisa.country} - ${editingVisa.visaType}`, type: 'VISA' });
+                      } else if (serviceDrawerCategory === 'PROTECTION' && editingProtection) {
+                        setDeleteTarget({ id: editingProtection.id, name: editingProtection.serviceName, type: 'PROTECTION' });
+                      } else if (serviceDrawerCategory === 'VIP' && editingVip) {
+                        setDeleteTarget({ id: editingVip.id, name: editingVip.name, type: 'VIP' });
+                      } else if (serviceDrawerCategory === 'CONNECTIVITY' && editingConnectivity) {
+                        setDeleteTarget({ id: editingConnectivity.id, name: editingConnectivity.name, type: 'CONNECTIVITY' });
+                      }
+                    }}
+                    className="px-3.5 py-2.5 rounded-xl border border-rose-900/60 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5"
+                    title="Delete this service record"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => setIsServiceDrawerOpen(false)}
@@ -2916,24 +2941,75 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
         <DeleteConfirmModal
           isOpen={true}
           onClose={() => setDeleteTarget(null)}
+          onSuccess={() => {
+            if (deleteTarget.type === 'VISA') {
+              setVisas(db.getVisas());
+              if (editingVisa?.id === deleteTarget.id) {
+                setEditingVisa(null);
+                setIsServiceDrawerOpen(false);
+              }
+            } else if (deleteTarget.type === 'PROTECTION') {
+              setProtectionPlans(db.getTravelProtectionPlans());
+              if (editingProtection?.id === deleteTarget.id) {
+                setEditingProtection(null);
+                setIsServiceDrawerOpen(false);
+              }
+            } else if (deleteTarget.type === 'VIP') {
+              setVipServices(db.getVipGroundServices());
+              if (editingVip?.id === deleteTarget.id) {
+                setEditingVip(null);
+                setIsServiceDrawerOpen(false);
+              }
+            } else if (deleteTarget.type === 'CONNECTIVITY') {
+              setConnectivityPlans(db.getConnectivityPlans());
+              if (editingConnectivity?.id === deleteTarget.id) {
+                setEditingConnectivity(null);
+                setIsServiceDrawerOpen(false);
+              }
+            }
+            setDeleteTarget(null);
+          }}
           onConfirm={() => {
             if (deleteTarget.type === 'VISA') {
               db.deleteVisa(deleteTarget.id, user);
               setVisas(db.getVisas());
-              if (editingVisa?.id === deleteTarget.id) setEditingVisa(null);
+              if (editingVisa?.id === deleteTarget.id) {
+                setEditingVisa(null);
+                setIsServiceDrawerOpen(false);
+              }
             } else if (deleteTarget.type === 'PROTECTION') {
               db.deleteTravelProtectionPlan(deleteTarget.id, user);
               setProtectionPlans(db.getTravelProtectionPlans());
+              if (editingProtection?.id === deleteTarget.id) {
+                setEditingProtection(null);
+                setIsServiceDrawerOpen(false);
+              }
             } else if (deleteTarget.type === 'VIP') {
               db.deleteVipGroundService(deleteTarget.id, user);
               setVipServices(db.getVipGroundServices());
+              if (editingVip?.id === deleteTarget.id) {
+                setEditingVip(null);
+                setIsServiceDrawerOpen(false);
+              }
             } else if (deleteTarget.type === 'CONNECTIVITY') {
               db.deleteConnectivityPlan(deleteTarget.id, user);
               setConnectivityPlans(db.getConnectivityPlans());
+              if (editingConnectivity?.id === deleteTarget.id) {
+                setEditingConnectivity(null);
+                setIsServiceDrawerOpen(false);
+              }
             }
             setDeleteTarget(null);
           }}
-          entityType={deleteTarget.type === 'VISA' ? 'Visa' : 'Product'}
+          entityType={
+            deleteTarget.type === 'VISA'
+              ? 'Visa'
+              : deleteTarget.type === 'PROTECTION'
+              ? 'TravelProtectionPlan'
+              : deleteTarget.type === 'VIP'
+              ? 'VipGroundService'
+              : 'ConnectivityPlan'
+          }
           recordId={deleteTarget.id}
           recordTitle={deleteTarget.name}
           user={user}

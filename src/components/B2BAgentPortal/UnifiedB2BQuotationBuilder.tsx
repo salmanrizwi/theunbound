@@ -74,6 +74,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
 import { formatCurrency, convertCurrency, calculateQuoteInternalBreakdown } from '../../services/pricingEngine';
 import { canonicalImageService } from '../../services/imageService';
+import { sanitizeImageUrl } from '../../utils/imageUtils';
 import { ProposalDocumentView } from '../ProposalDocumentView';
 import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
 import { RailJourneyModal } from '../RailJourneyModal';
@@ -105,6 +106,7 @@ import { hotelToProduct, manualHotelToProduct, isManualHotelPricingComplete, cal
 import { downloadQuotationPDF } from '../../services/pdfGenerator';
 import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { EmailNotificationService } from '../../services/emailNotificationService';
+import { formatPlainTextQuotationToHtml } from '../../services/quoteEmailFormatter';
 import { DestinationRelevanceService, matchesDestination } from '../../services/destinationRelevanceService';
 import { QuotationScope } from '../../types';
 
@@ -982,8 +984,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [emailCustomNote, setEmailCustomNote] = useState('');
   const [emailMessage, setEmailMessage] = useState('');
   const [emailPreviewHtml, setEmailPreviewHtml] = useState('');
+  const [emailRichHtml, setEmailRichHtml] = useState('');
+  const [emailSimpleHtml, setEmailSimpleHtml] = useState('');
+  const [plainTextSubView, setPlainTextSubView] = useState<'PREVIEW' | 'EDIT'>('PREVIEW');
   const [emailPreviewTab, setEmailPreviewTab] = useState<'HTML_PREVIEW' | 'FULL_TEXT'>('HTML_PREVIEW');
   const [emailCopied, setEmailCopied] = useState(false);
+  const [emailCopiedMode, setEmailCopiedMode] = useState<'RICH_HTML' | 'PLAIN_TEXT' | null>(null);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [emailSuccessMessage, setEmailSuccessMessage] = useState<string | null>(null);
   const [emailErrorMessage, setEmailErrorMessage] = useState<string | null>(null);
@@ -2159,7 +2165,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       }
     );
     setEmailMessage(canonical.textBody);
-    setEmailPreviewHtml(canonical.htmlBody);
+    setEmailRichHtml(canonical.proposalViewHtml);
+    setEmailSimpleHtml(canonical.simpleSemanticHtml);
+    setEmailPreviewHtml(canonical.proposalViewHtml);
     return canonical;
   };
 
@@ -2182,34 +2190,83 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     );
     setEmailSubject(canonical.subject);
     setEmailPreviewTab('HTML_PREVIEW');
+    setPlainTextSubView('PREVIEW');
     setEmailCopied(false);
     setEmailSuccessMessage(null);
     setEmailErrorMessage(null);
     setIsEmailModalOpen(true);
   };
 
-  // Copy Complete Email Quotation Text to Clipboard
-  const handleCopyEmailText = async () => {
+  // Copy Complete Quotation as Formatted Rich Text (text/html + text/plain fallback)
+  const handleCopyFormattedQuotation = async () => {
+    // Option 1 uses rich proposal view HTML, Option 2 uses simple semantic rich text HTML
+    const htmlToCopy = emailPreviewTab === 'HTML_PREVIEW'
+      ? (emailRichHtml || emailPreviewHtml)
+      : (emailSimpleHtml || formatPlainTextQuotationToHtml(emailMessage));
+    const plainTextFallback = emailMessage;
+
+    let successMode: 'RICH_HTML' | 'PLAIN_TEXT' | null = null;
+
     try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(emailMessage);
+      if (typeof window !== 'undefined' && typeof window.ClipboardItem !== 'undefined' && navigator?.clipboard?.write) {
+        const blobHtml = new Blob([htmlToCopy], { type: 'text/html' });
+        const blobText = new Blob([plainTextFallback], { type: 'text/plain' });
+        const item = new ClipboardItem({
+          'text/html': blobHtml,
+          'text/plain': blobText,
+        });
+        await navigator.clipboard.write([item]);
+        successMode = 'RICH_HTML';
       } else {
-        const textArea = document.createElement('textarea');
-        textArea.value = emailMessage;
-        textArea.style.position = 'fixed';
-        textArea.style.opacity = '0';
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
+        // Fallback using temporary off-screen container selection for browsers without ClipboardItem
+        const container = document.createElement('div');
+        container.innerHTML = htmlToCopy;
+        container.style.position = 'fixed';
+        container.style.pointerEvents = 'none';
+        container.style.opacity = '0';
+        container.style.left = '-9999px';
+        document.body.appendChild(container);
+
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(container);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+
+        const successful = document.execCommand('copy');
+        selection?.removeAllRanges();
+        document.body.removeChild(container);
+
+        if (successful) {
+          successMode = 'RICH_HTML';
+        } else if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(plainTextFallback);
+          successMode = 'PLAIN_TEXT';
+        }
       }
-      setEmailCopied(true);
-      setTimeout(() => setEmailCopied(false), 3000);
     } catch (err) {
-      console.error('Failed to copy email content:', err);
+      console.warn('Rich text clipboard write encountered issue, falling back to plain text:', err);
+      try {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(plainTextFallback);
+          successMode = 'PLAIN_TEXT';
+        }
+      } catch (fallbackErr) {
+        console.error('All clipboard operations failed:', fallbackErr);
+      }
+    }
+
+    if (successMode) {
+      setEmailCopiedMode(successMode);
+      setEmailCopied(true);
+      setTimeout(() => {
+        setEmailCopied(false);
+        setEmailCopiedMode(null);
+      }, 3000);
     }
   };
+
+  const handleCopyEmailText = handleCopyFormattedQuotation;
 
   // Send Complete Email Proposal via EmailNotificationService
   const handleSendProposalEmail = async () => {
@@ -2241,16 +2298,21 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           email: user?.email || saved.agentEmail || 'sales@theunbound.in',
           phone: user?.phone || saved.agentPhone || '+91-9811654959',
           selectedOptionIndexOrId: Math.max(0, activeOptionTab - 1),
-          customNote: emailCustomNote
+          customNote: emailCustomNote,
+          formattingMode: emailPreviewTab === 'HTML_PREVIEW' ? 'PROPOSAL_VIEW' : 'PLAIN_TEXT'
         }
       );
 
       const finalSubject = emailSubject.trim() || generatedEmail.subject;
+      // Option 1: Proposal View Rich HTML vs Option 2: Complete Plain-Text Simple Semantic HTML
+      const finalHtmlBody = emailPreviewTab === 'HTML_PREVIEW'
+        ? (emailRichHtml && emailRichHtml.trim() ? emailRichHtml : generatedEmail.proposalViewHtml || generatedEmail.fullHtml)
+        : (emailSimpleHtml && emailSimpleHtml.trim() ? emailSimpleHtml : formatPlainTextQuotationToHtml(emailMessage));
 
       const result = await emailService.sendViaGmailApi(
         cleanRecipient,
         finalSubject,
-        generatedEmail.fullHtml,
+        finalHtmlBody,
         {
           quoteId: saved.id,
           leadId: saved.leadId,
@@ -2258,7 +2320,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           eventType: 'QUOTE_EMAIL_SENT',
           sentBy: user?.id,
           sentByName: user?.name || 'Agent'
-        }
+        },
+        emailMessage
       );
 
       if (result.success) {
@@ -3185,6 +3248,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                         alt={prod.name}
                         referrerPolicy="no-referrer"
                         className="w-16 h-16 rounded-xl object-cover border border-slate-200 shrink-0"
+                        onError={(e) => {
+                          const fallback = sanitizeImageUrl('', prod.category || prod.city);
+                          if ((e.currentTarget as HTMLImageElement).src !== fallback) {
+                            (e.currentTarget as HTMLImageElement).src = fallback;
+                          }
+                        }}
                       />
 
                       <div className="min-w-0 flex-1">
@@ -3367,57 +3436,144 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                 />
               </div>
 
-              {/* Complete Quotation Content Preview / Full Text Tabs */}
-              <div className="space-y-2">
+              {/* Two Formatting Modes: Option 1 (Rich HTML Preview) vs Option 2 (Complete Formatted Quotation) */}
+              <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1 text-xs font-bold">
                     <button
                       type="button"
                       onClick={() => setEmailPreviewTab('HTML_PREVIEW')}
-                      className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center space-x-1.5 ${
                         emailPreviewTab === 'HTML_PREVIEW'
                           ? 'bg-white text-slate-900 shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
-                      Rich HTML Quotation Preview
+                      <span>Option 1: Rich HTML Quotation Preview</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">Proposal View</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setEmailPreviewTab('FULL_TEXT')}
-                      className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center space-x-1.5 ${
                         emailPreviewTab === 'FULL_TEXT'
                           ? 'bg-white text-slate-900 shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
-                      Complete Plain-Text Quotation ({emailMessage.length} chars)
+                      <span>Option 2: Complete Formatted Quotation</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-100 text-blue-800">Copy Rich Text</span>
                     </button>
                   </div>
 
                   <button
                     type="button"
-                    onClick={handleCopyEmailText}
-                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold border border-slate-200 transition-colors cursor-pointer"
+                    onClick={handleCopyFormattedQuotation}
+                    className="px-3.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-200 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-2xs"
+                    title="Copy formatted rich text quotation to clipboard (ready to paste into Gmail, Outlook, or docs)"
                   >
-                    {emailCopied ? '✓ Copied Complete Quotation Text!' : 'Copy Complete Email Text'}
+                    {emailCopied ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        <span className="text-emerald-700 font-extrabold">
+                          {emailCopiedMode === 'RICH_HTML' ? 'Copied Formatted Quotation!' : 'Copied Plain-Text (Fallback)!'}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Copy Formatted Quotation</span>
+                      </>
+                    )}
                   </button>
                 </div>
 
                 {emailPreviewTab === 'HTML_PREVIEW' ? (
-                  <div className="border border-slate-200 rounded-2xl bg-slate-100 p-3 sm:p-4 max-h-96 overflow-y-auto">
-                    <div
-                      className="bg-white rounded-xl overflow-hidden"
-                      dangerouslySetInnerHTML={{ __html: emailPreviewHtml }}
-                    />
+                  <div className="space-y-1.5">
+                    <div className="text-[11px] text-slate-500">
+                      <span>Matches the authoritative <strong>Proposal View</strong> layout (responsive fluid email container, dark curated banner, route hubs, cards, and consolidated total).</span>
+                    </div>
+                    <div className="border border-slate-200 rounded-2xl bg-slate-100 p-2 sm:p-4 max-h-[420px] overflow-y-auto">
+                      <div
+                        className="bg-white rounded-xl shadow-xs overflow-hidden mx-auto"
+                        dangerouslySetInnerHTML={{ __html: emailRichHtml || emailPreviewHtml }}
+                      />
+                    </div>
                   </div>
                 ) : (
-                  <textarea
-                    rows={14}
-                    value={emailMessage}
-                    onChange={(e) => setEmailMessage(e.target.value)}
-                    className="w-full p-3.5 rounded-2xl bg-slate-900 text-slate-100 border border-slate-800 text-xs font-mono leading-relaxed outline-none"
-                  />
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="text-[11px] text-slate-500">
+                        <span>Semantic rich-text quotation ready to copy & paste into email composers (preserves bold headings, lists & structure).</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <button
+                          type="button"
+                          onClick={handleCopyFormattedQuotation}
+                          className="px-3 py-1 rounded-lg cursor-pointer transition-all bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-2xs"
+                          title="Copy formatted quotation (rich text) to paste into any email composer"
+                        >
+                          {emailCopied ? (
+                            <>
+                              <Check className="w-3.5 h-3.5" />
+                              <span>{emailCopiedMode === 'RICH_HTML' ? 'Copied Formatted Quotation!' : 'Copied (Fallback)!'}</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Copy Formatted Quotation</span>
+                            </>
+                          )}
+                        </button>
+                        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs font-medium">
+                          <button
+                            type="button"
+                            onClick={() => setPlainTextSubView('PREVIEW')}
+                            className={`px-2.5 py-1 rounded-md cursor-pointer transition-all ${
+                              plainTextSubView === 'PREVIEW'
+                                ? 'bg-slate-900 text-white font-bold'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Formatted Text Preview
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPlainTextSubView('EDIT')}
+                            className={`px-2.5 py-1 rounded-md cursor-pointer transition-all ${
+                              plainTextSubView === 'EDIT'
+                                ? 'bg-slate-900 text-white font-bold'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Edit Quotation Text
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {plainTextSubView === 'PREVIEW' ? (
+                      <div className="border border-slate-200 rounded-2xl bg-slate-50 p-3 sm:p-4 max-h-[420px] overflow-y-auto">
+                        <div
+                          className="bg-white rounded-xl border border-slate-200 p-5 sm:p-6 shadow-xs mx-auto max-w-2xl text-left"
+                          dangerouslySetInnerHTML={{
+                            __html: emailSimpleHtml || formatPlainTextQuotationToHtml(emailMessage)
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <textarea
+                        rows={15}
+                        value={emailMessage}
+                        onChange={(e) => {
+                          const nextMsg = e.target.value;
+                          setEmailMessage(nextMsg);
+                          setEmailSimpleHtml(formatPlainTextQuotationToHtml(nextMsg));
+                        }}
+                        className="w-full p-3.5 rounded-2xl bg-slate-900 text-slate-100 border border-slate-800 text-xs font-mono leading-relaxed outline-none focus:border-[#00C6A6]"
+                      />
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -3451,12 +3607,16 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                   {isSendingEmail ? (
                     <>
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Sending Complete Quotation...</span>
+                      <span>Sending Quotation...</span>
                     </>
                   ) : (
                     <>
                       <Send className="w-3.5 h-3.5" />
-                      <span>Send Complete Proposal Email</span>
+                      <span>
+                        {emailPreviewTab === 'HTML_PREVIEW'
+                          ? 'Send Proposal View Email'
+                          : 'Send Plain-Text Quotation Email'}
+                      </span>
                     </>
                   )}
                 </button>

@@ -136,8 +136,15 @@ export const CommercialProductsManager: React.FC<CommercialProductsManagerProps>
         return;
       }
 
+      const cleanedPrimary = (formData.imageUrl || '').trim();
+      const existingOtherImages = (formData.images || []).filter(u => u && u.trim() !== cleanedPrimary);
+      const updatedImages = cleanedPrimary ? [cleanedPrimary, ...existingOtherImages] : existingOtherImages;
+
       const payloadToSave: JapanRailCommercialProduct = {
         ...formData,
+        imageUrl: cleanedPrimary,
+        heroImage: cleanedPrimary,
+        images: updatedImages,
         validityFrom: effectiveValidFrom || '2026-01-01',
         validityTo: effectiveValidTo || '2027-03-31',
         validity: {

@@ -13,6 +13,8 @@ export const INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS: JapanRailCommercialProduct[
     category: 'RAIL',
     destinationId: 'dest-japan',
     destinationName: 'Japan',
+    regionId: 'reg-east-asia',
+    regionName: 'East Asia',
     productType: 'ORDINARY_RESERVED',
     carType: 'Ordinary',
     classType: 'Standard',
@@ -68,6 +70,8 @@ export const INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS: JapanRailCommercialProduct[
     category: 'RAIL',
     destinationId: 'dest-japan',
     destinationName: 'Japan',
+    regionId: 'reg-east-asia',
+    regionName: 'East Asia',
     productType: 'GREEN_RESERVED',
     carType: 'Green',
     classType: 'First Class',
@@ -91,9 +95,9 @@ export const INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS: JapanRailCommercialProduct[
       'Green Car tickets require full Green surcharge for children occupying their own seat.',
       'Scenic Mt. Fuji view is on Seat D on westbound trains (Tokyo to Kyoto/Osaka).'
     ],
-    imageUrl: 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?auto=format&fit=crop&w=1600&q=80',
+    imageUrl: 'https://photos.smugmug.com/Kyoto/Getting-Around-Kyoto/i-DBVGwFn/0/8e1e9571/L/Shinkansen%20Green%20Car-L.jpg',
     images: [
-      'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?auto=format&fit=crop&w=1600&q=80',
+      'https://photos.smugmug.com/Kyoto/Getting-Around-Kyoto/i-DBVGwFn/0/8e1e9571/L/Shinkansen%20Green%20Car-L.jpg',
       'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=1600&q=80'
     ],
     supportedServices: ['NOZOMI', 'MIZUHO', 'HIKARI', 'KODAMA', 'SAKURA', 'TSUBAME'],

@@ -68,7 +68,8 @@ service cloud.firestore {
             'COMING_SOON', 'Coming Soon', 'CONFIRMED', 'Confirmed', 'PENDING', 'Pending',
             'CANCELLED', 'Cancelled', 'COMPLETED', 'Completed', 'NEW', 'New',
             'CONTACTED', 'Contacted', 'PROPOSAL_SENT', 'Proposal Sent', 'NEGOTIATION', 'Negotiation',
-            'WON', 'Won', 'LOST', 'Lost', 'QUALIFIED', 'Qualified', 'PENDING_APPROVAL', 'SUSPENDED'
+            'WON', 'Won', 'LOST', 'Lost', 'QUALIFIED', 'Qualified', 'PENDING_APPROVAL', 'SUSPENDED',
+            'SYNCED', 'Synced'
           ]
         ) &&
         (!('role' in request.resource.data) || request.resource.data.role != 'B2B_AGENT') &&

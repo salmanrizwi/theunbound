@@ -281,6 +281,8 @@ export interface JapanRailCommercialProduct {
   category: 'RAIL' | 'Rail';
   destinationId: string; // 'dest-japan' | 'DST-JPN'
   destinationName?: string;
+  regionId?: string;
+  regionName?: string;
   productType: 'ORDINARY_RESERVED' | 'GREEN_RESERVED' | 'Rail';
   description?: string;
   shortDescription?: string;
@@ -288,6 +290,7 @@ export interface JapanRailCommercialProduct {
   exclusions?: string[];
   importantInformation?: string[];
   imageUrl?: string;
+  heroImage?: string;
   images?: string[];
   classType: string; // 'Standard' | 'First Class'
   carType: RailCarType; // 'Ordinary' | 'Green'

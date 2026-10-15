@@ -2,6 +2,14 @@ import { Quotation, QuoteItem, TripRouteHub } from '../types';
 import { formatCurrency } from './pricingEngine';
 import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../utils/inventoryDisplayHelpers';
 import { isRailQuoteItem } from './rail/JapanRailJourneyDataService';
+import { 
+  renderProposalViewHtmlEmail,
+  renderStructuredQuotationHtmlEmail, 
+  formatPlainTextQuotationToHtml,
+  renderSimpleSemanticQuotationEmailFromModel,
+  convertHtmlToCleanPlainText
+} from './quoteEmailFormatter';
+import { richTextToWhatsApp } from '../utils/richTextFormatter';
 
 export interface ServicePresentationItem {
   id: string;
@@ -314,7 +322,7 @@ export function transformQuoteItemToPresentation(item: QuoteItem, currency: stri
     meetingPoint,
     pickupPoint,
     dropoffPoint,
-    priceFormatted: formatCurrency(itemPrice, currency),
+    priceFormatted: '',
     paxText: `${adultsCount} Adults${childrenCount ? `, ${childrenCount} Ch` : ''}`,
     statusText: 'Confirmed Allotment',
     rawItem: item
@@ -543,7 +551,7 @@ export function buildQuotePresentationModel(
           overview: matchedHotelItem?.contentSnapshot?.overviewSpecifications || matchedHotelItem?.product?.longDescription || matchedHotelItem?.product?.shortDescription,
           inclusions: matchedHotelItem?.contentSnapshot?.inclusions || matchedHotelItem?.product?.inclusions || [mealPlan, `${roomsCount} × ${roomType} (${nights} Nights)`],
           exclusions: matchedHotelItem?.contentSnapshot?.exclusions || matchedHotelItem?.product?.exclusions || [],
-          priceFormatted: itemPrice > 0 ? formatCurrency(itemPrice, effectiveCurrency) : undefined,
+          priceFormatted: undefined,
           notes: h.manualHotel?.internalNotes || (h.manualHotel as any)?.notes || matchedHotelItem?.notes
         });
       }
@@ -578,7 +586,7 @@ export function buildQuotePresentationModel(
       overview: it.contentSnapshot?.overviewSpecifications || it.product?.longDescription || it.product?.shortDescription,
       inclusions: it.contentSnapshot?.inclusions || it.product?.inclusions || [],
       exclusions: it.contentSnapshot?.exclusions || it.product?.exclusions || [],
-      priceFormatted: itemPrice > 0 ? formatCurrency(itemPrice, effectiveCurrency) : undefined,
+      priceFormatted: undefined,
       notes: it.notes
     });
   });
@@ -737,7 +745,7 @@ export function buildQuotePresentationModel(
           inclusions: [mealPlan, `${roomsCount} × ${roomType} (${nights} Nights)`],
           exclusions: [],
           specialInstructions: activeHub.manualHotel?.internalNotes || activeHub.notes,
-          priceFormatted: formatCurrency(manualPrice, effectiveCurrency),
+          priceFormatted: '',
           paxText: `${adultsDisplay} Adults${childrenDisplay ? `, ${childrenDisplay} Ch` : ''}`,
           statusText: 'Confirmed Allotment',
           rawItem: {
@@ -890,8 +898,8 @@ export function buildQuotePresentationModel(
     agentPhone: effectiveAgentPhone,
     agentLogoUrl: effectiveAgentLogoUrl,
     agentAgencySubtitle: effectiveAgency 
-      ? 'Authorized Travel Partner • In Association with TheUnbound Wholesale DMC Network'
-      : 'Destination Management Operations • Direct Ground Logistics & Wholesale Tour Hub',
+      ? 'Authorized Travel Partner • In Association with TheUnbound Luxury DMC Network'
+      : 'Destination Management Operations • Direct Ground Logistics & Destination Operations Hub',
     agentNotes: effectiveAgentNotes,
     clientName: quote.clientName && quote.clientName !== 'Client Name Pending' ? quote.clientName : (quote.clientName || 'Valued Guest'),
     clientCompany: quote.clientCompany,
@@ -924,7 +932,7 @@ export function buildQuotePresentationModel(
     pricePerTravelerFormatted: `${formatCurrency(pricePerPerson, effectiveCurrency)} / Traveler (${effectivePax} Guests)`,
     guaranteedCurrencyLine: `Guaranteed in ${effectiveCurrency} • No Hidden Surcharges`,
     childAndAttractionPolicies,
-    commercialTerms: quote.termsAndConditions || 'This quotation is issued by TheUnbound Wholesale DMC Network. Rates are valid for 14 calendar days from generation date. All reservations subject to live inventory confirmation upon deposit.',
+    commercialTerms: quote.termsAndConditions || 'This quotation is issued by TheUnbound Luxury DMC Network. Rates are valid for 14 calendar days from generation date. All reservations subject to live inventory confirmation upon deposit.',
     footerContactLine: 'TheUnbound DMC Global Ground Logistics • sales@theunbound.in • Official Contracted Quotation Document'
   };
 }
@@ -935,11 +943,14 @@ export function buildQuotePresentationModel(
 
 export function renderQuoteEmailFromPresentationModel(
   model: QuotePresentationModel,
-  customNote?: string
+  customNote?: string,
+  mode: 'PROPOSAL_VIEW' | 'PLAIN_TEXT' = 'PROPOSAL_VIEW'
 ): {
   subject: string;
   htmlBody: string;
   textBody: string;
+  proposalViewHtml: string;
+  simpleSemanticHtml: string;
 } {
   const subject = `Bespoke Itinerary & Quotation Proposal [${model.quoteNumber} v${model.version}] — ${model.destination} (${model.totalDays} Days / ${model.totalNights} Nights) — ${model.clientName}`;
 
@@ -949,13 +960,11 @@ export function renderQuoteEmailFromPresentationModel(
 
   // 1. Build Complete Plain-Text Representation (mirrors 100% of Quote Preview)
   const textSections: string[] = [];
-  const LINE_DIVIDER = '──────────────────────────────────────────────────────────────────────';
 
   textSections.push([
-    LINE_DIVIDER,
     `${model.agencyName.toUpperCase()} — OFFICIAL ITINERARY & QUOTATION PROPOSAL`,
     model.agentAgencySubtitle,
-    LINE_DIVIDER,
+    ``,
     `Quote Reference : ${model.quoteNumber} (v${model.version})`,
     `Quote ID        : ${model.quoteId}`,
     `Status          : ${model.status}`,
@@ -973,7 +982,6 @@ export function renderQuoteEmailFromPresentationModel(
 
   textSections.push([
     `1. CURATED JOURNEY OVERVIEW`,
-    LINE_DIVIDER,
     `Itinerary       : ${model.destination} Bespoke Travel Itinerary`,
     `Destination     : ${model.destination}`,
     `Route & Hubs    : ${routeString}`,
@@ -982,13 +990,11 @@ export function renderQuoteEmailFromPresentationModel(
     `Passengers      : ${model.paxDetailsText}`,
     model.nationality ? `Nationality     : ${model.nationality}` : '',
     model.travelStyle ? `Travel Style    : ${model.travelStyle}` : '',
-    `Rate Per Person : ${model.pricePerPersonFormatted} (Inclusive of all ground taxes)`,
-    `Total Quotation : ${model.totalItineraryValueFormatted} (${model.guaranteedCurrencyLine})`
+    `Total Package Investment : ${model.totalItineraryValueFormatted} ${model.currency}`
   ].filter(Boolean).join('\n'));
 
   textSections.push([
     `2. CLIENT & SPECIALIST DOSSIER`,
-    LINE_DIVIDER,
     `Prepared For (Client):`,
     `  Name          : ${model.clientName}`,
     model.clientCompany ? `  Company       : ${model.clientCompany}` : '',
@@ -1005,8 +1011,7 @@ export function renderQuoteEmailFromPresentationModel(
 
   if (model.accommodations && model.accommodations.length > 0) {
     const accommodationLines = [
-      `3. ACCOMMODATION & HOTEL STAYS (${model.accommodations.length} ${model.accommodations.length === 1 ? 'STAY' : 'STAYS'})`,
-      LINE_DIVIDER
+      `3. ACCOMMODATION & HOTEL STAYS (${model.accommodations.length} ${model.accommodations.length === 1 ? 'STAY' : 'STAYS'})`
     ];
     model.accommodations.forEach((acc, idx) => {
       accommodationLines.push(
@@ -1018,19 +1023,17 @@ export function renderQuoteEmailFromPresentationModel(
     textSections.push(accommodationLines.filter(Boolean).join('\n'));
   } else if (model.hotels.length > 0) {
     const hotelLines = [
-      `3. CURATED ACCOMMODATION SUMMARY (${model.hotels.length} ${model.hotels.length === 1 ? 'STAY' : 'STAYS'})`,
-      LINE_DIVIDER
+      `3. CURATED ACCOMMODATION SUMMARY (${model.hotels.length} ${model.hotels.length === 1 ? 'STAY' : 'STAYS'})`
     ];
     model.hotels.forEach((h, idx) => {
       hotelLines.push(
         `[${idx + 1}] ${h.hotelName} (${h.cityHub}${h.starRating ? ` • ${h.starRating}` : ''})`,
         `    Stay Dates  : ${h.checkInDate} → ${h.checkOutDate} (${h.nightsCount} ${h.nightsCount === 1 ? 'Night' : 'Nights'})`,
         `    Room & Meal : ${h.roomsCount} × ${h.roomType} | ${h.mealPlan} | Occupancy: ${h.occupancy}`,
-        h.priceFormatted ? `    Tariff      : ${h.priceFormatted}` : '',
-        h.overview ? `    Overview    : ${h.overview}` : '',
+        h.overview ? `    Overview    : ${convertHtmlToCleanPlainText(h.overview)}` : '',
         h.inclusions.length > 0 ? `    Inclusions  : ${h.inclusions.join(' | ')}` : '',
         h.exclusions.length > 0 ? `    Exclusions  : ${h.exclusions.join(' | ')}` : '',
-        h.notes ? `    Stay Notes  : ${h.notes}` : ''
+        h.notes ? `    Stay Notes  : ${convertHtmlToCleanPlainText(h.notes)}` : ''
       );
     });
     textSections.push(hotelLines.filter(Boolean).join('\n'));
@@ -1038,39 +1041,36 @@ export function renderQuoteEmailFromPresentationModel(
 
   if (model.visaServices.length > 0) {
     const visaLines = [
-      `4. VISA & ANCILLARY SERVICES (${model.visaServices.length} INCLUDED)`,
-      LINE_DIVIDER
+      `4. VISA & ANCILLARY SERVICES (${model.visaServices.length} INCLUDED)`
     ];
     model.visaServices.forEach((v, idx) => {
       visaLines.push(
-        `[${idx + 1}] ${v.listingName} (${v.categoryLabel}) — ${v.priceFormatted} [${v.paxText}]`,
+        `[${idx + 1}] ${v.listingName} (${v.categoryLabel}) [${v.paxText}] • Included`,
         v.duration ? `    Duration        : ${v.duration}` : '',
         v.configurationSummary ? `    Specifications  : ${v.configurationSummary}` : '',
-        v.overview ? `    Overview        : ${v.overview}` : '',
+        v.overview ? `    Overview        : ${convertHtmlToCleanPlainText(v.overview)}` : '',
         v.inclusions.length > 0 ? `    Inclusions      : ${v.inclusions.map(i => `✓ ${i}`).join(' | ')}` : '',
         v.exclusions.length > 0 ? `    Exclusions      : ${v.exclusions.map(e => `✕ ${e}`).join(' | ')}` : '',
-        v.specialInstructions ? `    Special Notes   : ${v.specialInstructions}` : ''
+        v.specialInstructions ? `    Special Notes   : ${convertHtmlToCleanPlainText(v.specialInstructions)}` : ''
       );
     });
     textSections.push(visaLines.filter(Boolean).join('\n'));
   }
 
   const daySectionLines: string[] = [
-    `5. DAY-BY-DAY CHRONOLOGICAL ITINERARY (${model.days.length} DAYS)`,
-    LINE_DIVIDER
+    `5. DAY-BY-DAY CHRONOLOGICAL ITINERARY (${model.days.length} DAYS)`
   ];
 
   model.days.forEach(day => {
     const transitionBadge = day.isTransitionDay && day.prevHubName ? ` [Transfer: ${day.prevHubName} → ${day.hubName}]` : '';
     const themeText = day.customTheme ? ` • ${day.customTheme}` : '';
     daySectionLines.push(
-      `\n======================================================================`,
-      `DAY ${String(day.dayNumber).padStart(2, '0')}: ${day.dayOfWeek}, ${day.formattedDate} — ${day.hubName} Base${transitionBadge}${themeText}`,
-      `======================================================================`
+      ``,
+      `DAY ${String(day.dayNumber).padStart(2, '0')}: ${day.dayOfWeek}, ${day.formattedDate} — ${day.hubName} Base${transitionBadge}${themeText}`
     );
 
     if (day.dayOverview) {
-      daySectionLines.push(`Day ${day.dayNumber} Overview: ${day.dayOverview}`);
+      daySectionLines.push(`Day ${day.dayNumber} Overview: ${convertHtmlToCleanPlainText(day.dayOverview)}`);
     }
 
     if (day.services.length === 0) {
@@ -1082,23 +1082,23 @@ export function renderQuoteEmailFromPresentationModel(
       day.services.forEach((s, sIdx) => {
         daySectionLines.push(
           `  [${sIdx + 1}] ${s.listingName} (${s.categoryLabel})`,
-          `      Price / Pax    : ${s.priceFormatted} (${s.paxText}) — ${s.statusText}`,
+          `      Allotment Status : ${s.statusText} (${s.paxText})`,
           (s.duration || s.serviceTime) ? `      Schedule       : ${[s.duration ? `Duration: ${s.duration}` : '', s.serviceTime ? `Time: ${s.serviceTime}` : ''].filter(Boolean).join(' • ')}` : '',
           s.configurationSummary ? `      Specifications : ${s.configurationSummary}` : '',
           s.meetingPoint ? `      Meeting Point  : ${s.meetingPoint}` : '',
           s.pickupPoint ? `      Pickup Point   : ${s.pickupPoint}` : '',
           s.dropoffPoint ? `      Drop-off Point : ${s.dropoffPoint}` : '',
           (s.isRail && s.railDetails) ? `      Bullet Train   : ${s.railDetails.origin} → ${s.railDetails.destination} | ${s.railDetails.carType} (${s.railDetails.seatType}) | ${s.railDetails.serviceGroup}${s.railDetails.seatPreference ? ` | Seat: ${s.railDetails.seatPreference}` : ''}${s.railDetails.pnrReference ? ` | PNR: ${s.railDetails.pnrReference}` : ''}` : '',
-          s.overview ? `      Overview       : ${s.overview}` : '',
+          s.overview ? `      Overview       : ${convertHtmlToCleanPlainText(s.overview)}` : '',
           s.inclusions.length > 0 ? `      Inclusions     : ${s.inclusions.map(i => `✓ ${i}`).join(' | ')}` : '',
           s.exclusions.length > 0 ? `      Exclusions     : ${s.exclusions.map(e => `✕ ${e}`).join(' | ')}` : '',
-          s.specialInstructions ? `      Instructions   : ${s.specialInstructions}` : ''
+          s.specialInstructions ? `      Instructions   : ${convertHtmlToCleanPlainText(s.specialInstructions)}` : ''
         );
       });
     }
 
     if (day.dayNotes) {
-      daySectionLines.push(`  Day ${day.dayNumber} Operational Notes: ${day.dayNotes}`);
+      daySectionLines.push(`  Day ${day.dayNumber} Operational Notes: ${convertHtmlToCleanPlainText(day.dayNotes)}`);
     }
   });
 
@@ -1106,17 +1106,16 @@ export function renderQuoteEmailFromPresentationModel(
 
   if (model.additionalServices.length > 0) {
     const addLines = [
-      `6. ADDITIONAL PACKAGE SERVICES & PRIVILEGES`,
-      LINE_DIVIDER
+      `6. ADDITIONAL PACKAGE SERVICES & PRIVILEGES`
     ];
     model.additionalServices.forEach((a, idx) => {
       addLines.push(
-        `  [${idx + 1}] ${a.name} — ${a.priceFormatted}`,
+        `  [${idx + 1}] ${a.name} • Included`,
         `      Details    : ${a.summary}`,
-        a.overview ? `      Overview   : ${a.overview}` : '',
+        a.overview ? `      Overview   : ${convertHtmlToCleanPlainText(a.overview)}` : '',
         (a.inclusions && a.inclusions.length > 0) ? `      Inclusions : ${a.inclusions.join(' | ')}` : '',
         (a.exclusions && a.exclusions.length > 0) ? `      Exclusions : ${a.exclusions.join(' | ')}` : '',
-        a.specialInstructions ? `      Notes      : ${a.specialInstructions}` : ''
+        a.specialInstructions ? `      Notes      : ${convertHtmlToCleanPlainText(a.specialInstructions)}` : ''
       );
     });
     textSections.push(addLines.filter(Boolean).join('\n'));
@@ -1124,457 +1123,44 @@ export function renderQuoteEmailFromPresentationModel(
 
   textSections.push([
     `7. GROUND OPERATIONS STANDARDS & INCLUSIONS`,
-    LINE_DIVIDER,
     ...model.operationalStandards.map(op => `  • ${op.title}: ${op.desc}`)
   ].join('\n'));
 
   textSections.push([
-    `8. OFFICIAL PROPOSAL TARIFF & FINANCIAL SUMMARY`,
-    LINE_DIVIDER,
-    `Guaranteed Total Itinerary Value : ${model.totalItineraryValueFormatted}`,
-    `Package Rate Per Traveler        : ${model.pricePerTravelerFormatted}`,
+    `8. TOTAL PACKAGE INVESTMENT`,
+    `Final Total                      : ${model.totalItineraryValueFormatted} ${model.currency}`,
     `Currency & Tax Guarantee         : ${model.guaranteedCurrencyLine}`,
     `Quotation Valid Until            : ${model.validUntilFormatted}`
   ].join('\n'));
 
   textSections.push([
     `9. OPERATIONAL GUIDELINES & CHILD / ATTRACTION POLICY`,
-    LINE_DIVIDER,
     ...model.childAndAttractionPolicies.map(p => `  • ${p}`)
   ].join('\n'));
 
   textSections.push([
     `10. COMMERCIAL QUOTATION TERMS & CONDITIONS`,
-    LINE_DIVIDER,
-    model.commercialTerms,
+    convertHtmlToCleanPlainText(model.commercialTerms),
     ``,
-    model.footerContactLine
+    convertHtmlToCleanPlainText(model.footerContactLine)
   ].join('\n'));
 
   const textBody = textSections.join('\n\n');
 
-  // 2. Build Complete Rich HTML Representation (mirrors 100% of Quote Preview & PDF)
-  const renderServiceHtmlCard = (s: ServicePresentationItem) => {
-    const operationalPointsHtml = (s.meetingPoint || s.pickupPoint || s.dropoffPoint) ? `
-      <div style="margin: 6px 0; font-size: 11px; color: #334155;">
-        ${s.meetingPoint ? `<span style="display: inline-block; background: #ffffff; padding: 3px 8px; border-radius: 6px; border: 1px solid #cbd5e1; margin-right: 6px; margin-bottom: 4px;"><strong>Meeting Point:</strong> ${s.meetingPoint}</span>` : ''}
-        ${s.pickupPoint ? `<span style="display: inline-block; background: #ffffff; padding: 3px 8px; border-radius: 6px; border: 1px solid #cbd5e1; margin-right: 6px; margin-bottom: 4px;"><strong>Pickup:</strong> ${s.pickupPoint}</span>` : ''}
-        ${s.dropoffPoint ? `<span style="display: inline-block; background: #ffffff; padding: 3px 8px; border-radius: 6px; border: 1px solid #cbd5e1; margin-right: 6px; margin-bottom: 4px;"><strong>Drop-off:</strong> ${s.dropoffPoint}</span>` : ''}
-      </div>
-    ` : '';
+  // Option 1: Proposal View Rich HTML Email (adapted for responsive email clients)
+  const proposalViewHtml = renderProposalViewHtmlEmail(model, customNote);
 
-    const railBoxHtml = (s.isRail && s.railDetails) ? `
-      <div style="margin: 8px 0; padding: 10px 12px; border-radius: 10px; background: #eef2ff; border: 1px solid #c7d2fe; font-size: 11.5px; color: #312e81;">
-        <div style="font-weight: 800; margin-bottom: 3px;">
-          🚄 Bullet Train: ${s.railDetails.origin} → ${s.railDetails.destination} • ${s.railDetails.carType} (${s.railDetails.seatType}) • ${s.railDetails.serviceGroup}
-        </div>
-        <div style="font-size: 11px; color: #4338ca;">
-          ${s.railDetails.seatPreference ? `<span style="margin-right: 12px;">Seat Preference: <strong>${s.railDetails.seatPreference}</strong></span>` : ''}
-          ${s.railDetails.pnrReference ? `<span>SmartEX PNR: <strong style="font-family: monospace;">${s.railDetails.pnrReference}</strong></span>` : ''}
-        </div>
-      </div>
-    ` : '';
+  // Option 2: Complete Plain-Text Quotation (Simple Semantic Formatted HTML)
+  const simpleSemanticHtml = formatPlainTextQuotationToHtml(textBody);
 
-    const overviewHtml = s.overview ? `
-      <div style="margin-top: 8px;">
-        <span style="font-size: 10px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 3px;">Overview & Specifications</span>
-        <div style="font-size: 12px; color: #334155; line-height: 1.55;">${s.overview}</div>
-      </div>
-    ` : '';
-
-    const inclusionsHtml = s.inclusions.length > 0 ? `
-      <div style="margin-top: 8px;">
-        <span style="font-size: 10px; font-weight: 800; color: #059669; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 4px;">Inclusions</span>
-        <div>
-          ${s.inclusions.map(inc => `<span style="display: inline-block; font-size: 11px; background: #ffffff; color: #064e3b; padding: 3px 8px; border-radius: 6px; border: 1px solid #a7f3d0; margin-right: 5px; margin-bottom: 5px;">✓ ${inc}</span>`).join('')}
-        </div>
-      </div>
-    ` : '';
-
-    const exclusionsHtml = s.exclusions.length > 0 ? `
-      <div style="margin-top: 8px;">
-        <span style="font-size: 10px; font-weight: 800; color: #e11d48; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 4px;">Exclusions</span>
-        <div>
-          ${s.exclusions.map(exc => `<span style="display: inline-block; font-size: 11px; background: #ffffff; color: #881337; padding: 3px 8px; border-radius: 6px; border: 1px solid #fecdd3; margin-right: 5px; margin-bottom: 5px;">✕ ${exc}</span>`).join('')}
-        </div>
-      </div>
-    ` : '';
-
-    const specialInstructionsHtml = s.specialInstructions ? `
-      <div style="font-size: 11.5px; color: #334155; background: #ffffff; padding: 8px 10px; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 8px;">
-        <strong>Special Instructions / Notes: </strong>${s.specialInstructions}
-      </div>
-    ` : '';
-
-    return `
-      <div style="padding: 14px 16px; border-radius: 14px; background: #f8fafc; border: 1px solid ${s.badgeBg || '#e2e8f0'}; margin-bottom: 12px;">
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr>
-            <td style="vertical-align: top; padding-right: 12px;">
-              <div style="margin-bottom: 6px;">
-                <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; padding: 3px 8px; border-radius: 5px; background: ${s.badgeBg}; color: ${s.badgeText}; display: inline-block; margin-right: 6px;">
-                  ${s.categoryLabel}
-                </span>
-                ${s.duration ? `<span style="font-size: 11px; color: #475569; margin-right: 6px;">⏱️ ${s.duration}</span>` : ''}
-                ${s.serviceTime ? `<span style="font-size: 11px; font-family: monospace; font-weight: 700; color: #334155; background: #ffffff; padding: 2px 7px; border-radius: 5px; border: 1px solid #cbd5e1;">${s.serviceTime}</span>` : ''}
-              </div>
-              <h4 style="font-size: 14px; font-weight: 800; color: #0f172a; margin: 0 0 4px 0;">${s.listingName}</h4>
-              ${s.configurationSummary && !s.isRail ? `<p style="font-size: 12px; color: #475569; margin: 0 0 6px 0; font-weight: 600;">${s.configurationSummary}</p>` : ''}
-              ${operationalPointsHtml}
-              ${railBoxHtml}
-              ${overviewHtml}
-              ${inclusionsHtml}
-              ${exclusionsHtml}
-              ${specialInstructionsHtml}
-            </td>
-            <td style="vertical-align: top; text-align: right; width: 130px; white-space: nowrap;">
-              <div style="font-size: 14px; font-weight: 900; color: #0f172a; font-family: monospace;">${s.priceFormatted}</div>
-              <div style="font-size: 11px; color: #64748b; margin-top: 2px;">${s.paxText}</div>
-              <span style="display: inline-block; margin-top: 6px; font-size: 9.5px; font-weight: 800; text-transform: uppercase; color: #047857; background: #ecfdf5; padding: 3px 7px; border-radius: 5px; border: 1px solid #a7f3d0;">${s.statusText}</span>
-            </td>
-          </tr>
-        </table>
-      </div>
-    `;
-  };
-
-  const htmlBody = `
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 780px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; color: #0f172a; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);">
-      <!-- 1. Document Header & Brand Identity -->
-      <div style="padding: 24px 28px; border-bottom: 2px solid #020617; background: #ffffff;">
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr>
-            <td style="vertical-align: top;">
-              <div>
-                <span style="font-size: 26px; font-weight: 900; text-transform: lowercase; color: #020617; letter-spacing: -0.5px; margin-right: 10px;">${model.agencyName}</span>
-                <span style="font-size: 10px; text-transform: uppercase; font-weight: 800; letter-spacing: 0.06em; padding: 4px 9px; border-radius: 6px; background: #020617; color: #00E5C0; vertical-align: middle;">Official Itinerary Proposal</span>
-              </div>
-              <p style="font-size: 11.5px; color: #64748b; margin: 6px 0 0 0;">${model.agentAgencySubtitle}</p>
-            </td>
-            <td style="vertical-align: top; text-align: right; font-family: monospace; font-size: 11.5px;">
-              <div style="font-size: 15px; font-weight: 900; color: #020617;">${model.quoteNumber} (v${model.version})</div>
-              <div style="color: #64748b;">Quote ID: ${model.quoteId}</div>
-              <div style="color: #64748b;">Date: ${model.createdDateFormatted}</div>
-              <div style="color: #64748b;">Valid Until: ${model.validUntilFormatted}</div>
-              <div style="color: #0d9488; font-weight: 700;">Status: ${model.status}</div>
-            </td>
-          </tr>
-        </table>
-      </div>
-
-      <div style="padding: 24px 28px;">
-        ${customNote && customNote.trim() ? `
-          <div style="background: #f0fdf4; border-left: 4px solid #008972; padding: 14px 18px; border-radius: 0 12px 12px 0; margin-bottom: 20px; font-size: 13px; color: #14532d; line-height: 1.55;">
-            <strong style="display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #008972; margin-bottom: 4px;">Personal Note from ${model.agentName}</strong>
-            <div style="white-space: pre-line;">${customNote.trim()}</div>
-          </div>
-        ` : ''}
-
-        <!-- 2. Curated Journey Overview Banner -->
-        <div style="background: #0f172a; color: #ffffff; padding: 22px 24px; border-radius: 16px; margin-bottom: 20px;">
-          <table style="width: 100%; border-collapse: collapse;">
-            <tr>
-              <td style="vertical-align: top;">
-                <span style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: #00E5C0; font-weight: 800; display: block;">Curated Journey Overview</span>
-                <h1 style="font-size: 21px; font-weight: 900; color: #ffffff; margin: 4px 0 6px 0;">${model.destination} Bespoke Travel Itinerary</h1>
-                <p style="font-size: 12px; color: #cbd5e1; margin: 0; line-height: 1.6;">
-                  <span>${model.totalDays} Days / ${model.totalNights} Nights</span>
-                  <span> • </span>
-                  <strong style="color: #00E5C0;">${model.paxDetailsText}</strong>
-                  ${model.nationality ? `<span> • Nationality: <strong style="color: #ffffff;">${model.nationality}</strong></span>` : ''}
-                  ${model.travelStyle ? `<span> • Style: <strong style="color: #ffffff;">${model.travelStyle}</strong></span>` : ''}
-                  ${model.dateSpanText ? `<span> • <span style="font-family: monospace; color: #00E5C0;">${model.dateSpanText}</span></span>` : ''}
-                  ${model.selectedOptionTitle ? `<span> • Option: <strong style="color: #38bdf8;">${model.selectedOptionTitle}</strong></span>` : ''}
-                </p>
-              </td>
-              <td style="vertical-align: top; text-align: right; min-width: 155px;">
-                <span style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; font-weight: 700; display: block;">Package Rate per Person</span>
-                <div style="font-size: 22px; font-weight: 900; font-family: monospace; color: #00E5C0;">${model.pricePerPersonFormatted}</div>
-                <span style="font-size: 10px; color: #94a3b8;">Inclusive of all ground taxes</span>
-              </td>
-            </tr>
-          </table>
-
-          ${model.routeHubs.length > 0 ? `
-            <div style="padding-top: 14px; border-top: 1px solid #334155; margin-top: 14px;">
-              <div style="font-size: 11px; font-weight: 700; color: #94a3b8; margin-bottom: 8px;">
-                🧭 Route & Destination Hubs:
-              </div>
-              <div>
-                ${model.routeHubs.map((h, i) => `
-                  <span style="display: inline-block; background: #1e293b; padding: 5px 10px; border-radius: 8px; border: 1px solid #475569; font-size: 11.5px; color: #ffffff; margin-right: 4px; margin-bottom: 4px;">
-                    📍 <strong>${h.hubName}</strong> <span style="color: #00E5C0; font-family: monospace;">(${h.nights} ${h.nights === 1 ? 'Night' : 'Nights'})</span>
-                  </span>
-                  ${i < model.routeHubs.length - 1 ? `<span style="color: #64748b; font-weight: bold; margin-right: 4px;">→</span>` : ''}
-                `).join('')}
-              </div>
-            </div>
-          ` : ''}
-        </div>
-
-        <!-- 3. Client & Specialist Dossier -->
-        <table style="width: 100%; border-collapse: collapse; background: #f8fafc; border-radius: 14px; border: 1px solid #e2e8f0; margin-bottom: 22px; font-size: 12px;">
-          <tr>
-            <td style="width: 50%; padding: 16px; vertical-align: top; border-right: 1px solid #e2e8f0;">
-              <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; display: block; margin-bottom: 4px;">👥 Valued Guest / Client</span>
-              <div style="font-weight: 800; font-size: 14px; color: #0f172a;">${model.clientName}</div>
-              ${model.clientCompany ? `<div style="color: #475569; font-weight: 600; margin-top: 2px;">${model.clientCompany}</div>` : ''}
-              ${model.clientEmail ? `<div style="color: #64748b; font-family: monospace; margin-top: 2px;">${model.clientEmail}</div>` : ''}
-              ${model.clientPhone ? `<div style="color: #64748b; font-family: monospace; margin-top: 2px;">${model.clientPhone}</div>` : ''}
-            </td>
-            <td style="width: 50%; padding: 16px; vertical-align: top;">
-              <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; display: block; margin-bottom: 4px;">🎖️ Prepared By Destination Specialist</span>
-              <div style="font-weight: 800; font-size: 14px; color: #0f172a;">${model.agentName}</div>
-              <div style="color: #334155; font-weight: 600; margin-top: 2px;">${model.agencyName}</div>
-              ${model.agentEmail ? `<div style="color: #64748b; font-family: monospace; margin-top: 2px;">${model.agentEmail}</div>` : ''}
-              ${model.agentPhone ? `<div style="color: #64748b; font-family: monospace; margin-top: 2px;">${model.agentPhone}</div>` : ''}
-              <div style="color: #0d9488; font-size: 11px; font-weight: 700; margin-top: 4px;">🛡️ 24/7 On-Ground Concierge & Multilingual Dispatch</div>
-            </td>
-          </tr>
-        </table>
-
-        <!-- 3.5. Curated Accommodation Summary Table -->
-        ${model.accommodations && model.accommodations.length > 0 ? `
-          <div style="margin-bottom: 24px;">
-            <div style="border-bottom: 2px solid #0f766e; padding-bottom: 6px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
-              <h2 style="font-size: 14px; font-weight: 900; color: #020617; text-transform: uppercase; margin: 0;">🏨 Accommodation & Destination Stays (${model.accommodations.length})</h2>
-            </div>
-            <div style="border: 1px solid #cbd5e1; border-radius: 12px; overflow: hidden;">
-              <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
-                <thead style="background: #f1f5f9; color: #334155;">
-                  <tr>
-                    <th style="padding: 10px 12px; font-weight: 800;">City Hub & Hotel</th>
-                    <th style="padding: 10px 12px; font-weight: 800;">Dates & Duration</th>
-                    <th style="padding: 10px 12px; font-weight: 800;">Arrangement & Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${model.accommodations.map((acc, i) => `
-                    <tr style="border-top: ${i === 0 ? 'none' : '1px solid #e2e8f0'}; background: ${acc.hotelName.includes('No Accommodation') ? '#f8fafc' : '#ffffff'};">
-                      <td style="padding: 10px 12px; vertical-align: top;">
-                        <strong style="color: #0f172a; font-size: 13px;">${acc.hotelName}</strong>
-                        <div style="font-size: 11px; color: #0d9488; font-weight: 600;">📍 ${acc.city}</div>
-                      </td>
-                      <td style="padding: 10px 12px; vertical-align: top; color: #475569;">
-                        <div><strong>${acc.nights} ${acc.nights === 1 ? 'Night' : 'Nights'}</strong></div>
-                        ${acc.checkInDate && acc.checkOutDate ? `<div style="font-size: 11px; color: #64748b; font-family: monospace;">${acc.checkInDate} → ${acc.checkOutDate}</div>` : ''}
-                      </td>
-                      <td style="padding: 10px 12px; vertical-align: top; color: #334155;">
-                        <div>${acc.roomSummary || 'Standard Stay'}</div>
-                      </td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ` : (model.hotels.length > 0 ? `
-          <div style="margin-bottom: 24px;">
-            <div style="border-bottom: 2px solid #92400e; padding-bottom: 6px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
-              <h2 style="font-size: 14px; font-weight: 900; color: #020617; text-transform: uppercase; margin: 0;">🏨 Curated Accommodation & Hotel Stays (${model.hotels.length})</h2>
-            </div>
-            <div style="border: 1px solid #fde68a; border-radius: 12px; overflow: hidden;">
-              <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
-                <thead style="background: #fef3c7; color: #92400e;">
-                  <tr>
-                    <th style="padding: 10px 12px; font-weight: 800;">City Hub & Hotel</th>
-                    <th style="padding: 10px 12px; font-weight: 800;">Check-In / Out & Nights</th>
-                    <th style="padding: 10px 12px; font-weight: 800;">Room Config & Meal Plan</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${model.hotels.map((h, i) => `
-                    <tr style="border-top: ${i === 0 ? 'none' : '1px solid #fef3c7'}; background: #fffbeb;">
-                      <td style="padding: 10px 12px; vertical-align: top;">
-                        <strong style="color: #0f172a; font-size: 13px;">${h.hotelName}</strong>
-                        <div style="font-size: 11px; color: #92400e; font-weight: 600;">📍 ${h.cityHub}${h.starRating ? ` • ${h.starRating}` : ''}</div>
-                        ${h.notes ? `<div style="font-size: 11px; color: #475569; margin-top: 3px;">${h.notes}</div>` : ''}
-                      </td>
-                      <td style="padding: 10px 12px; vertical-align: top; color: #334155;">
-                        <div style="font-weight: 700;">${h.nightsCount} ${h.nightsCount === 1 ? 'Night' : 'Nights'}</div>
-                        <div style="font-size: 11px; color: #64748b;">${h.checkInDate} → ${h.checkOutDate}</div>
-                      </td>
-                      <td style="padding: 10px 12px; vertical-align: top; color: #334155;">
-                        <div style="font-weight: 700;">${h.roomsCount} × ${h.roomType}</div>
-                        <div style="font-size: 11px; color: #059669; font-weight: 700;">${h.mealPlan}</div>
-                        <div style="font-size: 11px; color: #64748b;">Occupancy: ${h.occupancy}</div>
-                      </td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ` : '')}
-
-        <!-- 4. Visa & Ancillary Services -->
-        ${model.visaServices.length > 0 ? `
-          <div style="margin-bottom: 24px;">
-            <div style="border-bottom: 2px solid #065f46; padding-bottom: 6px; margin-bottom: 12px;">
-              <h2 style="font-size: 14px; font-weight: 900; color: #020617; text-transform: uppercase; margin: 0;">
-                🌐 Visa & Ancillary Services (${model.visaServices.length} Included)
-              </h2>
-            </div>
-            ${model.visaServices.map(v => renderServiceHtmlCard(v)).join('')}
-          </div>
-        ` : ''}
-
-        <!-- 5. Day-by-Day Chronological Itinerary -->
-        <div style="margin-bottom: 24px;">
-          <div style="border-bottom: 2px solid #020617; padding-bottom: 8px; margin-bottom: 14px;">
-            <h2 style="font-size: 15px; font-weight: 900; color: #020617; text-transform: uppercase; margin: 0;">
-              📅 Day-by-Day Itinerary & Scheduled Services (${model.days.length} Days)
-            </h2>
-          </div>
-
-          ${model.days.map(day => `
-            <div style="border: 1px solid #cbd5e1; border-radius: 16px; overflow: hidden; margin-bottom: 18px; background: #ffffff;">
-              <div style="background: #0f172a; color: #ffffff; padding: 12px 16px;">
-                <table style="width: 100%; border-collapse: collapse;">
-                  <tr>
-                    <td style="vertical-align: middle;">
-                      <div style="font-weight: 900; font-size: 14px; color: #ffffff;">
-                        <span style="display: inline-block; background: #00E5C0; color: #0f172a; font-family: monospace; font-weight: 900; font-size: 12px; padding: 2px 7px; border-radius: 6px; margin-right: 8px;">
-                          DAY ${String(day.dayNumber).padStart(2, '0')}
-                        </span>
-                        Day ${day.dayNumber}: ${day.dayOfWeek}, ${day.formattedDate}
-                        ${day.isTransitionDay && day.prevHubName ? `
-                          <span style="display: inline-block; margin-left: 8px; padding: 2px 7px; border-radius: 5px; background: rgba(245, 158, 11, 0.25); color: #fcd34d; font-size: 10px; font-weight: 700;">
-                            Transfer: ${day.prevHubName} → ${day.hubName}
-                          </span>
-                        ` : ''}
-                      </div>
-                      <div style="font-size: 11.5px; color: #cbd5e1; margin-top: 4px;">
-                        <span style="color: #00E5C0;">📍</span> <strong>${day.hubName} Base</strong>
-                        ${day.customTheme ? ` <span style="color: #64748b;">•</span> <span style="color: #00E5C0; font-weight: 700;">${day.customTheme}</span>` : ''}
-                      </div>
-                    </td>
-                    <td style="vertical-align: middle; text-align: right; font-family: monospace; font-size: 11px; color: #94a3b8;">
-                      ${day.services.length > 0 ? `${day.services.length} ${day.services.length === 1 ? 'Service' : 'Services'}` : 'Leisure Exploration'}
-                    </td>
-                  </tr>
-                </table>
-              </div>
-
-              <div style="padding: 14px 16px;">
-                ${day.dayOverview ? `
-                  <div style="padding: 10px 14px; border-radius: 10px; background: #f8fafc; border: 1px solid #e2e8f0; margin-bottom: 12px; font-size: 12px; color: #334155; line-height: 1.5;">
-                    <strong style="font-size: 10px; text-transform: uppercase; color: #0d9488; display: block; margin-bottom: 3px;">Day ${day.dayNumber} Overview</strong>
-                    <div>${day.dayOverview}</div>
-                  </div>
-                ` : ''}
-
-                ${day.services.length > 0
-                  ? day.services.map(s => renderServiceHtmlCard(s)).join('')
-                  : `
-                    <div style="padding: 12px 14px; border-radius: 10px; background: #f8fafc; border: 1px dashed #cbd5e1; font-size: 12px; color: #475569;">
-                      <strong style="color: #1e293b;">• Day at Leisure in ${day.hubName} (Self-Paced)</strong>
-                      <p style="margin: 4px 0 0 0; font-size: 11.5px; color: #64748b;">Free time for personal exploration, neighborhood shopping, and local dining discoveries. 24/7 concierge assistance available.</p>
-                    </div>
-                  `
-                }
-
-                ${day.dayNotes ? `
-                  <div style="padding: 10px 14px; border-radius: 10px; background: #fffbeb; border: 1px solid #fde68a; margin-top: 10px; font-size: 11.5px; color: #78350f; line-height: 1.45;">
-                    <strong>Day ${day.dayNumber} Operational Notes: </strong>${day.dayNotes}
-                  </div>
-                ` : ''}
-              </div>
-            </div>
-          `).join('')}
-        </div>
-
-        <!-- 6. Additional Package Services & Privileges -->
-        ${model.additionalServices.length > 0 ? `
-          <div style="margin-bottom: 24px;">
-            <div style="border-bottom: 1px solid #cbd5e1; padding-bottom: 6px; margin-bottom: 12px; font-size: 13px; font-weight: 900; color: #0f172a; text-transform: uppercase;">
-              ✨ Additional Package Services & Privileges
-            </div>
-            ${model.additionalServices.map(a => `
-              <div style="padding: 12px 14px; border-radius: 10px; border: 1px solid #e2e8f0; background: #f8fafc; margin-bottom: 8px; font-size: 12px;">
-                <table style="width: 100%; border-collapse: collapse;">
-                  <tr>
-                    <td>
-                      <strong style="color: #0f172a; font-size: 13px;">${a.name}</strong>
-                      <div style="font-size: 11px; color: #64748b; margin-top: 2px;">${a.summary}</div>
-                      ${a.overview ? `<div style="font-size: 11.5px; color: #334155; margin-top: 4px;">${a.overview}</div>` : ''}
-                      ${a.inclusions && a.inclusions.length > 0 ? `<div style="font-size: 11px; color: #065f46; margin-top: 4px;"><strong>Inclusions:</strong> ${a.inclusions.join(' • ')}</div>` : ''}
-                      ${a.exclusions && a.exclusions.length > 0 ? `<div style="font-size: 11px; color: #9f1239; margin-top: 2px;"><strong>Exclusions:</strong> ${a.exclusions.join(' • ')}</div>` : ''}
-                    </td>
-                    <td style="text-align: right; vertical-align: top; font-family: monospace; font-weight: 800; color: #0f172a;">
-                      ${a.priceFormatted}
-                    </td>
-                  </tr>
-                </table>
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
-
-        <!-- 7. Ground Operations Standards -->
-        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 16px; margin-bottom: 22px;">
-          <div style="font-size: 12px; font-weight: 800; color: #0f172a; text-transform: uppercase; margin-bottom: 10px;">
-            🛡️ TheUnbound Ground Operations Standards & Inclusions
-          </div>
-          <table style="width: 100%; border-collapse: collapse;">
-            <tr>
-              ${model.operationalStandards.map(op => `
-                <td style="width: 25%; vertical-align: top; padding: 6px;">
-                  <div style="background: #ffffff; padding: 10px; border-radius: 10px; border: 1px solid #e2e8f0;">
-                    <strong style="font-size: 11px; color: #0f172a; display: block; margin-bottom: 4px;">${op.title}</strong>
-                    <p style="font-size: 10.5px; color: #64748b; margin: 0; line-height: 1.4;">${op.desc}</p>
-                  </div>
-                </td>
-              `).join('')}
-            </tr>
-          </table>
-        </div>
-
-        <!-- 8. Official Proposal Tariff & Financial Summary -->
-        <div style="background: #020617; color: #ffffff; padding: 22px 24px; border-radius: 16px; margin-bottom: 20px;">
-          <table style="width: 100%; border-collapse: collapse;">
-            <tr>
-              <td style="vertical-align: middle;">
-                <span style="font-size: 10px; font-weight: 800; color: #00E5C0; text-transform: uppercase; letter-spacing: 0.1em; display: block;">Official Proposal Tariff</span>
-                <h3 style="font-size: 19px; font-weight: 900; color: #ffffff; margin: 3px 0 5px 0;">Guaranteed Total Itinerary Value</h3>
-                <p style="font-size: 11.5px; color: #cbd5e1; margin: 0;">All private transportation, accommodations, bullet train fares, guided experiences, entrance tickets, and applicable government taxes are fully included.</p>
-              </td>
-              <td style="vertical-align: middle; text-align: right; min-width: 180px;">
-                <div style="font-size: 28px; font-weight: 900; font-family: monospace; color: #00E5C0;">${model.totalItineraryValueFormatted}</div>
-                <div style="font-size: 12px; color: #cbd5e1; font-family: monospace; margin-top: 2px;">${model.pricePerTravelerFormatted}</div>
-                <div style="font-size: 10.5px; color: #94a3b8; margin-top: 3px;">${model.guaranteedCurrencyLine}</div>
-                <div style="font-size: 10.5px; color: #00E5C0; margin-top: 2px;">Valid Until: ${model.validUntilFormatted}</div>
-              </td>
-            </tr>
-          </table>
-        </div>
-
-        <!-- 9. Operational Guidelines & Child / Attraction Policy -->
-        <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 14px; padding: 14px 18px; margin-bottom: 20px; font-size: 11.5px;">
-          <div style="font-weight: 900; color: #78350f; text-transform: uppercase; font-size: 11px; margin-bottom: 6px;">
-            ℹ️ Operational Guidelines & Child / Attraction Policy
-          </div>
-          <ul style="margin: 0; padding-left: 18px; color: #92400e; line-height: 1.55;">
-            ${model.childAndAttractionPolicies.map(p => `<li style="margin-bottom: 4px;">${p}</li>`).join('')}
-          </ul>
-        </div>
-
-        <!-- 10. Commercial Quotation Terms & Footer -->
-        <div style="border-top: 1px solid #e2e8f0; padding-top: 14px; font-size: 11.5px; color: #64748b;">
-          <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 10.5px; margin-bottom: 4px;">Commercial Quotation Terms & Conditions:</div>
-          <p style="margin: 0 0 12px 0; color: #475569; line-height: 1.5;">${model.commercialTerms}</p>
-          <div style="border-top: 1px solid #f1f5f9; padding-top: 10px; font-size: 10.5px; color: #94a3b8; font-family: monospace; text-align: center;">
-            ${model.footerContactLine}
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
+  const htmlBody = mode === 'PLAIN_TEXT' ? simpleSemanticHtml : proposalViewHtml;
 
   return {
     subject,
     htmlBody,
-    textBody
+    textBody,
+    proposalViewHtml,
+    simpleSemanticHtml
   };
 }
 
@@ -1668,17 +1254,18 @@ export function renderQuoteWhatsAppFromPresentationModel(
       useEmojis ? `🏨 *CURATED ACCOMMODATION & LUXURY STAYS (${model.hotels.length})*` : `*ACCOMMODATION & STAYS (${model.hotels.length})*`
     ];
     model.hotels.forEach(h => {
+      const hotelOverview = h.overview ? richTextToWhatsApp(h.overview) : '';
+      const hotelNotes = h.notes ? richTextToWhatsApp(h.notes) : '';
       if (useEmojis) {
         const entry = [
           `• 🏙️ *${h.cityHub.toUpperCase()}* — *${h.nightsCount}* ${h.nightsCount === 1 ? 'Night' : 'Nights'}`,
           `  ⭐ *${h.hotelName}*${h.starRating ? ` (${h.starRating})` : ''}`,
           `  🛏️ *Room:* ${h.roomsCount} × ${h.roomType} | 🍳 *Meal Plan:* ${h.mealPlan}`,
           `  📅 *Stay Dates:* ${h.checkInDate} ➔ ${h.checkOutDate}`,
-          h.priceFormatted ? `  💵 *Tariff:* ${h.priceFormatted}` : '',
-          h.overview ? `  📝 *Overview:* ${h.overview}` : '',
-          h.inclusions.length > 0 ? `  ✅ *Inclusions:* ${h.inclusions.join(', ')}` : '',
-          h.exclusions.length > 0 ? `  ❌ *Exclusions:* ${h.exclusions.join(', ')}` : '',
-          h.notes ? `  💡 *Notes:* ${h.notes}` : ''
+          hotelOverview ? `  📝 *Overview:* ${hotelOverview}` : '',
+          h.inclusions.length > 0 ? `  ✅ *Inclusions:* ${h.inclusions.map(i => richTextToWhatsApp(i)).join(', ')}` : '',
+          h.exclusions.length > 0 ? `  ❌ *Exclusions:* ${h.exclusions.map(e => richTextToWhatsApp(e)).join(', ')}` : '',
+          hotelNotes ? `  💡 *Notes:* ${hotelNotes}` : ''
         ].filter(Boolean).join('\n');
         hotelLines.push(entry);
       } else {
@@ -1686,11 +1273,10 @@ export function renderQuoteWhatsAppFromPresentationModel(
           `• *${h.cityHub.toUpperCase()}* — ${h.nightsCount} ${h.nightsCount === 1 ? 'Night' : 'Nights'}`,
           `  ${h.hotelName}${h.starRating ? ` (${h.starRating})` : ''} | ${h.roomsCount} × ${h.roomType} • ${h.mealPlan}`,
           `  Stay Dates: ${h.checkInDate} to ${h.checkOutDate}`,
-          h.priceFormatted ? `  Tariff: ${h.priceFormatted}` : '',
-          h.overview ? `  Overview: ${h.overview}` : '',
-          h.inclusions.length > 0 ? `  Inclusions: ${h.inclusions.join(', ')}` : '',
-          h.exclusions.length > 0 ? `  Exclusions: ${h.exclusions.join(', ')}` : '',
-          h.notes ? `  Notes: ${h.notes}` : ''
+          hotelOverview ? `  Overview: ${hotelOverview}` : '',
+          h.inclusions.length > 0 ? `  Inclusions: ${h.inclusions.map(i => richTextToWhatsApp(i)).join(', ')}` : '',
+          h.exclusions.length > 0 ? `  Exclusions: ${h.exclusions.map(e => richTextToWhatsApp(e)).join(', ')}` : '',
+          hotelNotes ? `  Notes: ${hotelNotes}` : ''
         ].filter(Boolean).join('\n');
         hotelLines.push(entry);
       }
@@ -1704,16 +1290,18 @@ export function renderQuoteWhatsAppFromPresentationModel(
       useEmojis ? `🛂 *VISA & ANCILLARY SERVICES (${model.visaServices.length} INCLUDED)*` : `*VISA & ANCILLARY SERVICES (${model.visaServices.length} INCLUDED)*`
     ];
     model.visaServices.forEach(v => {
+      const vOverview = v.overview ? richTextToWhatsApp(v.overview) : '';
+      const vInstructions = v.specialInstructions ? richTextToWhatsApp(v.specialInstructions) : '';
       const lines = [
         useEmojis
-          ? `• 📑 *${v.listingName}* [${v.categoryLabel}] — *${v.priceFormatted}* (${v.paxText})`
-          : `• *${v.listingName}* [${v.categoryLabel}] — ${v.priceFormatted} (${v.paxText})`,
+          ? `• 📑 *${v.listingName}* [${v.categoryLabel}] • *Included* (${v.paxText})`
+          : `• *${v.listingName}* [${v.categoryLabel}] • Included (${v.paxText})`,
         v.duration ? `  ⏱️ Duration: ${v.duration}` : '',
         v.configurationSummary ? `  ⚙️ Specs: ${v.configurationSummary}` : '',
-        v.overview ? `  📖 Overview: ${v.overview}` : '',
-        v.inclusions.length > 0 ? `  ✅ Inclusions: ${v.inclusions.join(', ')}` : '',
-        v.exclusions.length > 0 ? `  ❌ Exclusions: ${v.exclusions.join(', ')}` : '',
-        v.specialInstructions ? `  💡 Notes: ${v.specialInstructions}` : ''
+        vOverview ? `  📖 Overview: ${vOverview}` : '',
+        v.inclusions.length > 0 ? `  ✅ Inclusions: ${v.inclusions.map(i => richTextToWhatsApp(i)).join(', ')}` : '',
+        v.exclusions.length > 0 ? `  ❌ Exclusions: ${v.exclusions.map(e => richTextToWhatsApp(e)).join(', ')}` : '',
+        vInstructions ? `  💡 Notes: ${vInstructions}` : ''
       ].filter(Boolean);
       visaLines.push(lines.join('\n'));
     });
@@ -1736,7 +1324,7 @@ export function renderQuoteWhatsAppFromPresentationModel(
       const dayItems: string[] = [dayHeader];
 
       if (day.dayOverview) {
-        dayItems.push(`  📝 *Day Overview:* ${day.dayOverview}`);
+        dayItems.push(`  📝 *Day Overview:* ${richTextToWhatsApp(day.dayOverview)}`);
       }
 
       if (day.services.length === 0) {
@@ -1750,8 +1338,8 @@ export function renderQuoteWhatsAppFromPresentationModel(
           const icon = s.isRail ? '🚅' : s.categoryLabel.includes('Accommodation') ? '🏨' : s.categoryLabel.includes('Transfer') ? '🚗' : '🎟️';
           const sLines: string[] = [
             useEmojis
-              ? `  ${icon} *${s.listingName}* (${s.categoryLabel}) — *${s.priceFormatted}* [${s.paxText}]`
-              : `  • *${s.listingName}* (${s.categoryLabel}) — ${s.priceFormatted} [${s.paxText}]`
+              ? `  ${icon} *${s.listingName}* (${s.categoryLabel}) [${s.paxText}]`
+              : `  • *${s.listingName}* (${s.categoryLabel}) [${s.paxText}]`
           ];
 
           if (s.duration || s.serviceTime) {
@@ -1775,24 +1363,26 @@ export function renderQuoteWhatsAppFromPresentationModel(
               `     🚄 Bullet Train: ${s.railDetails.origin} ➔ ${s.railDetails.destination} • ${s.railDetails.carType} (${s.railDetails.seatType}) • ${s.railDetails.serviceGroup}${s.railDetails.seatPreference ? ` • Seat: ${s.railDetails.seatPreference}` : ''}${s.railDetails.pnrReference ? ` • PNR: ${s.railDetails.pnrReference}` : ''}`
             );
           }
-          if (s.overview) {
-            sLines.push(`     📖 Overview: ${s.overview}`);
+          const sOverview = s.overview ? richTextToWhatsApp(s.overview) : '';
+          if (sOverview) {
+            sLines.push(`     📖 Overview: ${sOverview}`);
           }
           if (s.inclusions.length > 0) {
-            sLines.push(`     ✅ Inclusions: ${s.inclusions.join(', ')}`);
+            sLines.push(`     ✅ Inclusions: ${s.inclusions.map(i => richTextToWhatsApp(i)).join(', ')}`);
           }
           if (s.exclusions.length > 0) {
-            sLines.push(`     ❌ Exclusions: ${s.exclusions.join(', ')}`);
+            sLines.push(`     ❌ Exclusions: ${s.exclusions.map(e => richTextToWhatsApp(e)).join(', ')}`);
           }
-          if (s.specialInstructions) {
-            sLines.push(`     💡 Instructions: ${s.specialInstructions}`);
+          const sInstructions = s.specialInstructions ? richTextToWhatsApp(s.specialInstructions) : '';
+          if (sInstructions) {
+            sLines.push(`     💡 Instructions: ${sInstructions}`);
           }
           dayItems.push(sLines.join('\n'));
         });
       }
 
       if (day.dayNotes) {
-        dayItems.push(`  📌 *Day ${day.dayNumber} Notes:* ${day.dayNotes}`);
+        dayItems.push(`  📌 *Day ${day.dayNumber} Notes:* ${richTextToWhatsApp(day.dayNotes)}`);
       }
 
       dayItems.push(useEmojis ? `  🛌 *Overnight Hub:* ${day.hubName}` : `  • Overnight Hub: ${day.hubName}`);
@@ -1812,10 +1402,13 @@ export function renderQuoteWhatsAppFromPresentationModel(
       useEmojis ? `✨ *ADDITIONAL PACKAGE SERVICES & PRIVILEGES*` : `*ADDITIONAL PACKAGE SERVICES & PRIVILEGES*`
     ];
     model.additionalServices.forEach(a => {
+      const aSummary = a.summary ? richTextToWhatsApp(a.summary) : '';
+      const aOverview = a.overview ? richTextToWhatsApp(a.overview) : '';
+      const aInstructions = a.specialInstructions ? richTextToWhatsApp(a.specialInstructions) : '';
       addLines.push(
         useEmojis
-          ? `• 💎 *${a.name}* — *${a.priceFormatted}*\n  ${a.summary}${a.overview ? `\n  Overview: ${a.overview}` : ''}`
-          : `• *${a.name}* — ${a.priceFormatted}\n  ${a.summary}${a.overview ? `\n  Overview: ${a.overview}` : ''}`
+          ? `• 💎 *${a.name}* • *Included*\n  ${aSummary}${aOverview ? `\n  Overview: ${aOverview}` : ''}${aInstructions ? `\n  Notes: ${aInstructions}` : ''}`
+          : `• *${a.name}* • Included\n  ${aSummary}${aOverview ? `\n  Overview: ${aOverview}` : ''}${aInstructions ? `\n  Notes: ${aInstructions}` : ''}`
       );
     });
     sections.push(addLines.join('\n'));
@@ -1841,39 +1434,39 @@ export function renderQuoteWhatsAppFromPresentationModel(
     sections.push(polLines.join('\n'));
   }
 
-  // 8. Final Quotation Investment & Commercial Terms
+  // 8. TOTAL PACKAGE INVESTMENT
   const priceLines: string[] = [];
+  const cleanCommercialTerms = richTextToWhatsApp(model.commercialTerms);
   if (useEmojis) {
     priceLines.push(
-      `💰 *OFFICIAL PROPOSAL TARIFF & INVESTMENT SUMMARY*`,
-      `🏷️ *FINAL QUOTATION TOTAL:* *${model.totalItineraryValueFormatted}*`,
-      `👤 *Rate Per Traveler:* ${model.pricePerTravelerFormatted}`,
+      `💰 *TOTAL PACKAGE INVESTMENT*`,
+      `🏷️ *Final Total: ${model.totalItineraryValueFormatted} ${model.currency}*`,
       `💱 *Currency & Taxes:* ${model.guaranteedCurrencyLine}`,
       `⏳ *Quote Valid Until:* *${model.validUntilFormatted}*`,
       ``,
       `📜 *Commercial Terms & Conditions:*`,
-      `${model.commercialTerms}`
+      cleanCommercialTerms
     );
   } else {
     priceLines.push(
-      `*OFFICIAL PROPOSAL TARIFF & INVESTMENT SUMMARY*`,
-      `Final Quotation Total: *${model.totalItineraryValueFormatted}*`,
-      `Rate Per Traveler: ${model.pricePerTravelerFormatted}`,
+      `*TOTAL PACKAGE INVESTMENT*`,
+      `Final Total: ${model.totalItineraryValueFormatted} ${model.currency}`,
       `Currency & Taxes: ${model.guaranteedCurrencyLine}`,
       `Quote Valid Until: ${model.validUntilFormatted}`,
       ``,
       `*Commercial Terms & Conditions:*`,
-      `${model.commercialTerms}`
+      cleanCommercialTerms
     );
   }
   sections.push(priceLines.join('\n'));
 
   // 9. Personal Note
   if (options?.customNote && options.customNote.trim()) {
+    const cleanCustomNote = richTextToWhatsApp(options.customNote.trim());
     sections.push(
       useEmojis
-        ? `📝 *PERSONAL NOTE FROM YOUR TRAVEL DESIGNER:*\n"${options.customNote.trim()}"`
-        : `*PERSONAL NOTE:*\n${options.customNote.trim()}`
+        ? `📝 *PERSONAL NOTE FROM YOUR TRAVEL DESIGNER:*\n"${cleanCustomNote}"`
+        : `*PERSONAL NOTE:*\n${cleanCustomNote}`
     );
   }
 
@@ -2013,6 +1606,14 @@ export function generateEmailPlainTextSummary(
 ): string {
   return renderQuoteEmailFromPresentationModel(model, customNote).textBody;
 }
+
+export { 
+  renderProposalViewHtmlEmail,
+  renderStructuredQuotationHtmlEmail, 
+  formatPlainTextQuotationToHtml,
+  formatPlainTextQuotationToSimpleSemanticHtml,
+  renderSimpleSemanticQuotationEmailFromModel
+} from './quoteEmailFormatter';
 
 
 

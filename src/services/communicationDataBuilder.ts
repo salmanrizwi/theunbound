@@ -1371,16 +1371,16 @@ export function formatWhatsAppQuoteFromPayload(
   const priceLines: string[] = [];
   if (useEmojis) {
     priceLines.push(
-      `💰 *PACKAGE INVESTMENT SUMMARY*`,
-      `🏷️ *TOTAL FINAL SELLING PRICE:* *${payload.pricing.formattedPrice}*`,
+      `💰 *TOTAL PACKAGE INVESTMENT*`,
+      `🏷️ *Final Total: ${payload.pricing.formattedPrice} ${payload.pricing.currency}*`,
       `👥 *Travelers:* ${payload.tripSummary.travelers.displayText}`,
       `🔒 *Taxes & Fees:* Fully Included — Zero Hidden Surcharges`,
       `⏳ *Price Guaranteed Until:* *${payload.pricing.validUntilText}*`
     );
   } else {
     priceLines.push(
-      `*PACKAGE INVESTMENT*`,
-      `Total Final Selling Price: *${payload.pricing.formattedPrice}*`,
+      `*TOTAL PACKAGE INVESTMENT*`,
+      `Final Total: ${payload.pricing.formattedPrice} ${payload.pricing.currency}`,
       `Travelers: ${payload.tripSummary.travelers.displayText}`,
       `Taxes & Fees: Included`,
       `Quote Valid Until: ${payload.pricing.validUntilText}`
@@ -1487,7 +1487,7 @@ EXPERIENCES & TRANSFERS
 ${payload.activities.map(a => `• Activity: ${a.activityName} (${a.location})`).join('\n')}
 ${payload.transfers.map(t => `• Transfer: ${t.serviceName} (${t.pickupLocation} to ${t.dropLocation})`).join('\n')}
 
-TOTAL TRIP PRICE: ${payload.pricing.formattedPrice}
+TOTAL PACKAGE INVESTMENT: ${payload.pricing.formattedPrice} ${payload.pricing.currency}
 Quote Valid Until: ${payload.pricing.validUntilText}
 
 Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground Operations Team'})
@@ -1670,8 +1670,9 @@ Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground 
         <!-- Pricing Card -->
         <div style="background-color: #0f172a; border-radius: 12px; padding: 18px 20px; color: #ffffff; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center;">
           <div>
-            <span style="font-size: 11px; text-transform: uppercase; color: #94a3b8; font-weight: 700; letter-spacing: 1px; display: block;">Final Package Investment</span>
-            <span style="font-size: 11px; color: #00E5C0;">All private transfers, experiences, stays & taxes included</span>
+            <span style="font-size: 11px; text-transform: uppercase; color: #00E5C0; font-weight: 800; letter-spacing: 1px; display: block;">TOTAL PACKAGE INVESTMENT</span>
+            <span style="font-size: 13px; font-weight: 700; color: #ffffff;">Final Total: ${payload.pricing.formattedPrice} ${payload.pricing.currency}</span>
+            <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">All private transfers, experiences, stays & taxes included</div>
           </div>
           <div style="text-align: right;">
             <span style="font-size: 24px; font-weight: 900; color: #00E5C0; font-family: monospace;">

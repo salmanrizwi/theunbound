@@ -368,12 +368,12 @@ export class CurrencyEngine {
    * "Calculate Native First, Convert Second"
    * Converts the delivered commercial price from nativeCurrency to targetCurrency
    */
-  public convert(amount: number, from: CurrencyCode | string, to: CurrencyCode | string): number {
+  public convert(amount: number, from: CurrencyCode | string | any, to: CurrencyCode | string | any): number {
     const safeAmount = (typeof amount === 'number' && !isNaN(amount)) ? amount : (Number(amount) || 0);
     if (safeAmount === 0) return 0;
 
-    const fromCode = (from || 'USD').toUpperCase() as CurrencyCode;
-    const toCode = (to || 'USD').toUpperCase() as CurrencyCode;
+    const fromCode = this.normalizeCurrencyCode(from);
+    const toCode = this.normalizeCurrencyCode(to);
 
     if (fromCode === toCode) {
       return safeAmount;
@@ -382,31 +382,101 @@ export class CurrencyEngine {
     const pairId = `${fromCode}_${toCode}`;
     const directPair = this.pairs.get(pairId);
 
-    if (directPair && directPair.status !== 'PAUSED') {
+    // Validate positive, finite effective rate on direct pair
+    if (
+      directPair &&
+      directPair.status !== 'PAUSED' &&
+      typeof directPair.effectiveRate === 'number' &&
+      Number.isFinite(directPair.effectiveRate) &&
+      directPair.effectiveRate > 0
+    ) {
       return safeAmount * directPair.effectiveRate;
     }
 
     // Check inverse pair
     const inversePairId = `${toCode}_${fromCode}`;
     const inversePair = this.pairs.get(inversePairId);
-    if (inversePair && inversePair.effectiveRate > 0 && inversePair.status !== 'PAUSED') {
+    if (
+      inversePair &&
+      inversePair.status !== 'PAUSED' &&
+      typeof inversePair.effectiveRate === 'number' &&
+      Number.isFinite(inversePair.effectiveRate) &&
+      inversePair.effectiveRate > 0
+    ) {
       return safeAmount / inversePair.effectiveRate;
     }
 
     // Triangulate via USD base rate
     const fromUsd = this.usdRates[fromCode] || BASELINE_USD_RATES[fromCode] || 1.0;
     const toUsd = this.usdRates[toCode] || BASELINE_USD_RATES[toCode] || 1.0;
-    const baseEffectiveRate = toUsd / fromUsd;
+    if (fromUsd > 0 && toUsd > 0 && Number.isFinite(fromUsd) && Number.isFinite(toUsd)) {
+      const baseEffectiveRate = toUsd / fromUsd;
+      if (Number.isFinite(baseEffectiveRate) && baseEffectiveRate > 0) {
+        return safeAmount * baseEffectiveRate;
+      }
+    }
 
-    return safeAmount * baseEffectiveRate;
+    return 0;
+  }
+
+  /**
+   * Helper to normalize currency inputs (codes, symbols, names, objects)
+   */
+  public normalizeCurrencyCode(raw: any, fallback: CurrencyCode = 'USD'): CurrencyCode {
+    if (!raw) return fallback;
+    if (typeof raw === 'object' && raw !== null) {
+      raw = raw.code || raw.currency || raw.value || raw.targetCurrency || raw.nativeCurrency || fallback;
+    }
+    const clean = String(raw).trim();
+    if (!clean) return fallback;
+    const upper = clean.toUpperCase();
+
+    const symbols: Record<string, CurrencyCode> = {
+      '¥': 'JPY',
+      '￥': 'JPY',
+      '₹': 'INR',
+      '$': 'USD',
+      'US$': 'USD',
+      '€': 'EUR',
+      '£': 'GBP',
+      'AED': 'AED',
+      '฿': 'THB',
+      'A$': 'AUD',
+      'AU$': 'AUD',
+      'CA$': 'CAD',
+      'C$': 'CAD',
+      'S$': 'SGD',
+      'SG$': 'SGD',
+      'CHF': 'CHF'
+    };
+    if (symbols[clean]) return symbols[clean];
+
+    const names: Record<string, CurrencyCode> = {
+      'JAPANESE YEN': 'JPY',
+      'YEN': 'JPY',
+      'INDIAN RUPEE': 'INR',
+      'RUPEE': 'INR',
+      'US DOLLAR': 'USD',
+      'EURO': 'EUR',
+      'BRITISH POUND': 'GBP',
+      'AUSTRALIAN DOLLAR': 'AUD',
+      'CANADIAN DOLLAR': 'CAD',
+      'SINGAPORE DOLLAR': 'SGD',
+      'SWISS FRANC': 'CHF',
+      'THAI BAHT': 'THB'
+    };
+    if (names[upper]) return names[upper];
+
+    const matched = SUPPORTED_CURRENCIES.find(c => c.code === upper);
+    return matched ? matched.code : fallback;
   }
 
   /**
    * Retrieves full rate details, Google Finance live rate, adjustment, and metadata
    */
-  public getRateInfo(from: CurrencyCode | string, to: CurrencyCode | string): FXRateDetails {
-    const fromCode = (from || 'USD').toUpperCase() as CurrencyCode;
-    const toCode = (to || 'USD').toUpperCase() as CurrencyCode;
+  public getRateInfo(from: CurrencyCode | string | any, to: CurrencyCode | string | any): FXRateDetails {
+    const fromCode = this.normalizeCurrencyCode(from, 'USD');
+    const toCode = this.normalizeCurrencyCode(to, 'USD');
 
     if (fromCode === toCode) {
       return {
@@ -645,3 +715,8 @@ export function formatCurrency(amount?: number | null, currency: CurrencyCode | 
 export function getExchangeRateInfo(from: CurrencyCode | string, to: CurrencyCode | string): FXRateDetails {
   return currencyEngine.getRateInfo(from, to);
 }
+
+export function normalizeCurrency(curr: any, fallback: CurrencyCode = 'USD'): CurrencyCode {
+  return currencyEngine.normalizeCurrencyCode(curr, fallback);
+}
+

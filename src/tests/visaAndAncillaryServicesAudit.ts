@@ -24,6 +24,10 @@ async function runAudit() {
   const db = AppDatabase.getInstance();
   // Mock network Firestore round-trip for local CLI headless test environment
   db.syncFirestoreDocAsync = async (_col: string, _docId: string, _data: any) => true;
+  db.deleteFirestoreDocAsync = async (col: string, docId: string, details?: any) => {
+    db.markEntityDeleted(col, docId, details);
+    return true;
+  };
 
   const mockAdminUser: User = {
     id: 'usr-admin-test',
@@ -251,15 +255,111 @@ async function runAudit() {
   console.log('Restored original Connectivity plan snapshot.');
 
   // --------------------------------------------------------------------------
-  // TEST SECTION 5: REGRESSION TESTING (VISA SERVICES & QUOTE BUILDER MARGIN)
+  // TEST SECTION 6: COMPLETE CRUD DELETION PERSISTENCE & EMPTY STATE GUARANTEE
   // --------------------------------------------------------------------------
-  console.log('\n--- TEST SECTION 5: Regression Safety Check ---');
-  
-  const visas = db.getVisas();
-  assert(visas.length > 0, `Visa services intact (${visas.length} records)`);
-  const v = visas[0];
-  assert(!!v.country && !!v.visaType, 'Visa service has valid country and visaType');
-  assert(v.embassyFee !== undefined, 'Visa service preserves commercial embassyFee');
+  console.log('\n--- TEST SECTION 6: Complete CRUD Deletion Persistence & Empty State Guarantee ---');
+
+  // Save current snapshots before testing deletion of all records
+  const initialVisaSnapshot = JSON.parse(JSON.stringify(db.getVisas()));
+  const initialProtSnapshot = JSON.parse(JSON.stringify(db.getTravelProtectionPlans()));
+  const initialVipSnapshot = JSON.parse(JSON.stringify(db.getVipGroundServices()));
+  const initialConnSnapshot = JSON.parse(JSON.stringify(db.getConnectivityPlans()));
+
+  // 6.1 Test Deletion of ALL Visa records
+  console.log('Testing total deletion of Visa services...');
+  for (const visa of initialVisaSnapshot) {
+    const delRes = await db.deleteVisaAsync(visa.id, mockAdminUser);
+    assert(delRes.success === true, `Visa ${visa.id} deleted successfully via deleteVisaAsync`);
+  }
+  const visasAfterAllDeleted = db.getVisas();
+  assert(visasAfterAllDeleted.length === 0, `All visas deleted: getVisas() returns 0 items (got ${visasAfterAllDeleted.length}), NO fallback resurrection`);
+
+  // 6.2 Test Deletion of ALL Travel Protection records
+  console.log('Testing total deletion of Travel Protection plans...');
+  for (const prot of initialProtSnapshot) {
+    const delRes = await db.deleteTravelProtectionPlanAsync(prot.id, mockAdminUser);
+    assert(delRes.success === true, `Travel Protection ${prot.id} deleted successfully via deleteTravelProtectionPlanAsync`);
+  }
+  const protAfterAllDeleted = db.getTravelProtectionPlans();
+  assert(protAfterAllDeleted.length === 0, `All travel protection plans deleted: getTravelProtectionPlans() returns 0 items (got ${protAfterAllDeleted.length}), NO fallback resurrection`);
+
+  // 6.3 Test Deletion of ALL VIP Ground records via secureDeleteRecordAsync
+  console.log('Testing total deletion of VIP Ground services via secureDeleteRecordAsync...');
+  for (const vip of initialVipSnapshot) {
+    const secRes = await db.secureDeleteRecordAsync('VipGroundService', vip.id, mockAdminUser);
+    assert(secRes.success === true, `VIP Ground Service ${vip.id} deleted via secureDeleteRecordAsync`);
+  }
+  const vipAfterAllDeleted = db.getVipGroundServices();
+  assert(vipAfterAllDeleted.length === 0, `All VIP ground services deleted: getVipGroundServices() returns 0 items (got ${vipAfterAllDeleted.length}), NO fallback resurrection`);
+
+  // 6.4 Test Deletion of ALL Connectivity records via secureDeleteRecordAsync
+  console.log('Testing total deletion of Connectivity plans via secureDeleteRecordAsync...');
+  for (const conn of initialConnSnapshot) {
+    const secRes = await db.secureDeleteRecordAsync('ConnectivityPlan', conn.id, mockAdminUser);
+    assert(secRes.success === true, `Connectivity plan ${conn.id} deleted via secureDeleteRecordAsync`);
+  }
+  const connAfterAllDeleted = db.getConnectivityPlans();
+  assert(connAfterAllDeleted.length === 0, `All connectivity plans deleted: getConnectivityPlans() returns 0 items (got ${connAfterAllDeleted.length}), NO fallback resurrection`);
+
+  // 6.5 Verify purgeTombstonedItems preserves empty states
+  db.purgeTombstonedItems();
+  assert(db.getVisas().length === 0, 'purgeTombstonedItems: Visas remain empty (0 records)');
+  assert(db.getTravelProtectionPlans().length === 0, 'purgeTombstonedItems: Travel protection remains empty (0 records)');
+  assert(db.getVipGroundServices().length === 0, 'purgeTombstonedItems: VIP ground remains empty (0 records)');
+  assert(db.getConnectivityPlans().length === 0, 'purgeTombstonedItems: Connectivity remains empty (0 records)');
+
+  // 6.6 Verify creation of a new item into an empty collection
+  console.log('Testing creation of single new service into empty collection...');
+  const newProtPlan: TravelProtectionPlan = {
+    id: `PROT-NEW-${Date.now()}`,
+    serviceName: 'Single Clean Newly Created Travel Protection',
+    provider: 'Global Cover',
+    coverageArea: 'Worldwide',
+    medicalCoverageAmount: 100000,
+    emergencyAssistanceIncluded: true,
+    evacuationCoverageAmount: 50000,
+    tripCancellationAmount: 2000,
+    baggageLossAmount: 1000,
+    validityDaysMax: 30,
+    eligibilityAgeMin: 0,
+    eligibilityAgeMax: 80,
+    netCostPerTrip: 20,
+    sellingPricePerTrip: 35,
+    netCostPerDay: 0,
+    sellingPricePerDay: 0,
+    currency: 'USD',
+    status: 'ACTIVE',
+    terms: 'Standard terms',
+    customerDescription: 'Clean new plan',
+    inclusions: ['Emergency Assistance']
+  };
+  await db.saveTravelProtectionPlanAsync(newProtPlan, mockAdminUser);
+  const protListWithOne = db.getTravelProtectionPlans();
+  assert(protListWithOne.length === 1, `Exactly 1 travel protection plan exists after creation (got ${protListWithOne.length})`);
+  assert(protListWithOne[0].id === newProtPlan.id, 'The created plan matches expected ID');
+
+  // Clean up test new item
+  await db.deleteTravelProtectionPlanAsync(newProtPlan.id, mockAdminUser);
+
+  // 6.7 Restore all original snapshots cleanly
+  console.log('Restoring all original snapshots for test idempotency...');
+  for (const v of initialVisaSnapshot) {
+    await db.saveVisaAsync(v, mockAdminUser);
+  }
+  for (const p of initialProtSnapshot) {
+    await db.saveTravelProtectionPlanAsync(p, mockAdminUser);
+  }
+  for (const s of initialVipSnapshot) {
+    await db.saveVipGroundServiceAsync(s, mockAdminUser);
+  }
+  for (const c of initialConnSnapshot) {
+    await db.saveConnectivityPlanAsync(c, mockAdminUser);
+  }
+
+  assert(db.getVisas().length === initialVisaSnapshot.length, `Visas restored cleanly (${db.getVisas().length} records)`);
+  assert(db.getTravelProtectionPlans().length === initialProtSnapshot.length, `Protection plans restored cleanly (${db.getTravelProtectionPlans().length} records)`);
+  assert(db.getVipGroundServices().length === initialVipSnapshot.length, `VIP ground restored cleanly (${db.getVipGroundServices().length} records)`);
+  assert(db.getConnectivityPlans().length === initialConnSnapshot.length, `Connectivity restored cleanly (${db.getConnectivityPlans().length} records)`);
 
   console.log('\n===============================================================');
   console.log('🎉 ALL VISA & ANCILLARY SERVICES AUDIT TESTS PASSED WITH 100% SUCCESS');

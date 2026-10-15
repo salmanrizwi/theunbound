@@ -20,6 +20,8 @@ export function isDefaultFallbackImageUrl(url?: string | null): boolean {
 
 export const DESTINATION_FALLBACKS: Record<string, string> = {
   japan: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
+  rail: 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1200&q=80',
+  shinkansen: 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1200&q=80',
   tokyo: 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=1200&auto=format&fit=crop',
   kyoto: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
   osaka: 'https://images.unsplash.com/photo-1590559899731-a3f376ec4e22?q=80&w=1200&auto=format&fit=crop',

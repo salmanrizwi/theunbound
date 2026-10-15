@@ -70,7 +70,8 @@ import {
   X,
   Tag
 } from 'lucide-react';
-import { fileToDataUrl, convertUnsplashUrl, fetchUnsplashImagesByQuery } from '../../utils/imageUtils';
+import { fileToDataUrl, convertUnsplashUrl, fetchUnsplashImagesByQuery, sanitizeImageUrl } from '../../utils/imageUtils';
+import { canonicalImageService } from '../../services/imageService';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { ProductUpdateWorkspace } from './ProductUpdateWorkspace';
@@ -577,6 +578,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     const matchesSearch = !q ||
       (p.name || '').toLowerCase().includes(q) ||
       (p.sku || '').toLowerCase().includes(q) ||
+      (p.id || '').toLowerCase().includes(q) ||
+      ((p as any).product_id || '').toLowerCase().includes(q) ||
       (p.city || '').toLowerCase().includes(q) ||
       (p.regionName || '').toLowerCase().includes(q) ||
       (p.supplierName || '').toLowerCase().includes(q);
@@ -765,9 +768,16 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   <td className="py-3.5 px-4">
                     <div className="flex items-center space-x-3">
                       <img
-                        src={product.images[0] || 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=200&auto=format&fit=crop'}
+                        src={product.images?.[0] || product.imageUrl || product.heroImage || canonicalImageService.resolveProductImage(product)}
                         alt={product.name}
                         className="w-12 h-10 rounded-lg object-cover bg-slate-100 shrink-0 border border-slate-200"
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          const fallback = sanitizeImageUrl('', product.category || product.city);
+                          if ((e.currentTarget as HTMLImageElement).src !== fallback) {
+                            (e.currentTarget as HTMLImageElement).src = fallback;
+                          }
+                        }}
                       />
                       <div>
                         <span className="font-mono text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-semibold border border-slate-200">

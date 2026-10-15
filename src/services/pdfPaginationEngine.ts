@@ -348,10 +348,9 @@ function buildDayServiceCardBlock(
         ${specialInstructionsHtml}
       </div>
 
-      <div style="text-align: right; min-width: 105px;">
-        <div style="font-size: 13px; font-weight: 800; color: #0f172a; font-family: monospace;">${s.priceFormatted}</div>
-        <div style="font-size: 9.5px; color: #64748b; margin-top: 2px;">${s.paxText}</div>
-        <span style="display: inline-block; margin-top: 4px; font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: #047857; background: #ecfdf5; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">Confirmed</span>
+      <div style="text-align: right; min-width: 90px;">
+        <span style="display: inline-block; font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: #047857; background: #ecfdf5; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">Confirmed</span>
+        <div style="font-size: 9.5px; color: #64748b; margin-top: 4px;">${s.paxText}</div>
       </div>
     </div>
   `;
@@ -396,10 +395,9 @@ function buildDayServiceCardBlock(
           ${renderOverviewSection(firstPartOverview, false)}
         </div>
 
-        <div style="text-align: right; min-width: 105px;">
-          <div style="font-size: 13px; font-weight: 800; color: #0f172a; font-family: monospace;">${s.priceFormatted}</div>
-          <div style="font-size: 9.5px; color: #64748b; margin-top: 2px;">${s.paxText}</div>
-          <span style="display: inline-block; margin-top: 4px; font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: #047857; background: #ecfdf5; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">Confirmed</span>
+        <div style="text-align: right; min-width: 90px;">
+          <span style="display: inline-block; font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: #047857; background: #ecfdf5; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">Confirmed</span>
+          <div style="font-size: 9.5px; color: #64748b; margin-top: 4px;">${s.paxText}</div>
         </div>
       </div>
     `;
@@ -556,9 +554,9 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
           </p>
         </div>
         <div style="text-align: right; min-width: 140px;">
-          <span style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; font-weight: 700; display: block;">Package Rate per Person</span>
-          <div style="font-size: 20px; font-weight: 900; font-family: monospace; color: #00E5C0;">${model.pricePerPersonFormatted}</div>
-          <span style="font-size: 9.5px; color: #94a3b8;">Inclusive of all ground taxes</span>
+          <span style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: #00E5C0; font-weight: 700; display: block;">Official Proposal</span>
+          <div style="font-size: 14px; font-weight: 800; color: #ffffff; margin-top: 2px;">${model.totalDays} Days / ${model.totalNights} Nights</div>
+          <span style="font-size: 9.5px; color: #94a3b8;">Exclusive Ground Itinerary</span>
         </div>
       </div>
       ${routeHubsHtml}
@@ -655,10 +653,9 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
                 </div>
               ` : ''}
             </div>
-            <div style="text-align: right; min-width: 110px;">
-              <div style="font-size: 13.5px; font-weight: 800; color: #0f172a; font-family: monospace;">${v.priceFormatted}</div>
-              <div style="font-size: 9.5px; color: #64748b; margin-top: 2px;">${v.paxText}</div>
-              <span style="display: inline-block; margin-top: 4px; font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: #065f46; background: #d1fae5; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">Included</span>
+            <div style="text-align: right; min-width: 90px;">
+              <span style="display: inline-block; font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: #065f46; background: #d1fae5; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">Included</span>
+              <div style="font-size: 9.5px; color: #64748b; margin-top: 4px;">${v.paxText}</div>
             </div>
           </div>
         `,
@@ -805,7 +802,7 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
                   <div style="font-weight: 700; color: #0f172a;">${a.name}</div>
                   <div style="font-size: 9.5px; color: #64748b;">${a.summary}</div>
                 </div>
-                <div style="font-family: monospace; font-weight: 700; color: #0f172a;">${a.priceFormatted}</div>
+                <span style="font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: #065f46; background: #d1fae5; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">Included</span>
               </div>
             `).join('')}
           </div>
@@ -849,13 +846,12 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
     html: `
       <div style="background: #020617; color: #ffffff; padding: 18px 20px; border-radius: 16px; margin-top: 14px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
         <div>
-          <span style="font-size: 9px; font-weight: 800; color: #00E5C0; text-transform: uppercase; letter-spacing: 0.1em; display: block;">Official Proposal Tariff</span>
-          <h3 style="font-size: 17px; font-weight: 900; color: #ffffff; margin: 2px 0 4px 0;">Guaranteed Total Itinerary Value</h3>
+          <span style="font-size: 9px; font-weight: 800; color: #00E5C0; text-transform: uppercase; letter-spacing: 0.1em; display: block;">TOTAL PACKAGE INVESTMENT</span>
+          <h3 style="font-size: 16px; font-weight: 900; color: #ffffff; margin: 2px 0 4px 0;">Final Total: ${model.totalItineraryValueFormatted} ${model.currency}</h3>
           <p style="font-size: 10px; color: #cbd5e1; margin: 0; max-width: 420px;">All private transport, bullet train fares, entrance tickets, and applicable government taxes are fully included.</p>
         </div>
         <div style="text-align: right;">
           <div style="font-size: 24px; font-weight: 900; font-family: monospace; color: #00E5C0;">${model.totalItineraryValueFormatted}</div>
-          <div style="font-size: 10.5px; color: #cbd5e1; font-family: monospace;">${model.pricePerTravelerFormatted}</div>
           <div style="font-size: 9px; color: #94a3b8; margin-top: 2px;">${model.guaranteedCurrencyLine}</div>
         </div>
       </div>

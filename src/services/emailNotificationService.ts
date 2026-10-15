@@ -47,7 +47,8 @@ export class EmailNotificationService {
       eventType?: CommunicationEventType;
       sentBy?: string;
       sentByName?: string;
-    }
+    },
+    textBody?: string
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     const db = AppDatabase.getInstance();
     const communicationId = `comm-email-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -71,6 +72,7 @@ export class EmailNotificationService {
           to,
           subject,
           htmlBody,
+          textBody,
           meta: {
             quoteId: meta?.quoteId,
             bookingId: meta?.bookingId,
@@ -241,8 +243,8 @@ export class EmailNotificationService {
                   <strong style="color: #0f172a;">${item.name}</strong>
                   <div style="font-size: 11px; color: #64748b;">${item.category} • ${item.destination} • ${item.date || 'Scheduled Itinerary'}</div>
                 </div>
-                <div style="text-align: right; font-weight: 700; color: #008972;">
-                  ${item.formattedPrice}
+                <div style="text-align: right;">
+                  <span style="display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; color: #047857; background: #ecfdf5; padding: 2px 7px; border-radius: 4px; border: 1px solid #a7f3d0;">Confirmed</span>
                 </div>
               </div>
             `).join('')}
@@ -251,8 +253,9 @@ export class EmailNotificationService {
           <!-- Total Investment -->
           <div style="background-color: #0f172a; border-radius: 12px; padding: 18px 20px; color: #ffffff; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center;">
             <div>
-              <span style="font-size: 11px; text-transform: uppercase; color: #94a3b8; font-weight: 700; display: block;">Total Booking Investment</span>
-              <span style="font-size: 11px; color: #00E5C0;">Payment Status: <strong>${payload.paymentStatus}</strong></span>
+              <span style="font-size: 11px; text-transform: uppercase; color: #00E5C0; font-weight: 800; letter-spacing: 0.05em; display: block;">TOTAL PACKAGE INVESTMENT</span>
+              <span style="font-size: 13px; font-weight: 700; color: #ffffff;">Final Total: ${payload.formattedTotalPrice}</span>
+              <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">Payment Status: <strong>${payload.paymentStatus}</strong></div>
             </div>
             <div style="text-align: right;">
               <span style="font-size: 22px; font-weight: 900; color: #00E5C0; font-family: monospace;">${payload.formattedTotalPrice}</span>
@@ -314,12 +317,15 @@ export class EmailNotificationService {
       logoUrl?: string;
       selectedOptionIndexOrId?: number | string;
       customNote?: string;
+      formattingMode?: 'PROPOSAL_VIEW' | 'PLAIN_TEXT';
     }
   ): {
     model: QuotePresentationModel;
     subject: string;
     htmlBody: string;
     textBody: string;
+    proposalViewHtml: string;
+    simpleSemanticHtml: string;
   } {
     const model = buildQuotePresentationModel(quote, {
       name: agentInfo?.name,
@@ -330,23 +336,18 @@ export class EmailNotificationService {
       selectedOptionIndexOrId: agentInfo?.selectedOptionIndexOrId
     });
 
-    const { subject, htmlBody, textBody } = renderQuoteEmailFromPresentationModel(
+    const { subject, htmlBody, textBody, proposalViewHtml, simpleSemanticHtml } = renderQuoteEmailFromPresentationModel(
       model,
-      agentInfo?.customNote
+      agentInfo?.customNote,
+      agentInfo?.formattingMode || 'PROPOSAL_VIEW'
     );
 
-    return { model, subject, htmlBody, textBody };
+    return { model, subject, htmlBody, textBody, proposalViewHtml, simpleSemanticHtml };
   }
 
   /**
    * Generates client-facing quotation proposal email using the canonical QuotePresentationModel.
-   * Contains 100% of the quotation details present in Quote Preview & PDF:
-   * Quote Reference, Agent/Client Dossier, Curated Journey Overview, Route Hubs,
-   * Curated Accommodation Summary, Visa & Ancillary Services, Complete Day-by-Day Chronological Itinerary
-   * (with all selected activities, hotels, rail, transfers, descriptions, overview, specifications,
-   * inclusions, exclusions, meeting/pickup/drop-off points, duration, operational instructions, day notes),
-   * Additional Services, Ground Operations Standards, Child/Attraction Policies, Commercial Terms,
-   * Final Quotation Total, Currency, and Quote Validity.
+   * Contains 100% of the quotation details present in Quote Preview & PDF.
    */
   public generateQuotationProposalEmail(
     quote: Quotation, 
@@ -358,12 +359,18 @@ export class EmailNotificationService {
       logoUrl?: string;
       selectedOptionIndexOrId?: number | string;
       customNote?: string;
+      formattingMode?: 'PROPOSAL_VIEW' | 'PLAIN_TEXT';
     }
-  ): SentEmailRecord & { fullText?: string; presentationModel?: QuotePresentationModel } {
+  ): SentEmailRecord & {
+    fullText?: string;
+    presentationModel?: QuotePresentationModel;
+    proposalViewHtml?: string;
+    simpleSemanticHtml?: string;
+  } {
     const sentAt = new Date().toISOString();
     const recipient = quote.clientEmail || 'client@example.com';
 
-    const { model, subject, htmlBody, textBody } = this.buildCanonicalQuotationEmail(quote, agentInfo);
+    const { model, subject, htmlBody, textBody, proposalViewHtml, simpleSemanticHtml } = this.buildCanonicalQuotationEmail(quote, agentInfo);
 
     return {
       recipient,
@@ -373,6 +380,8 @@ export class EmailNotificationService {
       fullHtml: htmlBody,
       fullText: textBody,
       presentationModel: model,
+      proposalViewHtml,
+      simpleSemanticHtml,
       sentAt,
       status: 'DELIVERED'
     };

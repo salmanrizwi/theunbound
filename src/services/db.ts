@@ -240,6 +240,7 @@ import {
 } from './permissionEngine';
 import { 
   sanitizeQuoteForAgent, 
+  sanitizeQuoteDocumentForCustomer,
   sanitizeBookingForAgent, 
   sanitizeProductForAgent 
 } from '../utils/customerQuoteSanitizer';
@@ -1123,16 +1124,20 @@ export class AppDatabase {
     const filteredDests = dests.filter(d => !deletedSet.has(d.id) && !deletedSet.has(d.slug));
     if (filteredDests.length !== dests.length) this.setItem('destinations', filteredDests, false);
 
-    const protections = this.getItem<TravelProtectionPlan[]>('travel_protection_plans', []);
-    const filteredProtections = protections.filter(p => !deletedSet.has(p.id) && !deletedSet.has(`TravelProtectionPlan_${p.id}`));
+    const visas = this.getItem<VisaProduct[]>('visas', allowDemo ? INITIAL_VISAS : []);
+    const filteredVisas = visas.filter(v => !deletedSet.has(v.id) && !deletedSet.has(`Visa_${v.id}`) && !deletedSet.has(`visas_${v.id}`));
+    if (filteredVisas.length !== visas.length) this.setItem('visas', filteredVisas, false);
+
+    const protections = this.getItem<TravelProtectionPlan[]>('travel_protection_plans', allowDemo ? INITIAL_TRAVEL_PROTECTION_PLANS : []);
+    const filteredProtections = protections.filter(p => !deletedSet.has(p.id) && !deletedSet.has(`TravelProtectionPlan_${p.id}`) && !deletedSet.has(`travel_protection_plans_${p.id}`));
     if (filteredProtections.length !== protections.length) this.setItem('travel_protection_plans', filteredProtections, false);
 
-    const vip = this.getItem<VipGroundService[]>('vip_ground_services', []);
-    const filteredVip = vip.filter(v => !deletedSet.has(v.id) && !deletedSet.has(`VipGroundService_${v.id}`));
+    const vip = this.getItem<VipGroundService[]>('vip_ground_services', allowDemo ? INITIAL_VIP_GROUND_SERVICES : []);
+    const filteredVip = vip.filter(v => !deletedSet.has(v.id) && !deletedSet.has(`VipGroundService_${v.id}`) && !deletedSet.has(`vip_ground_services_${v.id}`));
     if (filteredVip.length !== vip.length) this.setItem('vip_ground_services', filteredVip, false);
 
-    const conn = this.getItem<ConnectivityPlan[]>('connectivity_plans', []);
-    const filteredConn = conn.filter(c => !deletedSet.has(c.id) && !deletedSet.has(`ConnectivityPlan_${c.id}`));
+    const conn = this.getItem<ConnectivityPlan[]>('connectivity_plans', allowDemo ? INITIAL_CONNECTIVITY_PLANS : []);
+    const filteredConn = conn.filter(c => !deletedSet.has(c.id) && !deletedSet.has(`ConnectivityPlan_${c.id}`) && !deletedSet.has(`connectivity_plans_${c.id}`));
     if (filteredConn.length !== conn.length) this.setItem('connectivity_plans', filteredConn, false);
   }
 
@@ -1483,16 +1488,32 @@ export class AppDatabase {
           list.forEach((rec: any) => {
             if (storageKey === 'products') {
               const cleanImages = canonicalImageService.extractPersistedProductImages(rec);
-              const primaryUrl = cleanImages[0] || null;
-              rec.images = cleanImages;
+              const isRail = rec.id === 'RAIL-JP-ORD-RESERVED' || rec.id === 'RAIL-JP-GREEN-RESERVED' || rec.category === 'Rail' || rec.category === 'Rail / Shinkansen';
+              const primaryUrl = isRail ? (rec.imageUrl || rec.heroImage || cleanImages[0] || null) : (cleanImages[0] || rec.imageUrl || rec.heroImage || null);
+              const resolvedGallery = primaryUrl ? [primaryUrl, ...cleanImages.filter(u => u !== primaryUrl)] : cleanImages;
+              rec.images = resolvedGallery;
               rec.heroImage = primaryUrl;
               rec.imageUrl = primaryUrl;
               if (!primaryUrl) {
                 rec.primaryImage = null;
                 rec.primaryImageId = null;
-              } else if (rec.primaryImage && typeof rec.primaryImage === 'object') {
-                rec.primaryImage = { ...rec.primaryImage, url: primaryUrl };
+              } else {
+                rec.primaryImageId = rec.primaryImageId || canonicalImageService.computeImageId('PRODUCT', rec.id || rec.sku || 'item', 'PRIMARY');
+                rec.primaryImage = {
+                  imageId: rec.primaryImageId,
+                  url: primaryUrl,
+                  version: rec.updatedAt || rec.lastUpdated || '1.0',
+                  altText: rec.name || `PRODUCT image for ${rec.id}`,
+                  lastSyncedAt: rec.updatedAt || new Date().toISOString()
+                };
               }
+            } else if (storageKey === 'japan_rail_commercial_products') {
+              const cleanImages = canonicalImageService.extractPersistedProductImages(rec);
+              const primaryUrl = rec.imageUrl || rec.heroImage || cleanImages[0] || null;
+              const resolvedGallery = primaryUrl ? [primaryUrl, ...cleanImages.filter(u => u !== primaryUrl)] : cleanImages;
+              rec.imageUrl = primaryUrl || '';
+              rec.heroImage = primaryUrl || '';
+              rec.images = resolvedGallery.length > 0 ? resolvedGallery : (primaryUrl ? [primaryUrl] : []);
             }
             const recId = rec.id || rec.sku || rec.code;
             if (recId) {
@@ -1991,16 +2012,13 @@ export class AppDatabase {
     if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'visas')) {
       this.setItem('visas', INITIAL_VISAS);
     }
-    const currentProtection = this.getItem<TravelProtectionPlan[]>('travel_protection_plans', []);
-    if (!currentProtection || currentProtection.length === 0) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'travel_protection_plans')) {
       this.setItem('travel_protection_plans', INITIAL_TRAVEL_PROTECTION_PLANS);
     }
-    const currentVip = this.getItem<VipGroundService[]>('vip_ground_services', []);
-    if (!currentVip || currentVip.length === 0) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'vip_ground_services')) {
       this.setItem('vip_ground_services', INITIAL_VIP_GROUND_SERVICES);
     }
-    const currentConn = this.getItem<ConnectivityPlan[]>('connectivity_plans', []);
-    if (!currentConn || currentConn.length === 0) {
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'connectivity_plans')) {
       this.setItem('connectivity_plans', INITIAL_CONNECTIVITY_PLANS);
     }
     if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'footer_config')) {
@@ -3757,6 +3775,60 @@ export class AppDatabase {
         break;
       }
 
+      case 'TravelProtectionPlan': {
+        const planList = this.getTravelProtectionPlans();
+        const targetPlan = planList.find(p => p.id === recordId);
+        const pName = (targetPlan?.serviceName || '').toLowerCase();
+        const linkedQuotes = quotes.filter(q =>
+          q.items && q.items.some(it => it.product?.id === recordId || (pName && it.product?.name?.toLowerCase() === pName))
+        );
+        if (linkedQuotes.length > 0) {
+          groups.push({
+            entityType: 'Quote',
+            count: linkedQuotes.length,
+            label: `${linkedQuotes.length} Linked Proposal${linkedQuotes.length > 1 ? 's' : ''}`,
+            items: linkedQuotes.slice(0, 10).map(q => ({ id: q.id, name: `Quote #${q.quoteNumber || q.id}`, type: 'Quote', details: `Client: ${q.clientName || 'Agent'}` }))
+          });
+        }
+        break;
+      }
+
+      case 'VipGroundService': {
+        const vipList = this.getVipGroundServices();
+        const targetVip = vipList.find(s => s.id === recordId);
+        const vName = (targetVip?.name || '').toLowerCase();
+        const linkedQuotes = quotes.filter(q =>
+          q.items && q.items.some(it => it.product?.id === recordId || (vName && it.product?.name?.toLowerCase() === vName))
+        );
+        if (linkedQuotes.length > 0) {
+          groups.push({
+            entityType: 'Quote',
+            count: linkedQuotes.length,
+            label: `${linkedQuotes.length} Linked Proposal${linkedQuotes.length > 1 ? 's' : ''}`,
+            items: linkedQuotes.slice(0, 10).map(q => ({ id: q.id, name: `Quote #${q.quoteNumber || q.id}`, type: 'Quote', details: `Client: ${q.clientName || 'Agent'}` }))
+          });
+        }
+        break;
+      }
+
+      case 'ConnectivityPlan': {
+        const connList = this.getConnectivityPlans();
+        const targetConn = connList.find(c => c.id === recordId);
+        const cName = (targetConn?.name || '').toLowerCase();
+        const linkedQuotes = quotes.filter(q =>
+          q.items && q.items.some(it => it.product?.id === recordId || (cName && it.product?.name?.toLowerCase() === cName))
+        );
+        if (linkedQuotes.length > 0) {
+          groups.push({
+            entityType: 'Quote',
+            count: linkedQuotes.length,
+            label: `${linkedQuotes.length} Linked Proposal${linkedQuotes.length > 1 ? 's' : ''}`,
+            items: linkedQuotes.slice(0, 10).map(q => ({ id: q.id, name: `Quote #${q.quoteNumber || q.id}`, type: 'Quote', details: `Client: ${q.clientName || 'Agent'}` }))
+          });
+        }
+        break;
+      }
+
       case 'CustomPage': {
         const customPages = this.getCustomPages();
         const page = customPages.find(p => p.id === recordId || p.slug === recordId);
@@ -4134,6 +4206,33 @@ export class AppDatabase {
         break;
       }
 
+      case 'TravelProtectionPlan': {
+        const plans = this.getTravelProtectionPlans();
+        const target = plans.find(p => p.id === recordId);
+        this.setItem('travel_protection_plans', plans.filter(p => p.id !== recordId));
+        this.deleteFirestoreDoc('travel_protection_plans', recordId);
+        this.logAudit(user, 'PRODUCT_DELETED', 'TravelProtectionPlan', recordId, `Permanently deleted travel protection plan: ${target?.serviceName || recordId}`);
+        break;
+      }
+
+      case 'VipGroundService': {
+        const services = this.getVipGroundServices();
+        const target = services.find(s => s.id === recordId);
+        this.setItem('vip_ground_services', services.filter(s => s.id !== recordId));
+        this.deleteFirestoreDoc('vip_ground_services', recordId);
+        this.logAudit(user, 'PRODUCT_DELETED', 'VipGroundService', recordId, `Permanently deleted VIP ground service: ${target?.name || recordId}`);
+        break;
+      }
+
+      case 'ConnectivityPlan': {
+        const plans = this.getConnectivityPlans();
+        const target = plans.find(c => c.id === recordId);
+        this.setItem('connectivity_plans', plans.filter(c => c.id !== recordId));
+        this.deleteFirestoreDoc('connectivity_plans', recordId);
+        this.logAudit(user, 'PRODUCT_DELETED', 'ConnectivityPlan', recordId, `Permanently deleted 5G connectivity plan: ${target?.name || recordId}`);
+        break;
+      }
+
       case 'CustomPage': {
         this.deleteCustomPage(recordId, user);
         this.logAudit(user, 'PAGE_DELETED', 'CustomPage', recordId, `Deleted institutional page: ${recordId}`);
@@ -4346,6 +4445,9 @@ export class AppDatabase {
         TransferRate: 'transfer_rates',
         Visa: 'visas',
         VisaRate: 'visa_rates',
+        TravelProtectionPlan: 'travel_protection_plans',
+        VipGroundService: 'vip_ground_services',
+        ConnectivityPlan: 'connectivity_plans',
         PackageItem: 'package_items'
       };
       const col = colMap[entityType] || entityType.toLowerCase() + 's';
@@ -4491,6 +4593,39 @@ export class AppDatabase {
         break;
       }
 
+      case 'TravelProtectionPlan': {
+        const plans = this.getTravelProtectionPlans();
+        const target = plans.find(p => p.id === recordId);
+        if (target) {
+          target.status = 'ARCHIVED';
+          this.saveTravelProtectionPlan(target, user);
+          this.logAudit(user, 'PRODUCT_ARCHIVED', 'TravelProtectionPlan', recordId, `Archived travel protection plan: ${target.serviceName}`);
+        }
+        break;
+      }
+
+      case 'VipGroundService': {
+        const services = this.getVipGroundServices();
+        const target = services.find(s => s.id === recordId);
+        if (target) {
+          target.status = 'ARCHIVED';
+          this.saveVipGroundService(target, user);
+          this.logAudit(user, 'PRODUCT_ARCHIVED', 'VipGroundService', recordId, `Archived VIP ground service: ${target.name}`);
+        }
+        break;
+      }
+
+      case 'ConnectivityPlan': {
+        const plans = this.getConnectivityPlans();
+        const target = plans.find(c => c.id === recordId);
+        if (target) {
+          target.status = 'ARCHIVED';
+          this.saveConnectivityPlan(target, user);
+          this.logAudit(user, 'PRODUCT_ARCHIVED', 'ConnectivityPlan', recordId, `Archived 5G connectivity plan: ${target.name}`);
+        }
+        break;
+      }
+
       case 'Quote': {
         this.updateQuotationStatus(recordId, 'EXPIRED', user);
         break;
@@ -4536,6 +4671,9 @@ export class AppDatabase {
       case 'Promotion': col = 'promotions'; break;
       case 'GalleryImage': col = 'gallery_items'; break;
       case 'Visa': case 'VisaRequirement': col = 'visas'; break;
+      case 'TravelProtectionPlan': col = 'travel_protection_plans'; break;
+      case 'VipGroundService': col = 'vip_ground_services'; break;
+      case 'ConnectivityPlan': col = 'connectivity_plans'; break;
       case 'CustomPage': col = 'custom_pages'; break;
       case 'MenuItem': col = 'menu_items'; break;
       case 'Quote': col = 'quotations'; break;
@@ -4600,6 +4738,9 @@ export class AppDatabase {
       case 'Review': col = 'google_reviews'; break;
       case 'Promotion': col = 'promotions'; break;
       case 'Visa': case 'VisaRequirement': col = 'visas'; break;
+      case 'TravelProtectionPlan': col = 'travel_protection_plans'; break;
+      case 'VipGroundService': col = 'vip_ground_services'; break;
+      case 'ConnectivityPlan': col = 'connectivity_plans'; break;
       case 'CustomPage': col = 'custom_pages'; break;
       default: col = entityType.toLowerCase() + 's'; break;
     }
@@ -4634,6 +4775,87 @@ export class AppDatabase {
         raw.unshift(...missing);
       }
     }
+
+    // Keep in lockstep with japan_rail_commercial_products collection (authoritative commercial rail master)
+    const railCommercialList = this.getItem<JapanRailCommercialProduct[]>('japan_rail_commercial_products', []);
+    if (Array.isArray(railCommercialList) && railCommercialList.length > 0) {
+      for (const railProd of railCommercialList) {
+        const canonicalId = railProd.productCode === 'GREEN_RESERVED' || railProd.id === 'RAIL-JP-GREEN-RESERVED'
+          ? 'RAIL-JP-GREEN-RESERVED'
+          : 'RAIL-JP-ORD-RESERVED';
+        const existingIdx = raw.findIndex(p => p.id === canonicalId);
+        const railImg = railProd.imageUrl || (railProd as any).heroImage || (Array.isArray(railProd.images) ? railProd.images[0] : null);
+        
+        if (existingIdx >= 0) {
+          const existing = raw[existingIdx];
+          const existingImg = existing.imageUrl || existing.heroImage || (Array.isArray(existing.images) ? existing.images[0] : null);
+          const railUpdated = railProd.updatedAt ? new Date(railProd.updatedAt).getTime() : 0;
+          const existingUpdated = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+          if (railImg && (!existingImg || railUpdated >= existingUpdated)) {
+            const cleanGallery = Array.isArray(railProd.images) && railProd.images.length > 0
+              ? railProd.images
+              : (railImg ? [railImg] : []);
+            raw[existingIdx] = {
+              ...existing,
+              imageUrl: railImg,
+              heroImage: railImg,
+              images: cleanGallery
+            };
+          }
+        } else {
+          const cleanGallery = Array.isArray(railProd.images) && railProd.images.length > 0
+            ? railProd.images
+            : (railImg ? [railImg] : []);
+          raw.unshift({
+            id: canonicalId,
+            product_id: canonicalId,
+            sku: canonicalId === 'RAIL-JP-GREEN-RESERVED' ? 'JP-SHINKANSEN-GRN-RES' : 'JP-SHINKANSEN-ORD-RES',
+            name: railProd.productName,
+            title: railProd.productName,
+            destinationId: railProd.destinationId || 'DST-JPN',
+            destinationName: railProd.destinationName || 'Japan',
+            country: 'Japan',
+            city: 'Tokyo',
+            category: 'Rail' as any,
+            subcategory: 'High-Speed Rail',
+            duration: 'Dynamic',
+            operatingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+            operatingHours: '06:00 - 23:30',
+            shortDescription: railProd.shortDescription || railProd.productName,
+            longDescription: railProd.description || railProd.productName,
+            supplierId: 'sup-jr-pass',
+            supplierName: 'Japan Rail Group / smartEX',
+            supplierProductCode: railProd.productCode,
+            adultNetPrice: railProd.pricingConfiguration?.supplierNett || 13970,
+            childNetPrice: Math.round((railProd.pricingConfiguration?.supplierNett || 13970) * 0.5),
+            infantNetPrice: 0,
+            currency: railProd.nativeCurrency || 'JPY',
+            nativeCurrency: railProd.nativeCurrency || 'JPY',
+            defaultMarkupPercent: railProd.pricingConfiguration?.marginValue || 12,
+            taxPercent: railProd.pricingConfiguration?.taxValue || 10,
+            commissionPercent: 0,
+            serviceFeeFixed: 0,
+            sellingPriceStartingFrom: railProd.pricingConfiguration?.supplierNett || 13970,
+            season: 'All Year',
+            validityFrom: railProd.validityFrom || '2026-10-12',
+            validityTo: railProd.validityTo || '2027-05-31',
+            minPax: 1,
+            maxPax: 10,
+            availability: 'INSTANT',
+            bookingRequiredDays: 0,
+            cancellationPolicy: 'Non-refundable once ticket issued',
+            inclusions: railProd.inclusions || [],
+            exclusions: railProd.exclusions || [],
+            importantInformation: railProd.importantInformation || [],
+            imageUrl: railImg,
+            heroImage: railImg,
+            images: cleanGallery,
+            status: railProd.status || 'ACTIVE'
+          } as Product);
+        }
+      }
+    }
+
     const deletedSet = this.getDeletedEntityIds();
     return raw
       .filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Product_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED')
@@ -4648,10 +4870,14 @@ export class AppDatabase {
           ? configSurcharges
           : [];
         const cleanImages = canonicalImageService.extractPersistedProductImages(p);
-        const primaryUrl = cleanImages[0] || null;
+        const isRail = p.id === 'RAIL-JP-ORD-RESERVED' || p.id === 'RAIL-JP-GREEN-RESERVED' || p.category === 'Rail' || p.category === 'Rail / Shinkansen';
+        const primaryUrl = isRail ? (p.imageUrl || p.heroImage || cleanImages[0] || null) : (cleanImages[0] || p.imageUrl || p.heroImage || null);
+        const finalImages = primaryUrl
+          ? [primaryUrl, ...cleanImages.filter(u => u !== primaryUrl)]
+          : cleanImages;
         return {
           ...p,
-          images: cleanImages,
+          images: finalImages,
           heroImage: primaryUrl,
           imageUrl: primaryUrl,
           primaryImage: primaryUrl
@@ -5291,10 +5517,42 @@ export class AppDatabase {
 
     if (Array.isArray(raw)) {
       for (const item of raw) {
-        if (item && item.productCode && (item.productCode === 'ORDINARY_RESERVED' || item.productCode === 'GREEN_RESERVED')) {
-          const current = productsMap.get(item.productCode);
-          if (current) {
-            productsMap.set(item.productCode, { ...current, ...item });
+        if (item) {
+          const code = item.productCode || (item.id === 'RAIL-JP-GREEN-RESERVED' ? 'GREEN_RESERVED' : (item.id === 'RAIL-JP-ORD-RESERVED' ? 'ORDINARY_RESERVED' : undefined));
+          if (code === 'ORDINARY_RESERVED' || code === 'GREEN_RESERVED') {
+            const current = productsMap.get(code);
+            if (current) {
+              const merged: JapanRailCommercialProduct = { ...current, ...item };
+              if (item.imageUrl !== undefined && item.imageUrl !== null) {
+                merged.imageUrl = item.imageUrl;
+              }
+              productsMap.set(code, merged);
+            }
+          }
+        }
+      }
+    }
+
+    // Keep in lockstep with products collection
+    const productsList = this.getItem<Product[]>('products', []);
+    if (Array.isArray(productsList)) {
+      for (const prod of productsList) {
+        if (prod.id === 'RAIL-JP-ORD-RESERVED' || prod.id === 'RAIL-JP-GREEN-RESERVED') {
+          const code = prod.id === 'RAIL-JP-GREEN-RESERVED' ? 'GREEN_RESERVED' : 'ORDINARY_RESERVED';
+          const current = productsMap.get(code);
+          const prodImg = prod.imageUrl || prod.heroImage || (Array.isArray(prod.images) ? prod.images[0] : null);
+          if (current && prodImg && prodImg.trim()) {
+            const currentImg = current.imageUrl || current.heroImage || (Array.isArray(current.images) ? current.images[0] : null);
+            const prodUpdated = prod.updatedAt ? new Date(prod.updatedAt).getTime() : 0;
+            const currentUpdated = current.updatedAt ? new Date(current.updatedAt).getTime() : 0;
+            if (!currentImg || prodUpdated > currentUpdated) {
+              productsMap.set(code, {
+                ...current,
+                imageUrl: prodImg,
+                heroImage: prodImg,
+                images: Array.isArray(prod.images) && prod.images.length > 0 ? prod.images : [prodImg]
+              } as any);
+            }
           }
         }
       }
@@ -5337,16 +5595,45 @@ export class AppDatabase {
 
     const now = new Date().toISOString();
     const resolvedCurrency = (product.nativeCurrency || (product as any).currency || 'JPY') as CurrencyCode;
+
+    // Validate and resolve canonical image without default fallback overwriting
+    const rawImageInput = product.imageUrl || (product.images && product.images.length > 0 ? product.images[0] : (product as any).heroImage);
+    const imgCheck = canonicalImageService.validateUserSuppliedImageUrl(rawImageInput);
+    const resolvedHeroImg = (!imgCheck.isEmpty && imgCheck.isValid) ? imgCheck.cleanUrl : null;
+
+    const productsList = this.getProducts();
+    const prodIdx = productsList.findIndex(p => p.id === product.id || (product.productCode === 'ORDINARY_RESERVED' ? p.id === 'RAIL-JP-ORD-RESERVED' : p.id === 'RAIL-JP-GREEN-RESERVED'));
+    const existingProd = prodIdx >= 0 ? productsList[prodIdx] : undefined;
+
+    const prevPrimaryUrl = existingIndex >= 0 
+      ? (currentList[existingIndex].imageUrl || currentList[existingIndex].images?.[0])
+      : (existingProd?.imageUrl || existingProd?.heroImage || existingProd?.images?.[0]);
+
+    const otherImages = (product.images || existingProd?.images || [])
+      .map(u => canonicalImageService.validateImage(u))
+      .filter(v => v.isValid && v.cleanUrl !== resolvedHeroImg && (resolvedHeroImg && prevPrimaryUrl ? v.cleanUrl !== prevPrimaryUrl : true))
+      .map(v => v.cleanUrl);
+
+    const resolvedGallery = resolvedHeroImg
+      ? [resolvedHeroImg, ...otherImages]
+      : otherImages;
+
     const updated: JapanRailCommercialProduct = {
       ...(existingIndex >= 0 ? currentList[existingIndex] : {}),
       ...product,
       category: 'RAIL',
       destinationId: product.destinationId || 'dest-japan',
+      destinationName: product.destinationName || 'Japan',
+      regionId: (product as any).regionId || 'reg-east-asia',
+      regionName: (product as any).regionName || 'East Asia',
       nativeCurrency: resolvedCurrency,
+      imageUrl: resolvedHeroImg || '',
+      images: resolvedGallery,
       updatedAt: now,
       updatedBy: user?.name || user?.email || 'Admin',
       schemaVersion: 1
     };
+    (updated as any).heroImage = resolvedHeroImg || '';
 
     if (existingIndex >= 0) {
       currentList[existingIndex] = updated;
@@ -5359,19 +5646,6 @@ export class AppDatabase {
     this.syncFirestoreDoc('japan_rail_commercial_products', updated.id, updated);
 
     // Keep canonical products collection in complete synchronization
-    const productsList = this.getProducts();
-    const prodIdx = productsList.findIndex(p => p.id === updated.id);
-    const existingProd = prodIdx >= 0 ? productsList[prodIdx] : undefined;
-    const resolvedHeroImg = updated.imageUrl || (updated as any).heroImage || existingProd?.heroImage || existingProd?.imageUrl;
-    const resolvedGallery =
-      updated.images && updated.images.length > 0
-        ? updated.images
-        : (updated as any).gallery && (updated as any).gallery.length > 0
-        ? (updated as any).gallery
-        : resolvedHeroImg
-        ? [resolvedHeroImg]
-        : (existingProd?.images || []);
-
     const syncedProd: Product = {
       ...(existingProd || {}),
       id: updated.id,
@@ -5382,7 +5656,12 @@ export class AppDatabase {
       country: 'Japan',
       destinationId: updated.destinationId || 'dest-japan',
       destinationName: 'Japan',
+      regionId: (updated as any).regionId || existingProd?.regionId || 'reg-east-asia',
+      regionName: (updated as any).regionName || existingProd?.regionName || 'East Asia',
+      hubIds: existingProd?.hubIds || ['hub-tokyo', 'hub-kyoto', 'hub-osaka', 'hub-hiroshima', 'hub-hakone'],
+      hubId: existingProd?.hubId || 'hub-tokyo',
       currency: resolvedCurrency,
+      nativeCurrency: resolvedCurrency,
       adultNetPrice: updated.pricingConfiguration?.supplierNett ?? existingProd?.adultNetPrice ?? 0,
       sellingPriceStartingFrom: (updated.pricingConfiguration as any)?.startingFromFareJPY ?? existingProd?.sellingPriceStartingFrom ?? 0,
       heroImage: resolvedHeroImg,
@@ -5395,12 +5674,20 @@ export class AppDatabase {
       validityFrom: updated.validityFrom || existingProd?.validityFrom,
       validityTo: updated.validityTo || existingProd?.validityTo,
       surcharges: updated.surcharges || existingProd?.surcharges || [],
-      lastUpdated: now.split('T')[0]
+      lastUpdated: now.split('T')[0],
+      updatedAt: now
     } as Product;
 
     if (resolvedHeroImg) {
       canonicalImageService.syncImage(
         'PRODUCT',
+        updated.id,
+        resolvedHeroImg,
+        'PRIMARY',
+        updated.productName
+      );
+      canonicalImageService.syncImage(
+        'RAIL',
         updated.id,
         resolvedHeroImg,
         'PRIMARY',
@@ -5433,16 +5720,94 @@ export class AppDatabase {
     user: User | null
   ): Promise<JapanRailCommercialProduct> {
     const updated = this.saveJapanRailCommercialProduct(product, user);
+    const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || (user as any)?.email || 'business@theunbound.in';
+    const effectiveUid = auth.currentUser?.uid || currentAuthUser?.id || (user as any)?.id || 'usr-admin-business';
+    const canonicalProdId = (updated.id === 'RAIL-JP-ORD-RESERVED' || updated.productCode === 'ORDINARY_RESERVED')
+      ? 'RAIL-JP-ORD-RESERVED'
+      : 'RAIL-JP-GREEN-RESERVED';
+
     try {
-      const enriched = {
+      const enrichedComm = {
         ...updated,
+        id: canonicalProdId,
         updatedByRole: 'ADMIN',
-        updatedByEmail: 'business@theunbound.in',
-        updatedBy: user?.name || user?.email || 'Admin'
+        updatedByEmail: effectiveEmail,
+        updatedBy: user?.name || user?.email || effectiveUid || 'Admin',
+        isDeleted: false
       };
-      await setDoc(doc(firestoreDb, 'japan_rail_commercial_products', updated.id), cleanForFirestore(enriched), { merge: true });
+      const railDocRef = doc(firestoreDb, 'japan_rail_commercial_products', canonicalProdId);
+      await setDoc(railDocRef, cleanForFirestore(enrichedComm), { merge: true });
+
+      // Verify read-back from Firestore japan_rail_commercial_products
+      const railSnap = await getDoc(railDocRef);
+      if (!railSnap.exists()) {
+        throw new Error(`Firestore read-back verification failed: Document japan_rail_commercial_products/${canonicalProdId} not found.`);
+      }
+      const readBackRail = railSnap.data();
+      const expectedImg = updated.imageUrl || '';
+      const actualImg = readBackRail.imageUrl || (Array.isArray(readBackRail.images) ? readBackRail.images[0] : '');
+      if (expectedImg && actualImg !== expectedImg) {
+        throw new Error(`Firestore read-back image mismatch for japan_rail_commercial_products/${canonicalProdId}: expected "${expectedImg}", read back "${actualImg}".`);
+      }
+
+      // Synchronize corresponding product in products collection
+      const prodDocRef = doc(firestoreDb, 'products', canonicalProdId);
+      const existingProdSnap = await getDoc(prodDocRef);
+      const existingProdData = existingProdSnap.exists() ? existingProdSnap.data() : (this.getProductById(canonicalProdId) || {});
+      const nowIso = new Date().toISOString();
+      const primaryImageId = expectedImg
+        ? canonicalImageService.computeImageId('PRODUCT', canonicalProdId, 'PRIMARY')
+        : null;
+      const primaryImageDto = expectedImg && primaryImageId
+        ? {
+            imageId: primaryImageId,
+            url: expectedImg,
+            version: nowIso,
+            altText: updated.productName || `PRODUCT image for ${canonicalProdId}`,
+            lastSyncedAt: nowIso
+          }
+        : null;
+
+      const enrichedProd = {
+        ...existingProdData,
+        id: canonicalProdId,
+        name: updated.productName || existingProdData.name,
+        category: 'Rail',
+        productType: 'Rail',
+        heroImage: expectedImg || null,
+        imageUrl: expectedImg || null,
+        images: updated.images || (expectedImg ? [expectedImg] : []),
+        primaryImageId,
+        primaryImage: primaryImageDto,
+        updatedByRole: 'ADMIN',
+        updatedByEmail: effectiveEmail,
+        updatedBy: user?.name || user?.email || effectiveUid || 'Admin',
+        isDeleted: false,
+        updatedAt: nowIso
+      };
+      await setDoc(prodDocRef, cleanForFirestore(enrichedProd), { merge: true });
+
+      const prodSnap = await getDoc(prodDocRef);
+      if (prodSnap.exists()) {
+        const prodData = prodSnap.data();
+        const prodPrimary = prodData.imageUrl || prodData.heroImage || (Array.isArray(prodData.images) ? prodData.images[0] : '');
+        if (expectedImg && prodPrimary !== expectedImg) {
+          throw new Error(`Firestore read-back image mismatch for products/${canonicalProdId}: expected "${expectedImg}", read back "${prodPrimary}".`);
+        }
+      }
+
+      // Update in-memory products list so that immediate subsequent reads reflect the update
+      const memoryProducts = this.getItem<Product[]>('products', []);
+      const pIdx = memoryProducts.findIndex(p => p.id === canonicalProdId);
+      if (pIdx >= 0) {
+        memoryProducts[pIdx] = { ...memoryProducts[pIdx], ...enrichedProd } as Product;
+      } else {
+        memoryProducts.push(enrichedProd as Product);
+      }
+      this.setItem('products', memoryProducts);
     } catch (err: any) {
-      console.warn(`[DB] Firestore saveJapanRailCommercialProductAsync warning (${updated.id}):`, err?.message || err);
+      console.warn(`[DB] Firestore saveJapanRailCommercialProductAsync warning (${canonicalProdId}):`, err?.message || err);
+      throw err;
     }
     return updated;
   }
@@ -5510,7 +5875,10 @@ export class AppDatabase {
   public getProductById(id: string): Product | undefined {
     if (!id) return undefined;
     const products = this.getProducts();
-    return products.find(p => p.id === id) || products.find(p => p.sku === id);
+    return products.find(p => p.id === id) || 
+           products.find(p => p.sku === id) || 
+           products.find(p => (p as any).product_id === id) ||
+           products.find(p => (p as any).docId === id);
   }
 
   private prepareProductForSave(product: Product, user: User | null): {
@@ -5530,8 +5898,14 @@ export class AppDatabase {
 
     const products = this.getProducts();
     let existingIndex = products.findIndex(p => p.id === product.id);
+    if (existingIndex < 0 && product.id) {
+      existingIndex = products.findIndex(p => p.sku === product.id || (p as any).product_id === product.id || (p as any).docId === product.id);
+    }
     if (existingIndex < 0 && product.sku) {
-      existingIndex = products.findIndex(p => p.sku === product.sku);
+      existingIndex = products.findIndex(p => p.sku === product.sku || p.id === product.sku || (p as any).product_id === product.sku || (p as any).docId === product.sku);
+    }
+    if (existingIndex < 0 && (product as any).product_id) {
+      existingIndex = products.findIndex(p => p.id === (product as any).product_id || p.sku === (product as any).product_id || (p as any).product_id === (product as any).product_id);
     }
     const prev = existingIndex >= 0 ? products[existingIndex] : null;
     const effectiveId = prev ? prev.id : (product.id || `prod-${Date.now()}`);
@@ -5693,6 +6067,48 @@ export class AppDatabase {
     this.unmarkEntityDeleted('products', savedProd.id);
     this.unmarkEntityDeleted('Product', savedProd.id);
     this.syncFirestoreDoc('products', savedProd.id, savedProd);
+
+    // Sync dual Japan Rail Commercial Products collection if Rail product
+    const isRail = savedProd.id === 'RAIL-JP-ORD-RESERVED' ||
+                   savedProd.id === 'RAIL-JP-GREEN-RESERVED' ||
+                   savedProd.category === 'Rail' ||
+                   savedProd.category === 'Rail / Shinkansen';
+    if (isRail) {
+      const railCode = (savedProd.id === 'RAIL-JP-GREEN-RESERVED' || (savedProd.sku && savedProd.sku.includes('GRN')))
+        ? 'GREEN_RESERVED'
+        : 'ORDINARY_RESERVED';
+      const railCommercialDoc: Partial<JapanRailCommercialProduct> = {
+        id: savedProd.id,
+        productCode: railCode,
+        productName: savedProd.name,
+        category: 'RAIL',
+        destinationId: savedProd.destinationId || 'dest-japan',
+        destinationName: savedProd.destinationName || 'Japan',
+        productType: railCode,
+        imageUrl: savedProd.imageUrl || savedProd.heroImage || '',
+        images: savedProd.images,
+        nativeCurrency: savedProd.nativeCurrency || savedProd.currency || 'JPY',
+        status: savedProd.status,
+        updatedAt: new Date().toISOString(),
+        updatedBy: user?.name || user?.email || 'Admin',
+        schemaVersion: 1
+      };
+      (railCommercialDoc as any).heroImage = savedProd.heroImage || savedProd.imageUrl || '';
+      this.syncFirestoreDoc('japan_rail_commercial_products', savedProd.id, railCommercialDoc);
+
+      const railList = this.getJapanRailCommercialProducts();
+      const rIdx = railList.findIndex(p => p.id === savedProd.id || p.productCode === railCode);
+      if (rIdx >= 0) {
+        railList[rIdx] = { ...railList[rIdx], ...railCommercialDoc } as JapanRailCommercialProduct;
+      } else {
+        railList.push(railCommercialDoc as JapanRailCommercialProduct);
+      }
+      this.setItem('japan_rail_commercial_products', railList, false);
+      if (savedProd.imageUrl || savedProd.heroImage) {
+        canonicalImageService.syncImage('RAIL', savedProd.id, savedProd.imageUrl || savedProd.heroImage || '', 'PRIMARY', savedProd.name);
+      }
+    }
+
     if (primaryImageDto && primaryImageDto.imageId && primaryImageDto.url) {
       this.syncFirestoreDoc('image_metadata', primaryImageDto.imageId, {
         imageId: primaryImageDto.imageId,
@@ -5744,8 +6160,10 @@ export class AppDatabase {
     }
     const persistedRaw = snap.data() as Product;
     const persistedImages = canonicalImageService.extractPersistedProductImages(persistedRaw);
-    const expectedPrimary = savedProd.heroImage || null;
-    const actualPrimary = persistedImages[0] || null;
+    const expectedPrimaryCheck = canonicalImageService.validateImage(savedProd.heroImage);
+    const actualPrimaryCheck = canonicalImageService.validateImage(persistedImages[0]);
+    const expectedPrimary = expectedPrimaryCheck.isValid ? expectedPrimaryCheck.cleanUrl : (savedProd.heroImage || null);
+    const actualPrimary = actualPrimaryCheck.isValid ? actualPrimaryCheck.cleanUrl : (persistedImages[0] || null);
 
     if (expectedPrimary !== actualPrimary) {
       throw new Error(
@@ -5764,9 +6182,71 @@ export class AppDatabase {
       primaryImage: actualPrimary ? savedProd.primaryImage : null
     };
 
+    // Synchronize dual Japan Rail Commercial Products collection if Rail product
+    const isRail = savedProd.id === 'RAIL-JP-ORD-RESERVED' ||
+                   savedProd.id === 'RAIL-JP-GREEN-RESERVED' ||
+                   savedProd.category === 'Rail' ||
+                   savedProd.category === 'Rail / Shinkansen';
+    if (isRail) {
+      const railCode = (savedProd.id === 'RAIL-JP-GREEN-RESERVED' || (savedProd.sku && savedProd.sku.includes('GRN')))
+        ? 'GREEN_RESERVED'
+        : 'ORDINARY_RESERVED';
+      const railDocRef = doc(firestoreDb, 'japan_rail_commercial_products', savedProd.id);
+      const existingRailSnap = await getDoc(railDocRef);
+      const existingRailData = existingRailSnap.exists() ? existingRailSnap.data() : {};
+
+      const railCommercialDoc = {
+        ...existingRailData,
+        id: savedProd.id,
+        productCode: railCode,
+        productName: savedProd.name,
+        category: 'RAIL',
+        destinationId: savedProd.destinationId || 'dest-japan',
+        destinationName: savedProd.destinationName || 'Japan',
+        productType: railCode,
+        imageUrl: actualPrimary || '',
+        heroImage: actualPrimary || '',
+        images: persistedImages,
+        nativeCurrency: savedProd.nativeCurrency || savedProd.currency || 'JPY',
+        status: savedProd.status,
+        updatedAt: new Date().toISOString(),
+        updatedBy: user?.name || user?.email || effectiveUid || 'Admin',
+        updatedByRole: 'ADMIN',
+        updatedByEmail: effectiveEmail,
+        isDeleted: false,
+        schemaVersion: 1
+      };
+
+      await setDoc(railDocRef, cleanForFirestore(railCommercialDoc), { merge: true });
+
+      // Verify read-back from japan_rail_commercial_products
+      const railReadSnap = await getDoc(railDocRef);
+      if (!railReadSnap.exists()) {
+        throw new Error(`Firestore read-back verification failed: Document japan_rail_commercial_products/${savedProd.id} not found.`);
+      }
+      const readBackRailData = railReadSnap.data();
+      const readBackRailImg = readBackRailData.imageUrl || (Array.isArray(readBackRailData.images) ? readBackRailData.images[0] : '');
+      if (expectedPrimary && readBackRailImg !== expectedPrimary) {
+        throw new Error(`Firestore read-back image mismatch for japan_rail_commercial_products/${savedProd.id}: expected "${expectedPrimary}", read back "${readBackRailImg}".`);
+      }
+
+      // Update local storage for japan_rail_commercial_products
+      const railList = this.getJapanRailCommercialProducts();
+      const rIdx = railList.findIndex(p => p.id === savedProd.id || p.productCode === railCode);
+      if (rIdx >= 0) {
+        railList[rIdx] = { ...railList[rIdx], ...railCommercialDoc } as JapanRailCommercialProduct;
+      } else {
+        railList.push(railCommercialDoc as unknown as JapanRailCommercialProduct);
+      }
+      this.setItem('japan_rail_commercial_products', railList, false);
+      if (actualPrimary) {
+        canonicalImageService.syncImage('RAIL', savedProd.id, actualPrimary, 'PRIMARY', savedProd.name);
+      }
+    }
+
     // 3. Sync image_metadata non-blockingly
     if (primaryImageDto && primaryImageDto.imageId && primaryImageDto.url) {
-      this.syncFirestoreDoc('image_metadata', primaryImageDto.imageId, {
+      const metaPayload = {
         imageId: primaryImageDto.imageId,
         entityType: 'PRODUCT',
         entityId: verifiedProd.id,
@@ -5776,8 +6256,16 @@ export class AppDatabase {
         altText: primaryImageDto.altText || verifiedProd.name,
         status: 'SYNCED',
         version: primaryImageDto.version,
-        updatedAt: new Date().toISOString()
-      });
+        updatedAt: new Date().toISOString(),
+        updatedByRole: 'ADMIN',
+        updatedByEmail: effectiveEmail,
+        updatedBy: effectiveUid
+      };
+      this.syncFirestoreDoc('image_metadata', primaryImageDto.imageId, metaPayload);
+      if (verifiedProd.sku && verifiedProd.sku !== verifiedProd.id) {
+        const skuImageId = canonicalImageService.computeImageId('PRODUCT', verifiedProd.sku, 'PRIMARY');
+        this.syncFirestoreDoc('image_metadata', skuImageId, { ...metaPayload, imageId: skuImageId, entityId: verifiedProd.sku });
+      }
     }
 
     // 4. Update local application state and notify listeners
@@ -6931,13 +7419,13 @@ export class AppDatabase {
       return agentQuotes.map(q => sanitizeQuoteForAgent(q));
     }
 
-    // 3. Buyers / Registered Users see quotes created for their account or email (STRICTLY SANITIZED)
+    // 3. Buyers / Registered Users see quotes created for their account or email (STRICTLY SANITIZED - FINAL TOTAL ONLY)
     const userEmail = user.email ? user.email.toLowerCase().trim() : '';
     const buyerQuotes = all.filter(q => 
       (q.clientUserId && q.clientUserId === user.id) ||
       (userEmail && q.clientEmail && q.clientEmail.toLowerCase().trim() === userEmail)
     );
-    return buyerQuotes.map(q => sanitizeQuoteForAgent(q));
+    return buyerQuotes.map(q => sanitizeQuoteDocumentForCustomer(q));
   }
 
   public getAllSavedQuotesForUser(user: User | null): Quotation[] {
@@ -6974,13 +7462,13 @@ export class AppDatabase {
       }
     }
 
-    // 3. Buyer / User (STRICT SANITIZATION)
+    // 3. Buyer / User (STRICT CUSTOMER SANITIZATION - FINAL TOTAL ONLY)
     const userEmail = user.email ? user.email.toLowerCase().trim() : '';
     if (
       (found.clientUserId && found.clientUserId === user.id) ||
       (userEmail && found.clientEmail && found.clientEmail.toLowerCase().trim() === userEmail)
     ) {
-      return sanitizeQuoteForAgent(found);
+      return sanitizeQuoteDocumentForCustomer(found);
     }
 
     // Access denied
@@ -17397,12 +17885,9 @@ export class AppDatabase {
   // VISA PRODUCTS & CHECKLIST MANAGEMENT
   // ==========================================
   public getVisas(): VisaProduct[] {
-    const list = this.getItem<VisaProduct[]>('visas', INITIAL_VISAS);
-    if (!list || list.length === 0) {
-      this.setItem('visas', INITIAL_VISAS);
-      return INITIAL_VISAS;
-    }
-    return list;
+    const raw = this.getItem<VisaProduct[]>('visas', envService.allowDemoData() ? INITIAL_VISAS : []);
+    const deletedSet = this.getDeletedEntityIds();
+    return raw.filter(v => v && v.id && !deletedSet.has(v.id) && !deletedSet.has(`Visa_${v.id}`) && !deletedSet.has(`visas_${v.id}`) && !(v as any).isDeleted && (v as any).status !== 'DELETED');
   }
 
   public getVisaById(id: string): VisaProduct | undefined {
@@ -17410,23 +17895,26 @@ export class AppDatabase {
   }
 
   public saveVisa(visa: VisaProduct, user?: User | null): void {
-    const visas = this.getVisas();
-    const index = visas.findIndex(v => v.id === visa.id);
-    const now = new Date().toISOString();
     const visaId = visa.id || `visa-${Date.now()}`;
+    this.unmarkEntityDeleted('visas', visaId);
+    this.unmarkEntityDeleted('Visa', visaId);
+    const visas = this.getVisas();
+    const index = visas.findIndex(v => v.id === visaId);
+    const now = new Date().toISOString();
     canonicalImageService.extractAllImagesFromRecord(visa, 'VISA', visaId);
     const visaPrimaryDto = canonicalImageService.getCanonicalImageDto({ ...visa, id: visaId }, 'VISA');
     let savedVisa: VisaProduct;
     if (index >= 0) {
       savedVisa = {
         ...visa,
+        id: visaId,
         imageUrl: visaPrimaryDto.url,
         primaryImageId: visaPrimaryDto.imageId,
         primaryImage: visaPrimaryDto as any,
         updatedAt: now
       };
       visas[index] = savedVisa;
-      this.logAudit(user || null, 'PRODUCT_UPDATED', 'VisaProduct', visa.id, `Updated visa product: ${visa.country} - ${visa.visaType}`);
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'VisaProduct', visaId, `Updated visa product: ${visa.country} - ${visa.visaType}`);
     } else {
       savedVisa = {
         ...visa,
@@ -17434,7 +17922,7 @@ export class AppDatabase {
         imageUrl: visaPrimaryDto.url,
         primaryImageId: visaPrimaryDto.imageId,
         primaryImage: visaPrimaryDto as any,
-        createdAt: now,
+        createdAt: (visa as any).createdAt || now,
         updatedAt: now
       };
       visas.unshift(savedVisa);
@@ -17446,23 +17934,26 @@ export class AppDatabase {
   }
 
   public async saveVisaAsync(visa: VisaProduct, user?: User | null): Promise<VisaProduct> {
-    const visas = this.getVisas();
-    const index = visas.findIndex(v => v.id === visa.id);
-    const now = new Date().toISOString();
     const visaId = visa.id || `visa-${Date.now()}`;
+    this.unmarkEntityDeleted('visas', visaId);
+    this.unmarkEntityDeleted('Visa', visaId);
+    const visas = this.getVisas();
+    const index = visas.findIndex(v => v.id === visaId);
+    const now = new Date().toISOString();
     canonicalImageService.extractAllImagesFromRecord(visa, 'VISA', visaId);
     const visaPrimaryDto = canonicalImageService.getCanonicalImageDto({ ...visa, id: visaId }, 'VISA');
     let savedVisa: VisaProduct;
     if (index >= 0) {
       savedVisa = {
         ...visa,
+        id: visaId,
         imageUrl: visaPrimaryDto.url,
         primaryImageId: visaPrimaryDto.imageId,
         primaryImage: visaPrimaryDto as any,
         updatedAt: now
       };
       visas[index] = savedVisa;
-      this.logAudit(user || null, 'PRODUCT_UPDATED', 'VisaProduct', visa.id, `Updated visa product: ${visa.country} - ${visa.visaType}`);
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'VisaProduct', visaId, `Updated visa product: ${visa.country} - ${visa.visaType}`);
     } else {
       savedVisa = {
         ...visa,
@@ -17470,7 +17961,7 @@ export class AppDatabase {
         imageUrl: visaPrimaryDto.url,
         primaryImageId: visaPrimaryDto.imageId,
         primaryImage: visaPrimaryDto as any,
-        createdAt: now,
+        createdAt: (visa as any).createdAt || now,
         updatedAt: now
       };
       visas.unshift(savedVisa);
@@ -17488,20 +17979,50 @@ export class AppDatabase {
     this.setItem('visas', visas.filter(v => v.id !== visaId));
     this.deleteFirestoreDoc('visas', visaId);
     if (target) {
-      this.logAudit(user || null, 'PRODUCT_ARCHIVED', 'VisaProduct', visaId, `Deleted visa product: ${target.country} - ${target.visaType}`);
+      this.logAudit(user || null, 'VISA_DELETED', 'VisaProduct', visaId, `Deleted visa product: ${target.country} - ${target.visaType}`);
     }
+  }
+
+  public async deleteVisaAsync(visaId: string, user?: User | null): Promise<{ success: boolean; error?: string }> {
+    const effectiveUser = user || this.getCurrentUser();
+    if (effectiveUser) {
+      const auth = this.canUserDelete(effectiveUser, 'Visa', visaId);
+      if (!auth.allowed) {
+        return { success: false, error: `Unauthorized delete attempt: ${auth.reason}` };
+      }
+    }
+
+    const visas = this.getVisas();
+    const target = visas.find(v => v.id === visaId);
+    if (!target) {
+      return { success: false, error: 'Visa product not found.' };
+    }
+
+    this.setItem('visas', visas.filter(v => v.id !== visaId));
+
+    const deleted = await this.deleteFirestoreDocAsync('visas', visaId, {
+      country: target.country,
+      visaType: target.visaType
+    });
+
+    this.logAudit(
+      effectiveUser || null,
+      'VISA_DELETED',
+      'VisaProduct',
+      visaId,
+      `Deleted visa product: ${target.country} - ${target.visaType}`
+    );
+
+    return { success: deleted };
   }
 
   // ==========================================
   // TRAVEL PROTECTION & INTERNATIONAL MEDICAL
   // ==========================================
   public getTravelProtectionPlans(): TravelProtectionPlan[] {
-    const list = this.getItem<TravelProtectionPlan[]>('travel_protection_plans', INITIAL_TRAVEL_PROTECTION_PLANS);
-    if (!list || list.length === 0) {
-      this.setItem('travel_protection_plans', INITIAL_TRAVEL_PROTECTION_PLANS);
-      return INITIAL_TRAVEL_PROTECTION_PLANS;
-    }
-    return list;
+    const raw = this.getItem<TravelProtectionPlan[]>('travel_protection_plans', envService.allowDemoData() ? INITIAL_TRAVEL_PROTECTION_PLANS : []);
+    const deletedSet = this.getDeletedEntityIds();
+    return raw.filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`TravelProtectionPlan_${p.id}`) && !deletedSet.has(`travel_protection_plans_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED');
   }
 
   public getTravelProtectionPlanById(id: string): TravelProtectionPlan | undefined {
@@ -17509,16 +18030,19 @@ export class AppDatabase {
   }
 
   public saveTravelProtectionPlan(plan: TravelProtectionPlan, user?: User | null): void {
+    const planId = plan.id || `PROT-${Date.now()}`;
+    this.unmarkEntityDeleted('travel_protection_plans', planId);
+    this.unmarkEntityDeleted('TravelProtectionPlan', planId);
     const plans = this.getTravelProtectionPlans();
-    const index = plans.findIndex(p => p.id === plan.id);
+    const index = plans.findIndex(p => p.id === planId);
     const now = new Date().toISOString();
     let saved: TravelProtectionPlan;
     if (index >= 0) {
-      saved = { ...plan, updatedAt: now };
+      saved = { ...plan, id: planId, updatedAt: now };
       plans[index] = saved;
-      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', plan.id, `Updated travel protection: ${plan.serviceName}`);
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', planId, `Updated travel protection: ${plan.serviceName}`);
     } else {
-      saved = { ...plan, id: plan.id || `PROT-${Date.now()}`, updatedAt: now };
+      saved = { ...plan, id: planId, updatedAt: now };
       plans.unshift(saved);
       this.logAudit(user || null, 'PRODUCT_CREATED', 'Product', saved.id, `Created travel protection: ${plan.serviceName}`);
     }
@@ -17527,16 +18051,19 @@ export class AppDatabase {
   }
 
   public async saveTravelProtectionPlanAsync(plan: TravelProtectionPlan, user?: User | null): Promise<TravelProtectionPlan> {
+    const planId = plan.id || `PROT-${Date.now()}`;
+    this.unmarkEntityDeleted('travel_protection_plans', planId);
+    this.unmarkEntityDeleted('TravelProtectionPlan', planId);
     const plans = this.getTravelProtectionPlans();
-    const index = plans.findIndex(p => p.id === plan.id);
+    const index = plans.findIndex(p => p.id === planId);
     const now = new Date().toISOString();
     let saved: TravelProtectionPlan;
     if (index >= 0) {
-      saved = { ...plan, updatedAt: now };
+      saved = { ...plan, id: planId, updatedAt: now };
       plans[index] = saved;
-      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', plan.id, `Updated travel protection: ${plan.serviceName}`);
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', planId, `Updated travel protection: ${plan.serviceName}`);
     } else {
-      saved = { ...plan, id: plan.id || `PROT-${Date.now()}`, updatedAt: now };
+      saved = { ...plan, id: planId, updatedAt: now };
       plans.unshift(saved);
       this.logAudit(user || null, 'PRODUCT_CREATED', 'Product', saved.id, `Created travel protection: ${plan.serviceName}`);
     }
@@ -17551,20 +18078,50 @@ export class AppDatabase {
     this.setItem('travel_protection_plans', plans.filter(p => p.id !== id));
     this.deleteFirestoreDoc('travel_protection_plans', id);
     if (target) {
-      this.logAudit(user || null, 'PRODUCT_ARCHIVED', 'Product', id, `Deleted travel protection: ${target.serviceName}`);
+      this.logAudit(user || null, 'PRODUCT_DELETED', 'TravelProtectionPlan', id, `Deleted travel protection: ${target.serviceName}`);
     }
+  }
+
+  public async deleteTravelProtectionPlanAsync(id: string, user?: User | null): Promise<{ success: boolean; error?: string }> {
+    const effectiveUser = user || this.getCurrentUser();
+    if (effectiveUser) {
+      const auth = this.canUserDelete(effectiveUser, 'TravelProtectionPlan', id);
+      if (!auth.allowed) {
+        return { success: false, error: `Unauthorized delete attempt: ${auth.reason}` };
+      }
+    }
+
+    const plans = this.getTravelProtectionPlans();
+    const target = plans.find(p => p.id === id);
+    if (!target) {
+      return { success: false, error: 'Travel protection plan not found.' };
+    }
+
+    this.setItem('travel_protection_plans', plans.filter(p => p.id !== id));
+
+    const deleted = await this.deleteFirestoreDocAsync('travel_protection_plans', id, {
+      serviceName: target.serviceName,
+      provider: target.provider
+    });
+
+    this.logAudit(
+      effectiveUser || null,
+      'PRODUCT_DELETED',
+      'TravelProtectionPlan',
+      id,
+      `Deleted travel protection plan: ${target.serviceName}`
+    );
+
+    return { success: deleted };
   }
 
   // ==========================================
   // VIP GROUND SERVICES
   // ==========================================
   public getVipGroundServices(): VipGroundService[] {
-    const list = this.getItem<VipGroundService[]>('vip_ground_services', INITIAL_VIP_GROUND_SERVICES);
-    if (!list || list.length === 0) {
-      this.setItem('vip_ground_services', INITIAL_VIP_GROUND_SERVICES);
-      return INITIAL_VIP_GROUND_SERVICES;
-    }
-    return list;
+    const raw = this.getItem<VipGroundService[]>('vip_ground_services', envService.allowDemoData() ? INITIAL_VIP_GROUND_SERVICES : []);
+    const deletedSet = this.getDeletedEntityIds();
+    return raw.filter(s => s && s.id && !deletedSet.has(s.id) && !deletedSet.has(`VipGroundService_${s.id}`) && !deletedSet.has(`vip_ground_services_${s.id}`) && !(s as any).isDeleted && (s as any).status !== 'DELETED');
   }
 
   public getVipGroundServiceById(id: string): VipGroundService | undefined {
@@ -17572,16 +18129,19 @@ export class AppDatabase {
   }
 
   public saveVipGroundService(service: VipGroundService, user?: User | null): void {
+    const serviceId = service.id || `VIP-${Date.now()}`;
+    this.unmarkEntityDeleted('vip_ground_services', serviceId);
+    this.unmarkEntityDeleted('VipGroundService', serviceId);
     const services = this.getVipGroundServices();
-    const index = services.findIndex(s => s.id === service.id);
+    const index = services.findIndex(s => s.id === serviceId);
     const now = new Date().toISOString();
     let saved: VipGroundService;
     if (index >= 0) {
-      saved = { ...service, updatedAt: now };
+      saved = { ...service, id: serviceId, updatedAt: now };
       services[index] = saved;
-      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', service.id, `Updated VIP ground service: ${service.name}`);
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', serviceId, `Updated VIP ground service: ${service.name}`);
     } else {
-      saved = { ...service, id: service.id || `VIP-${Date.now()}`, updatedAt: now };
+      saved = { ...service, id: serviceId, updatedAt: now };
       services.unshift(saved);
       this.logAudit(user || null, 'PRODUCT_CREATED', 'Product', saved.id, `Created VIP ground service: ${service.name}`);
     }
@@ -17590,16 +18150,19 @@ export class AppDatabase {
   }
 
   public async saveVipGroundServiceAsync(service: VipGroundService, user?: User | null): Promise<VipGroundService> {
+    const serviceId = service.id || `VIP-${Date.now()}`;
+    this.unmarkEntityDeleted('vip_ground_services', serviceId);
+    this.unmarkEntityDeleted('VipGroundService', serviceId);
     const services = this.getVipGroundServices();
-    const index = services.findIndex(s => s.id === service.id);
+    const index = services.findIndex(s => s.id === serviceId);
     const now = new Date().toISOString();
     let saved: VipGroundService;
     if (index >= 0) {
-      saved = { ...service, updatedAt: now };
+      saved = { ...service, id: serviceId, updatedAt: now };
       services[index] = saved;
-      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', service.id, `Updated VIP ground service: ${service.name}`);
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', serviceId, `Updated VIP ground service: ${service.name}`);
     } else {
-      saved = { ...service, id: service.id || `VIP-${Date.now()}`, updatedAt: now };
+      saved = { ...service, id: serviceId, updatedAt: now };
       services.unshift(saved);
       this.logAudit(user || null, 'PRODUCT_CREATED', 'Product', saved.id, `Created VIP ground service: ${service.name}`);
     }
@@ -17614,20 +18177,50 @@ export class AppDatabase {
     this.setItem('vip_ground_services', services.filter(s => s.id !== id));
     this.deleteFirestoreDoc('vip_ground_services', id);
     if (target) {
-      this.logAudit(user || null, 'PRODUCT_ARCHIVED', 'Product', id, `Deleted VIP ground service: ${target.name}`);
+      this.logAudit(user || null, 'PRODUCT_DELETED', 'VipGroundService', id, `Deleted VIP ground service: ${target.name}`);
     }
+  }
+
+  public async deleteVipGroundServiceAsync(id: string, user?: User | null): Promise<{ success: boolean; error?: string }> {
+    const effectiveUser = user || this.getCurrentUser();
+    if (effectiveUser) {
+      const auth = this.canUserDelete(effectiveUser, 'VipGroundService', id);
+      if (!auth.allowed) {
+        return { success: false, error: `Unauthorized delete attempt: ${auth.reason}` };
+      }
+    }
+
+    const services = this.getVipGroundServices();
+    const target = services.find(s => s.id === id);
+    if (!target) {
+      return { success: false, error: 'VIP ground service not found.' };
+    }
+
+    this.setItem('vip_ground_services', services.filter(s => s.id !== id));
+
+    const deleted = await this.deleteFirestoreDocAsync('vip_ground_services', id, {
+      name: target.name,
+      supplierName: target.supplierName
+    });
+
+    this.logAudit(
+      effectiveUser || null,
+      'PRODUCT_DELETED',
+      'VipGroundService',
+      id,
+      `Deleted VIP ground service: ${target.name}`
+    );
+
+    return { success: deleted };
   }
 
   // ==========================================
   // 5G CONNECTIVITY & eSIM PACKAGES
   // ==========================================
   public getConnectivityPlans(): ConnectivityPlan[] {
-    const list = this.getItem<ConnectivityPlan[]>('connectivity_plans', INITIAL_CONNECTIVITY_PLANS);
-    if (!list || list.length === 0) {
-      this.setItem('connectivity_plans', INITIAL_CONNECTIVITY_PLANS);
-      return INITIAL_CONNECTIVITY_PLANS;
-    }
-    return list;
+    const raw = this.getItem<ConnectivityPlan[]>('connectivity_plans', envService.allowDemoData() ? INITIAL_CONNECTIVITY_PLANS : []);
+    const deletedSet = this.getDeletedEntityIds();
+    return raw.filter(c => c && c.id && !deletedSet.has(c.id) && !deletedSet.has(`ConnectivityPlan_${c.id}`) && !deletedSet.has(`connectivity_plans_${c.id}`) && !(c as any).isDeleted && (c as any).status !== 'DELETED');
   }
 
   public getConnectivityPlanById(id: string): ConnectivityPlan | undefined {
@@ -17635,16 +18228,19 @@ export class AppDatabase {
   }
 
   public saveConnectivityPlan(plan: ConnectivityPlan, user?: User | null): void {
+    const planId = plan.id || `ESIM-${Date.now()}`;
+    this.unmarkEntityDeleted('connectivity_plans', planId);
+    this.unmarkEntityDeleted('ConnectivityPlan', planId);
     const plans = this.getConnectivityPlans();
-    const index = plans.findIndex(c => c.id === plan.id);
+    const index = plans.findIndex(c => c.id === planId);
     const now = new Date().toISOString();
     let saved: ConnectivityPlan;
     if (index >= 0) {
-      saved = { ...plan, updatedAt: now };
+      saved = { ...plan, id: planId, updatedAt: now };
       plans[index] = saved;
-      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', plan.id, `Updated 5G connectivity: ${plan.name}`);
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', planId, `Updated 5G connectivity: ${plan.name}`);
     } else {
-      saved = { ...plan, id: plan.id || `ESIM-${Date.now()}`, updatedAt: now };
+      saved = { ...plan, id: planId, updatedAt: now };
       plans.unshift(saved);
       this.logAudit(user || null, 'PRODUCT_CREATED', 'Product', saved.id, `Created 5G connectivity: ${plan.name}`);
     }
@@ -17653,16 +18249,19 @@ export class AppDatabase {
   }
 
   public async saveConnectivityPlanAsync(plan: ConnectivityPlan, user?: User | null): Promise<ConnectivityPlan> {
+    const planId = plan.id || `ESIM-${Date.now()}`;
+    this.unmarkEntityDeleted('connectivity_plans', planId);
+    this.unmarkEntityDeleted('ConnectivityPlan', planId);
     const plans = this.getConnectivityPlans();
-    const index = plans.findIndex(c => c.id === plan.id);
+    const index = plans.findIndex(c => c.id === planId);
     const now = new Date().toISOString();
     let saved: ConnectivityPlan;
     if (index >= 0) {
-      saved = { ...plan, updatedAt: now };
+      saved = { ...plan, id: planId, updatedAt: now };
       plans[index] = saved;
-      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', plan.id, `Updated 5G connectivity: ${plan.name}`);
+      this.logAudit(user || null, 'PRODUCT_UPDATED', 'Product', planId, `Updated 5G connectivity: ${plan.name}`);
     } else {
-      saved = { ...plan, id: plan.id || `ESIM-${Date.now()}`, updatedAt: now };
+      saved = { ...plan, id: planId, updatedAt: now };
       plans.unshift(saved);
       this.logAudit(user || null, 'PRODUCT_CREATED', 'Product', saved.id, `Created 5G connectivity: ${plan.name}`);
     }
@@ -17677,8 +18276,41 @@ export class AppDatabase {
     this.setItem('connectivity_plans', plans.filter(c => c.id !== id));
     this.deleteFirestoreDoc('connectivity_plans', id);
     if (target) {
-      this.logAudit(user || null, 'PRODUCT_ARCHIVED', 'Product', id, `Deleted 5G connectivity: ${target.name}`);
+      this.logAudit(user || null, 'PRODUCT_DELETED', 'ConnectivityPlan', id, `Deleted 5G connectivity: ${target.name}`);
     }
+  }
+
+  public async deleteConnectivityPlanAsync(id: string, user?: User | null): Promise<{ success: boolean; error?: string }> {
+    const effectiveUser = user || this.getCurrentUser();
+    if (effectiveUser) {
+      const auth = this.canUserDelete(effectiveUser, 'ConnectivityPlan', id);
+      if (!auth.allowed) {
+        return { success: false, error: `Unauthorized delete attempt: ${auth.reason}` };
+      }
+    }
+
+    const plans = this.getConnectivityPlans();
+    const target = plans.find(c => c.id === id);
+    if (!target) {
+      return { success: false, error: '5G connectivity plan not found.' };
+    }
+
+    this.setItem('connectivity_plans', plans.filter(c => c.id !== id));
+
+    const deleted = await this.deleteFirestoreDocAsync('connectivity_plans', id, {
+      name: target.name,
+      coverageZone: target.coverageZone
+    });
+
+    this.logAudit(
+      effectiveUser || null,
+      'PRODUCT_DELETED',
+      'ConnectivityPlan',
+      id,
+      `Deleted 5G connectivity plan: ${target.name}`
+    );
+
+    return { success: deleted };
   }
 
   // ==========================================

@@ -85,6 +85,8 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
     // Deep clone to avoid mutating parent before save
     const cloned: B2BPackage = JSON.parse(JSON.stringify(initialPackage));
     // Ensure nested structures are present
+    cloned.hubIds = Array.isArray(cloned.hubIds) ? cloned.hubIds : [];
+    cloned.hubNames = Array.isArray(cloned.hubNames) ? cloned.hubNames : [];
     cloned.highlights = cloned.highlights || [];
     cloned.inclusions = cloned.inclusions || [];
     cloned.exclusions = cloned.exclusions || [];
@@ -94,7 +96,7 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
     cloned.productIds = cloned.productIds || [];
     cloned.itinerary = cloned.itinerary || [];
     cloned.manualHotels = cloned.manualHotels || [];
-    cloned.routeHubs = cloned.routeHubs || [];
+    cloned.routeHubs = Array.isArray(cloned.routeHubs) ? cloned.routeHubs : [];
     cloned.isLandOnly = cloned.isLandOnly ?? false;
     cloned.currency = cloned.currency || 'USD';
     cloned.pricingConfiguration = cloned.pricingConfiguration || {
@@ -146,41 +148,70 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Available City Hubs for current package destination
+  // Available City Hubs for current package destination (authoritative DB records)
+  // Loading available hubs never automatically updates selectedHubIds or routeHubs
   const destinationHubs = useMemo(() => {
+    if (!pkg.destinationId) return [];
     return cityHubs.filter(h => 
-      h.destinationId === pkg.destinationId || 
-      (h.destinationName && h.destinationName.toLowerCase() === (pkg.destinationName || '').toLowerCase())
+      (h.destinationId === pkg.destinationId || 
+      (h.destinationName && pkg.destinationName && h.destinationName.toLowerCase() === pkg.destinationName.toLowerCase())) &&
+      !(h as any).isDeleted && (h as any).status !== 'ARCHIVED'
     );
   }, [cityHubs, pkg.destinationId, pkg.destinationName]);
 
-  // Ensure routeHubs are synchronized if empty
-  useEffect(() => {
-    if (!pkg.routeHubs || pkg.routeHubs.length === 0) {
-      if (destinationHubs.length > 0) {
-        const initialHubs: TripRouteHub[] = destinationHubs.slice(0, 3).map((h, i) => ({
-          id: `route-hub-${i + 1}-${h.id}`,
-          hubId: h.id,
-          hubName: h.name,
-          destinationId: h.destinationId,
-          destinationName: h.destinationName,
-          nights: i === 0 ? 3 : 2,
-          order: i + 1,
-          accommodationType: pkg.isLandOnly ? 'NO_ACCOMMODATION' : 'none',
-          roomsCount: 1
-        }));
-        
-        const totalNights = initialHubs.reduce((sum, h) => sum + (h.nights || 0), 0);
-        setPkg(prev => ({
+  // Explicit Hub Selection Toggle Handler
+  const handleToggleHub = (hub: CityHub) => {
+    setPkg(prev => {
+      const currentSelectedIds = prev.hubIds || [];
+      const isSelected = currentSelectedIds.includes(hub.id);
+
+      if (isSelected) {
+        // Explicitly unselecting hub: remove from selected list and route
+        const nextHubIds = currentSelectedIds.filter(id => id !== hub.id);
+        const nextHubNames = (prev.hubNames || []).filter(name => name !== hub.name);
+        const nextRouteHubs = (prev.routeHubs || []).filter(rh => rh.hubId !== hub.id);
+        const totalNights = nextRouteHubs.reduce((sum, h) => sum + (h.nights || 0), 0);
+        return {
           ...prev,
-          routeHubs: initialHubs,
+          hubIds: nextHubIds,
+          hubNames: nextHubNames,
+          routeHubs: nextRouteHubs,
           durationNights: totalNights,
-          durationDays: totalNights + 1,
-          routeSummary: initialHubs.map(h => `${h.hubName} (${h.nights}N)`)
-        }));
+          durationDays: Math.max(1, totalNights + 1),
+          routeSummary: nextRouteHubs.map(h => `${h.hubName} (${h.nights}N)`)
+        };
+      } else {
+        // Explicitly selecting hub: add to selected list and route
+        const nextHubIds = Array.from(new Set([...currentSelectedIds, hub.id]));
+        const nextHubNames = Array.from(new Set([...(prev.hubNames || []), hub.name]));
+        let nextRouteHubs = [...(prev.routeHubs || [])];
+        if (!nextRouteHubs.some(rh => rh.hubId === hub.id)) {
+          const newOrder = nextRouteHubs.length + 1;
+          nextRouteHubs.push({
+            id: `route-hub-${Date.now()}-${hub.id}`,
+            hubId: hub.id,
+            hubName: hub.name,
+            destinationId: hub.destinationId || prev.destinationId,
+            destinationName: hub.destinationName || prev.destinationName,
+            nights: 2,
+            order: newOrder,
+            accommodationType: prev.isLandOnly ? 'NO_ACCOMMODATION' : 'none',
+            roomsCount: 1
+          });
+        }
+        const totalNights = nextRouteHubs.reduce((sum, h) => sum + (h.nights || 0), 0);
+        return {
+          ...prev,
+          hubIds: nextHubIds,
+          hubNames: nextHubNames,
+          routeHubs: nextRouteHubs,
+          durationNights: totalNights,
+          durationDays: Math.max(1, totalNights + 1),
+          routeSummary: nextRouteHubs.map(h => `${h.hubName} (${h.nights}N)`)
+        };
       }
-    }
-  }, [destinationHubs, pkg.routeHubs, pkg.isLandOnly]);
+    });
+  };
 
   // Handle Land-Only Mode Toggle
   const handleToggleLandOnly = (enabled: boolean) => {
@@ -485,8 +516,18 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
     const durationNights = Math.max(0, durationDays - 1);
     const slug = pkg.slug?.trim() || pkg.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
+    // Persist only explicitly selected hub IDs using existing schema
+    const validDestinationHubIds = new Set(destinationHubs.map(h => h.id));
+    const cleanHubIds = Array.from(new Set(pkg.hubIds || [])).filter(id => validDestinationHubIds.has(id));
+    const cleanHubNames = destinationHubs.filter(h => cleanHubIds.includes(h.id)).map(h => h.name);
+    const cleanRouteHubs = (pkg.routeHubs || []).filter(h => h.hubId && cleanHubIds.includes(h.hubId));
+
     const finalPkg: B2BPackage = {
       ...pkg,
+      hubIds: cleanHubIds,
+      hubNames: cleanHubNames,
+      routeHubs: cleanRouteHubs,
+      routeSummary: cleanRouteHubs.map(h => `${h.hubName} (${h.nights || 1}N)`),
       slug,
       durationDays,
       durationNights,
@@ -670,18 +711,32 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
                   <select
                     value={pkg.destinationId}
                     onChange={(e) => {
-                      const dest = destinations.find(d => d.id === e.target.value);
+                      const newDestId = e.target.value;
+                      const dest = destinations.find(d => d.id === newDestId);
                       if (dest) {
-                        const newHubs = cityHubs.filter(h => h.destinationId === dest.id);
-                        setPkg({
-                          ...pkg,
+                        setPkg(prev => ({
+                          ...prev,
                           destinationId: dest.id,
                           destinationName: dest.name,
                           regionId: dest.region,
                           regionName: dest.region,
-                          hubIds: newHubs.map(h => h.id),
-                          hubNames: newHubs.map(h => h.name)
-                        });
+                          // Per requirement: Clear incompatible hub selections and require explicit selection!
+                          // No hub is selected by default!
+                          hubIds: [],
+                          hubNames: [],
+                          routeHubs: [],
+                          routeSummary: []
+                        }));
+                      } else {
+                        setPkg(prev => ({
+                          ...prev,
+                          destinationId: '',
+                          destinationName: '',
+                          hubIds: [],
+                          hubNames: [],
+                          routeHubs: [],
+                          routeSummary: []
+                        }));
                       }
                     }}
                     className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-xs text-slate-800 outline-none cursor-pointer"
@@ -787,26 +842,91 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
                 </div>
               </div>
 
+              {/* AVAILABLE HUBS SELECTOR */}
+              <div className="pt-4 border-t border-slate-100 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center space-x-1.5">
+                      <MapPin className="w-3.5 h-3.5 text-[#008972]" />
+                      <span>Available Hubs</span>
+                      {pkg.destinationName && (
+                        <span className="text-[11px] font-semibold text-slate-500 normal-case">
+                          — Destination: <strong className="text-slate-800">{pkg.destinationName}</strong>
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Explicitly select city hubs to include in this package. No hub is selected by default.
+                    </p>
+                  </div>
+                  {pkg.destinationId && destinationHubs.length > 0 && (
+                    <span className="self-start sm:self-auto text-[11px] font-bold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-xl">
+                      {(pkg.hubIds || []).length} of {destinationHubs.length} Selected
+                    </span>
+                  )}
+                </div>
+
+                {!pkg.destinationId ? (
+                  <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-xs text-slate-500 italic flex items-center space-x-2">
+                    <Info className="w-4 h-4 text-slate-400 shrink-0" />
+                    <span>Select a destination to view its available hubs.</span>
+                  </div>
+                ) : destinationHubs.length === 0 ? (
+                  <div className="p-4 bg-amber-50 border border-dashed border-amber-200 rounded-2xl text-xs text-amber-800 flex items-center space-x-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>No hubs are configured for this destination.</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 p-3.5 bg-slate-50/80 border border-slate-200 rounded-2xl">
+                    {destinationHubs.map(hub => {
+                      const isChecked = (pkg.hubIds || []).includes(hub.id);
+                      return (
+                        <label
+                          key={hub.id}
+                          className={`flex items-center space-x-2.5 p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all select-none ${
+                            isChecked
+                              ? 'bg-emerald-50 border-emerald-300 text-emerald-950 shadow-xs'
+                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => handleToggleHub(hub)}
+                            className="w-4 h-4 rounded text-[#008972] focus:ring-[#008972] border-slate-300 cursor-pointer accent-[#008972]"
+                          />
+                          <span className="truncate">{hub.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* ROUTE SUMMARY & HUBS */}
               <div className="pt-4 border-t border-slate-100 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">Multi-City Circuit Route</h3>
-                    <p className="text-[11px] text-slate-500">Order of cities / hubs included in this circuit.</p>
+                    <p className="text-[11px] text-slate-500">Order and nights breakdown of selected cities in this circuit.</p>
                   </div>
 
                   <button
                     type="button"
+                    disabled={!pkg.destinationId || destinationHubs.length === 0}
                     onClick={() => {
-                      const availableHub = destinationHubs.find(h => !(pkg.routeHubs || []).some(rh => rh.hubId === h.id)) || destinationHubs[0];
+                      const availableHub = destinationHubs.find(h => !(pkg.routeHubs || []).some(rh => rh.hubId === h.id));
                       if (availableHub) {
+                        handleToggleHub(availableHub);
+                      } else if (destinationHubs.length > 0) {
+                        const repeatHub = destinationHubs[0];
                         const newOrder = (pkg.routeHubs || []).length + 1;
                         const newHub: TripRouteHub = {
                           id: `route-hub-${Date.now()}`,
-                          hubId: availableHub.id,
-                          hubName: availableHub.name,
-                          destinationId: availableHub.destinationId,
-                          destinationName: availableHub.destinationName,
+                          hubId: repeatHub.id,
+                          hubName: repeatHub.name,
+                          destinationId: repeatHub.destinationId || pkg.destinationId,
+                          destinationName: repeatHub.destinationName || pkg.destinationName,
                           nights: 2,
                           order: newOrder,
                           accommodationType: pkg.isLandOnly ? 'NO_ACCOMMODATION' : 'none',
@@ -814,96 +934,117 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
                         };
                         const updatedHubs = [...(pkg.routeHubs || []), newHub];
                         const totalNights = updatedHubs.reduce((sum, h) => sum + (h.nights || 0), 0);
-                        setPkg({
-                          ...pkg,
+                        const nextHubIds = Array.from(new Set([...(pkg.hubIds || []), repeatHub.id]));
+                        const nextHubNames = Array.from(new Set([...(pkg.hubNames || []), repeatHub.name]));
+                        setPkg(prev => ({
+                          ...prev,
+                          hubIds: nextHubIds,
+                          hubNames: nextHubNames,
                           routeHubs: updatedHubs,
                           durationNights: totalNights,
                           durationDays: totalNights + 1,
                           routeSummary: updatedHubs.map(h => `${h.hubName} (${h.nights}N)`)
-                        });
+                        }));
                       }
                     }}
-                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold flex items-center space-x-1 cursor-pointer"
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-800 rounded-xl text-xs font-bold flex items-center space-x-1 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     <span>Add City Hub</span>
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                  {(pkg.routeHubs || []).map((hub, hubIdx) => (
-                    <div key={hub.id || hubIdx} className="p-3 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between">
-                      <div className="flex items-center space-x-2.5">
-                        <span className="w-6 h-6 rounded-lg bg-slate-200 text-slate-700 flex items-center justify-center font-black text-xs">
-                          {hubIdx + 1}
-                        </span>
-                        <div>
-                          <span className="font-bold text-xs text-slate-800 block">{hub.hubName}</span>
-                          <span className="text-[11px] text-slate-500 font-semibold">{hub.nights} Nights</span>
+                {(pkg.routeHubs || []).length === 0 ? (
+                  <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-xs text-slate-500 italic flex items-center space-x-2">
+                    <Info className="w-4 h-4 text-slate-400 shrink-0" />
+                    <span>No hubs currently added to circuit route. Check available hubs above to add them to this package.</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {(pkg.routeHubs || []).map((hub, hubIdx) => (
+                      <div key={hub.id || hubIdx} className="p-3 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between">
+                        <div className="flex items-center space-x-2.5">
+                          <span className="w-6 h-6 rounded-lg bg-slate-200 text-slate-700 flex items-center justify-center font-black text-xs">
+                            {hubIdx + 1}
+                          </span>
+                          <div>
+                            <span className="font-bold text-xs text-slate-800 block">{hub.hubName}</span>
+                            <span className="text-[11px] text-slate-500 font-semibold">{hub.nights} Nights</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newNights = Math.max(1, (hub.nights || 1) + 1);
+                              const updatedHubs = (pkg.routeHubs || []).map((h, i) => i === hubIdx ? { ...h, nights: newNights } : h);
+                              const totalNights = updatedHubs.reduce((sum, h) => sum + (h.nights || 0), 0);
+                              setPkg(prev => ({
+                                ...prev,
+                                routeHubs: updatedHubs,
+                                durationNights: totalNights,
+                                durationDays: totalNights + 1,
+                                routeSummary: updatedHubs.map(h => `${h.hubName} (${h.nights}N)`)
+                              }));
+                            }}
+                            className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[11px] font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
+                            title="Increase nights"
+                          >
+                            +
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newNights = Math.max(1, (hub.nights || 1) - 1);
+                              const updatedHubs = (pkg.routeHubs || []).map((h, i) => i === hubIdx ? { ...h, nights: newNights } : h);
+                              const totalNights = updatedHubs.reduce((sum, h) => sum + (h.nights || 0), 0);
+                              setPkg(prev => ({
+                                ...prev,
+                                routeHubs: updatedHubs,
+                                durationNights: totalNights,
+                                durationDays: totalNights + 1,
+                                routeSummary: updatedHubs.map(h => `${h.hubName} (${h.nights}N)`)
+                              }));
+                            }}
+                            className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[11px] font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
+                            title="Decrease nights"
+                          >
+                            -
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const hubToRemove = pkg.routeHubs?.[hubIdx];
+                              const updatedHubs = (pkg.routeHubs || []).filter((_, i) => i !== hubIdx);
+                              const totalNights = updatedHubs.reduce((sum, h) => sum + (h.nights || 0), 0);
+                              const stillPresent = updatedHubs.some(h => h.hubId === hubToRemove?.hubId);
+                              const nextHubIds = stillPresent 
+                                ? (pkg.hubIds || []) 
+                                : (pkg.hubIds || []).filter(id => id !== hubToRemove?.hubId);
+                              const nextHubNames = stillPresent
+                                ? (pkg.hubNames || [])
+                                : (pkg.hubNames || []).filter(name => name !== hubToRemove?.hubName);
+                              setPkg(prev => ({
+                                ...prev,
+                                hubIds: nextHubIds,
+                                hubNames: nextHubNames,
+                                routeHubs: updatedHubs,
+                                durationNights: totalNights,
+                                durationDays: Math.max(1, totalNights + 1),
+                                routeSummary: updatedHubs.map(h => `${h.hubName} (${h.nights}N)`)
+                              }));
+                            }}
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded cursor-pointer"
+                            title="Remove city hub"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
-
-                      <div className="flex items-center space-x-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const newNights = Math.max(1, (hub.nights || 1) + 1);
-                            const updatedHubs = (pkg.routeHubs || []).map((h, i) => i === hubIdx ? { ...h, nights: newNights } : h);
-                            const totalNights = updatedHubs.reduce((sum, h) => sum + (h.nights || 0), 0);
-                            setPkg({
-                              ...pkg,
-                              routeHubs: updatedHubs,
-                              durationNights: totalNights,
-                              durationDays: totalNights + 1,
-                              routeSummary: updatedHubs.map(h => `${h.hubName} (${h.nights}N)`)
-                            });
-                          }}
-                          className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[11px] font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
-                          title="Increase nights"
-                        >
-                          +
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const newNights = Math.max(1, (hub.nights || 1) - 1);
-                            const updatedHubs = (pkg.routeHubs || []).map((h, i) => i === hubIdx ? { ...h, nights: newNights } : h);
-                            const totalNights = updatedHubs.reduce((sum, h) => sum + (h.nights || 0), 0);
-                            setPkg({
-                              ...pkg,
-                              routeHubs: updatedHubs,
-                              durationNights: totalNights,
-                              durationDays: totalNights + 1,
-                              routeSummary: updatedHubs.map(h => `${h.hubName} (${h.nights}N)`)
-                            });
-                          }}
-                          className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[11px] font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
-                          title="Decrease nights"
-                        >
-                          -
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const updatedHubs = (pkg.routeHubs || []).filter((_, i) => i !== hubIdx);
-                            const totalNights = updatedHubs.reduce((sum, h) => sum + (h.nights || 0), 0);
-                            setPkg({
-                              ...pkg,
-                              routeHubs: updatedHubs,
-                              durationNights: totalNights,
-                              durationDays: Math.max(1, totalNights + 1),
-                              routeSummary: updatedHubs.map(h => `${h.hubName} (${h.nights}N)`)
-                            });
-                          }}
-                          className="p-1 text-slate-400 hover:text-rose-600 rounded cursor-pointer"
-                          title="Remove city hub"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1959,7 +2100,7 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
                 <div className="space-y-2">
                   {[
                     { label: 'Package Title and URL slug configured', passed: !!pkg.title.trim() && !!pkg.slug },
-                    { label: 'Destination assigned with regional hubs', passed: !!pkg.destinationId && (pkg.routeHubs || []).length > 0 },
+                    { label: 'Destination assigned', passed: !!pkg.destinationId },
                     { label: 'Day-Wise Itinerary created', passed: (pkg.itinerary || []).length > 0 },
                     { 
                       label: pkg.isLandOnly ? 'Land-Only Mode enabled (No accommodation charges)' : 'Accommodations configured for all stays', 

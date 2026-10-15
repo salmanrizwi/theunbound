@@ -272,9 +272,9 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
                 <span className="truncate">{quote.travelStartDate || 'Flexible'}</span>
               </div>
               <div className="sm:text-right">
-                <span className="text-[10px] text-slate-400 block font-medium">Selling Price:</span>
+                <span className="text-[10px] text-slate-400 block font-medium">TOTAL PACKAGE INVESTMENT:</span>
                 <span className="text-sm font-extrabold font-mono text-emerald-700">
-                  {formatCurrency(finalSellingPrice, quote.currency || 'USD')}
+                  {formatCurrency(finalSellingPrice, quote.currency || 'USD')} {quote.currency || 'USD'}
                 </span>
               </div>
             </div>
@@ -495,12 +495,12 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
               {copied ? (
                 <>
                   <Check className="w-3.5 h-3.5 text-emerald-600" />
-                  <span className="text-emerald-700 font-extrabold">Copied!</span>
+                  <span className="text-emerald-700 font-extrabold">Copied for WhatsApp!</span>
                 </>
               ) : (
                 <>
                   <Copy className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Copy Message</span>
+                  <span>Copy WhatsApp Message</span>
                 </>
               )}
             </button>

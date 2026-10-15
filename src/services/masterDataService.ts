@@ -1,5 +1,8 @@
 import { MasterRegion, Destination, CityHub, Product, CurrencyCode } from '../types';
 import { AppDatabase } from './db';
+import { INITIAL_MASTER_REGIONS } from '../data/initialRegions';
+import { DESTINATIONS } from '../data/destinations';
+import { INITIAL_CITY_HUBS } from '../data/initialCityHubs';
 
 export interface HierarchyValidationResult {
   valid: boolean;
@@ -95,6 +98,29 @@ export const CANONICAL_LEGACY_MAPPINGS: Record<string, LegacyMasterMapping> = {
   'hub-hiroshima': { legacyIdOrCode: 'hub-hiroshima', canonicalId: 'HUB-HIRO', type: 'HUB', description: 'Legacy hub-hiroshima to Canonical HUB-HIRO' },
   'hiroshima': { legacyIdOrCode: 'hiroshima', canonicalId: 'HUB-HIRO', type: 'HUB', description: 'City name to Canonical HUB-HIRO' },
   'hub-hiro': { legacyIdOrCode: 'hub-hiro', canonicalId: 'HUB-HIRO', type: 'HUB', description: 'Lowercase HUB-HIRO' },
+  'hub-nagoya-chubu': { legacyIdOrCode: 'hub-nagoya-chubu', canonicalId: 'HUB-NGO', type: 'HUB', description: 'Nagoya Chubu Hub' },
+  'hub-nagoya': { legacyIdOrCode: 'hub-nagoya', canonicalId: 'HUB-NGO', type: 'HUB', description: 'Nagoya Hub' },
+  'nagoya': { legacyIdOrCode: 'nagoya', canonicalId: 'HUB-NGO', type: 'HUB', description: 'Nagoya Hub' },
+  'hub-ngo': { legacyIdOrCode: 'hub-ngo', canonicalId: 'HUB-NGO', type: 'HUB', description: 'Lowercase HUB-NGO' },
+  'hub-sapporo': { legacyIdOrCode: 'hub-sapporo', canonicalId: 'HUB-SPK', type: 'HUB', description: 'Sapporo Hub' },
+  'sapporo': { legacyIdOrCode: 'sapporo', canonicalId: 'HUB-SPK', type: 'HUB', description: 'Sapporo Hub' },
+  'hub-spk': { legacyIdOrCode: 'hub-spk', canonicalId: 'HUB-SPK', type: 'HUB', description: 'Lowercase HUB-SPK' },
+  'hub-fukuoka-kyushu': { legacyIdOrCode: 'hub-fukuoka-kyushu', canonicalId: 'HUB-FUK', type: 'HUB', description: 'Fukuoka Hub' },
+  'hub-fukuoka': { legacyIdOrCode: 'hub-fukuoka', canonicalId: 'HUB-FUK', type: 'HUB', description: 'Fukuoka Hub' },
+  'fukuoka': { legacyIdOrCode: 'fukuoka', canonicalId: 'HUB-FUK', type: 'HUB', description: 'Fukuoka Hub' },
+  'hub-fuk': { legacyIdOrCode: 'hub-fuk', canonicalId: 'HUB-FUK', type: 'HUB', description: 'Lowercase HUB-FUK' },
+  'hub-sendai': { legacyIdOrCode: 'hub-sendai', canonicalId: 'HUB-SDJ', type: 'HUB', description: 'Sendai Hub' },
+  'sendai': { legacyIdOrCode: 'sendai', canonicalId: 'HUB-SDJ', type: 'HUB', description: 'Sendai Hub' },
+  'hub-sdj': { legacyIdOrCode: 'hub-sdj', canonicalId: 'HUB-SDJ', type: 'HUB', description: 'Lowercase HUB-SDJ' },
+  'hub-fukushima': { legacyIdOrCode: 'hub-fukushima', canonicalId: 'HUB-FKS', type: 'HUB', description: 'Fukushima Hub' },
+  'fukushima': { legacyIdOrCode: 'fukushima', canonicalId: 'HUB-FKS', type: 'HUB', description: 'Fukushima Hub' },
+  'hub-fks': { legacyIdOrCode: 'hub-fks', canonicalId: 'HUB-FKS', type: 'HUB', description: 'Lowercase HUB-FKS' },
+  'hub-kanazawa': { legacyIdOrCode: 'hub-kanazawa', canonicalId: 'HUB-KNZ', type: 'HUB', description: 'Kanazawa Hub' },
+  'kanazawa': { legacyIdOrCode: 'kanazawa', canonicalId: 'HUB-KNZ', type: 'HUB', description: 'Kanazawa Hub' },
+  'hub-knz': { legacyIdOrCode: 'hub-knz', canonicalId: 'HUB-KNZ', type: 'HUB', description: 'Lowercase HUB-KNZ' },
+  'hub-yokohama': { legacyIdOrCode: 'hub-yokohama', canonicalId: 'HUB-YOK', type: 'HUB', description: 'Yokohama Hub' },
+  'yokohama': { legacyIdOrCode: 'yokohama', canonicalId: 'HUB-YOK', type: 'HUB', description: 'Yokohama Hub' },
+  'hub-yok': { legacyIdOrCode: 'hub-yok', canonicalId: 'HUB-YOK', type: 'HUB', description: 'Lowercase HUB-YOK' },
   'hub-london': { legacyIdOrCode: 'hub-london', canonicalId: 'HUB-LON', type: 'HUB', description: 'Legacy hub-london to Canonical HUB-LON' },
   'london': { legacyIdOrCode: 'london', canonicalId: 'HUB-LON', type: 'HUB', description: 'City name to Canonical HUB-LON' },
   'hub-lon': { legacyIdOrCode: 'hub-lon', canonicalId: 'HUB-LON', type: 'HUB', description: 'Lowercase HUB-LON' },
@@ -198,7 +224,8 @@ export class MasterDataService {
   public getActiveRegions(): MasterRegion[] {
     const db = AppDatabase.getInstance();
     const raw = db.getMasterRegions();
-    return raw
+    const source = raw && raw.length > 0 ? raw : INITIAL_MASTER_REGIONS;
+    return source
       .filter(r => r && r.id && r.status !== 'INACTIVE' && (r as any).status !== 'DELETED')
       .map(toCanonicalRegion);
   }
@@ -243,7 +270,8 @@ export class MasterDataService {
   public getActiveDestinations(): Destination[] {
     const db = AppDatabase.getInstance();
     const raw = db.getDestinations();
-    return raw
+    const source = raw && raw.length > 0 ? raw : DESTINATIONS;
+    return source
       .filter(d => d && d.id && d.status !== 'INACTIVE' && (d as any).status !== 'DELETED')
       .map(toCanonicalDestination);
   }
@@ -309,7 +337,8 @@ export class MasterDataService {
   public getActiveHubs(): CityHub[] {
     const db = AppDatabase.getInstance();
     const raw = db.getCityHubs();
-    return raw
+    const source = raw && raw.length > 0 ? raw : INITIAL_CITY_HUBS;
+    return source
       .filter(h => h && h.id && h.status !== 'ARCHIVED' && (h as any).status !== 'DELETED')
       .map(toCanonicalHub);
   }

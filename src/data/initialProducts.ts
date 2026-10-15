@@ -7,6 +7,10 @@ export const INITIAL_PRODUCTS: Product[] = [
     sku: 'JP-SHINKANSEN-ORD-RES',
     destinationId: 'dest-japan',
     destinationName: 'Japan',
+    regionId: 'reg-east-asia',
+    regionName: 'East Asia',
+    hubIds: ['hub-tokyo', 'hub-kyoto', 'hub-osaka', 'hub-hiroshima', 'hub-hakone'],
+    hubId: 'hub-tokyo',
     country: 'Japan',
     city: 'Tokyo, Kyoto, Osaka & National Network',
     productType: 'Rail',
@@ -58,6 +62,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     ],
     meetingPoint: 'Dedicated Shinkansen ticket gates at your selected origin station.',
     heroImage: 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1600&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1600&q=80',
     images: [
       'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1600&q=80',
       'https://images.unsplash.com/photo-1538332576228-eb5b4c4de6f5?auto=format&fit=crop&w=1600&q=80'
@@ -69,6 +74,10 @@ export const INITIAL_PRODUCTS: Product[] = [
     sku: 'JP-SHINKANSEN-GRN-RES',
     destinationId: 'dest-japan',
     destinationName: 'Japan',
+    regionId: 'reg-east-asia',
+    regionName: 'East Asia',
+    hubIds: ['hub-tokyo', 'hub-kyoto', 'hub-osaka', 'hub-hiroshima', 'hub-hakone'],
+    hubId: 'hub-tokyo',
     country: 'Japan',
     city: 'Tokyo, Kyoto, Osaka & National Network',
     productType: 'Rail',
@@ -120,9 +129,10 @@ export const INITIAL_PRODUCTS: Product[] = [
       'Scenic Mt. Fuji view is on Seat D on westbound trains (Tokyo to Kyoto/Osaka).'
     ],
     meetingPoint: 'Dedicated Shinkansen ticket gates at your selected origin station.',
-    heroImage: 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?auto=format&fit=crop&w=1600&q=80',
+    heroImage: 'https://photos.smugmug.com/Kyoto/Getting-Around-Kyoto/i-DBVGwFn/0/8e1e9571/L/Shinkansen%20Green%20Car-L.jpg',
+    imageUrl: 'https://photos.smugmug.com/Kyoto/Getting-Around-Kyoto/i-DBVGwFn/0/8e1e9571/L/Shinkansen%20Green%20Car-L.jpg',
     images: [
-      'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?auto=format&fit=crop&w=1600&q=80',
+      'https://photos.smugmug.com/Kyoto/Getting-Around-Kyoto/i-DBVGwFn/0/8e1e9571/L/Shinkansen%20Green%20Car-L.jpg',
       'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=1600&q=80'
     ],
     status: 'ACTIVE'

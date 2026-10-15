@@ -10,6 +10,7 @@ import { japanRailJourneyDataService } from './JapanRailJourneyDataService';
 import { japanRailJourneyValidationService } from './JapanRailJourneyValidationService';
 import { japanRailJourneyPricingService } from './JapanRailJourneyPricingService';
 import { japanRailJourneyMapper } from './JapanRailJourneyMapper';
+import { currencyConversionService } from '../currencyConversionService';
 
 export class JapanRailJourneyService {
   private static instance: JapanRailJourneyService;
@@ -39,7 +40,7 @@ export class JapanRailJourneyService {
   }): JapanRailJourney {
     const portalOrigin = options?.portalOrigin || 'BUYER';
     const userRole = options?.userRole;
-    const currency = options?.currency || 'JPY';
+    const currency = currencyConversionService.normalizeCurrency(options?.currency, 'JPY');
     const passengers: JapanRailJourneyPassengerConfig = options?.passengers || {
       adults: 2,
       children: 0,
@@ -307,10 +308,11 @@ export class JapanRailJourneyService {
   /**
    * Updates currency
    */
-  public setCurrency(journey: JapanRailJourney, currency: CurrencyCode, userRole?: UserRole): JapanRailJourney {
+  public setCurrency(journey: JapanRailJourney, currency: any, userRole?: UserRole): JapanRailJourney {
+    const normalized = currencyConversionService.normalizeCurrency(currency, 'JPY');
     return this.validateAndRecalculate({
       ...journey,
-      currency
+      currency: normalized
     }, userRole);
   }
 
@@ -474,7 +476,10 @@ export class JapanRailJourneyService {
         snapshotOrDetails.journeySnapshot ||
         snapshotOrDetails;
 
-      const currency = overrideCurrency || snap.currency || 'JPY';
+      const currency = currencyConversionService.normalizeCurrency(
+        overrideCurrency || snap.currency || (typeof snap.pricing?.targetCurrency === 'string' ? snap.pricing.targetCurrency : null),
+        'JPY'
+      );
       const passengers: JapanRailJourneyPassengerConfig = snap.passengers || {
         adults: snap.adultsCount || snap.adults || 2,
         children: snap.childrenCount || snap.children || 0,
@@ -536,7 +541,7 @@ export class JapanRailJourneyService {
           segments,
           selectedRailProducts: Array.from(new Set(segments.map(s => s.productId))),
           pricing: {} as any,
-          currency: (snap.currency as any) || currency || 'JPY',
+          currency,
           validation: { isValid: true, errors: [], warnings: [], segmentErrors: {}, segmentWarnings: {} },
           metadata: {
             createdAt: snap.configuredAt || snap.createdAt || new Date().toISOString(),

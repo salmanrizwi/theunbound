@@ -3445,7 +3445,10 @@ export type CMSDeletableEntityType =
   | 'Campaign'
   | 'User'
   | 'Booking'
-  | 'TransferRoute';
+  | 'TransferRoute'
+  | 'TravelProtectionPlan'
+  | 'VipGroundService'
+  | 'ConnectivityPlan';
 
 export interface DependencyDetailItem {
   id: string;

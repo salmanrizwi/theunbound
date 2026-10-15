@@ -395,13 +395,13 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
           </div>
 
           <div className="text-left md:text-right shrink-0">
-            <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold block">
-              Package Rate per Person
+            <span className="text-[10px] uppercase tracking-widest text-[#00E5C0] font-bold block">
+              Official Proposal
             </span>
-            <div className="text-2xl font-black font-mono text-[#00E5C0]">
-              {formatCurrency((quote.finalCustomerSellingPrice || (quote as any).final_customer_selling_price || quote.totalSellingPrice) / Math.max(1, effectivePax), quote.currency)}
+            <div className="text-xl font-black text-white">
+              {model.totalDays} Days / {model.totalNights} Nights
             </div>
-            <span className="text-[10px] text-slate-400">Inclusive of all ground taxes</span>
+            <span className="text-[10px] text-slate-400">Inclusive of all ground arrangements</span>
           </div>
         </div>
 
@@ -615,16 +615,13 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                   </div>
                 </div>
 
-                <div className="text-left sm:text-right shrink-0 font-mono self-end sm:self-start pt-2 sm:pt-0">
-                  <div className="text-sm sm:text-base font-black text-slate-900">
-                    {formatCurrency(item.calculation?.finalTotalSellingPrice || 0, quote.currency)}
-                  </div>
-                  <div className="text-[10px] text-slate-500 font-sans mt-0.5">
-                    {item.pax?.adults || 2} Adults{item.pax?.children ? `, ${item.pax.children} Ch` : ''}
-                  </div>
-                  <span className="inline-block mt-1 text-[9px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300">
+                <div className="text-left sm:text-right shrink-0 self-end sm:self-start pt-2 sm:pt-0">
+                  <span className="inline-block text-[9px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded border border-emerald-300">
                     Visa & Ancillary Included
                   </span>
+                  <div className="text-[10px] text-slate-500 font-sans mt-1">
+                    {item.pax?.adults || 2} Adults{item.pax?.children ? `, ${item.pax.children} Ch` : ''}
+                  </div>
                 </div>
               </div>
             ))}
@@ -698,7 +695,6 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                       {day.items.map((item, itemIdx) => {
                         const meta = getCategoryMeta(item.product.category, item.product.productType);
                         const IconComponent = meta.icon;
-                        const itemPrice = item.calculation?.finalTotalSellingPrice || item.calculation?.totalSellingPrice || 0;
 
                         return (
                           <div 
@@ -809,17 +805,14 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                               </div>
                             </div>
 
-                            {/* Service Status / Item Price */}
-                            <div className="text-left sm:text-right shrink-0 font-mono self-end sm:self-start pt-2 sm:pt-0">
-                              <div className="text-sm font-bold text-slate-900">
-                                {formatCurrency(itemPrice, quote.currency)}
-                              </div>
-                              <div className="text-[10px] text-slate-500 font-sans">
-                                {item.pax?.adults || 2} Adults{item.pax?.children ? `, ${item.pax.children} Ch` : ''}
-                              </div>
-                              <span className="inline-block mt-1 text-[9px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                            {/* Service Status */}
+                            <div className="text-left sm:text-right shrink-0 self-end sm:self-start pt-2 sm:pt-0">
+                              <span className="inline-block text-[9px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200">
                                 Confirmed Allotment
                               </span>
+                              <div className="text-[10px] text-slate-500 font-sans mt-1">
+                                {item.pax?.adults || 2} Adults{item.pax?.children ? `, ${item.pax.children} Ch` : ''}
+                              </div>
                             </div>
                           </div>
                         );
@@ -863,9 +856,9 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                   <div className="font-bold text-slate-900">{getInventoryDisplayName(item)}</div>
                   <div className="text-[11px] text-slate-500 mt-0.5">{getInventoryConfigurationSummary(item) || `${item.product.category} • ${item.product.city || quote.destination}`}</div>
                 </div>
-                <div className="font-mono font-bold text-slate-900 text-xs">
-                  {formatCurrency(item.calculation?.finalTotalSellingPrice || 0, quote.currency)}
-                </div>
+                <span className="inline-block text-[9px] font-bold uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded border border-emerald-300">
+                  Included
+                </span>
               </div>
             ))}
           </div>
@@ -909,15 +902,15 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
       </div>
 
       {/* ---------------------------------------------------- */}
-      {/* 6. TRANSPARENT INVESTMENT TOTAL & FINANCIAL SUMMARY */}
+      {/* 6. TOTAL PACKAGE INVESTMENT (CONSOLIDATED FINAL ONLY) */}
       {/* ---------------------------------------------------- */}
       <div className="bg-slate-950 text-white p-6 sm:p-8 rounded-3xl flex flex-col sm:flex-row justify-between items-center gap-6 shadow-xl">
         <div className="space-y-1">
-          <span className="text-[10px] font-bold text-[#00E5C0] uppercase tracking-widest block">
-            Official Proposal Tariff
+          <span className="text-xs font-black text-[#00E5C0] uppercase tracking-widest block">
+            TOTAL PACKAGE INVESTMENT
           </span>
           <h3 className="text-xl font-black text-white">
-            Guaranteed Total Itinerary Value
+            Final Total: {formatCurrency(quote.finalCustomerSellingPrice || (quote as any).final_customer_selling_price || quote.totalSellingPrice, quote.currency)} {quote.currency}
           </h3>
           <p className="text-xs text-slate-300 max-w-md">
             All private transportation, accommodations, guided experiences, entrance tickets, and applicable government taxes are fully included.
@@ -928,11 +921,8 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
           <div className="text-3xl sm:text-4xl font-black font-mono text-[#00E5C0]">
             {formatCurrency(quote.finalCustomerSellingPrice || (quote as any).final_customer_selling_price || quote.totalSellingPrice, quote.currency)}
           </div>
-          <div className="text-xs text-slate-300 font-mono">
-            {formatCurrency((quote.finalCustomerSellingPrice || (quote as any).final_customer_selling_price || quote.totalSellingPrice) / Math.max(1, effectivePax), quote.currency)} / Traveler ({effectivePax} Guests)
-          </div>
-          <div className="text-[10px] text-slate-400 font-sans">
-            Guaranteed in {quote.currency} • No Hidden Surcharges
+          <div className="text-[11px] text-slate-300 font-bold uppercase tracking-wider">
+            {quote.currency} Guaranteed
           </div>
         </div>
       </div>

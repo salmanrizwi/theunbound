@@ -63,7 +63,7 @@ export async function startServer() {
       if (!isProduction) {
         const { createServer: createViteServer } = await import("vite");
         const vite = await createViteServer({
-          server: { middlewareMode: true },
+          server: { middlewareMode: true, hmr: false },
           appType: "custom",
         });
 
@@ -132,43 +132,32 @@ export async function startServer() {
         });
       }
 
-      // Resilient Dual-Port Binding Architecture:
-      // 1. Cloud Run sets process.env.PORT (typically 8080) and sends container health checks to it.
-      // 2. AI Studio local development & iframe proxy uses port 3000.
-      // We bind both ports so that whether Cloud Run or an Nginx reverse proxy routes traffic, the server responds.
-      const cloudRunPort = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
-      const devPort = 3000;
-      const portsToTry = Array.from(new Set([cloudRunPort, devPort]));
-      let activeListeners = 0;
+      // In AI Studio Build runtime, NGINX is reverse proxying from 8080 to 3000.
+      // Express must strictly listen on port 3000.
+      const port = 3000;
       let primaryServer: any = null;
 
-      for (const p of portsToTry) {
-        try {
-          const s = app.listen(p, "0.0.0.0", () => {
-            console.log(`[SERVER] Ready and listening on port ${p}`);
-            activeListeners++;
-            if (!primaryServer) {
-              primaryServer = s;
-              resolve(primaryServer);
-            }
-          });
+      try {
+        const s = app.listen(port, "0.0.0.0", () => {
+          console.log(`[SERVER] Ready and listening on port ${port}`);
+          primaryServer = s;
+          resolve(primaryServer);
+        });
 
-          s.on('error', (err: any) => {
-            if (err.code === 'EADDRINUSE') {
-              console.log(`[SERVER] Port ${p} is in use (reverse proxy or parallel listener active).`);
-            } else {
-              console.warn(`[SERVER] Listener error on port ${p}:`, err);
-            }
-            if (activeListeners === 0 && p === portsToTry[portsToTry.length - 1]) {
-              console.error(`[SERVER] Fatal: No port could be bound.`);
-              serverPromise = null;
-              reject(err);
-              process.exit(1);
-            }
-          });
-        } catch (e) {
-          console.warn(`[SERVER] Failed to initiate listener on port ${p}:`, e);
-        }
+        s.on('error', (err: any) => {
+          if (err.code === 'EADDRINUSE') {
+            console.log(`[SERVER] Port ${port} is in use (reusing active listener).`);
+            resolve(primaryServer || s);
+          } else {
+            console.error(`[SERVER] Fatal listener error on port ${port}:`, err);
+            serverPromise = null;
+            reject(err);
+          }
+        });
+      } catch (e) {
+        console.warn(`[SERVER] Failed to initiate listener on port ${port}:`, e);
+        serverPromise = null;
+        reject(e);
       }
     } catch (err) {
       serverPromise = null;

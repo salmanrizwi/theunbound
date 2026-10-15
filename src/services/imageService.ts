@@ -306,65 +306,117 @@ export class ImageService {
       }
     };
 
-    const result: string[] = [];
-
-    // Detect if caller explicitly updated images[] vs heroImage/imageUrl
     const rawImagesArray = Array.isArray(record.images) ? record.images : [];
     const cleanedImagesArray: string[] = [];
     rawImagesArray.forEach((img: any) => addIfValid(img, cleanedImagesArray));
 
-    const prevImagesArray: string[] = [];
-    if (prevRecord && Array.isArray(prevRecord.images)) {
-      prevRecord.images.forEach((img: any) => addIfValid(img, prevImagesArray));
+    const heroVal = record.heroImage || record.hero_image_url || record.hero_image;
+    const heroCheck = this.validateImage(heroVal);
+
+    const imageUrlVal = record.imageUrl || record.imageURL || record.image_url || record.image;
+    const imageUrlCheck = this.validateImage(imageUrlVal);
+
+    const primaryImageVal = typeof record.primaryImage === 'string' ? record.primaryImage : record.primaryImage?.url;
+    const primaryImageCheck = this.validateImage(primaryImageVal);
+
+    // If caller explicitly passed an empty images array AND empty hero/image fields, treat as cleared
+    const explicitlyCleared =
+      Array.isArray(record.images) &&
+      rawImagesArray.length === 0 &&
+      !heroCheck.isValid &&
+      !imageUrlCheck.isValid &&
+      !primaryImageCheck.isValid;
+
+    if (explicitlyCleared) {
+      return [];
     }
 
-    const heroCheck = this.validateImage(record.heroImage || record.hero_image_url || record.hero_image);
     const prevHeroCheck = prevRecord
       ? this.validateImage(prevRecord.heroImage || prevRecord.hero_image_url || prevRecord.hero_image)
       : { isValid: false, cleanUrl: '' };
 
-    const imageUrlCheck = this.validateImage(record.imageUrl || record.imageURL || record.image_url || record.image);
     const prevImageUrlCheck = prevRecord
       ? this.validateImage(prevRecord.imageUrl || prevRecord.imageURL || prevRecord.image_url || prevRecord.image)
       : { isValid: false, cleanUrl: '' };
 
-    const imagesChanged =
-      Array.isArray(record.images) &&
-      (cleanedImagesArray[0] !== prevImagesArray[0] || cleanedImagesArray.length !== prevImagesArray.length);
-    const heroChanged = heroCheck.isValid && heroCheck.cleanUrl !== prevHeroCheck.cleanUrl;
-    const imageUrlChanged = imageUrlCheck.isValid && imageUrlCheck.cleanUrl !== prevImageUrlCheck.cleanUrl;
+    const prevImagesFirstCheck = prevRecord && Array.isArray(prevRecord.images) && prevRecord.images.length > 0
+      ? this.validateImage(prevRecord.images[0])
+      : { isValid: false, cleanUrl: '' };
 
-    // If caller explicitly passed an empty images array (e.g. Admin cleared the image) and didn't set a new heroImage
-    if (Array.isArray(record.images) && cleanedImagesArray.length === 0 && !heroChanged && !imageUrlChanged && prevRecord) {
-      return [];
+    const heroChanged = prevRecord ? (heroCheck.isValid && heroCheck.cleanUrl !== prevHeroCheck.cleanUrl) : false;
+    const imageUrlChanged = prevRecord ? (imageUrlCheck.isValid && imageUrlCheck.cleanUrl !== prevImageUrlCheck.cleanUrl) : false;
+    const imagesArrayChanged = prevRecord ? (cleanedImagesArray.length > 0 && cleanedImagesArray[0] !== prevImagesFirstCheck.cleanUrl) : false;
+
+    const isRailEntity = 
+      record.category === 'RAIL' || 
+      record.category === 'Rail' || 
+      record.category === 'Rail / Shinkansen' ||
+      record.productType === 'Rail' ||
+      record.productType === 'ORDINARY_RESERVED' ||
+      record.productType === 'GREEN_RESERVED' ||
+      (typeof record.id === 'string' && record.id.startsWith('RAIL-'));
+
+    const result: string[] = [];
+
+    // 1. Determine canonical primary image.
+    // When editing (prevRecord present): check which field was explicitly mutated.
+    // For Rail entities, imageUrl is the canonical schema field and takes highest precedence.
+    if (isRailEntity) {
+      if (imageUrlChanged && imageUrlCheck.isValid) {
+        addIfValid(imageUrlCheck.cleanUrl, result);
+      } else if (imagesArrayChanged && cleanedImagesArray.length > 0) {
+        addIfValid(cleanedImagesArray[0], result);
+      } else if (heroChanged && heroCheck.isValid) {
+        addIfValid(heroCheck.cleanUrl, result);
+      } else if (imageUrlCheck.isValid) {
+        addIfValid(imageUrlCheck.cleanUrl, result);
+      } else if (cleanedImagesArray.length > 0) {
+        addIfValid(cleanedImagesArray[0], result);
+      } else if (heroCheck.isValid) {
+        addIfValid(heroCheck.cleanUrl, result);
+      } else if (primaryImageCheck.isValid) {
+        addIfValid(primaryImageCheck.cleanUrl, result);
+      }
+    } else {
+      if (imagesArrayChanged && cleanedImagesArray.length > 0) {
+        addIfValid(cleanedImagesArray[0], result);
+      } else if (heroChanged && heroCheck.isValid) {
+        addIfValid(heroCheck.cleanUrl, result);
+      } else if (imageUrlChanged && imageUrlCheck.isValid) {
+        addIfValid(imageUrlCheck.cleanUrl, result);
+      } else if (cleanedImagesArray.length > 0) {
+        addIfValid(cleanedImagesArray[0], result);
+      } else if (heroCheck.isValid) {
+        addIfValid(heroCheck.cleanUrl, result);
+      } else if (imageUrlCheck.isValid) {
+        addIfValid(imageUrlCheck.cleanUrl, result);
+      } else if (primaryImageCheck.isValid) {
+        addIfValid(primaryImageCheck.cleanUrl, result);
+      }
     }
 
-    if (imagesChanged && cleanedImagesArray.length > 0) {
-      cleanedImagesArray.forEach(u => addIfValid(u, result));
-    } else if (heroChanged) {
-      addIfValid(heroCheck.cleanUrl, result);
-    } else if (imageUrlChanged) {
-      addIfValid(imageUrlCheck.cleanUrl, result);
-    }
-
-    // Collect remaining valid images across all canonical & legacy fields
+    // 2. Add remaining images from the images array (preserving order and skipping primary duplicate)
     cleanedImagesArray.forEach(u => addIfValid(u, result));
-    addIfValid(record.heroImage, result);
-    addIfValid(record.hero_image_url, result);
-    addIfValid(record.hero_image, result);
-    addIfValid(record.imageUrl, result);
-    addIfValid(record.imageURL, result);
-    addIfValid(record.image_url, result);
-    addIfValid(record.primaryImage, result);
-    addIfValid(record.primary_image_url, result);
-    addIfValid(record.primaryImageUrl, result);
-    addIfValid(record.image, result);
-    addIfValid(record.photo_url, result);
-    addIfValid(record.photoUrl, result);
-    addIfValid(record.photo, result);
-    addIfValid(record.thumbnail, result);
-    addIfValid(record.coverImage, result);
-    addIfValid(record.bannerImage, result);
+
+    // 3. Only if no images were provided via record.images, collect from legacy fields
+    if (result.length === 0 || !Array.isArray(record.images)) {
+      addIfValid(record.heroImage, result);
+      addIfValid(record.hero_image_url, result);
+      addIfValid(record.hero_image, result);
+      addIfValid(record.imageUrl, result);
+      addIfValid(record.imageURL, result);
+      addIfValid(record.image_url, result);
+      addIfValid(record.primaryImage, result);
+      addIfValid(record.primary_image_url, result);
+      addIfValid(record.primaryImageUrl, result);
+      addIfValid(record.image, result);
+      addIfValid(record.photo_url, result);
+      addIfValid(record.photoUrl, result);
+      addIfValid(record.photo, result);
+      addIfValid(record.thumbnail, result);
+      addIfValid(record.coverImage, result);
+      addIfValid(record.bannerImage, result);
+    }
 
     if (Array.isArray(record.galleryImages)) {
       record.galleryImages.forEach((img: any) => addIfValid(img, result));
@@ -582,6 +634,11 @@ export class ImageService {
       extracted.push(meta);
     });
 
+    if (record.sku && record.sku !== entityId) {
+      const skuKey = this.getEntityKey(entityType, record.sku);
+      this.entityIndex.set(skuKey, [...(this.entityIndex.get(entityKey) || [])]);
+    }
+
     this.persistRegistry();
     return extracted;
   }
@@ -643,6 +700,18 @@ export class ImageService {
         const images = this.getImages(entityType, id);
         registryRecord = images.find(img => img.role === 'PRIMARY') || images[0] || null;
       }
+      if (!registryRecord && entity?.sku && entity.sku !== id) {
+        const images = this.getImages(entityType, entity.sku);
+        registryRecord = images.find(img => img.role === 'PRIMARY') || images[0] || null;
+      }
+      if (!registryRecord && entity?.id && entity.id !== id) {
+        const images = this.getImages(entityType, entity.id);
+        registryRecord = images.find(img => img.role === 'PRIMARY') || images[0] || null;
+      }
+      if (!registryRecord && entity?.product_id && entity.product_id !== id) {
+        const images = this.getImages(entityType, entity.product_id);
+        registryRecord = images.find(img => img.role === 'PRIMARY') || images[0] || null;
+      }
 
       if (registryRecord && registryRecord.status !== 'INVALID' && registryRecord.status !== 'DISABLED') {
         const regVal = this.validateImage(registryRecord.storageUrl || registryRecord.sourceUrl);
@@ -667,19 +736,34 @@ export class ImageService {
 
     const id = product.id || product.sku || product.product_id;
     const fallbackKey = product.category || product.city || 'Japan';
-    const candidates = [
-      product.hero_image_url,
-      product.heroImage,
-      product.imageUrl,
-      ...(Array.isArray(product.images) ? product.images : []),
-      typeof product.primaryImage === 'string' ? product.primaryImage : product.primaryImage?.url,
-      product.imageURL,
-      product.image,
-      product.photo_url,
-      product.photo,
-      product.thumbnail,
-      product.coverImage
-    ].filter(Boolean);
+    const isRail = product.id === 'RAIL-JP-ORD-RESERVED' || product.id === 'RAIL-JP-GREEN-RESERVED' || product.category === 'Rail' || product.category === 'Rail / Shinkansen';
+    const candidates = isRail
+      ? [
+          product.imageUrl,
+          product.heroImage,
+          ...(Array.isArray(product.images) ? product.images : []),
+          typeof product.primaryImage === 'string' ? product.primaryImage : product.primaryImage?.url,
+          product.hero_image_url,
+          product.imageURL,
+          product.image,
+          product.photo_url,
+          product.photo,
+          product.thumbnail,
+          product.coverImage
+        ].filter(Boolean)
+      : [
+          ...(Array.isArray(product.images) && product.images.length > 0 ? product.images : []),
+          product.imageUrl,
+          product.heroImage,
+          product.hero_image_url,
+          typeof product.primaryImage === 'string' ? product.primaryImage : product.primaryImage?.url,
+          product.imageURL,
+          product.image,
+          product.photo_url,
+          product.photo,
+          product.thumbnail,
+          product.coverImage
+        ].filter(Boolean);
 
     return this.resolveCanonicalEntityPrimary(
       product,

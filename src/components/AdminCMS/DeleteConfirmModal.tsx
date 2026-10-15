@@ -33,6 +33,7 @@ interface DeleteConfirmModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: (result: SecureDeleteResult) => void;
+  onConfirm?: () => void;
   entityType: CMSDeletableEntityType;
   recordId: string;
   recordTitle: string;
@@ -51,6 +52,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  onConfirm,
   entityType,
   recordId,
   recordTitle,
@@ -116,6 +118,9 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
       case 'package': return <Layers className="w-4 h-4 text-purple-600" />;
       case 'quote': case 'quotation': return <FileText className="w-4 h-4 text-emerald-600" />;
       case 'visa': case 'visarequirement': return <FileText className="w-4 h-4 text-cyan-600" />;
+      case 'protection': case 'travelprotectionplan': return <ShieldAlert className="w-4 h-4 text-emerald-600" />;
+      case 'vip': case 'vipgroundservice': return <Building2 className="w-4 h-4 text-purple-600" />;
+      case 'connectivity': case 'connectivityplan': return <FileText className="w-4 h-4 text-cyan-600" />;
       case 'cityhub': case 'destination': case 'masterregion': return <MapPin className="w-4 h-4 text-rose-600" />;
       case 'task': case 'calendartask': return <Calendar className="w-4 h-4 text-indigo-600" />;
       default: return <Users className="w-4 h-4 text-slate-600" />;
@@ -132,6 +137,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
         // Authoritative inventory recalculation & view sync
         inventoryVisibilityService.notifyInventoryChanged();
         if (onSuccess) onSuccess(res);
+        if (onConfirm) onConfirm();
         onClose();
       } else {
         // Honest error handling (Requirement 23)
@@ -153,6 +159,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
       if (res.success) {
         inventoryVisibilityService.notifyInventoryChanged();
         if (onSuccess) onSuccess(res);
+        if (onConfirm) onConfirm();
         onClose();
       } else {
         setErrorMsg(`Archive failed: ${res.message || 'The record could not be archived.'}`);

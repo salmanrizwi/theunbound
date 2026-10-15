@@ -38,6 +38,7 @@ import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRou
 import { isRailProduct } from '../../services/rail/JapanRailJourneyDataService';
 import { AppDatabase } from '../../services/db';
 import { canonicalImageService } from '../../services/imageService';
+import { sanitizeImageUrl } from '../../utils/imageUtils';
 import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
 
 // Safely normalize any value to a lowercase trimmed string to prevent undefined property crashes
@@ -833,7 +834,10 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     referrerPolicy="no-referrer"
                     onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolveProductImage(prod);
+                      const fallback = sanitizeImageUrl('', prod.category || prod.city);
+                      if ((e.currentTarget as HTMLImageElement).src !== fallback) {
+                        (e.currentTarget as HTMLImageElement).src = fallback;
+                      }
                     }}
                   />
                   <div className="absolute top-3 left-3 bg-slate-900/80 backdrop-blur-xs text-white px-2 py-0.5 rounded-md text-[10px] font-bold">

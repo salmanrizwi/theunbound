@@ -7,6 +7,7 @@ import { campaignAnalytics } from '../services/campaignAnalyticsService';
 import { useAuth } from './AuthContext';
 import { createQuoteItemContentSnapshot } from '../utils/b2bQuotationHelpers';
 import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
+import { japanRailJourneyService } from '../services/rail/JapanRailJourneyService';
 import { canUserViewInternalCostBreakdown } from '../services/permissionEngine';
 
 interface QuotationContextType {
@@ -303,6 +304,24 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         if (isLocked && item.calculation && item.calculation.currency === currency) {
           return item;
         }
+
+        // Authoritative Rail Journey Snapshot Recalculation
+        if (isRailQuoteItem(item) && (item.japanRailJourneySnapshot || (item as any).metadata?.journeySnapshot)) {
+          const snapshot = item.japanRailJourneySnapshot || (item as any).metadata?.journeySnapshot;
+          const restored = japanRailJourneyService.restoreJourneyFromSnapshot(snapshot, user?.role, currency);
+          if (restored && restored.pricing.isPriceAvailable) {
+            const refreshedItem = japanRailJourneyService.convertToQuoteItem(
+              restored,
+              (item as any).metadata?.dayNumber || 1
+            );
+            return {
+              ...refreshedItem,
+              id: item.id,
+              notes: item.notes || refreshedItem.notes
+            };
+          }
+        }
+
         const calculation = calculateItemPrice(item.product, {
           productId: item.product.id,
           pricingTier,
