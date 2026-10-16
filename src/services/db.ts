@@ -8480,7 +8480,46 @@ export class AppDatabase {
   public getPackages(): B2BPackage[] {
     const raw = this.getItem<B2BPackage[]>('b2b_packages', envService.allowDemoData() ? INITIAL_B2B_PACKAGES : []);
     const deletedSet = this.getDeletedEntityIds();
-    return raw.filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Package_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED');
+    return raw
+      .filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Package_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED')
+      .map(p => {
+        const title = p.title || p.name || 'Untitled Package';
+        const status = p.status || (p.isPublished ? 'PUBLISHED' : 'DRAFT');
+        const isPublished = status === 'PUBLISHED' && p.isPublished !== false;
+        const itinerary = Array.isArray(p.itinerary)
+          ? p.itinerary
+          : Array.isArray((p as any).days)
+            ? (p as any).days
+            : [];
+        return {
+          ...p,
+          title,
+          name: title,
+          status,
+          isPublished,
+          itinerary,
+          hubIds: Array.isArray(p.hubIds) ? p.hubIds : [],
+          routeSummary: Array.isArray(p.routeSummary) ? p.routeSummary : [],
+          hotelsSummary: Array.isArray(p.hotelsSummary) ? p.hotelsSummary : [],
+          highlights: Array.isArray(p.highlights) ? p.highlights : [],
+          inclusions: Array.isArray(p.inclusions) ? p.inclusions : [],
+          exclusions: Array.isArray(p.exclusions) ? p.exclusions : []
+        };
+      });
+  }
+
+  public getPublishedB2BPackages(): B2BPackage[] {
+    return this.getPackages().filter(pkg => {
+      if ((pkg as any).isDeleted === true) return false;
+      const statusUpper = String(pkg.status || '').toUpperCase();
+      if (statusUpper === 'ARCHIVED' || statusUpper === 'DRAFT' || statusUpper === 'INACTIVE' || statusUpper === 'DELETED') {
+        return false;
+      }
+      if (pkg.isPublished === false && statusUpper !== 'PUBLISHED' && statusUpper !== 'ACTIVE') {
+        return false;
+      }
+      return true;
+    });
   }
 
   public getPackageById(id: string): B2BPackage | null {
@@ -8503,13 +8542,14 @@ export class AppDatabase {
     
     // Automatically keep title/name synced and normalize status
     const status = pkg.status || (pkg.isPublished ? 'PUBLISHED' : 'DRAFT');
-    const isPublished = status === 'PUBLISHED' || !!pkg.isPublished;
+    const isPublished = pkg.status ? pkg.status === 'PUBLISHED' : Boolean(pkg.isPublished);
 
     canonicalImageService.extractAllImagesFromRecord(pkg, 'PACKAGE', pkg.id);
     const pkgPrimaryDto = canonicalImageService.getCanonicalImageDto(pkg, 'PACKAGE');
 
     const updatedPkg: B2BPackage = { 
       ...pkg, 
+      package_id: pkg.id,
       title: pkg.title || pkg.name || 'Custom Package Itinerary',
       name: pkg.title || pkg.name || 'Custom Package Itinerary',
       heroImage: pkgPrimaryDto.url,
@@ -8573,7 +8613,7 @@ export class AppDatabase {
     const isNew = idx < 0;
 
     const status = pkg.status || (pkg.isPublished ? 'PUBLISHED' : 'DRAFT');
-    const isPublished = status === 'PUBLISHED' || !!pkg.isPublished;
+    const isPublished = pkg.status ? pkg.status === 'PUBLISHED' : Boolean(pkg.isPublished);
 
     const updatedPkg: B2BPackage = {
       ...pkg,

@@ -45,6 +45,12 @@ import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRou
 import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
 import { AddVisaToQuoteModal } from './AddVisaToQuoteModal';
 import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
+import {
+  cleanPackageText,
+  isPackageVisibleToB2BAgent,
+  normalizePackageRecord,
+  resolvePackageOrderedHubs
+} from '../../services/packageToQuoteTransformer';
 
 interface B2BHomeDiscoveryViewProps {
   destinations: Destination[];
@@ -78,7 +84,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
   const { user } = useAuth();
   const { items, addProductToQuote, removeProductFromQuote, currency } = useQuotation();
   const db = AppDatabase.getInstance();
-  const [, setImageTick] = useState(0);
+  const [imageTick, setImageTick] = useState(0);
 
   useEffect(() => {
     const unsubDb = db.subscribe(() => setImageTick(t => t + 1));
@@ -136,7 +142,14 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
     setSelectedVisaForModal(visa);
   };
 
-  const packages = useMemo(() => db.getPackages(), [db]);
+  const packages = useMemo(
+    () =>
+      db
+        .getPublishedB2BPackages()
+        .map(normalizePackageRecord)
+        .filter(isPackageVisibleToB2BAgent),
+    [db, imageTick]
+  );
 
   // Context Navigation Handlers
   const handleSelectDestinationForHubs = (dest: Destination) => {
@@ -1123,14 +1136,14 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                 <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
                   <div className="space-y-2">
                     <div className="flex flex-wrap gap-1.5">
-                      {pkg.routeSummary.map((r, idx) => (
+                      {resolvePackageOrderedHubs(pkg).map((h, idx) => (
                         <span key={idx} className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-bold">
-                          {r}
+                          {h.hubName} ({h.nights}N)
                         </span>
                       ))}
                     </div>
                     <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
-                      {pkg.tagline || pkg.description}
+                      {cleanPackageText(pkg.tagline || pkg.description)}
                     </p>
                   </div>
 

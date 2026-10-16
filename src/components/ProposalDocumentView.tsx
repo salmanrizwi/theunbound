@@ -234,8 +234,10 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
         return Number((it as any).dayNumber) === calDay.dayNumber;
       });
       
-      // Look up custom theme for this day (from quote.dayThemes or auto-generated)
+      // Look up custom theme and narrative description for this day
       const customTheme = quote.dayThemes?.[calDay.dayNumber];
+      const dayDescription = quote.dayDescriptions?.[calDay.dayNumber] || quote.dayOverviews?.[calDay.dayNumber];
+      const dayNote = quote.dayNotes?.[calDay.dayNumber];
       
       return {
         ...calDay,
@@ -243,6 +245,8 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
         isTransitionDay,
         prevHub,
         customTheme,
+        dayDescription,
+        dayNote,
         items: dayItems
       };
     });
@@ -360,10 +364,10 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <span className="text-[10px] uppercase tracking-widest text-[#00E5C0] font-bold block">
-              Curated Journey Overview
+              {quote.sourcePackageName ? `Curated Package Proposal • ${quote.sourcePackageName}` : 'Curated Journey Overview'}
             </span>
             <h1 className="text-xl sm:text-2xl font-black text-white mt-0.5">
-              {quote.destination || 'Japan'} Bespoke Travel Itinerary
+              {quote.title || quote.sourcePackageName || `${quote.destination || 'Japan'} Bespoke Travel Itinerary`}
             </h1>
             <p className="text-xs text-slate-300 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
               <span>{itineraryDays.length} Days / {totalNights} Nights</span>
@@ -690,6 +694,16 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
 
                 {/* Day Content: Services List */}
                 <div className="p-4 sm:p-5 space-y-3">
+                  {day.dayDescription && (
+                    <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs text-slate-700 leading-relaxed">
+                      <RichTextRenderer content={day.dayDescription} className="text-xs text-slate-700 leading-relaxed" />
+                      {day.dayNote && (
+                        <p className="mt-2 pt-2 border-t border-slate-200/70 text-[11px] text-teal-800 font-semibold">
+                          {day.dayNote}
+                        </p>
+                      )}
+                    </div>
+                  )}
                   {hasItems ? (
                     <div className="space-y-3">
                       {day.items.map((item, itemIdx) => {
@@ -926,6 +940,61 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* ---------------------------------------------------- */}
+      {/* 6.2. PACKAGE INCLUSIONS, EXCLUSIONS & IMPORTANT NOTES */}
+      {/* ---------------------------------------------------- */}
+      {((quote.inclusions && quote.inclusions.length > 0) || (quote.exclusions && quote.exclusions.length > 0) || quote.importantInformation || quote.cancellationPolicy) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {quote.inclusions && quote.inclusions.length > 0 && (
+            <div className="bg-emerald-50/50 border border-emerald-200 rounded-2xl p-5 space-y-2.5">
+              <h4 className="font-extrabold text-emerald-950 uppercase tracking-wider text-[11px] flex items-center space-x-1.5">
+                <Check className="w-4 h-4 text-emerald-600" />
+                <span>Package Inclusions</span>
+              </h4>
+              <ul className="space-y-1.5 text-xs text-emerald-950">
+                {quote.inclusions.map((inc, idx) => (
+                  <li key={idx} className="flex items-start space-x-2">
+                    <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                    <span>{inc}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {quote.exclusions && quote.exclusions.length > 0 && (
+            <div className="bg-rose-50/50 border border-rose-200 rounded-2xl p-5 space-y-2.5">
+              <h4 className="font-extrabold text-rose-950 uppercase tracking-wider text-[11px] flex items-center space-x-1.5">
+                <Info className="w-4 h-4 text-rose-600" />
+                <span>Package Exclusions</span>
+              </h4>
+              <ul className="space-y-1.5 text-xs text-rose-950">
+                {quote.exclusions.map((exc, idx) => (
+                  <li key={idx} className="flex items-start space-x-2">
+                    <span className="text-rose-500 font-bold shrink-0">✕</span>
+                    <span>{exc}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {quote.importantInformation && (
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-1.5 md:col-span-2">
+              <h4 className="font-extrabold text-slate-900 uppercase tracking-wider text-[11px]">Important Information</h4>
+              <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line">{quote.importantInformation}</p>
+            </div>
+          )}
+
+          {quote.cancellationPolicy && (
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-1.5 md:col-span-2">
+              <h4 className="font-extrabold text-slate-900 uppercase tracking-wider text-[11px]">Cancellation Policy</h4>
+              <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line">{quote.cancellationPolicy}</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ---------------------------------------------------- */}
       {/* 6.5. OPERATIONAL & ATTRACTION GUIDELINES */}

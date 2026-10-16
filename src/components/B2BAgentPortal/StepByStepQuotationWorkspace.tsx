@@ -180,6 +180,11 @@ export interface StepByStepQuotationWorkspaceProps {
   onOpenEditItem?: (item: QuoteItem) => void;
   dayThemes?: Record<number, string>;
   setDayThemes?: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  dayDescriptions?: Record<number, string>;
+  setDayDescriptions?: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  sourcePackageName?: string | null;
+  quoteTitle?: string;
+  setQuoteTitle?: (title: string) => void;
 
   // Pricing & Margins
   baseFinalSellingPrice?: number;
@@ -310,6 +315,11 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   onOpenEditItem,
   dayThemes = {},
   setDayThemes,
+  dayDescriptions = {},
+  setDayDescriptions,
+  sourcePackageName,
+  quoteTitle,
+  setQuoteTitle,
   baseFinalSellingPrice,
   adminManualMarginType: propAdminManualMarginType,
   setAdminManualMarginType: propSetAdminManualMarginType,
@@ -1822,6 +1832,34 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 </span>
               </div>
 
+              {sourcePackageName && (
+                <div className="p-3.5 rounded-2xl bg-teal-50/80 border border-teal-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center space-x-2.5">
+                    <Sparkles className="w-4 h-4 text-teal-600 shrink-0" />
+                    <div className="text-xs text-teal-950">
+                      <span className="font-black">Customizing Ready-Made Package:</span>{' '}
+                      <span className="font-semibold text-teal-800">{sourcePackageName}</span>
+                      <span className="text-teal-600 block sm:inline sm:ml-2 text-[11px]">
+                        • Changing the Start Date or Passenger Counts automatically shifts all itinerary dates &amp; recalculates live pricing.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {setQuoteTitle && (
+                <div>
+                  <label className="text-[11px] font-bold text-slate-600 block mb-1">Proposal / Itinerary Title</label>
+                  <input
+                    type="text"
+                    value={quoteTitle || ''}
+                    onChange={(e) => setQuoteTitle(e.target.value)}
+                    placeholder={sourcePackageName || `${currentDestination.name} Bespoke Travel Proposal`}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:border-teal-500 outline-none"
+                  />
+                </div>
+              )}
+
               {/* Client & CRM Leads */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -3105,6 +3143,25 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
                       {/* Day Body Content */}
                       <div className="p-4 sm:p-5 space-y-4">
+                        {/* Day Narrative / Overview Editor (Pre-populated from Ready-Made Packages or custom) */}
+                        <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                              Day {slot.dayNumber} Narrative &amp; Overview
+                            </span>
+                            {dayDescriptions[slot.dayNumber] && (
+                              <span className="text-[10px] text-teal-700 font-semibold">Included in Client Proposal</span>
+                            )}
+                          </div>
+                          <textarea
+                            rows={2}
+                            placeholder={`Describe the flow and highlights for Day ${slot.dayNumber} in ${slot.hub?.hubName || currentDestination.name}...`}
+                            value={dayDescriptions[slot.dayNumber] || ''}
+                            onChange={(e) => setDayDescriptions?.(prev => ({ ...prev, [slot.dayNumber]: e.target.value }))}
+                            className="w-full text-xs text-slate-700 placeholder:text-slate-400 bg-white rounded-lg border border-slate-200 focus:border-[#00C6A6] p-2 outline-none resize-y leading-relaxed"
+                          />
+                        </div>
+
                         {/* Night Accommodation Badge for this Day */}
                         {quotationScope !== 'LAND_ONLY' && (
                           <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 flex items-center justify-between">

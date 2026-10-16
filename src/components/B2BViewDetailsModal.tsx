@@ -20,6 +20,7 @@ import { WishlistButton } from './WishlistButton';
 import { RichTextRenderer } from './common/RichTextRenderer';
 import { AppDatabase } from '../services/db';
 import { canonicalImageService } from '../services/imageService';
+import { PackageDetailModal } from './PackageDetailModal';
 import { 
   X, 
   MapPin, 
@@ -187,6 +188,32 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
           </div>
         </div>
       </div>
+    );
+  }
+
+  if (packageItem && !product && !hotel) {
+    return (
+      <PackageDetailModal
+        packageItem={packageItem}
+        onClose={onClose}
+        onCustomizePackage={
+          onCustomizePackage
+            ? pkg => {
+                onClose();
+                onCustomizePackage(pkg);
+              }
+            : undefined
+        }
+        onInstantBook={
+          onInstantBookPackage
+            ? pkg => {
+                onClose();
+                onInstantBookPackage(pkg);
+              }
+            : undefined
+        }
+        onEnquirePackage={onEnquirePackage}
+      />
     );
   }
 

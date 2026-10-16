@@ -121,6 +121,9 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
     setQuotationDates, 
     setDestination, 
     loadSavedQuote,
+    loadPackageIntoQuote,
+    quoteSource,
+    sourcePackageId,
     setIsQuoteDrawerOpen,
     loadAiPlannerPayload,
     setLeadId,
@@ -175,37 +178,30 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
   };
 
   const handleOpenCreateQuote = (destSlug?: string) => {
+    clearQuote();
     setTargetQuoteIdForBuilder(null);
     setTargetQuoteVersionForBuilder(undefined);
     setTargetQuoteModeForBuilder('edit');
     if (destSlug) {
       setInitialDestinationSlug(destSlug);
+    } else {
+      setInitialDestinationSlug(undefined);
     }
     setActiveTab('create-quote');
   };
 
   const handleCustomizePackage = (pkg: B2BPackage) => {
-    // 1. Clear active quote
     clearQuote();
+    loadPackageIntoQuote(pkg);
+    setTargetQuoteIdForBuilder(null);
+    setTargetQuoteVersionForBuilder(undefined);
+    setTargetQuoteModeForBuilder('edit');
+    setInitialDestinationSlug(undefined);
 
-    // 2. Set Destination & Dates
-    setDestination(pkg.destinationName);
-    setQuotationDates('2026-05-10', '2026-05-20');
-
-    // 3. Find corresponding products and add them to quote
-    const destProducts = products.filter(p => 
-      p.destinationName.toLowerCase().includes(pkg.destinationName.toLowerCase()) ||
-      p.country.toLowerCase().includes(pkg.destinationName.toLowerCase())
+    showToast(
+      'Package Loaded into Quote Builder',
+      `${pkg.title} (${pkg.durationDays}D/${pkg.durationNights}N)`
     );
-
-    if (destProducts.length > 0) {
-      destProducts.slice(0, 4).forEach(prod => {
-        addProductToQuote(prod, { adults: 2, children: 0, infants: 0 });
-      });
-    }
-
-    showToast('Package Imported to Quote Builder', `${pkg.title} (${pkg.durationDays}D/${pkg.durationNights}N)`);
-    // 4. Switch to quotation builder step
     setActiveTab('create-quote');
   };
 
@@ -415,7 +411,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
               targetQuoteId={targetQuoteIdForBuilder || undefined}
               targetQuoteVersion={targetQuoteVersionForBuilder}
               initialMode={targetQuoteModeForBuilder}
-              isNewQuoteMode={!targetQuoteIdForBuilder}
+              isNewQuoteMode={!targetQuoteIdForBuilder && quoteSource !== 'PACKAGE' && !sourcePackageId}
               onBackToDashboard={() => handleTabSelect('dashboard')}
               onViewMyQuotes={() => handleTabSelect('my-quotes')}
               onConvertToBooking={handleConvertToBooking}

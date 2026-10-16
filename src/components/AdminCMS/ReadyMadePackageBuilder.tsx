@@ -516,18 +516,40 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
     const durationNights = Math.max(0, durationDays - 1);
     const slug = pkg.slug?.trim() || pkg.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
-    // Persist only explicitly selected hub IDs using existing schema
+    // Persist only explicitly selected hub IDs in their saved order
     const validDestinationHubIds = new Set(destinationHubs.map(h => h.id));
-    const cleanHubIds = Array.from(new Set(pkg.hubIds || [])).filter(id => validDestinationHubIds.has(id));
-    const cleanHubNames = destinationHubs.filter(h => cleanHubIds.includes(h.id)).map(h => h.name);
+    const cleanHubIds = Array.from(new Set(pkg.hubIds || [])).filter(id => validDestinationHubIds.has(id) || (pkg.hubIds || []).includes(id));
+    const cleanHubNames = cleanHubIds.map(id => {
+      const matched = destinationHubs.find(h => h.id === id);
+      return matched?.name || ( matched as any)?.hubName || id;
+    });
     const cleanRouteHubs = (pkg.routeHubs || []).filter(h => h.hubId && cleanHubIds.includes(h.hubId));
+
+    // Synchronize all productIds referenced in day-wise itinerary
+    const allItineraryProductIds = new Set<string>(pkg.productIds || []);
+    (pkg.itinerary || []).forEach(day => {
+      (day.productIds || []).forEach(pid => {
+        if (pid) allItineraryProductIds.add(pid);
+      });
+      if (day.transferId) allItineraryProductIds.add(day.transferId);
+      if (day.railId) allItineraryProductIds.add(day.railId);
+    });
+
+    const computedRouteSummary = cleanRouteHubs.length > 0
+      ? cleanRouteHubs.map(h => `${h.hubName} (${h.nights || 1}N)`)
+      : (pkg.routeSummary && pkg.routeSummary.length > 0
+          ? pkg.routeSummary
+          : cleanHubNames.map(name => `${name} (${Math.max(1, Math.floor(durationNights / Math.max(1, cleanHubNames.length)))}N)`));
 
     const finalPkg: B2BPackage = {
       ...pkg,
+      name: pkg.title.trim(),
+      title: pkg.title.trim(),
       hubIds: cleanHubIds,
       hubNames: cleanHubNames,
       routeHubs: cleanRouteHubs,
-      routeSummary: cleanRouteHubs.map(h => `${h.hubName} (${h.nights || 1}N)`),
+      routeSummary: computedRouteSummary,
+      productIds: Array.from(allItineraryProductIds),
       slug,
       durationDays,
       durationNights,

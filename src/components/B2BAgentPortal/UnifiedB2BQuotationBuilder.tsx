@@ -72,7 +72,7 @@ import {
 } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
-import { formatCurrency, convertCurrency, calculateQuoteInternalBreakdown } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, calculateQuoteInternalBreakdown, calculateProductPrice, calculateProductPriceForAgent } from '../../services/pricingEngine';
 import { canonicalImageService } from '../../services/imageService';
 import { sanitizeImageUrl } from '../../utils/imageUtils';
 import { ProposalDocumentView } from '../ProposalDocumentView';
@@ -231,15 +231,38 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     totalSellingPrice,
     totalMarginAmount,
     saveCurrentQuote,
+    quoteTitle,
+    setQuoteTitle,
+    sourcePackageId,
+    setSourcePackageId,
+    sourcePackageName,
+    setSourcePackageName,
+    quotationScope: contextQuotationScope,
+    setQuotationScope: setContextQuotationScope,
     routeHubs: contextRouteHubs,
     setRouteHubs: setContextRouteHubs,
     paxConfig: contextPaxConfig,
     setPaxConfig: setContextPaxConfig,
     dayThemes: contextDayThemes,
     setDayThemes: setContextDayThemes,
+    dayDescriptions: contextDayDescriptions,
+    setDayDescriptions: setContextDayDescriptions,
+    dayOverviews: contextDayOverviews,
+    setDayOverviews: setContextDayOverviews,
+    dayNotes: contextDayNotes,
+    setDayNotes: setContextDayNotes,
+    inclusions: contextInclusions,
+    setInclusions: setContextInclusions,
+    exclusions: contextExclusions,
+    setExclusions: setContextExclusions,
+    importantInformation: contextImportantInformation,
+    setImportantInformation: setContextImportantInformation,
+    cancellationPolicy: contextCancellationPolicy,
+    setCancellationPolicy: setContextCancellationPolicy,
     destination: contextDestination,
     travelStartDate: contextStartDate,
     travelEndDate: contextEndDate,
+    setQuotationDates: setContextQuotationDates,
     handoffPayload,
     quoteSource,
     priceRefreshNotice,
@@ -285,7 +308,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   // Client Details & Specs
   const [selectedLeadId, setSelectedLeadId] = useState<string>('');
   const [tripType, setTripType] = useState('FIT Luxury');
-  const [quotationScope, setQuotationScope] = useState<QuotationScope>('HOTEL_LAND');
+  const [quotationScope, setQuotationScope] = useState<QuotationScope>(() => contextQuotationScope || 'HOTEL_LAND');
 
   // Travel Dates & Passengers
   const [startDate, setStartDate] = useState<string>(() => {
@@ -319,6 +342,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     if (contextStartDate) setStartDate(contextStartDate);
     if (contextEndDate) setEndDate(contextEndDate);
   }, [contextStartDate, contextEndDate]);
+
+  useEffect(() => {
+    if (contextQuotationScope) {
+      setQuotationScope(contextQuotationScope);
+    }
+  }, [contextQuotationScope]);
 
   useEffect(() => {
     if (contextPaxConfig) {
@@ -440,27 +469,167 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     return classifyPassengers(adultsCount, childAges, infantsCount);
   }, [adultsCount, childAges, infantsCount]);
 
+  // Dynamic Internal Cost Access check
+  const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
+
+  // Helper to recalculate all quote items when passenger counts or dates change
+  const recalculateItemsForPaxAndDateShift = (
+    targetItems: QuoteItem[],
+    nextAdults: number,
+    nextChildren: number,
+    nextInfants: number,
+    dateDiffDays: number = 0
+  ): QuoteItem[] => {
+    const pricingTier = user && user.role !== 'PUBLIC' ? 'B2B' : 'B2C';
+    const shiftIsoDate = (iso?: string): string | undefined => {
+      if (!iso || dateDiffDays === 0) return iso;
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      d.setDate(d.getDate() + dateDiffDays);
+      return d.toISOString().split('T')[0];
+    };
+
+    return targetItems.map(item => {
+      const nextTravelDate = shiftIsoDate(item.travelDate) || item.travelDate;
+      const nextCheckIn = shiftIsoDate(item.checkInDate);
+      const nextCheckOut = shiftIsoDate(item.checkOutDate);
+      const nextManualDetails = item.manualHotelDetails
+        ? {
+            ...item.manualHotelDetails,
+            checkInDate: shiftIsoDate(item.manualHotelDetails.checkInDate) || item.manualHotelDetails.checkInDate,
+            checkOutDate: shiftIsoDate(item.manualHotelDetails.checkOutDate) || item.manualHotelDetails.checkOutDate
+          }
+        : item.manualHotelDetails;
+
+      const calcParams = {
+        productId: item.product.id,
+        pricingTier: pricingTier as 'B2B' | 'B2C',
+        adults: nextAdults,
+        children: nextChildren,
+        infants: nextInfants,
+        travelDate: nextTravelDate,
+        targetCurrency: currency,
+        selectedAddonIds: item.selectedAddonIds || []
+      };
+
+      const calculation = !canViewInternalCosts
+        ? (calculateProductPriceForAgent(item.product, calcParams) as any)
+        : calculateProductPrice(item.product, calcParams);
+
+      return {
+        ...item,
+        pax: { adults: nextAdults, children: nextChildren, infants: nextInfants },
+        travelDate: nextTravelDate,
+        checkInDate: nextCheckIn,
+        checkOutDate: nextCheckOut,
+        manualHotelDetails: nextManualDetails,
+        calculation
+      };
+    });
+  };
+
+  // Handle Start Date change (automatically shifts End Date and all scheduled items by the date delta)
+  const handleChangeStartDate = (newStartDate: string) => {
+    if (!newStartDate) {
+      setStartDate(newStartDate);
+      return;
+    }
+    const prevStart = new Date(startDate);
+    const nextStart = new Date(newStartDate);
+    let nextEndDate = endDate;
+
+    if (!isNaN(prevStart.getTime()) && !isNaN(nextStart.getTime())) {
+      const diffDays = Math.round((nextStart.getTime() - prevStart.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays !== 0) {
+        const currentNights = routeHubs.reduce((acc, h) => acc + (h.nights || 0), 0) || tripNights || 7;
+        const computedEnd = new Date(nextStart);
+        computedEnd.setDate(computedEnd.getDate() + Math.max(1, currentNights));
+        nextEndDate = computedEnd.toISOString().split('T')[0];
+
+        if (items.length > 0) {
+          const shiftedItems = recalculateItemsForPaxAndDateShift(items, adultsCount, childrenCount, infantsCount, diffDays);
+          setItems(shiftedItems);
+        }
+        if (routeHubs.length > 0) {
+          const shiftIso = (iso?: string) => {
+            if (!iso) return iso;
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return iso;
+            d.setDate(d.getDate() + diffDays);
+            return d.toISOString().split('T')[0];
+          };
+          const shiftedHubs = routeHubs.map(h => ({
+            ...h,
+            checkInDate: shiftIso(h.checkInDate),
+            checkOutDate: shiftIso(h.checkOutDate),
+            manualHotel: h.manualHotel
+              ? {
+                  ...h.manualHotel,
+                  checkInDate: shiftIso(h.manualHotel.checkInDate) || h.manualHotel.checkInDate,
+                  checkOutDate: shiftIso(h.manualHotel.checkOutDate) || h.manualHotel.checkOutDate
+                }
+              : h.manualHotel
+          }));
+          setRouteHubs(shiftedHubs);
+          setContextRouteHubs(shiftedHubs);
+        }
+      }
+    }
+
+    setStartDate(newStartDate);
+    setEndDate(nextEndDate);
+    setContextQuotationDates(newStartDate, nextEndDate);
+  };
+
+  const handleChangeEndDate = (newEndDate: string) => {
+    setEndDate(newEndDate);
+    setContextQuotationDates(startDate, newEndDate);
+  };
+
+  // Handle Changing Adult Count
+  const handleSetAdultsCount = (newAdults: number) => {
+    const safeAdults = Math.max(1, newAdults);
+    setAdultsCount(safeAdults);
+    setContextPaxConfig(prev => ({ ...prev, adults: safeAdults }));
+    if (items.length > 0) {
+      setItems(prev => recalculateItemsForPaxAndDateShift(prev, safeAdults, childrenCount, infantsCount, 0));
+    }
+  };
+
   // Handle Changing Child Count
   const handleSetChildrenCount = (newCount: number) => {
     const safeCount = Math.max(0, newCount);
     setChildrenCount(safeCount);
-    setChildAges(prev => {
-      const next = [...prev];
-      if (safeCount > next.length) {
-        for (let i = next.length; i < safeCount; i++) {
-          next.push(7); // Default child age 7 (CWB)
-        }
-      } else if (safeCount < next.length) {
-        next.splice(safeCount);
+    let updatedAges = [...childAges];
+    if (safeCount > updatedAges.length) {
+      for (let i = updatedAges.length; i < safeCount; i++) {
+        updatedAges.push(7); // Default child age 7 (CWB)
       }
-      return next;
-    });
+    } else if (safeCount < updatedAges.length) {
+      updatedAges.splice(safeCount);
+    }
+    setChildAges(updatedAges);
+    setContextPaxConfig(prev => ({ ...prev, children: safeCount, childAges: updatedAges }));
+    if (items.length > 0) {
+      setItems(prev => recalculateItemsForPaxAndDateShift(prev, adultsCount, safeCount, infantsCount, 0));
+    }
+  };
+
+  // Handle Changing Infant Count
+  const handleSetInfantsCount = (newInfants: number) => {
+    const safeInfants = Math.max(0, newInfants);
+    setInfantsCount(safeInfants);
+    setContextPaxConfig(prev => ({ ...prev, infants: safeInfants }));
+    if (items.length > 0) {
+      setItems(prev => recalculateItemsForPaxAndDateShift(prev, adultsCount, childrenCount, safeInfants, 0));
+    }
   };
 
   const handleUpdateChildAge = (index: number, age: number) => {
     setChildAges(prev => {
       const next = [...prev];
       next[index] = age;
+      setContextPaxConfig(p => ({ ...p, childAges: next }));
       return next;
     });
   };
@@ -524,8 +693,28 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       if (q.adminManualMarginValue !== undefined) setAdminManualMarginValue(q.adminManualMarginValue);
       if (q.adminMarginMode) setAdminMarginMode(q.adminMarginMode);
       if (q.overallDiscountPercent !== undefined) setOverallDiscountPercent(q.overallDiscountPercent);
-      const loadedScope: QuotationScope = (q.scope as QuotationScope) || 'HOTEL_LAND';
+      const loadedScope: QuotationScope = (q.quotationScope as QuotationScope) || (q.scope as QuotationScope) || 'HOTEL_LAND';
       setQuotationScope(loadedScope);
+      setContextQuotationScope(loadedScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND');
+      if (q.title) setQuoteTitle(q.title);
+      if (q.sourcePackageId !== undefined) setSourcePackageId(q.sourcePackageId || null);
+      if (q.sourcePackageName !== undefined) setSourcePackageName(q.sourcePackageName || '');
+      if (q.dayDescriptions) {
+        setDayDescriptions(q.dayDescriptions);
+        setContextDayDescriptions(q.dayDescriptions);
+      }
+      if (q.dayOverviews) {
+        setDayOverviews(q.dayOverviews);
+        setContextDayOverviews(q.dayOverviews);
+      }
+      if (q.dayNotes) {
+        setDayNotes(q.dayNotes);
+        setContextDayNotes(q.dayNotes);
+      }
+      if (q.inclusions) setContextInclusions(q.inclusions);
+      if (q.exclusions) setContextExclusions(q.exclusions);
+      if (q.importantInformation !== undefined) setContextImportantInformation(q.importantInformation || '');
+      if (q.cancellationPolicy !== undefined) setContextCancellationPolicy(q.cancellationPolicy || '');
 
       const normalizeLoadedHubs = (hubsList: TripRouteHub[], scopeVal: QuotationScope): TripRouteHub[] => {
         return (hubsList || []).map(h => {
@@ -661,8 +850,48 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         setSelectedLeadId('');
         setRouteHubs([]);
       }
+    } else if (!targetQuoteId && (quoteSource === 'PACKAGE' || sourcePackageId)) {
+      // Package Customization Mode: initialize fresh quote identity while preserving all loaded package state
+      setActiveQuoteId(`QTE-${Date.now().toString(36).toUpperCase()}`);
+      setQuoteNumber(`QTE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
+      setQuoteVersion(1);
+      setHasExplicitlySaved(false);
+      setLoadError(null);
+      setAutoSaveStatus('IDLE');
+      setActiveStepId(1);
+      setActiveViewTab('BUILDER');
+      setActiveOptionTab(1);
+      if (contextQuotationScope) {
+        setQuotationScope(contextQuotationScope);
+      }
+      if (contextRouteHubs && contextRouteHubs.length > 0) {
+        setRouteHubs(contextRouteHubs);
+      }
+      if (contextDayThemes) {
+        setDayThemes(contextDayThemes);
+      }
+      if (contextDayDescriptions) {
+        setDayDescriptions(contextDayDescriptions);
+      }
+      if (contextDayOverviews) {
+        setDayOverviews(contextDayOverviews);
+      }
+      if (contextDayNotes) {
+        setDayNotes(contextDayNotes);
+      }
+      setOptionsData(prev => ({
+        ...prev,
+        1: {
+          ...prev[1],
+          title: sourcePackageName ? `Option 1: ${sourcePackageName}` : prev[1].title,
+          scope: contextQuotationScope || 'HOTEL_LAND',
+          items: items || [],
+          routeHubs: contextRouteHubs || [],
+          dayThemes: contextDayThemes || {}
+        }
+      }));
     }
-  }, [targetQuoteId, isNewQuoteMode, prefillLead]);
+  }, [targetQuoteId, isNewQuoteMode, prefillLead, sourcePackageId]);
 
   // City Hubs for Destination (strictly destination-aware via DestinationRelevanceService)
   const destinationHubs = useMemo(() => {
@@ -897,8 +1126,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
   };
 
-  // Day Theme and Notes customization
+  // Day Theme, Descriptions, Overviews and Notes customization
   const [dayThemes, setDayThemes] = useState<Record<number, string>>(() => contextDayThemes || {});
+  const [dayDescriptions, setDayDescriptions] = useState<Record<number, string>>(() => contextDayDescriptions || {});
+  const [dayOverviews, setDayOverviews] = useState<Record<number, string>>(() => contextDayOverviews || {});
+  const [dayNotes, setDayNotes] = useState<Record<number, string>>(() => contextDayNotes || {});
 
   useEffect(() => {
     if (contextDayThemes && Object.keys(contextDayThemes).length > 0) {
@@ -906,9 +1138,40 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
   }, [contextDayThemes]);
 
-  const handleUpdateDayThemes = (themes: Record<number, string>) => {
-    setDayThemes(themes);
-    setContextDayThemes(themes);
+  useEffect(() => {
+    if (contextDayDescriptions && Object.keys(contextDayDescriptions).length > 0) {
+      setDayDescriptions(contextDayDescriptions);
+    }
+  }, [contextDayDescriptions]);
+
+  useEffect(() => {
+    if (contextDayOverviews && Object.keys(contextDayOverviews).length > 0) {
+      setDayOverviews(contextDayOverviews);
+    }
+  }, [contextDayOverviews]);
+
+  useEffect(() => {
+    if (contextDayNotes && Object.keys(contextDayNotes).length > 0) {
+      setDayNotes(contextDayNotes);
+    }
+  }, [contextDayNotes]);
+
+  const handleUpdateDayThemes: React.Dispatch<React.SetStateAction<Record<number, string>>> = (updaterOrValue) => {
+    setDayThemes(prev => {
+      const next = typeof updaterOrValue === 'function' ? updaterOrValue(prev) : updaterOrValue;
+      setContextDayThemes(next);
+      return next;
+    });
+  };
+
+  const handleUpdateDayDescriptions: React.Dispatch<React.SetStateAction<Record<number, string>>> = (updaterOrValue) => {
+    setDayDescriptions(prev => {
+      const next = typeof updaterOrValue === 'function' ? updaterOrValue(prev) : updaterOrValue;
+      setContextDayDescriptions(next);
+      setDayOverviews(next);
+      setContextDayOverviews(next);
+      return next;
+    });
   };
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
 
@@ -1458,9 +1721,6 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const visaTotalSelling = useMemo(() => visaItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [visaItems]);
   const experienceTotalSelling = useMemo(() => experienceItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [experienceItems]);
 
-  // Dynamic Internal Cost Access check
-  const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
-
   const baseFinalSellingPrice = useMemo(() => {
     const rawSellingPrice = quotationScope === 'LAND_ONLY'
       ? effectivePricedItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0)
@@ -1599,8 +1859,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         id: activeQuoteId,
         quoteNumber,
         version: quoteVersion,
-        title: `${currentDestination.name} Bespoke Journey (${tripNights} Nights)`,
+        title: quoteTitle || (sourcePackageName ? `${sourcePackageName} (${tripNights} Nights)` : `${currentDestination.name} Bespoke Journey (${tripNights} Nights)`),
         destination: currentDestination.name,
+        sourcePackageId: sourcePackageId || undefined,
+        sourcePackageName: sourcePackageName || undefined,
+        quotationScope: quotationScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND',
         items: effectivePricedItems,
         currency,
         overallMarkupPercent: agentMarginType === 'PERCENTAGE' ? agentMarginValue : 0,
@@ -1708,7 +1971,14 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         leadId: selectedLeadId || undefined,
         scope: quotationScope,
         routeHubs,
-        dayThemes
+        dayThemes,
+        dayDescriptions,
+        dayOverviews,
+        dayNotes,
+        inclusions: contextInclusions && contextInclusions.length > 0 ? contextInclusions : undefined,
+        exclusions: contextExclusions && contextExclusions.length > 0 ? contextExclusions : undefined,
+        importantInformation: contextImportantInformation || undefined,
+        cancellationPolicy: contextCancellationPolicy || undefined
       };
 
       db.saveQuote(activeQuote, user, 'EDITED');
@@ -2749,6 +3019,15 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               </span>
 
               {/* Status / Feasibility Alerts Badge */}
+              {sourcePackageName && (
+                <span
+                  className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200 flex items-center gap-1 shrink-0 whitespace-nowrap max-w-[180px] truncate"
+                  title={`Customizing Package: ${sourcePackageName}`}
+                >
+                  <Sparkles className="w-3 h-3 text-teal-600 shrink-0" />
+                  <span className="truncate">Pkg: {sourcePackageName}</span>
+                </span>
+              )}
               {feasibility.warnings.length > 0 ? (
                 <span 
                   className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1 shrink-0 whitespace-nowrap" 
@@ -2889,8 +3168,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               id: activeQuoteId,
               quoteNumber,
               version: quoteVersion,
-              title: `${currentDestination.name} Bespoke Travel Proposal`,
+              title: quoteTitle || (sourcePackageName ? `${sourcePackageName} (${tripNights} Nights)` : `${currentDestination.name} Bespoke Travel Proposal`),
               destination: currentDestination.name,
+              sourcePackageId: sourcePackageId || undefined,
+              sourcePackageName: sourcePackageName || undefined,
+              quotationScope: quotationScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND',
               scope: quotationScope,
               items: effectivePricedItems,
               currency,
@@ -2924,7 +3206,14 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               travelStyle,
               options: computedQuotationOptions,
               routeHubs,
-              dayThemes
+              dayThemes,
+              dayDescriptions,
+              dayOverviews,
+              dayNotes,
+              inclusions: contextInclusions && contextInclusions.length > 0 ? contextInclusions : undefined,
+              exclusions: contextExclusions && contextExclusions.length > 0 ? contextExclusions : undefined,
+              importantInformation: contextImportantInformation || undefined,
+              cancellationPolicy: contextCancellationPolicy || undefined
             }}
             agentUser={user}
           />
@@ -2963,16 +3252,16 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               quotationScope={quotationScope}
               setQuotationScope={handleChangeQuotationScope}
               startDate={startDate}
-              setStartDate={setStartDate}
+              setStartDate={handleChangeStartDate}
               endDate={endDate}
-              setEndDate={setEndDate}
+              setEndDate={handleChangeEndDate}
               tripNights={tripNights}
               adultsCount={adultsCount}
-              setAdultsCount={setAdultsCount}
+              setAdultsCount={handleSetAdultsCount}
               childrenCount={childrenCount}
               onSetChildrenCount={handleSetChildrenCount}
               infantsCount={infantsCount}
-              setInfantsCount={setInfantsCount}
+              setInfantsCount={handleSetInfantsCount}
               childAges={childAges}
               onUpdateChildAge={handleUpdateChildAge}
               passengerClassification={passengerClassification}
@@ -3075,6 +3364,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               onOpenEditItem={handleOpenEditItem}
               dayThemes={dayThemes}
               setDayThemes={handleUpdateDayThemes}
+              dayDescriptions={dayDescriptions}
+              setDayDescriptions={handleUpdateDayDescriptions}
+              sourcePackageName={sourcePackageName}
+              quoteTitle={quoteTitle}
+              setQuoteTitle={setQuoteTitle}
             />
         </main>
       )}

@@ -9,6 +9,7 @@ import { createQuoteItemContentSnapshot } from '../utils/b2bQuotationHelpers';
 import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
 import { japanRailJourneyService } from '../services/rail/JapanRailJourneyService';
 import { canUserViewInternalCostBreakdown } from '../services/permissionEngine';
+import { transformPackageToQuoteState } from '../services/packageToQuoteTransformer';
 
 interface QuotationContextType {
   items: QuoteItem[];
@@ -133,19 +134,41 @@ interface QuotationContextType {
   currentVersion: number;
   isLocked: boolean;
 
-  // Route Hubs, Pax Configuration, Day Themes
+  // Route Hubs, Pax Configuration, Day Themes & Package Itinerary Fields
+  quoteTitle: string;
+  setQuoteTitle: (title: string) => void;
+  sourcePackageId: string | null;
+  setSourcePackageId: (id: string | null) => void;
+  sourcePackageName: string;
+  setSourcePackageName: (name: string) => void;
+  quotationScope: 'HOTEL_LAND' | 'LAND_ONLY';
+  setQuotationScope: (scope: 'HOTEL_LAND' | 'LAND_ONLY') => void;
   routeHubs: TripRouteHub[];
   setRouteHubs: React.Dispatch<React.SetStateAction<TripRouteHub[]>>;
   paxConfig: { adults: number; children: number; childAges: number[]; infants: number };
   setPaxConfig: React.Dispatch<React.SetStateAction<{ adults: number; children: number; childAges: number[]; infants: number }>>;
   dayThemes: Record<number, string>;
   setDayThemes: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  dayDescriptions: Record<number, string>;
+  setDayDescriptions: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  dayOverviews: Record<number, string>;
+  setDayOverviews: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  dayNotes: Record<number, string>;
+  setDayNotes: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  inclusions: string[];
+  setInclusions: React.Dispatch<React.SetStateAction<string[]>>;
+  exclusions: string[];
+  setExclusions: React.Dispatch<React.SetStateAction<string[]>>;
+  importantInformation: string;
+  setImportantInformation: (info: string) => void;
+  cancellationPolicy: string;
+  setCancellationPolicy: (policy: string) => void;
 
   // AI Planner Integration & State Tracking
   handoffPayload: QuoteBuilderHandoffPayload | null;
   setHandoffPayload: (payload: QuoteBuilderHandoffPayload | null) => void;
-  quoteSource: 'AI_PLANNER' | 'USER' | 'HYBRID';
-  setQuoteSource: (source: 'AI_PLANNER' | 'USER' | 'HYBRID') => void;
+  quoteSource: 'AI_PLANNER' | 'USER' | 'HYBRID' | 'PACKAGE';
+  setQuoteSource: (source: 'AI_PLANNER' | 'USER' | 'HYBRID' | 'PACKAGE') => void;
   priceRefreshNotice: string | null;
   clearPriceRefreshNotice: () => void;
   loadAiPlannerPayload: (payload: QuoteBuilderHandoffPayload) => { priceVariance: boolean; oldPrice: number; newPrice: number };
@@ -211,14 +234,25 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [clientCompany, setClientCompany] = useState('');
   const [clientPhone, setClientPhone] = useState('');
   // No hardcoded default destination or dates: Quote Builder starts empty unless AI or user provides values
+  const [quoteTitle, setQuoteTitle] = useState('');
+  const [sourcePackageId, setSourcePackageId] = useState<string | null>(null);
+  const [sourcePackageName, setSourcePackageName] = useState('');
+  const [quotationScope, setQuotationScope] = useState<'HOTEL_LAND' | 'LAND_ONLY'>('HOTEL_LAND');
   const [destination, setDestination] = useState('');
   const [travelStartDate, setTravelStartDate] = useState('');
   const [travelEndDate, setTravelEndDate] = useState('');
   const [routeHubs, setRouteHubs] = useState<TripRouteHub[]>([]);
   const [paxConfig, setPaxConfig] = useState({ adults: 2, children: 0, childAges: [] as number[], infants: 0 });
   const [dayThemes, setDayThemes] = useState<Record<number, string>>({});
+  const [dayDescriptions, setDayDescriptions] = useState<Record<number, string>>({});
+  const [dayOverviews, setDayOverviews] = useState<Record<number, string>>({});
+  const [dayNotes, setDayNotes] = useState<Record<number, string>>({});
+  const [inclusions, setInclusions] = useState<string[]>([]);
+  const [exclusions, setExclusions] = useState<string[]>([]);
+  const [importantInformation, setImportantInformation] = useState('');
+  const [cancellationPolicy, setCancellationPolicy] = useState('');
   const [handoffPayload, setHandoffPayload] = useState<QuoteBuilderHandoffPayload | null>(null);
-  const [quoteSource, setQuoteSource] = useState<'AI_PLANNER' | 'USER' | 'HYBRID'>('USER');
+  const [quoteSource, setQuoteSource] = useState<'AI_PLANNER' | 'USER' | 'HYBRID' | 'PACKAGE'>('USER');
   const [priceRefreshNotice, setPriceRefreshNotice] = useState<string | null>(null);
   const [leadId, setLeadId] = useState('');
   const [agentNotes, setAgentNotes] = useState('');
@@ -709,6 +743,10 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const clearQuote = () => {
     setItems([]);
+    setQuoteTitle('');
+    setSourcePackageId(null);
+    setSourcePackageName('');
+    setQuotationScope('HOTEL_LAND');
     setClientName('');
     setClientEmail('');
     setClientCompany('');
@@ -719,6 +757,13 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setRouteHubs([]);
     setPaxConfig({ adults: 2, children: 0, childAges: [], infants: 0 });
     setDayThemes({});
+    setDayDescriptions({});
+    setDayOverviews({});
+    setDayNotes({});
+    setInclusions([]);
+    setExclusions([]);
+    setImportantInformation('');
+    setCancellationPolicy('');
     setHandoffPayload(null);
     setQuoteSource('USER');
     setPriceRefreshNotice(null);
@@ -908,7 +953,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const newQuote: Quotation = {
       id: quoteIdToUse,
       quoteNumber: quoteNumberToUse,
-      title: clientName ? `Quotation for ${clientName}` : `Bespoke Itinerary Quote #${items.length} Products`,
+      title: quoteTitle || (clientName ? `Quotation for ${clientName}` : `Bespoke Itinerary Quote #${items.length} Products`),
       clientName: clientName || 'Client Name Pending',
       clientEmail,
       clientCompany,
@@ -917,7 +962,21 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       agentName: user?.name || 'Travel Consultant',
       agentAgency: user?.agencyName || user?.companyName,
       agentLogoUrl: user?.brandLogoUrl || user?.logoUrl,
-      destination: items[0]?.product.destinationName || 'Multi-Destination',
+      destination: destination || items[0]?.product.destinationName || 'Multi-Destination',
+      travelStartDate: travelStartDate || undefined,
+      travelEndDate: travelEndDate || undefined,
+      quotationScope,
+      routeHubs,
+      dayThemes,
+      dayDescriptions,
+      dayOverviews,
+      dayNotes,
+      sourcePackageId: sourcePackageId || undefined,
+      sourcePackageName: sourcePackageName || undefined,
+      inclusions: inclusions.length > 0 ? inclusions : undefined,
+      exclusions: exclusions.length > 0 ? exclusions : undefined,
+      importantInformation: importantInformation || undefined,
+      cancellationPolicy: cancellationPolicy || undefined,
       currency,
       items,
       version: currentVersion,
@@ -970,8 +1029,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         assignedStaffId: user?.id || 'staff-01',
         assignedStaffName: user?.name || 'Operations Desk',
         destinationId: items[0]?.product.destinationId || 'japan',
-        destinationName: items[0]?.product.destinationName || 'Multi-Destination',
-        travelDates: items[0]?.travelDate || 'Upcoming 2026',
+        destinationName: destination || items[0]?.product.destinationName || 'Multi-Destination',
+        travelDates: travelStartDate || items[0]?.travelDate || 'Upcoming 2026',
         paxAdults: items.reduce((sum, it) => sum + it.pax.adults, 0) || 2,
         paxChildren: items.reduce((sum, it) => sum + it.pax.children, 0) || 0,
         estimatedBudget: totals.totalSellingPrice,
@@ -1000,6 +1059,22 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const loadSavedQuote = (quote: Quotation) => {
     setItems(quote.items || []);
+    setQuoteTitle(quote.title || '');
+    setSourcePackageId(quote.sourcePackageId || null);
+    setSourcePackageName(quote.sourcePackageName || '');
+    setQuotationScope((quote.quotationScope as 'HOTEL_LAND' | 'LAND_ONLY') || 'HOTEL_LAND');
+    setDestination(quote.destination || '');
+    setTravelStartDate(quote.travelStartDate || '');
+    setTravelEndDate(quote.travelEndDate || '');
+    setRouteHubs(quote.routeHubs || []);
+    setDayThemes(quote.dayThemes || {});
+    setDayDescriptions(quote.dayDescriptions || {});
+    setDayOverviews(quote.dayOverviews || {});
+    setDayNotes(quote.dayNotes || {});
+    setInclusions(quote.inclusions || []);
+    setExclusions(quote.exclusions || []);
+    setImportantInformation(quote.importantInformation || '');
+    setCancellationPolicy(quote.cancellationPolicy || '');
     setCurrency(quote.currency || 'USD');
     setClientName(quote.clientName || '');
     setClientEmail(quote.clientEmail || '');
@@ -1010,96 +1085,43 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActiveQuoteId(quote.id);
     setCurrentVersion(quote.version || 1);
     setIsLocked(!!quote.isLocked);
-    setIsQuoteDrawerOpen(true);
   };
 
   const loadPackageIntoQuote = (pkg: B2BPackage) => {
     const db = AppDatabase.getInstance();
-    const allProducts = db.getProducts();
-    const packageCurrency = pkg.currency || 'USD';
-    setCurrency(packageCurrency);
+    const freshPkg = db.getPackageById(pkg.id) || pkg;
 
-    // Compute start date: 14 days in future
-    const startDateObj = new Date(Date.now() + 86400000 * 14);
-    const startDateStr = startDateObj.toISOString().split('T')[0];
-    const durationDays = pkg.durationDays || 5;
-    const endDateObj = new Date(startDateObj.getTime() + 86400000 * (durationDays - 1));
-    const endDateStr = endDateObj.toISOString().split('T')[0];
+    const transformed = transformPackageToQuoteState(freshPkg, {
+      user,
+      currency,
+      adultsCount: paxConfig.adults || 2,
+      childrenCount: paxConfig.children || 0,
+      infantsCount: paxConfig.infants || 0
+    });
 
-    setTravelStartDate(startDateStr);
-    setTravelEndDate(endDateStr);
-    setDestination(pkg.destinationName || 'Japan');
-    setClientName(`Bespoke Traveler - ${pkg.title}`);
-    setAgentNotes(`Customized from Ready-Made Package Circuit: "${pkg.title}" (${durationDays} Days / ${pkg.durationNights || durationDays - 1} Nights). Route: ${(pkg.routeSummary || []).join(' → ')}`);
-
-    // Build QuoteItems from package itinerary & products
-    const newItems: QuoteItem[] = [];
-    const defaultPax = { adults: 2, children: 0, infants: 0 };
-
-    if (pkg.itinerary && pkg.itinerary.length > 0) {
-      pkg.itinerary.forEach((day, dayIndex) => {
-        const dayDate = new Date(startDateObj.getTime() + 86400000 * dayIndex).toISOString().split('T')[0];
-        (day.productIds || []).forEach((prodId, pIdx) => {
-          const product = allProducts.find(p => p.id === prodId);
-          if (product) {
-            const calculation = calculateProductPrice(product, {
-              productId: product.id,
-              travelDate: dayDate,
-              adults: defaultPax.adults,
-              children: defaultPax.children,
-              infants: defaultPax.infants,
-              targetCurrency: packageCurrency,
-              userRole: 'B2B_AGENT'
-            });
-            newItems.push({
-              id: `item-pkg-${pkg.id}-d${day.dayNumber}-${pIdx}-${Date.now()}`,
-              product,
-              travelDate: dayDate,
-              serviceTime: pIdx === 0 ? '09:00' : '14:00',
-              pax: defaultPax,
-              calculation,
-              selectedAddonIds: [],
-              notes: `Day ${day.dayNumber}: ${day.title}`
-            });
-          }
-        });
-      });
-    }
-
-    // Fallback: If itinerary had no productIds, attach top-level productIds
-    if (newItems.length === 0 && pkg.productIds && pkg.productIds.length > 0) {
-      pkg.productIds.forEach((prodId, idx) => {
-        const product = allProducts.find(p => p.id === prodId);
-        if (product) {
-          const dayDate = new Date(startDateObj.getTime() + 86400000 * (idx % durationDays)).toISOString().split('T')[0];
-          const calculation = calculateProductPrice(product, {
-            productId: product.id,
-            travelDate: dayDate,
-            adults: defaultPax.adults,
-            children: defaultPax.children,
-            infants: defaultPax.infants,
-            targetCurrency: packageCurrency,
-            userRole: 'B2B_AGENT'
-          });
-          newItems.push({
-            id: `item-pkg-${pkg.id}-${idx}-${Date.now()}`,
-            product,
-            travelDate: dayDate,
-            serviceTime: '09:00',
-            pax: defaultPax,
-            calculation,
-            selectedAddonIds: [],
-            notes: `Package Component ${idx + 1}`
-          });
-        }
-      });
-    }
-
-    setItems(newItems);
-    setActiveQuoteId(null); // Fresh bespoke quote derived from package
+    setSourcePackageId(transformed.sourcePackageId);
+    setSourcePackageName(transformed.sourcePackageName);
+    setQuoteTitle(transformed.quoteTitle);
+    setDestination(transformed.destination.name);
+    setQuotationScope(transformed.quotationScope);
+    setTravelStartDate(transformed.startDate);
+    setTravelEndDate(transformed.endDate);
+    setRouteHubs(transformed.routeHubs);
+    setItems(transformed.items);
+    setDayThemes(transformed.dayThemes);
+    setDayDescriptions(transformed.dayDescriptions);
+    setDayOverviews(transformed.dayOverviews);
+    setDayNotes(transformed.dayNotes);
+    setInclusions(transformed.inclusions);
+    setExclusions(transformed.exclusions);
+    setImportantInformation(transformed.importantInformation);
+    setCancellationPolicy(transformed.cancellationPolicy);
+    setAgentNotes(transformed.agentNotes);
+    setQuoteSource('PACKAGE');
+    setActiveQuoteId(null);
     setCurrentVersion(1);
     setIsLocked(false);
-    setIsQuoteDrawerOpen(true);
+    setIsQuoteDrawerOpen(false);
   };
 
   const deleteSavedQuote = (quoteId: string) => {
@@ -1155,12 +1177,34 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         activeQuoteId,
         currentVersion,
         isLocked,
+        quoteTitle,
+        setQuoteTitle,
+        sourcePackageId,
+        setSourcePackageId,
+        sourcePackageName,
+        setSourcePackageName,
+        quotationScope,
+        setQuotationScope,
         routeHubs,
         setRouteHubs,
         paxConfig,
         setPaxConfig,
         dayThemes,
         setDayThemes,
+        dayDescriptions,
+        setDayDescriptions,
+        dayOverviews,
+        setDayOverviews,
+        dayNotes,
+        setDayNotes,
+        inclusions,
+        setInclusions,
+        exclusions,
+        setExclusions,
+        importantInformation,
+        setImportantInformation,
+        cancellationPolicy,
+        setCancellationPolicy,
         handoffPayload,
         setHandoffPayload,
         quoteSource,

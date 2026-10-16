@@ -34,6 +34,12 @@ import { B2BNavTab, Quotation, B2BPackage, Destination, Product, Hotel } from '.
 import { AppDatabase } from '../../services/db';
 import { canonicalImageService } from '../../services/imageService';
 import { formatCurrency, calculatePackagePrice } from '../../services/pricingEngine';
+import {
+  cleanPackageText,
+  isPackageVisibleToB2BAgent,
+  normalizePackageRecord,
+  resolvePackageOrderedHubs
+} from '../../services/packageToQuoteTransformer';
 
 interface B2BDashboardViewProps {
   onNavigate: (tab: B2BNavTab) => void;
@@ -72,7 +78,14 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
     };
   }, [db]);
 
-  const packages = useMemo(() => db.getPackages(), [db, dbTick]);
+  const packages = useMemo(
+    () =>
+      db
+        .getPublishedB2BPackages()
+        .map(normalizePackageRecord)
+        .filter(isPackageVisibleToB2BAgent),
+    [db, dbTick]
+  );
   const customers = useMemo(() => db.getB2BCustomers(user?.id), [db, user, dbTick]);
   const tasks = useMemo(() => db.getB2BTasks(user?.id), [db, user, dbTick]);
   const bookings = useMemo(() => db.getBookingsForUser(user), [db, user, dbTick]);
@@ -538,14 +551,14 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                   <div className="p-3.5 flex-1 flex flex-col justify-between space-y-3 bg-white">
                     <div className="space-y-1.5">
                       <div className="flex flex-wrap gap-1">
-                        {pkg.routeSummary.slice(0, 3).map((r, i) => (
+                        {resolvePackageOrderedHubs(pkg).slice(0, 3).map((h, i) => (
                           <span key={i} className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md font-medium">
-                            {r}
+                            {h.hubName} ({h.nights}N)
                           </span>
                         ))}
                       </div>
                       <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">
-                        {pkg.tagline}
+                        {cleanPackageText(pkg.tagline || pkg.description)}
                       </p>
                     </div>
 
