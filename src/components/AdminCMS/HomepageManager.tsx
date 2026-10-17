@@ -43,12 +43,20 @@ import {
   AlertCircle,
   X,
   MapPin,
-  Mail
+  Mail,
+  Upload,
+  Loader2,
+  FileImage
 } from 'lucide-react';
 import { UniversalHero } from '../UniversalHero';
 import { BuyerHeroSection } from '../BuyerPortal/BuyerHeroSection';
 import { UniversalHeroConfig, HeroTrustItem } from '../../types';
 import { NewsletterManager } from './NewsletterManager';
+import { 
+  uploadAffiliationLogo, 
+  uploadSectionBanner, 
+  OFFICIAL_ASSOCIATION_LOGOS 
+} from '../../services/affiliationStorageService';
 
 export interface SequenceModuleItem {
   key: string;
@@ -174,12 +182,18 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
     name: '',
     fullName: '',
     type: 'Regulatory Verification',
+    logo: '',
     description: '',
     verificationReference: '',
     officialLink: '',
     displayOrder: 1,
     isActive: true
   });
+  const [uploadingAffiliationId, setUploadingAffiliationId] = useState<string | null>(null);
+  const [isUploadingSectionBanner, setIsUploadingSectionBanner] = useState(false);
+  const [bannerUploadError, setBannerUploadError] = useState<string | null>(null);
+  const [affiliationUploadError, setAffiliationUploadError] = useState<string | null>(null);
+  const [modalLogoUploading, setModalLogoUploading] = useState(false);
 
   // FAQ Modal state
   const [isEditingFaq, setIsEditingFaq] = useState(false);
@@ -551,6 +565,8 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
         name: affiliationForm.name,
         fullName: affiliationForm.fullName,
         type: affiliationForm.type || 'Regulatory Verification',
+        logo: affiliationForm.logo || '',
+        storagePath: affiliationForm.storagePath || '',
         description: affiliationForm.description || '',
         verificationReference: affiliationForm.verificationReference || '',
         officialLink: affiliationForm.officialLink || '',
@@ -567,12 +583,122 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
       name: '',
       fullName: '',
       type: 'Regulatory Verification',
+      logo: '',
       description: '',
       verificationReference: '',
       officialLink: '',
       displayOrder: 1,
       isActive: true
     });
+  };
+
+  const moveAffiliation = (index: number, direction: 'up' | 'down') => {
+    const existing = [...(config.affiliations && config.affiliations.length > 0 ? config.affiliations : INITIAL_AFFILIATIONS)];
+    const targetIdx = direction === 'up' ? index - 1 : index + 1;
+    if (targetIdx < 0 || targetIdx >= existing.length) return;
+    const temp = existing[index];
+    existing[index] = existing[targetIdx];
+    existing[targetIdx] = temp;
+    const reordered = existing.map((aff, idx) => ({
+      ...aff,
+      displayOrder: idx + 1
+    }));
+    const updated = { ...config, affiliations: reordered };
+    setConfig(updated);
+    db.updateHomepageConfig(updated, user);
+  };
+
+  const handleAffiliationLogoUpload = async (file: File, affId: string) => {
+    if (!file) return;
+    setUploadingAffiliationId(affId);
+    setAffiliationUploadError(null);
+    try {
+      const result = await uploadAffiliationLogo(file, affId);
+      const existing = [...(config.affiliations && config.affiliations.length > 0 ? config.affiliations : INITIAL_AFFILIATIONS)];
+      const idx = existing.findIndex(a => a.id === affId);
+      if (idx >= 0) {
+        existing[idx] = {
+          ...existing[idx],
+          logo: result.url,
+          storagePath: result.storagePath
+        };
+        const updated = { ...config, affiliations: existing };
+        setConfig(updated);
+        db.updateHomepageConfig(updated, user);
+      }
+    } catch (err: any) {
+      console.error('Affiliation logo upload failed:', err);
+      setAffiliationUploadError(err?.message || 'Failed to upload affiliation logo.');
+    } finally {
+      setUploadingAffiliationId(null);
+    }
+  };
+
+  const handleRemoveAffiliationLogo = (affId: string) => {
+    const existing = [...(config.affiliations && config.affiliations.length > 0 ? config.affiliations : INITIAL_AFFILIATIONS)];
+    const idx = existing.findIndex(a => a.id === affId);
+    if (idx >= 0) {
+      existing[idx] = {
+        ...existing[idx],
+        logo: '',
+        storagePath: undefined
+      };
+      const updated = { ...config, affiliations: existing };
+      setConfig(updated);
+      db.updateHomepageConfig(updated, user);
+    }
+  };
+
+  const handleResetToOfficialLogo = (affId: string) => {
+    const existing = [...(config.affiliations && config.affiliations.length > 0 ? config.affiliations : INITIAL_AFFILIATIONS)];
+    const idx = existing.findIndex(a => a.id === affId);
+    if (idx >= 0) {
+      const upper = (existing[idx].name || '').toUpperCase().trim();
+      const official = OFFICIAL_ASSOCIATION_LOGOS[upper]?.logo || '';
+      if (official) {
+        existing[idx] = {
+          ...existing[idx],
+          logo: official,
+          storagePath: undefined
+        };
+        const updated = { ...config, affiliations: existing };
+        setConfig(updated);
+        db.updateHomepageConfig(updated, user);
+      }
+    }
+  };
+
+  const handleSectionBannerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingSectionBanner(true);
+    setBannerUploadError(null);
+    try {
+      const result = await uploadSectionBanner(file);
+      const updated = {
+        ...config,
+        affiliationsSectionImage: result.url,
+        affiliationsSectionImageStoragePath: result.storagePath
+      };
+      setConfig(updated);
+      db.updateHomepageConfig(updated, user);
+    } catch (err: any) {
+      console.error('Section banner upload failed:', err);
+      setBannerUploadError(err?.message || 'Failed to upload section banner.');
+    } finally {
+      setIsUploadingSectionBanner(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleRemoveSectionBanner = () => {
+    const updated = {
+      ...config,
+      affiliationsSectionImage: '',
+      affiliationsSectionImageStoragePath: ''
+    };
+    setConfig(updated);
+    db.updateHomepageConfig(updated, user);
   };
 
   const handleDeleteAffiliation = (id: string) => {
@@ -2886,140 +3012,372 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
               </div>
             </div>
 
+            {/* Error notifications */}
+            {(bannerUploadError || affiliationUploadError) && (
+              <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{bannerUploadError || affiliationUploadError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBannerUploadError(null);
+                    setAffiliationUploadError(null);
+                  }}
+                  className="text-rose-600 hover:text-rose-900 font-bold ml-4 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
             {/* Section Controls */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Section Badge
-                </label>
-                <input
-                  type="text"
-                  value={config.affiliationsSectionBadge || 'REGULATORY AFFILIATIONS & ACCREDITATIONS'}
-                  onChange={e => {
-                    const updated = { ...config, affiliationsSectionBadge: e.target.value };
-                    setConfig(updated);
-                    db.updateHomepageConfig(updated, user);
-                  }}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white"
-                />
+            <div className="space-y-4 p-5 rounded-2xl bg-slate-50 border border-slate-200">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Section Badge
+                  </label>
+                  <input
+                    type="text"
+                    value={config.affiliationsSectionBadge || 'REGULATORY AFFILIATIONS & ACCREDITATIONS'}
+                    onChange={e => {
+                      const updated = { ...config, affiliationsSectionBadge: e.target.value };
+                      setConfig(updated);
+                      db.updateHomepageConfig(updated, user);
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Section Title
+                  </label>
+                  <input
+                    type="text"
+                    value={config.affiliationsSectionTitle || 'Regulatory Verification & Recognized Trade Affiliations'}
+                    onChange={e => {
+                      const updated = { ...config, affiliationsSectionTitle: e.target.value };
+                      setConfig(updated);
+                      db.updateHomepageConfig(updated, user);
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Section Subtitle
+                  </label>
+                  <input
+                    type="text"
+                    value={config.affiliationsSectionSubtitle || 'TheUnbound operates under rigorous regulatory oversight and recognized tourism bodies.'}
+                    onChange={e => {
+                      const updated = { ...config, affiliationsSectionSubtitle: e.target.value };
+                      setConfig(updated);
+                      db.updateHomepageConfig(updated, user);
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white"
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Section Title
-                </label>
-                <input
-                  type="text"
-                  value={config.affiliationsSectionTitle || 'Regulatory Verification & Recognized Trade Affiliations'}
-                  onChange={e => {
-                    const updated = { ...config, affiliationsSectionTitle: e.target.value };
-                    setConfig(updated);
-                    db.updateHomepageConfig(updated, user);
-                  }}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white font-bold"
-                />
-              </div>
+              {/* Section-Level Banner / Image Management */}
+              <div className="pt-4 border-t border-slate-200/80">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+                      Section-Level Banner / Credentials Image (Optional)
+                    </label>
+                    <p className="text-[11px] text-slate-500">
+                      Upload an optional header banner or trust credential graphic for this section. Independent from individual association logos.
+                    </p>
+                  </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Section Subtitle
-                </label>
-                <input
-                  type="text"
-                  value={config.affiliationsSectionSubtitle || 'TheUnbound operates under rigorous regulatory oversight and recognized tourism bodies.'}
-                  onChange={e => {
-                    const updated = { ...config, affiliationsSectionSubtitle: e.target.value };
-                    setConfig(updated);
-                    db.updateHomepageConfig(updated, user);
-                  }}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs bg-white"
-                />
+                  <div className="flex items-center space-x-2">
+                    <label className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs cursor-pointer shadow-xs transition-colors">
+                      {isUploadingSectionBanner ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#00C6A6]" />
+                          <span>Uploading to Firebase Storage...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-3.5 h-3.5 text-[#00C6A6]" />
+                          <span>{config.affiliationsSectionImage ? 'Replace Section Banner' : 'Upload Section Banner'}</span>
+                        </>
+                      )}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        disabled={isUploadingSectionBanner}
+                        onChange={handleSectionBannerUpload}
+                        className="hidden"
+                      />
+                    </label>
+
+                    {config.affiliationsSectionImage && (
+                      <button
+                        type="button"
+                        onClick={handleRemoveSectionBanner}
+                        className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold cursor-pointer transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Remove Banner</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {config.affiliationsSectionImage && (
+                  <div className="p-3 bg-white rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center gap-4">
+                    <div className="w-full sm:w-48 h-20 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 shrink-0">
+                      <img
+                        src={config.affiliationsSectionImage}
+                        alt={config.affiliationsSectionImageAlt || 'Section Banner Preview'}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="flex-1 space-y-1.5">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          Live on Homepage
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono truncate max-w-xs">
+                          {config.affiliationsSectionImage.startsWith('data:') ? 'Uploaded local asset' : config.affiliationsSectionImage}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <label className="text-[11px] font-bold text-slate-600 shrink-0">Alt Text:</label>
+                        <input
+                          type="text"
+                          value={config.affiliationsSectionImageAlt || ''}
+                          placeholder="e.g. TheUnbound Regulatory Verification & Recognized Trade Affiliations"
+                          onChange={e => {
+                            const updated = { ...config, affiliationsSectionImageAlt: e.target.value };
+                            setConfig(updated);
+                            db.updateHomepageConfig(updated, user);
+                          }}
+                          className="w-full px-2.5 py-1 rounded-md border border-slate-200 text-xs bg-slate-50"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Affiliations Cards List */}
             <div className="space-y-3">
-              {(config.affiliations && config.affiliations.length > 0 ? config.affiliations : INITIAL_AFFILIATIONS).map((aff, idx) => (
-                <div 
-                  key={aff.id}
-                  className={`p-4 rounded-xl border transition-all ${
-                    aff.isActive ? 'bg-white border-slate-200' : 'bg-slate-50 border-slate-200 opacity-60'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="space-y-1.5 flex-1">
-                      <div className="flex items-center space-x-2">
-                        <span className="text-[10px] font-bold font-mono px-2 py-0.5 bg-slate-100 text-slate-600 rounded">
-                          Order #{aff.displayOrder || idx + 1}
-                        </span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 bg-teal-50 text-[#008972] rounded">
-                          {aff.type}
-                        </span>
-                        {!aff.isActive && (
-                          <span className="text-[10px] font-bold px-2 py-0.5 bg-rose-50 text-rose-600 rounded">
-                            Inactive / Hidden
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-baseline space-x-2 pt-0.5">
-                        <span className="text-sm font-black text-slate-900">{aff.name}</span>
-                        <span className="text-xs font-medium text-slate-600">— {aff.fullName}</span>
-                      </div>
-                      <p className="text-xs text-slate-600 leading-relaxed">{aff.description}</p>
-                      
-                      <div className="flex flex-wrap items-center gap-3 pt-1 text-[11px]">
-                        {aff.verificationReference && (
-                          <span className="text-slate-500">
-                            <strong>Reference:</strong> <code className="font-mono text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded">{aff.verificationReference}</code>
-                          </span>
-                        )}
-                        {aff.officialLink && (
-                          <a 
-                            href={aff.officialLink} 
-                            target="_blank" 
-                            rel="noopener noreferrer" 
-                            className="text-[#008972] hover:underline flex items-center space-x-1"
-                          >
-                            <span>Official Destination URL</span>
-                            <ExternalLink className="w-3 h-3" />
-                          </a>
-                        )}
-                      </div>
-                    </div>
+              {(config.affiliations && config.affiliations.length > 0 ? config.affiliations : INITIAL_AFFILIATIONS).map((aff, idx) => {
+                const upperName = (aff.name || '').toUpperCase().trim();
+                const officialPreset = OFFICIAL_ASSOCIATION_LOGOS[upperName];
+                const isOfficial = aff.logo && officialPreset && aff.logo === officialPreset.logo;
+                const isUploadingThis = uploadingAffiliationId === aff.id;
 
-                    <div className="flex items-center space-x-2">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleAffiliation(aff.id)}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${
-                          aff.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
-                        }`}
-                      >
-                        {aff.isActive ? 'Active' : 'Inactive'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAffiliationForm(aff);
-                          setIsEditingAffiliation(true);
-                        }}
-                        className="p-1.5 text-slate-500 hover:text-slate-900 rounded-lg hover:bg-slate-100 cursor-pointer"
-                        title="Edit Affiliation"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteAffiliation(aff.id)}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer"
-                        title="Delete Affiliation"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                return (
+                  <div 
+                    key={aff.id}
+                    className={`p-5 rounded-2xl border transition-all ${
+                      aff.isActive ? 'bg-white border-slate-200 shadow-2xs' : 'bg-slate-50 border-slate-200 opacity-60'
+                    }`}
+                  >
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                      {/* Left: Reorder buttons & Logo Preview */}
+                      <div className="flex items-start sm:items-center space-x-3.5 flex-1 min-w-0">
+                        {/* Order Controls */}
+                        <div className="flex flex-col space-y-1 shrink-0 pt-0.5 sm:pt-0">
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => moveAffiliation(idx, 'up')}
+                            className={`p-1 rounded-md border text-slate-500 hover:text-slate-900 transition-colors ${
+                              idx === 0 ? 'opacity-30 cursor-not-allowed bg-slate-50 border-slate-100' : 'bg-white border-slate-200 hover:bg-slate-100 cursor-pointer'
+                            }`}
+                            title={idx === 0 ? 'First item' : 'Move up'}
+                          >
+                            <ArrowUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === (config.affiliations || INITIAL_AFFILIATIONS).length - 1}
+                            onClick={() => moveAffiliation(idx, 'down')}
+                            className={`p-1 rounded-md border text-slate-500 hover:text-slate-900 transition-colors ${
+                              idx === (config.affiliations || INITIAL_AFFILIATIONS).length - 1 ? 'opacity-30 cursor-not-allowed bg-slate-50 border-slate-100' : 'bg-white border-slate-200 hover:bg-slate-100 cursor-pointer'
+                            }`}
+                            title={idx === (config.affiliations || INITIAL_AFFILIATIONS).length - 1 ? 'Last item' : 'Move down'}
+                          >
+                            <ArrowDown className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {/* Logo Container */}
+                        <div className="w-16 h-16 rounded-xl bg-white border border-slate-200 p-2 flex items-center justify-center shrink-0 shadow-2xs overflow-hidden relative group">
+                          {aff.logo ? (
+                            <img
+                              src={aff.logo}
+                              alt={`${aff.name} logo`}
+                              className="max-w-full max-h-full object-contain"
+                            />
+                          ) : (
+                            <span className="font-black text-slate-900 text-sm">
+                              {aff.name || 'Logo'}
+                            </span>
+                          )}
+                          {isUploadingThis && (
+                            <div className="absolute inset-0 bg-slate-950/60 flex items-center justify-center">
+                              <Loader2 className="w-5 h-5 text-[#00C6A6] animate-spin" />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Association Details */}
+                        <div className="space-y-1 min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10px] font-bold font-mono px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md">
+                              Order #{aff.displayOrder || idx + 1}
+                            </span>
+                            <span className="text-[10px] font-bold px-2 py-0.5 bg-teal-50 text-[#008972] border border-teal-200/60 rounded-md">
+                              {aff.type}
+                            </span>
+                            {isOfficial ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md flex items-center space-x-1">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                <span>Official Association Logo</span>
+                              </span>
+                            ) : aff.logo ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 bg-blue-50 text-blue-800 border border-blue-200 rounded-md">
+                                Custom Uploaded Logo
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded-md">
+                                Logo Missing
+                              </span>
+                            )}
+                            {!aff.isActive && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 bg-rose-50 text-rose-600 rounded-md">
+                                Inactive
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-baseline space-x-2 pt-0.5">
+                            <span className="text-sm font-black text-slate-900">{aff.name}</span>
+                            <span className="text-xs font-semibold text-slate-600 truncate">— {aff.fullName}</span>
+                          </div>
+
+                          <p className="text-xs text-slate-600 leading-relaxed line-clamp-1">{aff.description}</p>
+                          
+                          <div className="flex flex-wrap items-center gap-3 pt-1 text-[11px]">
+                            {aff.verificationReference && (
+                              <span className="text-slate-500">
+                                <strong>Ref:</strong> <code className="font-mono text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded">{aff.verificationReference}</code>
+                              </span>
+                            )}
+                            {aff.officialLink && (
+                              <a 
+                                href={aff.officialLink} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="text-[#008972] hover:underline flex items-center space-x-1"
+                              >
+                                <span>Official Portal</span>
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Logo Upload/Management & Entry Controls */}
+                      <div className="flex flex-wrap items-center gap-2 border-t lg:border-t-0 pt-3 lg:pt-0 border-slate-100">
+                        {/* Direct Logo Upload Trigger */}
+                        <label 
+                          className={`inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 text-xs font-bold cursor-pointer transition-colors shadow-2xs ${
+                            isUploadingThis ? 'opacity-60 cursor-not-allowed' : ''
+                          }`}
+                          title="Upload new logo from computer"
+                        >
+                          <Upload className="w-3.5 h-3.5 text-[#008972]" />
+                          <span>{aff.logo ? 'Replace Logo' : 'Upload Logo'}</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            disabled={isUploadingThis}
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) handleAffiliationLogoUpload(file, aff.id);
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+
+                        {/* Reset to official preset if applicable */}
+                        {officialPreset && !isOfficial && (
+                          <button
+                            type="button"
+                            onClick={() => handleResetToOfficialLogo(aff.id)}
+                            className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold cursor-pointer transition-colors"
+                            title="Reset to official verified association logo"
+                          >
+                            <RotateCcw className="w-3 h-3 text-emerald-600" />
+                            <span>Reset Official</span>
+                          </button>
+                        )}
+
+                        {/* Remove Logo */}
+                        {aff.logo && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAffiliationLogo(aff.id)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer"
+                            title="Remove Logo"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+
+                        {/* Toggle Active */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleAffiliation(aff.id)}
+                          className={`px-2.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
+                            aff.isActive ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                          }`}
+                        >
+                          {aff.isActive ? 'Active' : 'Inactive'}
+                        </button>
+
+                        {/* Edit Affiliation */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAffiliationForm(aff);
+                            setIsEditingAffiliation(true);
+                          }}
+                          className="p-1.5 text-slate-500 hover:text-slate-900 rounded-lg hover:bg-slate-100 cursor-pointer"
+                          title="Edit All Details"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Delete Affiliation */}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAffiliation(aff.id)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer"
+                          title="Delete Affiliation"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -3277,6 +3635,156 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                 placeholder="e.g. Japan Association of Travel Agents"
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900"
               />
+            </div>
+
+            {/* Logo Image Management */}
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Official Association Logo
+                  </label>
+                  <p className="text-[10px] text-slate-500">
+                    Upload official logo file to Firebase Storage or enter image URL.
+                  </p>
+                </div>
+                {affiliationForm.logo && (
+                  <button
+                    type="button"
+                    onClick={() => setAffiliationForm({ ...affiliationForm, logo: '', storagePath: undefined })}
+                    className="text-[11px] font-bold text-rose-600 hover:text-rose-800 cursor-pointer"
+                  >
+                    Remove Logo
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3">
+                {/* Logo Preview */}
+                <div className="w-16 h-16 rounded-xl bg-white border border-slate-200 p-2 flex items-center justify-center shrink-0 shadow-2xs overflow-hidden relative">
+                  {affiliationForm.logo ? (
+                    <img
+                      src={affiliationForm.logo}
+                      alt="Logo preview"
+                      className="max-w-full max-h-full object-contain"
+                    />
+                  ) : (
+                    <span className="text-xs font-black text-slate-400">
+                      {affiliationForm.name || 'No Logo'}
+                    </span>
+                  )}
+                  {modalLogoUploading && (
+                    <div className="absolute inset-0 bg-slate-950/60 flex items-center justify-center">
+                      <Loader2 className="w-4 h-4 text-[#00C6A6] animate-spin" />
+                    </div>
+                  )}
+                </div>
+
+                {/* Upload Action */}
+                <div className="flex-1 space-y-1.5">
+                  <label className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs cursor-pointer shadow-xs transition-colors">
+                    {modalLogoUploading ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#00C6A6]" />
+                        <span>Uploading...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-3.5 h-3.5 text-[#00C6A6]" />
+                        <span>Upload Logo File</span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      disabled={modalLogoUploading}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setModalLogoUploading(true);
+                        try {
+                          const result = await uploadAffiliationLogo(file, affiliationForm.id || 'new');
+                          setAffiliationForm(prev => ({
+                            ...prev,
+                            logo: result.url,
+                            storagePath: result.storagePath
+                          }));
+                        } catch (err: any) {
+                          alert(`Upload failed: ${err?.message || 'Error uploading file'}`);
+                        } finally {
+                          setModalLogoUploading(false);
+                          e.target.value = '';
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                  <p className="text-[10px] text-slate-500">Supports SVG, PNG, WEBP, JPEG up to 10MB.</p>
+                </div>
+              </div>
+
+              {/* Direct URL input */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Direct Logo URL / Path</label>
+                <input
+                  type="text"
+                  value={affiliationForm.logo || ''}
+                  onChange={e => setAffiliationForm({ ...affiliationForm, logo: e.target.value })}
+                  placeholder="/logos/jata_official.png or https://..."
+                  className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-mono text-slate-800"
+                />
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div className="pt-1">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
+                  Official Presets:
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setAffiliationForm({
+                      ...affiliationForm,
+                      name: affiliationForm.name || 'JATA',
+                      fullName: affiliationForm.fullName || 'Japan Association of Travel Agents',
+                      type: affiliationForm.type || 'Accredited Allied Travel Partner',
+                      logo: '/logos/jata_official.png',
+                      officialLink: affiliationForm.officialLink || 'https://www.jata-net.or.jp/'
+                    })}
+                    className="text-[10px] font-bold px-2 py-1 rounded-lg bg-white border border-slate-200 hover:border-[#008972] text-slate-700 cursor-pointer transition-colors"
+                  >
+                    🇯🇵 JATA Official
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAffiliationForm({
+                      ...affiliationForm,
+                      name: affiliationForm.name || 'MSME',
+                      fullName: affiliationForm.fullName || 'Ministry of Micro, Small & Medium Enterprises',
+                      type: affiliationForm.type || 'National Enterprise Registration',
+                      logo: '/logos/msme_official.svg',
+                      officialLink: affiliationForm.officialLink || 'https://msme.gov.in/'
+                    })}
+                    className="text-[10px] font-bold px-2 py-1 rounded-lg bg-white border border-slate-200 hover:border-[#008972] text-slate-700 cursor-pointer transition-colors"
+                  >
+                    🇮🇳 MSME Official
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAffiliationForm({
+                      ...affiliationForm,
+                      name: affiliationForm.name || 'NIDHI',
+                      fullName: affiliationForm.fullName || 'National Integrated Database of Hospitality Industry',
+                      type: affiliationForm.type || 'Ministry of Tourism Regulatory Registration',
+                      logo: '/logos/nidhi_official.png',
+                      officialLink: affiliationForm.officialLink || 'https://nidhi.tourism.gov.in/'
+                    })}
+                    className="text-[10px] font-bold px-2 py-1 rounded-lg bg-white border border-slate-200 hover:border-[#008972] text-slate-700 cursor-pointer transition-colors"
+                  >
+                    🇮🇳 NIDHI Official
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div>

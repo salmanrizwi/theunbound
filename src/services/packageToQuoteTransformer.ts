@@ -447,21 +447,25 @@ export function transformPackageToQuoteState(
         d.id === pkg.destinationId ||
         (d.name || '').toLowerCase() === (pkg.destinationName || '').toLowerCase()
     ) ||
-    allDestinations[0] || {
+    allDestinations[0] || ({
       id: pkg.destinationId || 'dest-japan',
       name: pkg.destinationName || 'Japan',
       slug: 'japan',
-      code: 'JP',
-      region: 'JAPAN',
       country: pkg.destinationName || 'Japan',
+      region: 'JAPAN',
       currency: 'JPY',
+      tagline: 'Land of the Rising Sun',
       description: pkg.description || '',
       heroImage: pkg.heroImage || '',
       highlights: [],
-      popularCities: [],
+      cities: [],
+      keySellingPoints: [],
       bestTimeToVisit: 'All Year',
-      visaPolicySummary: ''
-    };
+      idealTripDuration: '7-14 Days',
+      travelStyle: 'Cultural & Modern',
+      featuredProductIds: [],
+      status: 'ACTIVE'
+    } as Destination);
 
   // 2. Compute Travel Duration & Dates
   // In Quote Builder, calendarDays has length `tripNights + 1`.

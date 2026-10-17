@@ -20,6 +20,7 @@ import {
   browserPopupRedirectResolver,
   GoogleAuthProvider 
 } from 'firebase/auth';
+import { getStorage } from 'firebase/storage';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 const metaEnv = (import.meta as unknown as { env?: Record<string, string> }).env || {};
@@ -46,6 +47,27 @@ export const FIRESTORE_DATABASE_ID = (firebaseConfigJson as any).firestoreDataba
 
 // Initialize Firebase App singleton
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+
+// Safely initialize Firebase Storage instance if the storage service is available
+let storageInstance: any = null;
+try {
+  storageInstance = getStorage(app);
+} catch (storageErr) {
+  console.info('[FIREBASE] Storage service initialization notice: Firebase Storage not provisioned or running in Firestore/Auth mode.');
+}
+
+export function getFirebaseStorage() {
+  if (!storageInstance) {
+    try {
+      storageInstance = getStorage(app);
+    } catch {
+      return null;
+    }
+  }
+  return storageInstance;
+}
+
+export const storage = storageInstance;
 
 // Initialize Firestore with in-memory cache and auto long-polling to prevent QuotaExceededError and WebStorage locks
 const customDatabaseId = FIRESTORE_DATABASE_ID;

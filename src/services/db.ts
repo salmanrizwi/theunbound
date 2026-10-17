@@ -13854,6 +13854,30 @@ export class AppDatabase {
     }
     if (!config.affiliations || config.affiliations.length === 0) {
       config.affiliations = INITIAL_HOMEPAGE_CONFIG.affiliations;
+    } else {
+      // Ensure official logos are displayed if previous data stored generic Unsplash stock placeholders
+      const legacyPlaceholders = [
+        'photo-1542051841857-5f90071e7989',
+        'photo-1532375810709-75b1da00537c',
+        'photo-1486406146926-c627a92ad1ab'
+      ];
+      config.affiliations = config.affiliations.map(aff => {
+        const isLegacyPlaceholder = aff.logo && legacyPlaceholders.some(p => aff.logo!.includes(p));
+        const isMissing = !aff.logo || aff.logo.trim() === '';
+        if (isLegacyPlaceholder || isMissing) {
+          const upper = (aff.name || '').toUpperCase().trim();
+          if (upper === 'JATA') return { ...aff, logo: '/logos/jata_official.png' };
+          if (upper === 'MSME') return { ...aff, logo: '/logos/msme_official.svg' };
+          if (upper === 'NIDHI') return { ...aff, logo: '/logos/nidhi_official.png' };
+        }
+        return aff;
+      });
+    }
+    if (config.affiliationsSectionImage === undefined) {
+      config.affiliationsSectionImage = INITIAL_HOMEPAGE_CONFIG.affiliationsSectionImage || '';
+    }
+    if (config.affiliationsSectionImageAlt === undefined) {
+      config.affiliationsSectionImageAlt = INITIAL_HOMEPAGE_CONFIG.affiliationsSectionImageAlt || '';
     }
     if (config.showAffiliationsSection === undefined) {
       config.showAffiliationsSection = INITIAL_HOMEPAGE_CONFIG.showAffiliationsSection !== false;

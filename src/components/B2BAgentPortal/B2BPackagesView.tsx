@@ -91,11 +91,20 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
   const handleToggleSavePackage = (e: React.MouseEvent, pkg: B2BPackage) => {
     e.stopPropagation();
     if (!user) return;
-    const isSaved = db.isProductInWishlist(user.id, pkg.id);
-    if (isSaved) {
-      db.removeFromWishlist(user.id, pkg.id);
+    const items = db.getWishlistItems(user.id);
+    const existing = items.find(i => (i.productId || (i as any).itemId) === pkg.id);
+    if (existing) {
+      db.deleteWishlistItem(existing.id);
     } else {
-      db.addToWishlist(user.id, pkg.id, `Ready-Made Package: ${pkg.title}`);
+      const folders = db.getWishlistFolders(user.id);
+      db.saveWishlistItem({
+        id: `wish-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        userId: user.id,
+        productId: pkg.id,
+        folderId: folders[0]?.id || 'default',
+        notes: `Ready-Made Package: ${pkg.title}`,
+        addedAt: new Date().toISOString()
+      });
     }
     setWishlistTrigger(prev => prev + 1);
   };

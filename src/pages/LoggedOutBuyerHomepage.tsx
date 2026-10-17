@@ -714,6 +714,20 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                 </div>
               </div>
 
+              {/* Optional Section-Level Regulatory Credentials Banner */}
+              {config.affiliationsSectionImage && (
+                <div className="relative w-full rounded-2xl overflow-hidden border border-slate-200/80 shadow-2xs bg-slate-50 max-h-64 flex items-center justify-center">
+                  <img
+                    src={config.affiliationsSectionImage}
+                    alt={config.affiliationsSectionImageAlt || config.affiliationsSectionTitle || 'Regulatory Verification & Recognized Trade Affiliations'}
+                    className="w-full h-auto max-h-64 object-cover object-center"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
+                  />
+                </div>
+              )}
+
               {/* Affiliations Cards Matrix */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
                 {(config.affiliations && config.affiliations.length > 0 ? config.affiliations : homepageService.getHomepageAffiliations())
@@ -725,16 +739,31 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                       className="p-6 rounded-2xl bg-slate-50 hover:bg-slate-100/70 border border-slate-200 transition-all flex flex-col justify-between space-y-4 group hover:shadow-md"
                     >
                       <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-3">
-                            <div className="w-14 h-14 rounded-xl bg-white border border-slate-200 p-2 flex items-center justify-center font-black text-slate-900 text-lg shadow-xs group-hover:border-[#00C6A6] transition-colors">
-                              {aff.name}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center space-x-3.5 min-w-0">
+                            {/* Official Logo Container */}
+                            <div className="w-16 h-16 rounded-xl bg-white border border-slate-200 p-2.5 flex items-center justify-center shrink-0 shadow-2xs group-hover:border-[#00C6A6] transition-colors overflow-hidden">
+                              {aff.logo ? (
+                                <img
+                                  src={aff.logo}
+                                  alt={`${aff.name} - ${aff.fullName} Official Logo`}
+                                  className="max-w-full max-h-full object-contain"
+                                  onError={(e) => {
+                                    (e.target as HTMLElement).style.display = 'none';
+                                    const fallback = (e.target as HTMLElement).parentElement?.querySelector('.logo-text-fallback');
+                                    if (fallback) (fallback as HTMLElement).classList.remove('hidden');
+                                  }}
+                                />
+                              ) : null}
+                              <span className={`logo-text-fallback font-black text-slate-900 text-lg ${aff.logo ? 'hidden' : 'block'}`}>
+                                {aff.name}
+                              </span>
                             </div>
-                            <div>
-                              <span className="text-[10px] font-bold text-[#008972] bg-[#00C6A6]/10 px-2 py-0.5 rounded-md uppercase tracking-wider border border-[#00C6A6]/20">
+                            <div className="min-w-0">
+                              <span className="text-[10px] font-bold text-[#008972] bg-[#00C6A6]/10 px-2 py-0.5 rounded-md uppercase tracking-wider border border-[#00C6A6]/20 inline-block truncate max-w-full">
                                 {aff.type}
                               </span>
-                              <h3 className="text-sm font-bold text-slate-900 mt-1 leading-snug">
+                              <h3 className="text-sm font-bold text-slate-900 mt-1 leading-snug line-clamp-2" title={aff.fullName}>
                                 {aff.fullName}
                               </h3>
                             </div>

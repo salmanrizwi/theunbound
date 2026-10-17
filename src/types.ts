@@ -1635,7 +1635,7 @@ export interface AgentPricingResponse {
   surchargeValidationMessage?: string;
 }
 
-export type QuoteItemSource = 'AI_PLANNER' | 'USER' | 'SYSTEM';
+export type QuoteItemSource = 'AI_PLANNER' | 'USER' | 'SYSTEM' | 'PACKAGE';
 
 export interface QuoteItemContentSnapshot {
   overviewSpecifications: string;
@@ -4554,6 +4554,7 @@ export interface HomepageAffiliation {
   fullName: string;
   type: string;
   logo?: string;
+  storagePath?: string;
   description: string;
   verificationReference?: string;
   officialLink: string;
@@ -4648,6 +4649,9 @@ export interface HomepageConfig {
   affiliationsSectionBadge?: string;
   affiliationsSectionTitle?: string;
   affiliationsSectionSubtitle?: string;
+  affiliationsSectionImage?: string;
+  affiliationsSectionImageStoragePath?: string;
+  affiliationsSectionImageAlt?: string;
   affiliations?: HomepageAffiliation[];
   showGoogleReviews: boolean;
   showHomepageFAQs: boolean;
