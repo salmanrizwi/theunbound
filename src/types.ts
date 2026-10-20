@@ -1971,6 +1971,10 @@ export interface Quotation {
   totalTaxes: number;
   totalMargin: number;
 
+  // Hotel Accommodation Pricing (Informational Subtotal included within Complete Package Total)
+  hotelAccommodationTotal?: number;
+  hotelAccommodationTotalFormatted?: string;
+
   // Authoritative Commercial & Agent Margin Architecture (Section 8 Compliance)
   marginType?: AgentMarginType;
   marginValue?: number;
@@ -6798,6 +6802,8 @@ export interface QuotationOption {
   marginValue?: number;
   marginAmount?: number;
   totalSellingPrice: number;
+  hotelAccommodationTotal?: number;
+  hotelAccommodationTotalFormatted?: string;
   totalMargin?: number;
   totalTaxes?: number;
 }

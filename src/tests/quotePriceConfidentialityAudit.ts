@@ -228,16 +228,30 @@ export function runQuotePriceConfidentialityAudit() {
     console.error('FAIL: PDF missing "Final Total:" line.');
     passed = false;
   }
+  if (!allPdfHtml.includes('Hotel Accommodation Total')) {
+    console.error('FAIL: PDF missing "Hotel Accommodation Total" line.');
+    passed = false;
+  }
+  if (!allPdfHtml.includes('90,000')) {
+    console.error('FAIL: PDF missing Hotel Accommodation Total amount 90,000.');
+    passed = false;
+  }
 
-  // Check that item prices (90,000, 28,000, 65,000, 15,000) are NOT present in the PDF cards
-  const forbiddenItemPrices = ['₹90,000', '90,000', '₹28,000', '28,000', '₹65,000', '65,000', '₹15,000', '15,000'];
+  // Check that individual non-hotel item prices (28,000, 65,000, 15,000) are NOT present
+  const forbiddenItemPrices = ['₹28,000', '28,000', '₹65,000', '65,000', '₹15,000', '15,000'];
   forbiddenItemPrices.forEach(fp => {
-    // Check if it appears outside the total 250,000
     if (allPdfHtml.includes(`₹${fp}`) || allPdfHtml.includes(`INR ${fp}`)) {
       console.error(`FAIL: PDF leaked item price: ${fp}`);
       passed = false;
     }
   });
+
+  // Verify that itinerary cards (outside the tariff container) do NOT leak any item prices
+  const cardsHtml = pdfPages.map(p => p.blocks.filter(b => b.type !== 'TARIFF_CONTAINER').map(b => b.html).join('')).join('');
+  if (cardsHtml.includes('90,000') || cardsHtml.includes('₹90,000')) {
+    console.error('FAIL: PDF leaked hotel price inside itinerary card.');
+    passed = false;
+  }
 
   // Verify items remain visible
   if (!allPdfHtml.includes('The Capitol Hotel Tokyu') || !allPdfHtml.includes('Shinkansen Bullet Train') || !allPdfHtml.includes('Private Arashiyama Bamboo')) {

@@ -261,7 +261,15 @@ export function runQuoteEmailFormattingAudit() {
     console.error('FAIL: Option 1 missing consolidated total 385,000 INR.');
     passed = false;
   }
-  const leakedPriceTerms = ['180,000', '120,000', '35,000', '20,000'];
+  if (!proposalViewHtml.includes('Hotel Accommodation Total')) {
+    console.error('FAIL: Option 1 missing "Hotel Accommodation Total".');
+    passed = false;
+  }
+  if (!proposalViewHtml.includes('180,000') && !proposalViewHtml.includes('1,80,000')) {
+    console.error('FAIL: Option 1 missing Hotel Accommodation Total amount 180,000 INR.');
+    passed = false;
+  }
+  const leakedPriceTerms = ['120,000', '35,000', '20,000'];
   leakedPriceTerms.forEach(term => {
     if (proposalViewHtml.includes(`₹${term}`) || proposalViewHtml.includes(`INR ${term}`)) {
       console.error(`FAIL: Option 1 leaked confidential item price "${term}".`);
@@ -459,8 +467,16 @@ Child age policies apply at attraction gates.
     console.error('FAIL: WhatsApp quotation output missing services.');
     passed = false;
   }
-  if (waOutput.includes('₹180,000') || waOutput.includes('₹120,000')) {
-    console.error('FAIL: WhatsApp output leaked item prices.');
+  if (!waOutput.includes('Hotel Accommodation Total')) {
+    console.error('FAIL: WhatsApp quotation output missing Hotel Accommodation Total.');
+    passed = false;
+  }
+  if (!waOutput.includes('180,000') && !waOutput.includes('1,80,000')) {
+    console.error('FAIL: WhatsApp quotation output missing Hotel Accommodation Total amount 180,000.');
+    passed = false;
+  }
+  if (waOutput.includes('₹120,000') || waOutput.includes('₹35,000') || waOutput.includes('₹20,000')) {
+    console.error('FAIL: WhatsApp output leaked individual item prices.');
     passed = false;
   }
 

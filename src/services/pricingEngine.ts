@@ -3107,14 +3107,25 @@ export function calculateQuoteTotal(
   totalNetCost: number;
   itemsIncludedCount: number;
   hotelItemsIncludedCount: number;
+  hotelTotalSellingPrice: number;
+  hotelTotalNetCost: number;
+  hasHotelAccommodation: boolean;
+  landItemsIncludedCount: number;
+  landBaseSellingPrice: number;
+  landPartTotalSellingPrice: number;
+  landTotalNetCost: number;
+  hasLandServices: boolean;
 } {
   const isHotelItem = (it: QuoteItem): boolean => {
     const cat = (it.product?.category || it.category || it.product?.productType || '').toLowerCase();
     return cat.includes('hotel') || cat.includes('accommodation') || cat.includes('resort') || cat.includes('ryokan') ||
-           it.product?.productType === 'HOTEL' || Boolean(it.isManualHotel || it.manualHotelDetails || it.hotelId);
+           it.product?.productType === 'HOTEL' || (it as any).service_type === 'HOTEL' ||
+           Boolean(it.isManualHotel || it.manualHotelDetails || it.hotelId);
   };
 
   let activeItems: QuoteItem[] = [];
+  let activeHubs: TripRouteHub[] = [];
+  let isLandOnly = false;
   let marginType = 'PERCENTAGE';
   let marginValue = 0;
   let discountPercent = 0;
@@ -3135,9 +3146,10 @@ export function calculateQuoteTotal(
     const hubs: TripRouteHub[] = (activeOption?.routeHubs && activeOption.routeHubs.length > 0)
       ? activeOption.routeHubs
       : (quote.routeHubs || []);
+    activeHubs = hubs;
 
     const effectiveScope = activeOption?.scope || activeOption?.quotationScope || quote.scope || quote.quotationScope || 'HOTEL_LAND';
-    const isLandOnly = effectiveScope === 'LAND_ONLY';
+    isLandOnly = effectiveScope === 'LAND_ONLY';
 
     const noAccHubIds = new Set(
       hubs
@@ -3172,14 +3184,56 @@ export function calculateQuoteTotal(
     discountPercent = quote.overallDiscountPercent || 0;
   }
 
-  const baseSellingPrice = activeItems.reduce(
-    (sum, it) => sum + (it.calculation?.finalTotalSellingPrice || (it.calculation as any)?.totalSellingPrice || 0),
-    0
-  );
-  const totalNetCost = activeItems.reduce(
-    (sum, it) => sum + ((it.calculation as any)?.totalNetCost || 0),
-    0
-  );
+  const getItemSelling = (it: QuoteItem): number =>
+    it.calculation?.finalTotalSellingPrice ||
+    (it.calculation as any)?.totalSellingPrice ||
+    (it as any).totalSellingPrice ||
+    (it as any).totalPrice ||
+    (it as any).sellingPrice ||
+    0;
+
+  const getItemNet = (it: QuoteItem): number =>
+    (it.calculation as any)?.totalNetCost || (it as any).totalNetCost || 0;
+
+  // Partition activeItems into strictly non-overlapping Hotel vs Non-Hotel (Land) sets
+  const hotelItems = activeItems.filter(isHotelItem);
+  const landItems = activeItems.filter(it => !isHotelItem(it));
+
+  let hotelBaseSellingPrice = hotelItems.reduce((sum, it) => sum + getItemSelling(it), 0);
+  const hotelTotalNetCost = hotelItems.reduce((sum, it) => sum + getItemNet(it), 0);
+
+  // Include any routeHub manualHotel that was not already represented in hotelItems
+  let hubManualHotelsCount = 0;
+  if (!isLandOnly && activeHubs.length > 0) {
+    const countedHotelIds = new Set<string>();
+    activeHubs.forEach(h => {
+      if (h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none') return;
+      const matched = hotelItems.find(it => {
+        if (countedHotelIds.has(it.id)) return false;
+        return (h.hotelId && it.product?.id?.includes(h.hotelId)) ||
+               (h.manualHotel?.hotelName && it.product?.name?.toLowerCase().includes(h.manualHotel.hotelName.toLowerCase())) ||
+               (it.notes && it.notes.toLowerCase().includes((h.hubName || '').toLowerCase())) ||
+               (it.hubId === h.id || it.manualHotelDetails?.hubId === h.id);
+      });
+      if (matched) {
+        countedHotelIds.add(matched.id);
+      } else if (h.manualHotel) {
+        const manualPrice = (h.manualHotel as any)?.totalSellingPrice ||
+                            (h.manualHotel as any)?.totalPrice ||
+                            (h.manualHotel as any)?.price || 0;
+        if (manualPrice > 0) {
+          hotelBaseSellingPrice += manualPrice;
+          hubManualHotelsCount++;
+        }
+      }
+    });
+  }
+
+  const landBaseSellingPrice = landItems.reduce((sum, it) => sum + getItemSelling(it), 0);
+  const landTotalNetCost = landItems.reduce((sum, it) => sum + getItemNet(it), 0);
+
+  const baseSellingPrice = hotelBaseSellingPrice + landBaseSellingPrice;
+  const totalNetCost = hotelTotalNetCost + landTotalNetCost;
 
   const adminMarginValue = !Array.isArray(quoteOrItems)
     ? ((quoteOrItems as any).adminManualMarginValue ?? (quoteOrItems as any).admin_manual_margin_value)
@@ -3192,6 +3246,9 @@ export function calculateQuoteTotal(
     : 'REPLACE';
 
   let effectiveBaseSellingPrice = baseSellingPrice;
+  let effectiveHotelBaseSellingPrice = hotelBaseSellingPrice;
+  let effectiveLandBaseSellingPrice = landBaseSellingPrice;
+
   if (adminMarginValue !== undefined && adminMarginValue > 0) {
     const adminMarginAmount = adminMarginType === 'PERCENTAGE'
       ? Math.round(totalNetCost * (adminMarginValue / 100))
@@ -3199,6 +3256,27 @@ export function calculateQuoteTotal(
     effectiveBaseSellingPrice = adminMarginMode === 'REPLACE'
       ? (totalNetCost + adminMarginAmount)
       : (baseSellingPrice + adminMarginAmount);
+
+    if (adminMarginType === 'PERCENTAGE') {
+      const hotelAdminMargin = Math.round(hotelTotalNetCost * (adminMarginValue / 100));
+      const landAdminMargin = adminMarginAmount - hotelAdminMargin;
+      effectiveHotelBaseSellingPrice = adminMarginMode === 'REPLACE'
+        ? (hotelTotalNetCost + hotelAdminMargin)
+        : (hotelBaseSellingPrice + hotelAdminMargin);
+      effectiveLandBaseSellingPrice = adminMarginMode === 'REPLACE'
+        ? (landTotalNetCost + landAdminMargin)
+        : (landBaseSellingPrice + landAdminMargin);
+    } else {
+      const hotelShare = baseSellingPrice > 0 ? (hotelBaseSellingPrice / baseSellingPrice) : 0;
+      const hotelAdminMargin = Math.round(adminMarginAmount * hotelShare);
+      const landAdminMargin = adminMarginAmount - hotelAdminMargin;
+      effectiveHotelBaseSellingPrice = adminMarginMode === 'REPLACE'
+        ? (hotelTotalNetCost + hotelAdminMargin)
+        : (hotelBaseSellingPrice + hotelAdminMargin);
+      effectiveLandBaseSellingPrice = adminMarginMode === 'REPLACE'
+        ? (landTotalNetCost + landAdminMargin)
+        : (landBaseSellingPrice + landAdminMargin);
+    }
   }
 
   const markupAmount = marginType === 'PERCENTAGE'
@@ -3210,7 +3288,42 @@ export function calculateQuoteTotal(
     : 0;
 
   const finalCustomerSellingPrice = Math.max(0, effectiveBaseSellingPrice + markupAmount - discountAmount);
-  const hotelItemsIncludedCount = activeItems.filter(isHotelItem).length;
+
+  // Calculate Hotel Accommodation Total and Land Part Total using identical margin/discount rules
+  const hotelMarkupAmount = marginType === 'PERCENTAGE'
+    ? Math.round(effectiveHotelBaseSellingPrice * (marginValue / 100))
+    : (effectiveBaseSellingPrice > 0
+        ? Math.round(markupAmount * (effectiveHotelBaseSellingPrice / effectiveBaseSellingPrice))
+        : 0);
+  const hotelDiscountAmount = discountPercent > 0
+    ? Math.round((effectiveHotelBaseSellingPrice + hotelMarkupAmount) * (discountPercent / 100))
+    : 0;
+  const hotelTotalSellingPrice = Math.max(0, effectiveHotelBaseSellingPrice + hotelMarkupAmount - hotelDiscountAmount);
+
+  const landMarkupAmount = markupAmount - hotelMarkupAmount;
+  const landDiscountAmount = discountAmount - hotelDiscountAmount;
+  let landPartTotalSellingPrice = Math.max(0, effectiveLandBaseSellingPrice + landMarkupAmount - landDiscountAmount);
+
+  const hotelItemsIncludedCount = hotelItems.length + hubManualHotelsCount;
+  const landItemsIncludedCount = landItems.length;
+
+  // Fallback for legacy snapshot records that have no item-level breakdown at all
+  if (activeItems.length === 0 && hubManualHotelsCount === 0 && !Array.isArray(quoteOrItems)) {
+    const q = quoteOrItems as any;
+    const activeOpt = q.options && q.options.length > 0
+      ? (q.options.find((o: any) => o.id === (activeOptionIdOrMarginType || q.activeOptionId)) || q.options[0])
+      : undefined;
+    const fallbackLand = activeOpt?.landPartTotal ?? q.landPartTotal;
+    const fallbackTotal = activeOpt?.totalSellingPrice || q.finalCustomerSellingPrice || q.totalSellingPrice || 0;
+    if (typeof fallbackLand === 'number' && fallbackLand > 0) {
+      landPartTotalSellingPrice = fallbackLand;
+    } else if (fallbackTotal > 0 && hotelTotalSellingPrice === 0) {
+      landPartTotalSellingPrice = fallbackTotal;
+    }
+  }
+
+  const hasHotelAccommodation = hotelItemsIncludedCount > 0 && hotelTotalSellingPrice > 0;
+  const hasLandServices = landPartTotalSellingPrice > 0 || landItemsIncludedCount > 0;
 
   return {
     baseSellingPrice: effectiveBaseSellingPrice,
@@ -3223,6 +3336,14 @@ export function calculateQuoteTotal(
     totalSellingPrice: finalCustomerSellingPrice,
     totalNetCost,
     itemsIncludedCount: activeItems.length,
-    hotelItemsIncludedCount
+    hotelItemsIncludedCount,
+    hotelTotalSellingPrice,
+    hotelTotalNetCost,
+    hasHotelAccommodation,
+    landItemsIncludedCount,
+    landBaseSellingPrice: effectiveLandBaseSellingPrice,
+    landPartTotalSellingPrice,
+    landTotalNetCost,
+    hasLandServices
   };
 }

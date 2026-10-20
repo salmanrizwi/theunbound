@@ -1,5 +1,5 @@
 import { Quotation, QuoteItem, TripRouteHub } from '../types';
-import { formatCurrency } from './pricingEngine';
+import { formatCurrency, calculateQuoteTotal } from './pricingEngine';
 import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../utils/inventoryDisplayHelpers';
 import { isRailQuoteItem } from './rail/JapanRailJourneyDataService';
 import { 
@@ -107,6 +107,17 @@ export interface QuotePresentationModel {
   validUntilFormatted: string;
   currency: string;
   totalSellingPriceNumeric: number;
+  
+  // Separate Primary Totals: Hotel Accommodation Total & Land Part Total (Excludes Accommodation)
+  hasHotelAccommodation: boolean;
+  hotelAccommodationTotalNumeric: number;
+  hotelAccommodationTotalFormatted?: string;
+  hotelItemsCount: number;
+
+  hasLandServices: boolean;
+  landPartTotalNumeric: number;
+  landPartTotalFormatted: string;
+  landItemsCount: number;
   
   // Agent & Agency Branding
   agencyName: string;
@@ -396,7 +407,8 @@ export function buildQuotePresentationModel(
   const isHotelQuoteItem = (it: QuoteItem): boolean => {
     const cat = (it.product?.category || it.category || it.product?.productType || '').toLowerCase();
     return cat.includes('hotel') || cat.includes('accommodation') || cat.includes('resort') || cat.includes('ryokan') ||
-           it.product?.productType === 'HOTEL' || Boolean(it.isManualHotel || it.manualHotelDetails || it.hotelId);
+           it.product?.productType === 'HOTEL' || (it as any).service_type === 'HOTEL' ||
+           Boolean(it.isManualHotel || it.manualHotelDetails || it.hotelId);
   };
 
   const items: QuoteItem[] = rawItems.filter(it => {
@@ -819,11 +831,39 @@ export function buildQuotePresentationModel(
     });
 
   const totalNights = hubs.reduce((sum, h) => sum + (h.nights || 0), 0) || Math.max(1, days.length - 1);
-  const rawSellingPrice = (activeOption?.totalSellingPrice && activeOption.totalSellingPrice > 0)
-    ? activeOption.totalSellingPrice
-    : (quote.finalCustomerSellingPrice || (quote as any).final_customer_selling_price || quote.totalSellingPrice || (quote as any).totalAmount || 0);
-  const itemsSumPrice = items.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || it.calculation?.totalSellingPrice || (it as any).totalSellingPrice || 0), 0);
-  const effectiveSellingPrice = rawSellingPrice > 0 ? rawSellingPrice : itemsSumPrice;
+
+  // --------------------------------------------------------------------------
+  // Single Authoritative Pricing Calculation via Central Pricing Engine
+  // --------------------------------------------------------------------------
+  const centralTotals = calculateQuoteTotal(quote, activeOption?.id);
+
+  let hotelAccommodationTotalNumeric = centralTotals.hotelTotalSellingPrice;
+  let landPartTotalNumeric = centralTotals.landPartTotalSellingPrice;
+  const hotelItemsCount = centralTotals.hotelItemsIncludedCount;
+  const landItemsCount = centralTotals.landItemsIncludedCount;
+
+  // Fallback to pre-calculated quote / activeOption fields only if no items exist
+  if (!isLandOnlyQuote && hotelAccommodationTotalNumeric === 0 && hotelItemsCount === 0) {
+    if (typeof (activeOption as any)?.hotelAccommodationTotal === 'number' && (activeOption as any).hotelAccommodationTotal > 0) {
+      hotelAccommodationTotalNumeric = (activeOption as any).hotelAccommodationTotal;
+    } else if (typeof (quote as any).hotelAccommodationTotal === 'number' && (quote as any).hotelAccommodationTotal > 0) {
+      hotelAccommodationTotalNumeric = (quote as any).hotelAccommodationTotal;
+    } else if (typeof (quote as any).hotelTotalSelling === 'number' && (quote as any).hotelTotalSelling > 0) {
+      hotelAccommodationTotalNumeric = (quote as any).hotelTotalSelling;
+    }
+  }
+
+  const hasHotelAccommodation = !isLandOnlyQuote && hotelAccommodationTotalNumeric > 0 && (hotelItemsCount > 0 || hotels.length > 0);
+  const hotelAccommodationTotalFormatted = hasHotelAccommodation
+    ? formatCurrency(hotelAccommodationTotalNumeric, effectiveCurrency)
+    : undefined;
+
+  // Critical Rule: Land Part Total strictly excludes all hotel accommodation charges
+  const hasLandServices = landPartTotalNumeric > 0 || landItemsCount > 0;
+  const landPartTotalFormatted = formatCurrency(landPartTotalNumeric, effectiveCurrency);
+
+  // Use Land Part Total as the customer-facing non-accommodation total across all templates
+  const effectiveSellingPrice = landPartTotalNumeric;
   const pricePerPerson = effectiveSellingPrice / Math.max(1, effectivePax);
 
   const paxDetailsText = quote.passengerBreakdown
@@ -924,11 +964,19 @@ export function buildQuotePresentationModel(
     routeHubs: sortedHubs.map(h => ({ hubName: h.hubName || h.destinationName || quote.destination || 'Hub', nights: h.nights || 1 })),
     hotels,
     accommodations,
+    hasHotelAccommodation,
+    hotelAccommodationTotalNumeric,
+    hotelAccommodationTotalFormatted,
+    hotelItemsCount,
+    hasLandServices,
+    landPartTotalNumeric,
+    landPartTotalFormatted,
+    landItemsCount,
     visaServices: visaItems.map(it => transformQuoteItemToPresentation(it, effectiveCurrency)),
     days,
     additionalServices: generalInclusions,
     operationalStandards,
-    totalItineraryValueFormatted: formatCurrency(effectiveSellingPrice, effectiveCurrency),
+    totalItineraryValueFormatted: landPartTotalFormatted,
     pricePerTravelerFormatted: `${formatCurrency(pricePerPerson, effectiveCurrency)} / Traveler (${effectivePax} Guests)`,
     guaranteedCurrencyLine: `Guaranteed in ${effectiveCurrency} • No Hidden Surcharges`,
     childAndAttractionPolicies,
@@ -990,7 +1038,10 @@ export function renderQuoteEmailFromPresentationModel(
     `Passengers      : ${model.paxDetailsText}`,
     model.nationality ? `Nationality     : ${model.nationality}` : '',
     model.travelStyle ? `Travel Style    : ${model.travelStyle}` : '',
-    `Total Package Investment : ${model.totalItineraryValueFormatted} ${model.currency}`
+    ...(model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted ? [
+      `Hotel Accommodation Total : ${model.hotelAccommodationTotalFormatted}`
+    ] : []),
+    `Land Part Total : ${model.landPartTotalFormatted}`
   ].filter(Boolean).join('\n'));
 
   textSections.push([
@@ -1128,7 +1179,10 @@ export function renderQuoteEmailFromPresentationModel(
 
   textSections.push([
     `8. TOTAL PACKAGE INVESTMENT`,
-    `Final Total                      : ${model.totalItineraryValueFormatted} ${model.currency}`,
+    ...(model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted ? [
+      `Hotel Accommodation Total        : ${model.hotelAccommodationTotalFormatted}`
+    ] : []),
+    `Land Part Total                  : ${model.landPartTotalFormatted}`,
     `Currency & Tax Guarantee         : ${model.guaranteedCurrencyLine}`,
     `Quotation Valid Until            : ${model.validUntilFormatted}`
   ].join('\n'));
@@ -1434,13 +1488,19 @@ export function renderQuoteWhatsAppFromPresentationModel(
     sections.push(polLines.join('\n'));
   }
 
-  // 8. TOTAL PACKAGE INVESTMENT
+  // 8. YOUR TRAVEL QUOTATION (PRICING SUMMARY)
   const priceLines: string[] = [];
   const cleanCommercialTerms = richTextToWhatsApp(model.commercialTerms);
   if (useEmojis) {
     priceLines.push(
-      `💰 *TOTAL PACKAGE INVESTMENT*`,
-      `🏷️ *Final Total: ${model.totalItineraryValueFormatted} ${model.currency}*`,
+      `💰 *Your Travel Quotation*`,
+      ...(model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted ? [
+        ``,
+        `🏨 *Hotel Accommodation Total:* ${model.hotelAccommodationTotalFormatted}`
+      ] : []),
+      ``,
+      `🏷️ *Land Part Total:* ${model.landPartTotalFormatted}`,
+      ``,
       `💱 *Currency & Taxes:* ${model.guaranteedCurrencyLine}`,
       `⏳ *Quote Valid Until:* *${model.validUntilFormatted}*`,
       ``,
@@ -1449,8 +1509,14 @@ export function renderQuoteWhatsAppFromPresentationModel(
     );
   } else {
     priceLines.push(
-      `*TOTAL PACKAGE INVESTMENT*`,
-      `Final Total: ${model.totalItineraryValueFormatted} ${model.currency}`,
+      `*Your Travel Quotation*`,
+      ...(model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted ? [
+        ``,
+        `Hotel Accommodation Total: ${model.hotelAccommodationTotalFormatted}`
+      ] : []),
+      ``,
+      `Land Part Total: ${model.landPartTotalFormatted}`,
+      ``,
       `Currency & Taxes: ${model.guaranteedCurrencyLine}`,
       `Quote Valid Until: ${model.validUntilFormatted}`,
       ``,
@@ -1534,10 +1600,13 @@ export function validateQuotePresentationCompleteness(
     { label: 'Client Name', value: model.clientName },
     { label: 'Destination', value: model.destination },
     { label: 'Passenger Summary', value: model.paxDetailsText },
-    { label: 'Total Quotation Value', value: model.totalItineraryValueFormatted },
+    { label: 'Land Part Total', value: model.landPartTotalFormatted },
     { label: 'Agent Name', value: model.agentName },
     { label: 'Agency Name', value: model.agencyName },
-    { label: 'Valid Until Date', value: model.validUntilFormatted }
+    { label: 'Valid Until Date', value: model.validUntilFormatted },
+    ...(model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted ? [
+      { label: 'Hotel Accommodation Total', value: model.hotelAccommodationTotalFormatted }
+    ] : [])
   ];
 
   model.hotels.forEach(h => {

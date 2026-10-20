@@ -916,27 +916,42 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
       </div>
 
       {/* ---------------------------------------------------- */}
-      {/* 6. TOTAL PACKAGE INVESTMENT (CONSOLIDATED FINAL ONLY) */}
+      {/* 6. QUOTATION PRICING SUMMARY (HOTEL & LAND TOTALS)   */}
       {/* ---------------------------------------------------- */}
       <div className="bg-slate-950 text-white p-6 sm:p-8 rounded-3xl flex flex-col sm:flex-row justify-between items-center gap-6 shadow-xl">
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <span className="text-xs font-black text-[#00E5C0] uppercase tracking-widest block">
-            TOTAL PACKAGE INVESTMENT
+            QUOTATION PRICING SUMMARY
           </span>
+          {model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted && (
+            <div className="text-base font-bold text-slate-200">
+              <span className="text-white">Hotel Accommodation Total:</span>{' '}
+              <span className="text-[#00E5C0] font-mono">{model.hotelAccommodationTotalFormatted}</span>
+            </div>
+          )}
           <h3 className="text-xl font-black text-white">
-            Final Total: {formatCurrency(quote.finalCustomerSellingPrice || (quote as any).final_customer_selling_price || quote.totalSellingPrice, quote.currency)} {quote.currency}
+            <span>Land Part Total:</span>{' '}
+            <span className="text-[#00E5C0] font-mono">{model.landPartTotalFormatted}</span>
           </h3>
           <p className="text-xs text-slate-300 max-w-md">
-            All private transportation, accommodations, guided experiences, entrance tickets, and applicable government taxes are fully included.
+            Land Part Total covers all included non-accommodation travel services (private transportation, guided experiences, entrance tickets, rail, and ancillary ground services) and applicable taxes.
           </p>
         </div>
 
         <div className="text-right shrink-0 space-y-1">
+          {model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted && (
+            <div className="text-xs text-slate-300 font-bold uppercase tracking-wider">
+              Hotel Accommodation Total: <span className="text-[#00E5C0] font-mono">{model.hotelAccommodationTotalFormatted}</span>
+            </div>
+          )}
+          <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+            Land Part Total
+          </div>
           <div className="text-3xl sm:text-4xl font-black font-mono text-[#00E5C0]">
-            {formatCurrency(quote.finalCustomerSellingPrice || (quote as any).final_customer_selling_price || quote.totalSellingPrice, quote.currency)}
+            {model.landPartTotalFormatted}
           </div>
           <div className="text-[11px] text-slate-300 font-bold uppercase tracking-wider">
-            {quote.currency} Guaranteed
+            {model.currency} Guaranteed
           </div>
         </div>
       </div>

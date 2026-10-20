@@ -853,17 +853,26 @@ export function renderProposalViewHtmlEmail(
                   </table>
                 </div>
 
-                <!-- 8. FINANCIAL TARIFF CONTAINER (Exact PDF Consolidated Price Only) -->
+                <!-- 8. FINANCIAL TARIFF CONTAINER -->
                 <div style="background: #020617; color: #ffffff; padding: 18px 20px; border-radius: 16px; margin-top: 14px; margin-bottom: 12px;">
                   <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="border-collapse: collapse;">
                     <tr>
                       <td style="vertical-align: middle;">
-                        <span style="font-size: 9px; font-weight: 800; color: #00E5C0; text-transform: uppercase; letter-spacing: 0.1em; display: block;">TOTAL PACKAGE INVESTMENT</span>
-                        <h3 style="font-size: 16px; font-weight: 900; color: #ffffff; margin: 2px 0 4px 0;">Final Total: ${model.totalItineraryValueFormatted} ${model.currency}</h3>
-                        <p style="font-size: 10px; color: #cbd5e1; margin: 0; max-width: 420px; line-height: 1.4;">All private transport, bullet train fares, entrance tickets, and applicable government taxes are fully included.</p>
+                        <span style="font-size: 9px; font-weight: 800; color: #00E5C0; text-transform: uppercase; letter-spacing: 0.1em; display: block;">QUOTATION PRICING SUMMARY</span>
+                        ${model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted ? `
+                          <div style="font-size: 14px; font-weight: 800; color: #ffffff; margin: 6px 0 4px 0;">
+                            <strong>Hotel Accommodation Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.hotelAccommodationTotalFormatted}</span>
+                          </div>
+                        ` : ''}
+                        <h3 style="font-size: 16px; font-weight: 900; color: #ffffff; margin: 4px 0 4px 0;"><strong>Land Part Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.landPartTotalFormatted}</span></h3>
+                        <p style="font-size: 10px; color: #cbd5e1; margin: 0; max-width: 420px; line-height: 1.4;">Land Part Total covers all included non-accommodation travel services (tours, activities, transfers, rail, and ancillary ground services) and applicable taxes.</p>
                       </td>
-                      <td style="vertical-align: middle; text-align: right; width: 170px;">
-                        <div style="font-size: 24px; font-weight: 900; font-family: monospace; color: #00E5C0;">${model.totalItineraryValueFormatted}</div>
+                      <td style="vertical-align: middle; text-align: right; width: 190px;">
+                        ${model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted ? `
+                          <div style="font-size: 10.5px; font-weight: 800; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Hotel Total: <span style="color: #00E5C0; font-family: monospace;">${model.hotelAccommodationTotalFormatted}</span></div>
+                        ` : ''}
+                        <div style="font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Land Part Total</div>
+                        <div style="font-size: 22px; font-weight: 900; font-family: monospace; color: #00E5C0;">${model.landPartTotalFormatted}</div>
                         <div style="font-size: 9px; color: #94a3b8; margin-top: 2px;">${cleanInlineFormattedText(model.guaranteedCurrencyLine)}</div>
                       </td>
                     </tr>
@@ -1206,7 +1215,7 @@ export function formatPlainTextQuotationToHtml(input: string): string {
       case 'KEY_VALUE':
         if (node.keyValues && node.keyValues.length > 0) {
           const rows = node.keyValues.map(kv => {
-            const isTotal = /final total|total package/i.test(kv.key);
+            const isTotal = /hotel accommodation total|land part total|final total|total package/i.test(kv.key);
             return `
               <p style="margin: 0 0 4px 0; font-size: ${isTotal ? '13.5px' : '13px'}; line-height: 1.5; color: #1e293b;">
                 <strong>${cleanInlineFormattedText(kv.key)}:</strong> ${cleanInlineFormattedText(kv.value)}
@@ -1370,7 +1379,10 @@ export function renderSimpleSemanticQuotationEmailFromModel(
 
   // Total Package Investment
   lines.push(`TOTAL PACKAGE INVESTMENT`);
-  lines.push(`Final Total: ${model.totalItineraryValueFormatted} ${model.currency}`);
+  if (model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted) {
+    lines.push(`Hotel Accommodation Total: ${model.hotelAccommodationTotalFormatted}`);
+  }
+  lines.push(`Land Part Total: ${model.landPartTotalFormatted}`);
   lines.push(`Currency Guarantee: ${model.guaranteedCurrencyLine}`);
   lines.push(`Quotation Validity: Valid until ${model.validUntilFormatted}`);
   lines.push('');

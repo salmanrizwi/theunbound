@@ -10,7 +10,7 @@ import {
   CommunicationEventType,
   CommunicationAuditLog
 } from '../types';
-import { formatCurrency } from './pricingEngine';
+import { formatCurrency, calculateQuoteTotal } from './pricingEngine';
 import { 
   formatPassengerSummary, 
   formatDestinationSummary, 
@@ -201,6 +201,11 @@ export interface QuoteCommunicationPayload {
   pricing: {
     finalSellingPrice: number;
     formattedPrice: string;
+    hasHotelAccommodation: boolean;
+    hotelAccommodationTotal: number;
+    formattedHotelAccommodationTotal?: string;
+    landPartTotal: number;
+    formattedLandPartTotal: string;
     currency: string;
     taxesIncluded: boolean;
     paymentTerms?: string;
@@ -596,9 +601,11 @@ export function buildQuoteCommunicationPayload(
   const effectiveHubs = activeOption?.routeHubs || quote.routeHubs || [];
   const effectiveScope = activeOption?.scope || quote.scope || 'FULL_PACKAGE';
   const isLandOnly = effectiveScope === 'LAND_ONLY';
-  const effectiveSellingPrice = activeOption?.totalSellingPrice !== undefined
-    ? activeOption.totalSellingPrice
-    : (quote.finalCustomerSellingPrice || quote.final_customer_selling_price || quote.totalSellingPrice || 0);
+  const centralTotals = calculateQuoteTotal(quote, activeOption?.id);
+  const hotelAccommodationTotal = isLandOnly ? 0 : centralTotals.hotelTotalSellingPrice;
+  const hasHotelAccommodation = !isLandOnly && hotelAccommodationTotal > 0 && centralTotals.hotelItemsIncludedCount > 0;
+  const landPartTotal = centralTotals.landPartTotalSellingPrice;
+  const effectiveSellingPrice = landPartTotal;
 
   // 2. Passenger info
   const adultsCount = quote.adultsCount || quote.passengerBreakdown?.adults || 2;
@@ -878,6 +885,11 @@ export function buildQuoteCommunicationPayload(
     pricing: {
       finalSellingPrice: effectiveSellingPrice,
       formattedPrice: formatCurrency(effectiveSellingPrice, quote.currency || 'USD'),
+      hasHotelAccommodation,
+      hotelAccommodationTotal,
+      formattedHotelAccommodationTotal: hasHotelAccommodation ? formatCurrency(hotelAccommodationTotal, quote.currency || 'USD') : undefined,
+      landPartTotal,
+      formattedLandPartTotal: formatCurrency(landPartTotal, quote.currency || 'USD'),
       currency: quote.currency || 'USD',
       taxesIncluded: true,
       paymentTerms: '30% Advance Deposit upon acceptance; 70% Balance 21 days prior to travel departure.',
@@ -1371,16 +1383,28 @@ export function formatWhatsAppQuoteFromPayload(
   const priceLines: string[] = [];
   if (useEmojis) {
     priceLines.push(
-      `💰 *TOTAL PACKAGE INVESTMENT*`,
-      `🏷️ *Final Total: ${payload.pricing.formattedPrice} ${payload.pricing.currency}*`,
+      `💰 *Your Travel Quotation*`,
+      ...(payload.pricing.hasHotelAccommodation && payload.pricing.formattedHotelAccommodationTotal ? [
+        ``,
+        `🏨 *Hotel Accommodation Total:* ${payload.pricing.formattedHotelAccommodationTotal}`
+      ] : []),
+      ``,
+      `🏷️ *Land Part Total:* ${payload.pricing.formattedLandPartTotal}`,
+      ``,
       `👥 *Travelers:* ${payload.tripSummary.travelers.displayText}`,
       `🔒 *Taxes & Fees:* Fully Included — Zero Hidden Surcharges`,
       `⏳ *Price Guaranteed Until:* *${payload.pricing.validUntilText}*`
     );
   } else {
     priceLines.push(
-      `*TOTAL PACKAGE INVESTMENT*`,
-      `Final Total: ${payload.pricing.formattedPrice} ${payload.pricing.currency}`,
+      `*Your Travel Quotation*`,
+      ...(payload.pricing.hasHotelAccommodation && payload.pricing.formattedHotelAccommodationTotal ? [
+        ``,
+        `Hotel Accommodation Total: ${payload.pricing.formattedHotelAccommodationTotal}`
+      ] : []),
+      ``,
+      `Land Part Total: ${payload.pricing.formattedLandPartTotal}`,
+      ``,
       `Travelers: ${payload.tripSummary.travelers.displayText}`,
       `Taxes & Fees: Included`,
       `Quote Valid Until: ${payload.pricing.validUntilText}`
@@ -1487,7 +1511,8 @@ EXPERIENCES & TRANSFERS
 ${payload.activities.map(a => `• Activity: ${a.activityName} (${a.location})`).join('\n')}
 ${payload.transfers.map(t => `• Transfer: ${t.serviceName} (${t.pickupLocation} to ${t.dropLocation})`).join('\n')}
 
-TOTAL PACKAGE INVESTMENT: ${payload.pricing.formattedPrice} ${payload.pricing.currency}
+QUOTATION PRICING SUMMARY
+${payload.pricing.hasHotelAccommodation && payload.pricing.formattedHotelAccommodationTotal ? `Hotel Accommodation Total: ${payload.pricing.formattedHotelAccommodationTotal}\n` : ''}Land Part Total: ${payload.pricing.formattedLandPartTotal}
 Quote Valid Until: ${payload.pricing.validUntilText}
 
 Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground Operations Team'})
@@ -1670,13 +1695,18 @@ Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground 
         <!-- Pricing Card -->
         <div style="background-color: #0f172a; border-radius: 12px; padding: 18px 20px; color: #ffffff; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center;">
           <div>
-            <span style="font-size: 11px; text-transform: uppercase; color: #00E5C0; font-weight: 800; letter-spacing: 1px; display: block;">TOTAL PACKAGE INVESTMENT</span>
-            <span style="font-size: 13px; font-weight: 700; color: #ffffff;">Final Total: ${payload.pricing.formattedPrice} ${payload.pricing.currency}</span>
-            <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">All private transfers, experiences, stays & taxes included</div>
+            <span style="font-size: 11px; text-transform: uppercase; color: #00E5C0; font-weight: 800; letter-spacing: 1px; display: block;">QUOTATION PRICING SUMMARY</span>
+            ${payload.pricing.hasHotelAccommodation && payload.pricing.formattedHotelAccommodationTotal ? `
+              <div style="font-size: 13px; font-weight: 700; color: #ffffff; margin-top: 4px;">
+                <strong>Hotel Accommodation Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${payload.pricing.formattedHotelAccommodationTotal}</span>
+              </div>
+            ` : ''}
+            <span style="font-size: 14px; font-weight: 800; color: #ffffff; display: block; margin-top: 2px;"><strong>Land Part Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${payload.pricing.formattedLandPartTotal}</span></span>
+            <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">Land Part Total covers all included non-accommodation travel services & taxes</div>
           </div>
           <div style="text-align: right;">
-            <span style="font-size: 24px; font-weight: 900; color: #00E5C0; font-family: monospace;">
-              ${payload.pricing.formattedPrice}
+            <span style="font-size: 22px; font-weight: 900; color: #00E5C0; font-family: monospace;">
+              ${payload.pricing.formattedLandPartTotal}
             </span>
           </div>
         </div>

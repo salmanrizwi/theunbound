@@ -846,19 +846,28 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
     html: `
       <div style="background: #020617; color: #ffffff; padding: 18px 20px; border-radius: 16px; margin-top: 14px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
         <div>
-          <span style="font-size: 9px; font-weight: 800; color: #00E5C0; text-transform: uppercase; letter-spacing: 0.1em; display: block;">TOTAL PACKAGE INVESTMENT</span>
-          <h3 style="font-size: 16px; font-weight: 900; color: #ffffff; margin: 2px 0 4px 0;">Final Total: ${model.totalItineraryValueFormatted} ${model.currency}</h3>
-          <p style="font-size: 10px; color: #cbd5e1; margin: 0; max-width: 420px;">All private transport, bullet train fares, entrance tickets, and applicable government taxes are fully included.</p>
+          <span style="font-size: 9px; font-weight: 800; color: #00E5C0; text-transform: uppercase; letter-spacing: 0.1em; display: block;">QUOTATION PRICING SUMMARY</span>
+          ${model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted ? `
+            <div style="font-size: 13px; font-weight: 800; color: #ffffff; margin: 4px 0 3px 0;">
+              <strong>Hotel Accommodation Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.hotelAccommodationTotalFormatted}</span>
+            </div>
+          ` : ''}
+          <h3 style="font-size: 16px; font-weight: 900; color: #ffffff; margin: 3px 0 4px 0;"><strong>Land Part Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.landPartTotalFormatted}</span></h3>
+          <p style="font-size: 10px; color: #cbd5e1; margin: 0; max-width: 420px;">Land Part Total covers all included non-accommodation travel services (private transport, tours, activities, rail, and ancillary ground services) and applicable taxes.</p>
         </div>
         <div style="text-align: right;">
-          <div style="font-size: 24px; font-weight: 900; font-family: monospace; color: #00E5C0;">${model.totalItineraryValueFormatted}</div>
+          ${model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted ? `
+            <div style="font-size: 10.5px; font-weight: 800; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Hotel Total: <span style="color: #00E5C0; font-family: monospace;">${model.hotelAccommodationTotalFormatted}</span></div>
+          ` : ''}
+          <div style="font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Land Part Total</div>
+          <div style="font-size: 22px; font-weight: 900; font-family: monospace; color: #00E5C0;">${model.landPartTotalFormatted}</div>
           <div style="font-size: 9px; color: #94a3b8; margin-top: 2px;">${model.guaranteedCurrencyLine}</div>
         </div>
       </div>
     `,
-    estimatedHeight: 140,
+    estimatedHeight: model.hasHotelAccommodation ? 165 : 145,
     splittable: false,
-    minMeaningfulHeight: 140
+    minMeaningfulHeight: model.hasHotelAccommodation ? 165 : 145
   });
 
   // 7. OPERATIONAL GUIDELINES & POLICIES

@@ -271,11 +271,19 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
                 <Calendar className="w-3.5 h-3.5 text-teal-600 shrink-0" />
                 <span className="truncate">{quote.travelStartDate || 'Flexible'}</span>
               </div>
-              <div className="sm:text-right">
-                <span className="text-[10px] text-slate-400 block font-medium">TOTAL PACKAGE INVESTMENT:</span>
-                <span className="text-sm font-extrabold font-mono text-emerald-700">
-                  {formatCurrency(finalSellingPrice, quote.currency || 'USD')} {quote.currency || 'USD'}
-                </span>
+              <div className="sm:text-right space-y-0.5">
+                {presentationModel.hasHotelAccommodation && presentationModel.hotelAccommodationTotalFormatted && (
+                  <div className="text-[11px] font-bold text-slate-600">
+                    <span>Hotel Accommodation Total: </span>
+                    <span className="font-mono text-emerald-700">{presentationModel.hotelAccommodationTotalFormatted}</span>
+                  </div>
+                )}
+                <div>
+                  <span className="text-[10px] text-slate-400 font-medium">Land Part Total: </span>
+                  <span className="text-sm font-extrabold font-mono text-emerald-700">
+                    {presentationModel.landPartTotalFormatted}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
