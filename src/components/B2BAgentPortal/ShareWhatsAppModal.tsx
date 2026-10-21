@@ -13,7 +13,7 @@ import {
   Layers,
   X
 } from 'lucide-react';
-import { Quotation, User, TravelLead } from '../../types';
+import { Quotation, User, TravelLead, QuoteBrandingMode } from '../../types';
 import { AppDatabase } from '../../services/db';
 import {
   generateWhatsAppQuoteMessage,
@@ -23,6 +23,10 @@ import {
   recordWhatsAppQuoteShare,
   WhatsAppSenderBranding
 } from '../../services/quoteWhatsAppService';
+import {
+  buildAgencyBrandingSnapshotFromUser,
+  validateWhiteLabelReadiness
+} from '../../services/quotePresentationModel';
 import { formatCurrency } from '../../services/pricingEngine';
 
 interface ShareWhatsAppModalProps {
@@ -57,17 +61,41 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
   const [customNote, setCustomNote] = useState<string>('');
   const [includeEmojis, setIncludeEmojis] = useState<boolean>(true);
   const [formatStyle, setFormatStyle] = useState<'DETAILED' | 'SUMMARY'>('DETAILED');
+  const [brandingMode, setBrandingMode] = useState<QuoteBrandingMode>(
+    quote.brandingMode || quote.brandingSnapshot?.mode || 'STANDARD'
+  );
   const [copied, setCopied] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [shareSuccessNotice, setShareSuccessNotice] = useState<string | null>(null);
 
+  const agencySnapshot = useMemo(() => {
+    return buildAgencyBrandingSnapshotFromUser(user, quote, brandingMode);
+  }, [user, quote, brandingMode]);
+
+  const whiteLabelReadiness = useMemo(() => {
+    return validateWhiteLabelReadiness(agencySnapshot);
+  }, [agencySnapshot]);
+
   // Sender branding determination
   const senderBranding: WhatsAppSenderBranding = useMemo(() => ({
-    name: user?.name || quote.agentName,
-    agency: user?.agencyName || user?.companyName || quote.agentAgency || 'TheUnbound Luxury DMC',
-    phone: user?.phone || quote.agentPhone,
-    email: user?.email || quote.agentEmail
-  }), [user, quote]);
+    name: agencySnapshot.agentName,
+    agency: brandingMode === 'WHITE_LABEL'
+      ? (agencySnapshot.agencyName || 'Partner Travel Agency')
+      : (agencySnapshot.agencyName || 'TheUnbound Luxury DMC'),
+    phone: agencySnapshot.phone,
+    email: agencySnapshot.email,
+    address: agencySnapshot.address,
+    website: agencySnapshot.website,
+    footerText: agencySnapshot.footerText,
+    disclaimer: agencySnapshot.disclaimer,
+    brandingMode
+  }), [agencySnapshot, brandingMode]);
+
+  const effectiveQuoteForShare = useMemo<Quotation>(() => ({
+    ...quote,
+    brandingMode,
+    brandingSnapshot: agencySnapshot
+  }), [quote, brandingMode, agencySnapshot]);
 
   // Selected Option Information
   const currentOption = useMemo(() => {
@@ -82,26 +110,26 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
   // Canonical Presentation Model (shared single source of truth with Preview, PDF, and Email)
   const presentationModel = useMemo(() => {
     return getWhatsAppPresentationModel({
-      quote,
+      quote: effectiveQuoteForShare,
       selectedOptionIndexOrId: selectedOptionIndex,
       senderBranding,
       customNote,
       useEmojis: includeEmojis,
       formatStyle
     });
-  }, [quote, selectedOptionIndex, senderBranding, customNote, includeEmojis, formatStyle]);
+  }, [effectiveQuoteForShare, selectedOptionIndex, senderBranding, customNote, includeEmojis, formatStyle]);
 
   // Dynamically generated message from canonical presentation model
   const generatedMessage = useMemo(() => {
     return generateWhatsAppQuoteMessage({
-      quote,
+      quote: effectiveQuoteForShare,
       selectedOptionIndexOrId: selectedOptionIndex,
       senderBranding,
       customNote,
       useEmojis: includeEmojis,
       formatStyle
     });
-  }, [quote, selectedOptionIndex, senderBranding, customNote, includeEmojis, formatStyle]);
+  }, [effectiveQuoteForShare, selectedOptionIndex, senderBranding, customNote, includeEmojis, formatStyle]);
 
   // Real-time phone validation
   const phoneValidation = useMemo(() => {
@@ -164,8 +192,8 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
       }
 
       // 1. Audit and record activity in Quotation + Lead Management
-      const shareResult = recordWhatsAppQuoteShare(db, quote, {
-        quote,
+      const shareResult = recordWhatsAppQuoteShare(db, effectiveQuoteForShare, {
+        quote: effectiveQuoteForShare,
         recipientPhone: phoneValidation.normalized,
         user,
         selectedOptionTitle: currentOptionTitle,
@@ -286,6 +314,48 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* WHITE-LABEL vs STANDARD BRANDING SELECTOR */}
+            <div className="pt-2.5 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[11px] font-bold text-slate-700 flex items-center space-x-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Quotation Branding Mode:</span>
+              </div>
+              <div className="inline-flex rounded-xl bg-white p-0.5 border border-slate-200 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setBrandingMode('STANDARD')}
+                  className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    brandingMode === 'STANDARD'
+                      ? 'bg-slate-900 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Standard Quote
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBrandingMode('WHITE_LABEL')}
+                  className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    brandingMode === 'WHITE_LABEL'
+                      ? 'bg-indigo-600 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  White-Label Quote ({agencySnapshot.agencyName || 'Agency Brand'})
+                </button>
+              </div>
+            </div>
+
+            {brandingMode === 'WHITE_LABEL' && !whiteLabelReadiness.isReady && (
+              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 flex items-start space-x-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">Agency Profile Incomplete for Full White-Label Branding: </span>
+                  Missing {whiteLabelReadiness.missingMandatoryFields.join(' & ')}. Complete your Agency Profile in Account Settings or the Quote Builder to include your official agency identity.
+                </div>
+              </div>
+            )}
           </div>
 
           {/* CUSTOMER PHONE INPUT SECTION */}

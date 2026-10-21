@@ -68,7 +68,8 @@ import {
   QuotationScope,
   VisaProduct,
   FeasibilityCheckResult,
-  AgentMarginType
+  AgentMarginType,
+  QuoteBrandingMode
 } from '../../types';
 import { formatCurrency, convertCurrency, resolveCapacityPricingTier, calculateQuoteInternalBreakdown } from '../../services/pricingEngine';
 import { useAuth } from '../../context/AuthContext';
@@ -80,6 +81,7 @@ import { DestinationRelevanceService, matchesDestination } from '../../services/
 import { AppDatabase } from '../../services/db';
 import { TransferConfigurator } from '../Configurators/TransferConfigurator';
 import { RichTextRenderer } from '../common/RichTextRenderer';
+import { validateWhiteLabelReadiness, buildAgencyBrandingSnapshotFromUser } from '../../services/quotePresentationModel';
 
 // Helper to check if a product matches a target city/hub
 export const isProductMatchingCity = (product: Product, targetCityName?: string, targetHubId?: string): boolean => {
@@ -241,6 +243,8 @@ export interface StepByStepQuotationWorkspaceProps {
   lastSavedTimestamp: string;
   quoteNumber?: string;
   quoteVersion?: number;
+  brandingMode?: QuoteBrandingMode;
+  setBrandingMode?: (mode: QuoteBrandingMode) => void;
 }
 
 export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspaceProps> = ({
@@ -365,11 +369,367 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   autoSaveStatus,
   lastSavedTimestamp,
   quoteNumber = 'QTE-LIVE',
-  quoteVersion = 1
+  quoteVersion = 1,
+  brandingMode: propBrandingMode = 'STANDARD',
+  setBrandingMode: propSetBrandingMode
 }) => {
-  const { user } = useAuth();
+  const { user, updateUserProfile } = useAuth();
   const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
   const [showInternalItemized, setShowInternalItemized] = useState<boolean>(false);
+  const [localBrandingMode, setLocalBrandingMode] = useState<QuoteBrandingMode>(propBrandingMode || 'STANDARD');
+  const activeBrandingMode: QuoteBrandingMode = propSetBrandingMode ? (propBrandingMode || 'STANDARD') : localBrandingMode;
+
+  const [isEditingAgencyBranding, setIsEditingAgencyBranding] = useState(false);
+  const [agencyForm, setAgencyForm] = useState({
+    agencyName: user?.agencyName || '',
+    specialistName: user?.name || '',
+    email: user?.email || '',
+    phone: user?.phone || '',
+    website: user?.website || '',
+    address: user?.businessAddress || '',
+    logoUrl: user?.brandLogoUrl || '',
+    brandPrimaryColor: user?.brandPrimaryColor || '#0f172a',
+    brandAccentColor: user?.brandAccentColor || '#b45309',
+    quoteTagline: user?.quoteTagline || 'Bespoke Travel Proposal',
+    quoteFooterText: user?.quoteFooterText || '',
+    quoteDisclaimer: user?.quoteDisclaimer || ''
+  });
+  const [agencySavedToast, setAgencySavedToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user) {
+      setAgencyForm({
+        agencyName: user.agencyName || '',
+        specialistName: user.name || '',
+        email: user.email || '',
+        phone: user.phone || '',
+        website: user.website || '',
+        address: user.businessAddress || '',
+        logoUrl: user.brandLogoUrl || '',
+        brandPrimaryColor: user.brandPrimaryColor || '#0f172a',
+        brandAccentColor: user.brandAccentColor || '#b45309',
+        quoteTagline: user.quoteTagline || 'Bespoke Travel Proposal',
+        quoteFooterText: user.quoteFooterText || '',
+        quoteDisclaimer: user.quoteDisclaimer || ''
+      });
+    }
+  }, [user]);
+
+  const handleSelectBrandingMode = (mode: QuoteBrandingMode) => {
+    if (propSetBrandingMode) {
+      propSetBrandingMode(mode);
+    } else {
+      setLocalBrandingMode(mode);
+    }
+    if (mode === 'WHITE_LABEL') {
+      const readiness = validateWhiteLabelReadiness(user);
+      if (!readiness.isReady) {
+        setIsEditingAgencyBranding(true);
+      }
+    }
+  };
+
+  const handleSaveQuickAgencyBranding = () => {
+    if (updateUserProfile) {
+      updateUserProfile({
+        agencyName: agencyForm.agencyName.trim(),
+        name: agencyForm.specialistName.trim() || user?.name || '',
+        email: agencyForm.email.trim() || user?.email || '',
+        phone: agencyForm.phone.trim(),
+        website: agencyForm.website.trim(),
+        businessAddress: agencyForm.address.trim(),
+        brandLogoUrl: agencyForm.logoUrl.trim(),
+        brandPrimaryColor: agencyForm.brandPrimaryColor.trim() || '#0f172a',
+        brandAccentColor: agencyForm.brandAccentColor.trim() || '#b45309',
+        quoteTagline: agencyForm.quoteTagline.trim() || 'Bespoke Travel Proposal',
+        quoteFooterText: agencyForm.quoteFooterText.trim(),
+        quoteDisclaimer: agencyForm.quoteDisclaimer.trim()
+      });
+      setIsEditingAgencyBranding(false);
+      setAgencySavedToast('Agency white-label branding profile updated.');
+      setTimeout(() => setAgencySavedToast(null), 3500);
+    }
+  };
+
+  const renderBrandingModeSelectorCard = () => {
+    const readiness = validateWhiteLabelReadiness(user);
+    const snapshot = buildAgencyBrandingSnapshotFromUser(user, undefined, activeBrandingMode);
+
+    return (
+      <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center space-x-2">
+              <Sparkles size={16} className="text-amber-600" />
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
+                Quotation Branding & White-Label Output Mode
+              </h3>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1">
+              Applies consistently across Proposal Preview, Downloadable PDF, Email Quotations, Copy Rich Text, and WhatsApp shares.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsEditingAgencyBranding(!isEditingAgencyBranding)}
+            className="px-3.5 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-[11px] font-bold text-slate-700 transition-all"
+          >
+            {isEditingAgencyBranding ? 'Close Branding Settings' : 'Configure Agency Profile'}
+          </button>
+        </div>
+
+        {agencySavedToast && (
+          <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-800 flex items-center space-x-2">
+            <CheckCircle size={14} className="text-emerald-600 shrink-0" />
+            <span>{agencySavedToast}</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <button
+            type="button"
+            onClick={() => handleSelectBrandingMode('STANDARD')}
+            className={`text-left p-4 rounded-2xl border-2 transition-all ${
+              activeBrandingMode === 'STANDARD'
+                ? 'border-slate-900 bg-slate-900 text-white shadow-md'
+                : 'border-slate-200 bg-slate-50/60 hover:border-slate-300 text-slate-800'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-black uppercase tracking-wider">Standard Quote</span>
+              <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${
+                activeBrandingMode === 'STANDARD' ? 'bg-amber-500 text-slate-950' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {activeBrandingMode === 'STANDARD' ? 'Active' : 'Select'}
+              </span>
+            </div>
+            <p className={`text-[11px] leading-relaxed ${activeBrandingMode === 'STANDARD' ? 'text-slate-300' : 'text-slate-500'}`}>
+              Uses standard authorized platform quotation branding, headers, operational inclusions, and standard DMC layout.
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSelectBrandingMode('WHITE_LABEL')}
+            className={`text-left p-4 rounded-2xl border-2 transition-all ${
+              activeBrandingMode === 'WHITE_LABEL'
+                ? 'border-amber-600 bg-amber-50/70 text-slate-900 shadow-md'
+                : 'border-slate-200 bg-slate-50/60 hover:border-amber-300 text-slate-800'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-black uppercase tracking-wider flex items-center gap-1.5">
+                <span>White-Label Quote (Agency Branded)</span>
+              </span>
+              <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${
+                activeBrandingMode === 'WHITE_LABEL' ? 'bg-amber-600 text-white' : 'bg-amber-100 text-amber-800'
+              }`}>
+                {activeBrandingMode === 'WHITE_LABEL' ? 'Active' : 'Select'}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              Presents the quotation exclusively under your own agency identity ({snapshot.agencyName || 'Your Agency'}) and removes all TheUnbound references across PDF, Email, Rich Text, and WhatsApp.
+            </p>
+          </button>
+        </div>
+
+        {activeBrandingMode === 'WHITE_LABEL' && (
+          <div className={`p-4 rounded-2xl border flex flex-wrap items-center justify-between gap-4 ${
+            readiness.isReady ? 'bg-emerald-50/70 border-emerald-200' : 'bg-amber-50 border-amber-300'
+          }`}>
+            <div className="flex items-start space-x-3">
+              {readiness.isReady ? (
+                <CheckCircle size={18} className="text-emerald-600 shrink-0 mt-0.5" />
+              ) : (
+                <AlertTriangle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+              )}
+              <div>
+                <div className="text-xs font-black text-slate-900">
+                  {readiness.isReady
+                    ? `White-Label Active: ${snapshot.agencyName}`
+                    : 'Complete Your Agency Profile for Full White-Label Branding'}
+                </div>
+                <div className="text-[11px] text-slate-600 mt-0.5">
+                  {readiness.isReady ? (
+                    <span>
+                      Specialist: <strong>{snapshot.specialistName || 'Travel Specialist'}</strong>
+                      {snapshot.email ? ` • ${snapshot.email}` : ''}
+                      {snapshot.phone ? ` • ${snapshot.phone}` : ''}
+                      {snapshot.website ? ` • ${snapshot.website}` : ''}
+                    </span>
+                  ) : (
+                    <span>
+                      Missing recommended fields: <strong>{readiness.missingFields.join(', ')}</strong>. All TheUnbound branding is strictly suppressed even while neutral fallbacks are used.
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+            {!isEditingAgencyBranding && (
+              <button
+                type="button"
+                onClick={() => setIsEditingAgencyBranding(true)}
+                className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:border-slate-900 text-[11px] font-bold text-slate-800 transition-all"
+              >
+                {readiness.isReady ? 'Edit Agency Details' : 'Complete Profile Now'}
+              </button>
+            )}
+          </div>
+        )}
+
+        {isEditingAgencyBranding && (
+          <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                Agency White-Label Profile Settings
+              </h4>
+              <span className="text-[10px] font-bold text-slate-500">
+                Saved to your authenticated B2B Agent account & quotation snapshot
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Agency / Company Name *
+                </label>
+                <input
+                  type="text"
+                  value={agencyForm.agencyName}
+                  onChange={e => setAgencyForm(prev => ({ ...prev, agencyName: e.target.value }))}
+                  placeholder="e.g. Wanderlust Luxury Travel"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Lead Travel Specialist
+                </label>
+                <input
+                  type="text"
+                  value={agencyForm.specialistName}
+                  onChange={e => setAgencyForm(prev => ({ ...prev, specialistName: e.target.value }))}
+                  placeholder="e.g. Sarah Jenkins"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Business Email *
+                </label>
+                <input
+                  type="email"
+                  value={agencyForm.email}
+                  onChange={e => setAgencyForm(prev => ({ ...prev, email: e.target.value }))}
+                  placeholder="quotes@youragency.com"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Contact Number / WhatsApp *
+                </label>
+                <input
+                  type="text"
+                  value={agencyForm.phone}
+                  onChange={e => setAgencyForm(prev => ({ ...prev, phone: e.target.value }))}
+                  placeholder="+44 20 7946 0921"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Agency Website
+                </label>
+                <input
+                  type="text"
+                  value={agencyForm.website}
+                  onChange={e => setAgencyForm(prev => ({ ...prev, website: e.target.value }))}
+                  placeholder="www.youragency.com"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Agency Logo URL (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={agencyForm.logoUrl}
+                  onChange={e => setAgencyForm(prev => ({ ...prev, logoUrl: e.target.value }))}
+                  placeholder="https://youragency.com/logo.png"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Business Address
+                </label>
+                <input
+                  type="text"
+                  value={agencyForm.address}
+                  onChange={e => setAgencyForm(prev => ({ ...prev, address: e.target.value }))}
+                  placeholder="14 Mayfair Square, London, UK"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                    Primary Color
+                  </label>
+                  <input
+                    type="color"
+                    value={agencyForm.brandPrimaryColor || '#0f172a'}
+                    onChange={e => setAgencyForm(prev => ({ ...prev, brandPrimaryColor: e.target.value }))}
+                    className="w-full h-9 rounded-lg border border-slate-200 bg-white p-1 cursor-pointer"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                    Accent Color
+                  </label>
+                  <input
+                    type="color"
+                    value={agencyForm.brandAccentColor || '#b45309'}
+                    onChange={e => setAgencyForm(prev => ({ ...prev, brandAccentColor: e.target.value }))}
+                    className="w-full h-9 rounded-lg border border-slate-200 bg-white p-1 cursor-pointer"
+                  />
+                </div>
+              </div>
+              <div className="sm:col-span-3">
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Authorized Footer / Commercial Disclaimer (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={agencyForm.quoteDisclaimer}
+                  onChange={e => setAgencyForm(prev => ({ ...prev, quoteDisclaimer: e.target.value }))}
+                  placeholder="Custom booking terms or agency disclaimer for quotation footers..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-900"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsEditingAgencyBranding(false)}
+                className="px-4 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveQuickAgencyBranding}
+                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black uppercase tracking-wider"
+              >
+                Save Agency Profile
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // User Type Segregation checks (Section 3)
   const isMasterAdminUser = Boolean(user && (user.role === 'ADMIN' || (user as any).email === 'business@theunbound.in' || (user as any).email === 'admin@theunbound.com'));
@@ -1870,7 +2230,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <div className="flex items-center space-x-2">
                       <span className="text-xs text-slate-400">Import CRM Lead:</span>
                       <select
-                        value={selectedLeadId}
+                        value={selectedLeadId || ''}
                         onChange={(e) => onSelectLead(e.target.value)}
                         className="text-xs font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-xl px-2.5 py-1 outline-none cursor-pointer"
                       >
@@ -1890,7 +2250,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Client Full Name *</label>
                     <input
                       type="text"
-                      value={clientName}
+                      value={clientName || ''}
                       onChange={(e) => setClientName(e.target.value)}
                       placeholder="e.g. Robert & Sarah Vance"
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:border-teal-500 outline-none"
@@ -1901,7 +2261,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Client Email</label>
                     <input
                       type="email"
-                      value={clientEmail}
+                      value={clientEmail || ''}
                       onChange={(e) => setClientEmail(e.target.value)}
                       placeholder="client@agency.com"
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:border-teal-500 outline-none"
@@ -1912,7 +2272,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Phone / WhatsApp</label>
                     <input
                       type="tel"
-                      value={clientPhone}
+                      value={clientPhone || ''}
                       onChange={(e) => setClientPhone(e.target.value)}
                       placeholder="+1 (555) 019-2834"
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:border-teal-500 outline-none"
@@ -1923,7 +2283,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Agency / Company</label>
                     <input
                       type="text"
-                      value={clientCompany}
+                      value={clientCompany || ''}
                       onChange={(e) => setClientCompany(e.target.value)}
                       placeholder="Elite Luxury Travel Ltd"
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:border-teal-500 outline-none"
@@ -1942,7 +2302,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Destination Country *</label>
                     <select
-                      value={currentDestination.id}
+                      value={currentDestination?.id || ''}
                       onChange={(e) => {
                         const found = destinations.find(d => d.id === e.target.value);
                         if (found) onSelectDestination(found);
@@ -1958,7 +2318,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Quotation Scope</label>
                     <select
-                      value={quotationScope}
+                      value={quotationScope || 'HOTEL_LAND'}
                       onChange={(e) => setQuotationScope(e.target.value as QuotationScope)}
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:border-teal-500 outline-none cursor-pointer"
                     >
@@ -1973,7 +2333,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Start Date (Check-in)</label>
                     <input
                       type="date"
-                      value={startDate}
+                      value={startDate || ''}
                       onChange={(e) => setStartDate(e.target.value)}
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:border-teal-500 outline-none cursor-pointer"
                     />
@@ -1985,7 +2345,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     </label>
                     <input
                       type="date"
-                      value={endDate}
+                      value={endDate || ''}
                       onChange={(e) => setEndDate(e.target.value)}
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:border-teal-500 outline-none cursor-pointer"
                     />
@@ -2116,7 +2476,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 <div>
                   <label className="text-[11px] font-bold text-slate-600 block mb-1">Number of Rooms</label>
                   <select
-                    value={roomingConfig.roomsCount}
+                    value={roomingConfig?.roomsCount ?? 1}
                     onChange={(e) => setRoomingConfig({ ...roomingConfig, roomsCount: parseInt(e.target.value, 10) })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 outline-none cursor-pointer"
                   >
@@ -2129,7 +2489,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 <div>
                   <label className="text-[11px] font-bold text-slate-600 block mb-1">Extra Bed Required</label>
                   <select
-                    value={roomingConfig.extraBedRequired ? 'YES' : 'NO'}
+                    value={roomingConfig?.extraBedRequired ? 'YES' : 'NO'}
                     onChange={(e) => setRoomingConfig({ ...roomingConfig, extraBedRequired: e.target.value === 'YES' })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 outline-none cursor-pointer"
                   >
@@ -2142,7 +2502,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   <label className="text-[11px] font-bold text-slate-600 block mb-1">Nationality</label>
                   <input
                     type="text"
-                    value={nationality}
+                    value={nationality || ''}
                     onChange={(e) => setNationality(e.target.value)}
                     placeholder="e.g. Indian, American"
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 outline-none"
@@ -2152,7 +2512,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 <div>
                   <label className="text-[11px] font-bold text-slate-600 block mb-1">Meal Plan</label>
                   <select
-                    value={mealPlanPreference}
+                    value={mealPlanPreference || 'CP (Breakfast Included)'}
                     onChange={(e) => setMealPlanPreference(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 outline-none cursor-pointer"
                   >
@@ -2595,7 +2955,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                           )}
                         </label>
                         <select
-                          value={dropdownSelectValue}
+                          value={dropdownSelectValue || ''}
                           disabled={isLandOnlyMode}
                           onChange={(e) => {
                             const val = e.target.value;
@@ -2838,7 +3198,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                   </span>
                                 </label>
                                 <select
-                                  value={currentRoomsCount}
+                                  value={currentRoomsCount ?? 1}
                                   onChange={(e) => {
                                     const newRooms = parseInt(e.target.value, 10) || 1;
                                     handleSelectHotel(hub.order, selectedHotel, selectedRoom?.id, newRooms);
@@ -3402,54 +3762,103 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                         )}
 
                         {/* Recommended Highlights for this Day / Hub */}
-                        {products.length > 0 && (
-                          <div className="bg-slate-50/80 rounded-xl p-3 border border-slate-200 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider flex items-center space-x-1.5">
-                                <Sparkles className="w-3.5 h-3.5 text-[#00A88F]" />
-                                <span>Recommended for {slot.hub?.hubName || currentDestination.name}</span>
-                              </span>
-                              <span className="text-[10px] text-slate-400 font-medium">City-Matched Experiences</span>
-                            </div>
+                        {(() => {
+                          const resolvedHubRef = slot.hub?.hubId || slot.hub?.hubName;
+                          if (!resolvedHubRef) {
+                            return (
+                              <div className="bg-amber-50/70 rounded-xl p-3 border border-amber-200 flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center space-x-2 text-xs text-amber-900">
+                                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                                  <span>
+                                    No City Hub assigned for Day {slot.dayNumber}. Assign a City Hub in Step 2 (Route &amp; City Plan) to view Hub-matched recommendations.
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveStepId(2)}
+                                  className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] transition-colors cursor-pointer shrink-0"
+                                >
+                                  Select Hub in Step 2
+                                </button>
+                              </div>
+                            );
+                          }
 
-                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                              {DestinationRelevanceService.getInstance().getRelevantProducts(
-                                currentDestination.id,
-                                slot.hub?.hubId || slot.hub?.hubName
-                              ).hubActivities
-                                .filter(p => !slot.productItems.some(it => it.product.id === p.id))
-                                .slice(0, 3)
-                                .map(recProd => (
-                                  <div
-                                    key={recProd.id}
-                                    className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between gap-2 text-xs"
-                                  >
-                                    <div className="min-w-0">
-                                      <span className="font-bold text-slate-900 block truncate">{recProd.name}</span>
-                                      <span className="text-[10px] text-slate-500">{recProd.city || slot.hub?.hubName} • {recProd.category}</span>
+                          const allHubActivities = DestinationRelevanceService.getInstance()
+                            .getRelevantProducts(currentDestination.id, resolvedHubRef)
+                            .hubActivities.filter(p => !items.some(it => it.product.id === p.id));
+
+                          // Determine index of this day among days assigned to the same Hub to prevent identical duplicate top-3 cards across consecutive days in the same Hub
+                          const sameHubDayIndex = Math.max(
+                            0,
+                            daySchedule
+                              .filter(d => (d.hub?.hubId || d.hub?.hubName) === resolvedHubRef)
+                              .findIndex(d => d.dayNumber === slot.dayNumber)
+                          );
+                          const startOffset = (sameHubDayIndex * 3) % Math.max(1, allHubActivities.length);
+                          const rotatedActivities =
+                            allHubActivities.length > 3
+                              ? [
+                                  ...allHubActivities.slice(startOffset),
+                                  ...allHubActivities.slice(0, startOffset)
+                                ]
+                              : allHubActivities;
+                          const hubRecommendations = rotatedActivities.slice(0, 3);
+
+                          return (
+                            <div className="bg-slate-50/80 rounded-xl p-3 border border-slate-200 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider flex items-center space-x-1.5">
+                                  <Sparkles className="w-3.5 h-3.5 text-[#00A88F]" />
+                                  <span>Recommended for {slot.hub?.hubName || resolvedHubRef} Hub</span>
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-medium">Hub-Matched Experiences</span>
+                              </div>
+
+                              {hubRecommendations.length === 0 ? (
+                                <div className="text-[11px] text-slate-500 py-1.5 px-2 bg-white rounded-lg border border-slate-200/80">
+                                  All available Hub experiences for <span className="font-semibold text-slate-700">{slot.hub?.hubName || resolvedHubRef}</span> are already added to the itinerary, or no additional Hub-specific activities are available.
+                                </div>
+                              ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                                  {hubRecommendations.map(recProd => (
+                                    <div
+                                      key={recProd.id}
+                                      className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between gap-2 text-xs"
+                                    >
+                                      <div className="min-w-0">
+                                        <span className="font-bold text-slate-900 block truncate">{recProd.name}</span>
+                                        <span className="text-[10px] text-slate-500">{recProd.city || slot.hub?.hubName} • {recProd.category}</span>
+                                      </div>
+                                      <div className="shrink-0">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (isRailProduct(recProd) && onOpenProductDetails) {
+                                              onOpenProductDetails(recProd);
+                                              return;
+                                            }
+                                            addProductToQuote(recProd, {
+                                              adults: adultsCount,
+                                              children: childrenCount,
+                                              infants: infantsCount,
+                                              travelDate: slot.dateString,
+                                              openDrawer: false
+                                            });
+                                          }}
+                                          className="px-2.5 py-1.5 rounded-lg bg-[#00C6A6] hover:bg-[#00A88F] text-white font-bold text-[11px] transition-colors cursor-pointer shadow-2xs flex items-center"
+                                          title="Add to day itinerary"
+                                        >
+                                          <span>Configure &amp; Add</span>
+                                        </button>
+                                      </div>
                                     </div>
-                                    <div className="shrink-0">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          addProductToQuote(recProd, {
-                                            adults: adultsCount,
-                                            children: childrenCount,
-                                            infants: infantsCount,
-                                            travelDate: slot.dateString
-                                          });
-                                        }}
-                                        className="px-2.5 py-1.5 rounded-lg bg-[#00C6A6] hover:bg-[#00A88F] text-white font-bold text-[11px] transition-colors cursor-pointer shadow-2xs flex items-center"
-                                        title="Directly add to day itinerary"
-                                      >
-                                        <span>Configure & Add</span>
-                                      </button>
-                                    </div>
-                                  </div>
-                                ))}
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        )}
+                          );
+                        })()}
                       </div>
                     </div>
                   ))}
@@ -4080,7 +4489,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
                         {/* Currency Selector */}
                         <select
-                          value={currency}
+                          value={currency || 'USD'}
                           onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
                           className="px-2 py-0.5 rounded-md bg-white border border-slate-300 text-xs font-bold text-slate-900 outline-none cursor-pointer"
                         >
@@ -4296,6 +4705,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   </div>
                 </div>
               </div>
+
+                {renderBrandingModeSelectorCard()}
 
                 {/* COMMERCIAL SUMMARY & NEXT STEP TRANSITION */}
                 <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-4">
@@ -4757,7 +5168,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             min="0"
                             max={effectiveAdminMarginType === 'PERCENTAGE' ? 200 : undefined}
                             step={effectiveAdminMarginType === 'PERCENTAGE' ? 0.5 : 100}
-                            value={effectiveAdminMarginValue}
+                            value={Number.isNaN(effectiveAdminMarginValue) ? 0 : (effectiveAdminMarginValue ?? 0)}
                             onChange={(e) => handleUpdateAdminMarginValue(parseFloat(e.target.value) || 0)}
                             className="w-full pl-3 pr-8 py-1.5 rounded-xl border border-slate-300 font-mono text-xs font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 shadow-2xs"
                           />
@@ -4942,7 +5353,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             min="0"
                             max={effectiveMarginType === 'PERCENTAGE' ? 100 : undefined}
                             step={effectiveMarginType === 'PERCENTAGE' ? 0.5 : 100}
-                            value={effectiveMarginValue}
+                            value={Number.isNaN(effectiveMarginValue) ? 0 : (effectiveMarginValue ?? 0)}
                             onChange={(e) => handleUpdateMarginValue(parseFloat(e.target.value) || 0)}
                             className="w-full pl-3 pr-8 py-1.5 rounded-xl border border-slate-300 font-mono text-xs font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 shadow-2xs"
                           />
@@ -5001,6 +5412,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     </div>
                   </div>
                 )}
+
+                {renderBrandingModeSelectorCard()}
 
                 {/* 3. Dispatch & Generation Action Hub */}
                 <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">

@@ -1,4 +1,4 @@
-import { Quotation, QuoteItem, TripRouteHub } from '../types';
+import { Quotation, QuoteItem, TripRouteHub, QuoteBrandingMode, AgencyBrandingSnapshot, User } from '../types';
 import { formatCurrency, calculateQuoteTotal } from './pricingEngine';
 import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../utils/inventoryDisplayHelpers';
 import { isRailQuoteItem } from './rail/JapanRailJourneyDataService';
@@ -10,6 +10,180 @@ import {
   convertHtmlToCleanPlainText
 } from './quoteEmailFormatter';
 import { richTextToWhatsApp } from '../utils/richTextFormatter';
+
+export function isTheUnboundBrandString(val?: string | null): boolean {
+  if (!val) return false;
+  const lower = val.trim().toLowerCase();
+  return (
+    lower.includes('theunbound') ||
+    lower.includes('the unbound') ||
+    lower === '+91-9811654959'
+  );
+}
+
+export function sanitizeWhiteLabelString(
+  rawText: string | undefined | null,
+  agencyName: string,
+  agencyEmail?: string,
+  agencyPhone?: string
+): string {
+  if (!rawText) return '';
+  const safeAgency = agencyName && !isTheUnboundBrandString(agencyName) ? agencyName : 'Your Travel Agency';
+  let result = rawText;
+  result = result.replace(/In Association with TheUnbound Luxury DMC Network/gi, 'Official Bespoke Travel Proposal');
+  result = result.replace(/TheUnbound Luxury DMC Network/gi, safeAgency);
+  result = result.replace(/TheUnbound Luxury DMC/gi, safeAgency);
+  result = result.replace(/TheUnbound DMC Global Ground Logistics/gi, safeAgency);
+  result = result.replace(/TheUnbound Ground Operations/gi, `${safeAgency} Ground Operations`);
+  result = result.replace(/TheUnbound DMC/gi, safeAgency);
+  result = result.replace(/TheUnbound/gi, safeAgency);
+  result = result.replace(/theunbound\.in/gi, '');
+  result = result.replace(/theunbound\.com/gi, '');
+  result = result.replace(/sales@theunbound\.in/gi, agencyEmail && !isTheUnboundBrandString(agencyEmail) ? agencyEmail : '');
+  result = result.replace(/agent@theunbound\.com/gi, agencyEmail && !isTheUnboundBrandString(agencyEmail) ? agencyEmail : '');
+  result = result.replace(/\+91-9811654959/g, agencyPhone && !isTheUnboundBrandString(agencyPhone) ? agencyPhone : '');
+  return result.replace(/\s+•\s+•\s+/g, ' • ').replace(/^[•\s]+|[•\s]+$/g, '').trim();
+}
+
+export interface WhiteLabelReadinessValidation {
+  isReady: boolean;
+  missingMandatoryFields: string[];
+  optionalMissingFields: string[];
+}
+
+export function validateWhiteLabelReadiness(
+  branding?: Partial<AgencyBrandingSnapshot> | null
+): WhiteLabelReadinessValidation {
+  const missingMandatoryFields: string[] = [];
+  const optionalMissingFields: string[] = [];
+
+  const agencyName = branding?.agencyName?.trim() || '';
+  if (!agencyName || isTheUnboundBrandString(agencyName) || agencyName.toLowerCase() === 'travel partner agency') {
+    missingMandatoryFields.push('Agency / Company Name');
+  }
+
+  const hasValidEmail = Boolean(branding?.email?.trim() && !isTheUnboundBrandString(branding.email));
+  const hasValidPhone = Boolean(branding?.phone?.trim() && !isTheUnboundBrandString(branding.phone));
+  if (!hasValidEmail && !hasValidPhone) {
+    missingMandatoryFields.push('Business Email or Contact Phone Number');
+  }
+
+  if (!branding?.logoUrl?.trim()) {
+    optionalMissingFields.push('Agency Logo');
+  }
+  if (!branding?.address?.trim()) {
+    optionalMissingFields.push('Business Address');
+  }
+  if (!branding?.website?.trim()) {
+    optionalMissingFields.push('Agency Website');
+  }
+
+  return {
+    isReady: missingMandatoryFields.length === 0,
+    missingMandatoryFields,
+    optionalMissingFields
+  };
+}
+
+export function buildAgencyBrandingSnapshotFromUser(
+  user?: Partial<User> | null,
+  quote?: Partial<Quotation> | null,
+  mode: QuoteBrandingMode = 'STANDARD'
+): AgencyBrandingSnapshot {
+  const existingSnap = quote?.brandingSnapshot;
+  const rawAgencyName =
+    user?.agencyName ||
+    user?.companyName ||
+    existingSnap?.agencyName ||
+    quote?.agentAgency ||
+    quote?.agentCompany ||
+    '';
+  const cleanAgencyName =
+    mode === 'WHITE_LABEL'
+      ? (isTheUnboundBrandString(rawAgencyName) ? '' : rawAgencyName.trim())
+      : (rawAgencyName.trim() || 'theunbound');
+
+  const rawAgentName =
+    user?.name ||
+    user?.displayName ||
+    existingSnap?.agentName ||
+    quote?.agentName ||
+    'Bespoke Travel Specialist';
+  const cleanAgentName =
+    mode === 'WHITE_LABEL' && isTheUnboundBrandString(rawAgentName)
+      ? 'Senior Travel Consultant'
+      : rawAgentName;
+
+  const rawEmail =
+    user?.companyEmail ||
+    user?.email ||
+    existingSnap?.email ||
+    quote?.agentEmail ||
+    '';
+  const cleanEmail =
+    mode === 'WHITE_LABEL'
+      ? (isTheUnboundBrandString(rawEmail) ? '' : rawEmail.trim())
+      : (rawEmail.trim() || 'sales@theunbound.in');
+
+  const rawPhone =
+    user?.companyPhone ||
+    user?.phone ||
+    user?.contactNumber ||
+    existingSnap?.phone ||
+    quote?.agentPhone ||
+    '';
+  const cleanPhone =
+    mode === 'WHITE_LABEL'
+      ? (isTheUnboundBrandString(rawPhone) ? '' : rawPhone.trim())
+      : (rawPhone.trim() || '+91-9811654959');
+
+  const rawLogo =
+    user?.brandLogoUrl ||
+    user?.logoUrl ||
+    existingSnap?.logoUrl ||
+    quote?.agentLogoUrl ||
+    '';
+  const cleanLogo =
+    mode === 'WHITE_LABEL' && isTheUnboundBrandString(rawLogo)
+      ? ''
+      : rawLogo.trim();
+
+  const rawWebsite =
+    user?.companyWebsite ||
+    existingSnap?.website ||
+    '';
+  const cleanWebsite =
+    mode === 'WHITE_LABEL' && isTheUnboundBrandString(rawWebsite)
+      ? ''
+      : rawWebsite.trim();
+
+  const addressParts = [
+    user?.companyAddress || user?.address,
+    user?.companyCity || user?.city,
+    user?.companyState || user?.state,
+    user?.companyPostalCode || user?.postalCode,
+    user?.companyCountry || user?.country
+  ].filter(Boolean);
+  const resolvedAddress = existingSnap?.address || (addressParts.length > 0 ? Array.from(new Set(addressParts)).join(', ') : '');
+
+  return {
+    mode,
+    agencyId: user?.companyId || user?.id || existingSnap?.agencyId || quote?.agentId,
+    agencyName: cleanAgencyName,
+    agentName: cleanAgentName,
+    tagline: user?.quoteTagline || existingSnap?.tagline || undefined,
+    logoUrl: cleanLogo || undefined,
+    primaryColor: user?.brandPrimaryColor || existingSnap?.primaryColor || '#0f172a',
+    accentColor: user?.brandAccentColor || existingSnap?.accentColor || '#4f46e5',
+    address: resolvedAddress || undefined,
+    phone: cleanPhone || undefined,
+    email: cleanEmail || undefined,
+    website: cleanWebsite || undefined,
+    footerText: user?.quoteFooterText || existingSnap?.footerText || undefined,
+    disclaimer: user?.quoteDisclaimer || existingSnap?.disclaimer || undefined,
+    capturedAt: new Date().toISOString()
+  };
+}
 
 export interface ServicePresentationItem {
   id: string;
@@ -120,12 +294,21 @@ export interface QuotePresentationModel {
   landItemsCount: number;
   
   // Agent & Agency Branding
+  brandingMode: QuoteBrandingMode;
+  isWhiteLabel: boolean;
   agencyName: string;
   agentName: string;
   agentEmail?: string;
   agentPhone?: string;
   agentLogoUrl?: string;
+  agencyAddress?: string;
+  agencyWebsite?: string;
+  brandPrimaryColor?: string;
+  brandAccentColor?: string;
   agentAgencySubtitle: string;
+  documentBadgeTitle: string;
+  operationalStandardsTitle: string;
+  footerRightTitle: string;
   agentNotes?: string;
   
   // Client Dossier
@@ -348,6 +531,14 @@ export function buildQuotePresentationModel(
     email?: string;
     phone?: string;
     logoUrl?: string;
+    address?: string;
+    website?: string;
+    primaryColor?: string;
+    accentColor?: string;
+    tagline?: string;
+    footerText?: string;
+    disclaimer?: string;
+    brandingMode?: QuoteBrandingMode;
     selectedOptionIndexOrId?: number | string;
   }
 ): QuotePresentationModel {
@@ -428,17 +619,82 @@ export function buildQuotePresentationModel(
   });
 
   const effectiveCurrency = quote.currency || 'USD';
-  const effectiveAgency = agentOverride?.agencyName || quote.agentAgency || quote.agentCompany;
-  const effectiveAgentName = agentOverride?.name || quote.agentName || 'Bespoke Travel Specialist';
-  const effectiveAgentEmail = agentOverride?.email || quote.agentEmail || 'sales@theunbound.in';
-  const effectiveAgentPhone = agentOverride?.phone || quote.agentPhone || '+91-9811654959';
-  const effectiveAgentLogoUrl = agentOverride?.logoUrl || quote.agentLogoUrl;
+  const effectiveBrandingMode: QuoteBrandingMode =
+    agentOverride?.brandingMode ||
+    quote.brandingMode ||
+    quote.brandingSnapshot?.mode ||
+    'STANDARD';
+  const isWhiteLabel = effectiveBrandingMode === 'WHITE_LABEL';
+  const snap = quote.brandingSnapshot;
 
-  const effectiveAgentNotes = typeof quote.agentNotes === 'string'
+  const rawAgencyCandidate =
+    agentOverride?.agencyName ||
+    snap?.agencyName ||
+    quote.agentAgency ||
+    quote.agentCompany ||
+    '';
+  const effectiveAgency = isWhiteLabel
+    ? ((!isTheUnboundBrandString(rawAgencyCandidate) && rawAgencyCandidate.trim()) ? rawAgencyCandidate.trim() : 'Partner Travel Agency')
+    : (rawAgencyCandidate.trim() || 'theunbound');
+
+  const rawAgentNameCandidate =
+    agentOverride?.name ||
+    snap?.agentName ||
+    quote.agentName ||
+    'Bespoke Travel Specialist';
+  const effectiveAgentName = (isWhiteLabel && isTheUnboundBrandString(rawAgentNameCandidate))
+    ? 'Senior Travel Consultant'
+    : rawAgentNameCandidate;
+
+  const rawEmailCandidate =
+    agentOverride?.email ??
+    snap?.email ??
+    quote.agentEmail ??
+    '';
+  const effectiveAgentEmail = isWhiteLabel
+    ? (isTheUnboundBrandString(rawEmailCandidate) ? undefined : (rawEmailCandidate.trim() || undefined))
+    : (rawEmailCandidate.trim() || 'sales@theunbound.in');
+
+  const rawPhoneCandidate =
+    agentOverride?.phone ??
+    snap?.phone ??
+    quote.agentPhone ??
+    '';
+  const effectiveAgentPhone = isWhiteLabel
+    ? (isTheUnboundBrandString(rawPhoneCandidate) ? undefined : (rawPhoneCandidate.trim() || undefined))
+    : (rawPhoneCandidate.trim() || '+91-9811654959');
+
+  const rawLogoCandidate =
+    agentOverride?.logoUrl ??
+    snap?.logoUrl ??
+    quote.agentLogoUrl ??
+    '';
+  const effectiveAgentLogoUrl = (isWhiteLabel && isTheUnboundBrandString(rawLogoCandidate))
+    ? undefined
+    : (rawLogoCandidate.trim() || undefined);
+
+  const rawWebsiteCandidate = agentOverride?.website ?? snap?.website ?? '';
+  const effectiveAgencyWebsite = (isWhiteLabel && isTheUnboundBrandString(rawWebsiteCandidate))
+    ? undefined
+    : (rawWebsiteCandidate.trim() || undefined);
+
+  const rawAddressCandidate = agentOverride?.address ?? snap?.address ?? '';
+  const effectiveAgencyAddress = (isWhiteLabel && isTheUnboundBrandString(rawAddressCandidate))
+    ? undefined
+    : (rawAddressCandidate.trim() || undefined);
+
+  const effectivePrimaryColor = agentOverride?.primaryColor || snap?.primaryColor || '#0f172a';
+  const effectiveAccentColor = agentOverride?.accentColor || snap?.accentColor || '#4f46e5';
+  const effectiveTagline = agentOverride?.tagline || snap?.tagline;
+
+  const rawAgentNotes = typeof quote.agentNotes === 'string'
     ? quote.agentNotes
     : Array.isArray(quote.agentNotes)
       ? (quote.agentNotes as any[]).map(x => typeof x === 'string' ? x : x?.text || '').filter(Boolean).join('\n')
       : undefined;
+  const effectiveAgentNotes = isWhiteLabel && rawAgentNotes
+    ? sanitizeWhiteLabelString(rawAgentNotes, effectiveAgency, effectiveAgentEmail, effectiveAgentPhone)
+    : rawAgentNotes;
 
   // Split visa vs non-visa
   const visaItems = items.filter(isVisaQuoteItem);
@@ -923,6 +1179,41 @@ export function buildQuotePresentationModel(
     return val;
   };
 
+  const resolvedSubtitle = isWhiteLabel
+    ? (effectiveTagline && !isTheUnboundBrandString(effectiveTagline)
+        ? effectiveTagline
+        : [
+            'Official Travel Proposal & Bespoke Itinerary',
+            effectiveAgencyWebsite,
+            effectiveAgencyAddress
+          ].filter(Boolean).join(' • '))
+    : (effectiveAgency && !isTheUnboundBrandString(effectiveAgency)
+        ? 'Authorized Travel Partner • In Association with TheUnbound Luxury DMC Network'
+        : 'Destination Management Operations • Direct Ground Logistics & Destination Operations Hub');
+
+  const rawCommercialTerms = agentOverride?.disclaimer || snap?.disclaimer || quote.termsAndConditions;
+  const resolvedCommercialTerms = isWhiteLabel
+    ? (rawCommercialTerms && !isTheUnboundBrandString(rawCommercialTerms)
+        ? rawCommercialTerms
+        : (rawCommercialTerms
+            ? sanitizeWhiteLabelString(rawCommercialTerms, effectiveAgency, effectiveAgentEmail, effectiveAgentPhone)
+            : `This quotation is issued by ${effectiveAgency}. Rates are valid for 14 calendar days from generation date. All reservations are subject to live inventory availability and confirmation upon deposit.`))
+    : (quote.termsAndConditions || 'This quotation is issued by TheUnbound Luxury DMC Network. Rates are valid for 14 calendar days from generation date. All reservations subject to live inventory confirmation upon deposit.');
+
+  const customFooterText = agentOverride?.footerText || snap?.footerText;
+  const resolvedFooterContactLine = isWhiteLabel
+    ? (customFooterText && !isTheUnboundBrandString(customFooterText)
+        ? customFooterText
+        : [
+            effectiveAgency,
+            effectiveAgentEmail,
+            effectiveAgentPhone,
+            effectiveAgencyWebsite,
+            effectiveAgencyAddress,
+            'Official Contracted Quotation Document'
+          ].filter(Boolean).join(' • '))
+    : 'TheUnbound DMC Global Ground Logistics • sales@theunbound.in • Official Contracted Quotation Document';
+
   return {
     quoteId: quote.id || quote.quoteNumber || 'UBQ-2026',
     quoteNumber: quote.quoteNumber || quote.id || 'UBQ-2026',
@@ -932,14 +1223,25 @@ export function buildQuotePresentationModel(
     validUntilFormatted: formatValidUntil(quote.validUntil),
     currency: effectiveCurrency,
     totalSellingPriceNumeric: effectiveSellingPrice,
-    agencyName: effectiveAgency || 'theunbound',
+    brandingMode: effectiveBrandingMode,
+    isWhiteLabel,
+    agencyName: effectiveAgency,
     agentName: effectiveAgentName,
     agentEmail: effectiveAgentEmail,
     agentPhone: effectiveAgentPhone,
     agentLogoUrl: effectiveAgentLogoUrl,
-    agentAgencySubtitle: effectiveAgency 
-      ? 'Authorized Travel Partner • In Association with TheUnbound Luxury DMC Network'
-      : 'Destination Management Operations • Direct Ground Logistics & Destination Operations Hub',
+    agencyAddress: effectiveAgencyAddress,
+    agencyWebsite: effectiveAgencyWebsite,
+    brandPrimaryColor: effectivePrimaryColor,
+    brandAccentColor: effectiveAccentColor,
+    agentAgencySubtitle: resolvedSubtitle,
+    documentBadgeTitle: isWhiteLabel ? 'Official Travel Proposal' : 'Official Quotation Proposal',
+    operationalStandardsTitle: isWhiteLabel
+      ? `${effectiveAgency} Service Standards & Ground Inclusions`
+      : 'TheUnbound Ground Operations Standards & Inclusions',
+    footerRightTitle: isWhiteLabel
+      ? `Issued by ${effectiveAgency}`
+      : 'Official DMC Electronic Proposal',
     agentNotes: effectiveAgentNotes,
     clientName: quote.clientName && quote.clientName !== 'Client Name Pending' ? quote.clientName : (quote.clientName || 'Valued Guest'),
     clientCompany: quote.clientCompany,
@@ -980,8 +1282,8 @@ export function buildQuotePresentationModel(
     pricePerTravelerFormatted: `${formatCurrency(pricePerPerson, effectiveCurrency)} / Traveler (${effectivePax} Guests)`,
     guaranteedCurrencyLine: `Guaranteed in ${effectiveCurrency} • No Hidden Surcharges`,
     childAndAttractionPolicies,
-    commercialTerms: quote.termsAndConditions || 'This quotation is issued by TheUnbound Luxury DMC Network. Rates are valid for 14 calendar days from generation date. All reservations subject to live inventory confirmation upon deposit.',
-    footerContactLine: 'TheUnbound DMC Global Ground Logistics • sales@theunbound.in • Official Contracted Quotation Document'
+    commercialTerms: resolvedCommercialTerms,
+    footerContactLine: resolvedFooterContactLine
   };
 }
 
@@ -1000,7 +1302,8 @@ export function renderQuoteEmailFromPresentationModel(
   proposalViewHtml: string;
   simpleSemanticHtml: string;
 } {
-  const subject = `Bespoke Itinerary & Quotation Proposal [${model.quoteNumber} v${model.version}] — ${model.destination} (${model.totalDays} Days / ${model.totalNights} Nights) — ${model.clientName}`;
+  const subjectPrefix = model.isWhiteLabel ? `${model.agencyName} — ` : '';
+  const subject = `${subjectPrefix}Bespoke Itinerary & Quotation Proposal [${model.quoteNumber} v${model.version}] — ${model.destination} (${model.totalDays} Days / ${model.totalNights} Nights) — ${model.clientName}`;
 
   const routeString = model.routeHubs.length > 0
     ? model.routeHubs.map(h => `${h.hubName} (${h.nights} ${h.nights === 1 ? 'Night' : 'Nights'})`).join(' → ')
@@ -1022,9 +1325,12 @@ export function renderQuoteEmailFromPresentationModel(
   ].filter(Boolean).join('\n'));
 
   if (customNote && customNote.trim()) {
+    const cleanNote = model.isWhiteLabel
+      ? sanitizeWhiteLabelString(customNote.trim(), model.agencyName, model.agentEmail, model.agentPhone)
+      : customNote.trim();
     textSections.push([
       `PERSONAL NOTE FROM ${model.agentName.toUpperCase()}:`,
-      customNote.trim()
+      cleanNote
     ].join('\n'));
   }
 
@@ -1057,6 +1363,8 @@ export function renderQuoteEmailFromPresentationModel(
     `  Agency        : ${model.agencyName}`,
     model.agentEmail ? `  Email         : ${model.agentEmail}` : '',
     model.agentPhone ? `  Phone         : ${model.agentPhone}` : '',
+    model.agencyWebsite ? `  Website       : ${model.agencyWebsite}` : '',
+    model.agencyAddress ? `  Address       : ${model.agencyAddress}` : '',
     model.agentNotes ? `  Agent Notes   : ${model.agentNotes}` : ''
   ].filter(Boolean).join('\n'));
 
@@ -1173,7 +1481,7 @@ export function renderQuoteEmailFromPresentationModel(
   }
 
   textSections.push([
-    `7. GROUND OPERATIONS STANDARDS & INCLUSIONS`,
+    `7. ${model.operationalStandardsTitle.toUpperCase()}`,
     ...model.operationalStandards.map(op => `  • ${op.title}: ${op.desc}`)
   ].join('\n'));
 
@@ -1199,18 +1507,27 @@ export function renderQuoteEmailFromPresentationModel(
     convertHtmlToCleanPlainText(model.footerContactLine)
   ].join('\n'));
 
-  const textBody = textSections.join('\n\n');
+  const rawTextBody = textSections.join('\n\n');
+  const textBody = model.isWhiteLabel
+    ? sanitizeWhiteLabelString(rawTextBody, model.agencyName, model.agentEmail, model.agentPhone)
+    : rawTextBody;
 
   // Option 1: Proposal View Rich HTML Email (adapted for responsive email clients)
-  const proposalViewHtml = renderProposalViewHtmlEmail(model, customNote);
+  const rawProposalViewHtml = renderProposalViewHtmlEmail(model, customNote);
+  const proposalViewHtml = model.isWhiteLabel
+    ? sanitizeWhiteLabelString(rawProposalViewHtml, model.agencyName, model.agentEmail, model.agentPhone)
+    : rawProposalViewHtml;
 
   // Option 2: Complete Plain-Text Quotation (Simple Semantic Formatted HTML)
-  const simpleSemanticHtml = formatPlainTextQuotationToHtml(textBody);
+  const rawSimpleSemanticHtml = formatPlainTextQuotationToHtml(textBody);
+  const simpleSemanticHtml = model.isWhiteLabel
+    ? sanitizeWhiteLabelString(rawSimpleSemanticHtml, model.agencyName, model.agentEmail, model.agentPhone)
+    : rawSimpleSemanticHtml;
 
   const htmlBody = mode === 'PLAIN_TEXT' ? simpleSemanticHtml : proposalViewHtml;
 
   return {
-    subject,
+    subject: model.isWhiteLabel ? sanitizeWhiteLabelString(subject, model.agencyName, model.agentEmail, model.agentPhone) : subject,
     htmlBody,
     textBody,
     proposalViewHtml,
@@ -1242,7 +1559,7 @@ export function renderQuoteWhatsAppFromPresentationModel(
   const headerLines: string[] = [];
   if (useEmojis) {
     headerLines.push(
-      `✨ *OFFICIAL TRAVEL QUOTATION PROPOSAL* ✨`,
+      `✨ *${model.agencyName.toUpperCase()} — OFFICIAL TRAVEL QUOTATION PROPOSAL* ✨`,
       `📋 *Quote Reference:* *#${model.quoteNumber}* (v${model.version})`,
       `🆔 *Quote ID:* ${model.quoteId} | *Status:* ${model.status}`,
       `📅 *Issued:* ${model.createdDateFormatted} | *Valid Until:* ${model.validUntilFormatted}`,
@@ -1263,7 +1580,7 @@ export function renderQuoteWhatsAppFromPresentationModel(
     );
   } else {
     headerLines.push(
-      `*OFFICIAL TRAVEL QUOTATION PROPOSAL*`,
+      `*${model.agencyName.toUpperCase()} — OFFICIAL TRAVEL QUOTATION PROPOSAL*`,
       `Quote Reference: *#${model.quoteNumber}* (v${model.version})`,
       `Quote ID: ${model.quoteId} | Status: ${model.status}`,
       `Issued: ${model.createdDateFormatted} | Valid Until: ${model.validUntilFormatted}`,
@@ -1550,7 +1867,10 @@ export function renderQuoteWhatsAppFromPresentationModel(
       `👤 *${model.agentName}*`,
       `🏢 ${model.agencyName}`,
       model.agentPhone ? `📞 WhatsApp / Direct: ${model.agentPhone}` : '',
-      model.agentEmail ? `✉️ Email: ${model.agentEmail}` : ''
+      model.agentEmail ? `✉️ Email: ${model.agentEmail}` : '',
+      model.agencyWebsite ? `🌐 Website: ${model.agencyWebsite}` : '',
+      model.agencyAddress ? `📍 Address: ${model.agencyAddress}` : '',
+      model.isWhiteLabel ? `📄 ${model.footerContactLine}` : ''
     );
   } else {
     interactiveLines.push(
@@ -1563,12 +1883,18 @@ export function renderQuoteWhatsAppFromPresentationModel(
       `*TRAVEL CONCIERGE & DESK*`,
       `Prepared by: *${model.agentName}* (${model.agencyName})`,
       model.agentPhone ? `WhatsApp / Tel: ${model.agentPhone}` : '',
-      model.agentEmail ? `Email: ${model.agentEmail}` : ''
+      model.agentEmail ? `Email: ${model.agentEmail}` : '',
+      model.agencyWebsite ? `Website: ${model.agencyWebsite}` : '',
+      model.agencyAddress ? `Address: ${model.agencyAddress}` : '',
+      model.isWhiteLabel ? model.footerContactLine : ''
     );
   }
   sections.push(interactiveLines.filter(Boolean).join('\n'));
 
-  return sections.join(`\n\n${DIVIDER}\n\n`);
+  const finalWhatsApp = sections.join(`\n\n${DIVIDER}\n\n`);
+  return model.isWhiteLabel
+    ? sanitizeWhiteLabelString(finalWhatsApp, model.agencyName, model.agentEmail, model.agentPhone)
+    : finalWhatsApp;
 }
 
 // ============================================================================

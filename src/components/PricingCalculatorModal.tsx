@@ -7,12 +7,14 @@ export interface PricingCalculatorModalProps {
   product: Product;
   onClose: () => void;
   onAddedToQuote?: () => void;
+  portalOrigin?: 'BUYER' | 'B2B_AGENT' | 'B2B_QUOTE_BUILDER' | 'ADMIN_CMS' | 'CART';
 }
 
 export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
   product,
   onClose,
-  onAddedToQuote
+  onAddedToQuote,
+  portalOrigin
 }) => {
   const { role } = useAuth();
 
@@ -20,7 +22,7 @@ export const PricingCalculatorModal: React.FC<PricingCalculatorModalProps> = ({
     <GlobalConfiguratorRouter
       isOpen={true}
       itemOrProduct={product}
-      portalOrigin={role === 'BUYER' ? 'BUYER' : 'B2B_AGENT'}
+      portalOrigin={portalOrigin || (role === 'BUYER' ? 'BUYER' : 'B2B_AGENT')}
       onClose={onClose}
       onSuccess={() => {
         onClose();

@@ -902,7 +902,8 @@ export class AppDatabase {
         'hotel_rooms', 'hotel_rates', 'hotel_meal_plans', 'transfer_routes', 'transfer_rates',
         'product_pricing_rates', 'product_capacities', 'b2b_packages', 'package_items',
         'visas', 'visa_rates', 'travel_protection_plans', 'vip_ground_services', 'connectivity_plans',
-        'custom_pages', 'blog_articles', 'inventory_tombstones', 'image_metadata'
+        'custom_pages', 'blog_articles', 'inventory_tombstones', 'image_metadata',
+        'campaigns', 'automation_jobs', 'automation_logs', 'automation_idempotency'
       ];
       const isAdminCollection = cmsCollections.includes(collectionName);
       const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || data?.updatedByEmail || 'business@theunbound.in';
@@ -940,7 +941,8 @@ export class AppDatabase {
         'hotel_rooms', 'hotel_rates', 'hotel_meal_plans', 'transfer_routes', 'transfer_rates',
         'product_pricing_rates', 'product_capacities', 'b2b_packages', 'package_items',
         'visas', 'visa_rates', 'travel_protection_plans', 'vip_ground_services', 'connectivity_plans',
-        'custom_pages', 'blog_articles', 'inventory_tombstones', 'image_metadata'
+        'custom_pages', 'blog_articles', 'inventory_tombstones', 'image_metadata',
+        'campaigns', 'automation_jobs', 'automation_logs', 'automation_idempotency'
       ];
       const isAdminCollection = cmsCollections.includes(collectionName);
       const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || data?.updatedByEmail || 'business@theunbound.in';
@@ -957,8 +959,9 @@ export class AppDatabase {
         isDeleted: false
       };
       const cleanData = cleanForFirestore(enrichedData);
-      await setDoc(doc(firestoreDb, collectionName, docId), cleanData, { merge: true });
-      return true;
+      const writePromise = setDoc(doc(firestoreDb, collectionName, docId), cleanData, { merge: true }).then(() => true);
+      const timeoutPromise = new Promise<boolean>(resolve => setTimeout(() => resolve(true), 1200));
+      return await Promise.race([writePromise, timeoutPromise]);
     } catch (e: any) {
       console.warn(`[DB] Firestore syncDocAsync note (${collectionName}/${docId}):`, e?.message || e);
       return false;
@@ -1639,7 +1642,6 @@ export class AppDatabase {
             this.syncCollectionSafely<SLAAutomationRule>('sla_automation_rules', 'sla_automation_rules'),
             this.syncCollectionSafely<AdminActivityRecord>('admin_activities', 'admin_activities'),
             this.syncCollectionSafely<CampaignEvent>('campaign_events', 'campaign_events'),
-            this.syncCollectionSafely<EmailCampaignConfig>('campaigns', 'campaigns'),
             this.syncCollectionSafely<SEORedirect>('seo_redirects', 'seo_redirects'),
             this.syncCollectionSafely<Supplier>('suppliers', 'suppliers'),
             this.syncCollectionSafely<SupplierRequest>('supplier_requests', 'supplier_requests'),
@@ -1776,11 +1778,99 @@ export class AppDatabase {
       this.syncCollectionSafely<RailRoute>('rail_routes', 'rail_routes');
       this.syncCollectionSafely<RailRate>('rail_rates', 'rail_rates');
       this.syncCollectionSafely<RailSeasonCalendarPeriod>('rail_seasons', 'rail_seasons');
-      this.syncCollectionSafely<RailMarkupRule>('rail_markup_rules', 'rail_markup_rules');
+      onSnapshot(collection(firestoreDb, 'rail_markup_rules'), (snapshot) => {
+        if (!snapshot.empty) {
+          let ruleDoc: RailMarkupRule | null = null;
+          snapshot.forEach(docSnap => {
+            const data = docSnap.data() as RailMarkupRule;
+            if (docSnap.id === 'markup-jp-rail-default' || !ruleDoc) {
+              ruleDoc = { ...INITIAL_RAIL_MARKUP_RULE, ...data, id: data.id || docSnap.id };
+            }
+          });
+          if (ruleDoc) {
+            this.setItem('rail_markup_rules', ruleDoc, true);
+          }
+        }
+      }, (err) => console.debug('Firestore rail_markup_rules sync note:', err?.message || err));
       this.syncCollectionSafely<VehicleMaster>('master_vehicles', 'master_vehicles');
       this.syncCollectionSafely<YachtMaster>('master_yachts', 'master_yachts');
       this.syncCollectionSafely<FerryMaster>('master_ferries', 'master_ferries');
       this.syncCollectionSafely<JapanRailCommercialProduct>('japan_rail_commercial_products', 'japan_rail_commercial_products');
+
+      // Synchronize Email Automation Campaigns (Merges Firestore overrides with canonical system triggers)
+      onSnapshot(collection(firestoreDb, 'campaigns'), (snapshot) => {
+        const deletedSet = this.getDeletedEntityIds();
+        const remoteMap = new Map<string, EmailCampaignConfig>();
+        if (!snapshot.empty) {
+          snapshot.forEach(docSnap => {
+            const raw = docSnap.data() as EmailCampaignConfig;
+            const id = raw.id || docSnap.id;
+            if ((raw as any).isDeleted === true || (raw as any).status === 'DELETED') {
+              deletedSet.add(id);
+              return;
+            }
+            if (deletedSet.has(id) || deletedSet.has(`campaigns_${id}`)) return;
+            remoteMap.set(id, { ...raw, id });
+          });
+        }
+        const currentLocal = this.getItem<EmailCampaignConfig[]>('campaigns', INITIAL_CAMPAIGNS);
+        const mergedMap = new Map<string, EmailCampaignConfig>();
+        INITIAL_CAMPAIGNS.forEach(initCamp => {
+          mergedMap.set(initCamp.id, { ...initCamp });
+        });
+        currentLocal.forEach(localCamp => {
+          if (localCamp && localCamp.id && !deletedSet.has(localCamp.id) && !deletedSet.has(`campaigns_${localCamp.id}`)) {
+            mergedMap.set(localCamp.id, { ...(mergedMap.get(localCamp.id) || {}), ...localCamp });
+          }
+        });
+        remoteMap.forEach((remoteCamp, id) => {
+          mergedMap.set(id, { ...(mergedMap.get(id) || {}), ...remoteCamp });
+        });
+        this.setItem('campaigns', Array.from(mergedMap.values()), true);
+      }, (err) => {
+        console.debug('Firestore campaigns sync note:', err?.message || err);
+      });
+
+      // Synchronize Marketing Automation Scheduled Jobs & Execution Logs
+      onSnapshot(collection(firestoreDb, 'automation_jobs'), (snapshot) => {
+        if (!snapshot.empty) {
+          const remoteJobs: any[] = [];
+          snapshot.forEach(docSnap => {
+            const raw = docSnap.data();
+            if (raw && (raw.jobId || docSnap.id)) {
+              remoteJobs.push({ ...raw, jobId: raw.jobId || docSnap.id });
+            }
+          });
+          if (remoteJobs.length > 0) {
+            const localJobs = this.getItem<any[]>('automation_jobs', []);
+            const map = new Map<string, any>();
+            localJobs.forEach(j => { if (j && j.jobId) map.set(j.jobId, j); });
+            remoteJobs.forEach(j => { map.set(j.jobId, { ...(map.get(j.jobId) || {}), ...j }); });
+            const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+            this.setItem('automation_jobs', merged, true);
+          }
+        }
+      }, (err) => console.debug('Firestore automation_jobs sync note:', err?.message || err));
+
+      onSnapshot(collection(firestoreDb, 'automation_logs'), (snapshot) => {
+        if (!snapshot.empty) {
+          const remoteLogs: any[] = [];
+          snapshot.forEach(docSnap => {
+            const raw = docSnap.data();
+            if (raw && (raw.id || docSnap.id)) {
+              remoteLogs.push({ ...raw, id: raw.id || docSnap.id });
+            }
+          });
+          if (remoteLogs.length > 0) {
+            const localLogs = this.getItem<any[]>('automation_logs', []);
+            const map = new Map<string, any>();
+            localLogs.forEach(l => { if (l && l.id) map.set(l.id, l); });
+            remoteLogs.forEach(l => { map.set(l.id, { ...(map.get(l.id) || {}), ...l }); });
+            const merged = Array.from(map.values()).sort((a, b) => new Date(b.executedAt || 0).getTime() - new Date(a.executedAt || 0).getTime());
+            this.setItem('automation_logs', merged, true);
+          }
+        }
+      }, (err) => console.debug('Firestore automation_logs sync note:', err?.message || err));
 
       // Real-time Canonical Image Metadata Listener
       onSnapshot(collection(firestoreDb, 'image_metadata'), (snapshot) => {
@@ -1900,7 +1990,7 @@ export class AppDatabase {
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_customers')) this.setItem('b2b_customers', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_tasks')) this.setItem('b2b_tasks', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'roster_resources')) this.setItem('roster_resources', []);
-      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'campaigns')) this.setItem('campaigns', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'campaigns')) this.setItem('campaigns', INITIAL_CAMPAIGNS);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'invoices')) this.setItem('invoices', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'vouchers')) this.setItem('vouchers', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'job_sheets')) this.setItem('job_sheets', []);
@@ -5094,8 +5184,27 @@ export class AppDatabase {
   // ==========================================
   public getRailStations(): RailStation[] {
     const deleted = this.getDeletedEntityIds();
+    const isDeleted = (id: string) =>
+      deleted.has(id) || deleted.has(`rail_stations_${id}`) || deleted.has(`RailStation_${id}`);
+
+    const stationsMap = new Map<string, RailStation>();
+    for (const initStation of INITIAL_RAIL_STATIONS) {
+      if (initStation && initStation.stationId && !isDeleted(initStation.stationId)) {
+        stationsMap.set(initStation.stationId, { ...initStation });
+      }
+    }
+
     const raw = this.getItem<RailStation[]>('rail_stations', INITIAL_RAIL_STATIONS);
-    return raw.filter(s => s && s.stationId && !deleted.has(s.stationId) && !deleted.has(`rail_stations_${s.stationId}`) && !deleted.has(`RailStation_${s.stationId}`));
+    if (Array.isArray(raw)) {
+      for (const s of raw) {
+        if (s && s.stationId && !isDeleted(s.stationId)) {
+          const existing = stationsMap.get(s.stationId);
+          stationsMap.set(s.stationId, existing ? { ...existing, ...s } : s);
+        }
+      }
+    }
+
+    return Array.from(stationsMap.values());
   }
 
   public saveRailStation(station: RailStation, user?: User | null): void {
@@ -5160,8 +5269,27 @@ export class AppDatabase {
 
   public getRailRoutes(): RailRoute[] {
     const deleted = this.getDeletedEntityIds();
+    const isDeleted = (id: string) =>
+      deleted.has(id) || deleted.has(`rail_routes_${id}`) || deleted.has(`RailRoute_${id}`);
+
+    const routesMap = new Map<string, RailRoute>();
+    for (const initRoute of INITIAL_RAIL_ROUTES) {
+      if (initRoute && initRoute.routeId && !isDeleted(initRoute.routeId)) {
+        routesMap.set(initRoute.routeId, { ...initRoute });
+      }
+    }
+
     const raw = this.getItem<RailRoute[]>('rail_routes', INITIAL_RAIL_ROUTES);
-    return raw.filter(r => r && r.routeId && !deleted.has(r.routeId) && !deleted.has(`rail_routes_${r.routeId}`) && !deleted.has(`RailRoute_${r.routeId}`));
+    if (Array.isArray(raw)) {
+      for (const r of raw) {
+        if (r && r.routeId && !isDeleted(r.routeId)) {
+          const existing = routesMap.get(r.routeId);
+          routesMap.set(r.routeId, existing ? { ...existing, ...r } : r);
+        }
+      }
+    }
+
+    return Array.from(routesMap.values());
   }
 
   public saveRailRoute(route: RailRoute, user?: User | null): void {
@@ -5226,9 +5354,27 @@ export class AppDatabase {
 
   public getRailRates(): RailRate[] {
     const deleted = this.getDeletedEntityIds();
+    const isDeleted = (id: string) =>
+      deleted.has(id) || deleted.has(`rail_rates_${id}`) || deleted.has(`RailRate_${id}`);
+
+    const ratesMap = new Map<string, RailRate>();
+    for (const initRate of INITIAL_RAIL_RATES) {
+      if (initRate && initRate.rateId && !isDeleted(initRate.rateId)) {
+        ratesMap.set(initRate.rateId, { ...initRate });
+      }
+    }
+
     const raw = this.getItem<RailRate[]>('rail_rates', INITIAL_RAIL_RATES);
-    return raw
-      .filter(r => r && r.rateId && !deleted.has(r.rateId) && !deleted.has(`rail_rates_${r.rateId}`) && !deleted.has(`RailRate_${r.rateId}`))
+    if (Array.isArray(raw)) {
+      for (const r of raw) {
+        if (r && r.rateId && !isDeleted(r.rateId)) {
+          const existing = ratesMap.get(r.rateId);
+          ratesMap.set(r.rateId, existing ? { ...existing, ...r } : r);
+        }
+      }
+    }
+
+    return Array.from(ratesMap.values())
       .map(r => {
         const verifiedNett = resolveRailRateNettPrice(r);
         if (verifiedNett !== null) {
@@ -5407,8 +5553,27 @@ export class AppDatabase {
 
   public getRailSeasons(): RailSeasonCalendarPeriod[] {
     const deleted = this.getDeletedEntityIds();
+    const isDeleted = (id: string) =>
+      deleted.has(id) || deleted.has(`rail_seasons_${id}`) || deleted.has(`RailSeason_${id}`);
+
+    const seasonsMap = new Map<string, RailSeasonCalendarPeriod>();
+    for (const initSeason of INITIAL_RAIL_SEASON_CALENDAR) {
+      if (initSeason && initSeason.id && !isDeleted(initSeason.id)) {
+        seasonsMap.set(initSeason.id, { ...initSeason });
+      }
+    }
+
     const raw = this.getItem<RailSeasonCalendarPeriod[]>('rail_seasons', INITIAL_RAIL_SEASON_CALENDAR);
-    return raw.filter(s => s && s.id && !deleted.has(s.id) && !deleted.has(`rail_seasons_${s.id}`) && !deleted.has(`RailSeason_${s.id}`));
+    if (Array.isArray(raw)) {
+      for (const s of raw) {
+        if (s && s.id && !isDeleted(s.id)) {
+          const existing = seasonsMap.get(s.id);
+          seasonsMap.set(s.id, existing ? { ...existing, ...s } : s);
+        }
+      }
+    }
+
+    return Array.from(seasonsMap.values());
   }
 
   public saveRailSeason(season: RailSeasonCalendarPeriod, user?: User | null): void {
@@ -5481,7 +5646,42 @@ export class AppDatabase {
   }
 
   public getRailMarkupRule(): RailMarkupRule {
-    return this.getItem<RailMarkupRule>('rail_markup_rules', INITIAL_RAIL_MARKUP_RULE);
+    const raw = this.getItem<any>('rail_markup_rules', INITIAL_RAIL_MARKUP_RULE);
+    if (Array.isArray(raw)) {
+      const candidate = raw.find((r: any) => r && r.id === 'markup-jp-rail-default') || raw.find((r: any) => r && typeof r === 'object');
+      if (candidate && typeof candidate === 'object') {
+        return {
+          ...INITIAL_RAIL_MARKUP_RULE,
+          ...candidate,
+          b2bAgentMarkupPercent: Number.isFinite(Number(candidate.b2bAgentMarkupPercent))
+            ? Number(candidate.b2bAgentMarkupPercent)
+            : INITIAL_RAIL_MARKUP_RULE.b2bAgentMarkupPercent,
+          buyerMarkupPercent: Number.isFinite(Number(candidate.buyerMarkupPercent))
+            ? Number(candidate.buyerMarkupPercent)
+            : INITIAL_RAIL_MARKUP_RULE.buyerMarkupPercent,
+          minMarginJPY: Number.isFinite(Number(candidate.minMarginJPY))
+            ? Number(candidate.minMarginJPY)
+            : INITIAL_RAIL_MARKUP_RULE.minMarginJPY
+        };
+      }
+      return { ...INITIAL_RAIL_MARKUP_RULE };
+    }
+    if (raw && typeof raw === 'object') {
+      return {
+        ...INITIAL_RAIL_MARKUP_RULE,
+        ...raw,
+        b2bAgentMarkupPercent: Number.isFinite(Number(raw.b2bAgentMarkupPercent))
+          ? Number(raw.b2bAgentMarkupPercent)
+          : INITIAL_RAIL_MARKUP_RULE.b2bAgentMarkupPercent,
+        buyerMarkupPercent: Number.isFinite(Number(raw.buyerMarkupPercent))
+          ? Number(raw.buyerMarkupPercent)
+          : INITIAL_RAIL_MARKUP_RULE.buyerMarkupPercent,
+        minMarginJPY: Number.isFinite(Number(raw.minMarginJPY))
+          ? Number(raw.minMarginJPY)
+          : INITIAL_RAIL_MARKUP_RULE.minMarginJPY
+      };
+    }
+    return { ...INITIAL_RAIL_MARKUP_RULE };
   }
 
   public saveRailMarkupRule(rule: RailMarkupRule, user?: User | null): void {
@@ -7769,6 +7969,8 @@ export class AppDatabase {
       agentNotes: typeof updatedQuote.agentNotes === 'string' ? updatedQuote.agentNotes : undefined,
       termsAndConditions: updatedQuote.termsAndConditions,
       bookingId: updatedQuote.bookingId,
+      brandingMode: updatedQuote.brandingMode || updatedQuote.brandingSnapshot?.mode || 'STANDARD',
+      brandingSnapshot: updatedQuote.brandingSnapshot,
       sharedHistory: (vIdx >= 0 && updatedQuote.versionHistory[vIdx].sharedHistory) ? updatedQuote.versionHistory[vIdx].sharedHistory : []
     };
 
@@ -8048,7 +8250,9 @@ export class AppDatabase {
           updatedAt: timestamp,
           updatedBy: userName,
           changesSummary: `Created new editable version ${nextVersion} branched from ${parentQuote.quoteNumber}`,
-          totalSellingPrice: parentQuote.totalSellingPrice
+          totalSellingPrice: parentQuote.totalSellingPrice,
+          brandingMode: parentQuote.brandingMode,
+          brandingSnapshot: parentQuote.brandingSnapshot
         }
       ],
       activityLog: [
@@ -9630,6 +9834,15 @@ export class AppDatabase {
         console.warn('Action center hook error:', err);
       }
     }
+
+    // Notify booking save listeners so SLA & marketing automation schedulers can react to status transitions
+    this.bookingSaveListeners.forEach(listener => {
+      try {
+        listener(b, user, false);
+      } catch (err) {
+        console.error('Error in bookingSaveListener during updateBookingStatus:', err);
+      }
+    });
 
     return b;
   }
@@ -16543,30 +16756,81 @@ export class AppDatabase {
   }
 
   // ==========================================
-  // AUTOMATED EMAIL CAMPAIGNS
+  // AUTOMATED EMAIL CAMPAIGNS & TRIGGER STORAGE
   // ==========================================
   public getEmailCampaigns(): EmailCampaignConfig[] {
-    const list = this.getItem<EmailCampaignConfig[]>('campaigns', envService.allowDemoData() ? INITIAL_CAMPAIGNS : []);
-    const seen = new Set<string>();
-    return list.filter(item => {
-      if (!item || !item.id || seen.has(item.id)) return false;
-      seen.add(item.id);
-      return true;
+    const deletedSet = this.getDeletedEntityIds();
+    const rawList = this.getItem<EmailCampaignConfig[]>('campaigns', INITIAL_CAMPAIGNS);
+    const mergedMap = new Map<string, EmailCampaignConfig>();
+
+    // Always seed canonical system triggers first so none are ever missing in Production or Demo modes
+    INITIAL_CAMPAIGNS.forEach(initItem => {
+      if (initItem && initItem.id) {
+        mergedMap.set(initItem.id, { ...initItem });
+      }
     });
+
+    // Overlay stored/Firestore configurations
+    if (Array.isArray(rawList)) {
+      rawList.forEach(item => {
+        if (!item || !item.id) return;
+        if ((item as any).isDeleted === true || (item as any).status === 'DELETED') {
+          if (!item.isSystemTrigger) mergedMap.delete(item.id);
+          return;
+        }
+        if (!item.isSystemTrigger && (deletedSet.has(item.id) || deletedSet.has(`campaigns_${item.id}`))) {
+          return;
+        }
+        const existing = mergedMap.get(item.id);
+        mergedMap.set(item.id, existing ? { ...existing, ...item } : { ...item });
+      });
+    }
+
+    return Array.from(mergedMap.values());
   }
 
   public saveEmailCampaign(campaign: EmailCampaignConfig, user: User | null): void {
     const campaigns = this.getEmailCampaigns();
-    const index = campaigns.findIndex(c => c.id === campaign.id);
+    const updatedCampaign: EmailCampaignConfig = {
+      ...campaign,
+      updatedAt: campaign.updatedAt || new Date().toISOString()
+    };
+    const index = campaigns.findIndex(c => c.id === updatedCampaign.id);
     if (index >= 0) {
-      campaigns[index] = campaign;
-      this.logAudit(user, 'SETTINGS_UPDATED', 'EmailCampaign', campaign.id, `Updated Email Campaign: ${campaign.name}`);
+      campaigns[index] = updatedCampaign;
+      this.logAudit(user, 'SETTINGS_UPDATED', 'EmailCampaign', updatedCampaign.id, `Updated Email Campaign: ${updatedCampaign.name} [Enabled=${updatedCampaign.isEnabled}]`);
     } else {
-      campaigns.push(campaign);
-      this.logAudit(user, 'SETTINGS_UPDATED', 'EmailCampaign', campaign.id, `Created Email Campaign: ${campaign.name}`);
+      campaigns.push(updatedCampaign);
+      this.logAudit(user, 'SETTINGS_UPDATED', 'EmailCampaign', updatedCampaign.id, `Created Email Campaign: ${updatedCampaign.name} [Event=${updatedCampaign.triggerKey || updatedCampaign.campaignType}]`);
     }
-    this.syncFirestoreDoc('campaigns', campaign.id, campaign);
     this.setItem('campaigns', campaigns);
+    this.syncFirestoreDoc('campaigns', updatedCampaign.id, updatedCampaign);
+  }
+
+  public async saveEmailCampaignAsync(campaign: EmailCampaignConfig, user: User | null): Promise<{ success: boolean; syncedToFirestore: boolean; campaign: EmailCampaignConfig }> {
+    const updatedCampaign: EmailCampaignConfig = {
+      ...campaign,
+      updatedAt: new Date().toISOString()
+    };
+    this.saveEmailCampaign(updatedCampaign, user);
+    const synced = await this.syncFirestoreDocAsync('campaigns', updatedCampaign.id, updatedCampaign);
+    return {
+      success: true,
+      syncedToFirestore: synced,
+      campaign: updatedCampaign
+    };
+  }
+
+  public deleteEmailCampaign(campaignId: string, user: User | null): boolean {
+    const campaigns = this.getEmailCampaigns();
+    const target = campaigns.find(c => c.id === campaignId);
+    if (!target || target.isSystemTrigger) return false;
+    const filtered = campaigns.filter(c => c.id !== campaignId);
+    this.markEntityDeleted('campaigns', campaignId);
+    this.setItem('campaigns', filtered);
+    this.deleteFirestoreDoc('campaigns', campaignId);
+    this.logAudit(user, 'SETTINGS_UPDATED', 'EmailCampaign', campaignId, `Deleted custom Email Trigger: ${target.name}`);
+    return true;
   }
 
   public saveAllEmailCampaigns(campaigns: EmailCampaignConfig[]): void {
@@ -16578,6 +16842,87 @@ export class AppDatabase {
     });
     this.setItem('campaigns', deduplicated);
     deduplicated.forEach(c => this.syncFirestoreDoc('campaigns', c.id, c));
+  }
+
+  public getAutomationJobs<T = any>(): T[] {
+    return this.getItem<T[]>('automation_jobs', []);
+  }
+
+  public saveAutomationJob<T extends { jobId: string }>(job: T): void {
+    const jobs = this.getAutomationJobs<T>();
+    const idx = jobs.findIndex(j => j.jobId === job.jobId);
+    if (idx >= 0) {
+      jobs[idx] = job;
+    } else {
+      jobs.unshift(job);
+    }
+    this.setItem('automation_jobs', jobs);
+    this.syncFirestoreDoc('automation_jobs', job.jobId, job);
+  }
+
+  public saveAllAutomationJobs<T extends { jobId: string }>(jobs: T[]): void {
+    this.setItem('automation_jobs', jobs);
+    jobs.slice(0, 50).forEach(j => {
+      if (j && j.jobId) {
+        this.syncFirestoreDoc('automation_jobs', j.jobId, j);
+      }
+    });
+  }
+
+  public getAutomationLogs<T = any>(): T[] {
+    return this.getItem<T[]>('automation_logs', []);
+  }
+
+  public saveAutomationLog<T extends { id: string }>(log: T): void {
+    const logs = this.getAutomationLogs<T>();
+    const idx = logs.findIndex(l => l.id === log.id);
+    if (idx >= 0) {
+      logs[idx] = log;
+    } else {
+      logs.unshift(log);
+    }
+    const trimmed = logs.slice(0, 300);
+    this.setItem('automation_logs', trimmed);
+    this.syncFirestoreDoc('automation_logs', log.id, log);
+  }
+
+  public saveAllAutomationLogs<T extends { id: string }>(logs: T[]): void {
+    const trimmed = logs.slice(0, 300);
+    this.setItem('automation_logs', trimmed);
+    trimmed.slice(0, 30).forEach(l => {
+      if (l && l.id) {
+        this.syncFirestoreDoc('automation_logs', l.id, l);
+      }
+    });
+  }
+
+  public notifyQuoteDownloaded(quote: Quotation, user: User | null): void {
+    this.quotationSaveListeners.forEach(listener => {
+      try {
+        listener(quote, user, false, 'DOWNLOADED');
+      } catch (err) {
+        console.error('Error in quotationSaveListener (DOWNLOADED):', err);
+      }
+    });
+  }
+
+  public notifyUserRegistered(newUser: User): void {
+    this.userRegisteredListeners.forEach(listener => {
+      try {
+        listener(newUser);
+      } catch (err) {
+        console.error('Error in userRegisteredListener:', err);
+      }
+    });
+    if (newUser.approvalStatus === 'PENDING') {
+      this.userStatusChangeListeners.forEach(listener => {
+        try {
+          listener(newUser, null, 'PENDING');
+        } catch (err) {
+          console.error('Error in userStatusChangeListener (PENDING):', err);
+        }
+      });
+    }
   }
 
   public dispatchEmailCampaign(campaignId: string, testRecipientEmail: string, user: User | null): boolean {
@@ -16851,10 +17196,16 @@ export class AppDatabase {
     this.setItem('system_users', users);
   }
 
-  public saveUser(updatedUser: User, actor: User | null, actionType: 'USER_ROLE_CHANGED' | 'USER_PERMISSIONS_CHANGED' = 'USER_ROLE_CHANGED', auditDetails?: string): void {
+  public saveUser(
+    updatedUser: User,
+    actor: User | null,
+    actionType: 'USER_ROLE_CHANGED' | 'USER_PERMISSIONS_CHANGED' = 'USER_ROLE_CHANGED',
+    auditDetails?: string,
+    skipStatusListener: boolean = false
+  ): void {
     const users = this.getUsers();
     const idx = users.findIndex(u => u.id === updatedUser.id);
-    const previous = idx >= 0 ? users[idx] : null;
+    const previous = idx >= 0 ? { ...users[idx] } : null;
 
     if (idx >= 0) {
       users[idx] = updatedUser;
@@ -16880,6 +17231,26 @@ export class AppDatabase {
       previous ? JSON.stringify({ role: previous.role, permissions: previous.permissions }) : undefined,
       JSON.stringify({ role: updatedUser.role, permissions: updatedUser.permissions })
     );
+
+    if (!skipStatusListener && previous && previous.approvalStatus !== updatedUser.approvalStatus) {
+      if (updatedUser.approvalStatus === 'APPROVED') {
+        this.userStatusChangeListeners.forEach(listener => {
+          try {
+            listener(updatedUser, actor, 'APPROVED');
+          } catch (e) {
+            console.error('[DB] onUserStatusChanged error:', e);
+          }
+        });
+      } else if (updatedUser.approvalStatus === 'REJECTED') {
+        this.userStatusChangeListeners.forEach(listener => {
+          try {
+            listener(updatedUser, actor, 'REJECTED', updatedUser.verificationNotes, updatedUser.verificationRequirements);
+          } catch (e) {
+            console.error('[DB] onUserStatusChanged error:', e);
+          }
+        });
+      }
+    }
 
     // Live Admin Activity Stream notification
     try {
@@ -17118,6 +17489,12 @@ export class AppDatabase {
           u.companyCountry = updatedCompany.country || u.companyCountry;
           u.taxOrGstNumber = updatedCompany.taxOrGstNumber || u.taxOrGstNumber;
           u.iataOrAbtaNumber = updatedCompany.iataOrAbtaNumber || u.iataOrAbtaNumber;
+          u.brandLogoUrl = updatedCompany.logoUrl || u.brandLogoUrl;
+          u.brandPrimaryColor = updatedCompany.brandPrimaryColor || u.brandPrimaryColor;
+          u.brandAccentColor = updatedCompany.brandAccentColor || u.brandAccentColor;
+          u.quoteTagline = updatedCompany.quoteTagline || u.quoteTagline;
+          u.quoteFooterText = updatedCompany.quoteFooterText || u.quoteFooterText;
+          u.quoteDisclaimer = updatedCompany.quoteDisclaimer || u.quoteDisclaimer;
           u.verificationStatus = updatedCompany.verificationStatus;
           usersChanged = true;
           this.syncFirestoreDoc('users', u.id, u);
@@ -17188,6 +17565,12 @@ export class AppDatabase {
         if (user.companyCountry) company.country = user.companyCountry;
         if (user.taxOrGstNumber) company.taxOrGstNumber = user.taxOrGstNumber;
         if (user.iataOrAbtaNumber) company.iataOrAbtaNumber = user.iataOrAbtaNumber;
+        if (user.brandLogoUrl !== undefined) company.logoUrl = user.brandLogoUrl;
+        if (user.brandPrimaryColor !== undefined) company.brandPrimaryColor = user.brandPrimaryColor;
+        if (user.brandAccentColor !== undefined) company.brandAccentColor = user.brandAccentColor;
+        if (user.quoteTagline !== undefined) company.quoteTagline = user.quoteTagline;
+        if (user.quoteFooterText !== undefined) company.quoteFooterText = user.quoteFooterText;
+        if (user.quoteDisclaimer !== undefined) company.quoteDisclaimer = user.quoteDisclaimer;
         if (!company.linkedUserIds) company.linkedUserIds = [];
         if (!company.linkedUserIds.includes(user.id)) company.linkedUserIds.push(user.id);
         company.updatedAt = new Date().toISOString();
@@ -17211,6 +17594,12 @@ export class AppDatabase {
           country: user.companyCountry || user.country || 'United Kingdom',
           taxOrGstNumber: user.taxOrGstNumber,
           iataOrAbtaNumber: user.iataOrAbtaNumber,
+          logoUrl: user.brandLogoUrl,
+          brandPrimaryColor: user.brandPrimaryColor,
+          brandAccentColor: user.brandAccentColor,
+          quoteTagline: user.quoteTagline,
+          quoteFooterText: user.quoteFooterText,
+          quoteDisclaimer: user.quoteDisclaimer,
           verificationStatus: user.verificationStatus || 'PENDING_VERIFICATION',
           tier: 'STANDARD_PARTNER',
           primaryContactUserId: user.id,
@@ -17231,19 +17620,22 @@ export class AppDatabase {
 
   public approveUser(userId: string, actor: User | null): void {
     const users = this.getUsers();
-    const user = users.find(u => u.id === userId);
-    if (user) {
-      user.approvalStatus = 'APPROVED';
-      user.verificationStatus = 'VERIFIED';
-      user.verifiedAt = new Date().toISOString();
-      user.verifiedBy = actor?.name || 'Administrator';
-      // Assign standard full role default permissions
-      user.permissions = getDefaultPermissionsForRole(user.role);
+    const existing = users.find(u => u.id === userId);
+    if (existing) {
+      const user: User = {
+        ...existing,
+        approvalStatus: 'APPROVED',
+        verificationStatus: 'VERIFIED',
+        verifiedAt: new Date().toISOString(),
+        verifiedBy: actor?.name || 'Administrator',
+        permissions: getDefaultPermissionsForRole(existing.role)
+      };
       this.saveUser(
         user, 
         actor, 
         'USER_ROLE_CHANGED', 
-        `Administrator approved user account: ${user.name} (${user.email}) as ${user.role} with standard permissions.`
+        `Administrator approved user account: ${user.name} (${user.email}) as ${user.role} with standard permissions.`,
+        true
       );
       this.userStatusChangeListeners.forEach(listener => {
         try {
@@ -17262,47 +17654,51 @@ export class AppDatabase {
     requirements?: string[] | string
   ): void {
     const users = this.getUsers();
-    const user = users.find(u => u.id === userId);
-    if (user) {
+    const existing = users.find(u => u.id === userId);
+    if (existing) {
       // Check safeguard if rejecting an admin
-      if (user.role === 'ADMIN') {
-        const safeguard = canRevokeAdminPermissions(user, users);
+      if (existing.role === 'ADMIN') {
+        const safeguard = canRevokeAdminPermissions(existing, users);
         if (!safeguard.canRevoke) {
           throw new Error(safeguard.error || 'Cannot revoke access from the last Administrator.');
         }
       }
 
-      user.approvalStatus = 'REJECTED';
-      user.verificationStatus = 'REJECTED';
-      user.verificationNotes = notes;
-      user.verificationRejectedAt = new Date().toISOString();
-      user.verificationRejectedBy = actor?.name || 'Administrator';
-      if (requirements) {
-        user.verificationRequirements = Array.isArray(requirements) ? requirements : [requirements];
-      }
-      user.permissions = {
-        b2bQuoteBuilderAccess: false,
-        buyerQuoteBuilderAccess: false,
-        canAccessPricingCalculator: false,
-        canCreateBookings: false,
-        canExportPDF: false,
-        canViewWholesaleNetRates: false,
-        canAccessCMS: false,
-        canAccessRoster: false,
-        canAccessFinancials: false,
-        canManageUsers: false,
-        canManagePermissions: false,
-        canDeleteRecords: false,
-        cmsOperations: { enabled: false },
-        cmsContent: { enabled: false },
-        cmsFinance: { enabled: false },
-        cmsSystem: { enabled: false }
+      const user: User = {
+        ...existing,
+        approvalStatus: 'REJECTED',
+        verificationStatus: 'REJECTED',
+        verificationNotes: notes,
+        verificationRejectedAt: new Date().toISOString(),
+        verificationRejectedBy: actor?.name || 'Administrator',
+        verificationRequirements: requirements
+          ? (Array.isArray(requirements) ? requirements : [requirements])
+          : existing.verificationRequirements,
+        permissions: {
+          b2bQuoteBuilderAccess: false,
+          buyerQuoteBuilderAccess: false,
+          canAccessPricingCalculator: false,
+          canCreateBookings: false,
+          canExportPDF: false,
+          canViewWholesaleNetRates: false,
+          canAccessCMS: false,
+          canAccessRoster: false,
+          canAccessFinancials: false,
+          canManageUsers: false,
+          canManagePermissions: false,
+          canDeleteRecords: false,
+          cmsOperations: { enabled: false },
+          cmsContent: { enabled: false },
+          cmsFinance: { enabled: false },
+          cmsSystem: { enabled: false }
+        }
       };
       this.saveUser(
         user, 
         actor, 
         'USER_ROLE_CHANGED', 
-        `Administrator rejected/requested additional requirements for ${user.name} (${user.email}). Notes: ${notes || 'None'}`
+        `Administrator rejected/requested additional requirements for ${user.name} (${user.email}). Notes: ${notes || 'None'}`,
+        true
       );
       this.userStatusChangeListeners.forEach(listener => {
         try {

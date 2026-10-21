@@ -210,7 +210,24 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return [];
   });
   const [currency, setCurrency] = useState<CurrencyCode>('USD');
-  const [isQuoteDrawerOpen, setIsQuoteDrawerOpen] = useState(false);
+  const [isQuoteDrawerOpenState, setIsQuoteDrawerOpenState] = useState(false);
+
+  const isInsideB2BQuoteBuilder = (): boolean => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return false;
+    if (document.getElementById('quote-builder-shell')) return true;
+    const path = (window.location?.pathname || '').toLowerCase();
+    return path.includes('b2b-quote-builder') || path.includes('quote-builder');
+  };
+
+  const setIsQuoteDrawerOpen = (open: boolean) => {
+    if (open && isInsideB2BQuoteBuilder()) {
+      setIsQuoteDrawerOpenState(false);
+      return;
+    }
+    setIsQuoteDrawerOpenState(open);
+  };
+
+  const isQuoteDrawerOpen = isInsideB2BQuoteBuilder() ? false : isQuoteDrawerOpenState;
 
   // Sync items to storage for session and cross-page persistence
   useEffect(() => {
@@ -487,7 +504,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     newItem.contentSnapshot = createQuoteItemContentSnapshot(effectiveProduct, newItem);
 
     setItems(prev => [...prev, newItem]);
-    if (options?.openDrawer !== false) {
+    if (options?.openDrawer !== false && !isInsideB2BQuoteBuilder()) {
       setIsQuoteDrawerOpen(true);
     }
   };

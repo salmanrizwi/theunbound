@@ -49,6 +49,12 @@ import {
 import { canUserAccessCMS, canUserAccessQuoteBuilder, canUserAccessB2BInventory } from './services/permissionEngine';
 import { authDiagnostic } from './services/authDiagnostic';
 import { inventoryVisibilityService } from './services/inventoryVisibilityService';
+import { automaticTaskEngine } from './services/automaticTaskEngine';
+import { marketingAutomationScheduler } from './services/marketingAutomationScheduler';
+
+// Ensure global marketing automation & operational task engines are initialized on startup
+void automaticTaskEngine;
+void marketingAutomationScheduler;
 import { 
   Globe2, 
   ShieldCheck, 

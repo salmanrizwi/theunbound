@@ -16,6 +16,11 @@ export interface WhatsAppSenderBranding {
   agency?: string;
   phone?: string;
   email?: string;
+  address?: string;
+  website?: string;
+  footerText?: string;
+  disclaimer?: string;
+  brandingMode?: 'STANDARD' | 'WHITE_LABEL';
 }
 
 export interface GenerateWhatsAppMessageOptions {
@@ -107,6 +112,11 @@ export function getWhatsAppPresentationModel(options: GenerateWhatsAppMessageOpt
     agencyName: options.senderBranding?.agency,
     email: options.senderBranding?.email,
     phone: options.senderBranding?.phone,
+    address: options.senderBranding?.address,
+    website: options.senderBranding?.website,
+    footerText: options.senderBranding?.footerText,
+    disclaimer: options.senderBranding?.disclaimer,
+    brandingMode: options.senderBranding?.brandingMode || options.quote.brandingMode,
     selectedOptionIndexOrId: options.selectedOptionIndexOrId
   });
 }

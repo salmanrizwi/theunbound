@@ -227,6 +227,7 @@ export const FerryConfigurator: React.FC<FerryConfiguratorProps> = ({
         selectedAddonIds: selectedAddons,
         selectedUpsellIds: selectedAddons,
         selectedUpsellSnapshots: selectedUpsellSnapshots as any,
+        openDrawer: portalOrigin !== 'B2B_QUOTE_BUILDER' && portalOrigin !== 'ADMIN_CMS',
         configuration_id: configIdentity.configuration_id,
         configuration_snapshot: configurationPayload,
         pricing_snapshot: pricing,

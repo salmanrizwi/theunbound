@@ -24,11 +24,15 @@ interface AddAddonModalProps {
   isOpen: boolean;
   onClose: () => void;
   destinationName: string;
-  totalDays: number;
+  totalDays?: number;
+  durationNights?: number;
   adultsCount: number;
   childrenCount: number;
   initialCategory?: 'ALL' | 'INSURANCE' | 'ESIM' | 'SERVICES';
+  category?: 'ALL' | 'INSURANCE' | 'ESIM' | 'SERVICES';
+  currency?: CurrencyCode;
   onAdded?: (productName: string) => void;
+  onAddAddon?: (product: Product) => void;
 }
 
 export const AddAddonModal: React.FC<AddAddonModalProps> = ({
@@ -36,14 +40,17 @@ export const AddAddonModal: React.FC<AddAddonModalProps> = ({
   onClose,
   destinationName,
   totalDays,
+  durationNights,
   adultsCount,
   childrenCount,
   initialCategory = 'ALL',
-  onAdded
+  category,
+  onAdded,
+  onAddAddon
 }) => {
   const { currency, addProductToQuote } = useQuotation();
-  const [activeTab, setActiveTab] = useState<'ALL' | 'INSURANCE' | 'ESIM' | 'SERVICES'>(initialCategory);
-  const [selectedDays, setSelectedDays] = useState<number>(Math.max(1, totalDays || 7));
+  const [activeTab, setActiveTab] = useState<'ALL' | 'INSURANCE' | 'ESIM' | 'SERVICES'>(category || initialCategory);
+  const [selectedDays, setSelectedDays] = useState<number>(Math.max(1, totalDays || (durationNights ? durationNights + 1 : 7)));
   const [selectedAdults, setSelectedAdults] = useState<number>(Math.max(1, adultsCount || 2));
   const [selectedChildren, setSelectedChildren] = useState<number>(childrenCount || 0);
 
@@ -101,7 +108,11 @@ export const AddAddonModal: React.FC<AddAddonModalProps> = ({
       galleryImages: ['https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?q=80&w=800&auto=format&fit=crop']
     } as unknown as Product;
 
-    addProductToQuote(product, { adults: selectedAdults, children: selectedChildren, infants: 0 });
+    if (onAddAddon) {
+      onAddAddon(product);
+    } else {
+      addProductToQuote(product, { adults: selectedAdults, children: selectedChildren, infants: 0, openDrawer: false });
+    }
     onAdded?.(product.name);
     onClose();
   };
@@ -150,7 +161,11 @@ export const AddAddonModal: React.FC<AddAddonModalProps> = ({
       galleryImages: ['https://images.unsplash.com/photo-1563986768609-322da13575f3?q=80&w=800&auto=format&fit=crop']
     } as unknown as Product;
 
-    addProductToQuote(product, { adults: 1, children: 0, infants: 0 });
+    if (onAddAddon) {
+      onAddAddon(product);
+    } else {
+      addProductToQuote(product, { adults: 1, children: 0, infants: 0, openDrawer: false });
+    }
     onAdded?.(product.name);
     onClose();
   };
@@ -213,7 +228,11 @@ export const AddAddonModal: React.FC<AddAddonModalProps> = ({
       galleryImages: ['https://images.unsplash.com/photo-1542296332-2e4473faf563?q=80&w=800&auto=format&fit=crop']
     } as unknown as Product;
 
-    addProductToQuote(product, { adults: 1, children: 0, infants: 0 });
+    if (onAddAddon) {
+      onAddAddon(product);
+    } else {
+      addProductToQuote(product, { adults: 1, children: 0, infants: 0, openDrawer: false });
+    }
     onAdded?.(product.name);
     onClose();
   };

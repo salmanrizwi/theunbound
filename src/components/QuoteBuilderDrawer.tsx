@@ -77,16 +77,25 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
   const [isSubmissionModalOpen, setIsSubmissionModalOpen] = useState(false);
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null);
 
-  // Lock body scroll when drawer is open
+  const isInsideQuoteBuilder =
+    typeof document !== 'undefined' &&
+    (Boolean(document.getElementById('quote-builder-shell')) ||
+      (typeof window !== 'undefined' && (window.location?.pathname || '').toLowerCase().includes('quote-builder')));
+
+  // Lock body scroll when drawer is open (never while inside B2B Quote Builder)
   useEffect(() => {
-    if (isQuoteDrawerOpen) {
+    if (isInsideQuoteBuilder && isQuoteDrawerOpen) {
+      setIsQuoteDrawerOpen(false);
+      return;
+    }
+    if (isQuoteDrawerOpen && !isInsideQuoteBuilder) {
       const originalOverflow = document.body.style.overflow;
       document.body.style.overflow = 'hidden';
       return () => {
         document.body.style.overflow = originalOverflow;
       };
     }
-  }, [isQuoteDrawerOpen]);
+  }, [isQuoteDrawerOpen, isInsideQuoteBuilder, setIsQuoteDrawerOpen]);
 
   // ESC key listener to close drawer
   useEffect(() => {
@@ -201,6 +210,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
     }
   };
 
+  if (isInsideQuoteBuilder) return null;
   if (!isQuoteDrawerOpen && !isSubmissionModalOpen && !confirmedBooking) return null;
 
   const isAuthorized = canUserAccessB2BInventory(user).allowed;
@@ -342,7 +352,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                   <Globe2 className="w-3 h-3 text-[#00E5C0]" />
                   <select
                     id="cart-drawer-currency-select"
-                    value={typeof currency === 'object' && currency !== null ? (currency as any).code : currency}
+                    value={(typeof currency === 'object' && currency !== null ? (currency as any).code : currency) || 'USD'}
                     onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
                     className="bg-transparent text-white text-[11px] font-bold outline-none cursor-pointer"
                   >
@@ -661,7 +671,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                                   type="number"
                                   min={1}
                                   max={30}
-                                  value={item.pax.adults}
+                                  value={item.pax?.adults ?? 1}
                                   onChange={(e) =>
                                     updateItemPax(item.id, {
                                       ...item.pax,
@@ -675,7 +685,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                                   type="number"
                                   min={0}
                                   max={15}
-                                  value={item.pax.children}
+                                  value={item.pax?.children ?? 0}
                                   onChange={(e) =>
                                     updateItemPax(item.id, {
                                       ...item.pax,
@@ -699,7 +709,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                               </button>
                               <input
                                 type="date"
-                                value={item.travelDate}
+                                value={item.travelDate || ''}
                                 min={item.product.validityFrom}
                                 max={item.product.validityTo}
                                 onChange={(e) => updateItemTravelDate(item.id, e.target.value)}

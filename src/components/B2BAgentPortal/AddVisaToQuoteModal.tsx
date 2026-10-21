@@ -16,6 +16,7 @@ export interface AddVisaToQuoteModalProps {
   initialApplicants?: number;
   initialNotes?: string;
   onAdded?: () => void;
+  portalOrigin?: 'BUYER' | 'B2B_AGENT' | 'B2B_QUOTE_BUILDER' | 'ADMIN_CMS';
 }
 
 /**
@@ -34,7 +35,8 @@ export const AddVisaToQuoteModal: React.FC<AddVisaToQuoteModalProps> = ({
   initialTravelDate,
   initialApplicants = 1,
   initialNotes = '',
-  onAdded
+  onAdded,
+  portalOrigin = 'B2B_AGENT'
 }) => {
   if (!isOpen || !visa) return null;
 
@@ -43,7 +45,7 @@ export const AddVisaToQuoteModal: React.FC<AddVisaToQuoteModalProps> = ({
       isOpen={isOpen}
       visa={visa}
       itemOrProduct={null}
-      portalOrigin="B2B_AGENT"
+      portalOrigin={portalOrigin}
       existingQuoteItemId={existingItemId || existingQuoteItemId}
       initialTravelDate={initialTravelDate}
       initialAdults={initialApplicants}

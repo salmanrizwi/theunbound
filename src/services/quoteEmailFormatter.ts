@@ -556,18 +556,19 @@ export function renderProposalViewHtmlEmail(
               <td style="padding: 24px 28px;">
 
                 <!-- 1. TOP HEADER (Exact PDF Header Fidelity) -->
-                <div style="border-bottom: 2px solid #020617; padding-bottom: 14px; margin-bottom: 16px;">
+                <div style="border-bottom: 2px solid ${model.isWhiteLabel && model.brandPrimaryColor ? model.brandPrimaryColor : '#020617'}; padding-bottom: 14px; margin-bottom: 16px;">
                   <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="border-collapse: collapse;">
                     <tr>
                       <td style="vertical-align: top;">
                         <div style="display: flex; align-items: center; gap: 10px;">
-                          <span style="font-size: 26px; font-weight: 900; text-transform: lowercase; color: #020617; letter-spacing: -0.02em;">${cleanInlineFormattedText(model.agencyName)}</span>
-                          <span style="font-size: 9px; text-transform: uppercase; font-weight: 800; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 4px; background: #020617; color: #00E5C0; display: inline-block; vertical-align: middle; margin-left: 8px;">Official Itinerary Proposal</span>
+                          ${model.agentLogoUrl ? `<img src="${model.agentLogoUrl}" alt="${cleanInlineFormattedText(model.agencyName)}" style="max-height: 40px; max-width: 130px; object-fit: contain; border-radius: 6px; margin-right: 8px; vertical-align: middle;" />` : ''}
+                          <span style="font-size: 24px; font-weight: 900; ${model.isWhiteLabel ? '' : 'text-transform: lowercase;'} color: ${model.isWhiteLabel && model.brandPrimaryColor ? model.brandPrimaryColor : '#020617'}; letter-spacing: -0.02em;">${cleanInlineFormattedText(model.agencyName)}</span>
+                          <span style="font-size: 9px; text-transform: uppercase; font-weight: 800; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 4px; background: ${model.isWhiteLabel && model.brandPrimaryColor ? model.brandPrimaryColor : '#020617'}; color: ${model.isWhiteLabel ? '#ffffff' : '#00E5C0'}; display: inline-block; vertical-align: middle; margin-left: 8px;">${cleanInlineFormattedText(model.documentBadgeTitle)}</span>
                         </div>
                         <p style="font-size: 10.5px; color: #64748b; margin: 4px 0 0 0;">${cleanInlineFormattedText(model.agentAgencySubtitle)}</p>
                       </td>
                       <td style="vertical-align: top; text-align: right; font-family: monospace; font-size: 10.5px; width: 200px;">
-                        <div style="font-size: 14px; font-weight: 900; color: #020617;">${cleanInlineFormattedText(model.quoteNumber)} (v${model.version})</div>
+                        <div style="font-size: 14px; font-weight: 900; color: ${model.isWhiteLabel && model.brandPrimaryColor ? model.brandPrimaryColor : '#020617'};">${cleanInlineFormattedText(model.quoteNumber)} (v${model.version})</div>
                         <div style="color: #64748b;">Date: ${cleanInlineFormattedText(model.createdDateFormatted)}</div>
                         <div style="color: #64748b;">Valid Until: ${cleanInlineFormattedText(model.validUntilFormatted)}</div>
                         <div style="color: #0d9488; font-weight: 700;">Status: ${cleanInlineFormattedText(model.status)}</div>
@@ -577,7 +578,7 @@ export function renderProposalViewHtmlEmail(
                 </div>
 
                 <!-- 2. CURATED JOURNEY OVERVIEW BANNER (Exact PDF Banner Fidelity) -->
-                <div style="background: #020617; background-image: linear-gradient(135deg, #020617, #0f172a, #020617); color: #ffffff; padding: 18px 20px; border-radius: 16px; margin-bottom: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.06);">
+                <div style="background: ${model.isWhiteLabel && model.brandPrimaryColor ? model.brandPrimaryColor : '#020617'}; background-image: linear-gradient(135deg, ${model.isWhiteLabel && model.brandPrimaryColor ? model.brandPrimaryColor : '#020617'}, #0f172a, ${model.isWhiteLabel && model.brandPrimaryColor ? model.brandPrimaryColor : '#020617'}); color: #ffffff; padding: 18px 20px; border-radius: 16px; margin-bottom: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.06);">
                   <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="border-collapse: collapse;">
                     <tr>
                       <td style="vertical-align: top;">
@@ -618,6 +619,9 @@ export function renderProposalViewHtmlEmail(
                         <div style="font-weight: 800; font-size: 13px; color: #0f172a;">${cleanInlineFormattedText(model.agentName)}</div>
                         <div style="color: #334155; font-weight: 600;">${cleanInlineFormattedText(model.agencyName)}</div>
                         ${model.agentEmail ? `<div style="color: #64748b; font-family: monospace;">${cleanInlineFormattedText(model.agentEmail)}</div>` : ''}
+                        ${model.agentPhone ? `<div style="color: #64748b; font-family: monospace;">${cleanInlineFormattedText(model.agentPhone)}</div>` : ''}
+                        ${model.agencyWebsite ? `<div style="color: #64748b; font-size: 10px;">${cleanInlineFormattedText(model.agencyWebsite)}</div>` : ''}
+                        ${model.agencyAddress ? `<div style="color: #64748b; font-size: 9.5px;">${cleanInlineFormattedText(model.agencyAddress)}</div>` : ''}
                         <div style="color: #0d9488; font-size: 10px; font-weight: 700; margin-top: 3px;">🛡️ 24/7 On-Ground Concierge Assistance</div>
                       </td>
                     </tr>
@@ -819,7 +823,7 @@ export function renderProposalViewHtmlEmail(
                 <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px 16px; margin-top: 14px; margin-bottom: 12px;">
                   <div style="font-size: 11px; font-weight: 800; color: #0f172a; text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
                     <span>🛡️</span>
-                    <span>TheUnbound Ground Operations Standards & Inclusions</span>
+                    <span>${cleanInlineFormattedText(model.operationalStandardsTitle)}</span>
                   </div>
                   <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="border-collapse: collapse;">
                     <tr>
@@ -896,7 +900,7 @@ export function renderProposalViewHtmlEmail(
                   <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="border-top: 1px solid #f1f5f9; padding-top: 8px; font-size: 9.5px; color: #94a3b8; font-family: monospace;">
                     <tr>
                       <td>${cleanInlineFormattedText(model.footerContactLine)}</td>
-                      <td style="text-align: right;">Official DMC Electronic Proposal</td>
+                      <td style="text-align: right;">${cleanInlineFormattedText(model.footerRightTitle)}</td>
                     </tr>
                   </table>
                 </div>
@@ -905,7 +909,7 @@ export function renderProposalViewHtmlEmail(
                 <div style="border-top: 1px solid #e2e8f0; padding-top: 8px; margin-top: 12px; font-size: 9.5px; color: #94a3b8; font-family: monospace;">
                   <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
                     <tr>
-                      <td style="font-weight: 700; color: #475569;">${cleanInlineFormattedText(model.agencyName.toUpperCase())} DMC • ${cleanInlineFormattedText(model.quoteNumber)}</td>
+                      <td style="font-weight: 700; color: #475569;">${model.isWhiteLabel ? cleanInlineFormattedText(model.agencyName.toUpperCase()) : `${cleanInlineFormattedText(model.agencyName.toUpperCase())} DMC`} • ${cleanInlineFormattedText(model.quoteNumber)}</td>
                       <td style="text-align: right; color: #0f172a; font-weight: 700;">Official Quotation Document</td>
                     </tr>
                   </table>
@@ -1294,12 +1298,18 @@ export function renderSimpleSemanticQuotationEmailFromModel(
   const lines: string[] = [];
 
   // Main Title
-  lines.push(`THEUNBOUND — COMPLETE TRAVEL QUOTATION`);
+  const titleBrand = model.isWhiteLabel ? model.agencyName.toUpperCase() : 'THEUNBOUND';
+  lines.push(`${titleBrand} — COMPLETE TRAVEL QUOTATION`);
   lines.push('');
   lines.push(`Destination: ${model.destination}`);
   lines.push(`Travel Dates: ${model.dateSpanText || 'As specified in the quotation'}`);
   lines.push(`Passengers: ${model.paxDetailsText}`);
   lines.push(`Quote Reference: ${model.quoteNumber} (v${model.version})`);
+  lines.push(`Prepared By: ${model.agentName} (${model.agencyName})`);
+  if (model.agentEmail) lines.push(`Contact Email: ${model.agentEmail}`);
+  if (model.agentPhone) lines.push(`Contact Phone: ${model.agentPhone}`);
+  if (model.agencyWebsite) lines.push(`Website: ${model.agencyWebsite}`);
+  if (model.agencyAddress) lines.push(`Address: ${model.agencyAddress}`);
   lines.push('');
 
   if (customNote && customNote.trim()) {

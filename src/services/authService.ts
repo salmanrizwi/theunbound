@@ -1153,9 +1153,10 @@ class AuthService {
       console.warn('[AUTH] Error writing profile to Firestore:', fsErr);
     }
 
-    // Step 4: Update local database cache
+    // Step 4: Update local database cache & notify marketing automation triggers
     const db = AppDatabase.getInstance();
     db.saveUserLocally(newUser);
+    db.notifyUserRegistered(newUser);
 
     db.logAudit(
       newUser,

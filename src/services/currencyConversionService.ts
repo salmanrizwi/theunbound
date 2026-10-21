@@ -129,8 +129,8 @@ export class CurrencyConversionService {
    * Normalizes any currency input (symbol, code, lowercase, whitespace, object)
    * to canonical ISO CurrencyCode.
    */
-  public normalizeCurrency(raw: any, fallback?: CurrencyCode): CurrencyCode {
-    if (!raw) return (fallback || 'USD') as CurrencyCode;
+  public normalizeCurrency(raw: any, fallback: CurrencyCode = 'USD'): CurrencyCode {
+    if (!raw) return fallback;
 
     // Unpack if object (e.g. { code: 'INR' }, { currency: 'JPY' })
     if (typeof raw === 'object' && raw !== null) {
@@ -141,7 +141,7 @@ export class CurrencyConversionService {
     }
 
     const trimmed = String(raw).trim();
-    if (!trimmed) return (fallback || 'USD') as CurrencyCode;
+    if (!trimmed) return fallback;
 
     // Direct symbol match
     if (CURRENCY_SYMBOLS[trimmed]) {
@@ -166,7 +166,7 @@ export class CurrencyConversionService {
       return matchCode[1] as CurrencyCode;
     }
 
-    return (fallback !== undefined ? fallback : undefined) as any;
+    return fallback;
   }
 
   /**
@@ -174,7 +174,7 @@ export class CurrencyConversionService {
    */
   public isSupported(currency: any): boolean {
     if (!currency) return false;
-    const normalized = this.normalizeCurrency(currency);
+    const normalized = this.normalizeCurrency(currency, '' as any);
     return Boolean(normalized && SUPPORTED_CODES_SET.has(normalized));
   }
 
@@ -198,8 +198,8 @@ export class CurrencyConversionService {
     toCurrency: any,
     context?: { moduleName?: string; productId?: string; fareId?: string }
   ): RateLookupResult {
-    const fromCode = this.normalizeCurrency(fromCurrency);
-    const toCode = this.normalizeCurrency(toCurrency);
+    const fromCode = this.normalizeCurrency(fromCurrency, '' as any);
+    const toCode = this.normalizeCurrency(toCurrency, '' as any);
     const moduleName = context?.moduleName || 'SHINKANSEN_DYNAMIC_JOURNEY';
 
     if (!fromCode || !toCode || !SUPPORTED_CODES_SET.has(fromCode) || !SUPPORTED_CODES_SET.has(toCode)) {
@@ -235,7 +235,7 @@ export class CurrencyConversionService {
     const status = this.engine.getStatus();
     const isEngineFetching = Boolean((this.engine as any).isFetching);
 
-    // Identity conversion
+    // Identity conversion: same-currency requires zero external FX lookup
     if (fromCode === toCode) {
       return {
         rate: 1.0,
@@ -244,19 +244,19 @@ export class CurrencyConversionService {
         isStale: false,
         status: 'AVAILABLE',
         rateTimestamp: status.lastFetchedAt || new Date().toISOString(),
-        provider: status.provider || 'Google Finance Live Feed',
+        provider: 'Identity (Same Currency)',
         sourceCurrency: fromCode,
         targetCurrency: toCode,
         pairId
       };
     }
 
-    // 1. Direct Pair lookup
-    const directPair = this.engine.getPair(pairId);
     let resolvedRate: number | null = null;
     let rateTimestamp = status.lastFetchedAt || new Date().toISOString();
     let cacheStatus: 'LIVE' | 'STALE' | 'CACHED' | 'BASELINE' | 'MISSING' = status.isStale ? 'STALE' : (status.isLive ? 'LIVE' : 'CACHED');
 
+    // 1. Direct Pair lookup
+    const directPair = this.engine.getPair(pairId);
     if (
       directPair &&
       directPair.status !== 'PAUSED' &&
@@ -267,7 +267,7 @@ export class CurrencyConversionService {
     }
 
     // 2. Inverse Pair lookup if direct pair missing/invalid/paused
-    if (resolvedRate === null) {
+    if (resolvedRate === null || !this.isValidRate(resolvedRate)) {
       const inversePairId = `${toCode}_${fromCode}`;
       const inversePair = this.engine.getPair(inversePairId);
       if (
@@ -275,27 +275,33 @@ export class CurrencyConversionService {
         inversePair.status !== 'PAUSED' &&
         this.isValidRate(inversePair.effectiveRate)
       ) {
-        resolvedRate = Number((1 / inversePair.effectiveRate).toFixed(6));
-        rateTimestamp = inversePair.lastFetchedAt || rateTimestamp;
+        const inverted = Number((1 / inversePair.effectiveRate).toFixed(6));
+        if (this.isValidRate(inverted)) {
+          resolvedRate = inverted;
+          rateTimestamp = inversePair.lastFetchedAt || rateTimestamp;
+        }
       }
     }
 
-    // 3. Triangulation via USD base rate
-    if (resolvedRate === null) {
+    // 3. Triangulation via USD base rate in engine
+    if (resolvedRate === null || !this.isValidRate(resolvedRate)) {
       const rateInfo = this.engine.getRateInfo(fromCode, toCode);
-      if (this.isValidRate(rateInfo.effectiveRate)) {
+      if (rateInfo && this.isValidRate(rateInfo.effectiveRate)) {
         resolvedRate = rateInfo.effectiveRate;
         rateTimestamp = rateInfo.rateTimestamp || rateTimestamp;
       }
     }
 
-    // 4. Baseline USD rates triangulation
-    if (resolvedRate === null) {
+    // 4. Baseline institutional USD rates triangulation fallback
+    if (resolvedRate === null || !this.isValidRate(resolvedRate)) {
       const fromUsd = BASELINE_USD_RATES[fromCode];
       const toUsd = BASELINE_USD_RATES[toCode];
       if (fromUsd && toUsd && fromUsd > 0 && toUsd > 0) {
-        resolvedRate = Number((toUsd / fromUsd).toFixed(6));
-        cacheStatus = 'BASELINE';
+        const baselineRate = Number((toUsd / fromUsd).toFixed(6));
+        if (this.isValidRate(baselineRate)) {
+          resolvedRate = baselineRate;
+          cacheStatus = 'BASELINE';
+        }
       }
     }
 
@@ -337,7 +343,7 @@ export class CurrencyConversionService {
         status: 'LOADING',
         reason: 'Price loading — Exchange rate pending',
         rateTimestamp: new Date().toISOString(),
-        provider: status.provider,
+        provider: status.provider || 'Google Finance Live Feed',
         sourceCurrency: fromCode,
         targetCurrency: toCode,
         pairId
@@ -365,7 +371,7 @@ export class CurrencyConversionService {
       status: 'UNAVAILABLE',
       reason: 'Price unavailable — FX exchange rate unavailable',
       rateTimestamp: new Date().toISOString(),
-      provider: status.provider,
+      provider: status.provider || 'Google Finance Live Feed',
       sourceCurrency: fromCode,
       targetCurrency: toCode,
       pairId
@@ -388,19 +394,38 @@ export class CurrencyConversionService {
       customDecimals?: number;
     }
   ): CurrencyConversionResult {
-    const lookup = this.getRate(fromCurrency, toCurrency, {
-      moduleName: options?.moduleName || 'SHINKANSEN_DYNAMIC_JOURNEY',
-      productId: options?.productId,
-      fareId: options?.fareId
-    });
-
-    const fromCode = lookup.sourceCurrency;
-    const toCode = lookup.targetCurrency;
+    const fromCode = this.normalizeCurrency(fromCurrency);
+    const hasExplicitTarget = toCurrency !== undefined && toCurrency !== null && String(toCurrency).trim() !== '';
+    const toCode = hasExplicitTarget ? this.normalizeCurrency(toCurrency) : fromCode;
     const safeAmount = (typeof baseAmount === 'number' && !isNaN(baseAmount)) ? baseAmount : (Number(baseAmount) || 0);
 
     const decimals = options?.customDecimals !== undefined 
       ? options.customDecimals 
       : (toCode === 'JPY' || toCode === 'THB' ? 0 : 2);
+
+    // Rule: Same-currency conversions return the unchanged monetary amount without requiring an unnecessary external FX lookup
+    if (fromCode && toCode && fromCode === toCode) {
+      const rounded = decimals === 0 ? Math.round(safeAmount) : Number(safeAmount.toFixed(decimals));
+      return {
+        success: true,
+        convertedAmount: rounded,
+        sourceAmount: safeAmount,
+        sourceCurrency: fromCode,
+        targetCurrency: toCode,
+        rate: 1.0,
+        isLoading: false,
+        isStale: false,
+        rateTimestamp: new Date().toISOString(),
+        provider: 'Identity (Same Currency)',
+        decimalsApplied: decimals
+      };
+    }
+
+    const lookup = this.getRate(fromCode, toCode, {
+      moduleName: options?.moduleName || 'SHINKANSEN_DYNAMIC_JOURNEY',
+      productId: options?.productId,
+      fareId: options?.fareId
+    });
 
     if (!lookup.isAvailable || !this.isValidRate(lookup.rate)) {
       return {
@@ -415,23 +440,6 @@ export class CurrencyConversionService {
         rateTimestamp: lookup.rateTimestamp,
         provider: lookup.provider,
         error: lookup.reason || 'Price unavailable — FX exchange rate unavailable',
-        decimalsApplied: decimals
-      };
-    }
-
-    if (fromCode === toCode) {
-      const rounded = decimals === 0 ? Math.round(safeAmount) : Number(safeAmount.toFixed(decimals));
-      return {
-        success: true,
-        convertedAmount: rounded,
-        sourceAmount: safeAmount,
-        sourceCurrency: fromCode,
-        targetCurrency: toCode,
-        rate: 1.0,
-        isLoading: false,
-        isStale: false,
-        rateTimestamp: lookup.rateTimestamp,
-        provider: lookup.provider,
         decimalsApplied: decimals
       };
     }

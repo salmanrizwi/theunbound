@@ -1053,13 +1053,16 @@ export function canUserViewInternalCostBreakdown(user: User | null | undefined):
  */
 export function syncSessionUserPermissions(updatedUser: User): void {
   try {
+    if (typeof localStorage === 'undefined') return;
     const saved = localStorage.getItem('theunbound_auth_user');
     if (saved) {
       const current = JSON.parse(saved);
       if (current && current.id === updatedUser.id) {
         const merged = { ...current, ...updatedUser };
         localStorage.setItem('theunbound_auth_user', JSON.stringify(merged));
-        window.dispatchEvent(new CustomEvent('theunbound_auth_changed', { detail: merged }));
+        if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+          window.dispatchEvent(new CustomEvent('theunbound_auth_changed', { detail: merged }));
+        }
       }
     }
   } catch (e) {

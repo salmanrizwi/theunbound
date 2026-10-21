@@ -100,6 +100,13 @@ export async function generateQuotationPDFFromModel(model: QuotePresentationMode
       format: 'a4'
     });
 
+    pdf.setProperties({
+      title: `${model.destination} Travel Quotation - ${model.quoteNumber}`,
+      subject: `Official Travel Quotation Proposal (${model.quoteNumber})`,
+      author: model.agencyName,
+      creator: model.agencyName
+    });
+
     const pageElements = wrapper.querySelectorAll('.proposal-pdf-page');
 
     for (let i = 0; i < pageElements.length; i++) {
@@ -141,7 +148,9 @@ export async function downloadQuotationPDF(options: PDFExportOptions): Promise<v
     const presentationModel = buildQuotePresentationModel(options.quote, {
       name: options.agentName,
       agencyName: options.agentAgency,
-      email: options.agentEmail
+      email: options.agentEmail,
+      logoUrl: options.agentLogoUrl,
+      brandingMode: options.quote.brandingMode
     });
 
     const pdf = await generateQuotationPDFFromModel(presentationModel);
@@ -166,6 +175,9 @@ export async function downloadQuotationPDF(options: PDFExportOptions): Promise<v
         sentByName: options.agentName || options.quote.agentName,
         deliveryStatus: 'SUCCESS'
       });
+
+      const actorUser = db.getUserByEmail(options.agentEmail || options.quote.agentEmail || '') || null;
+      db.notifyQuoteDownloaded(options.quote, actorUser);
     } catch (auditErr) {
       console.error('Failed to log PDF communication audit:', auditErr);
     }

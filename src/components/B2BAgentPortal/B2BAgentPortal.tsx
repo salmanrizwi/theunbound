@@ -130,10 +130,13 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
     currency
   } = useQuotation();
 
-  // Scroll to top when tab changes
+  // Scroll to top when tab changes & ensure Cart Drawer closes on entering Quote Builder
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [activeTab]);
+    if (activeTab === 'create-quote') {
+      setIsQuoteDrawerOpen(false);
+    }
+  }, [activeTab, setIsQuoteDrawerOpen]);
 
   const handleNavigate = (tab: string) => {
     const tabMap: Record<string, B2BTabType> = {

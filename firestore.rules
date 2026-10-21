@@ -615,13 +615,32 @@ service cloud.firestore {
 
     match /campaigns/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSContent();
+      allow create, update: if canAccessCMSContent() || isValidAdminCMSData() || isAuthenticated();
+      allow delete: if canAccessCMSContent() || isResourceAdminOwned();
     }
 
     match /campaign_events/{document=**} {
-      allow read: if canAccessCMSContent();
+      allow read: if canAccessCMSContent() || isAuthenticated();
       allow create: if true; // Public analytics telemetry
-      allow update, delete: if isMasterAdmin();
+      allow update, delete: if isMasterAdmin() || canAccessCMSContent();
+    }
+
+    match /automation_jobs/{document=**} {
+      allow read: if canAccessCMSContent() || isAuthenticated();
+      allow create, update: if true;
+      allow delete: if canAccessCMSContent() || isMasterAdmin();
+    }
+
+    match /automation_logs/{document=**} {
+      allow read: if canAccessCMSContent() || isAuthenticated();
+      allow create, update: if true;
+      allow delete: if canAccessCMSContent() || isMasterAdmin();
+    }
+
+    match /automation_idempotency/{document=**} {
+      allow read: if true;
+      allow create, update: if true;
+      allow delete: if canAccessCMSContent() || isMasterAdmin();
     }
 
     // =========================================================================

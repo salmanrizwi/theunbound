@@ -58,19 +58,26 @@ export class RailPricingEngine {
       if (!id) return undefined;
       const clean = id.trim().toLowerCase();
       const stripped = clean.replace(/^stn-/, '').replace(/^jp-st-/, '');
+      const codeMatch = id.match(/\(([A-Za-z0-9]{3})\)/);
+      const extractedCode = codeMatch ? codeMatch[1].toLowerCase() : null;
+      const nameBeforeParen = clean.split('(')[0].trim();
       return storedStations.find(s =>
         s.stationId === id ||
         s.stationCode === id ||
         s.stationId.toLowerCase() === clean ||
         s.stationCode.toLowerCase() === clean ||
+        s.stationCode.toLowerCase() === stripped ||
+        (extractedCode && s.stationCode.toLowerCase() === extractedCode) ||
         s.stationId.toLowerCase() === `jp-st-${stripped}` ||
         (stripped === 'osaka' && s.stationId === 'JP-ST-SHIN-OSAKA') ||
-        s.stationName.toLowerCase() === stripped
+        (nameBeforeParen === 'osaka' && s.stationId === 'JP-ST-SHIN-OSAKA') ||
+        s.stationName.toLowerCase() === stripped ||
+        s.stationName.toLowerCase() === nameBeforeParen
       );
     };
     const originStation = resolveStation(originStationId);
     const destinationStation = resolveStation(destinationStationId);
-    const normalizedTarget = currencyConversionService.normalizeCurrency(targetCurrency, 'USD');
+    const normalizedTarget = currencyConversionService.normalizeCurrency(targetCurrency, 'JPY');
 
     if (!originStation || !destinationStation || originStation.active === false || destinationStation.active === false) {
       return this.buildUnavailablePriceResult({
@@ -111,10 +118,13 @@ export class RailPricingEngine {
     }
 
     // 3. Resolve Product & Commercial Master Product
-    const isGreenCar = productId === 'RAIL-JP-GREEN-RESERVED';
-    const product = db.getProductById(productId) || INITIAL_PRODUCTS.find(p => p.id === productId);
+    const directProduct = db.getProductById(productId) || INITIAL_PRODUCTS.find(p => p.id === productId);
+    const isGreenCar = productId === 'RAIL-JP-GREEN-RESERVED' || (directProduct?.name || '').toLowerCase().includes('green');
+    const canonicalProductId = isGreenCar ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED';
+    const product = directProduct || db.getProductById(canonicalProductId) || INITIAL_PRODUCTS.find(p => p.id === canonicalProductId);
     const commercialPass = db.getJapanRailCommercialProductById?.(productId) ||
-      db.getJapanRailCommercialProducts?.()?.find((cp: any) => cp.id === productId || cp.sku === productId || cp.productCode === productId);
+      db.getJapanRailCommercialProductById?.(canonicalProductId) ||
+      db.getJapanRailCommercialProducts?.()?.find((cp: any) => cp.id === productId || cp.sku === productId || cp.productCode === productId || cp.id === canonicalProductId);
 
     if (
       !product ||
@@ -152,7 +162,7 @@ export class RailPricingEngine {
       const candidates = storedRates.filter(r =>
         ((r.originStationId === originStation.stationId && r.destinationStationId === destinationStation.stationId) ||
          (r.originStationId === destinationStation.stationId && r.destinationStationId === originStation.stationId)) &&
-        r.productId === productId &&
+        (r.productId === productId || r.productId === canonicalProductId) &&
         matchesServiceGroup(r.serviceGroup, serviceGroup) &&
         (r.passengerType?.toUpperCase() === paxType || (paxType === 'ADULT' && r.passengerType?.toUpperCase() === 'ADT'))
       );
@@ -248,12 +258,18 @@ export class RailPricingEngine {
     // 7. Apply TheUnbound DMC Commercial Markup
     const markupRule = db.getRailMarkupRule() || INITIAL_RAIL_MARKUP_RULE;
     const isB2BAgent = userRole === 'B2B_AGENT' || userRole === 'AGENT';
-    const appliedMarkupPercent = isB2BAgent 
+    const rawMarkupPercent = isB2BAgent 
       ? markupRule.b2bAgentMarkupPercent 
       : markupRule.buyerMarkupPercent;
+    const appliedMarkupPercent = Number.isFinite(Number(rawMarkupPercent))
+      ? Number(rawMarkupPercent)
+      : (isB2BAgent ? INITIAL_RAIL_MARKUP_RULE.b2bAgentMarkupPercent : INITIAL_RAIL_MARKUP_RULE.buyerMarkupPercent);
 
-    const totalPax = adultsCount + childrenCount;
-    const minGuaranteedMargin = (markupRule.minMarginJPY || 500) * totalPax;
+    const totalPax = Math.max(1, adultsCount + childrenCount);
+    const minMarginPerPax = Number.isFinite(Number(markupRule.minMarginJPY))
+      ? Number(markupRule.minMarginJPY)
+      : INITIAL_RAIL_MARKUP_RULE.minMarginJPY;
+    const minGuaranteedMargin = minMarginPerPax * totalPax;
     const calculatedMarkup = Math.round(totalSupplierCostJPY * (appliedMarkupPercent / 100));
     const totalMarkupJPY = Math.max(calculatedMarkup, minGuaranteedMargin);
 
@@ -276,35 +292,15 @@ export class RailPricingEngine {
       defaultApplicationBasis: 'PER_PERSON'
     });
 
+    const surchargeTotalNative = Number.isFinite(surchargeEval.totalSurchargeNative)
+      ? surchargeEval.totalSurchargeNative
+      : 0;
+
     const finalSellingPriceJPY = nativeCurrency === 'JPY'
-      ? Math.round((baseSellingPriceJPY + surchargeEval.totalSurchargeNative) / 10) * 10
-      : Math.round((baseSellingPriceJPY + surchargeEval.totalSurchargeNative) * 100) / 100;
+      ? Math.round((baseSellingPriceJPY + surchargeTotalNative) / 10) * 10
+      : Math.round((baseSellingPriceJPY + surchargeTotalNative) * 100) / 100;
 
-    // 8. Convert to Target Currency using Authoritative CurrencyConversionService
-    // "Base-currency calculation must happen before display-currency conversion."
-    const normalizedNative = currencyConversionService.normalizeCurrency(nativeCurrency, 'JPY');
-
-    const conversionResult = currencyConversionService.convertPrice(
-      finalSellingPriceJPY,
-      normalizedNative,
-      normalizedTarget,
-      {
-        moduleName: 'SHINKANSEN_DYNAMIC_JOURNEY',
-        productId: product?.id || 'RAIL-JP-ORD-RESERVED',
-        fareId: adultRate?.rateId
-      }
-    );
-
-    if (
-      !conversionResult.success ||
-      !currencyConversionService.isValidRate(conversionResult.rate) ||
-      !Number.isFinite(conversionResult.convertedAmount) ||
-      conversionResult.convertedAmount <= 0
-    ) {
-      const reason = conversionResult.isLoading 
-        ? 'Price loading — Exchange rate pending' 
-        : (conversionResult.error || 'Price unavailable — FX exchange rate unavailable');
-
+    if (!Number.isFinite(finalSellingPriceJPY) || finalSellingPriceJPY <= 0) {
       return this.buildUnavailablePriceResult({
         originStation,
         destinationStation,
@@ -317,12 +313,59 @@ export class RailPricingEngine {
         childrenCount,
         seatPreference,
         targetCurrency: normalizedTarget,
-        reason
+        reason: 'Price unavailable — Admin configuration required'
       });
     }
 
-    const exchangeRate = conversionResult.rate;
-    const finalSellingPriceTargetCurrency = conversionResult.convertedAmount;
+    // 8. Convert to Target Currency using Authoritative CurrencyConversionService
+    // Scenario A: Rail fare currency matches the requested pricing currency -> use configured rate directly without FX lookup
+    // Scenario B: Rail fare currency differs from the requested pricing currency -> convert using central FX engine
+    const normalizedNative = currencyConversionService.normalizeCurrency(nativeCurrency, 'JPY');
+
+    let exchangeRate = 1;
+    let finalSellingPriceTargetCurrency = finalSellingPriceJPY;
+
+    if (normalizedNative !== normalizedTarget) {
+      const conversionResult = currencyConversionService.convertPrice(
+        finalSellingPriceJPY,
+        normalizedNative,
+        normalizedTarget,
+        {
+          moduleName: 'SHINKANSEN_DYNAMIC_JOURNEY',
+          productId: product?.id || 'RAIL-JP-ORD-RESERVED',
+          fareId: adultRate?.rateId
+        }
+      );
+
+      if (
+        !conversionResult.success ||
+        !currencyConversionService.isValidRate(conversionResult.rate) ||
+        !Number.isFinite(conversionResult.convertedAmount) ||
+        conversionResult.convertedAmount <= 0
+      ) {
+        const reason = conversionResult.isLoading 
+          ? 'Price loading — Exchange rate pending' 
+          : (conversionResult.error || 'Price unavailable — FX exchange rate unavailable');
+
+        return this.buildUnavailablePriceResult({
+          originStation,
+          destinationStation,
+          route,
+          product,
+          serviceGroup,
+          travelDate,
+          departureTime,
+          adultsCount,
+          childrenCount,
+          seatPreference,
+          targetCurrency: normalizedTarget,
+          reason
+        });
+      }
+
+      exchangeRate = conversionResult.rate;
+      finalSellingPriceTargetCurrency = conversionResult.convertedAmount;
+    }
 
     // 9. Duration Estimation
     const durationMinutes = serviceGroup === 'NOZOMI_MIZUHO'
@@ -507,8 +550,17 @@ export class RailPricingEngine {
         total: totalPax
       },
       seatPreference: params.seatPreference,
-      estimatedDurationMinutes: 120,
-      formattedDuration: '2h 00m'
+      estimatedDurationMinutes: params.serviceGroup === 'NOZOMI_MIZUHO'
+        ? (route?.travelDurationMinutes?.nozomiMizuho || 135)
+        : (route?.travelDurationMinutes?.hikariKodamaSakura || 160),
+      formattedDuration: (() => {
+        const dur = params.serviceGroup === 'NOZOMI_MIZUHO'
+          ? (route?.travelDurationMinutes?.nozomiMizuho || 135)
+          : (route?.travelDurationMinutes?.hikariKodamaSakura || 160);
+        const h = Math.floor(dur / 60);
+        const m = dur % 60;
+        return h > 0 ? `${h}h ${m < 10 ? `0${m}` : m}m` : `${m}m`;
+      })()
     };
   }
 

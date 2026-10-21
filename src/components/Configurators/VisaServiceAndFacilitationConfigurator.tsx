@@ -480,7 +480,7 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
         serviceTime: `${selectedVisa.processingTimeDays} Days Processing`,
         notes: compiledNotes,
         selectedAddonIds: selectedAssistanceIds,
-        openDrawer: true,
+        openDrawer: portalOrigin !== 'B2B_QUOTE_BUILDER' && portalOrigin !== 'ADMIN_CMS',
         master_product_id: selectedVisa.id,
         service_id: selectedVisa.id,
         category: 'Visa & Ancillary Services',

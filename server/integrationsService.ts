@@ -376,6 +376,14 @@ export function createIntegrationsRouter(): Router {
     const htmlBody = bodyData.htmlBody || bodyData.html || bodyData.bodyHtml || bodyData.body;
     const textBody = bodyData.textBody;
     const meta = bodyData.meta;
+    const rawCc = bodyData.cc || meta?.cc || meta?.internalCopyRecipients;
+    const ccList: string[] = Array.isArray(rawCc)
+      ? rawCc.map((c: string) => String(c).trim()).filter((c: string) => c.includes('@') && c.toLowerCase() !== String(to || '').toLowerCase())
+      : typeof rawCc === 'string' && rawCc.includes('@')
+        ? rawCc.split(',').map((c: string) => c.trim()).filter((c: string) => c.includes('@') && c.toLowerCase() !== String(to || '').toLowerCase())
+        : [];
+    const customSenderName = (bodyData.senderName || meta?.senderName || '').trim();
+    const customSenderEmail = (bodyData.senderEmail || meta?.senderEmail || '').trim();
     const authHeader = req.headers.authorization;
     const clientToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
 
@@ -424,17 +432,21 @@ export function createIntegrationsRouter(): Router {
         });
       }
 
+      const resolvedSender = customSenderEmail
+        ? (customSenderName ? `${customSenderName} <${customSenderEmail}>` : customSenderEmail)
+        : (process.env.GOOGLE_WORKSPACE_EMAIL || 'business@theunbound.in');
+
       const logRecord: EmailLogRecord = {
         emailId,
         messageId,
-        recipient: to,
-        sender: process.env.GOOGLE_WORKSPACE_EMAIL || 'business@theunbound.in',
+        recipient: ccList.length > 0 ? `${to} (CC: ${ccList.join(', ')})` : to,
+        sender: resolvedSender,
         subject,
         relatedLeadId: meta?.leadId,
         relatedQuoteId: meta?.quoteId,
         relatedBookingId: meta?.bookingId,
         sentBy: meta?.sentBy,
-        sentByName: meta?.sentByName,
+        sentByName: meta?.sentByName || customSenderName,
         createdAt: sentAt,
         status: 'SENT',
         durationMs: Date.now() - startTime,
@@ -449,7 +461,9 @@ export function createIntegrationsRouter(): Router {
         sentAt,
         simulated: true,
         recipient: to,
-        details: 'Email dispatched successfully with complete quotation HTML and plain-text payload.'
+        cc: ccList,
+        sender: resolvedSender,
+        details: 'Email dispatched successfully via Transactional Relay.'
       });
     }
 
@@ -461,13 +475,13 @@ export function createIntegrationsRouter(): Router {
       const logRecord: EmailLogRecord = {
         emailId,
         recipient: to,
-        sender: process.env.GOOGLE_WORKSPACE_EMAIL || 'business@theunbound.in',
+        sender: customSenderEmail || process.env.GOOGLE_WORKSPACE_EMAIL || 'business@theunbound.in',
         subject,
         relatedLeadId: meta?.leadId,
         relatedQuoteId: meta?.quoteId,
         relatedBookingId: meta?.bookingId,
         sentBy: meta?.sentBy,
-        sentByName: meta?.sentByName,
+        sentByName: meta?.sentByName || customSenderName,
         createdAt: new Date().toISOString(),
         status: 'AUTHENTICATION_REQUIRED',
         failureCode: tokenResult.status,
@@ -486,16 +500,20 @@ export function createIntegrationsRouter(): Router {
 
     // 3. Construct RFC 2822 MIME message
     const defaultSender = 'Travel Operations <business@theunbound.in>';
-    let sender = process.env.GOOGLE_WORKSPACE_EMAIL || defaultSender;
-    if (/the\s*unbound/i.test(sender)) {
+    let sender = customSenderEmail
+      ? (customSenderName ? `${customSenderName} <${customSenderEmail}>` : customSenderEmail)
+      : (process.env.GOOGLE_WORKSPACE_EMAIL || defaultSender);
+    if (!customSenderName && /the\s*unbound/i.test(sender)) {
       sender = sender.replace(/the\s*unbound\s*(dmc)?/gi, 'Travel Operations').trim();
     }
     let emailHeaders: string[];
+    const ccHeader = ccList.length > 0 ? [`Cc: ${ccList.join(', ')}`] : [];
 
     if (textBody && typeof textBody === 'string' && textBody.trim()) {
       const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       emailHeaders = [
         `To: ${to}`,
+        ...ccHeader,
         `From: ${sender}`,
         `Subject: =?utf-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`,
         'MIME-Version: 1.0',
@@ -518,6 +536,7 @@ export function createIntegrationsRouter(): Router {
     } else {
       emailHeaders = [
         `To: ${to}`,
+        ...ccHeader,
         `From: ${sender}`,
         `Subject: =?utf-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`,
         'MIME-Version: 1.0',

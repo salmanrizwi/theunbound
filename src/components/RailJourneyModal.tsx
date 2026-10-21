@@ -13,6 +13,10 @@ export interface RailJourneyModalProps {
   onSelectCarType?: (carType: RailCarType) => void;
   initialOriginStationId?: string;
   initialDestinationStationId?: string;
+  initialTravelDate?: string;
+  initialAdults?: number;
+  initialChildren?: number;
+  initialInfants?: number;
   portalOrigin?: JourneyPortalOrigin;
   existingQuoteItemId?: string;
   existingJourneySnapshot?: any;
@@ -29,6 +33,10 @@ export const RailJourneyModal: React.FC<RailJourneyModalProps> = ({
   onInstantBook,
   initialOriginStationId = 'JP-ST-TOKYO',
   initialDestinationStationId = 'JP-ST-KYOTO',
+  initialTravelDate,
+  initialAdults,
+  initialChildren,
+  initialInfants,
   portalOrigin: explicitOrigin,
   existingQuoteItemId,
   existingJourneySnapshot
@@ -55,6 +63,10 @@ export const RailJourneyModal: React.FC<RailJourneyModalProps> = ({
       onInstantBook={onInstantBook}
       initialOriginStationId={initialOriginStationId}
       initialDestinationStationId={initialDestinationStationId}
+      initialTravelDate={initialTravelDate}
+      initialAdults={initialAdults}
+      initialChildren={initialChildren}
+      initialInfants={initialInfants}
       existingQuoteItemId={existingQuoteItemId}
       existingJourneySnapshot={existingJourneySnapshot}
     />

@@ -68,7 +68,8 @@ import {
   B2BPackage,
   PackageItineraryDay,
   AgentMarginType,
-  TravelLead
+  TravelLead,
+  QuoteBrandingMode
 } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
@@ -109,6 +110,7 @@ import { EmailNotificationService } from '../../services/emailNotificationServic
 import { formatPlainTextQuotationToHtml } from '../../services/quoteEmailFormatter';
 import { DestinationRelevanceService, matchesDestination } from '../../services/destinationRelevanceService';
 import { QuotationScope } from '../../types';
+import { buildAgencyBrandingSnapshotFromUser, validateWhiteLabelReadiness } from '../../services/quotePresentationModel';
 
 // Helper to check if a product is tagged with or matches a specific city / hub
 export const isProductMatchingCity = (product: Product, targetCityName?: string, targetHubId?: string): boolean => {
@@ -266,8 +268,14 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     handoffPayload,
     quoteSource,
     priceRefreshNotice,
-    clearQuote
+    clearQuote,
+    setIsQuoteDrawerOpen
   } = useQuotation();
+
+  // Strictly close global cart drawer on entry into the B2B Quote Builder
+  useEffect(() => {
+    setIsQuoteDrawerOpen(false);
+  }, [setIsQuoteDrawerOpen]);
 
   // Local agent markup & margin state (Section 2 & Step 9)
   const [agentMarginType, setAgentMarginType] = useState<AgentMarginType>('PERCENTAGE');
@@ -282,6 +290,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   // Top-Level View State (Itinerary Builder vs Official Proposal Preview)
   const [activeViewTab, setActiveViewTab] = useState<'BUILDER' | 'PROPOSAL_PREVIEW'>('BUILDER');
   const [activeStepId, setActiveStepId] = useState<number>(1);
+  const [brandingMode, setBrandingMode] = useState<QuoteBrandingMode>('STANDARD');
 
   // Destination & Specs State
   const defaultDest = useMemo(() => {
@@ -696,6 +705,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       const loadedScope: QuotationScope = (q.quotationScope as QuotationScope) || (q.scope as QuotationScope) || 'HOTEL_LAND';
       setQuotationScope(loadedScope);
       setContextQuotationScope(loadedScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND');
+      setBrandingMode(q.brandingMode || q.brandingSnapshot?.mode || 'STANDARD');
       if (q.title) setQuoteTitle(q.title);
       if (q.sourcePackageId !== undefined) setSourcePackageId(q.sourcePackageId || null);
       if (q.sourcePackageName !== undefined) setSourcePackageName(q.sourcePackageName || '');
@@ -822,6 +832,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       setHasExplicitlySaved(false);
       setLoadError(null);
       setAutoSaveStatus('IDLE');
+      setBrandingMode('STANDARD');
 
       if (prefillLead) {
         setClientName(prefillLead.contactName || prefillLead.clientName || '');
@@ -861,6 +872,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       setActiveStepId(1);
       setActiveViewTab('BUILDER');
       setActiveOptionTab(1);
+      setBrandingMode('STANDARD');
       if (contextQuotationScope) {
         setQuotationScope(contextQuotationScope);
       }
@@ -1211,12 +1223,13 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   // Helper to open quick add modal for a day slot
   const handleOpenQuickAddModal = (slot: { dayNumber: number; dateString: string; hub?: TripRouteHub | null }) => {
-    const dayCity = slot.hub?.hubName || currentDestination.name;
+    const resolvedHubName = slot.hub?.hubName?.trim() || '';
+    const resolvedHubId = slot.hub?.hubId?.trim() || '';
     setQuickAddModalDay({
       dayNum: slot.dayNumber,
       dateString: slot.dateString,
-      hubName: dayCity,
-      hubId: slot.hub?.hubId || slot.hub?.id
+      hubName: resolvedHubName,
+      hubId: resolvedHubId || undefined
     });
     setQuickAddSearch('');
     setQuickAddCategory('ALL');
@@ -1855,6 +1868,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           })
         : null;
 
+      const existingSaved = db.getQuoteByIdAuthorized(activeQuoteId, user);
+      const brandingSnapshot = buildAgencyBrandingSnapshotFromUser(user, existingSaved, brandingMode);
+
       const activeQuote: Quotation = {
         id: activeQuoteId,
         quoteNumber,
@@ -1936,12 +1952,15 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         clientPhone: clientPhone || '',
         clientCompany: clientCompany || user?.agencyName || 'Direct B2B Client',
         agentId: user?.id || 'usr-agent-01',
-        agentName: user?.name || 'Travel Consultant',
-        agentAgency: user?.agencyName || 'Partner Agency',
-        agentEmail: user?.email || 'sales@theunbound.in',
-        agentPhone: user?.phone || '+91-9811654959',
+        agentName: brandingSnapshot.specialistName || user?.name || 'Travel Consultant',
+        agentAgency: brandingSnapshot.agencyName || user?.agencyName || 'Partner Agency',
+        agentEmail: brandingSnapshot.email || user?.email || '',
+        agentPhone: brandingSnapshot.phone || user?.phone || '',
+        agentLogoUrl: brandingSnapshot.logoUrl || user?.brandLogoUrl,
+        brandingMode,
+        brandingSnapshot,
         agentNotes: agentNotes || '',
-        termsAndConditions: 'All wholesale rates valid for 14 days. 20% deposit secures itinerary reservations.',
+        termsAndConditions: brandingSnapshot.disclaimer || 'All rates valid for 14 days from issue date. 20% deposit secures itinerary reservations.',
         status: 'DRAFT',
         travelStartDate: startDate,
         travelEndDate: endDate,
@@ -2001,7 +2020,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       }
     }, 1500);
     return () => clearTimeout(timer);
-  }, [items, clientName, clientEmail, startDate, endDate, agentMarkupPercent, currency, routeHubs, quotationScope, hasExplicitlySaved]);
+  }, [items, clientName, clientEmail, startDate, endDate, agentMarkupPercent, currency, routeHubs, quotationScope, brandingMode, hasExplicitlySaved]);
 
   // Balance Nights Helper
   const handleAutoBalanceNights = () => {
@@ -2385,9 +2404,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     try {
       downloadQuotationPDF({
         quote: saved,
-        agentName: user?.name || 'B2B Partner Agent',
-        agentAgency: user?.agencyName || 'Luxury Travel Partners',
-        agentEmail: user?.email || 'agent@theunbound.com',
+        agentName: saved.brandingSnapshot?.specialistName || saved.agentName || user?.name || 'Travel Specialist',
+        agentAgency: saved.brandingSnapshot?.agencyName || saved.agentAgency || user?.agencyName || 'Partner Travel Agency',
+        agentEmail: saved.brandingSnapshot?.email || saved.agentEmail || user?.email || '',
+        agentPhone: saved.brandingSnapshot?.phone || saved.agentPhone || user?.phone || '',
+        agentLogoUrl: saved.brandingSnapshot?.logoUrl || saved.agentLogoUrl || user?.brandLogoUrl,
+        brandingMode: saved.brandingMode || brandingMode,
         leadId: selectedLeadId || saved.leadId
       });
       // Auto-schedule Google Calendar 24h Quote Follow-Up SLA
@@ -2416,20 +2438,30 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   };
 
   // Helper to sync canonical email preview when note or quote changes
-  const refreshCanonicalEmailContent = (quoteObj: Quotation, customNoteText: string) => {
+  const refreshCanonicalEmailContent = (quoteObj: Quotation, customNoteText: string, modeOverride?: QuoteBrandingMode) => {
+    const activeMode = modeOverride || quoteObj.brandingMode || brandingMode;
+    const snap = buildAgencyBrandingSnapshotFromUser(user, quoteObj, activeMode);
     const emailService = EmailNotificationService.getInstance();
     const canonical = emailService.buildCanonicalQuotationEmail(
       {
         ...quoteObj,
+        brandingMode: activeMode,
+        brandingSnapshot: snap,
         clientEmail: emailRecipient || clientEmail || quoteObj.clientEmail || 'client@example.com',
         clientName: clientName || quoteObj.clientName || 'Valued Guest',
         totalSellingPrice: finalClientPrice
       },
       {
-        name: user?.name || quoteObj.agentName || 'B2B Partner Agent',
-        agencyName: user?.agencyName || quoteObj.agentAgency || 'TheUnbound Partner Agency',
-        email: user?.email || quoteObj.agentEmail || 'sales@theunbound.in',
-        phone: user?.phone || quoteObj.agentPhone || '+91-9811654959',
+        name: snap.specialistName || user?.name || quoteObj.agentName || 'Travel Specialist',
+        agencyName: snap.agencyName || user?.agencyName || quoteObj.agentAgency || (activeMode === 'WHITE_LABEL' ? 'Partner Travel Agency' : 'TheUnbound Partner Agency'),
+        email: snap.email || user?.email || quoteObj.agentEmail || (activeMode === 'WHITE_LABEL' ? '' : 'sales@theunbound.in'),
+        phone: snap.phone || user?.phone || quoteObj.agentPhone || (activeMode === 'WHITE_LABEL' ? '' : '+91-9811654959'),
+        logoUrl: snap.logoUrl || user?.brandLogoUrl || quoteObj.agentLogoUrl,
+        website: snap.website || user?.website,
+        address: snap.address || user?.businessAddress,
+        brandPrimaryColor: snap.primaryColor || user?.brandPrimaryColor,
+        brandAccentColor: snap.accentColor || user?.brandAccentColor,
+        brandingMode: activeMode,
         selectedOptionIndexOrId: Math.max(0, activeOptionTab - 1),
         customNote: customNoteText
       }
@@ -2554,19 +2586,29 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     setEmailSuccessMessage(null);
 
     try {
+      const activeMode = saved.brandingMode || brandingMode;
+      const snap = buildAgencyBrandingSnapshotFromUser(user, saved, activeMode);
       const emailService = EmailNotificationService.getInstance();
       const generatedEmail = emailService.generateQuotationProposalEmail(
         {
           ...saved,
+          brandingMode: activeMode,
+          brandingSnapshot: snap,
           clientEmail: cleanRecipient,
           clientName: clientName || saved.clientName || 'Valued Guest',
           totalSellingPrice: finalClientPrice
         },
         {
-          name: user?.name || saved.agentName || 'B2B Partner Agent',
-          agencyName: user?.agencyName || saved.agentAgency || 'Luxury Partner Agency',
-          email: user?.email || saved.agentEmail || 'sales@theunbound.in',
-          phone: user?.phone || saved.agentPhone || '+91-9811654959',
+          name: snap.specialistName || user?.name || saved.agentName || 'Travel Specialist',
+          agencyName: snap.agencyName || user?.agencyName || saved.agentAgency || (activeMode === 'WHITE_LABEL' ? 'Partner Travel Agency' : 'Luxury Partner Agency'),
+          email: snap.email || user?.email || saved.agentEmail || (activeMode === 'WHITE_LABEL' ? '' : 'sales@theunbound.in'),
+          phone: snap.phone || user?.phone || saved.agentPhone || (activeMode === 'WHITE_LABEL' ? '' : '+91-9811654959'),
+          logoUrl: snap.logoUrl || user?.brandLogoUrl || saved.agentLogoUrl,
+          website: snap.website || user?.website,
+          address: snap.address || user?.businessAddress,
+          brandPrimaryColor: snap.primaryColor || user?.brandPrimaryColor,
+          brandAccentColor: snap.accentColor || user?.brandAccentColor,
+          brandingMode: activeMode,
           selectedOptionIndexOrId: Math.max(0, activeOptionTab - 1),
           customNote: emailCustomNote,
           formattingMode: emailPreviewTab === 'HTML_PREVIEW' ? 'PROPOSAL_VIEW' : 'PLAIN_TEXT'
@@ -2799,7 +2841,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     const targetCity = quickAddModalDay.hubName;
     const targetHubId = quickAddModalDay.hubId;
 
-    if (filterByDayCityOnly && (targetCity || targetHubId)) {
+    if (filterByDayCityOnly) {
+      if (!targetCity && !targetHubId) {
+        return [];
+      }
       return DestinationRelevanceService.getInstance().getRelevantProducts(
         currentDestination.id,
         targetHubId || targetCity
@@ -3152,13 +3197,42 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         {/* ========================================================================= */}
         {activeViewTab === 'PROPOSAL_PREVIEW' ? (
           <main className="w-full max-w-[1920px] mx-auto min-w-0 px-4 sm:px-6 py-8 space-y-6 pb-32">
-          {/* Client Presentation Mode Informational Strip (No action buttons) */}
-          <div className="bg-white px-4 py-3 rounded-2xl border border-slate-200 flex items-center space-x-2.5 shadow-xs print:hidden max-w-5xl mx-auto">
-            <Sparkles className="w-4 h-4 text-[#00A88F] shrink-0" />
-            <div className="text-xs text-slate-600 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span className="font-bold text-slate-900">Client Presentation Mode</span>
-              <span className="text-slate-300 hidden sm:inline">—</span>
-              <span>Review the official proposal layout before dispatching.</span>
+          {/* Client Presentation Mode Informational Strip & White-Label Branding Switcher */}
+          <div className="bg-white px-4 py-3 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 shadow-xs print:hidden max-w-5xl mx-auto">
+            <div className="flex items-center space-x-2.5">
+              <Sparkles className="w-4 h-4 text-[#00A88F] shrink-0" />
+              <div className="text-xs text-slate-600 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className="font-bold text-slate-900">Client Presentation Mode</span>
+                <span className="text-slate-300 hidden sm:inline">—</span>
+                <span>Review the live proposal layout and branding before dispatching.</span>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Branding:</span>
+              <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setBrandingMode('STANDARD')}
+                  className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                    brandingMode === 'STANDARD'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Standard Quote
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBrandingMode('WHITE_LABEL')}
+                  className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                    brandingMode === 'WHITE_LABEL'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  White-Label Quote
+                </button>
+              </div>
             </div>
           </div>
 
@@ -3189,8 +3263,13 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               agentId: user?.id || 'usr-agent-01',
               agentName: user?.name || 'Travel Consultant',
               agentAgency: user?.agencyName || 'Partner Agency',
+              agentEmail: user?.email || '',
+              agentPhone: user?.phone || '',
+              agentLogoUrl: user?.brandLogoUrl,
+              brandingMode,
+              brandingSnapshot: buildAgencyBrandingSnapshotFromUser(user, undefined, brandingMode),
               agentNotes: agentNotes || '',
-              termsAndConditions: 'All wholesale rates are confidential and valid for licensed travel partners.',
+              termsAndConditions: user?.quoteDisclaimer || 'All rates are confidential and subject to availability at confirmation.',
               status: 'DRAFT',
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
@@ -3369,6 +3448,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               sourcePackageName={sourcePackageName}
               quoteTitle={quoteTitle}
               setQuoteTitle={setQuoteTitle}
+              brandingMode={brandingMode}
+              setBrandingMode={setBrandingMode}
             />
         </main>
       )}
@@ -3386,7 +3467,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                 <div className="flex items-center space-x-2">
                   <span className="text-[10px] uppercase font-black text-teal-700 tracking-wider">Experience Catalog</span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#00C6A6] text-white shadow-2xs">
-                    📍 {quickAddModalDay.hubName}
+                    📍 {quickAddModalDay.hubName || 'Unassigned Hub'}
                   </span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-200/80 text-slate-700">
                     Day {quickAddModalDay.dayNum} • {quickAddModalDay.dateString}
@@ -3412,7 +3493,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                   <span className="font-bold text-slate-900 flex items-center space-x-1">
                     <span>Target Hub:</span>
                     <span className="text-teal-800 bg-teal-100/70 px-2 py-0.5 rounded-md font-mono">
-                      📍 {quickAddModalDay.hubName}
+                      📍 {quickAddModalDay.hubName || 'No Hub Selected'}
                     </span>
                   </span>
                 </div>
@@ -3431,7 +3512,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                     }`}
                   >
-                    📍 {quickAddModalDay.hubName} Only ({totalCityProductsCount})
+                    📍 {quickAddModalDay.hubName || 'Assigned Hub'} Only ({totalCityProductsCount})
                   </button>
                   <button
                     type="button"
@@ -3508,13 +3589,17 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                   <div className="space-y-1">
                     <p className="text-xs font-bold text-slate-700">
                       {filterByDayCityOnly 
-                        ? `No products tagged for ${quickAddModalDay.hubName} matching your filter.`
+                        ? (!quickAddModalDay.hubName && !quickAddModalDay.hubId)
+                          ? `No City Hub is assigned to Day ${quickAddModalDay.dayNum}.`
+                          : `No products tagged for ${quickAddModalDay.hubName} Hub matching your filter.`
                         : `No products matching your search in ${currentDestination.name}.`
                       }
                     </p>
                     <p className="text-[11px] text-slate-500">
                       {filterByDayCityOnly 
-                        ? `You can switch to view all available products across ${currentDestination.name} or adjust your filters.`
+                        ? (!quickAddModalDay.hubName && !quickAddModalDay.hubId)
+                          ? `Assign a City Hub in Step 2 (Route & City Plan) to receive Hub-matched recommendations, or switch to browse all ${currentDestination.name} products.`
+                          : `You can switch to view all available products across ${currentDestination.name} or adjust your filters.`
                         : 'Try searching with different keywords or changing the category filter.'
                       }
                     </p>
@@ -3668,7 +3753,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                 </div>
               )}
 
-              {/* Canonical Quotation Summary Strip */}
+              {/* Canonical Quotation Summary Strip & Branding Mode Switcher */}
               <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono font-bold bg-slate-900 text-[#00E5C0] px-2.5 py-1 rounded-lg">
@@ -3682,8 +3767,54 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                   <span className="text-slate-400">•</span>
                   <span className="text-teal-700 font-bold">{items.length} Configured Services</span>
                 </div>
-                <div className="font-mono font-black text-sm text-slate-900">
-                  Total: {formatCurrency(finalClientPrice, currency)}
+                <div className="flex items-center gap-3">
+                  <div className="inline-flex rounded-xl bg-white p-0.5 border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBrandingMode('STANDARD');
+                        if (emailModalQuote) {
+                          const updated = {
+                            ...emailModalQuote,
+                            brandingMode: 'STANDARD' as QuoteBrandingMode,
+                            brandingSnapshot: buildAgencyBrandingSnapshotFromUser(user, emailModalQuote, 'STANDARD')
+                          };
+                          setEmailModalQuote(updated);
+                          const canonical = refreshCanonicalEmailContent(updated, emailCustomNote, 'STANDARD');
+                          setEmailSubject(canonical.subject);
+                        }
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                        brandingMode === 'STANDARD' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Standard
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBrandingMode('WHITE_LABEL');
+                        if (emailModalQuote) {
+                          const updated = {
+                            ...emailModalQuote,
+                            brandingMode: 'WHITE_LABEL' as QuoteBrandingMode,
+                            brandingSnapshot: buildAgencyBrandingSnapshotFromUser(user, emailModalQuote, 'WHITE_LABEL')
+                          };
+                          setEmailModalQuote(updated);
+                          const canonical = refreshCanonicalEmailContent(updated, emailCustomNote, 'WHITE_LABEL');
+                          setEmailSubject(canonical.subject);
+                        }
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                        brandingMode === 'WHITE_LABEL' ? 'bg-amber-600 text-white' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      White-Label
+                    </button>
+                  </div>
+                  <div className="font-mono font-black text-sm text-slate-900">
+                    Total: {formatCurrency(finalClientPrice, currency)}
+                  </div>
                 </div>
               </div>
 
@@ -4030,7 +4161,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               adults: adults || adultsCount,
               children: children || childrenCount,
               infants: infantsCount,
-              travelDate: quickAddModalDay?.dateString || initialDate || startDate
+              travelDate: quickAddModalDay?.dateString || initialDate || startDate,
+              openDrawer: false
             });
             setInspectingProduct(null);
             setQuickAddModalDay(null);
@@ -4044,6 +4176,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       {calculatorProduct && !isRailProduct(calculatorProduct) && (
         <PricingCalculatorModal
           product={calculatorProduct}
+          portalOrigin="B2B_QUOTE_BUILDER"
           onClose={() => setCalculatorProduct(null)}
           onAddedToQuote={() => {
             setCalculatorProduct(null);
@@ -4402,6 +4535,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         <AddVisaToQuoteModal
           visa={selectedVisaForQuoteModal}
           isOpen={Boolean(selectedVisaForQuoteModal)}
+          portalOrigin="B2B_QUOTE_BUILDER"
           onClose={() => setSelectedVisaForQuoteModal(null)}
           initialTravelDate={startDate}
           initialApplicants={adultsCount + childrenCount}

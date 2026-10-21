@@ -274,7 +274,8 @@ export const GlobalConfiguratorRouter: React.FC<GlobalConfiguratorRouterProps> =
     // 10 — Rail / Shinkansen
     case 'SHINKANSEN':
     case 'RAIL': {
-      const product: Product = (itemOrProduct as QuoteItem).product || (itemOrProduct as Product);
+      const isQuoteItem = Boolean((itemOrProduct as QuoteItem).product);
+      const product: Product = isQuoteItem ? (itemOrProduct as QuoteItem).product : (itemOrProduct as Product);
       const existingSnapshot = (itemOrProduct as QuoteItem).japanRailJourneySnapshot ||
         (itemOrProduct as any).metadata?.journeySnapshot ||
         (itemOrProduct as QuoteItem).railJourneyDetails;
@@ -283,11 +284,14 @@ export const GlobalConfiguratorRouter: React.FC<GlobalConfiguratorRouterProps> =
         <RailJourneyModal
           product={product}
           portalOrigin={portalOrigin}
-          existingQuoteItemId={existingQuoteItemId || (itemOrProduct as QuoteItem).id}
+          existingQuoteItemId={existingQuoteItemId || (isQuoteItem ? (itemOrProduct as QuoteItem).id : undefined)}
           existingJourneySnapshot={existingSnapshot}
           initialOriginStationId={(itemOrProduct as QuoteItem).railJourneyDetails?.originStationId || 'JP-ST-TOKYO'}
           initialDestinationStationId={(itemOrProduct as QuoteItem).railJourneyDetails?.destinationStationId || 'JP-ST-KYOTO'}
           initialTravelDate={initialTravelDate || (itemOrProduct as QuoteItem).travelDate}
+          initialAdults={initialAdults}
+          initialChildren={initialChildren}
+          initialInfants={initialInfants}
           onClose={onClose}
           onAddToQuote={handleSuccess}
         />

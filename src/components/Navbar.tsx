@@ -281,8 +281,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             </select>
           </div>
 
-          {/* Quotation Cart in Upper Section - ONLY FOR VERIFIED B2B AGENTS & ADMIN */}
-          {isB2BAgentOrAdmin && (
+          {/* Quotation Cart in Upper Section - ONLY FOR VERIFIED B2B AGENTS & ADMIN (Hidden inside Quote Builder) */}
+          {isB2BAgentOrAdmin && activeTab !== 'B2B_BUILDER' && (
             <button
               id="quote-cart-btn"
               onClick={() => setIsQuoteDrawerOpen(true)}

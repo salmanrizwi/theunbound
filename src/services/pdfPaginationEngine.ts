@@ -520,18 +520,24 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
     </div>
   ` : '';
 
+  const primaryBrandHex = model.isWhiteLabel && model.brandPrimaryColor ? model.brandPrimaryColor : '#020617';
+  const accentBrandHex = model.isWhiteLabel && model.brandAccentColor ? model.brandAccentColor : '#00E5C0';
+
   const heroAndDossierHtml = `
     <!-- Top Header -->
-    <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #020617; padding-bottom: 14px; margin-bottom: 16px;">
-      <div>
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <span style="font-size: 26px; font-weight: 900; text-transform: lowercase; color: #020617; letter-spacing: -0.02em;">${model.agencyName}</span>
-          <span style="font-size: 9px; text-transform: uppercase; font-weight: 800; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 4px; background: #020617; color: #00E5C0;">Official Itinerary Proposal</span>
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid ${primaryBrandHex}; padding-bottom: 14px; margin-bottom: 16px;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        ${model.agentLogoUrl ? `<img src="${model.agentLogoUrl}" alt="${model.agencyName}" crossorigin="anonymous" style="max-height: 44px; max-width: 140px; object-fit: contain; border-radius: 6px;" />` : ''}
+        <div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 24px; font-weight: 900; ${model.isWhiteLabel ? '' : 'text-transform: lowercase;'} color: ${primaryBrandHex}; letter-spacing: -0.02em;">${model.agencyName}</span>
+            <span style="font-size: 9px; text-transform: uppercase; font-weight: 800; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 4px; background: ${primaryBrandHex}; color: ${model.isWhiteLabel ? '#ffffff' : accentBrandHex};">${model.documentBadgeTitle}</span>
+          </div>
+          <p style="font-size: 10.5px; color: #64748b; margin: 4px 0 0 0;">${model.agentAgencySubtitle}</p>
         </div>
-        <p style="font-size: 10.5px; color: #64748b; margin: 4px 0 0 0;">${model.agentAgencySubtitle}</p>
       </div>
       <div style="text-align: right; font-family: monospace; font-size: 10.5px;">
-        <div style="font-size: 14px; font-weight: 900; color: #020617;">${model.quoteNumber} (v${model.version})</div>
+        <div style="font-size: 14px; font-weight: 900; color: ${primaryBrandHex};">${model.quoteNumber} (v${model.version})</div>
         <div style="color: #64748b;">Date: ${model.createdDateFormatted}</div>
         <div style="color: #64748b;">Valid Until: ${model.validUntilFormatted}</div>
         <div style="color: #0d9488; font-weight: 700;">Status: ${model.status}</div>
@@ -539,7 +545,7 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
     </div>
 
     <!-- Curated Journey Overview Banner -->
-    <div style="background: linear-gradient(135deg, #020617, #0f172a, #020617); color: #ffffff; padding: 18px 20px; border-radius: 16px; margin-bottom: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.06);">
+    <div style="background: linear-gradient(135deg, ${primaryBrandHex}, #0f172a, ${primaryBrandHex}); color: #ffffff; padding: 18px 20px; border-radius: 16px; margin-bottom: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.06);">
       <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
         <div>
           <span style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: #00E5C0; font-weight: 800; display: block;">Curated Journey Overview</span>
@@ -576,6 +582,9 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
         <div style="font-weight: 800; font-size: 13px; color: #0f172a;">${model.agentName}</div>
         <div style="color: #334155; font-weight: 600;">${model.agencyName}</div>
         ${model.agentEmail ? `<div style="color: #64748b; font-family: monospace;">${model.agentEmail}</div>` : ''}
+        ${model.agentPhone ? `<div style="color: #64748b; font-family: monospace;">${model.agentPhone}</div>` : ''}
+        ${model.agencyWebsite ? `<div style="color: #64748b; font-size: 10px;">${model.agencyWebsite}</div>` : ''}
+        ${model.agencyAddress ? `<div style="color: #64748b; font-size: 9.5px;">${model.agencyAddress}</div>` : ''}
         <div style="color: #0d9488; font-size: 10px; font-weight: 700; margin-top: 3px;">🛡️ 24/7 On-Ground Concierge Assistance</div>
       </div>
     </div>
@@ -822,7 +831,7 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
       <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px 16px; margin-top: 14px; margin-bottom: 12px;">
         <div style="font-size: 11px; font-weight: 800; color: #0f172a; text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
           <span>🛡️</span>
-          <span>TheUnbound Ground Operations Standards & Inclusions</span>
+          <span>${model.operationalStandardsTitle}</span>
         </div>
         <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
           ${model.operationalStandards.map(op => `
@@ -900,7 +909,7 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
         <p style="margin: 0 0 10px 0; color: #475569; line-height: 1.4;">${model.commercialTerms}</p>
         <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #f1f5f9; padding-top: 8px; font-size: 9.5px; color: #94a3b8; font-family: monospace;">
           <span>${model.footerContactLine}</span>
-          <span>Official DMC Electronic Proposal</span>
+          <span>${model.footerRightTitle}</span>
         </div>
       </div>
     `,
@@ -1453,9 +1462,9 @@ export function paginateQuotePresentationModel(model: QuotePresentationModel): R
     const headerHtml = isPage1 ? '' : `
       <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; margin-bottom: 12px; font-size: 10.5px;">
         <div style="display: flex; align-items: center; gap: 8px;">
-          <span style="font-weight: 900; color: #020617; text-transform: lowercase; font-size: 13px;">${model.agencyName}</span>
+          <span style="font-weight: 900; color: #020617; ${model.isWhiteLabel ? '' : 'text-transform: lowercase;'} font-size: 13px;">${model.agencyName}</span>
           <span style="color: #94a3b8;">•</span>
-          <span style="color: #64748b; font-weight: 600;">Official Itinerary Proposal</span>
+          <span style="color: #64748b; font-weight: 600;">${model.documentBadgeTitle}</span>
         </div>
         <div style="font-family: monospace; color: #0f172a; font-weight: 700; font-size: 10px;">
           ${model.quoteNumber} (v${model.version})
@@ -1466,7 +1475,7 @@ export function paginateQuotePresentationModel(model: QuotePresentationModel): R
     const footerHtml = `
       <div style="border-top: 1px solid #e2e8f0; padding-top: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 9.5px; color: #94a3b8; font-family: monospace;">
         <div style="display: flex; align-items: center; gap: 6px;">
-          <span style="font-weight: 700; color: #475569;">${model.agencyName.toUpperCase()} DMC</span>
+          <span style="font-weight: 700; color: #475569;">${model.isWhiteLabel ? model.agencyName.toUpperCase() : `${model.agencyName.toUpperCase()} DMC`}</span>
           <span>•</span>
           <span>${model.quoteNumber}</span>
         </div>

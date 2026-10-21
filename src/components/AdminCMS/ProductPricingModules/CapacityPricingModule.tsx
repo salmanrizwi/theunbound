@@ -254,7 +254,7 @@ export const CapacityPricingModule: React.FC<CapacityPricingModuleProps> = ({
               {isYacht ? 'Yacht Classification' : 'Vehicle Classification'}
             </label>
             <select
-              value={currentCfg.vehicleType}
+              value={currentCfg.vehicleType || (isYacht ? 'Motor Yacht' : 'Executive MPV / Van')}
               onChange={e => updateConfig({ vehicleType: e.target.value, yachtType: e.target.value })}
               className="w-full p-2 bg-white rounded-lg font-medium text-xs"
             >
@@ -308,7 +308,7 @@ export const CapacityPricingModule: React.FC<CapacityPricingModuleProps> = ({
             <div className="space-y-1">
               <label className="text-[11px] text-slate-300 font-medium">Transfer Route Type</label>
               <select
-                value={currentCfg.route}
+                value={currentCfg.route || 'Airport Transfer (Airport ↔ Hotel)'}
                 onChange={e => updateConfig({ route: e.target.value })}
                 className="w-full p-2 bg-white rounded-lg font-medium text-xs"
               >

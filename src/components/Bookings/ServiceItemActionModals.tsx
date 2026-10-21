@@ -1026,7 +1026,7 @@ export const EditServiceItemModal: React.FC<EditServiceItemModalProps> = ({
                   <label className="text-[10px] font-bold uppercase text-slate-500">Internal Operations Notes</label>
                   <input
                     type="text"
-                    value={internalOpsNotes || internalNotes}
+                    value={internalOpsNotes || internalNotes || ''}
                     onChange={e => {
                       setInternalOpsNotes(e.target.value);
                       setInternalNotes(e.target.value);

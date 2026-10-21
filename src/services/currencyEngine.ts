@@ -158,7 +158,19 @@ export class CurrencyEngine {
         const storedPairs = window.localStorage.getItem(STORAGE_KEY_PAIRS);
         if (storedPairs) {
           const parsed: CurrencyPairConfig[] = JSON.parse(storedPairs);
-          parsed.forEach(p => this.pairs.set(p.id, p));
+          if (Array.isArray(parsed)) {
+            parsed.forEach(p => {
+              if (
+                p &&
+                p.id &&
+                typeof p.effectiveRate === 'number' &&
+                Number.isFinite(p.effectiveRate) &&
+                p.effectiveRate > 0
+              ) {
+                this.pairs.set(p.id, p);
+              }
+            });
+          }
         }
 
         const storedSettings = window.localStorage.getItem(STORAGE_KEY_SETTINGS);
@@ -468,7 +480,15 @@ export class CurrencyEngine {
     if (names[upper]) return names[upper];
 
     const matched = SUPPORTED_CURRENCIES.find(c => c.code === upper);
-    return matched ? matched.code : fallback;
+    if (matched) return matched.code;
+
+    // Extract 3-letter ISO code from formatted strings such as "JPY (¥)" or "INR ₹"
+    const codeMatch = upper.match(/\b(USD|EUR|GBP|JPY|AED|THB|AUD|CAD|SGD|INR|CHF)\b/);
+    if (codeMatch && codeMatch[1]) {
+      return codeMatch[1] as CurrencyCode;
+    }
+
+    return fallback;
   }
 
   /**
@@ -500,7 +520,13 @@ export class CurrencyEngine {
       ? CANONICAL_GOOGLEFINANCE_FORMULAS[toCode]?.direct || `=GOOGLEFINANCE("CURRENCY:USD${toCode}")`
       : `=GOOGLEFINANCE("CURRENCY:${fromCode}${toCode}")`;
 
-    if (directPair) {
+    if (
+      directPair &&
+      directPair.status !== 'PAUSED' &&
+      typeof directPair.effectiveRate === 'number' &&
+      Number.isFinite(directPair.effectiveRate) &&
+      directPair.effectiveRate > 0
+    ) {
       return {
         nativeCurrency: fromCode,
         targetCurrency: toCode,

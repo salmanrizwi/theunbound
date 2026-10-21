@@ -66,11 +66,10 @@ export const INITIAL_CAMPAIGNS: EmailCampaignConfig[] = [
         updatedBy: 'business@theunbound.in'
       }
     ],
-    sentCount: 118,
-    skippedCount: 2,
+    sentCount: 0,
+    skippedCount: 0,
     failedCount: 0,
-    updatedAt: '2026-10-01T10:30:00Z',
-    lastDispatchedAt: '2026-10-07T16:20:00Z'
+    updatedAt: '2026-10-01T10:30:00Z'
   },
   {
     id: 'trigger-quote-saved',
@@ -146,11 +145,10 @@ export const INITIAL_CAMPAIGNS: EmailCampaignConfig[] = [
         updatedBy: 'business@theunbound.in'
       }
     ],
-    sentCount: 89,
-    skippedCount: 31,
+    sentCount: 0,
+    skippedCount: 0,
     failedCount: 0,
-    updatedAt: '2026-10-02T14:15:00Z',
-    lastDispatchedAt: '2026-10-07T10:15:00Z'
+    updatedAt: '2026-10-02T14:15:00Z'
   },
   {
     id: 'trigger-quote-downloaded',
@@ -225,11 +223,10 @@ export const INITIAL_CAMPAIGNS: EmailCampaignConfig[] = [
         updatedBy: 'business@theunbound.in'
       }
     ],
-    sentCount: 64,
-    skippedCount: 19,
+    sentCount: 0,
+    skippedCount: 0,
     failedCount: 0,
-    updatedAt: '2026-10-03T11:00:00Z',
-    lastDispatchedAt: '2026-10-07T11:00:00Z'
+    updatedAt: '2026-10-03T11:00:00Z'
   },
   {
     id: 'trigger-first-booking-welcome',
@@ -303,11 +300,10 @@ export const INITIAL_CAMPAIGNS: EmailCampaignConfig[] = [
         updatedBy: 'business@theunbound.in'
       }
     ],
-    sentCount: 53,
-    skippedCount: 84,
+    sentCount: 0,
+    skippedCount: 0,
     failedCount: 0,
-    updatedAt: '2026-10-04T09:45:00Z',
-    lastDispatchedAt: '2026-10-07T14:10:00Z'
+    updatedAt: '2026-10-04T09:45:00Z'
   },
   {
     id: 'trigger-booking-confirmation-sla',
@@ -388,11 +384,10 @@ export const INITIAL_CAMPAIGNS: EmailCampaignConfig[] = [
         updatedBy: 'business@theunbound.in'
       }
     ],
-    sentCount: 142,
-    skippedCount: 68,
-    failedCount: 1,
-    updatedAt: '2026-10-05T12:00:00Z',
-    lastDispatchedAt: '2026-10-07T18:40:00Z'
+    sentCount: 0,
+    skippedCount: 0,
+    failedCount: 0,
+    updatedAt: '2026-10-05T12:00:00Z'
   },
   {
     id: 'trigger-account-pending-verification',
@@ -457,11 +452,10 @@ export const INITIAL_CAMPAIGNS: EmailCampaignConfig[] = [
         updatedBy: 'business@theunbound.in'
       }
     ],
-    sentCount: 42,
-    skippedCount: 1,
+    sentCount: 0,
+    skippedCount: 0,
     failedCount: 0,
-    updatedAt: '2026-10-06T10:00:00Z',
-    lastDispatchedAt: '2026-10-08T09:15:00Z'
+    updatedAt: '2026-10-06T10:00:00Z'
   },
   {
     id: 'trigger-account-verification-approved',
@@ -528,11 +522,10 @@ export const INITIAL_CAMPAIGNS: EmailCampaignConfig[] = [
         updatedBy: 'business@theunbound.in'
       }
     ],
-    sentCount: 38,
+    sentCount: 0,
     skippedCount: 0,
     failedCount: 0,
-    updatedAt: '2026-10-06T10:30:00Z',
-    lastDispatchedAt: '2026-10-08T09:45:00Z'
+    updatedAt: '2026-10-06T10:30:00Z'
   },
   {
     id: 'trigger-account-verification-rejected',
@@ -607,11 +600,10 @@ export const INITIAL_CAMPAIGNS: EmailCampaignConfig[] = [
         updatedBy: 'business@theunbound.in'
       }
     ],
-    sentCount: 11,
+    sentCount: 0,
     skippedCount: 0,
     failedCount: 0,
-    updatedAt: '2026-10-06T11:00:00Z',
-    lastDispatchedAt: '2026-10-07T12:00:00Z'
+    updatedAt: '2026-10-06T11:00:00Z'
   }
 ];
 

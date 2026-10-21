@@ -19,6 +19,9 @@ export class AutomaticTaskEngine {
   }
 
   private initEventListeners() {
+    // Ensure marketing automation scheduler listeners and background worker are bound
+    marketingAutomationScheduler.bindDatabaseEventProducers();
+
     // 1. Listen for Lead changes
     this.db.onLeadSaved((lead, user, isNew) => {
       if (isNew) {
@@ -26,51 +29,10 @@ export class AutomaticTaskEngine {
       }
     });
 
-    // 2. Listen for Booking changes
+    // 2. Listen for Booking changes (for operational calendar tasks)
     this.db.onBookingSaved((booking, user, isNew) => {
       if (isNew) {
         this.triggerBookingEvent('BOOKING_SUBMITTED', booking, user);
-        marketingAutomationScheduler.onBookingCreated(booking, user).catch(() => {});
-      } else {
-        marketingAutomationScheduler.onBookingStatusChanged(booking);
-      }
-    });
-
-    // 3. Listen for User Registration (USER_REGISTERED)
-    this.db.onUserRegistered((user) => {
-      marketingAutomationScheduler.onUserRegistered(user).catch(() => {});
-      if (user.approvalStatus === 'PENDING' || user.role === 'B2B_AGENT' || user.role === 'AGENT') {
-        marketingAutomationScheduler.onAccountPendingVerification(user).catch(() => {});
-      }
-    });
-
-    // 4. Listen for User Verification & Approval Status (ACCOUNT_PENDING_VERIFICATION, ACCOUNT_VERIFICATION_APPROVED, ACCOUNT_VERIFICATION_REJECTED)
-    this.db.onUserStatusChanged((user, actor, action, notes, requirements) => {
-      if (action === 'APPROVED') {
-        marketingAutomationScheduler.onAccountVerificationApproved(user, actor).catch(() => {});
-      } else if (action === 'REJECTED') {
-        marketingAutomationScheduler.onAccountVerificationRejected(user, actor, notes, requirements).catch(() => {});
-      } else if (action === 'PENDING') {
-        marketingAutomationScheduler.onAccountPendingVerification(user).catch(() => {});
-      }
-    });
-
-    // 5. Listen for Quotation Saved & Downloaded (QUOTE_SAVED & QUOTE_DOWNLOADED)
-    this.db.onQuotationSaved((quote, user, _isNew, actionType) => {
-      const isDownloaded =
-        actionType === 'DOWNLOADED' ||
-        actionType === 'PRINTED' ||
-        quote.status === 'DOWNLOADED_PDF' ||
-        quote.status === 'DOWNLOADED';
-      if (isDownloaded) {
-        marketingAutomationScheduler.onQuoteDownloaded(quote, user).catch(() => {});
-      } else if (
-        quote.status !== 'CONVERTED' &&
-        quote.status !== 'BOOKED' &&
-        quote.status !== 'CANCELLED' &&
-        quote.status !== 'EXPIRED'
-      ) {
-        marketingAutomationScheduler.onQuoteSaved(quote, user).catch(() => {});
       }
     });
   }

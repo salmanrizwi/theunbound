@@ -106,6 +106,19 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
     user?.email || 'business@theunbound.in'
   );
   const [isSendingTest, setIsSendingTest] = useState<boolean>(false);
+  const [dryRunResult, setDryRunResult] = useState<{
+    valid: boolean;
+    validationErrors: string[];
+    resolvedRecipient: string;
+    resolvedSubject: string;
+    resolvedBodyHtml: string;
+    timingSummary: string;
+    conditionEvaluation: string;
+  } | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
+  const [newTriggerName, setNewTriggerName] = useState<string>('');
+  const [newTriggerKey, setNewTriggerKey] = useState<MarketingTriggerKey>('QUOTE_SAVED');
+  const [newTriggerTiming, setNewTriggerTiming] = useState<TriggerTimingMode>('IMMEDIATE');
   const [feedbackBanner, setFeedbackBanner] = useState<{
     type: 'success' | 'info' | 'error';
     message: string;
@@ -140,10 +153,18 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
   };
 
   // Toggle Active / Inactive without deleting templates, logs, or analytics
-  const handleToggleTriggerStatus = (trigger: EmailCampaignConfig) => {
+  const handleToggleTriggerStatus = async (trigger: EmailCampaignConfig) => {
     const currentStatus: TriggerStatus =
       trigger.status || (trigger.isEnabled ? 'ACTIVE' : 'INACTIVE');
     const nextStatus: TriggerStatus = currentStatus === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+
+    if (nextStatus === 'ACTIVE') {
+      const validation = marketingAutomationScheduler.validateTriggerConfig(trigger);
+      if (!validation.valid) {
+        showNotice(`Cannot activate trigger: ${validation.errors.join(' ')}`, 'error');
+        return;
+      }
+    }
 
     const updated: EmailCampaignConfig = {
       ...trigger,
@@ -152,15 +173,15 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
       updatedAt: new Date().toISOString()
     };
 
-    db.saveEmailCampaign(updated, user);
+    await db.saveEmailCampaignAsync(updated, user);
     refreshData();
     showNotice(
-      `Trigger "${trigger.name}" set to ${nextStatus}. Existing templates, scheduled jobs, and audit logs remain preserved.`
+      `Trigger "${trigger.name}" set to ${nextStatus} and persisted to Firestore. Existing templates, scheduled jobs, and audit logs remain preserved.`
     );
   };
 
   // Duplicate Template (non-destructive variant creation)
-  const handleDuplicateTemplate = (trigger: EmailCampaignConfig) => {
+  const handleDuplicateTemplate = async (trigger: EmailCampaignConfig) => {
     const duplicate: EmailCampaignConfig = {
       ...trigger,
       id: `trigger-copy-${Date.now()}`,
@@ -175,20 +196,66 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
       updatedAt: new Date().toISOString(),
       lastDispatchedAt: undefined
     };
-    db.saveEmailCampaign(duplicate, user);
+    await db.saveEmailCampaignAsync(duplicate, user);
     refreshData();
     showNotice(`Created draft duplicate "${duplicate.name}".`);
+  };
+
+  // Create New Custom Trigger
+  const handleCreateCustomTrigger = async () => {
+    if (!newTriggerName.trim()) {
+      showNotice('Please enter a name for the new trigger.', 'error');
+      return;
+    }
+    const res = await marketingAutomationScheduler.createCustomTrigger(
+      {
+        name: newTriggerName.trim(),
+        triggerKey: newTriggerKey,
+        timingMode: newTriggerTiming
+      },
+      user
+    );
+    if (!res.success || !res.trigger) {
+      showNotice(
+        `Could not create trigger: ${(res.errors || ['Invalid configuration']).join(' ')}`,
+        'error'
+      );
+      return;
+    }
+    refreshData();
+    setShowCreateModal(false);
+    setNewTriggerName('');
+    setWorkspaceTrigger(JSON.parse(JSON.stringify(res.trigger)));
+    showNotice(`Created trigger "${res.trigger.name}". Configure its template and activate when ready.`);
+  };
+
+  // Delete Custom Trigger
+  const handleDeleteCustomTrigger = async (trigger: EmailCampaignConfig) => {
+    if (trigger.isSystemTrigger) {
+      showNotice('Canonical system triggers cannot be deleted; disable the trigger instead.', 'error');
+      return;
+    }
+    await db.deleteEmailCampaign(trigger.id, user);
+    refreshData();
+    showNotice(`Deleted custom trigger "${trigger.name}".`);
   };
 
   // Open Full-Page Configuration Workspace
   const handleOpenWorkspace = (trigger: EmailCampaignConfig) => {
     setWorkspaceTrigger(JSON.parse(JSON.stringify(trigger)));
+    setDryRunResult(null);
     setTestRecipientEmail(user?.email || 'business@theunbound.in');
   };
 
   // Explicit Save / Save & Activate from Workspace
-  const handleSaveWorkspace = (activateImmediately: boolean) => {
+  const handleSaveWorkspace = async (activateImmediately: boolean) => {
     if (!workspaceTrigger) return;
+
+    const validation = marketingAutomationScheduler.validateTriggerConfig(workspaceTrigger);
+    if (!validation.valid) {
+      showNotice(`Validation failed: ${validation.errors.join(' ')}`, 'error');
+      return;
+    }
 
     const currentVersionStr = workspaceTrigger.templateVersion || 'v1.0';
     const versionNum = parseFloat(currentVersionStr.replace(/^v/i, '')) || 1.0;
@@ -229,7 +296,7 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
       updatedAt: new Date().toISOString()
     };
 
-    db.saveEmailCampaign(completeRecord, user);
+    await db.saveEmailCampaignAsync(completeRecord, user);
     refreshData();
     setWorkspaceTrigger(null);
     showNotice(
@@ -237,6 +304,33 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
         ? `Saved & activated "${completeRecord.name}" (${nextVersion}).`
         : `Saved configuration changes for "${completeRecord.name}" (${nextVersion}).`
     );
+  };
+
+  const handleRunDryRun = (targetTrigger: EmailCampaignConfig, recipient: string) => {
+    const raw = marketingAutomationScheduler.dryRunTrigger(targetTrigger, {
+      recipientEmailOverride: recipient.trim() || user?.email || 'agent@agency.com'
+    });
+    const mapped = {
+      valid: raw.validConfig && raw.conditionPassed,
+      validationErrors: raw.validationErrors,
+      resolvedRecipient: raw.resolvedRecipient,
+      resolvedSubject: raw.renderedSubject,
+      resolvedBodyHtml: raw.renderedHtml,
+      timingSummary: raw.timingMode,
+      conditionEvaluation: raw.conditionReason
+    };
+    setDryRunResult(mapped);
+    if (mapped.valid) {
+      showNotice(
+        `Dry run passed for "${targetTrigger.name}". Condition & template validated without sending live email.`,
+        'info'
+      );
+    } else {
+      showNotice(
+        `Dry run detected issues: ${mapped.validationErrors.join(' ') || mapped.conditionEvaluation}`,
+        'error'
+      );
+    }
   };
 
   const handleDispatchTestEmail = async (
@@ -255,10 +349,18 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
         user
       );
       refreshData();
-      showNotice(
-        `Test email for "${targetTrigger.name}" dispatched to ${recipient.trim()} (Ref: ${res.messageId}).`
-      );
-      setTestModalTrigger(null);
+      if (res.success) {
+        showNotice(
+          `Test email for "${targetTrigger.name}" dispatched to ${recipient.trim()} (Ref: ${res.messageId}).`,
+          'success'
+        );
+        setTestModalTrigger(null);
+      } else {
+        showNotice(
+          `Test email failed for "${targetTrigger.name}": ${res.error || 'Email provider rejected dispatch'}. Logged as FAILED in audit logs.`,
+          'error'
+        );
+      }
     } finally {
       setIsSendingTest(false);
     }
@@ -419,47 +521,66 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                 <div>
                   <label className="block font-semibold text-[#1F2933] mb-1">
-                    Trigger Name {workspaceTrigger.isSystemTrigger && '(System Read-Only)'}
+                    Trigger Name
                   </label>
                   <input
                     type="text"
-                    readOnly={Boolean(workspaceTrigger.isSystemTrigger)}
                     value={workspaceTrigger.name}
                     onChange={e =>
                       setWorkspaceTrigger({ ...workspaceTrigger, name: e.target.value })
                     }
-                    className={`w-full px-3.5 py-2.5 rounded-xl border border-[#DDE8E6] font-semibold ${
-                      workspaceTrigger.isSystemTrigger
-                        ? 'bg-[#F8FAFA] text-[#5F6B73] cursor-not-allowed'
-                        : 'bg-white text-[#1F2933]'
-                    }`}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#DDE8E6] font-semibold bg-white text-[#1F2933]"
                   />
                 </div>
 
                 <div>
                   <label className="block font-semibold text-[#1F2933] mb-1">
-                    Trigger Key (Read-Only)
+                    Trigger Event {workspaceTrigger.isSystemTrigger && '(System Canonical Event)'}
                   </label>
-                  <input
-                    type="text"
-                    readOnly
-                    value={triggerKey}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#DDE8E6] bg-[#F8FAFA] text-[#5F6B73] font-mono font-semibold cursor-not-allowed"
-                  />
+                  {workspaceTrigger.isSystemTrigger ? (
+                    <input
+                      type="text"
+                      readOnly
+                      value={triggerKey}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-[#DDE8E6] bg-[#F8FAFA] text-[#5F6B73] font-mono font-semibold cursor-not-allowed"
+                    />
+                  ) : (
+                    <select
+                      value={triggerKey}
+                      onChange={e =>
+                        setWorkspaceTrigger({
+                          ...workspaceTrigger,
+                          triggerKey: e.target.value as MarketingTriggerKey
+                        })
+                      }
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-[#DDE8E6] bg-white text-[#1F2933] font-mono font-semibold"
+                    >
+                      {(Object.keys(EVENT_DISPLAY_LABELS) as MarketingTriggerKey[]).map(k => (
+                        <option key={k} value={k}>
+                          {EVENT_DISPLAY_LABELS[k]} ({k})
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
                 <div className="sm:col-span-2">
                   <label className="block font-semibold text-[#1F2933] mb-1">
-                    Internal Admin Description
+                    Trigger Condition / Guard Rule
                   </label>
                   <input
                     type="text"
-                    value={workspaceTrigger.description || ''}
+                    value={workspaceTrigger.triggerCondition || ''}
                     onChange={e =>
-                      setWorkspaceTrigger({ ...workspaceTrigger, description: e.target.value })
+                      setWorkspaceTrigger({
+                        ...workspaceTrigger,
+                        triggerCondition: e.target.value,
+                        description: workspaceTrigger.description || e.target.value
+                      })
                     }
+                    placeholder="e.g., Suppress if quote already converted to booking"
                     className="w-full px-3.5 py-2.5 rounded-xl border border-[#DDE8E6] bg-white text-[#1F2933]"
                   />
                 </div>
@@ -1121,34 +1242,83 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
               />
             </div>
 
-            {/* Section 6: Test Email Dispatch */}
+            {/* Section 6: Test Trigger & Dry Run Dispatch */}
             <div className="bg-white border border-[#DDE8E6] rounded-2xl p-6 space-y-4">
               <div className="border-b border-[#DDE8E6] pb-3">
                 <h3 className="text-base font-bold text-[#1F2933]">
-                  06. Send Test Email
+                  06. Test Trigger (Dry Run &amp; Live Dispatch)
                 </h3>
                 <p className="text-xs text-[#5F6B73]">
-                  Dispatches a live test email through the centralized EmailNotificationService and logs a TEST_SENT audit record.
+                  Run a safe Dry Run to verify condition evaluation and variable resolution, or dispatch a live test email via EmailNotificationService.
                 </p>
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-2">
+              <div className="space-y-2.5">
                 <input
                   type="email"
                   value={testRecipientEmail}
                   onChange={e => setTestRecipientEmail(e.target.value)}
                   placeholder="Enter test recipient email..."
-                  className="flex-1 px-3.5 py-2.5 rounded-xl border border-[#DDE8E6] bg-white text-xs font-mono text-[#1F2933]"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#DDE8E6] bg-white text-xs font-mono text-[#1F2933]"
                 />
-                <button
-                  type="button"
-                  disabled={isSendingTest}
-                  onClick={() => handleDispatchTestEmail(workspaceTrigger, testRecipientEmail)}
-                  className="px-4 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-xs cursor-pointer whitespace-nowrap transition-colors"
-                >
-                  {isSendingTest ? 'Sending Test...' : 'Send Test Email'}
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleRunDryRun(workspaceTrigger, testRecipientEmail)}
+                    className="px-4 py-2.5 rounded-xl border border-[#1F2933] bg-white hover:bg-[#F8FAFA] text-[#1F2933] font-bold text-xs cursor-pointer whitespace-nowrap transition-colors"
+                  >
+                    Simulate Dry Run
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSendingTest}
+                    onClick={() => handleDispatchTestEmail(workspaceTrigger, testRecipientEmail)}
+                    className="px-4 py-2.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-xs cursor-pointer whitespace-nowrap transition-colors"
+                  >
+                    {isSendingTest ? 'Sending Test...' : 'Send Live Test Email'}
+                  </button>
+                </div>
               </div>
+
+              {dryRunResult && (
+                <div
+                  className={`rounded-xl p-3.5 border text-xs space-y-1.5 ${
+                    dryRunResult.valid
+                      ? 'bg-emerald-50/70 border-emerald-200 text-[#1F2933]'
+                      : 'bg-rose-50 border-rose-200 text-rose-900'
+                  }`}
+                >
+                  <div className="font-bold flex items-center justify-between">
+                    <span>
+                      Dry Run Diagnostics: {dryRunResult.valid ? 'READY TO FIRE' : 'INVALID CONFIG'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setDryRunResult(null)}
+                      className="text-[#5F6B73] hover:text-[#1F2933]"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  {!dryRunResult.valid && dryRunResult.validationErrors.length > 0 && (
+                    <div className="text-rose-700 font-medium">
+                      Errors: {dryRunResult.validationErrors.join(' | ')}
+                    </div>
+                  )}
+                  <div>
+                    <span className="text-[#5F6B73]">Target Recipient: </span>
+                    <span className="font-mono font-semibold">{dryRunResult.resolvedRecipient}</span>
+                  </div>
+                  <div>
+                    <span className="text-[#5F6B73]">Timing Behavior: </span>
+                    <span className="font-mono">{dryRunResult.timingSummary}</span>
+                  </div>
+                  <div>
+                    <span className="text-[#5F6B73]">Condition Guard: </span>
+                    <span>{dryRunResult.conditionEvaluation}</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1331,6 +1501,13 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
                   {st === 'ALL' ? 'All' : st.charAt(0) + st.slice(1).toLowerCase()}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(true)}
+                className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 text-xs font-bold cursor-pointer whitespace-nowrap"
+              >
+                + Create Trigger
+              </button>
             </div>
           )}
         </div>
@@ -1489,7 +1666,7 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
                           >
                             Duplicate
                           </button>
-                          <button
+                           <button
                             type="button"
                             onClick={() => {
                               setLogTriggerFilter(key);
@@ -1500,6 +1677,16 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
                           >
                             Logs
                           </button>
+                          {!trigger.isSystemTrigger && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCustomTrigger(trigger)}
+                              className="px-2.5 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs cursor-pointer"
+                              title="Delete Custom Trigger"
+                            >
+                              Delete
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1525,6 +1712,22 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
                 Delayed quote reminders and booking SLA checks awaiting execution time. At execution, the scheduler verifies live conversion/confirmation status.
               </p>
             </div>
+            <button
+              type="button"
+              onClick={async () => {
+                const count = await marketingAutomationScheduler.processDueScheduledJobs();
+                refreshData();
+                showNotice(
+                  count > 0
+                    ? `Processed ${count} due scheduled job(s).`
+                    : 'Checked scheduled queue: no jobs are past their scheduled deadline right now.',
+                  'info'
+                );
+              }}
+              className="px-3.5 py-2 rounded-xl bg-[#1F2933] hover:bg-slate-800 text-white text-xs font-bold cursor-pointer whitespace-nowrap"
+            >
+              Process Due Jobs Now
+            </button>
           </div>
 
           <div className="overflow-x-auto">
@@ -1638,6 +1841,9 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
               >
                 <option value="ALL">All Triggers</option>
                 <option value="USER_REGISTERED">New User Registration</option>
+                <option value="ACCOUNT_PENDING_VERIFICATION">Account Under Verification</option>
+                <option value="ACCOUNT_VERIFICATION_APPROVED">Account Approved</option>
+                <option value="ACCOUNT_VERIFICATION_REJECTED">Account Requires Info</option>
                 <option value="QUOTE_SAVED">Saved Quote Reminder</option>
                 <option value="QUOTE_DOWNLOADED">Downloaded Quote Reminder</option>
                 <option value="FIRST_BOOKING_COMPLETED">First Booking Welcome</option>
@@ -1826,18 +2032,21 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
       )}
 
       {/* =====================================================================
-          MODAL: SEND TEST EMAIL
+          MODAL: SEND TEST EMAIL / DRY RUN
          ===================================================================== */}
       {testModalTrigger && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-[#DDE8E6] space-y-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 border border-[#DDE8E6] space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-[#DDE8E6]">
               <h3 className="text-base font-bold text-[#1F2933]">
-                Send Test Email — {testModalTrigger.name}
+                Test Trigger — {testModalTrigger.name}
               </h3>
               <button
                 type="button"
-                onClick={() => setTestModalTrigger(null)}
+                onClick={() => {
+                  setTestModalTrigger(null);
+                  setDryRunResult(null);
+                }}
                 className="p-1 text-[#5F6B73] hover:text-[#1F2933] cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -1845,7 +2054,7 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
             </div>
 
             <p className="text-xs text-[#5F6B73] leading-relaxed">
-              This will resolve all dynamic variables using sample data and dispatch a live test email via the centralized <span className="font-mono">EmailNotificationService</span>.
+              Run a safe <strong>Dry Run</strong> to evaluate trigger rules and preview variable substitution without sending an email, or dispatch a <strong>Live Test Email</strong> via <span className="font-mono">EmailNotificationService</span>.
             </p>
 
             <div className="text-xs">
@@ -1860,13 +2069,54 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
               />
             </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-[#DDE8E6]">
+            {dryRunResult && (
+              <div
+                className={`rounded-xl p-3.5 border text-xs space-y-1.5 ${
+                  dryRunResult.valid
+                    ? 'bg-emerald-50/70 border-emerald-200 text-[#1F2933]'
+                    : 'bg-rose-50 border-rose-200 text-rose-900'
+                }`}
+              >
+                <div className="font-bold">
+                  Dry Run Result: {dryRunResult.valid ? 'VALID — READY TO EXECUTE' : 'CONFIGURATION ERROR'}
+                </div>
+                {!dryRunResult.valid && dryRunResult.validationErrors.length > 0 && (
+                  <div className="text-rose-700 font-medium">
+                    {dryRunResult.validationErrors.join(' | ')}
+                  </div>
+                )}
+                <div>
+                  <span className="text-[#5F6B73]">Resolved Subject: </span>
+                  <span className="font-semibold">{dryRunResult.resolvedSubject}</span>
+                </div>
+                <div>
+                  <span className="text-[#5F6B73]">Timing: </span>
+                  <span className="font-mono">{dryRunResult.timingSummary}</span>
+                </div>
+                <div>
+                  <span className="text-[#5F6B73]">Condition Guard: </span>
+                  <span>{dryRunResult.conditionEvaluation}</span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap justify-end gap-2 pt-2 border-t border-[#DDE8E6]">
               <button
                 type="button"
-                onClick={() => setTestModalTrigger(null)}
+                onClick={() => {
+                  setTestModalTrigger(null);
+                  setDryRunResult(null);
+                }}
                 className="px-4 py-2 rounded-xl border border-[#DDE8E6] text-[#5F6B73] font-bold text-xs cursor-pointer"
               >
                 Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRunDryRun(testModalTrigger, testRecipientEmail)}
+                className="px-4 py-2 rounded-xl border border-[#1F2933] bg-white hover:bg-[#F8FAFA] text-[#1F2933] font-bold text-xs cursor-pointer"
+              >
+                Simulate Dry Run
               </button>
               <button
                 type="button"
@@ -1874,7 +2124,94 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
                 onClick={() => handleDispatchTestEmail(testModalTrigger, testRecipientEmail)}
                 className="px-4 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-xs cursor-pointer"
               >
-                {isSendingTest ? 'Sending...' : 'Dispatch Test Email'}
+                {isSendingTest ? 'Sending...' : 'Dispatch Live Test Email'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAL: CREATE NEW CUSTOM TRIGGER
+         ===================================================================== */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-[#DDE8E6] space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#DDE8E6]">
+              <h3 className="text-base font-bold text-[#1F2933]">
+                Create New Automation Trigger
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="p-1 text-[#5F6B73] hover:text-[#1F2933] cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold text-[#1F2933] mb-1">
+                  Trigger Name
+                </label>
+                <input
+                  type="text"
+                  value={newTriggerName}
+                  onChange={e => setNewTriggerName(e.target.value)}
+                  placeholder="e.g., VIP Quote Follow-Up (48h)"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#DDE8E6] text-[#1F2933] font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-[#1F2933] mb-1">
+                  Application Event
+                </label>
+                <select
+                  value={newTriggerKey}
+                  onChange={e => setNewTriggerKey(e.target.value as MarketingTriggerKey)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#DDE8E6] bg-white text-[#1F2933] font-semibold"
+                >
+                  {(Object.keys(EVENT_DISPLAY_LABELS) as MarketingTriggerKey[]).map(k => (
+                    <option key={k} value={k}>
+                      {EVENT_DISPLAY_LABELS[k]} ({k})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-[#1F2933] mb-1">
+                  Execution Timing Mode
+                </label>
+                <select
+                  value={newTriggerTiming}
+                  onChange={e => setNewTriggerTiming(e.target.value as TriggerTimingMode)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#DDE8E6] bg-white text-[#1F2933] font-semibold"
+                >
+                  <option value="IMMEDIATE">Immediate (Send on event)</option>
+                  <option value="PRESET">Delayed (Preset hours/days)</option>
+                  <option value="CUSTOM">Delayed (Custom duration)</option>
+                  <option value="SLA">SLA Escalation Check</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-[#DDE8E6]">
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="px-4 py-2 rounded-xl border border-[#DDE8E6] text-[#5F6B73] font-bold text-xs cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateCustomTrigger}
+                className="px-4 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 font-bold text-xs cursor-pointer"
+              >
+                Create &amp; Configure
               </button>
             </div>
           </div>

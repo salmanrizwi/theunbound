@@ -478,6 +478,15 @@ export function resolveProductCategoryEnum(itemOrProduct: any): ProductCategoryE
     if (lower === 'lunch / dinner restaurant' || lower === 'restaurant' || lower === 'restaurants' || lower === 'dining' || lower === 'fine dining') return 'RESTAURANT';
   }
 
+  // 1b. Explicit Transfer flags always resolve to TRANSFERS
+  if (
+    itemOrProduct.isTransfer === true ||
+    itemOrProduct.product?.isTransfer === true ||
+    String(itemOrProduct.productType || itemOrProduct.product?.productType || '').toLowerCase().includes('transfer')
+  ) {
+    return 'TRANSFERS';
+  }
+
   // 2. Authoritative domain signatures on quote item or special inventory entities
   if (isRailQuoteItem(itemOrProduct) || isRailProduct(itemOrProduct) || (itemOrProduct.product && isRailProduct(itemOrProduct.product))) {
     return 'RAIL';

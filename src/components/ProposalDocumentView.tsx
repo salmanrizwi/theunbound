@@ -55,10 +55,25 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
   onSendEmail
 }) => {
   const model = useMemo(() => {
+    const addressParts = [
+      agentUser?.companyAddress || agentUser?.address,
+      agentUser?.companyCity || agentUser?.city,
+      agentUser?.companyCountry || agentUser?.country
+    ].filter(Boolean);
     return buildQuotePresentationModel(quote, {
       name: agentUser?.name,
-      agencyName: agentUser?.agencyName,
-      email: agentUser?.email
+      agencyName: agentUser?.agencyName || agentUser?.companyName,
+      email: agentUser?.companyEmail || agentUser?.email,
+      phone: agentUser?.companyPhone || agentUser?.phone || agentUser?.contactNumber,
+      logoUrl: agentUser?.brandLogoUrl || agentUser?.logoUrl,
+      address: addressParts.length > 0 ? Array.from(new Set(addressParts)).join(', ') : undefined,
+      website: agentUser?.companyWebsite,
+      primaryColor: agentUser?.brandPrimaryColor,
+      accentColor: agentUser?.brandAccentColor,
+      tagline: agentUser?.quoteTagline,
+      footerText: agentUser?.quoteFooterText,
+      disclaimer: agentUser?.quoteDisclaimer,
+      brandingMode: quote.brandingMode
     });
   }, [quote, agentUser]);
 
@@ -68,9 +83,10 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
     } else {
       downloadQuotationPDF({
         quote,
-        agentName: agentUser?.name || quote.agentName,
-        agentAgency: agentUser?.agencyName || quote.agentAgency,
-        agentEmail: agentUser?.email || quote.agentEmail,
+        agentName: model.agentName,
+        agentAgency: model.agencyName,
+        agentEmail: model.agentEmail,
+        agentLogoUrl: model.agentLogoUrl,
         leadId: quote.leadId
       });
     }
@@ -333,27 +349,39 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
       {/* 1. DOCUMENT HEADER & BRAND IDENTITY */}
       {/* ---------------------------------------------------- */}
       <div className="flex flex-col sm:flex-row justify-between items-start border-b-2 border-slate-950 pb-6 gap-4">
-        <div>
-          <div className="flex items-center space-x-3">
-            <span className="text-3xl font-black lowercase tracking-tight font-sans text-slate-950">
-              {quote.agentAgency ? quote.agentAgency : 'theunbound'}
-            </span>
-            <span className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-1 rounded-md bg-slate-950 text-[#00E5C0]">
-              Official Itinerary Proposal
-            </span>
+        <div className="flex items-center gap-3.5">
+          {model.agentLogoUrl && (
+            <img
+              src={model.agentLogoUrl}
+              alt={model.agencyName}
+              className="max-h-12 max-w-36 object-contain rounded-lg border border-slate-200 p-1 bg-white"
+            />
+          )}
+          <div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className={`text-2xl sm:text-3xl font-black tracking-tight font-sans text-slate-950 ${model.isWhiteLabel ? '' : 'lowercase'}`}>
+                {model.agencyName}
+              </span>
+              <span className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-1 rounded-md bg-slate-950 text-[#00E5C0]">
+                {model.documentBadgeTitle}
+              </span>
+              {model.isWhiteLabel && (
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 print:hidden">
+                  White-Label Agency Brand
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-500 mt-1.5">
+              {model.agentAgencySubtitle}
+            </p>
           </div>
-          <p className="text-xs text-slate-500 mt-1.5">
-            {quote.agentAgency 
-              ? `Authorized Travel Partner • In Association with TheUnbound Wholesale DMC Network`
-              : `Destination Management Operations • Direct Ground Logistics & Wholesale Tour Hub`}
-          </p>
         </div>
 
         <div className="text-left sm:text-right space-y-0.5 font-mono text-xs">
-          <div className="text-base font-black text-slate-950">{quote.quoteNumber}</div>
-          <div className="text-slate-500">Date: {quote.createdAt ? new Date(quote.createdAt).toLocaleDateString() : 'Active'}</div>
-          <div className="text-slate-500">Valid Until: {quote.validUntil ? new Date(quote.validUntil).toLocaleDateString() : '14 Days'}</div>
-          <div className="text-teal-700 font-bold">Status: {quote.status}</div>
+          <div className="text-base font-black text-slate-950">{model.quoteNumber} (v{model.version})</div>
+          <div className="text-slate-500">Date: {model.createdDateFormatted}</div>
+          <div className="text-slate-500">Valid Until: {model.validUntilFormatted}</div>
+          <div className="text-teal-700 font-bold">Status: {model.status}</div>
         </div>
       </div>
 
@@ -454,9 +482,12 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
             <Award className="w-3 h-3 text-slate-400" />
             <span>Prepared By Destination Specialist</span>
           </span>
-          <div className="font-bold text-slate-900 text-sm">{quote.agentName || 'Bespoke Travel Specialist'}</div>
-          <div className="text-slate-700 font-medium">{quote.agentAgency || 'TheUnbound DMC Global Ground Desk'}</div>
-          {quote.agentEmail && <div className="text-slate-500 font-mono">{quote.agentEmail}</div>}
+          <div className="font-bold text-slate-900 text-sm">{model.agentName}</div>
+          <div className="text-slate-700 font-medium">{model.agencyName}</div>
+          {model.agentEmail && <div className="text-slate-500 font-mono">{model.agentEmail}</div>}
+          {model.agentPhone && <div className="text-slate-500 font-mono">{model.agentPhone}</div>}
+          {model.agencyWebsite && <div className="text-slate-500 text-[11px]">{model.agencyWebsite}</div>}
+          {model.agencyAddress && <div className="text-slate-500 text-[11px]">{model.agencyAddress}</div>}
           <div className="text-[11px] text-teal-700 font-semibold flex items-center space-x-1 mt-1">
             <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />
             <span>24/7 On-Ground Concierge & Multilingual Dispatch</span>
@@ -885,7 +916,7 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
       <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-5 space-y-3">
         <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center space-x-1.5">
           <ShieldCheck className="w-4 h-4 text-emerald-600" />
-          <span>TheUnbound Ground Operations Standards & Inclusions</span>
+          <span>{model.operationalStandardsTitle}</span>
         </h4>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
           <div className="bg-white p-3 rounded-xl border border-slate-200/80 space-y-1">
@@ -1035,13 +1066,13 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
         <div className="space-y-1.5">
           <h4 className="font-bold text-slate-800 uppercase tracking-wider text-[10px]">Commercial Quotation Terms:</h4>
           <p className="leading-relaxed text-slate-600">
-            {quote.termsAndConditions || 'This quotation is issued by TheUnbound Wholesale DMC Network. Rates are valid for 14 calendar days from generation date. All reservations subject to live inventory confirmation upon deposit.'}
+            {model.commercialTerms}
           </p>
         </div>
 
         <div className="flex flex-col sm:flex-row justify-between items-center gap-2 text-[10px] text-slate-400 pt-3 border-t border-slate-100 font-mono">
-          <span>TheUnbound DMC Global Ground Logistics • sales@theunbound.in</span>
-          <span>Official Contracted Quotation Document</span>
+          <span>{model.footerContactLine}</span>
+          <span>{model.footerRightTitle}</span>
         </div>
       </div>
     </div>

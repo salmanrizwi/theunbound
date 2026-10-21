@@ -681,26 +681,28 @@ export const B2BPortalHeader: React.FC<B2BPortalHeaderProps> = ({
           </select>
         </div>
 
-        {/* Quotation Cart Drawer Trigger */}
-        <button
-          onClick={() => setIsQuoteDrawerOpen(true)}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 text-slate-900 border border-slate-200 transition-all cursor-pointer relative"
-          title="Open Quotation Cart"
-        >
-          <div className="relative">
-            <ShoppingBag className="w-4 h-4 text-[#00C6A6]" />
+        {/* Quotation Cart Drawer Trigger (Hidden inside B2B Quote Builder) */}
+        {activeTab !== 'create-quote' && (
+          <button
+            onClick={() => setIsQuoteDrawerOpen(true)}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 text-slate-900 border border-slate-200 transition-all cursor-pointer relative"
+            title="Open Quotation Cart"
+          >
+            <div className="relative">
+              <ShoppingBag className="w-4 h-4 text-[#00C6A6]" />
+              {items.length > 0 && (
+                <span className="absolute -top-1.5 -right-2 w-3.5 h-3.5 rounded-full bg-[#00C6A6] text-slate-950 text-[9px] font-black flex items-center justify-center">
+                  {items.length}
+                </span>
+              )}
+            </div>
             {items.length > 0 && (
-              <span className="absolute -top-1.5 -right-2 w-3.5 h-3.5 rounded-full bg-[#00C6A6] text-slate-950 text-[9px] font-black flex items-center justify-center">
-                {items.length}
+              <span className="hidden md:inline text-xs font-bold text-slate-900 font-mono pl-1 border-l border-slate-300">
+                {formatCurrency(totalSellingPrice, currency)}
               </span>
             )}
-          </div>
-          {items.length > 0 && (
-            <span className="hidden md:inline text-xs font-bold text-slate-900 font-mono pl-1 border-l border-slate-300">
-              {formatCurrency(totalSellingPrice, currency)}
-            </span>
-          )}
-        </button>
+          </button>
+        )}
 
         {/* Action Centre Notifications (Bell 🔔) */}
         <div className="relative" ref={notificationsRef}>

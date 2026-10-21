@@ -173,7 +173,7 @@ export const HourlyPricingModule: React.FC<HourlyPricingModuleProps> = ({
           <div className="space-y-1">
             <label className="text-[11px] text-slate-300 font-medium">Accreditation / Qualification</label>
             <select
-              value={currentConfig.guideType}
+              value={currentConfig.guideType || 'LICENSED_NATIONAL_GUIDE'}
               onChange={e => updateConfig({ guideType: e.target.value as any })}
               className="w-full p-2 bg-white rounded-lg font-medium text-xs"
             >

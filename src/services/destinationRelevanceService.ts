@@ -144,6 +144,25 @@ export class DestinationRelevanceService {
   }
 
   /**
+   * Resolves a CityHub record from Master Architecture by ID, slug, or name within a destination.
+   */
+  public resolveHubRecord(destinationIdOrSlug: string, hubIdOrName?: string, sourceHubs?: CityHub[]): CityHub | undefined {
+    if (!hubIdOrName || typeof hubIdOrName !== 'string' || !hubIdOrName.trim()) return undefined;
+    const relevantHubs = destinationIdOrSlug
+      ? this.getRelevantHubs(destinationIdOrSlug, sourceHubs)
+      : (sourceHubs || this.db.getCityHubs()).filter(h => !h.status || h.status === 'ACTIVE');
+
+    const clean = hubIdOrName.trim().toLowerCase();
+    return relevantHubs.find(h =>
+      (h.id && h.id.toLowerCase() === clean) ||
+      (h.slug && h.slug.toLowerCase() === clean) ||
+      (h.name && h.name.toLowerCase() === clean) ||
+      (h.hubName && h.hubName.toLowerCase() === clean) ||
+      matchesHub(hubIdOrName, h.id, h.name, h.slug, h.hubName)
+    );
+  }
+
+  /**
    * LEVEL 3: Hotels strictly belonging to the destination, and optionally narrowed to a hub.
    * When hubIdOrName is provided, only returns hotels in that hub.
    * If none exist, returns [] (never falls back to other cities or global list).
@@ -165,8 +184,12 @@ export class DestinationRelevanceService {
 
     // Filter by Hub if specified
     if (hubIdOrName) {
+      const resolvedHub = this.resolveHubRecord(destinationIdOrSlug, hubIdOrName);
+      const criteriaTokens = Array.from(new Set(
+        [hubIdOrName, resolvedHub?.id, resolvedHub?.name, resolvedHub?.hubName, resolvedHub?.slug].filter(Boolean) as string[]
+      ));
       return destHotels.filter(h => 
-        matchesHub(hubIdOrName, h.hubId, h.city, h.cityId, h.cityName)
+        criteriaTokens.some(token => matchesHub(token, h.hubId, h.city, h.cityId, h.cityName))
       );
     }
 
@@ -211,8 +234,9 @@ export class DestinationRelevanceService {
   }
 
   /**
-   * LEVEL 3: Activities & Products strictly belonging to the destination.
+   * LEVEL 3: Activities & Products strictly belonging to the destination and resolved Hub.
    * Categorized into hub-specific activities vs destination-wide services (Rail passes, eSIM, Insurance).
+   * Strictly resolves Hub recommendations from Master Architecture (CityHub -> Product) without generic Destination fallbacks.
    */
   public getRelevantProducts(
     destinationIdOrSlug: string,
@@ -240,6 +264,13 @@ export class DestinationRelevanceService {
       const cat = (p.category || '').toLowerCase();
       const sub = (p.subcategory || '').toLowerCase();
       const name = (p.name || '').toLowerCase();
+      const hasHubBinding = Boolean(
+        (p as any).hubId ||
+        (Array.isArray(p.hubIds) && p.hubIds.length > 0) ||
+        p.city ||
+        p.fromHubId ||
+        p.fromHubName
+      );
       return (
         cat.includes('travel service') ||
         sub.includes('connectivity') ||
@@ -250,23 +281,34 @@ export class DestinationRelevanceService {
         name.includes('wifi') ||
         name.includes('insurance') ||
         name.includes('nationwide') ||
-        !p.city
+        !hasHubBinding
       );
     };
 
     const destinationWideProducts = destProducts.filter(isDestinationWide);
 
-    // If hub is provided, filter hub activities
+    // Strictly resolve Hub activities only when a Hub is specified; never fall back to generic destination products
     let hubActivities: Product[] = [];
-    if (hubIdOrName) {
-      hubActivities = destProducts.filter(p => 
-        !isDestinationWide(p) && (
-          matchesHub(hubIdOrName, (p as any).hubId, p.city) ||
-          (p.hubIds && p.hubIds.some(hId => matchesHub(hubIdOrName, hId)))
-        )
-      );
-    } else {
-      hubActivities = destProducts.filter(p => !isDestinationWide(p));
+    if (hubIdOrName && String(hubIdOrName).trim()) {
+      const resolvedHub = this.resolveHubRecord(destinationIdOrSlug, hubIdOrName);
+      const criteriaTokens = Array.from(new Set(
+        [
+          hubIdOrName,
+          resolvedHub?.id,
+          resolvedHub?.name,
+          resolvedHub?.hubName,
+          resolvedHub?.slug
+        ].filter(Boolean) as string[]
+      ));
+
+      hubActivities = destProducts.filter(p => {
+        if (isDestinationWide(p)) return false;
+        return criteriaTokens.some(token =>
+          matchesHub(token, (p as any).hubId, p.city, (p as any).cityId, (p as any).cityName) ||
+          (Array.isArray(p.hubIds) && p.hubIds.some(hId => matchesHub(token, hId))) ||
+          matchesHub(token, p.fromHubId, p.fromHubName)
+        );
+      });
     }
 
     return {

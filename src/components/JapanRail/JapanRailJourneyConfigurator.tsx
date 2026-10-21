@@ -53,6 +53,10 @@ export interface JapanRailJourneyConfiguratorProps {
   onInstantBook?: (product: Product, pricingResult: RailPricingResult) => void;
   initialOriginStationId?: string;
   initialDestinationStationId?: string;
+  initialTravelDate?: string;
+  initialAdults?: number;
+  initialChildren?: number;
+  initialInfants?: number;
   existingQuoteItemId?: string;
   existingJourneySnapshot?: any;
 }
@@ -65,6 +69,10 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
   onInstantBook,
   initialOriginStationId = 'JP-ST-TOKYO',
   initialDestinationStationId = 'JP-ST-KYOTO',
+  initialTravelDate,
+  initialAdults,
+  initialChildren,
+  initialInfants,
   existingQuoteItemId,
   existingJourneySnapshot
 }) => {
@@ -78,11 +86,12 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
 
   // Initialize the shared dynamic journey
   const [journey, setJourney] = useState<JapanRailJourney>(() => {
+    const resolvedCurrency = currencyConversionService.normalizeCurrency(currency, 'JPY');
     if (existingJourneySnapshot) {
       const restored = japanRailJourneyService.restoreJourneyFromSnapshot(
         existingJourneySnapshot,
         user?.role,
-        (typeof currency === 'string' ? currency : 'JPY') as CurrencyCode
+        resolvedCurrency
       );
       if (restored) return restored;
     }
@@ -90,10 +99,18 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
     return japanRailJourneyService.createDefaultJourney({
       portalOrigin: (portalOrigin || 'BUYER') as JourneyPortalOrigin,
       userRole: user?.role,
-      currency: typeof currency === 'string' ? currency : 'JPY',
+      currency: resolvedCurrency,
+      passengers: (initialAdults !== undefined || initialChildren !== undefined || initialInfants !== undefined)
+        ? {
+            adults: initialAdults ?? 2,
+            children: initialChildren ?? 0,
+            infants: initialInfants ?? 0
+          }
+        : undefined,
       initialOriginId: initialOriginStationId,
       initialDestId: initialDestinationStationId,
-      initialProductId: defaultProductId
+      initialProductId: defaultProductId,
+      initialDate: initialTravelDate
     });
   });
 
@@ -324,7 +341,7 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
             <div className="flex items-center bg-slate-800/90 border border-slate-700 rounded-lg px-2 sm:px-2.5 py-1 text-xs">
               <span className="hidden sm:inline text-slate-400 font-bold mr-1.5">Currency:</span>
               <select
-                value={journey.currency}
+                value={journey.currency || 'JPY'}
                 onChange={(e) => handleCurrencyChange(e.target.value)}
                 className="bg-transparent text-[#00E5C0] font-black outline-none cursor-pointer"
                 title="Display Currency"
@@ -720,7 +737,7 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                         </label>
                         <input
                           type="date"
-                          value={seg.travelDate}
+                          value={seg.travelDate || ''}
                           onChange={(e) => handleUpdateSegment(seg.segmentId, { travelDate: e.target.value })}
                           className="w-full px-2.5 py-2 text-xs font-bold border border-slate-200 rounded-lg outline-none focus:border-[#00C6A6] bg-white cursor-pointer"
                         />
@@ -731,7 +748,7 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                         </label>
                         <input
                           type="time"
-                          value={seg.departureTime}
+                          value={seg.departureTime || '09:00'}
                           onChange={(e) => handleUpdateSegment(seg.segmentId, { departureTime: e.target.value })}
                           className="w-full px-2.5 py-2 text-xs font-bold border border-slate-200 rounded-lg outline-none focus:border-[#00C6A6] bg-white cursor-pointer"
                         />
@@ -745,7 +762,7 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                           Car Class
                         </label>
                         <select
-                          value={seg.carClass}
+                          value={seg.carClass || 'Ordinary'}
                           onChange={(e) => handleUpdateSegment(seg.segmentId, { carClass: e.target.value as RailCarType })}
                           className="w-full px-2 py-2 text-xs font-bold border border-slate-200 rounded-lg outline-none focus:border-[#00C6A6] bg-white cursor-pointer"
                         >
@@ -759,7 +776,7 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                           Service Tier
                         </label>
                         <select
-                          value={seg.serviceGroup}
+                          value={seg.serviceGroup || 'NOZOMI_MIZUHO'}
                           onChange={(e) => handleUpdateSegment(seg.segmentId, { serviceGroup: e.target.value as RailServiceGroup })}
                           className="w-full px-2 py-2 text-xs font-bold border border-slate-200 rounded-lg outline-none focus:border-[#00C6A6] bg-white cursor-pointer"
                         >
@@ -778,7 +795,7 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
                     <div className="flex items-center space-x-2">
                       <span className="text-[11px] font-bold text-slate-500">Seat Preference:</span>
                       <select
-                        value={seg.seatPreference}
+                        value={seg.seatPreference || 'WINDOW'}
                         onChange={(e) => handleUpdateSegment(seg.segmentId, { seatPreference: e.target.value as any })}
                         className="px-2 py-1 text-xs font-semibold border border-slate-200 rounded-md outline-none bg-slate-50 cursor-pointer"
                       >

@@ -47,29 +47,73 @@ export class EmailNotificationService {
       eventType?: CommunicationEventType;
       sentBy?: string;
       sentByName?: string;
+      idempotencyKey?: string;
+      cc?: string[];
+      senderName?: string;
+      senderEmail?: string;
     },
     textBody?: string
-  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  ): Promise<{ success: boolean; messageId?: string; error?: string; alreadySent?: boolean; providerStatus?: string }> {
     const db = AppDatabase.getInstance();
     const communicationId = `comm-email-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const eventType: CommunicationEventType = meta?.eventType || (meta?.quoteId ? 'QUOTE_EMAIL_SENT' : 'BOOKING_EMAIL_SENT');
     const recipientType = meta?.recipientType || (meta?.quoteId ? 'BUYER' : 'DMC_OPS');
 
+    const cleanTo = (to || '').trim();
+    if (!cleanTo || !cleanTo.includes('@') || /^[^\s@]+@example\.com$/i.test(cleanTo)) {
+      const invalidErr = !cleanTo || !cleanTo.includes('@')
+        ? 'Invalid or missing recipient email address.'
+        : `Recipient address "${cleanTo}" is an unconfigured placeholder domain (@example.com).`;
+      db.saveCommunicationAuditLog({
+        id: `audit-${Date.now()}`,
+        communicationId,
+        quoteId: meta?.quoteId,
+        bookingId: meta?.bookingId,
+        leadId: meta?.leadId,
+        recipientEmail: cleanTo || 'MISSING',
+        recipientType,
+        channel: 'EMAIL',
+        eventType,
+        templateVersion: '1.0.0-standard',
+        sentAt: new Date().toISOString(),
+        sentBy: meta?.sentBy,
+        sentByName: meta?.sentByName,
+        deliveryStatus: 'FAILED',
+        failureReason: invalidErr
+      });
+      return { success: false, error: invalidErr, providerStatus: 'INVALID_RECIPIENT' };
+    }
+
+    if (!subject || !subject.trim()) {
+      return { success: false, error: 'Email subject line cannot be empty.', providerStatus: 'VALIDATION_ERROR' };
+    }
+
+    if (!htmlBody || !htmlBody.trim()) {
+      return { success: false, error: 'Email HTML body cannot be empty.', providerStatus: 'VALIDATION_ERROR' };
+    }
+
     try {
       const storedToken = typeof window !== 'undefined' ? (sessionStorage.getItem('google_access_token') || localStorage.getItem('google_access_token')) : null;
-      const idempotencyKey = `${meta?.quoteId || meta?.bookingId || meta?.leadId || to}-${eventType}-${Date.now()}`;
+      const idempotencyKey = meta?.idempotencyKey || `${meta?.quoteId || meta?.bookingId || meta?.leadId || cleanTo}-${eventType}-${Date.now()}`;
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'Authorization': storedToken ? `Bearer ${storedToken}` : 'Bearer theunbound-transactional-relay'
       };
 
+      const apiUrl = typeof window !== 'undefined' && window.location?.origin
+        ? `${window.location.origin}/api/integrations/gmail/send`
+        : 'http://localhost:3000/api/integrations/gmail/send';
+
       // Dispatch through secure backend integration proxy
-      const res = await fetch('/api/integrations/gmail/send', {
+      const res = await fetch(apiUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          to,
+          to: cleanTo,
+          cc: meta?.cc,
+          senderName: meta?.senderName,
+          senderEmail: meta?.senderEmail,
           subject,
           htmlBody,
           textBody,
@@ -81,7 +125,10 @@ export class EmailNotificationService {
             eventType,
             idempotencyKey,
             sentBy: meta?.sentBy,
-            sentByName: meta?.sentByName
+            sentByName: meta?.sentByName,
+            cc: meta?.cc,
+            senderName: meta?.senderName,
+            senderEmail: meta?.senderEmail
           }
         })
       });
@@ -96,7 +143,7 @@ export class EmailNotificationService {
           quoteId: meta?.quoteId,
           bookingId: meta?.bookingId,
           leadId: meta?.leadId,
-          recipientEmail: to,
+          recipientEmail: cleanTo,
           recipientType,
           channel: 'EMAIL',
           eventType,
@@ -107,7 +154,7 @@ export class EmailNotificationService {
           deliveryStatus: 'FAILED',
           failureReason: err
         });
-        return { success: false, error: err };
+        return { success: false, error: err, providerStatus: data.status || 'PROVIDER_REJECTED' };
       }
 
       db.saveCommunicationAuditLog({
@@ -116,7 +163,7 @@ export class EmailNotificationService {
         quoteId: meta?.quoteId,
         bookingId: meta?.bookingId,
         leadId: meta?.leadId,
-        recipientEmail: to,
+        recipientEmail: cleanTo,
         recipientType,
         channel: 'EMAIL',
         eventType,
@@ -127,7 +174,12 @@ export class EmailNotificationService {
         deliveryStatus: 'SUCCESS'
       });
 
-      return { success: true, messageId: data.messageId };
+      return {
+        success: true,
+        messageId: data.messageId,
+        alreadySent: Boolean(data.alreadySent),
+        providerStatus: data.simulated ? 'EMAIL_ACCEPTED_RELAY' : 'EMAIL_SENT_GMAIL_API'
+      };
     } catch (err: any) {
       const errorMsg = err?.message || 'Network error executing Gmail API';
       db.saveCommunicationAuditLog({
@@ -136,7 +188,7 @@ export class EmailNotificationService {
         quoteId: meta?.quoteId,
         bookingId: meta?.bookingId,
         leadId: meta?.leadId,
-        recipientEmail: to,
+        recipientEmail: cleanTo,
         recipientType,
         channel: 'EMAIL',
         eventType,
@@ -147,7 +199,7 @@ export class EmailNotificationService {
         deliveryStatus: 'FAILED',
         failureReason: errorMsg
       });
-      return { success: false, error: errorMsg };
+      return { success: false, error: errorMsg, providerStatus: 'NETWORK_ERROR' };
     }
   }
 
@@ -315,6 +367,14 @@ export class EmailNotificationService {
       email?: string;
       phone?: string;
       logoUrl?: string;
+      address?: string;
+      website?: string;
+      primaryColor?: string;
+      accentColor?: string;
+      tagline?: string;
+      footerText?: string;
+      disclaimer?: string;
+      brandingMode?: 'STANDARD' | 'WHITE_LABEL';
       selectedOptionIndexOrId?: number | string;
       customNote?: string;
       formattingMode?: 'PROPOSAL_VIEW' | 'PLAIN_TEXT';
@@ -333,6 +393,14 @@ export class EmailNotificationService {
       email: agentInfo?.email,
       phone: agentInfo?.phone,
       logoUrl: agentInfo?.logoUrl,
+      address: agentInfo?.address,
+      website: agentInfo?.website,
+      primaryColor: agentInfo?.primaryColor,
+      accentColor: agentInfo?.accentColor,
+      tagline: agentInfo?.tagline,
+      footerText: agentInfo?.footerText,
+      disclaimer: agentInfo?.disclaimer,
+      brandingMode: agentInfo?.brandingMode || quote.brandingMode,
       selectedOptionIndexOrId: agentInfo?.selectedOptionIndexOrId
     });
 
@@ -357,6 +425,14 @@ export class EmailNotificationService {
       email?: string;
       phone?: string;
       logoUrl?: string;
+      address?: string;
+      website?: string;
+      primaryColor?: string;
+      accentColor?: string;
+      tagline?: string;
+      footerText?: string;
+      disclaimer?: string;
+      brandingMode?: 'STANDARD' | 'WHITE_LABEL';
       selectedOptionIndexOrId?: number | string;
       customNote?: string;
       formattingMode?: 'PROPOSAL_VIEW' | 'PLAIN_TEXT';

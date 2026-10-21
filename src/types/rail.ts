@@ -142,16 +142,25 @@ export interface RailRate {
  */
 export function resolveRailRateNettPrice(rate?: Partial<RailRate> | null): number | null {
   if (!rate) return null;
-  if (typeof rate.nettPrice === 'number' && Number.isFinite(rate.nettPrice) && rate.nettPrice > 0) {
-    return rate.nettPrice;
+  const parsedNett = typeof rate.nettPrice === 'number'
+    ? rate.nettPrice
+    : typeof rate.nettPrice === 'string' && String(rate.nettPrice).trim() !== ''
+      ? Number(rate.nettPrice)
+      : NaN;
+  if (Number.isFinite(parsedNett) && parsedNett > 0) {
+    return parsedNett;
   }
+  const parsedRegular = typeof rate.regularTotalFareJPY === 'number'
+    ? rate.regularTotalFareJPY
+    : typeof rate.regularTotalFareJPY === 'string' && String(rate.regularTotalFareJPY).trim() !== ''
+      ? Number(rate.regularTotalFareJPY)
+      : NaN;
   if (
-    rate.nettPrice === undefined &&
-    typeof rate.regularTotalFareJPY === 'number' &&
-    Number.isFinite(rate.regularTotalFareJPY) &&
-    rate.regularTotalFareJPY > 0
+    (rate.nettPrice === undefined || rate.nettPrice === null || !Number.isFinite(parsedNett)) &&
+    Number.isFinite(parsedRegular) &&
+    parsedRegular > 0
   ) {
-    return rate.regularTotalFareJPY;
+    return parsedRegular;
   }
   return null;
 }

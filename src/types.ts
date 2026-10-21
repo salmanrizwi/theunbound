@@ -375,8 +375,33 @@ export interface Company {
   primaryContactEmail?: string;
   primaryContactPhone?: string;
   linkedUserIds?: string[];
+  brandPrimaryColor?: string;
+  brandAccentColor?: string;
+  quoteTagline?: string;
+  quoteFooterText?: string;
+  quoteDisclaimer?: string;
   createdAt: string;
   updatedAt?: string;
+}
+
+export type QuoteBrandingMode = 'STANDARD' | 'WHITE_LABEL';
+
+export interface AgencyBrandingSnapshot {
+  mode: QuoteBrandingMode;
+  agencyId?: string;
+  agencyName: string;
+  agentName?: string;
+  tagline?: string;
+  logoUrl?: string;
+  primaryColor?: string;
+  accentColor?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  website?: string;
+  footerText?: string;
+  disclaimer?: string;
+  capturedAt: string;
 }
 
 export interface User {
@@ -414,6 +439,11 @@ export interface User {
   avatarUrl?: string;
   brandLogoUrl?: string;
   logoUrl?: string;
+  brandPrimaryColor?: string;
+  brandAccentColor?: string;
+  quoteTagline?: string;
+  quoteFooterText?: string;
+  quoteDisclaimer?: string;
   primaryCurrency?: CurrencyCode;
   bio?: string;
   emergencyContactPerson?: string;
@@ -1761,6 +1791,8 @@ export interface QuoteVersionRecord {
   roomingConfig?: any;
   agentNotes?: string;
   termsAndConditions?: string;
+  brandingMode?: QuoteBrandingMode;
+  brandingSnapshot?: AgencyBrandingSnapshot;
   bookingId?: string;
   bookingReference?: string;
   sharedHistory?: {
@@ -1877,7 +1909,7 @@ export interface Quotation {
   assignedToName?: string;
   b2bAgentId?: string;
   
-  // Agent Details
+  // Agent Details & White-Label Branding
   agentId: string;
   agentName: string;
   agentEmail?: string;
@@ -1885,6 +1917,8 @@ export interface Quotation {
   agentCompany?: string;
   agentLogoUrl?: string;
   agentPhone?: string;
+  brandingMode?: QuoteBrandingMode;
+  brandingSnapshot?: AgencyBrandingSnapshot;
 
   // Target Client / User Details
   clientUserId?: string; // Links to registered User account (e.g. usr-buyer-01)
@@ -2037,7 +2071,7 @@ export interface AgentQuotationResponse {
   isLocked?: boolean;
   leadId?: string;
 
-  // Agent Details
+  // Agent Details & White-Label Branding
   agentId: string;
   agentName: string;
   agentEmail?: string;
@@ -2045,6 +2079,8 @@ export interface AgentQuotationResponse {
   agentCompany?: string;
   agentLogoUrl?: string;
   agentPhone?: string;
+  brandingMode?: QuoteBrandingMode;
+  brandingSnapshot?: AgencyBrandingSnapshot;
 
   // Client Details
   clientUserId?: string;
