@@ -4,6 +4,7 @@ import {
   Car, 
   Compass, 
   ShieldCheck, 
+  CheckCircle,
   CheckCircle2, 
   AlertTriangle, 
   AlertCircle, 
@@ -50,7 +51,7 @@ import {
   Smartphone,
   X
 } from 'lucide-react';
-import { isRailQuoteItem } from '../../services/rail/JapanRailJourneyDataService';
+import { isRailQuoteItem, isRailProduct } from '../../services/rail/JapanRailJourneyDataService';
 import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../../utils/inventoryDisplayHelpers';
 import { 
   QuoteItem, 
@@ -381,13 +382,13 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
   const [isEditingAgencyBranding, setIsEditingAgencyBranding] = useState(false);
   const [agencyForm, setAgencyForm] = useState({
-    agencyName: user?.agencyName || '',
+    agencyName: user?.agencyName || user?.companyName || '',
     specialistName: user?.name || '',
-    email: user?.email || '',
-    phone: user?.phone || '',
-    website: user?.website || '',
-    address: user?.businessAddress || '',
-    logoUrl: user?.brandLogoUrl || '',
+    email: user?.companyEmail || user?.email || '',
+    phone: user?.companyPhone || user?.phone || '',
+    website: user?.companyWebsite || '',
+    address: user?.companyAddress || user?.address || '',
+    logoUrl: user?.brandLogoUrl || user?.logoUrl || '',
     brandPrimaryColor: user?.brandPrimaryColor || '#0f172a',
     brandAccentColor: user?.brandAccentColor || '#b45309',
     quoteTagline: user?.quoteTagline || 'Bespoke Travel Proposal',
@@ -399,13 +400,13 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   useEffect(() => {
     if (user) {
       setAgencyForm({
-        agencyName: user.agencyName || '',
+        agencyName: user.agencyName || user.companyName || '',
         specialistName: user.name || '',
-        email: user.email || '',
-        phone: user.phone || '',
-        website: user.website || '',
-        address: user.businessAddress || '',
-        logoUrl: user.brandLogoUrl || '',
+        email: user.companyEmail || user.email || '',
+        phone: user.companyPhone || user.phone || '',
+        website: user.companyWebsite || '',
+        address: user.companyAddress || user.address || '',
+        logoUrl: user.brandLogoUrl || user.logoUrl || '',
         brandPrimaryColor: user.brandPrimaryColor || '#0f172a',
         brandAccentColor: user.brandAccentColor || '#b45309',
         quoteTagline: user.quoteTagline || 'Bespoke Travel Proposal',
@@ -422,7 +423,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       setLocalBrandingMode(mode);
     }
     if (mode === 'WHITE_LABEL') {
-      const readiness = validateWhiteLabelReadiness(user);
+      const snapshot = buildAgencyBrandingSnapshotFromUser(user, undefined, 'WHITE_LABEL');
+      const readiness = validateWhiteLabelReadiness(snapshot);
       if (!readiness.isReady) {
         setIsEditingAgencyBranding(true);
       }
@@ -433,12 +435,16 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     if (updateUserProfile) {
       updateUserProfile({
         agencyName: agencyForm.agencyName.trim(),
+        companyName: agencyForm.agencyName.trim(),
         name: agencyForm.specialistName.trim() || user?.name || '',
-        email: agencyForm.email.trim() || user?.email || '',
+        companyEmail: agencyForm.email.trim() || user?.email || '',
         phone: agencyForm.phone.trim(),
-        website: agencyForm.website.trim(),
-        businessAddress: agencyForm.address.trim(),
+        companyPhone: agencyForm.phone.trim(),
+        companyWebsite: agencyForm.website.trim(),
+        companyAddress: agencyForm.address.trim(),
+        address: agencyForm.address.trim(),
         brandLogoUrl: agencyForm.logoUrl.trim(),
+        logoUrl: agencyForm.logoUrl.trim(),
         brandPrimaryColor: agencyForm.brandPrimaryColor.trim() || '#0f172a',
         brandAccentColor: agencyForm.brandAccentColor.trim() || '#b45309',
         quoteTagline: agencyForm.quoteTagline.trim() || 'Bespoke Travel Proposal',
@@ -452,8 +458,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   };
 
   const renderBrandingModeSelectorCard = () => {
-    const readiness = validateWhiteLabelReadiness(user);
     const snapshot = buildAgencyBrandingSnapshotFromUser(user, undefined, activeBrandingMode);
+    const readiness = validateWhiteLabelReadiness(snapshot);
 
     return (
       <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
@@ -552,14 +558,14 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 <div className="text-[11px] text-slate-600 mt-0.5">
                   {readiness.isReady ? (
                     <span>
-                      Specialist: <strong>{snapshot.specialistName || 'Travel Specialist'}</strong>
+                      Specialist: <strong>{snapshot.agentName || 'Travel Specialist'}</strong>
                       {snapshot.email ? ` • ${snapshot.email}` : ''}
                       {snapshot.phone ? ` • ${snapshot.phone}` : ''}
                       {snapshot.website ? ` • ${snapshot.website}` : ''}
                     </span>
                   ) : (
                     <span>
-                      Missing recommended fields: <strong>{readiness.missingFields.join(', ')}</strong>. All TheUnbound branding is strictly suppressed even while neutral fallbacks are used.
+                      Missing recommended fields: <strong>{readiness.missingMandatoryFields.join(', ')}</strong>. All TheUnbound branding is strictly suppressed even while neutral fallbacks are used.
                     </span>
                   )}
                 </div>
@@ -3791,7 +3797,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                           // Determine index of this day among days assigned to the same Hub to prevent identical duplicate top-3 cards across consecutive days in the same Hub
                           const sameHubDayIndex = Math.max(
                             0,
-                            daySchedule
+                            daySlots
                               .filter(d => (d.hub?.hubId || d.hub?.hubName) === resolvedHubRef)
                               .findIndex(d => d.dayNumber === slot.dayNumber)
                           );
