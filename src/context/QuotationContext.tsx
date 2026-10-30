@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { CurrencyCode, Product, QuoteItem, Quotation, TravelLead, B2BPackage, TripRouteHub, QuoteBuilderHandoffPayload, QuoteItemSource } from '../types';
 import { calculateProductPrice, calculateProductPriceForAgent, resolveInventoryValidity, evaluateInventoryValidity } from '../services/pricingEngine';
 import { sanitizeProductForAgent } from '../utils/customerQuoteSanitizer';
@@ -18,7 +18,7 @@ interface QuotationContextType {
   currency: CurrencyCode;
   setCurrency: (curr: CurrencyCode) => void;
   isQuoteDrawerOpen: boolean;
-  setIsQuoteDrawerOpen: (open: boolean) => void;
+  setIsQuoteDrawerOpen: (open: boolean, options?: { explicitFromQuoteBuilder?: boolean }) => void;
   addProductToQuote: (
     product: Product, 
     options?: { 
@@ -219,15 +219,15 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return path.includes('b2b-quote-builder') || path.includes('quote-builder');
   };
 
-  const setIsQuoteDrawerOpen = (open: boolean) => {
-    if (open && isInsideB2BQuoteBuilder()) {
+  const setIsQuoteDrawerOpen = useCallback((open: boolean, options?: { explicitFromQuoteBuilder?: boolean }) => {
+    if (open && isInsideB2BQuoteBuilder() && !options?.explicitFromQuoteBuilder) {
       setIsQuoteDrawerOpenState(false);
       return;
     }
     setIsQuoteDrawerOpenState(open);
-  };
+  }, []);
 
-  const isQuoteDrawerOpen = isInsideB2BQuoteBuilder() ? false : isQuoteDrawerOpenState;
+  const isQuoteDrawerOpen = isQuoteDrawerOpenState;
 
   // Sync items to storage for session and cross-page persistence
   useEffect(() => {
@@ -280,10 +280,10 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const clearPriceRefreshNotice = () => setPriceRefreshNotice(null);
 
-  const setQuotationDates = (startDate: string, endDate: string) => {
+  const setQuotationDates = useCallback((startDate: string, endDate: string) => {
     setTravelStartDate(startDate);
     setTravelEndDate(endDate);
-  };
+  }, []);
 
   const setClientDetails = (name: string, email: string, phone?: string, company?: string) => {
     setClientName(name);

@@ -7909,11 +7909,17 @@ export class AppDatabase {
       : Math.min(baseFinalSellingPrice * 5, isNaN(Number(rawMarginValue)) ? 0 : Number(rawMarginValue))
     );
 
-    const agentMarginAmount = agentMarginType === 'PERCENTAGE'
-      ? Math.round(baseFinalSellingPrice * (validatedMarginValue / 100))
-      : Math.round(validatedMarginValue);
+    const quoteCurr = (quote.currency || existingQuote?.currency || 'USD').toUpperCase().trim();
+    const roundForCurr = (val: number) =>
+      quoteCurr === 'JPY' || quoteCurr === 'THB'
+        ? Math.round(val)
+        : Math.round((val + Number.EPSILON) * 100) / 100;
 
-    const finalCustomerSellingPrice = baseFinalSellingPrice + agentMarginAmount;
+    const agentMarginAmount = agentMarginType === 'PERCENTAGE'
+      ? roundForCurr(baseFinalSellingPrice * (validatedMarginValue / 100))
+      : roundForCurr(validatedMarginValue);
+
+    const finalCustomerSellingPrice = roundForCurr(baseFinalSellingPrice + agentMarginAmount);
     const pricingCalculatedAt = quote.pricingCalculatedAt || timestamp;
 
     activityLog.push({
@@ -7955,9 +7961,9 @@ export class AppDatabase {
     const agentMarkup = agentMarginAmount;
     const internalProfit = Math.max(0, finalCustomerSellingPrice - authoritativeNetCost);
 
-    const adminManualMarginType = quote.adminManualMarginType ?? quote.admin_manual_margin_type ?? existingQuote?.adminManualMarginType;
-    const adminManualMarginValue = quote.adminManualMarginValue ?? quote.admin_manual_margin_value ?? existingQuote?.adminManualMarginValue;
-    const adminMarginMode = quote.adminMarginMode ?? quote.admin_margin_mode ?? existingQuote?.adminMarginMode ?? 'REPLACE';
+    const adminManualMarginType = quote.adminManualMarginType ?? quote.admin_manual_margin_type ?? existingQuote?.adminManualMarginType ?? (existingQuote as any)?.admin_manual_margin_type;
+    const adminManualMarginValue = quote.adminManualMarginValue ?? quote.admin_manual_margin_value ?? existingQuote?.adminManualMarginValue ?? (existingQuote as any)?.admin_manual_margin_value;
+    const adminMarginMode = quote.adminMarginMode ?? quote.admin_margin_mode ?? existingQuote?.adminMarginMode ?? (existingQuote as any)?.admin_margin_mode ?? existingQuote?.pricingSnapshot?.adminMarginMode ?? 'ADD';
     const adminManualMarginAmount = quote.adminManualMarginAmount ?? quote.admin_manual_margin_amount ?? (
       adminManualMarginValue !== undefined
         ? (adminManualMarginType === 'FIXED' ? Math.round(adminManualMarginValue) : Math.round(authoritativeNetCost * (adminManualMarginValue / 100)))

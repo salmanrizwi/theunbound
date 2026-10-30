@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Building2, 
   MapPin, 
@@ -73,7 +73,7 @@ import {
 } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
-import { formatCurrency, convertCurrency, calculateQuoteInternalBreakdown, calculateProductPrice, calculateProductPriceForAgent } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, calculateQuoteInternalBreakdown, calculateProductPrice, calculateProductPriceForAgent, roundCurrencyAmount } from '../../services/pricingEngine';
 import { canonicalImageService } from '../../services/imageService';
 import { sanitizeImageUrl } from '../../utils/imageUtils';
 import { ProposalDocumentView } from '../ProposalDocumentView';
@@ -275,17 +275,17 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   // Strictly close global cart drawer on entry into the B2B Quote Builder
   useEffect(() => {
     setIsQuoteDrawerOpen(false);
-  }, [setIsQuoteDrawerOpen]);
+  }, []);
 
   // Local agent markup & margin state (Section 2 & Step 9)
   const [agentMarginType, setAgentMarginType] = useState<AgentMarginType>('PERCENTAGE');
   const [agentMarginValue, setAgentMarginValue] = useState<number>(10);
   const [agentMarkupPercent, setAgentMarkupPercent] = useState<number>(10);
 
-  // Admin Manual Margin on Total Nett Cost (Step 7)
+  // Admin Manual Margin on Total Nett Cost (Step 7) — Default mode is 'ADD' (Add to Existing Margin)
   const [adminManualMarginType, setAdminManualMarginType] = useState<'PERCENTAGE' | 'FIXED'>('PERCENTAGE');
   const [adminManualMarginValue, setAdminManualMarginValue] = useState<number>(0);
-  const [adminMarginMode, setAdminMarginMode] = useState<'REPLACE' | 'ADD'>('REPLACE');
+  const [adminMarginMode, setAdminMarginMode] = useState<'REPLACE' | 'ADD'>('ADD');
 
   // Top-Level View State (Itinerary Builder vs Official Proposal Preview)
   const [activeViewTab, setActiveViewTab] = useState<'BUILDER' | 'PROPOSAL_PREVIEW'>('BUILDER');
@@ -352,6 +352,14 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     if (contextEndDate) setEndDate(contextEndDate);
   }, [contextStartDate, contextEndDate]);
 
+  // Initialize QuotationContext travel dates on mount if not yet populated
+  useEffect(() => {
+    if (startDate && endDate && !contextStartDate && !contextEndDate) {
+      setContextQuotationDates(startDate, endDate);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (contextQuotationScope) {
       setQuotationScope(contextQuotationScope);
@@ -375,11 +383,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         (d.slug || '').toLowerCase() === qDestLower ||
         (d.id || '').toLowerCase() === qDestLower
       );
-      if (found) {
+      if (found && found.id !== currentDestination.id) {
         setCurrentDestination(found);
       }
     }
-  }, [contextDestination, destinations]);
+  }, [contextDestination, destinations, currentDestination.id]);
 
   // Quotation Multi-Options State (Option 1, Option 2, Option 3)
   const [activeOptionTab, setActiveOptionTab] = useState<number>(1);
@@ -692,15 +700,23 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       if (q.leadId) setSelectedLeadId(q.leadId);
       if (q.travelStartDate) setStartDate(q.travelStartDate);
       if (q.travelEndDate) setEndDate(q.travelEndDate);
+      if (q.travelStartDate && q.travelEndDate) {
+        setContextQuotationDates(q.travelStartDate, q.travelEndDate);
+      }
       if (q.adultsCount) setAdultsCount(q.adultsCount);
       if (q.childrenCount !== undefined) setChildrenCount(q.childrenCount);
       if (q.infantsCount !== undefined) setInfantsCount(q.infantsCount);
       if (q.childAges) setChildAges(q.childAges);
       if (q.agentMarginType) setAgentMarginType(q.agentMarginType);
       if (q.agentMarginValue !== undefined) setAgentMarginValue(q.agentMarginValue);
-      if (q.adminManualMarginType) setAdminManualMarginType(q.adminManualMarginType);
-      if (q.adminManualMarginValue !== undefined) setAdminManualMarginValue(q.adminManualMarginValue);
-      if (q.adminMarginMode) setAdminMarginMode(q.adminMarginMode);
+      const savedAdminMarginType = q.adminManualMarginType || (q as any).admin_manual_margin_type || q.pricingSnapshot?.adminManualMarginType || (q as any).pricing_snapshot?.adminManualMarginType;
+      if (savedAdminMarginType) setAdminManualMarginType(savedAdminMarginType);
+      const savedAdminMarginValue = q.adminManualMarginValue ?? (q as any).admin_manual_margin_value ?? q.pricingSnapshot?.adminManualMarginValue ?? (q as any).pricing_snapshot?.adminManualMarginValue;
+      if (savedAdminMarginValue !== undefined) setAdminManualMarginValue(savedAdminMarginValue);
+      const savedAdminMarginMode = q.adminMarginMode || (q as any).admin_margin_mode || q.pricingSnapshot?.adminMarginMode || (q as any).pricing_snapshot?.adminMarginMode;
+      if (savedAdminMarginMode === 'REPLACE' || savedAdminMarginMode === 'ADD') {
+        setAdminMarginMode(savedAdminMarginMode);
+      }
       if (q.overallDiscountPercent !== undefined) setOverallDiscountPercent(q.overallDiscountPercent);
       const loadedScope: QuotationScope = (q.quotationScope as QuotationScope) || (q.scope as QuotationScope) || 'HOTEL_LAND';
       setQuotationScope(loadedScope);
@@ -833,6 +849,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       setLoadError(null);
       setAutoSaveStatus('IDLE');
       setBrandingMode('STANDARD');
+      setAdminManualMarginType('PERCENTAGE');
+      setAdminManualMarginValue(0);
+      setAdminMarginMode('ADD');
 
       if (prefillLead) {
         setClientName(prefillLead.contactName || prefillLead.clientName || '');
@@ -856,10 +875,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         }
         if (prefillLead.travelStartDate) setStartDate(prefillLead.travelStartDate);
         if (prefillLead.travelEndDate) setEndDate(prefillLead.travelEndDate);
+        if (prefillLead.travelStartDate && prefillLead.travelEndDate) {
+          setContextQuotationDates(prefillLead.travelStartDate, prefillLead.travelEndDate);
+        }
       } else {
-        clearQuote();
+        setContextQuotationDates(startDate, endDate);
         setSelectedLeadId('');
-        setRouteHubs([]);
       }
     } else if (!targetQuoteId && (quoteSource === 'PACKAGE' || sourcePackageId)) {
       // Package Customization Mode: initialize fresh quote identity while preserving all loaded package state
@@ -873,6 +894,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       setActiveViewTab('BUILDER');
       setActiveOptionTab(1);
       setBrandingMode('STANDARD');
+      setAdminManualMarginType('PERCENTAGE');
+      setAdminManualMarginValue(0);
+      setAdminMarginMode('ADD');
       if (contextQuotationScope) {
         setQuotationScope(contextQuotationScope);
       }
@@ -943,14 +967,16 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     if (contextRouteHubs && contextRouteHubs.length > 0 && !areRouteHubsEqual(contextRouteHubs, routeHubs)) {
       setRouteHubs(contextRouteHubs);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contextRouteHubs]);
 
-  // Keep QuotationContext synchronized with routeHubs changes safely after render
+  // Keep QuotationContext synchronized when local routeHubs changes
   useEffect(() => {
     if (!areRouteHubsEqual(contextRouteHubs, routeHubs)) {
       setContextRouteHubs(routeHubs);
     }
-  }, [routeHubs, contextRouteHubs, setContextRouteHubs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeHubs]);
 
   // Keep active option data synchronized with routeHubs changes safely
   useEffect(() => {
@@ -965,6 +991,61 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       };
     });
   }, [routeHubs, activeOptionTab]);
+
+  // Keep hub hotel assignments synchronized when hotel items are removed from cart
+  const prevCartItemsRef = useRef<QuoteItem[]>(items);
+  useEffect(() => {
+    const prevItems = prevCartItemsRef.current;
+    prevCartItemsRef.current = items;
+    if (prevItems.length <= items.length) return;
+
+    const currentIds = new Set(items.map(i => i.id));
+    const removedItems = prevItems.filter(i => !currentIds.has(i.id));
+    if (removedItems.length === 0) return;
+
+    const isHotelItemCheck = (it: QuoteItem): boolean =>
+      it.product?.productType === 'Hotel' ||
+      it.product?.productType === 'Hotel & Resort' ||
+      it.isManualHotel === true ||
+      it.product?.accommodationType === 'manual' ||
+      (it.product as any)?.category === 'Hotels';
+
+    const removedHotels = removedItems.filter(isHotelItemCheck);
+    if (removedHotels.length > 0) {
+      const remainingHotels = items.filter(isHotelItemCheck);
+      setRouteHubs(prevHubs => {
+        if (prevHubs.length === 0) return prevHubs;
+        let changed = false;
+        const nextHubs = prevHubs.map(h => {
+          const wasRemovedForHub = removedHotels.some(rem =>
+            rem.hubId === h.id ||
+            rem.manualHotelDetails?.hubId === h.id ||
+            (h.hotelId && (rem.hotelId === h.hotelId || rem.product?.id?.includes(h.hotelId)))
+          );
+          if (!wasRemovedForHub) return h;
+
+          const stillHasHotelForHub = remainingHotels.some(rem =>
+            rem.hubId === h.id ||
+            rem.manualHotelDetails?.hubId === h.id ||
+            (h.hotelId && (rem.hotelId === h.hotelId || rem.product?.id?.includes(h.hotelId)))
+          );
+          if (stillHasHotelForHub) return h;
+
+          changed = true;
+          return {
+            ...h,
+            hotelId: undefined,
+            roomTypeId: undefined,
+            roomsCount: undefined,
+            isManualHotel: false,
+            manualHotel: undefined,
+            accommodationType: 'NO_ACCOMMODATION' as const
+          };
+        });
+        return changed ? nextHubs : prevHubs;
+      });
+    }
+  }, [items, activeOptionTab]);
 
   const handleUpdateRouteHubs: React.Dispatch<React.SetStateAction<TripRouteHub[]>> = (updaterOrValue) => {
     setRouteHubs(prev => {
@@ -1734,45 +1815,100 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const visaTotalSelling = useMemo(() => visaItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [visaItems]);
   const experienceTotalSelling = useMemo(() => experienceItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [experienceItems]);
 
-  const baseFinalSellingPrice = useMemo(() => {
-    const rawSellingPrice = quotationScope === 'LAND_ONLY'
-      ? effectivePricedItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0)
-      : totalSellingPrice;
+  const step7InternalBreakdown = useMemo(() => {
+    if (!canViewInternalCosts) return null;
+    return calculateQuoteInternalBreakdown({
+      items: effectivePricedItems,
+      targetCurrency: currency,
+      agentMarginType,
+      agentMarginValue,
+      overallDiscountPercent: overallDiscountPercent || 0,
+      userRole: user?.role,
+      scope: quotationScope,
+      routeHubs,
+      adminManualMarginType,
+      adminManualMarginValue,
+      adminMarginMode
+    });
+  }, [
+    canViewInternalCosts,
+    effectivePricedItems,
+    currency,
+    agentMarginType,
+    agentMarginValue,
+    overallDiscountPercent,
+    user?.role,
+    quotationScope,
+    routeHubs,
+    adminManualMarginType,
+    adminManualMarginValue,
+    adminMarginMode
+  ]);
 
-    if (adminManualMarginValue > 0 && canViewInternalCosts) {
-      const adminMarginAmount = adminManualMarginType === 'PERCENTAGE'
-        ? Math.round(totalNetCost * (adminManualMarginValue / 100))
-        : Math.round(adminManualMarginValue);
-      return adminMarginMode === 'REPLACE'
-        ? (totalNetCost + adminMarginAmount)
-        : (rawSellingPrice + adminMarginAmount);
+  const baseFinalSellingPrice = useMemo(() => {
+    const rawSellingPrice = roundCurrencyAmount(
+      quotationScope === 'LAND_ONLY'
+        ? effectivePricedItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0)
+        : totalSellingPrice,
+      currency
+    );
+
+    if (canViewInternalCosts) {
+      if (step7InternalBreakdown && step7InternalBreakdown.adminFinalTotal !== undefined && step7InternalBreakdown.adminFinalTotal > 0) {
+        return step7InternalBreakdown.adminFinalTotal;
+      }
+      if (totalNetCost > 0) {
+        const adminMarginAmount = adminManualMarginType === 'PERCENTAGE'
+          ? roundCurrencyAmount(totalNetCost * ((adminManualMarginValue || 0) / 100), currency)
+          : roundCurrencyAmount(adminManualMarginValue || 0, currency);
+        const stage1PreDiscount = adminMarginMode === 'REPLACE'
+          ? roundCurrencyAmount(totalNetCost + adminMarginAmount, currency)
+          : roundCurrencyAmount(rawSellingPrice + adminMarginAmount, currency);
+        const stage1Discount = (overallDiscountPercent || 0) > 0
+          ? roundCurrencyAmount(stage1PreDiscount * ((overallDiscountPercent || 0) / 100), currency)
+          : 0;
+        return Math.max(0, roundCurrencyAmount(stage1PreDiscount - stage1Discount, currency));
+      }
     }
 
     return rawSellingPrice;
-  }, [totalSellingPrice, quotationScope, effectivePricedItems, adminManualMarginValue, adminManualMarginType, adminMarginMode, totalNetCost, canViewInternalCosts]);
+  }, [
+    totalSellingPrice,
+    quotationScope,
+    effectivePricedItems,
+    adminManualMarginValue,
+    adminManualMarginType,
+    adminMarginMode,
+    totalNetCost,
+    canViewInternalCosts,
+    step7InternalBreakdown,
+    overallDiscountPercent,
+    currency
+  ]);
 
   const additionalMarginAmount = useMemo(() => {
     if (agentMarginType === 'PERCENTAGE') {
-      return Math.round(baseFinalSellingPrice * ((agentMarginValue || 0) / 100));
+      return roundCurrencyAmount(baseFinalSellingPrice * ((agentMarginValue || 0) / 100), currency);
     }
-    return Math.round(agentMarginValue || 0);
-  }, [baseFinalSellingPrice, agentMarginType, agentMarginValue]);
+    return roundCurrencyAmount(agentMarginValue || 0, currency);
+  }, [baseFinalSellingPrice, agentMarginType, agentMarginValue, currency]);
 
   const finalCustomerSellingPrice = useMemo(() => {
-    return baseFinalSellingPrice + additionalMarginAmount;
-  }, [baseFinalSellingPrice, additionalMarginAmount]);
+    return roundCurrencyAmount(baseFinalSellingPrice + additionalMarginAmount, currency);
+  }, [baseFinalSellingPrice, additionalMarginAmount, currency]);
 
   const finalClientPrice = finalCustomerSellingPrice;
 
   // Dynamic 3-Option Calculations Engine
   const computedQuotationOptions: QuotationOption[] = useMemo(() => {
     return [1, 2, 3].map(optNum => {
-      const optState = optNum === activeOptionTab
+      const isCurrentActiveOption = optNum === activeOptionTab;
+      const optState = isCurrentActiveOption
         ? {
             scope: quotationScope,
             items: effectivePricedItems,
             routeHubs,
-            agentMarkupPercent,
+            agentMarkupPercent: agentMarginType === 'PERCENTAGE' ? agentMarginValue : 0,
             overallDiscountPercent,
             title: optionsData[optNum]?.title || `Option ${optNum}`,
             badge: optionsData[optNum]?.badge || '',
@@ -1792,20 +1928,34 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           };
 
       const optItems = optState.items;
-      const selling = optItems.reduce((acc, it) => acc + (it.calculation?.finalTotalSellingPrice || it.product.priceSelling * ((it.pax?.adults || 2) + (it.pax?.children || 0))), 0);
-      const optMarkupAmount = Math.round(selling * ((optState.agentMarkupPercent || 12) / 100));
-      const optFinalClientPrice = Math.round((selling + optMarkupAmount) * (1 - (optState.overallDiscountPercent || 0) / 100));
+      const selling = roundCurrencyAmount(
+        optItems.reduce((acc, it) => acc + (it.calculation?.finalTotalSellingPrice || it.product.priceSelling * ((it.pax?.adults || 2) + (it.pax?.children || 0))), 0),
+        currency
+      );
+      const optMarkupAmount = isCurrentActiveOption
+        ? additionalMarginAmount
+        : roundCurrencyAmount(selling * ((optState.agentMarkupPercent || 12) / 100), currency);
+      const optFinalClientPrice = isCurrentActiveOption
+        ? finalCustomerSellingPrice
+        : roundCurrencyAmount((selling + optMarkupAmount) * (1 - (optState.overallDiscountPercent || 0) / 100), currency);
 
       const optBreakdown = canViewInternalCosts
         ? calculateQuoteInternalBreakdown({
             items: optItems,
             targetCurrency: currency,
-            agentMarginType: 'PERCENTAGE',
-            agentMarginValue: optState.agentMarkupPercent ?? 12,
+            agentMarginType: isCurrentActiveOption ? agentMarginType : 'PERCENTAGE',
+            agentMarginValue: isCurrentActiveOption ? agentMarginValue : (optState.agentMarkupPercent ?? 12),
             overallDiscountPercent: optState.overallDiscountPercent ?? 0,
             userRole: user?.role,
             scope: optState.scope,
-            routeHubs: optState.routeHubs
+            routeHubs: optState.routeHubs,
+            ...(isCurrentActiveOption
+              ? {
+                  adminManualMarginType,
+                  adminManualMarginValue,
+                  adminMarginMode
+                }
+              : {})
           })
         : null;
 
@@ -1819,12 +1969,31 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         items: optItems,
         routeHubs: optState.routeHubs,
         totalNetCost: canViewInternalCosts && optBreakdown && optBreakdown.isComplete ? optBreakdown.totalNettCost : 0,
-        totalSellingPrice: canViewInternalCosts && optBreakdown ? optBreakdown.finalPackagePrice : optFinalClientPrice,
+        totalSellingPrice: isCurrentActiveOption
+          ? finalCustomerSellingPrice
+          : (canViewInternalCosts && optBreakdown ? optBreakdown.finalPackagePrice : optFinalClientPrice),
         totalMargin: canViewInternalCosts && optBreakdown ? optBreakdown.totalMargin : optMarkupAmount,
         totalTaxes: canViewInternalCosts && optBreakdown ? optBreakdown.taxAmount : 0
       };
     });
-  }, [effectivePricedItems, routeHubs, quotationScope, agentMarkupPercent, overallDiscountPercent, optionsData, activeOptionTab, canViewInternalCosts, currency, user?.role]);
+  }, [
+    effectivePricedItems,
+    routeHubs,
+    quotationScope,
+    agentMarginType,
+    agentMarginValue,
+    additionalMarginAmount,
+    finalCustomerSellingPrice,
+    adminManualMarginType,
+    adminManualMarginValue,
+    adminMarginMode,
+    overallDiscountPercent,
+    optionsData,
+    activeOptionTab,
+    canViewInternalCosts,
+    currency,
+    user?.role
+  ]);
 
   // Sync / Auto-Save Quote to AppDatabase
   // Default explicit = true so all user action buttons (PDF, WhatsApp, Email, Convert Booking) always save & return the quote
@@ -1864,7 +2033,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             overallDiscountPercent,
             userRole: user?.role,
             scope: quotationScope,
-            routeHubs
+            routeHubs,
+            adminManualMarginType,
+            adminManualMarginValue,
+            adminMarginMode
           })
         : null;
 
@@ -2020,7 +2192,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       }
     }, 1500);
     return () => clearTimeout(timer);
-  }, [items, clientName, clientEmail, startDate, endDate, agentMarkupPercent, currency, routeHubs, quotationScope, brandingMode, hasExplicitlySaved]);
+  }, [items, clientName, clientEmail, startDate, endDate, agentMarkupPercent, agentMarginType, agentMarginValue, adminManualMarginType, adminManualMarginValue, adminMarginMode, overallDiscountPercent, currency, routeHubs, quotationScope, brandingMode, hasExplicitlySaved]);
 
   // Balance Nights Helper
   const handleAutoBalanceNights = () => {
@@ -3450,6 +3622,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               setQuoteTitle={setQuoteTitle}
               brandingMode={brandingMode}
               setBrandingMode={setBrandingMode}
+              onOpenCartDrawer={() => setIsQuoteDrawerOpen(true, { explicitFromQuoteBuilder: true })}
             />
         </main>
       )}

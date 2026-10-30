@@ -8,7 +8,7 @@ import {
   PricingCalculationResult, 
   AgentPricingResponse 
 } from '../types';
-import { formatCurrency } from '../services/pricingEngine';
+import { formatCurrency, roundCurrencyAmount } from '../services/pricingEngine';
 
 export interface CustomerSanitizedQuote {
   quoteId: string;
@@ -154,9 +154,14 @@ export function sanitizeQuoteForCustomer(
   }
 
   // Authoritative Final Selling Price
-  const finalPrice = activeOption?.totalSellingPrice !== undefined
-    ? activeOption.totalSellingPrice
-    : (quote.totalSellingPrice || 0);
+  const finalPrice = roundCurrencyAmount(
+    (selectedOptionIndexOrId === undefined && (quote.finalCustomerSellingPrice ?? quote.final_customer_selling_price) !== undefined)
+      ? (quote.finalCustomerSellingPrice ?? quote.final_customer_selling_price)!
+      : (activeOption?.totalSellingPrice !== undefined
+          ? activeOption.totalSellingPrice
+          : (quote.finalCustomerSellingPrice ?? quote.final_customer_selling_price ?? quote.totalSellingPrice ?? 0)),
+    quote.currency
+  );
 
   // Nights and Days
   let nightsCount = 1;
@@ -562,15 +567,21 @@ export function sanitizeQuoteForAgent(quote: Quotation): Quotation {
   const clone: Quotation = JSON.parse(JSON.stringify(quote));
 
   // Authoritative Agent-Facing Pricing Preservation (Section 5 & 8)
-  const baseFinalSellingPrice = clone.baseFinalSellingPrice ?? clone.base_final_selling_price ?? clone.totalSellingPrice;
+  const baseFinalSellingPrice = roundCurrencyAmount(
+    clone.baseFinalSellingPrice ?? clone.base_final_selling_price ?? clone.totalSellingPrice,
+    clone.currency
+  );
   const agentMarginType = clone.agentMarginType ?? clone.agent_margin_type ?? 'PERCENTAGE';
   const agentMarginValue = clone.agentMarginValue ?? clone.agent_margin_value ?? (clone.overallMarkupPercent ?? 0);
   const agentMarginAmount = clone.agentMarginAmount ?? clone.agent_margin_amount ?? (
     agentMarginType === 'PERCENTAGE'
-      ? Math.round(baseFinalSellingPrice * (agentMarginValue / 100))
-      : Math.round(agentMarginValue)
+      ? roundCurrencyAmount(baseFinalSellingPrice * (agentMarginValue / 100), clone.currency)
+      : roundCurrencyAmount(agentMarginValue, clone.currency)
   );
-  const finalCustomerSellingPrice = clone.finalCustomerSellingPrice ?? clone.final_customer_selling_price ?? (baseFinalSellingPrice + agentMarginAmount);
+  const finalCustomerSellingPrice = roundCurrencyAmount(
+    clone.finalCustomerSellingPrice ?? clone.final_customer_selling_price ?? (baseFinalSellingPrice + agentMarginAmount),
+    clone.currency
+  );
 
   // Set Agent-facing fields explicitly
   clone.baseFinalSellingPrice = baseFinalSellingPrice;

@@ -10,6 +10,7 @@ import { db } from '../services/db';
 import { GlobalConfiguratorRouter } from './Configurators/GlobalConfiguratorRouter';
 import { BookingSubmissionModal } from './B2BAgentPortal/BookingSubmissionModal';
 import { BookingConfirmationModal } from './BookingConfirmationModal';
+import { isRailQuoteItem, isRailProduct } from '../services/rail/JapanRailJourneyDataService';
 import { 
   X, 
   Trash2, 
@@ -61,7 +62,9 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
     updateItemTravelDate,
     clearQuote,
     totalNetCost,
-    totalSellingPrice
+    totalSellingPrice,
+    travelStartDate,
+    travelEndDate
   } = useQuotation();
 
   const { role, user, openAuthModal } = useAuth();
@@ -82,20 +85,16 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
     (Boolean(document.getElementById('quote-builder-shell')) ||
       (typeof window !== 'undefined' && (window.location?.pathname || '').toLowerCase().includes('quote-builder')));
 
-  // Lock body scroll when drawer is open (never while inside B2B Quote Builder)
+  // Lock body scroll when drawer is open
   useEffect(() => {
-    if (isInsideQuoteBuilder && isQuoteDrawerOpen) {
-      setIsQuoteDrawerOpen(false);
-      return;
-    }
-    if (isQuoteDrawerOpen && !isInsideQuoteBuilder) {
+    if (isQuoteDrawerOpen) {
       const originalOverflow = document.body.style.overflow;
       document.body.style.overflow = 'hidden';
       return () => {
         document.body.style.overflow = originalOverflow;
       };
     }
-  }, [isQuoteDrawerOpen, isInsideQuoteBuilder, setIsQuoteDrawerOpen]);
+  }, [isQuoteDrawerOpen]);
 
   // ESC key listener to close drawer
   useEffect(() => {
@@ -109,6 +108,8 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
   }, [isQuoteDrawerOpen, setIsQuoteDrawerOpen]);
 
   const handleEditItem = (item: any) => {
+    if (isInsideQuoteBuilder) return;
+    if (isRailQuoteItem(item) || (item?.product && isRailProduct(item.product))) return;
     setEditingItemId(item.id);
     setEditingItem(item);
   };
@@ -210,7 +211,6 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
     }
   };
 
-  if (isInsideQuoteBuilder) return null;
   if (!isQuoteDrawerOpen && !isSubmissionModalOpen && !confirmedBooking) return null;
 
   const isAuthorized = canUserAccessB2BInventory(user).allowed;
@@ -288,7 +288,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
           onClose={() => setIsSubmissionModalOpen(false)}
           onBackToCart={() => {
             setIsSubmissionModalOpen(false);
-            setIsQuoteDrawerOpen(true);
+            setIsQuoteDrawerOpen(true, { explicitFromQuoteBuilder: true });
           }}
           onBookingSuccess={(booking) => {
             setIsSubmissionModalOpen(false);
@@ -574,6 +574,14 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                       const cat = item.product.category?.toUpperCase() || '';
                       const isHotel = cat === 'ACCOMMODATION' || cat === 'HOTELS' || item.product.supplierProductCode?.startsWith('SUP-HTL-') || item.metadata?.hotelId;
                       const isVisa = cat === 'VISA' || cat === 'VISA SERVICE' || item.product.sku?.startsWith('VSA-') || item.metadata?.visaProductId;
+                      const isRail = isRailQuoteItem(item) || isRailProduct(item.product);
+                      const isOutsideQuoteDates = Boolean(
+                        travelStartDate &&
+                        travelEndDate &&
+                        item.travelDate &&
+                        !isVisa &&
+                        (item.travelDate < travelStartDate || item.travelDate > travelEndDate)
+                      );
 
                       return (
                         <div
@@ -581,6 +589,8 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                           className={`p-4 rounded-2xl bg-white border transition-all space-y-3 ${
                             !availability.isAvailable
                               ? 'border-rose-400 ring-2 ring-rose-200 bg-rose-50/30'
+                              : isOutsideQuoteDates
+                              ? 'border-amber-300 ring-1 ring-amber-200 bg-amber-50/20'
                               : 'border-slate-200 hover:border-slate-300 shadow-xs'
                           }`}
                         >
@@ -605,6 +615,12 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                                   <span className="text-[11px] text-slate-500 font-medium">
                                     {item.product.city || item.product.destinationName}
                                   </span>
+                                  {isOutsideQuoteDates && (
+                                    <span className="inline-flex items-center space-x-1 text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded">
+                                      <Clock className="w-3 h-3 text-amber-700" />
+                                      <span>Outside Quote Dates ({item.travelDate})</span>
+                                    </span>
+                                  )}
                                   {availability.isAvailable ? (
                                     <span className="inline-flex items-center space-x-1 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded">
                                       <CalendarCheck className="w-3 h-3 text-emerald-600" />
@@ -642,19 +658,23 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                             </div>
 
                             <div className="flex items-center space-x-1 shrink-0">
+                              {!isInsideQuoteBuilder && !isRail && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditItem(item)}
+                                  className="text-slate-700 hover:text-slate-950 bg-slate-100 hover:bg-slate-200 p-1.5 rounded-lg transition-colors cursor-pointer flex items-center space-x-1 text-[11px] font-bold"
+                                  title="Configure parameters and options"
+                                >
+                                  <Sliders className="w-3.5 h-3.5 text-[#008972]" />
+                                  <span className="hidden sm:inline">Edit</span>
+                                </button>
+                              )}
                               <button
                                 type="button"
-                                onClick={() => handleEditItem(item)}
-                                className="text-slate-700 hover:text-slate-950 bg-slate-100 hover:bg-slate-200 p-1.5 rounded-lg transition-colors cursor-pointer flex items-center space-x-1 text-[11px] font-bold"
-                                title="Configure parameters and options"
-                              >
-                                <Sliders className="w-3.5 h-3.5 text-[#008972]" />
-                                <span className="hidden sm:inline">Edit</span>
-                              </button>
-                              <button
                                 onClick={() => removeProductFromQuote(item.id)}
                                 className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
                                 title="Remove from cart"
+                                aria-label={`Remove ${item.customTitle || item.title || item.product.name} from cart`}
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
@@ -817,21 +837,33 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                   </div>
                 </div>
 
-                {/* Primary Direct Booking CTA Button */}
-                <button
-                  id="btn-submit-cart-booking"
-                  disabled={hasRosterConflict || items.length === 0}
-                  onClick={handleOpenBookingSubmission}
-                  className={`w-full py-3.5 px-4 rounded-xl text-sm font-black transition-all flex items-center justify-center space-x-2 shadow-lg ${
-                    hasRosterConflict || items.length === 0
-                      ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                      : 'bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 shadow-[#00C6A6]/20 cursor-pointer hover:scale-[1.01]'
-                  }`}
-                >
-                  <CheckCircle2 className="w-4.5 h-4.5" />
-                  <span>SUBMIT BOOKING ({items.length} {items.length === 1 ? 'Item' : 'Items'})</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
+                {/* Primary Action CTA Button */}
+                {isInsideQuoteBuilder ? (
+                  <button
+                    id="btn-return-to-quote-builder"
+                    type="button"
+                    onClick={() => setIsQuoteDrawerOpen(false)}
+                    className="w-full py-3.5 px-4 rounded-xl text-sm font-black transition-all flex items-center justify-center space-x-2 shadow-lg bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 shadow-[#00C6A6]/20 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4.5 h-4.5" />
+                    <span>DONE • RETURN TO QUOTE BUILDER ({items.length} {items.length === 1 ? 'Item' : 'Items'})</span>
+                  </button>
+                ) : (
+                  <button
+                    id="btn-submit-cart-booking"
+                    disabled={hasRosterConflict || items.length === 0}
+                    onClick={handleOpenBookingSubmission}
+                    className={`w-full py-3.5 px-4 rounded-xl text-sm font-black transition-all flex items-center justify-center space-x-2 shadow-lg ${
+                      hasRosterConflict || items.length === 0
+                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                        : 'bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 shadow-[#00C6A6]/20 cursor-pointer hover:scale-[1.01]'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-4.5 h-4.5" />
+                    <span>SUBMIT BOOKING ({items.length} {items.length === 1 ? 'Item' : 'Items'})</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             )}
           </div>

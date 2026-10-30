@@ -51,6 +51,7 @@ import { GlobalRemindersBar } from '../GlobalRemindersBar';
 import { ActionCenterDrawer } from '../ActionCenter/ActionCenterDrawer';
 import { CalendarTask, TravelLead } from '../../types';
 import { UnifiedB2BQuotationBuilder } from '../B2BAgentPortal/UnifiedB2BQuotationBuilder';
+import { QuoteBuilderDrawer } from '../QuoteBuilderDrawer';
 import { resolveAndValidateQuoteForBuilder } from '../../services/quotationRouting';
 import { 
   canUserAccessCMS, 
@@ -1393,6 +1394,9 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           }
         }}
       />
+
+      {/* Global B2B Cart Drawer (Controlled Manual Access in Quote Builder) */}
+      <QuoteBuilderDrawer />
     </div>
   );
 };

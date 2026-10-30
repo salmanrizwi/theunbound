@@ -2682,6 +2682,21 @@ export interface QuoteInternalBreakdownResult {
   adminManualMarginAmount?: number;
   existingMarginAmount?: number;
   revisedSellingPrice?: number;
+  adminFinalTotal?: number;
+}
+
+/**
+ * Currency-aware rounding helper.
+ * Preserves 2 decimal places for decimal currencies (INR, USD, EUR, GBP, AED, SGD, etc.)
+ * and 0 decimal places for integer currencies (JPY, THB).
+ */
+export function roundCurrencyAmount(amount: number, currency?: string): number {
+  if (!Number.isFinite(amount)) return 0;
+  const code = (currency || '').toUpperCase().trim();
+  if (code === 'JPY' || code === 'THB') {
+    return Math.round(amount);
+  }
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
 }
 
 /**
@@ -2933,17 +2948,36 @@ export function calculateQuoteInternalBreakdown(
     // 3. Authoritative Pricing Engine for Standard Inventory Products
     // (Tours, Tickets, Transfers, Guides, Rail, Ferries, Restaurants, Yachts, Visas, Ancillaries)
     try {
-      const calc = calculateProductPrice(item.product, {
-        productId: item.product.id,
-        pricingTier: 'B2B',
-        userRole: 'ADMIN',
-        adults: item.pax?.adults || 2,
-        children: item.pax?.children || 0,
-        infants: item.pax?.infants || 0,
-        travelDate: item.travelDate,
-        targetCurrency,
-        selectedAddonIds: item.selectedAddonIds || []
-      });
+      const existingCalc = item.calculation;
+      const existingCalcCurrency = existingCalc?.currency || existingCalc?.nativeCurrency;
+      const hasValidExistingCalc = Boolean(
+        existingCalc &&
+        typeof existingCalc.totalNetCost === 'number' &&
+        existingCalc.totalNetCost > 0 &&
+        existingCalcCurrency === targetCurrency
+      );
+
+      const calc = hasValidExistingCalc
+        ? {
+            nativeTotalNetCost: existingCalc!.nativeTotalNetCost ?? existingCalc!.totalNetCost,
+            nativeCurrency: (existingCalc!.nativeCurrency || targetCurrency) as CurrencyCode,
+            totalNetCost: existingCalc!.totalNetCost,
+            finalTotalSellingPrice: existingCalc!.finalTotalSellingPrice,
+            markupAmount: existingCalc!.markupAmount || 0,
+            taxAmount: existingCalc!.taxAmount || 0,
+            serviceFee: existingCalc!.serviceFee || 0
+          }
+        : calculateProductPrice(item.product, {
+            productId: item.product.id,
+            pricingTier: 'B2B',
+            userRole: 'ADMIN',
+            adults: item.pax?.adults || 2,
+            children: item.pax?.children || 0,
+            infants: item.pax?.infants || 0,
+            travelDate: item.travelDate,
+            targetCurrency,
+            selectedAddonIds: item.selectedAddonIds || []
+          });
 
       const totalPax = (item.pax?.adults || 2) + (item.pax?.children || 0);
       const isComplimentary = Boolean((item.product as any).isComplimentary || (item.product as any).isFree);
@@ -3028,59 +3062,82 @@ export function calculateQuoteInternalBreakdown(
   }
 
   // 4. Commercial Package Pricing Aggregations
-  const totalNettCost = isComplete ? accumulatedNetCost : 0;
-  const hasAdminManualMargin = params.adminManualMarginValue !== undefined && params.adminManualMarginValue > 0;
-  const adminMarginMode = params.adminMarginMode || 'REPLACE';
+  const totalNettCost = roundCurrencyAmount(isComplete ? accumulatedNetCost : 0, targetCurrency);
+  const existingMarginAmount = roundCurrencyAmount(accumulatedUnderlyingMarkup, targetCurrency);
+  const serviceFeeAmount = roundCurrencyAmount(accumulatedServiceFee, targetCurrency);
+  const taxAmount = roundCurrencyAmount(accumulatedTax, targetCurrency);
+
+  const hasAdminManualMargin =
+    params.adminManualMarginValue !== undefined || params.adminMarginMode !== undefined;
+  const adminMarginMode = params.adminMarginMode || 'ADD';
 
   const adminManualMarginAmount = hasAdminManualMargin
     ? (params.adminManualMarginType === 'FIXED'
-        ? Math.round(params.adminManualMarginValue || 0)
-        : Math.round(totalNettCost * ((params.adminManualMarginValue || 0) / 100)))
+        ? roundCurrencyAmount(params.adminManualMarginValue || 0, targetCurrency)
+        : roundCurrencyAmount(totalNettCost * ((params.adminManualMarginValue || 0) / 100), targetCurrency))
     : 0;
 
-  // Margin calculation on Total Nett Cost:
-  // In REPLACE mode (default): manual margin replaces accumulatedUnderlyingMarkup to avoid duplicate margin
-  // In ADD mode: manual margin is added on top of existing calculated margin
+  // STAGE 1: Manual Margin Adjustment on Total Nett Cost
+  // In ADD mode (default): manual margin is added on top of existing calculated margin (Existing Base Margin + Manual Margin Adjustment)
+  // In REPLACE mode (optional): manual margin replaces accumulatedUnderlyingMarkup (including 0% Nett override)
   const effectiveUnderlyingMargin = hasAdminManualMargin
     ? (adminMarginMode === 'REPLACE'
         ? adminManualMarginAmount
-        : (accumulatedUnderlyingMarkup + adminManualMarginAmount))
-    : accumulatedUnderlyingMarkup;
+        : roundCurrencyAmount(existingMarginAmount + adminManualMarginAmount, targetCurrency))
+    : existingMarginAmount;
 
-  const revisedSellingPrice = totalNettCost + effectiveUnderlyingMargin + accumulatedServiceFee;
+  const revisedSellingPrice = roundCurrencyAmount(
+    totalNettCost + effectiveUnderlyingMargin + serviceFeeAmount,
+    targetCurrency
+  );
 
-  const baseSellingPrice = hasAdminManualMargin
-    ? revisedSellingPrice
-    : accumulatedSellingPrice;
-
-  const partnerMarginAmount = agentMarginType === 'PERCENTAGE'
-    ? Math.round(baseSellingPrice * ((agentMarginValue || 0) / 100))
-    : Math.round(agentMarginValue || 0);
+  const stage1PreDiscountTotal = hasAdminManualMargin
+    ? roundCurrencyAmount(revisedSellingPrice + taxAmount, targetCurrency)
+    : roundCurrencyAmount(accumulatedSellingPrice, targetCurrency);
 
   const discountAmount = overallDiscountPercent > 0
-    ? Math.round((baseSellingPrice + partnerMarginAmount) * (overallDiscountPercent / 100))
+    ? roundCurrencyAmount(stage1PreDiscountTotal * (overallDiscountPercent / 100), targetCurrency)
     : 0;
 
-  const finalPackagePrice = Math.max(0, baseSellingPrice + partnerMarginAmount - discountAmount);
-  const totalMargin = effectiveUnderlyingMargin + partnerMarginAmount - discountAmount;
+  const adminFinalTotal = Math.max(
+    0,
+    roundCurrencyAmount(stage1PreDiscountTotal - discountAmount, targetCurrency)
+  );
+
+  // STAGE 2: Additional Agent Margin — Always uses Stage 1's Final Total (adminFinalTotal) as Existing Final Price
+  const baseSellingPrice = adminFinalTotal;
+
+  const partnerMarginAmount = agentMarginType === 'PERCENTAGE'
+    ? roundCurrencyAmount(baseSellingPrice * ((agentMarginValue || 0) / 100), targetCurrency)
+    : roundCurrencyAmount(agentMarginValue || 0, targetCurrency);
+
+  const finalPackagePrice = Math.max(
+    0,
+    roundCurrencyAmount(baseSellingPrice + partnerMarginAmount, targetCurrency)
+  );
+  const totalMargin = roundCurrencyAmount(
+    effectiveUnderlyingMargin + partnerMarginAmount - discountAmount,
+    targetCurrency
+  );
 
   return {
     isComplete,
     incompleteWarnings,
     totalNettCost,
     totalMargin,
-    underlyingMarginAmount: accumulatedUnderlyingMarkup,
+    underlyingMarginAmount: existingMarginAmount,
     partnerMarginAmount,
-    taxAmount: accumulatedTax,
-    serviceFee: accumulatedServiceFee,
+    taxAmount,
+    serviceFee: serviceFeeAmount,
     baseSellingPrice,
     discountAmount,
     finalPackagePrice,
     currency: targetCurrency,
     itemizedBreakdown,
     adminManualMarginAmount,
-    existingMarginAmount: accumulatedUnderlyingMarkup,
-    revisedSellingPrice
+    existingMarginAmount,
+    revisedSellingPrice,
+    adminFinalTotal
   };
 }
 
@@ -3129,6 +3186,7 @@ export function calculateQuoteTotal(
   let marginType = 'PERCENTAGE';
   let marginValue = 0;
   let discountPercent = 0;
+  const effectiveCurrency = currencyArg || (!Array.isArray(quoteOrItems) ? ((quoteOrItems as any).currency || (quoteOrItems as any).transactionCurrencySnapshot) : undefined) || 'USD';
 
   if (Array.isArray(quoteOrItems)) {
     activeItems = quoteOrItems;
@@ -3195,12 +3253,16 @@ export function calculateQuoteTotal(
   const getItemNet = (it: QuoteItem): number =>
     (it.calculation as any)?.totalNetCost || (it as any).totalNetCost || 0;
 
+  const getItemFeeAndTax = (it: QuoteItem): number =>
+    ((it.calculation as any)?.serviceFee || 0) + ((it.calculation as any)?.taxAmount || 0);
+
   // Partition activeItems into strictly non-overlapping Hotel vs Non-Hotel (Land) sets
   const hotelItems = activeItems.filter(isHotelItem);
   const landItems = activeItems.filter(it => !isHotelItem(it));
 
-  let hotelBaseSellingPrice = hotelItems.reduce((sum, it) => sum + getItemSelling(it), 0);
-  const hotelTotalNetCost = hotelItems.reduce((sum, it) => sum + getItemNet(it), 0);
+  let hotelBaseSellingPrice = roundCurrencyAmount(hotelItems.reduce((sum, it) => sum + getItemSelling(it), 0), effectiveCurrency);
+  const hotelTotalNetCost = roundCurrencyAmount(hotelItems.reduce((sum, it) => sum + getItemNet(it), 0), effectiveCurrency);
+  const hotelFeeAndTax = roundCurrencyAmount(hotelItems.reduce((sum, it) => sum + getItemFeeAndTax(it), 0), effectiveCurrency);
 
   // Include any routeHub manualHotel that was not already represented in hotelItems
   let hubManualHotelsCount = 0;
@@ -3222,87 +3284,119 @@ export function calculateQuoteTotal(
                             (h.manualHotel as any)?.totalPrice ||
                             (h.manualHotel as any)?.price || 0;
         if (manualPrice > 0) {
-          hotelBaseSellingPrice += manualPrice;
+          hotelBaseSellingPrice = roundCurrencyAmount(hotelBaseSellingPrice + manualPrice, effectiveCurrency);
           hubManualHotelsCount++;
         }
       }
     });
   }
 
-  const landBaseSellingPrice = landItems.reduce((sum, it) => sum + getItemSelling(it), 0);
-  const landTotalNetCost = landItems.reduce((sum, it) => sum + getItemNet(it), 0);
+  const landBaseSellingPrice = roundCurrencyAmount(landItems.reduce((sum, it) => sum + getItemSelling(it), 0), effectiveCurrency);
+  const landTotalNetCost = roundCurrencyAmount(landItems.reduce((sum, it) => sum + getItemNet(it), 0), effectiveCurrency);
+  const landFeeAndTax = roundCurrencyAmount(landItems.reduce((sum, it) => sum + getItemFeeAndTax(it), 0), effectiveCurrency);
 
-  const baseSellingPrice = hotelBaseSellingPrice + landBaseSellingPrice;
-  const totalNetCost = hotelTotalNetCost + landTotalNetCost;
+  const baseSellingPrice = roundCurrencyAmount(hotelBaseSellingPrice + landBaseSellingPrice, effectiveCurrency);
+  const totalNetCost = roundCurrencyAmount(hotelTotalNetCost + landTotalNetCost, effectiveCurrency);
+  const totalFeeAndTax = roundCurrencyAmount(hotelFeeAndTax + landFeeAndTax, effectiveCurrency);
 
   const adminMarginValue = !Array.isArray(quoteOrItems)
-    ? ((quoteOrItems as any).adminManualMarginValue ?? (quoteOrItems as any).admin_manual_margin_value)
+    ? ((quoteOrItems as any).adminManualMarginValue ?? (quoteOrItems as any).admin_manual_margin_value ?? (quoteOrItems as any).pricingSnapshot?.adminManualMarginValue)
     : undefined;
   const adminMarginType = !Array.isArray(quoteOrItems)
-    ? ((quoteOrItems as any).adminManualMarginType ?? (quoteOrItems as any).admin_manual_margin_type ?? 'PERCENTAGE')
+    ? ((quoteOrItems as any).adminManualMarginType ?? (quoteOrItems as any).admin_manual_margin_type ?? (quoteOrItems as any).pricingSnapshot?.adminManualMarginType ?? 'PERCENTAGE')
     : 'PERCENTAGE';
   const adminMarginMode = !Array.isArray(quoteOrItems)
-    ? ((quoteOrItems as any).adminMarginMode ?? (quoteOrItems as any).admin_margin_mode ?? 'REPLACE')
-    : 'REPLACE';
+    ? ((quoteOrItems as any).adminMarginMode ?? (quoteOrItems as any).admin_margin_mode ?? (quoteOrItems as any).pricingSnapshot?.adminMarginMode ?? 'ADD')
+    : 'ADD';
+  const hasAdminMarginConfig = !Array.isArray(quoteOrItems) && (
+    adminMarginValue !== undefined ||
+    (quoteOrItems as any).adminMarginMode !== undefined ||
+    (quoteOrItems as any).admin_margin_mode !== undefined ||
+    (quoteOrItems as any).pricingSnapshot?.adminMarginMode !== undefined
+  );
 
   let effectiveBaseSellingPrice = baseSellingPrice;
   let effectiveHotelBaseSellingPrice = hotelBaseSellingPrice;
   let effectiveLandBaseSellingPrice = landBaseSellingPrice;
 
-  if (adminMarginValue !== undefined && adminMarginValue > 0) {
+  if (hasAdminMarginConfig && totalNetCost > 0) {
+    const safeAdminMarginVal = Number(adminMarginValue ?? 0);
     const adminMarginAmount = adminMarginType === 'PERCENTAGE'
-      ? Math.round(totalNetCost * (adminMarginValue / 100))
-      : Math.round(adminMarginValue);
+      ? roundCurrencyAmount(totalNetCost * (safeAdminMarginVal / 100), effectiveCurrency)
+      : roundCurrencyAmount(safeAdminMarginVal, effectiveCurrency);
     effectiveBaseSellingPrice = adminMarginMode === 'REPLACE'
-      ? (totalNetCost + adminMarginAmount)
-      : (baseSellingPrice + adminMarginAmount);
+      ? roundCurrencyAmount(totalNetCost + adminMarginAmount + totalFeeAndTax, effectiveCurrency)
+      : roundCurrencyAmount(baseSellingPrice + adminMarginAmount, effectiveCurrency);
 
     if (adminMarginType === 'PERCENTAGE') {
-      const hotelAdminMargin = Math.round(hotelTotalNetCost * (adminMarginValue / 100));
-      const landAdminMargin = adminMarginAmount - hotelAdminMargin;
+      const hotelAdminMargin = roundCurrencyAmount(hotelTotalNetCost * (safeAdminMarginVal / 100), effectiveCurrency);
+      const landAdminMargin = roundCurrencyAmount(adminMarginAmount - hotelAdminMargin, effectiveCurrency);
       effectiveHotelBaseSellingPrice = adminMarginMode === 'REPLACE'
-        ? (hotelTotalNetCost + hotelAdminMargin)
-        : (hotelBaseSellingPrice + hotelAdminMargin);
+        ? roundCurrencyAmount(hotelTotalNetCost + hotelAdminMargin + hotelFeeAndTax, effectiveCurrency)
+        : roundCurrencyAmount(hotelBaseSellingPrice + hotelAdminMargin, effectiveCurrency);
       effectiveLandBaseSellingPrice = adminMarginMode === 'REPLACE'
-        ? (landTotalNetCost + landAdminMargin)
-        : (landBaseSellingPrice + landAdminMargin);
+        ? roundCurrencyAmount(landTotalNetCost + landAdminMargin + landFeeAndTax, effectiveCurrency)
+        : roundCurrencyAmount(landBaseSellingPrice + landAdminMargin, effectiveCurrency);
     } else {
-      const hotelShare = baseSellingPrice > 0 ? (hotelBaseSellingPrice / baseSellingPrice) : 0;
-      const hotelAdminMargin = Math.round(adminMarginAmount * hotelShare);
-      const landAdminMargin = adminMarginAmount - hotelAdminMargin;
+      const basisTotal = adminMarginMode === 'REPLACE' ? totalNetCost : baseSellingPrice;
+      const hotelBasis = adminMarginMode === 'REPLACE' ? hotelTotalNetCost : hotelBaseSellingPrice;
+      const hotelShare = basisTotal > 0 ? (hotelBasis / basisTotal) : 0;
+      const hotelAdminMargin = roundCurrencyAmount(adminMarginAmount * hotelShare, effectiveCurrency);
+      const landAdminMargin = roundCurrencyAmount(adminMarginAmount - hotelAdminMargin, effectiveCurrency);
       effectiveHotelBaseSellingPrice = adminMarginMode === 'REPLACE'
-        ? (hotelTotalNetCost + hotelAdminMargin)
-        : (hotelBaseSellingPrice + hotelAdminMargin);
+        ? roundCurrencyAmount(hotelTotalNetCost + hotelAdminMargin + hotelFeeAndTax, effectiveCurrency)
+        : roundCurrencyAmount(hotelBaseSellingPrice + hotelAdminMargin, effectiveCurrency);
       effectiveLandBaseSellingPrice = adminMarginMode === 'REPLACE'
-        ? (landTotalNetCost + landAdminMargin)
-        : (landBaseSellingPrice + landAdminMargin);
+        ? roundCurrencyAmount(landTotalNetCost + landAdminMargin + landFeeAndTax, effectiveCurrency)
+        : roundCurrencyAmount(landBaseSellingPrice + landAdminMargin, effectiveCurrency);
+    }
+  } else if (!Array.isArray(quoteOrItems)) {
+    // When net costs have been stripped (e.g. sanitized customer/agent quote), honor saved Stage 1 Final Total
+    const savedStage1Base =
+      (quoteOrItems as any).revisedSellingPrice ??
+      (quoteOrItems as any).revised_selling_price ??
+      (quoteOrItems as any).baseFinalSellingPrice ??
+      (quoteOrItems as any).base_final_selling_price;
+    if (typeof savedStage1Base === 'number' && savedStage1Base > 0 && (!isLandOnly || hotelBaseSellingPrice === 0)) {
+      effectiveBaseSellingPrice = roundCurrencyAmount(savedStage1Base, effectiveCurrency);
+      if (baseSellingPrice > 0 && effectiveBaseSellingPrice !== baseSellingPrice) {
+        const hotelShare = hotelBaseSellingPrice / baseSellingPrice;
+        effectiveHotelBaseSellingPrice = roundCurrencyAmount(effectiveBaseSellingPrice * hotelShare, effectiveCurrency);
+        effectiveLandBaseSellingPrice = roundCurrencyAmount(effectiveBaseSellingPrice - effectiveHotelBaseSellingPrice, effectiveCurrency);
+      }
     }
   }
 
-  const markupAmount = marginType === 'PERCENTAGE'
-    ? Math.round(effectiveBaseSellingPrice * (marginValue / 100))
-    : Math.round(marginValue);
-
-  const discountAmount = discountPercent > 0
-    ? Math.round((effectiveBaseSellingPrice + markupAmount) * (discountPercent / 100))
+  // Apply overall discount at Stage 1 if not already baked into savedStage1Base
+  const stage1DiscountAmount = discountPercent > 0 && (totalNetCost > 0 || Array.isArray(quoteOrItems))
+    ? roundCurrencyAmount(effectiveBaseSellingPrice * (discountPercent / 100), effectiveCurrency)
     : 0;
+  const stage1FinalBase = Math.max(0, roundCurrencyAmount(effectiveBaseSellingPrice - stage1DiscountAmount, effectiveCurrency));
 
-  const finalCustomerSellingPrice = Math.max(0, effectiveBaseSellingPrice + markupAmount - discountAmount);
+  const markupAmount = marginType === 'PERCENTAGE'
+    ? roundCurrencyAmount(stage1FinalBase * (marginValue / 100), effectiveCurrency)
+    : roundCurrencyAmount(marginValue, effectiveCurrency);
+
+  const discountAmount = stage1DiscountAmount;
+  const finalCustomerSellingPrice = Math.max(0, roundCurrencyAmount(stage1FinalBase + markupAmount, effectiveCurrency));
 
   // Calculate Hotel Accommodation Total and Land Part Total using identical margin/discount rules
-  const hotelMarkupAmount = marginType === 'PERCENTAGE'
-    ? Math.round(effectiveHotelBaseSellingPrice * (marginValue / 100))
-    : (effectiveBaseSellingPrice > 0
-        ? Math.round(markupAmount * (effectiveHotelBaseSellingPrice / effectiveBaseSellingPrice))
-        : 0);
-  const hotelDiscountAmount = discountPercent > 0
-    ? Math.round((effectiveHotelBaseSellingPrice + hotelMarkupAmount) * (discountPercent / 100))
+  const hotelDiscountAmount = discountPercent > 0 && stage1DiscountAmount > 0
+    ? roundCurrencyAmount(effectiveHotelBaseSellingPrice * (discountPercent / 100), effectiveCurrency)
     : 0;
-  const hotelTotalSellingPrice = Math.max(0, effectiveHotelBaseSellingPrice + hotelMarkupAmount - hotelDiscountAmount);
+  const stage1HotelFinalBase = Math.max(0, roundCurrencyAmount(effectiveHotelBaseSellingPrice - hotelDiscountAmount, effectiveCurrency));
 
-  const landMarkupAmount = markupAmount - hotelMarkupAmount;
-  const landDiscountAmount = discountAmount - hotelDiscountAmount;
-  let landPartTotalSellingPrice = Math.max(0, effectiveLandBaseSellingPrice + landMarkupAmount - landDiscountAmount);
+  const hotelMarkupAmount = marginType === 'PERCENTAGE'
+    ? roundCurrencyAmount(stage1HotelFinalBase * (marginValue / 100), effectiveCurrency)
+    : (stage1FinalBase > 0
+        ? roundCurrencyAmount(markupAmount * (stage1HotelFinalBase / stage1FinalBase), effectiveCurrency)
+        : 0);
+  const hotelTotalSellingPrice = Math.max(0, roundCurrencyAmount(stage1HotelFinalBase + hotelMarkupAmount, effectiveCurrency));
+
+  const landMarkupAmount = roundCurrencyAmount(markupAmount - hotelMarkupAmount, effectiveCurrency);
+  const landDiscountAmount = roundCurrencyAmount(discountAmount - hotelDiscountAmount, effectiveCurrency);
+  const stage1LandFinalBase = Math.max(0, roundCurrencyAmount(effectiveLandBaseSellingPrice - landDiscountAmount, effectiveCurrency));
+  let landPartTotalSellingPrice = Math.max(0, roundCurrencyAmount(stage1LandFinalBase + landMarkupAmount, effectiveCurrency));
 
   const hotelItemsIncludedCount = hotelItems.length + hubManualHotelsCount;
   const landItemsIncludedCount = landItems.length;
@@ -3326,8 +3420,8 @@ export function calculateQuoteTotal(
   const hasLandServices = landPartTotalSellingPrice > 0 || landItemsIncludedCount > 0;
 
   return {
-    baseSellingPrice: effectiveBaseSellingPrice,
-    baseTotalPrice: effectiveBaseSellingPrice,
+    baseSellingPrice: stage1FinalBase,
+    baseTotalPrice: stage1FinalBase,
     markupAmount,
     marginAmount: markupAmount,
     discountAmount,
@@ -3341,7 +3435,7 @@ export function calculateQuoteTotal(
     hotelTotalNetCost,
     hasHotelAccommodation,
     landItemsIncludedCount,
-    landBaseSellingPrice: effectiveLandBaseSellingPrice,
+    landBaseSellingPrice: stage1LandFinalBase,
     landPartTotalSellingPrice,
     landTotalNetCost,
     hasLandServices

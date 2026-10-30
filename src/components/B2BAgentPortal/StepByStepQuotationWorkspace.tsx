@@ -49,8 +49,10 @@ import {
   Train,
   Shield,
   Smartphone,
+  ShoppingCart,
   X
 } from 'lucide-react';
+import { useQuotation } from '../../context/QuotationContext';
 import { isRailQuoteItem, isRailProduct } from '../../services/rail/JapanRailJourneyDataService';
 import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../../utils/inventoryDisplayHelpers';
 import { 
@@ -72,7 +74,7 @@ import {
   AgentMarginType,
   QuoteBrandingMode
 } from '../../types';
-import { formatCurrency, convertCurrency, resolveCapacityPricingTier, calculateQuoteInternalBreakdown } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, resolveCapacityPricingTier, calculateQuoteInternalBreakdown, roundCurrencyAmount } from '../../services/pricingEngine';
 import { useAuth } from '../../context/AuthContext';
 import { canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
 import { TransferSuggestion } from '../../utils/b2bQuotationHelpers';
@@ -246,6 +248,7 @@ export interface StepByStepQuotationWorkspaceProps {
   quoteVersion?: number;
   brandingMode?: QuoteBrandingMode;
   setBrandingMode?: (mode: QuoteBrandingMode) => void;
+  onOpenCartDrawer?: () => void;
 }
 
 export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspaceProps> = ({
@@ -372,9 +375,11 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   quoteNumber = 'QTE-LIVE',
   quoteVersion = 1,
   brandingMode: propBrandingMode = 'STANDARD',
-  setBrandingMode: propSetBrandingMode
+  setBrandingMode: propSetBrandingMode,
+  onOpenCartDrawer
 }) => {
   const { user, updateUserProfile } = useAuth();
+  const { setIsQuoteDrawerOpen } = useQuotation();
   const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
   const [showInternalItemized, setShowInternalItemized] = useState<boolean>(false);
   const [localBrandingMode, setLocalBrandingMode] = useState<QuoteBrandingMode>(propBrandingMode || 'STANDARD');
@@ -750,12 +755,18 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   const canConfigureAdminManualMargin = isMasterAdminUser || (isTeamMember && isAuthorizedInternalUser);
   const canConfigureAgentManualMargin = isAgentUser || isMasterAdminUser;
 
-  // Local fallback admin manual margin state (Section 1)
+  // Local fallback admin manual margin state (Section 1) — Default mode is 'ADD' (Add to Existing Margin)
   const [internalAdminManualMarginType, setInternalAdminManualMarginType] = useState<'PERCENTAGE' | 'FIXED'>(propAdminManualMarginType || 'PERCENTAGE');
   const [internalAdminManualMarginValue, setInternalAdminManualMarginValue] = useState<number>(
     propAdminManualMarginValue !== undefined ? propAdminManualMarginValue : 0
   );
-  const [internalAdminMarginMode, setInternalAdminMarginMode] = useState<'REPLACE' | 'ADD'>(propAdminMarginMode || 'REPLACE');
+  const [internalAdminMarginMode, setInternalAdminMarginMode] = useState<'REPLACE' | 'ADD'>(propAdminMarginMode || 'ADD');
+
+  useEffect(() => {
+    if (propAdminMarginMode) {
+      setInternalAdminMarginMode(propAdminMarginMode);
+    }
+  }, [propAdminMarginMode]);
 
   const effectiveAdminMarginType = propAdminManualMarginType || internalAdminManualMarginType;
   const effectiveAdminMarginValue = propAdminManualMarginValue !== undefined ? propAdminManualMarginValue : internalAdminManualMarginValue;
@@ -827,44 +838,42 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     adminMarginMode: effectiveAdminMarginMode
   }) : null;
 
-  // Authoritative admin commercial variables
-  const adminTotalNettCost = step7BreakdownPricing?.totalNettCost ?? totalNetCost ?? 0;
-  const existingCalculatedMargin = step7BreakdownPricing?.existingMarginAmount ?? 0;
+  // STAGE 1: Manual Margin Adjustment (Admin Commercial Controls)
+  const adminTotalNettCost = roundCurrencyAmount(step7BreakdownPricing?.totalNettCost ?? totalNetCost ?? 0, currency);
+  const existingCalculatedMargin = roundCurrencyAmount(step7BreakdownPricing?.existingMarginAmount ?? 0, currency);
   const adminManualMarginAmount = effectiveAdminMarginType === 'PERCENTAGE'
-    ? Math.round(adminTotalNettCost * ((effectiveAdminMarginValue || 0) / 100))
-    : Math.round(effectiveAdminMarginValue || 0);
+    ? roundCurrencyAmount(adminTotalNettCost * ((effectiveAdminMarginValue || 0) / 100), currency)
+    : roundCurrencyAmount(effectiveAdminMarginValue || 0, currency);
 
   const adminRevisedSellingPrice = effectiveAdminMarginMode === 'REPLACE'
-    ? (adminTotalNettCost + adminManualMarginAmount + (step7BreakdownPricing?.serviceFee || 0))
-    : (adminTotalNettCost + existingCalculatedMargin + adminManualMarginAmount + (step7BreakdownPricing?.serviceFee || 0));
+    ? roundCurrencyAmount(adminTotalNettCost + adminManualMarginAmount + (step7BreakdownPricing?.serviceFee || 0), currency)
+    : roundCurrencyAmount(adminTotalNettCost + existingCalculatedMargin + adminManualMarginAmount + (step7BreakdownPricing?.serviceFee || 0), currency);
 
-  const adminFinalTotal = step7BreakdownPricing?.finalPackagePrice ?? (
-    adminRevisedSellingPrice + (step7BreakdownPricing?.taxAmount || 0) - (step7BreakdownPricing?.discountAmount || 0)
-  );
+  const stage1TaxAmount = roundCurrencyAmount(step7BreakdownPricing?.taxAmount || 0, currency);
+  const stage1PreDiscountTotal = roundCurrencyAmount(adminRevisedSellingPrice + stage1TaxAmount, currency);
+  const stage1DiscountAmount = (overallDiscountPercent || 0) > 0
+    ? roundCurrencyAmount(stage1PreDiscountTotal * ((overallDiscountPercent || 0) / 100), currency)
+    : 0;
+  const adminFinalTotal = step7BreakdownPricing?.adminFinalTotal !== undefined && step7BreakdownPricing.adminFinalTotal > 0
+    ? step7BreakdownPricing.adminFinalTotal
+    : Math.max(0, roundCurrencyAmount(stage1PreDiscountTotal - stage1DiscountAmount, currency));
 
-  // Authoritative existing final price for agent margin
-  const effectiveBasePrice = (canConfigureAdminManualMargin && effectiveAdminMarginValue > 0 && adminRevisedSellingPrice > 0)
-    ? adminRevisedSellingPrice
-    : (baseFinalSellingPrice !== undefined ? baseFinalSellingPrice : totalSellingPrice);
-
-  const existingFinalPrice = (canConfigureAdminManualMargin && effectiveAdminMarginValue > 0 && adminFinalTotal > 0)
+  // STAGE 2: Additional Agent Margin — Handoff from Manual Margin Adjustment
+  // The Additional Agent Margin section MUST ALWAYS use the Final Total generated by Manual Margin Adjustment as its starting price
+  const hasManualMarginStage = canConfigureAdminManualMargin && adminFinalTotal > 0;
+  const effectiveBasePrice = hasManualMarginStage
     ? adminFinalTotal
-    : effectiveBasePrice;
+    : roundCurrencyAmount(baseFinalSellingPrice !== undefined ? baseFinalSellingPrice : totalSellingPrice, currency);
 
-  const additionalAgentMarginAmount = propAgentMarginAmount !== undefined && !(canConfigureAdminManualMargin && effectiveAdminMarginValue > 0)
-    ? propAgentMarginAmount
-    : effectiveMarginType === 'PERCENTAGE'
-      ? Math.round(existingFinalPrice * ((effectiveMarginValue || 0) / 100))
-      : Math.round(effectiveMarginValue || 0);
+  const existingFinalPrice = effectiveBasePrice;
+
+  const additionalAgentMarginAmount = effectiveMarginType === 'PERCENTAGE'
+    ? roundCurrencyAmount(existingFinalPrice * ((effectiveMarginValue || 0) / 100), currency)
+    : roundCurrencyAmount(effectiveMarginValue || 0, currency);
 
   const effectiveMarginAmount = additionalAgentMarginAmount;
-  const revisedFinalPrice = existingFinalPrice + additionalAgentMarginAmount;
-
-  const effectiveFinalPrice = (canConfigureAdminManualMargin && effectiveAdminMarginValue > 0)
-    ? revisedFinalPrice
-    : (propFinalCustomerSellingPrice !== undefined
-        ? propFinalCustomerSellingPrice
-        : revisedFinalPrice);
+  const revisedFinalPrice = roundCurrencyAmount(existingFinalPrice + additionalAgentMarginAmount, currency);
+  const effectiveFinalPrice = items.length === 0 && routeHubs.every(h => !h.manualHotel) ? 0 : revisedFinalPrice;
 
   // Filter items by category (excluding hotel charges when Land-Only Mode or hub No Accommodation is active)
   const hotelItems = useMemo(() => {
@@ -2152,7 +2161,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
             <div>
               <div className="text-2xl font-black font-mono text-white">
-                {formatCurrency(finalClientPrice, currency)}
+                {formatCurrency(effectiveFinalPrice, currency)}
               </div>
               <p className="text-[11px] text-slate-400">
                 Guaranteed Final Price • All Inclusive
@@ -2174,6 +2183,33 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
               </div>
             </div>
           </div>
+
+          {/* Controlled Manual Cart Access Button — Directly Below Live Pricing Snapshot */}
+          <button
+            id="b2b-quote-builder-open-cart-btn"
+            type="button"
+            onClick={() => {
+              if (onOpenCartDrawer) {
+                onOpenCartDrawer();
+              } else {
+                setIsQuoteDrawerOpen(true, { explicitFromQuoteBuilder: true });
+              }
+            }}
+            className="w-full py-3 px-4 rounded-2xl bg-white hover:bg-teal-50/80 text-slate-900 border border-teal-500/40 hover:border-teal-600 shadow-xs transition-all flex items-center justify-between cursor-pointer group"
+            aria-label={`Open Cart (${items.length} ${items.length === 1 ? 'item' : 'items'})`}
+          >
+            <div className="flex items-center space-x-2.5">
+              <div className="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 group-hover:bg-teal-600 group-hover:text-white group-hover:border-teal-600 transition-colors flex items-center justify-center shrink-0">
+                <ShoppingCart className="w-4 h-4" />
+              </div>
+              <span className="text-xs font-black tracking-wide text-slate-900 group-hover:text-teal-900">
+                Open Cart
+              </span>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black font-mono bg-teal-50 text-teal-800 border border-teal-200 group-hover:bg-teal-600 group-hover:text-white group-hover:border-teal-600 transition-colors">
+              {items.length} {items.length === 1 ? 'Item' : 'Items'}
+            </span>
+          </button>
         </aside>
 
         {/* ========================================================================= */}
@@ -3939,7 +3975,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             const isNegativeMargin = (effectiveMarginValue || 0) < 0;
             const isHighMargin = effectiveMarginType === 'PERCENTAGE' && (effectiveMarginValue || 0) > 100;
 
-            const internalPricing = canViewInternalCosts ? calculateQuoteInternalBreakdown({
+            const internalPricing = canViewInternalCosts ? (step7BreakdownPricing || calculateQuoteInternalBreakdown({
               items: quotationScope === 'LAND_ONLY'
                 ? items.filter(it => !(
                     (it.product.category || '').toLowerCase().includes('hotel') ||
@@ -3953,8 +3989,13 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
               agentMarginType: effectiveMarginType,
               agentMarginValue: effectiveMarginValue,
               overallDiscountPercent: overallDiscountPercent || 0,
-              userRole: user?.role
-            }) : null;
+              userRole: user?.role,
+              scope: quotationScope,
+              routeHubs,
+              adminManualMarginType: effectiveAdminMarginType,
+              adminManualMarginValue: effectiveAdminMarginValue,
+              adminMarginMode: effectiveAdminMarginMode
+            })) : null;
 
             return (
               <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
@@ -5048,17 +5089,6 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                         <div className="inline-flex rounded-xl p-0.5 bg-slate-100 border border-slate-200 text-xs">
                           <button
                             type="button"
-                            onClick={() => handleUpdateAdminMarginMode('REPLACE')}
-                            className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                              effectiveAdminMarginMode === 'REPLACE'
-                                ? 'bg-indigo-600 text-white shadow-2xs'
-                                : 'text-slate-600 hover:text-slate-900'
-                            }`}
-                          >
-                            Replace Base Margin (Default)
-                          </button>
-                          <button
-                            type="button"
                             onClick={() => handleUpdateAdminMarginMode('ADD')}
                             className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
                               effectiveAdminMarginMode === 'ADD'
@@ -5066,7 +5096,18 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                 : 'text-slate-600 hover:text-slate-900'
                             }`}
                           >
-                            Add to Existing Margin
+                            Add to Existing Margin (Default)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateAdminMarginMode('REPLACE')}
+                            className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                              effectiveAdminMarginMode === 'REPLACE'
+                                ? 'bg-indigo-600 text-white shadow-2xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Replace Base Margin
                           </button>
                         </div>
                       </div>
@@ -5094,7 +5135,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                           +{formatCurrency(existingCalculatedMargin, currency)}
                         </span>
                         <span className="text-[10px] text-slate-400 block mt-0.5">
-                          {effectiveAdminMarginMode === 'REPLACE' && effectiveAdminMarginValue > 0 ? 'Replaced by manual' : 'Underlying supplier markup'}
+                          {effectiveAdminMarginMode === 'REPLACE' ? 'Replaced by manual' : 'Included in effective margin'}
                         </span>
                       </div>
 
@@ -5255,7 +5296,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             </span>
                           </div>
                           <p className="text-[11px] text-slate-500">
-                            Calculated directly on top of the <strong>Existing Final Price</strong> produced by the central pricing engine.
+                            Calculated directly on top of the <strong>Existing Final Price</strong>{canConfigureAdminManualMargin ? ' (Final Total from Manual Margin Adjustment)' : ' produced by the central pricing engine'}.
                           </p>
                         </div>
                       </div>
